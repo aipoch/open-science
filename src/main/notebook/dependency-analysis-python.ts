@@ -1,946 +1,2623 @@
-import { PYTHON_LIBRARY_EFFECTS } from './python-library-effects'
+import { PYTHON_LIBRARY_EFFECTS, type PythonLibraryMethodEffect } from './python-library-effects'
+import {
+  fieldChild,
+  fieldChildren,
+  parseNotebookSource,
+  type Node
+} from './dependency-analysis-parser'
+import type {
+  NotebookDependencyAlias,
+  NotebookDependencyMemberWrite,
+  NotebookDependencyReceiverCall,
+  NotebookDependencyTypeBinding,
+  NotebookDependencyTypeSummary,
+  NotebookRunDependencyFacts
+} from './dependency-analysis-types'
 
-const PYTHON_LIBRARY_EFFECTS_SOURCE = JSON.stringify(JSON.stringify(PYTHON_LIBRARY_EFFECTS))
+const MUTATING_METHODS = new Set([
+  'append',
+  'extend',
+  'insert',
+  'remove',
+  'pop',
+  'clear',
+  'sort',
+  'reverse',
+  'update',
+  'setdefault',
+  'add',
+  'discard'
+])
+const DYNAMIC_CALLS = new Set([
+  'eval',
+  'exec',
+  'globals',
+  'locals',
+  'vars',
+  'compile',
+  '__import__'
+])
+const SAFE_CALLS = new Set([
+  'abs',
+  'all',
+  'any',
+  'bool',
+  'bytes',
+  'complex',
+  'dict',
+  'enumerate',
+  'filter',
+  'float',
+  'frozenset',
+  'hash',
+  'id',
+  'int',
+  'len',
+  'list',
+  'map',
+  'max',
+  'min',
+  'print',
+  'range',
+  'repr',
+  'reversed',
+  'round',
+  'set',
+  'slice',
+  'sorted',
+  'str',
+  'sum',
+  'tuple',
+  'type',
+  'zip'
+])
+const EXTERNAL_READ_CALLS = new Set(['open'])
+const SCOPED_MUTATION_CALLS = new Set(['next'])
+const SAFE_LITERAL_METHODS = new Set([
+  'capitalize',
+  'casefold',
+  'endswith',
+  'format',
+  'join',
+  'lower',
+  'lstrip',
+  'replace',
+  'rstrip',
+  'split',
+  'startswith',
+  'strip',
+  'title',
+  'upper'
+])
+const SIMPLE_FORMULA_PATTERN = /^[A-Za-z0-9_~+*:/.-]+(?:\s+[A-Za-z0-9_~+*:/.-]+)*$/u
 
-const PYTHON_ANALYZER = String.raw`
-import ast, json, re, sys
+type PyCtx = 'Load' | 'Store' | 'Del'
+type ConstKind = 'int' | 'float' | 'bool' | 'str' | 'bytes' | 'none' | 'complex'
 
-LIBRARY_EFFECTS = json.loads(${PYTHON_LIBRARY_EFFECTS_SOURCE})
+type PyArg = { type: 'arg'; arg: string }
+type PyKeyword = { type: 'keyword'; arg: string | null; value: PyNode; _fields: string[] }
+type PyAlias = { type: 'alias'; name: string; asname: string | null }
+type PyComprehension = { target: PyNode; iter: PyNode; ifs: PyNode[] }
+type PyArguments = {
+  posonlyargs: PyArg[]
+  args: PyArg[]
+  vararg: PyArg | null
+  kwonlyargs: PyArg[]
+  kwarg: PyArg | null
+  defaults: PyNode[]
+  kw_defaults: Array<PyNode | null>
+}
 
-MUTATING_METHODS = {"append", "extend", "insert", "remove", "pop", "clear", "sort", "reverse", "update", "setdefault", "add", "discard"}
-DYNAMIC_CALLS = {"eval", "exec", "globals", "locals", "vars", "compile", "__import__"}
-SAFE_CALLS = {"abs", "all", "any", "bool", "bytes", "complex", "dict", "enumerate", "filter", "float", "frozenset", "hash", "id", "int", "len", "list", "map", "max", "min", "print", "range", "repr", "reversed", "round", "set", "slice", "sorted", "str", "sum", "tuple", "type", "zip"}
-EXTERNAL_READ_CALLS = {"open"}
-SCOPED_MUTATION_CALLS = {"next"}
-SAFE_LITERAL_METHODS = {"capitalize", "casefold", "endswith", "format", "join", "lower", "lstrip", "replace", "rstrip", "split", "startswith", "strip", "title", "upper"}
-SIMPLE_FORMULA_PATTERN = re.compile(r'^[A-Za-z0-9_~+*:/.-]+(?:\s+[A-Za-z0-9_~+*:/.-]+)*$')
+type PyNode = {
+  type: string
+  lineno?: number
+  end_lineno?: number
+  _fields: string[]
+  id?: string
+  attr?: string
+  ctx?: PyCtx
+  value?: unknown
+  constKind?: ConstKind
+  targets?: PyNode[]
+  target?: PyNode
+  op?: string
+  operand?: PyNode
+  func?: PyNode
+  args?: PyNode[] | PyArguments
+  keywords?: PyKeyword[]
+  names?: PyAlias[] | string[]
+  module?: string | null
+  name?: string
+  body?: PyNode[] | PyNode
+  orelse?: PyNode[]
+  iter?: PyNode
+  test?: PyNode
+  elt?: PyNode
+  key?: PyNode
+  keys?: Array<PyNode | null>
+  values?: PyNode[]
+  elts?: PyNode[]
+  generators?: PyComprehension[]
+  decorator_list?: PyNode[]
+  bases?: PyNode[]
+  classKeywords?: PyKeyword[]
+  annotation?: PyNode | null
+  slice?: PyNode
+  children?: PyNode[]
+}
 
-def simple_formula_names(node):
-    if not isinstance(node, ast.Constant) or not isinstance(node.value, str): return None
-    formula = node.value.strip()
-    if formula.count('~') != 1 or not SIMPLE_FORMULA_PATTERN.fullmatch(formula): return None
-    return set(re.findall(r'[A-Za-z_]\w*', formula))
+const isPyNode = (value: unknown): value is PyNode =>
+  Boolean(value && typeof value === 'object' && typeof (value as PyNode).type === 'string')
 
-def root_name(node):
-    while isinstance(node, (ast.Attribute, ast.Subscript)):
-        node = node.value
-    return node.id if isinstance(node, ast.Name) else None
+const py = (
+  type: string,
+  fields: Omit<PyNode, 'type' | '_fields'>,
+  fieldNames: string[]
+): PyNode => ({
+  type,
+  ...fields,
+  _fields: fieldNames
+})
 
-def member_name(node):
-    if isinstance(node, ast.Attribute): return node.attr
-    if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, (str, int)): return str(node.slice.value)
-    return None
+const locate = (node: Node, result: PyNode): PyNode => {
+  result.lineno = node.startPosition.row + 1
+  result.end_lineno = node.endPosition.row + 1
+  return result
+}
 
-def dynamic_member_write(node):
-    if isinstance(node, ast.Attribute):
-        type_wide = isinstance(node.value, ast.Attribute) and node.value.attr == '__class__'
-        return (member_name(node), type_wide)
-    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == '__dict__': return (member_name(node), False)
-    return None
+const pyChildren = (node: PyNode): PyNode[] => {
+  const children: PyNode[] = []
+  const push = (value: unknown): void => {
+    if (isPyNode(value)) children.push(value)
+    else if (Array.isArray(value)) value.forEach(push)
+    else if (value && typeof value === 'object') {
+      const comprehension = value as PyComprehension
+      if (comprehension.target && comprehension.iter) {
+        children.push(comprehension.target, comprehension.iter, ...comprehension.ifs)
+      }
+    }
+  }
+  for (const field of node._fields) push((node as Record<string, unknown>)[field])
+  return children
+}
 
-def python_field_relationship(node):
-    if isinstance(node, ast.Constant): return 'value'
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-        if node.func.id in {'bool', 'bytes', 'complex', 'float', 'frozenset', 'int', 'str'}: return 'value'
-        if node.func.id in {'dict', 'list', 'set'}: return 'reference'
-    if isinstance(node, (ast.Dict, ast.List, ast.Set, ast.ListComp, ast.SetComp, ast.DictComp)): return 'reference'
-    return 'unknown'
+const walkPy = (node: PyNode): PyNode[] => [node, ...pyChildren(node).flatMap(walkPy)]
 
-def static_integer(node):
-    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool): return node.value
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
-        value = static_integer(node.operand)
-        if value is not None: return value if isinstance(node.op, ast.UAdd) else -value
-    return None
+const decodePythonString = (text: string): { value: string; kind: ConstKind } | undefined => {
+  let rest = text
+  let kind: ConstKind = 'str'
+  while (rest && /^[rRuUbBfF]/u.test(rest[0] ?? '')) {
+    if (rest[0]?.toLowerCase() === 'b') kind = 'bytes'
+    if (rest[0]?.toLowerCase() === 'f') return undefined
+    rest = rest.slice(1)
+  }
+  const quote =
+    rest.startsWith('"""') || rest.startsWith("'''")
+      ? rest.slice(0, 3)
+      : rest.startsWith("'") || rest.startsWith('"')
+        ? rest.slice(0, 1)
+        : undefined
+  if (!quote || !rest.endsWith(quote)) return undefined
+  const inner = rest.slice(quote.length, rest.length - quote.length)
+  return {
+    kind,
+    value: inner
+      .replaceAll(String.raw`\\`, '\u0000')
+      .replaceAll(String.raw`\n`, '\n')
+      .replaceAll(String.raw`\t`, '\t')
+      .replaceAll(String.raw`\'`, "'")
+      .replaceAll(String.raw`\"`, '"')
+      .replaceAll('\u0000', '\\')
+  }
+}
 
-def static_scalar(node):
-    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes, int, float, complex, bool, type(None))): return True
-    return static_integer(node) is not None
+const parsePythonInteger = (text: string): number | undefined => {
+  const cleaned = text.replaceAll('_', '')
+  if (/^0[xX]/u.test(cleaned)) return Number.parseInt(cleaned, 16)
+  if (/^0[oO]/u.test(cleaned)) return Number.parseInt(cleaned.slice(2), 8)
+  if (/^0[bB]/u.test(cleaned)) return Number.parseInt(cleaned.slice(2), 2)
+  const value = Number(cleaned)
+  return Number.isFinite(value) ? value : undefined
+}
 
-def static_nonempty_iterable(node):
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        return bool(node.elts) and all(static_scalar(element) for element in node.elts)
-    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name) or node.keywords: return False
-    if node.func.id == 'range' and 1 <= len(node.args) <= 3:
-        values = [static_integer(argument) for argument in node.args]
-        if any(value is None for value in values): return False
-        try: return len(range(*values)) > 0
-        except (TypeError, ValueError): return False
-    if node.func.id in {'enumerate', 'reversed'} and len(node.args) == 1:
-        return static_nonempty_iterable(node.args[0])
-    if node.func.id == 'zip' and node.args:
-        return all(static_nonempty_iterable(argument) for argument in node.args)
-    return False
+const convertPattern = (node: Node, ctx: PyCtx): PyNode => {
+  if (node.type === 'identifier') return locate(node, py('Name', { id: node.text, ctx }, []))
+  if (node.type === 'pattern_list' || node.type === 'tuple_pattern' || node.type === 'tuple') {
+    return locate(
+      node,
+      py('Tuple', { elts: node.namedChildren.map((child) => convertPattern(child, ctx)), ctx }, [
+        'elts'
+      ])
+    )
+  }
+  if (node.type === 'list_pattern' || node.type === 'list') {
+    return locate(
+      node,
+      py('List', { elts: node.namedChildren.map((child) => convertPattern(child, ctx)), ctx }, [
+        'elts'
+      ])
+    )
+  }
+  return convertExpr(node, ctx)
+}
 
-def simple_loop_target(node):
-    if isinstance(node, ast.Name): return True
-    if isinstance(node, (ast.Tuple, ast.List)) and node.elts:
-        return all(simple_loop_target(element) for element in node.elts)
-    return False
+const convertParameters = (node: Node | null): PyArguments => {
+  const posonlyargs: PyArg[] = []
+  const args: PyArg[] = []
+  const kwonlyargs: PyArg[] = []
+  const defaults: PyNode[] = []
+  const kw_defaults: Array<PyNode | null> = []
+  let vararg: PyArg | null = null
+  let kwarg: PyArg | null = null
+  let seenStar = false
+  let currentArgs = args
+  if (!node) {
+    return { posonlyargs, args, vararg, kwonlyargs, kwarg, defaults, kw_defaults }
+  }
+  for (const child of node.namedChildren) {
+    if (child.type === 'positional_separator') {
+      posonlyargs.push(...args.splice(0, args.length))
+      continue
+    }
+    if (child.type === 'keyword_separator') {
+      seenStar = true
+      currentArgs = kwonlyargs
+      continue
+    }
+    if (child.type === 'list_splat' || child.type === 'list_splat_pattern') {
+      const name = child.namedChildren[0]?.text
+      if (name) vararg = { type: 'arg', arg: name }
+      seenStar = true
+      currentArgs = kwonlyargs
+      continue
+    }
+    if (child.type === 'dictionary_splat' || child.type === 'dictionary_splat_pattern') {
+      const name = child.namedChildren[0]?.text
+      if (name) kwarg = { type: 'arg', arg: name }
+      continue
+    }
+    const nameNode = child.type === 'identifier' ? child : fieldChild(child, 'name')
+    const argName = nameNode?.type === 'identifier' ? nameNode.text : nameNode?.text
+    if (!argName) continue
+    const arg = { type: 'arg' as const, arg: argName }
+    const defaultValue = fieldChild(child, 'value')
+    if (seenStar) {
+      kwonlyargs.push(arg)
+      kw_defaults.push(defaultValue ? convertExpr(defaultValue, 'Load') : null)
+    } else {
+      currentArgs.push(arg)
+      if (defaultValue) defaults.push(convertExpr(defaultValue, 'Load'))
+    }
+  }
+  return { posonlyargs, args, vararg, kwonlyargs, kwarg, defaults, kw_defaults }
+}
 
-def loop_target_names(node):
-    if isinstance(node, (ast.Tuple, ast.List)):
-        return [name for element in node.elts for name in loop_target_names(element)]
-    return [node.id] if isinstance(node, ast.Name) else []
+const convertCallArgs = (node: Node | null): { args: PyNode[]; keywords: PyKeyword[] } => {
+  const args: PyNode[] = []
+  const keywords: PyKeyword[] = []
+  if (!node) return { args, keywords }
+  if (node.type === 'generator_expression') {
+    args.push(convertExpr(node, 'Load'))
+    return { args, keywords }
+  }
+  for (const child of node.namedChildren) {
+    if (child.type === 'keyword_argument') {
+      const name = fieldChild(child, 'name')?.text ?? null
+      const value = fieldChild(child, 'value')
+      if (value) {
+        keywords.push({
+          type: 'keyword',
+          arg: name,
+          value: convertExpr(value, 'Load'),
+          _fields: ['value']
+        })
+      }
+      continue
+    }
+    if (child.type === 'dictionary_splat') {
+      const value = child.namedChildren[0]
+      if (value) {
+        keywords.push({
+          type: 'keyword',
+          arg: null,
+          value: convertExpr(value, 'Load'),
+          _fields: ['value']
+        })
+      }
+      continue
+    }
+    if (child.type === 'list_splat') {
+      const value = child.namedChildren[0]
+      if (value) args.push(convertExpr(value, 'Load'))
+      continue
+    }
+    args.push(convertExpr(child, 'Load'))
+  }
+  return { args, keywords }
+}
 
-class EffectOnlyLoopBody(ast.NodeVisitor):
-    def __init__(self): self.safe = True
-    def reject(self, node): self.safe = False
-    visit_Assign = reject
-    visit_AnnAssign = reject
-    visit_AugAssign = reject
-    visit_NamedExpr = reject
-    visit_Delete = reject
-    visit_Import = reject
-    visit_ImportFrom = reject
-    visit_FunctionDef = reject
-    visit_AsyncFunctionDef = reject
-    visit_ClassDef = reject
-    visit_Lambda = reject
-    visit_If = reject
-    visit_IfExp = reject
-    visit_BoolOp = reject
-    visit_For = reject
-    visit_AsyncFor = reject
-    visit_While = reject
-    visit_Try = reject
-    visit_TryStar = reject
-    visit_Match = reject
-    visit_With = reject
-    visit_AsyncWith = reject
-    visit_ListComp = reject
-    visit_SetComp = reject
-    visit_DictComp = reject
-    visit_GeneratorExp = reject
-    visit_Break = reject
-    visit_Continue = reject
-    visit_Return = reject
-    visit_Raise = reject
-    visit_Yield = reject
-    visit_YieldFrom = reject
+const convertComprehensions = (node: Node): PyComprehension[] => {
+  const generators: PyComprehension[] = []
+  for (const child of node.namedChildren) {
+    if (child.type === 'for_in_clause') {
+      const left = fieldChild(child, 'left')
+      const rights = fieldChildren(child, 'right')
+      generators.push({
+        target: left ? convertPattern(left, 'Store') : py('Name', { id: '', ctx: 'Store' }, []),
+        iter: rights[0]
+          ? convertExpr(rights[0], 'Load')
+          : py('Constant', { value: null, constKind: 'none' }, []),
+        ifs: []
+      })
+      continue
+    }
+    if (child.type === 'if_clause' && generators.length) {
+      generators[generators.length - 1]!.ifs.push(
+        convertExpr(child.namedChildren[0] ?? child, 'Load')
+      )
+    }
+  }
+  return generators
+}
 
-def effect_only_loop_body(statements):
-    visitor = EffectOnlyLoopBody()
-    for statement in statements:
-        visitor.visit(statement)
-        if not visitor.safe: return False
-    return True
+const convertBlock = (node: Node | null): PyNode[] =>
+  node
+    ? node.namedChildren
+        .map((child) => convertStmt(child))
+        .filter((child): child is PyNode => Boolean(child))
+    : []
 
-def scoped_effect_loops(tree):
-    loaded_after = {}
-    for candidate in ast.walk(tree):
-        if isinstance(candidate, ast.Name) and isinstance(candidate.ctx, ast.Load):
-            loaded_after.setdefault(candidate.id, []).append(getattr(candidate, 'lineno', 0))
-    result = set()
-    for candidate in ast.walk(tree):
-        if not isinstance(candidate, ast.For) or not simple_loop_target(candidate.target) or not effect_only_loop_body(candidate.body): continue
-        target_names = loop_target_names(candidate.target)
-        body_loads = {
-            child.id
-            for statement in candidate.body
-            for child in ast.walk(statement)
-            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
+const convertIf = (node: Node): PyNode => {
+  const test = fieldChild(node, 'condition')
+  const body = convertBlock(fieldChild(node, 'consequence'))
+  const alternatives = fieldChildren(node, 'alternative')
+  let orelse: PyNode[] = []
+  for (let index = alternatives.length - 1; index >= 0; index -= 1) {
+    const alternative = alternatives[index]
+    if (!alternative) continue
+    if (alternative.type === 'else_clause') {
+      orelse = convertBlock(fieldChild(alternative, 'body'))
+      continue
+    }
+    orelse = [
+      locate(
+        alternative,
+        py(
+          'If',
+          {
+            test: fieldChild(alternative, 'condition')
+              ? convertExpr(fieldChild(alternative, 'condition')!, 'Load')
+              : py('Constant', { value: false, constKind: 'bool' }, []),
+            body: convertBlock(fieldChild(alternative, 'consequence')),
+            orelse
+          },
+          ['test', 'body', 'orelse']
+        )
+      )
+    ]
+  }
+  return locate(
+    node,
+    py(
+      'If',
+      {
+        test: test
+          ? convertExpr(test, 'Load')
+          : py('Constant', { value: false, constKind: 'bool' }, []),
+        body,
+        orelse
+      },
+      ['test', 'body', 'orelse']
+    )
+  )
+}
+
+const convertAssignment = (node: Node): PyNode => {
+  const annotation = fieldChild(node, 'type')
+  const targets: PyNode[] = []
+  let current: Node | null = node
+  let value: PyNode | undefined
+  while (current?.type === 'assignment') {
+    const left = fieldChild(current, 'left')
+    if (left) targets.push(convertPattern(left, 'Store'))
+    const right = fieldChild(current, 'right')
+    if (right?.type === 'assignment' && !fieldChild(right, 'type')) {
+      current = right
+      continue
+    }
+    value = right ? convertExpr(right, 'Load') : undefined
+    break
+  }
+  if (annotation) {
+    return locate(
+      node,
+      py(
+        'AnnAssign',
+        {
+          target: targets[0],
+          annotation: convertExpr(annotation, 'Load'),
+          value: value ?? null
+        },
+        ['value', 'annotation', 'target']
+      )
+    )
+  }
+  return locate(node, py('Assign', { targets, value }, ['value', 'targets']))
+}
+
+const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
+  switch (node.type) {
+    case 'identifier':
+      return locate(node, py('Name', { id: node.text, ctx }, []))
+    case 'true':
+      return locate(node, py('Constant', { value: true, constKind: 'bool' }, []))
+    case 'false':
+      return locate(node, py('Constant', { value: false, constKind: 'bool' }, []))
+    case 'none':
+      return locate(node, py('Constant', { value: null, constKind: 'none' }, []))
+    case 'integer': {
+      const value = parsePythonInteger(node.text)
+      return locate(node, py('Constant', { value: value ?? node.text, constKind: 'int' }, []))
+    }
+    case 'float':
+      return locate(node, py('Constant', { value: Number(node.text), constKind: 'float' }, []))
+    case 'string': {
+      if (node.namedChildren.some((child) => child.type === 'interpolation')) {
+        return locate(
+          node,
+          py(
+            'JoinedStr',
+            {
+              children: node.namedChildren
+                .filter((child) => child.type === 'interpolation')
+                .map((child) => convertExpr(fieldChild(child, 'expression') ?? child, 'Load'))
+            },
+            ['children']
+          )
+        )
+      }
+      const decoded = decodePythonString(node.text)
+      return locate(
+        node,
+        py(
+          'Constant',
+          { value: decoded?.value ?? node.text, constKind: decoded?.kind ?? 'str' },
+          []
+        )
+      )
+    }
+    case 'concatenated_string':
+      return locate(
+        node,
+        py('JoinedStr', { children: node.namedChildren.map((child) => convertExpr(child, ctx)) }, [
+          'children'
+        ])
+      )
+    case 'attribute':
+      return locate(
+        node,
+        py(
+          'Attribute',
+          {
+            value: fieldChild(node, 'object')
+              ? convertExpr(
+                  fieldChild(node, 'object')!,
+                  ctx === 'Store' || ctx === 'Del' ? 'Load' : ctx
+                )
+              : py('Name', { id: '', ctx: 'Load' }, []),
+            attr: fieldChild(node, 'attribute')?.text ?? '',
+            ctx
+          },
+          ['value']
+        )
+      )
+    case 'subscript':
+      return locate(
+        node,
+        py(
+          'Subscript',
+          {
+            value: fieldChild(node, 'value')
+              ? convertExpr(
+                  fieldChild(node, 'value')!,
+                  ctx === 'Store' || ctx === 'Del' ? 'Load' : ctx
+                )
+              : py('Name', { id: '', ctx: 'Load' }, []),
+            slice: fieldChild(node, 'subscript')
+              ? convertExpr(fieldChild(node, 'subscript')!, 'Load')
+              : py('Constant', { value: null, constKind: 'none' }, []),
+            ctx
+          },
+          ['value', 'slice']
+        )
+      )
+    case 'slice':
+      return locate(
+        node,
+        py('Slice', { children: node.namedChildren.map((child) => convertExpr(child, 'Load')) }, [
+          'children'
+        ])
+      )
+    case 'call': {
+      const func = fieldChild(node, 'function')
+      const { args, keywords } = convertCallArgs(fieldChild(node, 'arguments'))
+      return locate(
+        node,
+        py(
+          'Call',
+          {
+            func: func ? convertExpr(func, 'Load') : py('Name', { id: '', ctx: 'Load' }, []),
+            args,
+            keywords
+          },
+          ['func', 'args', 'keywords']
+        )
+      )
+    }
+    case 'list':
+      return locate(
+        node,
+        py('List', { elts: node.namedChildren.map((child) => convertExpr(child, ctx)), ctx }, [
+          'elts'
+        ])
+      )
+    case 'tuple':
+      return locate(
+        node,
+        py('Tuple', { elts: node.namedChildren.map((child) => convertExpr(child, ctx)), ctx }, [
+          'elts'
+        ])
+      )
+    case 'set':
+      return locate(
+        node,
+        py('Set', { elts: node.namedChildren.map((child) => convertExpr(child, 'Load')) }, ['elts'])
+      )
+    case 'dictionary':
+      return locate(
+        node,
+        py(
+          'Dict',
+          {
+            keys: node.namedChildren.map((child) =>
+              child.type === 'pair' ? convertExpr(fieldChild(child, 'key') ?? child, 'Load') : null
+            ),
+            values: node.namedChildren.map((child) =>
+              child.type === 'pair'
+                ? convertExpr(fieldChild(child, 'value') ?? child, 'Load')
+                : convertExpr(child.namedChildren[0] ?? child, 'Load')
+            )
+          },
+          ['keys', 'values']
+        )
+      )
+    case 'parenthesized_expression':
+      return convertExpr(node.namedChildren[0] ?? node, ctx)
+    case 'conditional_expression': {
+      const [body, test, orelse] = node.namedChildren
+      return locate(
+        node,
+        py(
+          'IfExp',
+          {
+            body: body
+              ? convertExpr(body, 'Load')
+              : py('Constant', { value: null, constKind: 'none' }, []),
+            test: test
+              ? convertExpr(test, 'Load')
+              : py('Constant', { value: false, constKind: 'bool' }, []),
+            orelse: orelse
+              ? convertExpr(orelse, 'Load')
+              : py('Constant', { value: null, constKind: 'none' }, [])
+          },
+          ['body', 'test', 'orelse']
+        )
+      )
+    }
+    case 'named_expression':
+      return locate(
+        node,
+        py(
+          'NamedExpr',
+          {
+            target: fieldChild(node, 'name')
+              ? convertPattern(fieldChild(node, 'name')!, 'Store')
+              : py('Name', { id: '', ctx: 'Store' }, []),
+            value: fieldChild(node, 'value')
+              ? convertExpr(fieldChild(node, 'value')!, 'Load')
+              : py('Constant', { value: null, constKind: 'none' }, [])
+          },
+          ['value', 'target']
+        )
+      )
+    case 'unary_operator': {
+      const operator = fieldChild(node, 'operator')?.text ?? node.child(0)?.text ?? ''
+      const argument = fieldChild(node, 'argument')
+      return locate(
+        node,
+        py(
+          'UnaryOp',
+          {
+            op: operator === '+' ? 'UAdd' : operator === '-' ? 'USub' : operator,
+            operand: argument
+              ? convertExpr(argument, 'Load')
+              : py('Constant', { value: 0, constKind: 'int' }, [])
+          },
+          ['operand']
+        )
+      )
+    }
+    case 'not_operator':
+      return locate(
+        node,
+        py(
+          'UnaryOp',
+          {
+            op: 'Not',
+            operand: fieldChild(node, 'argument')
+              ? convertExpr(fieldChild(node, 'argument')!, 'Load')
+              : py('Constant', { value: false, constKind: 'bool' }, [])
+          },
+          ['operand']
+        )
+      )
+    case 'boolean_operator':
+      return locate(
+        node,
+        py(
+          'BoolOp',
+          {
+            values: [
+              fieldChild(node, 'left') ? convertExpr(fieldChild(node, 'left')!, 'Load') : undefined,
+              fieldChild(node, 'right')
+                ? convertExpr(fieldChild(node, 'right')!, 'Load')
+                : undefined
+            ].filter((value): value is PyNode => Boolean(value))
+          },
+          ['values']
+        )
+      )
+    case 'binary_operator':
+    case 'comparison_operator':
+      return locate(
+        node,
+        py(
+          'BinOp',
+          {
+            left: fieldChild(node, 'left')
+              ? convertExpr(fieldChild(node, 'left')!, 'Load')
+              : undefined,
+            right: fieldChild(node, 'right')
+              ? convertExpr(fieldChild(node, 'right')!, 'Load')
+              : undefined,
+            children: node.namedChildren.map((child) => convertExpr(child, 'Load'))
+          },
+          ['left', 'right', 'children']
+        )
+      )
+    case 'lambda':
+      return locate(
+        node,
+        py(
+          'Lambda',
+          {
+            args: convertParameters(fieldChild(node, 'parameters')),
+            body: fieldChild(node, 'body')
+              ? convertExpr(fieldChild(node, 'body')!, 'Load')
+              : py('Constant', { value: null, constKind: 'none' }, [])
+          },
+          ['args', 'body']
+        )
+      )
+    case 'list_comprehension':
+    case 'set_comprehension':
+    case 'generator_expression':
+      return locate(
+        node,
+        py(
+          node.type === 'list_comprehension'
+            ? 'ListComp'
+            : node.type === 'set_comprehension'
+              ? 'SetComp'
+              : 'GeneratorExp',
+          {
+            elt: fieldChild(node, 'body')
+              ? convertExpr(fieldChild(node, 'body')!, 'Load')
+              : py('Constant', { value: null, constKind: 'none' }, []),
+            generators: convertComprehensions(node)
+          },
+          ['elt', 'generators']
+        )
+      )
+    case 'dictionary_comprehension':
+      return locate(
+        node,
+        py(
+          'DictComp',
+          {
+            key: fieldChild(node, 'body')
+              ? convertExpr(fieldChild(node, 'body')!, 'Load')
+              : py('Constant', { value: null, constKind: 'none' }, []),
+            value: py('Constant', { value: null, constKind: 'none' }, []),
+            generators: convertComprehensions(node),
+            children: node.namedChildren.map((child) => convertExpr(child, 'Load'))
+          },
+          ['key', 'value', 'generators', 'children']
+        )
+      )
+    case 'assignment':
+      return convertAssignment(node)
+    case 'augmented_assignment':
+      return locate(
+        node,
+        py(
+          'AugAssign',
+          {
+            target: fieldChild(node, 'left')
+              ? convertPattern(fieldChild(node, 'left')!, 'Store')
+              : py('Name', { id: '', ctx: 'Store' }, []),
+            value: fieldChild(node, 'right')
+              ? convertExpr(fieldChild(node, 'right')!, 'Load')
+              : py('Constant', { value: null, constKind: 'none' }, [])
+          },
+          ['target', 'value']
+        )
+      )
+    default:
+      return locate(
+        node,
+        py('Generic', { children: node.namedChildren.map((child) => convertExpr(child, ctx)) }, [
+          'children'
+        ])
+      )
+  }
+}
+
+const convertFunction = (node: Node, asyncFn = false): PyNode => {
+  const decorators =
+    node.parent?.type === 'decorated_definition'
+      ? node.parent.namedChildren
+          .filter((child) => child.type === 'decorator')
+          .map((child) => convertExpr(child, 'Load'))
+      : []
+  return locate(
+    node,
+    py(
+      asyncFn ? 'AsyncFunctionDef' : 'FunctionDef',
+      {
+        name: fieldChild(node, 'name')?.text ?? '',
+        args: convertParameters(fieldChild(node, 'parameters')),
+        body: convertBlock(fieldChild(node, 'body')),
+        decorator_list: decorators
+      },
+      ['decorator_list', 'args', 'body']
+    )
+  )
+}
+
+const convertClass = (node: Node): PyNode => {
+  const superclasses = fieldChild(node, 'superclasses')
+  const { args, keywords } = convertCallArgs(superclasses)
+  const decorators =
+    node.parent?.type === 'decorated_definition'
+      ? node.parent.namedChildren
+          .filter((child) => child.type === 'decorator')
+          .map((child) => convertExpr(child, 'Load'))
+      : []
+  return locate(
+    node,
+    py(
+      'ClassDef',
+      {
+        name: fieldChild(node, 'name')?.text ?? '',
+        bases: args,
+        classKeywords: keywords,
+        body: convertBlock(fieldChild(node, 'body')),
+        decorator_list: decorators
+      },
+      ['decorator_list', 'bases', 'classKeywords', 'body']
+    )
+  )
+}
+
+const convertStmt = (node: Node): PyNode | undefined => {
+  switch (node.type) {
+    case 'comment':
+      return undefined
+    case 'expression_statement':
+      return node.namedChildren[0] ? convertExpr(node.namedChildren[0], 'Load') : undefined
+    case 'assignment':
+    case 'augmented_assignment':
+      return convertExpr(node, 'Load')
+    case 'function_definition':
+      return convertFunction(node)
+    case 'class_definition':
+      return convertClass(node)
+    case 'decorated_definition': {
+      const definition = fieldChild(node, 'definition')
+      return definition ? convertStmt(definition) : undefined
+    }
+    case 'if_statement':
+      return convertIf(node)
+    case 'for_statement':
+      return locate(
+        node,
+        py(
+          'For',
+          {
+            target: fieldChild(node, 'left')
+              ? convertPattern(fieldChild(node, 'left')!, 'Store')
+              : py('Name', { id: '', ctx: 'Store' }, []),
+            iter: fieldChild(node, 'right')
+              ? convertExpr(fieldChild(node, 'right')!, 'Load')
+              : py('Constant', { value: null, constKind: 'none' }, []),
+            body: convertBlock(fieldChild(node, 'body')),
+            orelse: convertBlock(fieldChild(fieldChild(node, 'alternative'), 'body'))
+          },
+          ['iter', 'target', 'body', 'orelse']
+        )
+      )
+    case 'while_statement':
+      return locate(
+        node,
+        py(
+          'While',
+          {
+            test: fieldChild(node, 'condition')
+              ? convertExpr(fieldChild(node, 'condition')!, 'Load')
+              : py('Constant', { value: false, constKind: 'bool' }, []),
+            body: convertBlock(fieldChild(node, 'body')),
+            orelse: convertBlock(fieldChild(fieldChild(node, 'alternative'), 'body'))
+          },
+          ['test', 'body', 'orelse']
+        )
+      )
+    case 'with_statement':
+    case 'async_with_statement': {
+      const items: PyNode[] = []
+      const collectWithItems = (current: Node): void => {
+        if (current.type === 'with_item') {
+          const value = fieldChild(current, 'value') ?? current.namedChildren[0]
+          if (value?.type === 'as_pattern') {
+            const alias = fieldChild(value, 'alias')
+            const expression = value.namedChildren.find(
+              (child) => child.type !== 'as_pattern_target'
+            )
+            const target = alias?.namedChildren[0] ?? alias
+            items.push(
+              py(
+                'withitem',
+                {
+                  context_expr: expression
+                    ? convertExpr(expression, 'Load')
+                    : py('Constant', { value: null, constKind: 'none' }, []),
+                  optional_vars: target ? convertPattern(target, 'Store') : undefined
+                },
+                ['context_expr', 'optional_vars']
+              )
+            )
+            return
+          }
+          if (value) {
+            items.push(
+              py('withitem', { context_expr: convertExpr(value, 'Load') }, ['context_expr'])
+            )
+          }
+          return
         }
-        if not any(name in body_loads for name in target_names): continue
-        end_line = getattr(candidate, 'end_lineno', getattr(candidate, 'lineno', 0))
-        if all(not any(line > end_line for line in loaded_after.get(name, [])) for name in target_names): result.add(id(candidate))
+        for (const child of current.namedChildren) collectWithItems(child)
+      }
+      collectWithItems(node)
+      return locate(
+        node,
+        py('With', { items, body: convertBlock(fieldChild(node, 'body')) }, ['items', 'body'])
+      )
+    }
+    case 'try_statement':
+    case 'match_statement':
+    case 'async_for_statement':
+      return locate(
+        node,
+        py(
+          node.type === 'async_for_statement'
+            ? 'AsyncFor'
+            : node.type === 'match_statement'
+              ? 'Match'
+              : 'Try',
+          {
+            children: node.namedChildren.map(
+              (child) => convertStmt(child) ?? convertExpr(child, 'Load')
+            )
+          },
+          ['children']
+        )
+      )
+    case 'delete_statement':
+      return locate(
+        node,
+        py('Delete', { targets: node.namedChildren.map((child) => convertPattern(child, 'Del')) }, [
+          'targets'
+        ])
+      )
+    case 'import_statement':
+      return locate(
+        node,
+        py(
+          'Import',
+          {
+            names: fieldChildren(node, 'name').map((alias) =>
+              alias.type === 'aliased_import'
+                ? {
+                    type: 'alias' as const,
+                    name: fieldChild(alias, 'name')?.text ?? '',
+                    asname: fieldChild(alias, 'alias')?.text ?? null
+                  }
+                : { type: 'alias' as const, name: alias.text, asname: null }
+            )
+          },
+          []
+        )
+      )
+    case 'import_from_statement':
+      return locate(
+        node,
+        py(
+          'ImportFrom',
+          {
+            module: fieldChild(node, 'module_name')?.text ?? null,
+            names: node.namedChildren.some((child) => child.type === 'wildcard_import')
+              ? [{ type: 'alias' as const, name: '*', asname: null }]
+              : fieldChildren(node, 'name').map((alias) =>
+                  alias.type === 'aliased_import'
+                    ? {
+                        type: 'alias' as const,
+                        name: fieldChild(alias, 'name')?.text ?? '',
+                        asname: fieldChild(alias, 'alias')?.text ?? null
+                      }
+                    : { type: 'alias' as const, name: alias.text, asname: null }
+                )
+          },
+          []
+        )
+      )
+    case 'global_statement':
+      return locate(
+        node,
+        py('Global', { names: node.namedChildren.map((child) => child.text) }, [])
+      )
+    case 'nonlocal_statement':
+      return locate(
+        node,
+        py('Nonlocal', { names: node.namedChildren.map((child) => child.text) }, [])
+      )
+    case 'return_statement':
+      return locate(
+        node,
+        py(
+          'Return',
+          { value: node.namedChildren[0] ? convertExpr(node.namedChildren[0], 'Load') : null },
+          ['value']
+        )
+      )
+    case 'pass_statement':
+    case 'break_statement':
+    case 'continue_statement':
+      return locate(
+        node,
+        py(
+          node.type === 'pass_statement'
+            ? 'Pass'
+            : node.type === 'break_statement'
+              ? 'Break'
+              : 'Continue',
+          {},
+          []
+        )
+      )
+    default:
+      return convertExpr(node, 'Load')
+  }
+}
+
+const convertModule = (root: Node): PyNode =>
+  locate(root, py('Module', { body: convertBlock(root) }, ['body']))
+
+class NodeVisitor {
+  visit(node: PyNode | null | undefined): void {
+    if (!node) return
+    const method = (this as Record<string, unknown>)[`visit_${node.type}`]
+    if (typeof method === 'function') (method as (node: PyNode) => void).call(this, node)
+    else this.genericVisit(node)
+  }
+
+  genericVisit(node: PyNode): void {
+    for (const child of pyChildren(node)) this.visit(child)
+  }
+}
+
+const simpleFormulaNames = (node: PyNode | null | undefined): Set<string> | undefined => {
+  if (
+    !node ||
+    node.type !== 'Constant' ||
+    node.constKind !== 'str' ||
+    typeof node.value !== 'string'
+  ) {
+    return undefined
+  }
+  const formula = node.value.trim()
+  if ((formula.match(/~/gu) ?? []).length !== 1 || !SIMPLE_FORMULA_PATTERN.test(formula))
+    return undefined
+  return new Set(formula.match(/[A-Za-z_]\w*/gu) ?? [])
+}
+
+const rootName = (node: PyNode | null | undefined): string | undefined => {
+  let current = node
+  while (current && (current.type === 'Attribute' || current.type === 'Subscript')) {
+    current = current.value as PyNode | undefined
+  }
+  return current?.type === 'Name' ? current.id : undefined
+}
+
+const memberName = (node: PyNode | null | undefined): string | undefined => {
+  if (!node) return undefined
+  if (node.type === 'Attribute') return node.attr
+  if (
+    node.type === 'Subscript' &&
+    isPyNode(node.slice) &&
+    node.slice.type === 'Constant' &&
+    (node.slice.constKind === 'str' || node.slice.constKind === 'int')
+  ) {
+    return String(node.slice.value)
+  }
+  return undefined
+}
+
+const dynamicMemberWrite = (node: PyNode): [string | undefined, boolean] | undefined => {
+  if (node.type === 'Attribute') {
+    const typeWide =
+      isPyNode(node.value) && node.value.type === 'Attribute' && node.value.attr === '__class__'
+    return [memberName(node), typeWide]
+  }
+  if (
+    node.type === 'Subscript' &&
+    isPyNode(node.value) &&
+    node.value.type === 'Attribute' &&
+    node.value.attr === '__dict__'
+  ) {
+    return [memberName(node), false]
+  }
+  return undefined
+}
+
+const pythonFieldRelationship = (
+  node: PyNode | null | undefined
+): 'value' | 'reference' | 'unknown' => {
+  if (!node) return 'unknown'
+  if (node.type === 'Constant') return 'value'
+  if (node.type === 'Call' && isPyNode(node.func) && node.func.type === 'Name') {
+    if (
+      ['bool', 'bytes', 'complex', 'float', 'frozenset', 'int', 'str'].includes(node.func.id ?? '')
+    )
+      return 'value'
+    if (['dict', 'list', 'set'].includes(node.func.id ?? '')) return 'reference'
+  }
+  if (['Dict', 'List', 'Set', 'ListComp', 'SetComp', 'DictComp'].includes(node.type))
+    return 'reference'
+  return 'unknown'
+}
+
+const staticInteger = (node: PyNode | null | undefined): number | undefined => {
+  if (!node) return undefined
+  if (node.type === 'Constant' && node.constKind === 'int' && typeof node.value === 'number')
+    return node.value
+  if (node.type === 'UnaryOp' && (node.op === 'UAdd' || node.op === 'USub')) {
+    const value = staticInteger(node.operand)
+    if (value === undefined) return undefined
+    return node.op === 'UAdd' ? value : -value
+  }
+  return undefined
+}
+
+const staticScalar = (node: PyNode | null | undefined): boolean => {
+  if (!node) return false
+  if (node.type === 'Constant' && node.constKind) return true
+  return staticInteger(node) !== undefined
+}
+
+const staticNonemptyIterable = (node: PyNode | null | undefined): boolean => {
+  if (!node) return false
+  if (node.type === 'List' || node.type === 'Tuple' || node.type === 'Set') {
+    return Boolean(node.elts?.length) && (node.elts ?? []).every(staticScalar)
+  }
+  if (
+    node.type !== 'Call' ||
+    !isPyNode(node.func) ||
+    node.func.type !== 'Name' ||
+    (node.keywords ?? []).length
+  ) {
+    return false
+  }
+  const args = Array.isArray(node.args) ? node.args : []
+  if (node.func.id === 'range' && args.length >= 1 && args.length <= 3) {
+    const values = args.map(staticInteger)
+    if (values.some((value) => value === undefined)) return false
+    try {
+      const [start, stop, step] =
+        values.length === 1
+          ? [0, values[0]!, 1]
+          : values.length === 2
+            ? [values[0]!, values[1]!, 1]
+            : values
+      if (!step) return false
+      return Math.ceil(((stop ?? 0) - (start ?? 0)) / step) > 0
+    } catch {
+      return false
+    }
+  }
+  if ((node.func.id === 'enumerate' || node.func.id === 'reversed') && args.length === 1) {
+    return staticNonemptyIterable(args[0])
+  }
+  if (node.func.id === 'zip' && args.length) return args.every(staticNonemptyIterable)
+  return false
+}
+
+const simpleLoopTarget = (node: PyNode | null | undefined): boolean => {
+  if (!node) return false
+  if (node.type === 'Name') return true
+  if ((node.type === 'Tuple' || node.type === 'List') && node.elts?.length) {
+    return node.elts.every(simpleLoopTarget)
+  }
+  return false
+}
+
+const loopTargetNames = (node: PyNode | null | undefined): string[] => {
+  if (!node) return []
+  if (node.type === 'Tuple' || node.type === 'List') {
+    return (node.elts ?? []).flatMap(loopTargetNames)
+  }
+  return node.type === 'Name' && node.id ? [node.id] : []
+}
+
+class EffectOnlyLoopBody extends NodeVisitor {
+  safe = true
+  reject(): void {
+    this.safe = false
+  }
+  visit_Assign = this.reject
+  visit_AnnAssign = this.reject
+  visit_AugAssign = this.reject
+  visit_NamedExpr = this.reject
+  visit_Delete = this.reject
+  visit_Import = this.reject
+  visit_ImportFrom = this.reject
+  visit_FunctionDef = this.reject
+  visit_AsyncFunctionDef = this.reject
+  visit_ClassDef = this.reject
+  visit_Lambda = this.reject
+  visit_If = this.reject
+  visit_IfExp = this.reject
+  visit_BoolOp = this.reject
+  visit_For = this.reject
+  visit_AsyncFor = this.reject
+  visit_While = this.reject
+  visit_Try = this.reject
+  visit_Match = this.reject
+  visit_With = this.reject
+  visit_AsyncWith = this.reject
+  visit_ListComp = this.reject
+  visit_SetComp = this.reject
+  visit_DictComp = this.reject
+  visit_GeneratorExp = this.reject
+  visit_Break = this.reject
+  visit_Continue = this.reject
+  visit_Return = this.reject
+  visit_Raise = this.reject
+  visit_Yield = this.reject
+  visit_YieldFrom = this.reject
+}
+
+const effectOnlyLoopBody = (statements: PyNode[]): boolean => {
+  const visitor = new EffectOnlyLoopBody()
+  for (const statement of statements) {
+    visitor.visit(statement)
+    if (!visitor.safe) return false
+  }
+  return true
+}
+
+const scopedEffectLoops = (tree: PyNode): Set<PyNode> => {
+  const loadedAfter = new Map<string, number[]>()
+  for (const candidate of walkPy(tree)) {
+    if (candidate.type === 'Name' && candidate.ctx === 'Load' && candidate.id) {
+      const lines = loadedAfter.get(candidate.id) ?? []
+      lines.push(candidate.lineno ?? 0)
+      loadedAfter.set(candidate.id, lines)
+    }
+  }
+  const result = new Set<PyNode>()
+  for (const candidate of walkPy(tree)) {
+    if (candidate.type !== 'For') continue
+    const body = Array.isArray(candidate.body) ? candidate.body : []
+    if (!simpleLoopTarget(candidate.target) || !effectOnlyLoopBody(body)) continue
+    const targetNames = loopTargetNames(candidate.target)
+    const bodyLoads = new Set(
+      body
+        .flatMap(walkPy)
+        .filter((child) => child.type === 'Name' && child.ctx === 'Load' && child.id)
+        .map((child) => child.id as string)
+    )
+    if (!targetNames.some((name) => bodyLoads.has(name))) continue
+    const endLine = candidate.end_lineno ?? candidate.lineno ?? 0
+    if (
+      targetNames.every((name) => !(loadedAfter.get(name) ?? []).some((line) => line > endLine))
+    ) {
+      result.add(candidate)
+    }
+  }
+  return result
+}
+
+class MethodEffectVisitor extends NodeVisitor {
+  effect: 'read' | 'mutate' | 'unknown' = 'read'
+  controlDepth = 0
+  namespaceUnknown = false
+
+  constructor(private readonly receiver: string) {
+    super()
+  }
+
+  mutate(): void {
+    if (this.controlDepth > 0) this.unknown()
+    else if (this.effect !== 'unknown') this.effect = 'mutate'
+  }
+
+  unknown(namespace = false): void {
+    this.effect = 'unknown'
+    if (namespace) this.namespaceUnknown = true
+  }
+
+  visit_FunctionDef(): void {
+    this.unknown()
+  }
+  visit_AsyncFunctionDef = this.visit_FunctionDef
+  visit_Lambda(): void {
+    this.unknown()
+  }
+  visit_Global(): void {
+    this.unknown(true)
+  }
+  visit_Nonlocal(): void {
+    this.unknown(true)
+  }
+  visit_ListComp(): void {
+    this.unknown()
+  }
+  visit_SetComp = this.visit_ListComp
+  visit_DictComp = this.visit_ListComp
+  visit_GeneratorExp = this.visit_ListComp
+
+  visit_control(node: PyNode): void {
+    this.controlDepth += 1
+    this.genericVisit(node)
+    this.controlDepth -= 1
+  }
+  visit_If = this.visit_control
+  visit_For = this.visit_control
+  visit_AsyncFor = this.visit_control
+  visit_While = this.visit_control
+  visit_Try = this.visit_control
+  visit_Match = this.visit_control
+
+  visit_Assign(node: PyNode): void {
+    if ((node.targets ?? []).some((target) => rootName(target) === this.receiver)) this.mutate()
+    else if (
+      (node.targets ?? []).some(
+        (target) => target.type === 'Attribute' || target.type === 'Subscript'
+      )
+    ) {
+      this.unknown(true)
+    }
+    this.genericVisit(node)
+  }
+
+  visit_AnnAssign(node: PyNode): void {
+    if (rootName(node.target) === this.receiver) this.mutate()
+    else if (node.target?.type === 'Attribute' || node.target?.type === 'Subscript')
+      this.unknown(true)
+    this.genericVisit(node)
+  }
+
+  visit_AugAssign(node: PyNode): void {
+    if (rootName(node.target) === this.receiver) this.mutate()
+    else if (node.target?.type === 'Attribute' || node.target?.type === 'Subscript')
+      this.unknown(true)
+    this.genericVisit(node)
+  }
+
+  visit_Delete(node: PyNode): void {
+    if ((node.targets ?? []).some((target) => rootName(target) === this.receiver)) this.mutate()
+    else if (
+      (node.targets ?? []).some(
+        (target) => target.type === 'Attribute' || target.type === 'Subscript'
+      )
+    ) {
+      this.unknown(true)
+    }
+    this.genericVisit(node)
+  }
+
+  visit_Call(node: PyNode): void {
+    if (isPyNode(node.func) && node.func.type === 'Name' && SAFE_CALLS.has(node.func.id ?? '')) {
+      this.genericVisit(node)
+      return
+    }
+    if (
+      isPyNode(node.func) &&
+      node.func.type === 'Attribute' &&
+      rootName(node.func.value as PyNode) === this.receiver
+    ) {
+      const inplace = (node.keywords ?? []).some(
+        (keyword) =>
+          keyword.arg === 'inplace' &&
+          keyword.value.type === 'Constant' &&
+          keyword.value.value === true
+      )
+      if (MUTATING_METHODS.has(node.func.attr ?? '') || inplace) this.mutate()
+      else this.unknown(true)
+    } else this.unknown(true)
+    this.genericVisit(node)
+  }
+}
+
+class FieldVisitor extends NodeVisitor {
+  constructor(
+    private readonly receiver: string,
+    private readonly record: (target: PyNode, value: PyNode | undefined, receiver: string) => void
+  ) {
+    super()
+  }
+  visit_FunctionDef(_node: PyNode): void {
+    void _node
+  }
+  visit_AsyncFunctionDef = this.visit_FunctionDef
+  visit_Lambda(_node: PyNode): void {
+    void _node
+  }
+  visit_ListComp(_node: PyNode): void {
+    void _node
+  }
+  visit_SetComp = this.visit_ListComp
+  visit_DictComp = this.visit_ListComp
+  visit_GeneratorExp = this.visit_ListComp
+
+  visit_Assign(node: PyNode): void {
+    for (const target of node.targets ?? [])
+      this.record(target, isPyNode(node.value) ? node.value : undefined, this.receiver)
+    if (isPyNode(node.value)) this.genericVisit(node.value)
+  }
+
+  visit_AnnAssign(node: PyNode): void {
+    if (node.target)
+      this.record(node.target, isPyNode(node.value) ? node.value : undefined, this.receiver)
+    if (isPyNode(node.value)) this.visit(node.value)
+  }
+
+  visit_AugAssign(node: PyNode): void {
+    if (node.target) this.record(node.target, undefined, this.receiver)
+    if (node.operand) this.visit(node.operand)
+    if (isPyNode(node.value)) this.visit(node.value)
+  }
+}
+
+class MethodNameVisitor extends NodeVisitor {
+  locals = new Set<string>()
+  globals = new Set<string>()
+  loaded = new Set<string>()
+  safeCalls = new Set<string>()
+
+  visit_FunctionDef(_node: PyNode): void {
+    void _node
+  }
+  visit_AsyncFunctionDef = this.visit_FunctionDef
+  visit_Lambda(_node: PyNode): void {
+    void _node
+  }
+  visit_Global(node: PyNode): void {
+    for (const name of node.names ?? []) if (typeof name === 'string') this.globals.add(name)
+  }
+  visit_Nonlocal(node: PyNode): void {
+    for (const name of node.names ?? []) if (typeof name === 'string') this.globals.add(name)
+  }
+  visit_Name(node: PyNode): void {
+    if (!node.id) return
+    if (node.ctx === 'Load') this.loaded.add(node.id)
+    else if (node.ctx === 'Store' || node.ctx === 'Del') this.locals.add(node.id)
+  }
+  visit_Call(node: PyNode): void {
+    if (isPyNode(node.func) && node.func.type === 'Name' && SAFE_CALLS.has(node.func.id ?? '')) {
+      this.safeCalls.add(node.func.id ?? '')
+    }
+    this.genericVisit(node)
+  }
+}
+
+const summarizeClass = (node: PyNode): NotebookDependencyTypeSummary | undefined => {
+  if (
+    (node.bases ?? []).length ||
+    (node.classKeywords ?? []).length ||
+    (node.decorator_list ?? []).length
+  ) {
+    return undefined
+  }
+  const methods: NotebookDependencyTypeSummary['methods'] = []
+  const fields: Record<string, 'value' | 'reference' | 'unknown'> = {}
+  const recordField = (target: PyNode, value: PyNode | undefined, receiver: string): void => {
+    if (target.type !== 'Attribute' || rootName(target) !== receiver || !target.attr) return
+    const previous = fields[target.attr]
+    if (value === undefined && previous !== undefined) return
+    const relationship = value ? pythonFieldRelationship(value) : 'unknown'
+    fields[target.attr] =
+      previous === undefined || previous === relationship ? relationship : 'unknown'
+  }
+  for (const item of Array.isArray(node.body) ? node.body : []) {
+    if (item.type === 'FunctionDef' || item.type === 'AsyncFunctionDef') {
+      if ((item.decorator_list ?? []).length) return undefined
+      const fnArgs = item.args as PyArguments | undefined
+      const positional = [...(fnArgs?.posonlyargs ?? []), ...(fnArgs?.args ?? [])]
+      if (!positional.length) return undefined
+      const receiver = positional[0]!.arg
+      const visitor = new MethodEffectVisitor(receiver)
+      const names = new MethodNameVisitor()
+      for (const argument of [
+        ...(fnArgs?.posonlyargs ?? []),
+        ...(fnArgs?.args ?? []),
+        ...(fnArgs?.kwonlyargs ?? [])
+      ]) {
+        names.locals.add(argument.arg)
+      }
+      if (fnArgs?.vararg) names.locals.add(fnArgs.vararg.arg)
+      if (fnArgs?.kwarg) names.locals.add(fnArgs.kwarg.arg)
+      const body = Array.isArray(item.body) ? item.body : []
+      for (const statement of body) visitor.visit(statement)
+      for (const statement of body) names.visit(statement)
+      const shadowedSafeCalls = new Set(
+        [...names.safeCalls].filter((name) => names.locals.has(name) && !names.globals.has(name))
+      )
+      if (shadowedSafeCalls.size) visitor.unknown(true)
+      const usedNames = [...names.loaded]
+        .filter(
+          (name) => !(names.locals.has(name) && !names.globals.has(name)) && name !== receiver
+        )
+        .sort()
+      methods.push({
+        name: item.name ?? '',
+        effect: visitor.effect,
+        usedNames,
+        safeCallNames: [...names.safeCalls].filter((name) => !shadowedSafeCalls.has(name)).sort(),
+        unknownScope: visitor.namespaceUnknown ? 'namespace' : 'receiver'
+      })
+      const fieldVisitor = new FieldVisitor(receiver, recordField)
+      for (const statement of body) fieldVisitor.visit(statement)
+    } else if (
+      item.type === 'Pass' ||
+      (item.type === 'Constant' && item.constKind === 'str') ||
+      (item.type === 'Expr' &&
+        isPyNode(item.value) &&
+        item.value.type === 'Constant' &&
+        item.value.constKind === 'str')
+    ) {
+      continue
+    } else return undefined
+  }
+  return {
+    name: node.name ?? '',
+    kind: 'python-class',
+    fields: Object.keys(fields)
+      .sort()
+      .map((name) => ({ name, relationship: fields[name]! })),
+    methods
+  }
+}
+
+class Analyzer extends NodeVisitor {
+  defined = new Set<string>()
+  used = new Map<string, number>()
+  priorUsed = new Map<string, number>()
+  mutated = new Set<string>()
+  possiblyMutated = new Set<string>()
+  aliases = new Map<string, string>()
+  possibleAliases = new Set<string>()
+  builtinContainers = new Set<string>()
+  safeCallNames = new Set<string>()
+  safeCallArgumentNames = new Set<string>()
+  possiblyUsed = new Set<string>()
+  typeSummaries: NotebookDependencyTypeSummary[] = []
+  typeBindings: NotebookDependencyTypeBinding[] = []
+  receiverCalls: NotebookDependencyReceiverCall[] = []
+  memberWrites: NotebookDependencyMemberWrite[] = []
+  constructorNodes = new Set<PyNode>()
+  callResultNames = new Map<PyNode, string[]>()
+  unknown = new Set<string>()
+  controlDepth = 0
+  localScopes: Array<Record<string, string | undefined>> = []
+  builtinModuleNames = new Set(['builtins', '__builtins__'])
+  importedModules = new Map<string, string>()
+  importedFunctions = new Map<string, string>()
+
+  constructor(private readonly scopedLoops: Set<PyNode>) {
+    super()
+  }
+
+  addUsed(name: string): void {
+    this.used.set(name, (this.used.get(name) ?? 0) + 1)
+    if (!this.defined.has(name)) this.priorUsed.set(name, (this.priorUsed.get(name) ?? 0) + 1)
+  }
+
+  removeUsed(name: string): void {
+    const count = this.used.get(name) ?? 0
+    if (count <= 1) this.used.delete(name)
+    else this.used.set(name, count - 1)
+    const priorCount = this.priorUsed.get(name) ?? 0
+    if (priorCount <= 1) this.priorUsed.delete(name)
+    else this.priorUsed.set(name, priorCount - 1)
+  }
+
+  addPossibleAlias(target: string, source: string, access?: string, member?: string): void {
+    this.possibleAliases.add(`${target}\0${source}\0${access ?? ''}\0${member ?? ''}`)
+  }
+
+  visibleRootName(node: PyNode | null | undefined): string | undefined {
+    const name = rootName(node)
+    for (let index = this.localScopes.length - 1; index >= 0; index -= 1) {
+      if (name && name in this.localScopes[index]!) return this.localScopes[index]![name]
+    }
+    return name
+  }
+
+  visibleRoots(nodes: Array<PyNode | undefined | null>): string[] {
+    const result: string[] = []
+    for (const node of nodes) {
+      for (const name of this.expressionVisibleRoots(node)) {
+        if (!result.includes(name)) result.push(name)
+      }
+    }
     return result
-
-class MethodEffectVisitor(ast.NodeVisitor):
-    def __init__(self, receiver):
-        self.effect = 'read'
-        self.receiver = receiver
-        self.control_depth = 0
-        self.namespace_unknown = False
-
-    def mutate(self):
-        if self.control_depth > 0: self.unknown()
-        elif self.effect != 'unknown': self.effect = 'mutate'
-
-    def unknown(self, namespace=False):
-        self.effect = 'unknown'
-        if namespace: self.namespace_unknown = True
-
-    def visit_FunctionDef(self, node): self.unknown()
-    visit_AsyncFunctionDef = visit_FunctionDef
-    def visit_Lambda(self, node): self.unknown()
-    def visit_Global(self, node): self.unknown(True)
-    def visit_Nonlocal(self, node): self.unknown(True)
-    def visit_ListComp(self, node): self.unknown()
-    visit_SetComp = visit_ListComp
-    visit_DictComp = visit_ListComp
-    visit_GeneratorExp = visit_ListComp
-
-    def visit_control(self, node):
-        self.control_depth += 1
-        self.generic_visit(node)
-        self.control_depth -= 1
-
-    visit_If = visit_control
-    visit_For = visit_control
-    visit_AsyncFor = visit_control
-    visit_While = visit_control
-    visit_Try = visit_control
-    visit_Match = visit_control
-
-    def visit_Assign(self, node):
-        if any(root_name(target) == self.receiver for target in node.targets): self.mutate()
-        elif any(isinstance(target, (ast.Attribute, ast.Subscript)) for target in node.targets): self.unknown(True)
-        self.generic_visit(node)
-
-    def visit_AnnAssign(self, node):
-        if root_name(node.target) == self.receiver: self.mutate()
-        elif isinstance(node.target, (ast.Attribute, ast.Subscript)): self.unknown(True)
-        self.generic_visit(node)
-
-    def visit_AugAssign(self, node):
-        if root_name(node.target) == self.receiver: self.mutate()
-        elif isinstance(node.target, (ast.Attribute, ast.Subscript)): self.unknown(True)
-        self.generic_visit(node)
-
-    def visit_Delete(self, node):
-        if any(root_name(target) == self.receiver for target in node.targets): self.mutate()
-        elif any(isinstance(target, (ast.Attribute, ast.Subscript)) for target in node.targets): self.unknown(True)
-        self.generic_visit(node)
-
-    def visit_Call(self, node):
-        if isinstance(node.func, ast.Name) and node.func.id in SAFE_CALLS:
-            self.generic_visit(node)
-            return
-        if isinstance(node.func, ast.Attribute) and root_name(node.func.value) == self.receiver:
-            inplace = any(keyword.arg == 'inplace' and isinstance(keyword.value, ast.Constant) and keyword.value.value is True for keyword in node.keywords)
-            if node.func.attr in MUTATING_METHODS or inplace: self.mutate()
-            else: self.unknown(True)
-        else: self.unknown(True)
-        self.generic_visit(node)
-
-class FieldVisitor(ast.NodeVisitor):
-    def __init__(self, receiver, record):
-        self.receiver = receiver
-        self.record = record
-
-    def visit_FunctionDef(self, node): return
-    visit_AsyncFunctionDef = visit_FunctionDef
-    def visit_Lambda(self, node): return
-    def visit_ListComp(self, node): return
-    visit_SetComp = visit_ListComp
-    visit_DictComp = visit_ListComp
-    visit_GeneratorExp = visit_ListComp
-
-    def visit_Assign(self, node):
-        for target in node.targets: self.record(target, node.value, self.receiver)
-        self.generic_visit(node.value)
-
-    def visit_AnnAssign(self, node):
-        self.record(node.target, node.value, self.receiver)
-        if node.value is not None: self.visit(node.value)
-
-    def visit_AugAssign(self, node):
-        self.record(node.target, None, self.receiver)
-        self.visit(node.value)
-
-class MethodNameVisitor(ast.NodeVisitor):
-    def __init__(self):
-        self.locals = set()
-        self.globals = set()
-        self.loaded = set()
-        self.safe_calls = set()
-
-    def visit_FunctionDef(self, node): return
-    visit_AsyncFunctionDef = visit_FunctionDef
-    def visit_Lambda(self, node): return
-    def visit_Global(self, node): self.globals.update(node.names)
-    def visit_Nonlocal(self, node): self.globals.update(node.names)
-    def visit_Name(self, node):
-        if isinstance(node.ctx, ast.Load): self.loaded.add(node.id)
-        elif isinstance(node.ctx, (ast.Store, ast.Del)): self.locals.add(node.id)
-
-    def visit_Call(self, node):
-        if isinstance(node.func, ast.Name) and node.func.id in SAFE_CALLS: self.safe_calls.add(node.func.id)
-        self.generic_visit(node)
-
-def summarize_class(node):
-    if node.bases or node.keywords or node.decorator_list: return None
-    methods = []
-    fields = {}
-    def record_field(target, value, receiver):
-        if not isinstance(target, ast.Attribute) or root_name(target) != receiver: return
-        previous = fields.get(target.attr)
-        if value is None and previous is not None: return
-        relationship = python_field_relationship(value) if value is not None else 'unknown'
-        fields[target.attr] = relationship if previous in {None, relationship} else 'unknown'
-    for item in node.body:
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if item.decorator_list: return None
-            positional = [*item.args.posonlyargs, *item.args.args]
-            if not positional: return None
-            receiver = positional[0].arg
-            visitor = MethodEffectVisitor(receiver)
-            names = MethodNameVisitor()
-            names.locals.update(argument.arg for argument in [*item.args.posonlyargs, *item.args.args, *item.args.kwonlyargs])
-            if item.args.vararg: names.locals.add(item.args.vararg.arg)
-            if item.args.kwarg: names.locals.add(item.args.kwarg.arg)
-            for statement in item.body: visitor.visit(statement)
-            for statement in item.body: names.visit(statement)
-            shadowed_safe_calls = names.safe_calls & (names.locals - names.globals)
-            if shadowed_safe_calls: visitor.unknown(True)
-            used_names = sorted(names.loaded - (names.locals - names.globals) - {receiver})
-            methods.append({'name': item.name, 'effect': visitor.effect, 'usedNames': used_names, 'safeCallNames': sorted(names.safe_calls - shadowed_safe_calls), 'unknownScope': 'namespace' if visitor.namespace_unknown else 'receiver'})
-            field_visitor = FieldVisitor(receiver, record_field)
-            for statement in item.body: field_visitor.visit(statement)
-        elif isinstance(item, ast.Pass) or (isinstance(item, ast.Expr) and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str)):
-            continue
-        else: return None
-    return {'name': node.name, 'kind': 'python-class', 'fields': [{'name': name, 'relationship': fields[name]} for name in sorted(fields)], 'methods': methods}
-
-class Analyzer(ast.NodeVisitor):
-    def __init__(self, scoped_loops=None):
-        self.defined = set()
-        self.used = {}
-        self.prior_used = {}
-        self.mutated = set()
-        self.possibly_mutated = set()
-        self.aliases = {}
-        self.possible_aliases = set()
-        self.builtin_containers = set()
-        self.safe_call_names = set()
-        self.safe_call_argument_names = set()
-        self.possibly_used = set()
-        self.type_summaries = []
-        self.type_bindings = []
-        self.receiver_calls = []
-        self.member_writes = []
-        self.constructor_nodes = set()
-        self.call_result_names = {}
-        self.unknown = set()
-        self.control_depth = 0
-        self.local_scopes = []
-        self.builtin_module_names = {"builtins", "__builtins__"}
-        self.imported_modules = {}
-        self.imported_functions = {}
-        self.scoped_loops = scoped_loops or set()
-
-    def add_used(self, name):
-        self.used[name] = self.used.get(name, 0) + 1
-        if name not in self.defined: self.prior_used[name] = self.prior_used.get(name, 0) + 1
-
-    def remove_used(self, name):
-        count = self.used.get(name, 0)
-        if count <= 1: self.used.pop(name, None)
-        else: self.used[name] = count - 1
-        prior_count = self.prior_used.get(name, 0)
-        if prior_count <= 1: self.prior_used.pop(name, None)
-        else: self.prior_used[name] = prior_count - 1
-
-    def add_possible_alias(self, target, source, access=None, member=None):
-        self.possible_aliases.add((target, source, access or '', member or ''))
-
-    def visible_root_name(self, node):
-        name = root_name(node)
-        for scope in reversed(self.local_scopes):
-            if name in scope: return scope[name]
-        return name
-
-    def visible_roots(self, nodes):
-        result = []
-        for node in nodes:
-            for name in self.expression_visible_roots(node):
-                if name not in result: result.append(name)
-        return result
-
-    def expression_visible_roots(self, node):
-        name = self.visible_root_name(node)
-        if name: return [name]
-        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-            return self.visible_roots(node.elts)
-        if isinstance(node, ast.Dict):
-            return self.visible_roots([item for pair in zip(node.keys, node.values) for item in pair if item is not None])
-        return []
-
-    def receiver_root_name(self, node):
-        name = self.visible_root_name(node)
-        if name: return name
-        if isinstance(node, (ast.Attribute, ast.Subscript)):
-            return self.receiver_root_name(node.value)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            return self.receiver_root_name(node.func.value)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            return self.imported_functions.get(node.func.id, node.func.id)
-        return None
-
-    def receiver_call_chain(self, node):
-        if isinstance(node, ast.Subscript):
-            return self.receiver_call_chain(node.value)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            return self.receiver_call_chain(node.func.value) + [node.func.attr]
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            return ['__call__']
-        return []
-
-    def receiver_chain_first_arguments(self, node):
-        if isinstance(node, ast.Subscript):
-            return self.receiver_chain_first_arguments(node.value)
-        if isinstance(node, ast.Call):
-            prior = self.receiver_chain_first_arguments(node.func.value) if isinstance(node.func, ast.Attribute) else []
-            first = self.expression_visible_roots(node.args[0]) if node.args else []
-            return prior + [first]
-        return []
-
-    def receiver_chain_arguments(self, node):
-        if isinstance(node, ast.Subscript):
-            return self.receiver_chain_arguments(node.value)
-        if isinstance(node, ast.Call):
-            prior = self.receiver_chain_arguments(node.func.value) if isinstance(node.func, ast.Attribute) else []
-            keywords = [self.keyword_argument_record(keyword) for keyword in node.keywords]
-            return prior + [{'positionalArgumentNames': [self.expression_visible_roots(argument) for argument in node.args], 'positionalStaticBooleans': [argument.value if isinstance(argument, ast.Constant) and isinstance(argument.value, bool) else None for argument in node.args], 'keywordArguments': keywords}]
-        return []
-
-    def receiver_value_roots(self, node):
-        if isinstance(node, ast.Subscript):
-            return self.receiver_value_roots(node.value)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            effect = self.library_call_effect(node)
-            base = self.receiver_value_roots(node.func.value)
-            if effect:
-                first_keyword = effect.get('firstArgumentKeyword')
-                first = next((keyword.value for keyword in node.keywords if keyword.arg == first_keyword), node.args[0] if node.args else None)
-                first_roots = self.expression_visible_roots(first) if first is not None else []
-                alias_keyword = effect.get('returnsAliasOfKeyword')
-                alias_value = next((keyword.value for keyword in node.keywords if keyword.arg == alias_keyword), None)
-                if alias_value is not None: return self.expression_visible_roots(alias_value)
-                if effect.get('returnsAliasOfReceiver'): return base
-                if effect.get('returnsPossibleAliasOf') == 'receiver': return base
-                if effect.get('returnsPossibleAliasOf') == 'firstArgument': return first_roots
-                conditional = effect.get('returnsPossibleAliasWhenKeywordFalse')
-                if conditional:
-                    keyword = next((keyword for keyword in node.keywords if keyword.arg == conditional.get('keyword')), None)
-                    position = conditional.get('positionalArgument')
-                    flag = keyword.value.value if keyword is not None and isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, bool) else node.args[position].value if isinstance(position, int) and position < len(node.args) and isinstance(node.args[position], ast.Constant) and isinstance(node.args[position].value, bool) else None
-                    if flag is not True:
-                        roots = []
-                        for source in conditional.get('sources', []):
-                            if source == 'receiver': roots.extend(base)
-                            elif source == 'firstArgument': roots.extend(first_roots)
-                            elif source == 'secondArgument':
-                                second_keyword = effect.get('secondArgumentKeyword')
-                                second = next((item.value for item in node.keywords if item.arg == second_keyword), node.args[1] if len(node.args) > 1 else None)
-                                if second is not None: roots.extend(self.expression_visible_roots(second))
-                            elif source == 'arguments': roots.extend(self.visible_roots(list(node.args) + [item.value for item in node.keywords]))
-                        return list(dict.fromkeys(roots))
-                if effect.get('returnType') or effect.get('destructuredReturnTypes'): return []
-            if node.func.attr == 'merge':
-                copy_keyword = next((item for item in node.keywords if item.arg == 'copy'), None)
-                copy_position = 9
-                has_copy_position = copy_position < len(node.args)
-                copy_flag = copy_keyword.value.value if copy_keyword is not None and isinstance(copy_keyword.value, ast.Constant) and isinstance(copy_keyword.value.value, bool) else node.args[copy_position].value if has_copy_position and isinstance(node.args[copy_position], ast.Constant) and isinstance(node.args[copy_position].value, bool) else None
-                if copy_keyword is not None or has_copy_position:
-                    if copy_flag is not True:
-                        right_keyword = next((item.value for item in node.keywords if item.arg == 'right'), None)
-                        right = right_keyword if right_keyword is not None else node.args[0] if node.args else None
-                        if right is not None: return list(dict.fromkeys(base + self.expression_visible_roots(right)))
-            return base
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            effect = self.library_call_effect(node)
-            first = node.args[0] if node.args else None
-            first_roots = self.expression_visible_roots(first) if first is not None else []
-            if effect:
-                alias_keyword = effect.get('returnsAliasOfKeyword')
-                alias_value = next((keyword.value for keyword in node.keywords if keyword.arg == alias_keyword), None)
-                if alias_value is not None: return self.expression_visible_roots(alias_value)
-                if effect.get('returnsPossibleAliasOf') == 'firstArgument': return first_roots
-                if effect.get('returnType') or effect.get('destructuredReturnTypes'): return []
-            return self.visible_roots(list(node.args) + [item.value for item in node.keywords])
-        name = self.visible_root_name(node)
-        return [name] if name else []
-
-    def has_local_root(self, node):
-        name = root_name(node)
-        if any(name in scope for scope in self.local_scopes): return True
-        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-            return any(self.has_local_root(element) for element in node.elts)
-        if isinstance(node, ast.Dict):
-            return any(self.has_local_root(item) for item in [item for pair in zip(node.keys, node.values) for item in pair if item is not None])
-        return False
-
-    def callable_references(self, node, container=None):
-        suffix = {'container': container} if container else {}
-        if isinstance(node, ast.Name):
-            alias = self.aliases.get(node.id, node.id)
-            return [{'root': self.imported_functions.get(alias, alias), **suffix}]
-        if isinstance(node, ast.Attribute):
-            root = self.visible_root_name(node.value)
-            alias = self.aliases.get(root, root) if root else None
-            return [{'root': alias, 'member': node.attr, **suffix}] if alias else []
-        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-            return [reference for element in node.elts for reference in self.callable_references(element, 'list')]
-        if isinstance(node, ast.Dict):
-            return [reference for value in node.values for reference in self.callable_references(value, 'dict')]
-        return []
-
-    def keyword_argument_record(self, keyword, track_local=False):
-        roots = self.visible_roots([keyword.value])
-        local = track_local and self.has_local_root(keyword.value)
-        static_boolean = keyword.value.value if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, bool) else None
-        return {'name': keyword.arg or '**', 'argumentNames': [] if local else roots, 'possibleArgumentNames': roots if local else [], 'staticBoolean': static_boolean, 'callableReferences': self.callable_references(keyword.value)}
-
-    def add_library_summaries(self):
-        existing = {summary['name'] for summary in self.type_summaries}
-        for name, summary in LIBRARY_EFFECTS.items():
-            if name in existing: continue
-            methods = []
-            for method_name, effect in summary['methods'].items():
-                method = {'name': method_name, 'effect': effect['effect']}
-                if effect.get('returnType'): method['returnType'] = effect['returnType']
-                if effect.get('destructuredReturnTypes'): method['destructuredReturnTypes'] = effect['destructuredReturnTypes']
-                if effect.get('mutatesKeyword'): method['mutatesKeyword'] = effect['mutatesKeyword']
-                methods.append(method)
-            self.type_summaries.append({'name': name, 'kind': 'python-module' if summary['kind'] == 'module' else 'python-class', 'fields': [], 'methods': methods})
-
-    def bind_library_module(self, target, module):
-        if module not in LIBRARY_EFFECTS or LIBRARY_EFFECTS[module]['kind'] != 'module': return
-        self.add_library_summaries()
-        self.imported_modules[target] = module
-        if target != module: self.aliases[target] = module
-        self.type_bindings.append({'target': target, 'typeName': module, 'argumentNames': []})
-
-    def bind_library_function(self, target, module, member):
-        summary = LIBRARY_EFFECTS.get(module)
-        effect = summary.get('methods', {}).get(member) if summary else None
-        if not effect: return
-        self.add_library_summaries()
-        callable_type = 'python-callable:' + module + '.' + member
-        method = {'name': '__call__', 'effect': effect['effect']}
-        if effect.get('returnType'): method['returnType'] = effect['returnType']
-        if effect.get('destructuredReturnTypes'): method['destructuredReturnTypes'] = effect['destructuredReturnTypes']
-        if effect.get('mutatesKeyword'): method['mutatesKeyword'] = effect['mutatesKeyword']
-        if not any(existing['name'] == callable_type for existing in self.type_summaries):
-            self.type_summaries.append({'name': callable_type, 'kind': 'python-class', 'fields': [], 'methods': [method]})
-        self.type_bindings.append({'target': target, 'typeName': callable_type, 'argumentNames': []})
-        self.imported_functions[target] = callable_type
-
-    def bind_unknown_import(self, target, module, member):
-        callable_type = 'python-callable:unknown.' + module + '.' + member
-        if not any(existing['name'] == callable_type for existing in self.type_summaries):
-            self.type_summaries.append({'name': callable_type, 'kind': 'python-class', 'fields': [], 'methods': [{'name': '__call__', 'effect': 'unknown', 'unknownScope': 'namespace'}]})
-        self.type_bindings.append({'target': target, 'typeName': callable_type, 'argumentNames': []})
-        self.imported_functions[target] = callable_type
-
-    def library_call_effect(self, node):
-        if isinstance(node.func, ast.Name):
-            callable_type = self.imported_functions.get(node.func.id, '')
-            prefix = 'python-callable:'
-            if not callable_type.startswith(prefix): return None
-            canonical = callable_type[len(prefix):]
-            modules = sorted((name for name, summary in LIBRARY_EFFECTS.items() if summary.get('kind') == 'module' and canonical.startswith(name + '.')), key=len, reverse=True)
-            if not modules: return None
-            module = modules[0]
-            return LIBRARY_EFFECTS.get(module, {}).get('methods', {}).get(canonical[len(module) + 1:])
-        if not isinstance(node.func, ast.Attribute): return None
-        receiver = self.visible_root_name(node.func.value)
-        module = self.imported_modules.get(receiver)
-        if not module: return None
-        return LIBRARY_EFFECTS.get(module, {}).get('methods', {}).get(node.func.attr)
-
-    def assigned_names(self, node):
-        return loop_target_names(node)
-
-    def clear_alias(self, name, conditional=False):
-        source = self.aliases.pop(name, None)
-        if source:
-            if conditional: self.add_possible_alias(name, source)
-            else: self.remove_used(source)
-
-    def prepare_assignment(self, target_names):
-        conditional = self.control_depth > 0
-        if conditional: self.unknown.add('control-flow')
-        for name in target_names:
-            self.imported_modules.pop(name, None)
-            self.imported_functions.pop(name, None)
-            self.type_bindings = [binding for binding in self.type_bindings if binding['target'] != name]
-            self.type_summaries = [summary for summary in self.type_summaries if summary['name'] != name]
-            self.builtin_containers.discard(name)
-            for target, source in list(self.aliases.items()):
-                if source == name:
-                    self.add_possible_alias(target, source)
-                    self.aliases.pop(target, None)
-                    self.unknown.add('alias-rebind')
-            self.clear_alias(name, conditional)
-
-    def visit_control(self, node):
-        self.unknown.add('control-flow')
-        self.control_depth += 1
-        self.generic_visit(node)
-        self.control_depth -= 1
-
-    def visit_Name(self, node):
-        if any(node.id in scope for scope in self.local_scopes): return
-        if isinstance(node.ctx, ast.Load): self.add_used(node.id)
-        elif isinstance(node.ctx, ast.Store): self.defined.add(node.id)
-        elif isinstance(node.ctx, ast.Del):
-            self.prepare_assignment([node.id])
-            self.mutated.add(node.id)
-
-    def visit_Import(self, node):
-        names = [alias.asname or alias.name.split('.')[0] for alias in node.names]
-        self.prepare_assignment(names)
-        for alias in node.names:
-            name = alias.asname or alias.name.split('.')[0]
-            self.defined.add(name)
-            if alias.name == 'builtins':
-                self.builtin_module_names.add(name)
-                if name != 'builtins': self.aliases[name] = 'builtins'
-            self.bind_library_module(name, alias.name)
-
-    def visit_ImportFrom(self, node):
-        self.prepare_assignment([alias.asname or alias.name for alias in node.names if alias.name != '*'])
-        for alias in node.names:
-            if alias.name == '*': self.unknown.add('wildcard-import')
-            else:
-                name = alias.asname or alias.name
-                self.defined.add(name)
-                if node.module == 'builtins' and alias.name == '__dict__':
-                    self.add_possible_alias(name, 'builtins', 'attribute')
-                if node.module:
-                    self.bind_library_module(name, node.module + '.' + alias.name)
-                    self.bind_library_function(name, node.module, alias.name)
-                    if name not in self.imported_modules and name not in self.imported_functions:
-                        self.bind_unknown_import(name, node.module, alias.name)
-
-    def visit_Assign(self, node):
-        target_names = [name for target in node.targets for name in self.assigned_names(target)]
-        if isinstance(node.value, ast.Call): self.call_result_names[id(node.value)] = target_names
-        alias_source = self.aliases.get(node.value.id, node.value.id) if isinstance(node.value, ast.Name) else None
-        member_source = self.visible_root_name(node.value) if isinstance(node.value, (ast.Attribute, ast.Subscript)) else None
-        member_access = 'subscript' if isinstance(node.value, ast.Subscript) else 'attribute'
-        member = member_name(node.value) if member_source else None
-        conditional_sources = {self.visible_root_name(value) for value in [node.value.body, node.value.orelse]} if isinstance(node.value, ast.IfExp) else set()
-        conditional_sources.discard(None)
-        constructor = len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id not in SAFE_CALLS | DYNAMIC_CALLS | EXTERNAL_READ_CALLS | SCOPED_MUTATION_CALLS and node.value.func.id not in self.imported_functions
-        constructor_arguments = set()
-        if constructor:
-            constructor_arguments = {self.visible_root_name(value) for value in list(node.value.args) + [keyword.value for keyword in node.value.keywords]}
-            constructor_arguments.discard(None)
-            self.constructor_nodes.add(id(node.value))
-        self.visit(node.value)
-        self.prepare_assignment(target_names)
-        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and conditional_sources:
-            self.unknown.add('conditional-expression')
-            for source in conditional_sources: self.add_possible_alias(node.targets[0].id, source)
-        elif len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Name):
-            if self.control_depth > 0: self.add_possible_alias(node.targets[0].id, alias_source)
-            else: self.aliases[node.targets[0].id] = alias_source
-        elif len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, (ast.Attribute, ast.Subscript)):
-            if member_source: self.add_possible_alias(node.targets[0].id, member_source, member_access, member)
-        elif constructor:
-            self.type_bindings.append({'target': node.targets[0].id, 'typeName': node.value.func.id, 'argumentNames': sorted(constructor_arguments)})
-        elif len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, (ast.Dict, ast.List, ast.Tuple)):
-            self.builtin_containers.add(node.targets[0].id)
-        for target in node.targets: self.visit(target)
-
-    def visit_AnnAssign(self, node):
-        target_names = self.assigned_names(node.target)
-        if isinstance(node.value, ast.Call): self.call_result_names[id(node.value)] = target_names
-        alias_source = self.aliases.get(node.value.id, node.value.id) if isinstance(node.value, ast.Name) else None
-        member_source = self.visible_root_name(node.value) if isinstance(node.value, (ast.Attribute, ast.Subscript)) else None
-        member_access = 'subscript' if isinstance(node.value, ast.Subscript) else 'attribute'
-        member = member_name(node.value) if member_source else None
-        conditional_sources = {self.visible_root_name(value) for value in [node.value.body, node.value.orelse]} if isinstance(node.value, ast.IfExp) else set()
-        conditional_sources.discard(None)
-        constructor = isinstance(node.target, ast.Name) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id not in SAFE_CALLS | DYNAMIC_CALLS | EXTERNAL_READ_CALLS | SCOPED_MUTATION_CALLS and node.value.func.id not in self.imported_functions
-        constructor_arguments = set()
-        if constructor:
-            constructor_arguments = {self.visible_root_name(value) for value in list(node.value.args) + [keyword.value for keyword in node.value.keywords]}
-            constructor_arguments.discard(None)
-            self.constructor_nodes.add(id(node.value))
-        if node.value is not None: self.visit(node.value)
-        if node.annotation is not None: self.visit(node.annotation)
-        self.prepare_assignment(target_names)
-        if isinstance(node.target, ast.Name) and conditional_sources:
-            self.unknown.add('conditional-expression')
-            for source in conditional_sources: self.add_possible_alias(node.target.id, source)
-        elif isinstance(node.target, ast.Name) and isinstance(node.value, ast.Name):
-            if self.control_depth > 0: self.add_possible_alias(node.target.id, alias_source)
-            else: self.aliases[node.target.id] = alias_source
-        elif isinstance(node.target, ast.Name) and isinstance(node.value, (ast.Attribute, ast.Subscript)):
-            if member_source: self.add_possible_alias(node.target.id, member_source, member_access, member)
-        elif constructor:
-            self.type_bindings.append({'target': node.target.id, 'typeName': node.value.func.id, 'argumentNames': sorted(constructor_arguments)})
-        elif isinstance(node.target, ast.Name) and isinstance(node.value, (ast.Dict, ast.List, ast.Tuple)):
-            self.builtin_containers.add(node.target.id)
-        self.visit(node.target)
-
-    def visit_NamedExpr(self, node):
-        if self.local_scopes: self.unknown.add('comprehension-scope')
-        target_names = self.assigned_names(node.target)
-        if isinstance(node.value, ast.Call): self.call_result_names[id(node.value)] = target_names
-        alias_source = self.aliases.get(node.value.id, node.value.id) if isinstance(node.value, ast.Name) else None
-        member_source = self.visible_root_name(node.value) if isinstance(node.value, (ast.Attribute, ast.Subscript)) else None
-        member_access = 'subscript' if isinstance(node.value, ast.Subscript) else 'attribute'
-        member = member_name(node.value) if member_source else None
-        conditional_sources = {self.visible_root_name(value) for value in [node.value.body, node.value.orelse]} if isinstance(node.value, ast.IfExp) else set()
-        conditional_sources.discard(None)
-        constructor = isinstance(node.target, ast.Name) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id not in SAFE_CALLS | DYNAMIC_CALLS | EXTERNAL_READ_CALLS | SCOPED_MUTATION_CALLS and node.value.func.id not in self.imported_functions
-        constructor_arguments = set()
-        if constructor:
-            constructor_arguments = {self.visible_root_name(value) for value in list(node.value.args) + [keyword.value for keyword in node.value.keywords]}
-            constructor_arguments.discard(None)
-            self.constructor_nodes.add(id(node.value))
-        self.visit(node.value)
-        self.prepare_assignment(target_names)
-        if isinstance(node.target, ast.Name) and conditional_sources:
-            self.unknown.add('conditional-expression')
-            for source in conditional_sources: self.add_possible_alias(node.target.id, source)
-        elif isinstance(node.target, ast.Name) and isinstance(node.value, ast.Name):
-            if self.control_depth > 0: self.add_possible_alias(node.target.id, alias_source)
-            else: self.aliases[node.target.id] = alias_source
-        elif isinstance(node.target, ast.Name) and isinstance(node.value, (ast.Attribute, ast.Subscript)):
-            if member_source: self.add_possible_alias(node.target.id, member_source, member_access, member)
-        elif constructor:
-            self.type_bindings.append({'target': node.target.id, 'typeName': node.value.func.id, 'argumentNames': sorted(constructor_arguments)})
-        elif isinstance(node.target, ast.Name) and isinstance(node.value, (ast.Dict, ast.List, ast.Tuple)):
-            self.builtin_containers.add(node.target.id)
-        self.visit(node.target)
-
-    visit_If = visit_control
-
-    def visit_For(self, node):
-        deterministic = static_nonempty_iterable(node.iter)
-        scoped = id(node) in self.scoped_loops
-        if not simple_loop_target(node.target) or not effect_only_loop_body(node.body) or not (deterministic or scoped):
-            self.visit_control(node)
-            return
-        self.visit(node.iter)
-        target_names = self.assigned_names(node.target)
-        if deterministic:
-            self.prepare_assignment(target_names)
-            self.defined.update(target_names)
-        source = self.visible_root_name(node.iter)
-        self.local_scopes.append({name: source for name in target_names})
-        for statement in node.body: self.visit(statement)
-        self.local_scopes.pop()
-        for statement in node.orelse: self.visit(statement)
-
-    visit_AsyncFor = visit_control
-    visit_While = visit_control
-    visit_Try = visit_control
-    visit_Match = visit_control
-
-    def visit_IfExp(self, node):
-        self.control_depth += 1
-        self.generic_visit(node)
-        self.control_depth -= 1
-
-    def visit_FunctionDef(self, node):
-        self.prepare_assignment([node.name])
-        self.defined.add(node.name)
-        self.unknown.add('function-scope')
-        for value in list(node.decorator_list) + list(node.args.defaults) + [v for v in node.args.kw_defaults if v is not None]: self.visit(value)
-
-    visit_AsyncFunctionDef = visit_FunctionDef
-
-    def visit_ClassDef(self, node):
-        self.prepare_assignment([node.name])
-        self.defined.add(node.name)
-        summary = summarize_class(node)
-        if summary: self.type_summaries.append(summary)
-        else: self.unknown.add('class-scope')
-        for value in list(node.decorator_list) + list(node.bases) + list(node.keywords): self.visit(value)
-
-    def visit_Lambda(self, node): self.unknown.add('lambda-scope')
-
-    def visit_comprehension(self, node, values):
-        scope = {}
-        self.local_scopes.append(scope)
-        for generator in node.generators:
-            self.visit(generator.iter)
-            source = self.visible_root_name(generator.iter)
-            for name in self.assigned_names(generator.target): scope[name] = source
-            for condition in generator.ifs: self.visit(condition)
-        for value in values: self.visit(value)
-        self.local_scopes.pop()
-
-    def visit_ListComp(self, node): self.visit_comprehension(node, [node.elt])
-    def visit_SetComp(self, node): self.visit_comprehension(node, [node.elt])
-    def visit_DictComp(self, node): self.visit_comprehension(node, [node.key, node.value])
-    def visit_GeneratorExp(self, node): self.visit_comprehension(node, [node.elt])
-
-    def visit_AugAssign(self, node):
-        name = self.visible_root_name(node.target)
-        if name:
-            self.add_used(name)
-            patched_member = dynamic_member_write(node.target)
-            if patched_member is None or not patched_member[1]: self.mutated.add(name)
-            if patched_member is not None:
-                member, type_wide = patched_member
-                self.member_writes.append({'receiver': name, **({'member': member} if member is not None else {}), **({'scope': 'type'} if type_wide else {})})
-            if name in self.builtin_module_names: self.unknown.add('dynamic-namespace')
-        else:
-            self.unknown.add('dynamic-assignment')
-            self.visit(node.target)
-        self.visit(node.value)
-
-    def visit_Subscript(self, node):
-        if isinstance(node.ctx, (ast.Store, ast.Del)):
-            name = self.visible_root_name(node)
-            if name:
-                self.add_used(name)
-                patched_member = dynamic_member_write(node)
-                if patched_member is None or not patched_member[1]: self.mutated.add(name)
-                if patched_member is not None:
-                    member, type_wide = patched_member
-                    self.member_writes.append({'receiver': name, **({'member': member} if member is not None else {}), **({'scope': 'type'} if type_wide else {})})
-                if name in self.builtin_module_names: self.unknown.add('dynamic-namespace')
-            else:
-                self.unknown.add('dynamic-assignment')
-                self.visit(node.value)
-            self.visit(node.slice)
-            return
-        self.generic_visit(node)
-
-    def visit_Attribute(self, node):
-        if isinstance(node.ctx, (ast.Store, ast.Del)):
-            name = self.visible_root_name(node)
-            if name:
-                self.add_used(name)
-                patched_member = dynamic_member_write(node)
-                member, type_wide = patched_member
-                if not type_wide: self.mutated.add(name)
-                self.member_writes.append({'receiver': name, 'member': member, **({'scope': 'type'} if type_wide else {})})
-                if name in self.builtin_module_names: self.unknown.add('dynamic-namespace')
-            else:
-                self.unknown.add('dynamic-assignment')
-                self.visit(node.value)
-            return
-        self.generic_visit(node)
-
-    def visit_Call(self, node):
-        library_effect = self.library_call_effect(node)
-        if library_effect and library_effect.get('unsafeNamespace'):
-            self.unknown.update({'opaque-call', 'dynamic-namespace'})
-        formula_rule = library_effect.get('formulaArgument') if library_effect else None
-        if formula_rule:
-            formula = next((keyword.value for keyword in node.keywords if keyword.arg == formula_rule.get('keyword')), None)
-            position = formula_rule.get('positionalArgument')
-            if formula is None and isinstance(position, int) and position < len(node.args): formula = node.args[position]
-            formula_names = simple_formula_names(formula)
-            if formula_names is None: self.unknown.add('opaque-call')
-            else: self.possibly_used.update(formula_names)
-        if id(node) in self.constructor_nodes:
-            if isinstance(node.func, ast.Name):
-                candidates = list(node.args) + [keyword.value for keyword in node.keywords]
-                arguments = self.visible_roots(candidates)
-                keyword_arguments = []
-                for keyword in node.keywords:
-                    keyword_arguments.append(self.keyword_argument_record(keyword))
-                self.receiver_calls.append({'receiver': node.func.id, 'member': '__call__', 'kind': 'callable', 'argumentNames': arguments, 'receiverChain': [], 'receiverChainFirstArgumentNames': [], 'receiverChainPositionalArgumentNames': [], 'receiverChainPositionalStaticBooleans': [], 'receiverChainKeywordArguments': [], 'receiverValueNames': [], 'positionalArgumentNames': [self.expression_visible_roots(argument) for argument in node.args], 'positionalStaticBooleans': [argument.value if isinstance(argument, ast.Constant) and isinstance(argument.value, bool) else None for argument in node.args], 'resultNames': self.call_result_names.get(id(node), []), 'keywordArguments': keyword_arguments})
-            self.generic_visit(node)
-            return
-        if isinstance(node.func, ast.Name) and node.func.id in DYNAMIC_CALLS:
-            self.unknown.add('dynamic-namespace')
-        elif isinstance(node.func, ast.Name) and node.func.id in SAFE_CALLS:
-            self.safe_call_names.add(node.func.id)
-            candidates = list(node.args) + [keyword.value for keyword in node.keywords]
-            possible = {self.visible_root_name(candidate) for candidate in candidates}
-            possible.discard(None)
-            self.safe_call_argument_names.update(possible)
-        elif isinstance(node.func, ast.Name) and node.func.id in EXTERNAL_READ_CALLS:
-            self.safe_call_names.add(node.func.id)
-            candidates = list(node.args) + [keyword.value for keyword in node.keywords]
-            possible = {self.visible_root_name(candidate) for candidate in candidates}
-            possible.discard(None)
-            self.safe_call_argument_names.update(possible)
-            self.unknown.add('external-state')
-        elif isinstance(node.func, ast.Name) and node.func.id in SCOPED_MUTATION_CALLS:
-            self.safe_call_names.add(node.func.id)
-            candidates = list(node.args) + [keyword.value for keyword in node.keywords]
-            possible = {self.visible_root_name(candidate) for candidate in candidates}
-            possible.discard(None)
-            self.safe_call_argument_names.update(possible)
-            self.possibly_mutated.update(possible)
-            if possible: self.unknown.add('opaque-mutation')
-        elif isinstance(node.func, ast.Name) and node.func.id in self.imported_functions:
-            candidates = list(node.args) + [keyword.value for keyword in node.keywords]
-            arguments = self.visible_roots(candidates)
-            keyword_arguments = []
-            for keyword in node.keywords:
-                keyword_arguments.append(self.keyword_argument_record(keyword))
-            self.receiver_calls.append({'receiver': self.imported_functions[node.func.id], 'member': '__call__', 'kind': 'callable', 'argumentNames': arguments, 'receiverChain': [], 'receiverChainFirstArgumentNames': [], 'receiverChainPositionalArgumentNames': [], 'receiverChainPositionalStaticBooleans': [], 'receiverChainKeywordArguments': [], 'receiverValueNames': [], 'positionalArgumentNames': [self.expression_visible_roots(argument) for argument in node.args], 'positionalStaticBooleans': [argument.value if isinstance(argument, ast.Constant) and isinstance(argument.value, bool) else None for argument in node.args], 'resultNames': self.call_result_names.get(id(node), []), 'keywordArguments': keyword_arguments})
-        elif isinstance(node.func, ast.Name) and node.func.id not in SAFE_CALLS:
-            candidates = list(node.args) + [keyword.value for keyword in node.keywords]
-            arguments = self.visible_roots(candidates)
-            keyword_arguments = []
-            for keyword in node.keywords:
-                keyword_arguments.append(self.keyword_argument_record(keyword))
-            self.receiver_calls.append({'receiver': node.func.id, 'member': '__call__', 'kind': 'callable', 'argumentNames': arguments, 'receiverChain': [], 'receiverChainFirstArgumentNames': [], 'receiverChainPositionalArgumentNames': [], 'receiverChainPositionalStaticBooleans': [], 'receiverChainKeywordArguments': [], 'receiverValueNames': [], 'positionalArgumentNames': [self.expression_visible_roots(argument) for argument in node.args], 'positionalStaticBooleans': [argument.value if isinstance(argument, ast.Constant) and isinstance(argument.value, bool) else None for argument in node.args], 'resultNames': self.call_result_names.get(id(node), []), 'keywordArguments': keyword_arguments})
-        if isinstance(node.func, ast.Attribute):
-            name = self.receiver_root_name(node.func.value)
-            literal_receiver = isinstance(node.func.value, ast.Constant) and node.func.attr in SAFE_LITERAL_METHODS
-            local_receiver = self.has_local_root(node.func.value)
-            inplace = any(keyword.arg == 'inplace' and isinstance(keyword.value, ast.Constant) and keyword.value.value is True for keyword in node.keywords)
-            possible_inplace = any(keyword.arg == 'inplace' and not (isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, bool)) for keyword in node.keywords)
-            if name:
-                arguments = self.visible_roots(list(node.args) + [keyword.value for keyword in node.keywords])
-                if local_receiver:
-                    self.possibly_mutated.add(name)
-                    self.unknown.add('opaque-mutation')
-                else:
-                    result_names = self.call_result_names.get(id(node), [])
-                    keyword_arguments = []
-                    for keyword in node.keywords:
-                        keyword_arguments.append(self.keyword_argument_record(keyword, True))
-                    chain_arguments = self.receiver_chain_arguments(node.func.value)
-                    self.receiver_calls.append({'receiver': name, 'member': node.func.attr, **({'kind': 'mutating'} if node.func.attr in MUTATING_METHODS or inplace else {}), 'argumentNames': arguments, 'receiverChain': self.receiver_call_chain(node.func.value), 'receiverChainFirstArgumentNames': self.receiver_chain_first_arguments(node.func.value), 'receiverChainPositionalArgumentNames': [step['positionalArgumentNames'] for step in chain_arguments], 'receiverChainPositionalStaticBooleans': [step['positionalStaticBooleans'] for step in chain_arguments], 'receiverChainKeywordArguments': [step['keywordArguments'] for step in chain_arguments], 'receiverValueNames': self.receiver_value_roots(node.func.value), 'positionalArgumentNames': [self.expression_visible_roots(argument) for argument in node.args], 'positionalStaticBooleans': [argument.value if isinstance(argument, ast.Constant) and isinstance(argument.value, bool) else None for argument in node.args], 'resultNames': result_names, 'keywordArguments': keyword_arguments})
-                    effect = self.library_call_effect(node)
-                    if effect and effect.get('mutatesKeyword'):
-                        for keyword in node.keywords:
-                            if keyword.arg == effect['mutatesKeyword']:
-                                output = self.visible_root_name(keyword.value)
-                                if not output: continue
-                                if self.has_local_root(keyword.value):
-                                    self.possibly_mutated.add(output)
-                                    self.unknown.add('opaque-mutation')
-                                else: self.mutated.add(output)
-                if possible_inplace:
-                    self.possibly_mutated.add(name)
-                    self.unknown.add('opaque-mutation')
-            elif not literal_receiver:
-                candidates = list(node.args) + [keyword.value for keyword in node.keywords]
-                possible = {self.visible_root_name(candidate) for candidate in candidates}
-                possible.discard(None)
-                if possible:
-                    self.possibly_mutated.update(possible)
-                    self.unknown.add('opaque-mutation')
-                self.unknown.add('opaque-call')
-            if name in self.builtin_module_names: self.unknown.add('dynamic-namespace')
-        elif not isinstance(node.func, ast.Name):
-            candidates = list(node.args) + [keyword.value for keyword in node.keywords]
-            possible = {self.visible_root_name(candidate) for candidate in candidates}
-            possible.discard(None)
-            if possible:
-                self.possibly_mutated.update(possible)
-                self.unknown.add('opaque-mutation')
-            self.unknown.add('opaque-call')
-        if isinstance(node.func, ast.Name) and node.func.id in {'setattr', 'delattr'} and node.args:
-            receiver = self.visible_root_name(node.args[0])
-            if receiver:
-                member = node.args[1].value if len(node.args) > 1 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str) else None
-                type_wide = isinstance(node.args[0], ast.Attribute) and node.args[0].attr == '__class__'
-                self.member_writes.append({'receiver': receiver, **({'member': member} if member else {}), **({'scope': 'type'} if type_wide else {})})
-            if receiver in self.builtin_module_names: self.unknown.add('dynamic-namespace')
-        self.generic_visit(node)
-
-def analyze(source):
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return {"state": "unknown", "reasons": ["parse-error"]}
-    analyzer = Analyzer(scoped_effect_loops(tree))
-    analyzer.visit(tree)
-    if analyzer.unknown:
-        return {"state": "unknown", "reasons": sorted(analyzer.unknown), "definedNames": sorted(analyzer.defined), "usedNames": sorted(analyzer.used), "priorUsedNames": sorted(analyzer.prior_used), "possiblyUsedNames": sorted(analyzer.possibly_used), "mutatedNames": sorted(analyzer.mutated), "possiblyMutatedNames": sorted(analyzer.possibly_mutated), "aliases": [{"target": target, "source": source, "kind": "reference"} for target, source in analyzer.aliases.items()] + [{"target": target, "source": source, "kind": "possible-reference", **({"access": access} if access else {}), **({"member": member} if member else {})} for target, source, access, member in sorted(analyzer.possible_aliases)], "builtinContainerNames": sorted(analyzer.builtin_containers), "safeCallNames": sorted(analyzer.safe_call_names), "safeCallArgumentNames": sorted(analyzer.safe_call_argument_names), "typeSummaries": analyzer.type_summaries, "typeBindings": analyzer.type_bindings, "receiverCalls": analyzer.receiver_calls, "memberWrites": analyzer.member_writes}
-    return {"state": "available", "definedNames": sorted(analyzer.defined), "usedNames": sorted(analyzer.used), "priorUsedNames": sorted(analyzer.prior_used), "possiblyUsedNames": sorted(analyzer.possibly_used), "mutatedNames": sorted(analyzer.mutated), "possiblyMutatedNames": sorted(analyzer.possibly_mutated), "aliases": [{"target": target, "source": source, "kind": "reference"} for target, source in analyzer.aliases.items()] + [{"target": target, "source": source, "kind": "possible-reference", **({"access": access} if access else {}), **({"member": member} if member else {})} for target, source, access, member in sorted(analyzer.possible_aliases)], "builtinContainerNames": sorted(analyzer.builtin_containers), "safeCallNames": sorted(analyzer.safe_call_names), "safeCallArgumentNames": sorted(analyzer.safe_call_argument_names), "typeSummaries": analyzer.type_summaries, "typeBindings": analyzer.type_bindings, "receiverCalls": analyzer.receiver_calls, "memberWrites": analyzer.member_writes}
-
-print(json.dumps([analyze(source) for source in NOTEBOOK_SOURCES]))
-`
-
-export { PYTHON_ANALYZER }
+  }
+
+  expressionVisibleRoots(node: PyNode | null | undefined): string[] {
+    const name = this.visibleRootName(node)
+    if (name) return [name]
+    if (node && (node.type === 'List' || node.type === 'Tuple' || node.type === 'Set')) {
+      return this.visibleRoots(node.elts ?? [])
+    }
+    if (node?.type === 'Dict') {
+      return this.visibleRoots([...(node.keys ?? []), ...(node.values ?? [])])
+    }
+    return []
+  }
+
+  receiverRootName(node: PyNode | null | undefined): string | undefined {
+    const name = this.visibleRootName(node)
+    if (name) return name
+    if (node && (node.type === 'Attribute' || node.type === 'Subscript')) {
+      return this.receiverRootName(node.value as PyNode)
+    }
+    if (node?.type === 'Call' && isPyNode(node.func) && node.func.type === 'Attribute') {
+      return this.receiverRootName(node.func.value as PyNode)
+    }
+    if (node?.type === 'Call' && isPyNode(node.func) && node.func.type === 'Name' && node.func.id) {
+      return this.importedFunctions.get(node.func.id) ?? node.func.id
+    }
+    return undefined
+  }
+
+  receiverCallChain(node: PyNode | null | undefined): string[] {
+    if (node?.type === 'Subscript') return this.receiverCallChain(node.value as PyNode)
+    if (node?.type === 'Call' && isPyNode(node.func) && node.func.type === 'Attribute') {
+      return [...this.receiverCallChain(node.func.value as PyNode), node.func.attr ?? '']
+    }
+    if (node?.type === 'Call' && isPyNode(node.func) && node.func.type === 'Name')
+      return ['__call__']
+    return []
+  }
+
+  receiverChainFirstArguments(node: PyNode | null | undefined): string[][] {
+    if (node?.type === 'Subscript') return this.receiverChainFirstArguments(node.value as PyNode)
+    if (node?.type === 'Call') {
+      const prior =
+        isPyNode(node.func) && node.func.type === 'Attribute'
+          ? this.receiverChainFirstArguments(node.func.value as PyNode)
+          : []
+      const args = Array.isArray(node.args) ? node.args : []
+      return [...prior, args.length ? this.expressionVisibleRoots(args[0]) : []]
+    }
+    return []
+  }
+
+  receiverChainArguments(node: PyNode | null | undefined): Array<{
+    positionalArgumentNames: string[][]
+    positionalStaticBooleans: Array<boolean | null>
+    keywordArguments: ReturnType<Analyzer['keywordArgumentRecord']>[]
+  }> {
+    if (node?.type === 'Subscript') return this.receiverChainArguments(node.value as PyNode)
+    if (node?.type === 'Call') {
+      const prior =
+        isPyNode(node.func) && node.func.type === 'Attribute'
+          ? this.receiverChainArguments(node.func.value as PyNode)
+          : []
+      const args = Array.isArray(node.args) ? node.args : []
+      return [
+        ...prior,
+        {
+          positionalArgumentNames: args.map((argument) => this.expressionVisibleRoots(argument)),
+          positionalStaticBooleans: args.map((argument) =>
+            argument.type === 'Constant' && argument.constKind === 'bool'
+              ? Boolean(argument.value)
+              : null
+          ),
+          keywordArguments: (node.keywords ?? []).map((keyword) =>
+            this.keywordArgumentRecord(keyword)
+          )
+        }
+      ]
+    }
+    return []
+  }
+
+  receiverValueRoots(node: PyNode | null | undefined): string[] {
+    if (node?.type === 'Subscript') return this.receiverValueRoots(node.value as PyNode)
+    if (node?.type === 'Call' && isPyNode(node.func) && node.func.type === 'Attribute') {
+      const effect = this.libraryCallEffect(node)
+      const base = this.receiverValueRoots(node.func.value as PyNode)
+      const args = Array.isArray(node.args) ? node.args : []
+      if (effect) {
+        const firstKeyword = effect.firstArgumentKeyword
+        const first =
+          (node.keywords ?? []).find((keyword) => keyword.arg === firstKeyword)?.value ?? args[0]
+        const firstRoots = first ? this.expressionVisibleRoots(first) : []
+        const aliasValue = (node.keywords ?? []).find(
+          (keyword) => keyword.arg === effect.returnsAliasOfKeyword
+        )?.value
+        if (aliasValue) return this.expressionVisibleRoots(aliasValue)
+        if (effect.returnsAliasOfReceiver) return base
+        if (effect.returnsPossibleAliasOf === 'receiver') return base
+        if (effect.returnsPossibleAliasOf === 'firstArgument') return firstRoots
+        const conditional = effect.returnsPossibleAliasWhenKeywordFalse
+        if (conditional) {
+          const keyword = (node.keywords ?? []).find((item) => item.arg === conditional.keyword)
+          const position = conditional.positionalArgument
+          const flag =
+            keyword?.value.type === 'Constant' && keyword.value.constKind === 'bool'
+              ? Boolean(keyword.value.value)
+              : typeof position === 'number' &&
+                  args[position]?.type === 'Constant' &&
+                  args[position]?.constKind === 'bool'
+                ? Boolean(args[position]?.value)
+                : undefined
+          if (flag !== true) {
+            const roots: string[] = []
+            for (const source of conditional.sources) {
+              if (source === 'receiver') roots.push(...base)
+              else if (source === 'firstArgument') roots.push(...firstRoots)
+              else if (source === 'secondArgument') {
+                const second =
+                  (node.keywords ?? []).find((item) => item.arg === effect.secondArgumentKeyword)
+                    ?.value ?? args[1]
+                if (second) roots.push(...this.expressionVisibleRoots(second))
+              } else if (source === 'arguments') {
+                roots.push(
+                  ...this.visibleRoots([
+                    ...args,
+                    ...(node.keywords ?? []).map((item) => item.value)
+                  ])
+                )
+              }
+            }
+            return [...new Set(roots)]
+          }
+        }
+        if (effect.returnType || effect.destructuredReturnTypes) return []
+      }
+      if (node.func.attr === 'merge') {
+        const copyKeyword = (node.keywords ?? []).find((item) => item.arg === 'copy')
+        const copyPosition = 9
+        const hasCopyPosition = copyPosition < args.length
+        const copyFlag =
+          copyKeyword?.value.type === 'Constant' && copyKeyword.value.constKind === 'bool'
+            ? Boolean(copyKeyword.value.value)
+            : hasCopyPosition &&
+                args[copyPosition]?.type === 'Constant' &&
+                args[copyPosition]?.constKind === 'bool'
+              ? Boolean(args[copyPosition]?.value)
+              : undefined
+        if (copyKeyword || hasCopyPosition) {
+          if (copyFlag !== true) {
+            const right =
+              (node.keywords ?? []).find((item) => item.arg === 'right')?.value ?? args[0]
+            if (right) return [...new Set([...base, ...this.expressionVisibleRoots(right)])]
+          }
+        }
+      }
+      return base
+    }
+    if (node?.type === 'Call' && isPyNode(node.func) && node.func.type === 'Name') {
+      const effect = this.libraryCallEffect(node)
+      const args = Array.isArray(node.args) ? node.args : []
+      const first = args[0]
+      const firstRoots = first ? this.expressionVisibleRoots(first) : []
+      if (effect) {
+        const aliasValue = (node.keywords ?? []).find(
+          (keyword) => keyword.arg === effect.returnsAliasOfKeyword
+        )?.value
+        if (aliasValue) return this.expressionVisibleRoots(aliasValue)
+        if (effect.returnsPossibleAliasOf === 'firstArgument') return firstRoots
+        if (effect.returnType || effect.destructuredReturnTypes) return []
+      }
+      return this.visibleRoots([...args, ...(node.keywords ?? []).map((item) => item.value)])
+    }
+    const name = this.visibleRootName(node)
+    return name ? [name] : []
+  }
+
+  hasLocalRoot(node: PyNode | null | undefined): boolean {
+    const name = rootName(node)
+    if (name && this.localScopes.some((scope) => name in scope)) return true
+    if (node && (node.type === 'List' || node.type === 'Tuple' || node.type === 'Set')) {
+      return (node.elts ?? []).some((element) => this.hasLocalRoot(element))
+    }
+    if (node?.type === 'Dict') {
+      return [...(node.keys ?? []), ...(node.values ?? [])].some((item) =>
+        this.hasLocalRoot(item ?? undefined)
+      )
+    }
+    return false
+  }
+
+  callableReferences(
+    node: PyNode | null | undefined,
+    container?: 'list' | 'dict'
+  ): Array<{ root: string; member?: string; container?: 'list' | 'dict' }> {
+    const suffix = container ? { container } : {}
+    if (node?.type === 'Name' && node.id) {
+      const alias = this.aliases.get(node.id) ?? node.id
+      return [{ root: this.importedFunctions.get(alias) ?? alias, ...suffix }]
+    }
+    if (node?.type === 'Attribute') {
+      const root = this.visibleRootName(node.value as PyNode)
+      const alias = root ? (this.aliases.get(root) ?? root) : undefined
+      return alias ? [{ root: alias, member: node.attr, ...suffix }] : []
+    }
+    if (node && (node.type === 'List' || node.type === 'Tuple' || node.type === 'Set')) {
+      return (node.elts ?? []).flatMap((element) => this.callableReferences(element, 'list'))
+    }
+    if (node?.type === 'Dict') {
+      return (node.values ?? []).flatMap((value) => this.callableReferences(value, 'dict'))
+    }
+    return []
+  }
+
+  keywordArgumentRecord(
+    keyword: PyKeyword,
+    trackLocal = false
+  ): NonNullable<NotebookDependencyReceiverCall['keywordArguments']>[number] {
+    const roots = this.visibleRoots([keyword.value])
+    const local = trackLocal && this.hasLocalRoot(keyword.value)
+    const staticBoolean =
+      keyword.value.type === 'Constant' && keyword.value.constKind === 'bool'
+        ? Boolean(keyword.value.value)
+        : null
+    return {
+      name: keyword.arg ?? '**',
+      argumentNames: local ? [] : roots,
+      possibleArgumentNames: local ? roots : [],
+      staticBoolean,
+      callableReferences: this.callableReferences(keyword.value)
+    }
+  }
+
+  addLibrarySummaries(): void {
+    const existing = new Set(this.typeSummaries.map((summary) => summary.name))
+    for (const [name, summary] of Object.entries(PYTHON_LIBRARY_EFFECTS)) {
+      if (existing.has(name)) continue
+      const methods = Object.entries(summary.methods).map(([methodName, effect]) => ({
+        name: methodName,
+        effect: effect.effect,
+        ...(effect.returnType ? { returnType: effect.returnType } : {}),
+        ...(effect.destructuredReturnTypes
+          ? { destructuredReturnTypes: effect.destructuredReturnTypes }
+          : {}),
+        ...(effect.mutatesKeyword ? { mutatesKeyword: effect.mutatesKeyword } : {})
+      }))
+      this.typeSummaries.push({
+        name,
+        kind: summary.kind === 'module' ? 'python-module' : 'python-class',
+        fields: [],
+        methods
+      })
+    }
+  }
+
+  bindLibraryModule(target: string, module: string): void {
+    const summary = PYTHON_LIBRARY_EFFECTS[module]
+    if (!summary || summary.kind !== 'module') return
+    this.addLibrarySummaries()
+    this.importedModules.set(target, module)
+    if (target !== module) this.aliases.set(target, module)
+    this.typeBindings.push({ target, typeName: module, argumentNames: [] })
+  }
+
+  bindLibraryFunction(target: string, module: string, member: string): void {
+    const effect = PYTHON_LIBRARY_EFFECTS[module]?.methods[member]
+    if (!effect) return
+    this.addLibrarySummaries()
+    const callableType = `python-callable:${module}.${member}`
+    const method = {
+      name: '__call__',
+      effect: effect.effect,
+      ...(effect.returnType ? { returnType: effect.returnType } : {}),
+      ...(effect.destructuredReturnTypes
+        ? { destructuredReturnTypes: effect.destructuredReturnTypes }
+        : {}),
+      ...(effect.mutatesKeyword ? { mutatesKeyword: effect.mutatesKeyword } : {})
+    }
+    if (!this.typeSummaries.some((existing) => existing.name === callableType)) {
+      this.typeSummaries.push({
+        name: callableType,
+        kind: 'python-class',
+        fields: [],
+        methods: [method]
+      })
+    }
+    this.typeBindings.push({ target, typeName: callableType, argumentNames: [] })
+    this.importedFunctions.set(target, callableType)
+  }
+
+  bindUnknownImport(target: string, module: string, member: string): void {
+    const callableType = `python-callable:unknown.${module}.${member}`
+    if (!this.typeSummaries.some((existing) => existing.name === callableType)) {
+      this.typeSummaries.push({
+        name: callableType,
+        kind: 'python-class',
+        fields: [],
+        methods: [{ name: '__call__', effect: 'unknown', unknownScope: 'namespace' }]
+      })
+    }
+    this.typeBindings.push({ target, typeName: callableType, argumentNames: [] })
+    this.importedFunctions.set(target, callableType)
+  }
+
+  libraryCallEffect(node: PyNode): PythonLibraryMethodEffect | undefined {
+    if (isPyNode(node.func) && node.func.type === 'Name' && node.func.id) {
+      const callableType = this.importedFunctions.get(node.func.id) ?? ''
+      const prefix = 'python-callable:'
+      if (!callableType.startsWith(prefix)) return undefined
+      const canonical = callableType.slice(prefix.length)
+      const modules = Object.entries(PYTHON_LIBRARY_EFFECTS)
+        .filter(([name, summary]) => summary.kind === 'module' && canonical.startsWith(`${name}.`))
+        .sort((left, right) => right[0].length - left[0].length)
+      const module = modules[0]?.[0]
+      if (!module) return undefined
+      return PYTHON_LIBRARY_EFFECTS[module]?.methods[canonical.slice(module.length + 1)]
+    }
+    if (!isPyNode(node.func) || node.func.type !== 'Attribute') return undefined
+    const receiver = this.visibleRootName(node.func.value as PyNode)
+    const module = receiver ? this.importedModules.get(receiver) : undefined
+    if (!module) return undefined
+    return PYTHON_LIBRARY_EFFECTS[module]?.methods[node.func.attr ?? '']
+  }
+
+  assignedNames(node: PyNode | null | undefined): string[] {
+    return loopTargetNames(node)
+  }
+
+  clearAlias(name: string, conditional = false): void {
+    const source = this.aliases.get(name)
+    this.aliases.delete(name)
+    if (!source) return
+    if (conditional) this.addPossibleAlias(name, source)
+    else this.removeUsed(source)
+  }
+
+  prepareAssignment(targetNames: string[]): void {
+    const conditional = this.controlDepth > 0
+    if (conditional) this.unknown.add('control-flow')
+    for (const name of targetNames) {
+      this.importedModules.delete(name)
+      this.importedFunctions.delete(name)
+      this.typeBindings = this.typeBindings.filter((binding) => binding.target !== name)
+      this.typeSummaries = this.typeSummaries.filter((summary) => summary.name !== name)
+      this.builtinContainers.delete(name)
+      for (const [target, source] of [...this.aliases.entries()]) {
+        if (source === name) {
+          this.addPossibleAlias(target, source)
+          this.aliases.delete(target)
+          this.unknown.add('alias-rebind')
+        }
+      }
+      this.clearAlias(name, conditional)
+    }
+  }
+
+  visit_control(node: PyNode): void {
+    this.unknown.add('control-flow')
+    this.controlDepth += 1
+    this.genericVisit(node)
+    this.controlDepth -= 1
+  }
+
+  visit_Name(node: PyNode): void {
+    if (!node.id || this.localScopes.some((scope) => node.id! in scope)) return
+    if (node.ctx === 'Load') this.addUsed(node.id)
+    else if (node.ctx === 'Store') this.defined.add(node.id)
+    else if (node.ctx === 'Del') {
+      this.prepareAssignment([node.id])
+      this.mutated.add(node.id)
+    }
+  }
+
+  visit_Import(node: PyNode): void {
+    const aliases = (node.names as PyAlias[] | undefined) ?? []
+    const names = aliases.map((alias) => alias.asname || alias.name.split('.')[0] || alias.name)
+    this.prepareAssignment(names)
+    for (const alias of aliases) {
+      const name = alias.asname || alias.name.split('.')[0] || alias.name
+      this.defined.add(name)
+      if (alias.name === 'builtins') {
+        this.builtinModuleNames.add(name)
+        if (name !== 'builtins') this.aliases.set(name, 'builtins')
+      }
+      this.bindLibraryModule(name, alias.name)
+    }
+  }
+
+  visit_ImportFrom(node: PyNode): void {
+    const aliases = (node.names as PyAlias[] | undefined) ?? []
+    this.prepareAssignment(
+      aliases.filter((alias) => alias.name !== '*').map((alias) => alias.asname || alias.name)
+    )
+    for (const alias of aliases) {
+      if (alias.name === '*') this.unknown.add('wildcard-import')
+      else {
+        const name = alias.asname || alias.name
+        this.defined.add(name)
+        if (node.module === 'builtins' && alias.name === '__dict__') {
+          this.addPossibleAlias(name, 'builtins', 'attribute')
+        }
+        if (node.module) {
+          this.bindLibraryModule(name, `${node.module}.${alias.name}`)
+          this.bindLibraryFunction(name, node.module, alias.name)
+          if (!this.importedModules.has(name) && !this.importedFunctions.has(name)) {
+            this.bindUnknownImport(name, node.module, alias.name)
+          }
+        }
+      }
+    }
+  }
+
+  bindAssignmentValue(
+    node: PyNode,
+    target: PyNode | undefined,
+    value: PyNode | undefined,
+    targetNames: string[]
+  ): void {
+    if (value?.type === 'Call') this.callResultNames.set(value, targetNames)
+    const aliasSource =
+      value?.type === 'Name' && value.id ? (this.aliases.get(value.id) ?? value.id) : undefined
+    const memberSource =
+      value && (value.type === 'Attribute' || value.type === 'Subscript')
+        ? this.visibleRootName(value)
+        : undefined
+    const memberAccess = value?.type === 'Subscript' ? 'subscript' : 'attribute'
+    const member = memberSource ? memberName(value) : undefined
+    const conditionalSources =
+      value?.type === 'IfExp'
+        ? new Set(
+            [
+              this.visibleRootName(value.body as PyNode),
+              this.visibleRootName(value.orelse as PyNode)
+            ].filter((name): name is string => Boolean(name))
+          )
+        : new Set<string>()
+    const constructor =
+      target?.type === 'Name' &&
+      value?.type === 'Call' &&
+      isPyNode(value.func) &&
+      value.func.type === 'Name' &&
+      value.func.id &&
+      !SAFE_CALLS.has(value.func.id) &&
+      !DYNAMIC_CALLS.has(value.func.id) &&
+      !EXTERNAL_READ_CALLS.has(value.func.id) &&
+      !SCOPED_MUTATION_CALLS.has(value.func.id) &&
+      !this.importedFunctions.has(value.func.id)
+    let constructorArguments = new Set<string>()
+    if (constructor && value) {
+      const args = Array.isArray(value.args) ? value.args : []
+      constructorArguments = new Set(
+        [...args, ...(value.keywords ?? []).map((keyword) => keyword.value)]
+          .map((item) => this.visibleRootName(item))
+          .filter((name): name is string => Boolean(name))
+      )
+      this.constructorNodes.add(value)
+    }
+    if (value) this.visit(value)
+    if (node.type === 'AnnAssign' && node.annotation) this.visit(node.annotation)
+    this.prepareAssignment(targetNames)
+    if (target?.type === 'Name' && target.id && conditionalSources.size) {
+      this.unknown.add('conditional-expression')
+      for (const source of conditionalSources) this.addPossibleAlias(target.id, source)
+    } else if (target?.type === 'Name' && target.id && value?.type === 'Name' && aliasSource) {
+      if (this.controlDepth > 0) this.addPossibleAlias(target.id, aliasSource)
+      else this.aliases.set(target.id, aliasSource)
+    } else if (
+      target?.type === 'Name' &&
+      target.id &&
+      value &&
+      (value.type === 'Attribute' || value.type === 'Subscript')
+    ) {
+      if (memberSource) this.addPossibleAlias(target.id, memberSource, memberAccess, member)
+    } else if (
+      constructor &&
+      target?.type === 'Name' &&
+      target.id &&
+      isPyNode(value?.func) &&
+      value?.func.type === 'Name'
+    ) {
+      this.typeBindings.push({
+        target: target.id,
+        typeName: value.func.id ?? '',
+        argumentNames: [...constructorArguments].sort()
+      })
+    } else if (
+      target?.type === 'Name' &&
+      target.id &&
+      value &&
+      (value.type === 'Dict' || value.type === 'List' || value.type === 'Tuple')
+    ) {
+      this.builtinContainers.add(target.id)
+    }
+  }
+
+  visit_Assign(node: PyNode): void {
+    const targetNames = (node.targets ?? []).flatMap((target) => this.assignedNames(target))
+    const target = (node.targets ?? []).length === 1 ? node.targets![0] : undefined
+    this.bindAssignmentValue(
+      node,
+      target,
+      isPyNode(node.value) ? node.value : undefined,
+      targetNames
+    )
+    for (const assigned of node.targets ?? []) this.visit(assigned)
+  }
+
+  visit_AnnAssign(node: PyNode): void {
+    this.bindAssignmentValue(
+      node,
+      node.target,
+      isPyNode(node.value) ? node.value : undefined,
+      this.assignedNames(node.target)
+    )
+    if (node.target) this.visit(node.target)
+  }
+
+  visit_NamedExpr(node: PyNode): void {
+    if (this.localScopes.length) this.unknown.add('comprehension-scope')
+    this.bindAssignmentValue(
+      node,
+      node.target,
+      isPyNode(node.value) ? node.value : undefined,
+      this.assignedNames(node.target)
+    )
+    if (node.target) this.visit(node.target)
+  }
+
+  visit_If = this.visit_control
+
+  visit_For(node: PyNode): void {
+    const deterministic = staticNonemptyIterable(node.iter)
+    const scoped = this.scopedLoops.has(node)
+    const body = Array.isArray(node.body) ? node.body : []
+    if (!simpleLoopTarget(node.target) || !effectOnlyLoopBody(body) || !(deterministic || scoped)) {
+      this.visit_control(node)
+      return
+    }
+    if (node.iter) this.visit(node.iter)
+    const targetNames = this.assignedNames(node.target)
+    if (deterministic) {
+      this.prepareAssignment(targetNames)
+      for (const name of targetNames) this.defined.add(name)
+    }
+    const source = this.visibleRootName(node.iter)
+    this.localScopes.push(Object.fromEntries(targetNames.map((name) => [name, source])))
+    for (const statement of body) this.visit(statement)
+    this.localScopes.pop()
+    for (const statement of node.orelse ?? []) this.visit(statement)
+  }
+
+  visit_AsyncFor = this.visit_control
+  visit_While = this.visit_control
+  visit_Try = this.visit_control
+  visit_Match = this.visit_control
+
+  visit_IfExp(node: PyNode): void {
+    this.controlDepth += 1
+    this.genericVisit(node)
+    this.controlDepth -= 1
+  }
+
+  visit_FunctionDef(node: PyNode): void {
+    if (node.name) {
+      this.prepareAssignment([node.name])
+      this.defined.add(node.name)
+    }
+    this.unknown.add('function-scope')
+    const fnArgs = node.args as PyArguments | undefined
+    for (const value of [
+      ...(node.decorator_list ?? []),
+      ...(fnArgs?.defaults ?? []),
+      ...(fnArgs?.kw_defaults ?? []).filter((item): item is PyNode => Boolean(item))
+    ]) {
+      this.visit(value)
+    }
+  }
+  visit_AsyncFunctionDef = this.visit_FunctionDef
+
+  visit_ClassDef(node: PyNode): void {
+    if (node.name) {
+      this.prepareAssignment([node.name])
+      this.defined.add(node.name)
+    }
+    const summary = summarizeClass(node)
+    if (summary) this.typeSummaries.push(summary)
+    else this.unknown.add('class-scope')
+    for (const value of [
+      ...(node.decorator_list ?? []),
+      ...(node.bases ?? []),
+      ...(node.classKeywords ?? [])
+    ]) {
+      this.visit(isPyNode(value) ? value : (value as PyKeyword).value)
+    }
+  }
+
+  visit_Lambda(): void {
+    this.unknown.add('lambda-scope')
+  }
+
+  visitComprehension(node: PyNode, values: Array<PyNode | undefined>): void {
+    const scope: Record<string, string | undefined> = {}
+    this.localScopes.push(scope)
+    for (const generator of node.generators ?? []) {
+      this.visit(generator.iter)
+      const source = this.visibleRootName(generator.iter)
+      for (const name of this.assignedNames(generator.target)) scope[name] = source
+      for (const condition of generator.ifs) this.visit(condition)
+    }
+    for (const value of values) this.visit(value)
+    this.localScopes.pop()
+  }
+
+  visit_ListComp(node: PyNode): void {
+    this.visitComprehension(node, [node.elt])
+  }
+  visit_SetComp(node: PyNode): void {
+    this.visitComprehension(node, [node.elt])
+  }
+  visit_DictComp(node: PyNode): void {
+    this.visitComprehension(node, [node.key, isPyNode(node.value) ? node.value : undefined])
+  }
+  visit_GeneratorExp(node: PyNode): void {
+    this.visitComprehension(node, [node.elt])
+  }
+
+  visit_AugAssign(node: PyNode): void {
+    const name = this.visibleRootName(node.target)
+    if (name) {
+      this.addUsed(name)
+      const patchedMember = node.target ? dynamicMemberWrite(node.target) : undefined
+      if (!patchedMember || !patchedMember[1]) this.mutated.add(name)
+      if (patchedMember) {
+        const [member, typeWide] = patchedMember
+        this.memberWrites.push({
+          receiver: name,
+          ...(member ? { member } : {}),
+          ...(typeWide ? { scope: 'type' as const } : {})
+        })
+      }
+      if (this.builtinModuleNames.has(name)) this.unknown.add('dynamic-namespace')
+    } else {
+      this.unknown.add('dynamic-assignment')
+      if (node.target) this.visit(node.target)
+    }
+    if (isPyNode(node.value)) this.visit(node.value)
+  }
+
+  visit_Subscript(node: PyNode): void {
+    if (node.ctx === 'Store' || node.ctx === 'Del') {
+      const name = this.visibleRootName(node)
+      if (name) {
+        this.addUsed(name)
+        const patchedMember = dynamicMemberWrite(node)
+        if (!patchedMember || !patchedMember[1]) this.mutated.add(name)
+        if (patchedMember) {
+          const [member, typeWide] = patchedMember
+          this.memberWrites.push({
+            receiver: name,
+            ...(member ? { member } : {}),
+            ...(typeWide ? { scope: 'type' as const } : {})
+          })
+        }
+        if (this.builtinModuleNames.has(name)) this.unknown.add('dynamic-namespace')
+      } else {
+        this.unknown.add('dynamic-assignment')
+        if (isPyNode(node.value)) this.visit(node.value)
+      }
+      if (node.slice) this.visit(node.slice)
+      return
+    }
+    this.genericVisit(node)
+  }
+
+  visit_Attribute(node: PyNode): void {
+    if (node.ctx === 'Store' || node.ctx === 'Del') {
+      const name = this.visibleRootName(node)
+      if (name) {
+        this.addUsed(name)
+        const patchedMember = dynamicMemberWrite(node)
+        const [member, typeWide] = patchedMember ?? [node.attr, false]
+        if (!typeWide) this.mutated.add(name)
+        this.memberWrites.push({
+          receiver: name,
+          ...(member ? { member } : {}),
+          ...(typeWide ? { scope: 'type' as const } : {})
+        })
+        if (this.builtinModuleNames.has(name)) this.unknown.add('dynamic-namespace')
+      } else {
+        this.unknown.add('dynamic-assignment')
+        if (isPyNode(node.value)) this.visit(node.value)
+      }
+      return
+    }
+    this.genericVisit(node)
+  }
+
+  visit_Call(node: PyNode): void {
+    const libraryEffect = this.libraryCallEffect(node)
+    if (libraryEffect?.unsafeNamespace) {
+      this.unknown.add('opaque-call')
+      this.unknown.add('dynamic-namespace')
+    }
+    const formulaRule = libraryEffect?.formulaArgument
+    if (formulaRule) {
+      const args = Array.isArray(node.args) ? node.args : []
+      const formula =
+        (node.keywords ?? []).find((keyword) => keyword.arg === formulaRule.keyword)?.value ??
+        (typeof formulaRule.positionalArgument === 'number'
+          ? args[formulaRule.positionalArgument]
+          : undefined)
+      const formulaNames = simpleFormulaNames(formula)
+      if (!formulaNames) this.unknown.add('opaque-call')
+      else for (const name of formulaNames) this.possiblyUsed.add(name)
+    }
+    const args = Array.isArray(node.args) ? node.args : []
+    if (this.constructorNodes.has(node)) {
+      if (isPyNode(node.func) && node.func.type === 'Name' && node.func.id) {
+        const candidates = [...args, ...(node.keywords ?? []).map((keyword) => keyword.value)]
+        this.receiverCalls.push({
+          receiver: node.func.id,
+          member: '__call__',
+          kind: 'callable',
+          argumentNames: this.visibleRoots(candidates),
+          receiverChain: [],
+          receiverChainFirstArgumentNames: [],
+          receiverChainPositionalArgumentNames: [],
+          receiverChainPositionalStaticBooleans: [],
+          receiverChainKeywordArguments: [],
+          receiverValueNames: [],
+          positionalArgumentNames: args.map((argument) => this.expressionVisibleRoots(argument)),
+          positionalStaticBooleans: args.map((argument) =>
+            argument.type === 'Constant' && argument.constKind === 'bool'
+              ? Boolean(argument.value)
+              : null
+          ),
+          resultNames: this.callResultNames.get(node) ?? [],
+          keywordArguments: (node.keywords ?? []).map((keyword) =>
+            this.keywordArgumentRecord(keyword)
+          )
+        })
+      }
+      this.genericVisit(node)
+      return
+    }
+    if (isPyNode(node.func) && node.func.type === 'Name' && DYNAMIC_CALLS.has(node.func.id ?? '')) {
+      this.unknown.add('dynamic-namespace')
+    } else if (
+      isPyNode(node.func) &&
+      node.func.type === 'Name' &&
+      SAFE_CALLS.has(node.func.id ?? '')
+    ) {
+      this.safeCallNames.add(node.func.id ?? '')
+      const possible = new Set(
+        [...args, ...(node.keywords ?? []).map((keyword) => keyword.value)]
+          .map((candidate) => this.visibleRootName(candidate))
+          .filter((name): name is string => Boolean(name))
+      )
+      for (const name of possible) this.safeCallArgumentNames.add(name)
+    } else if (
+      isPyNode(node.func) &&
+      node.func.type === 'Name' &&
+      EXTERNAL_READ_CALLS.has(node.func.id ?? '')
+    ) {
+      this.safeCallNames.add(node.func.id ?? '')
+      const possible = new Set(
+        [...args, ...(node.keywords ?? []).map((keyword) => keyword.value)]
+          .map((candidate) => this.visibleRootName(candidate))
+          .filter((name): name is string => Boolean(name))
+      )
+      for (const name of possible) this.safeCallArgumentNames.add(name)
+      this.unknown.add('external-state')
+    } else if (
+      isPyNode(node.func) &&
+      node.func.type === 'Name' &&
+      SCOPED_MUTATION_CALLS.has(node.func.id ?? '')
+    ) {
+      this.safeCallNames.add(node.func.id ?? '')
+      const possible = new Set(
+        [...args, ...(node.keywords ?? []).map((keyword) => keyword.value)]
+          .map((candidate) => this.visibleRootName(candidate))
+          .filter((name): name is string => Boolean(name))
+      )
+      for (const name of possible) this.safeCallArgumentNames.add(name)
+      for (const name of possible) this.possiblyMutated.add(name)
+      if (possible.size) this.unknown.add('opaque-mutation')
+    } else if (
+      isPyNode(node.func) &&
+      node.func.type === 'Name' &&
+      node.func.id &&
+      this.importedFunctions.has(node.func.id)
+    ) {
+      this.receiverCalls.push({
+        receiver: this.importedFunctions.get(node.func.id) ?? node.func.id,
+        member: '__call__',
+        kind: 'callable',
+        argumentNames: this.visibleRoots([
+          ...args,
+          ...(node.keywords ?? []).map((keyword) => keyword.value)
+        ]),
+        receiverChain: [],
+        receiverChainFirstArgumentNames: [],
+        receiverChainPositionalArgumentNames: [],
+        receiverChainPositionalStaticBooleans: [],
+        receiverChainKeywordArguments: [],
+        receiverValueNames: [],
+        positionalArgumentNames: args.map((argument) => this.expressionVisibleRoots(argument)),
+        positionalStaticBooleans: args.map((argument) =>
+          argument.type === 'Constant' && argument.constKind === 'bool'
+            ? Boolean(argument.value)
+            : null
+        ),
+        resultNames: this.callResultNames.get(node) ?? [],
+        keywordArguments: (node.keywords ?? []).map((keyword) =>
+          this.keywordArgumentRecord(keyword)
+        )
+      })
+    } else if (
+      isPyNode(node.func) &&
+      node.func.type === 'Name' &&
+      node.func.id &&
+      !SAFE_CALLS.has(node.func.id)
+    ) {
+      this.receiverCalls.push({
+        receiver: node.func.id,
+        member: '__call__',
+        kind: 'callable',
+        argumentNames: this.visibleRoots([
+          ...args,
+          ...(node.keywords ?? []).map((keyword) => keyword.value)
+        ]),
+        receiverChain: [],
+        receiverChainFirstArgumentNames: [],
+        receiverChainPositionalArgumentNames: [],
+        receiverChainPositionalStaticBooleans: [],
+        receiverChainKeywordArguments: [],
+        receiverValueNames: [],
+        positionalArgumentNames: args.map((argument) => this.expressionVisibleRoots(argument)),
+        positionalStaticBooleans: args.map((argument) =>
+          argument.type === 'Constant' && argument.constKind === 'bool'
+            ? Boolean(argument.value)
+            : null
+        ),
+        resultNames: this.callResultNames.get(node) ?? [],
+        keywordArguments: (node.keywords ?? []).map((keyword) =>
+          this.keywordArgumentRecord(keyword)
+        )
+      })
+    }
+    if (isPyNode(node.func) && node.func.type === 'Attribute') {
+      const name = this.receiverRootName(node.func.value as PyNode)
+      const literalReceiver =
+        isPyNode(node.func.value) &&
+        node.func.value.type === 'Constant' &&
+        SAFE_LITERAL_METHODS.has(node.func.attr ?? '')
+      const localReceiver = this.hasLocalRoot(node.func.value as PyNode)
+      const inplace = (node.keywords ?? []).some(
+        (keyword) =>
+          keyword.arg === 'inplace' &&
+          keyword.value.type === 'Constant' &&
+          keyword.value.value === true
+      )
+      const possibleInplace = (node.keywords ?? []).some(
+        (keyword) =>
+          keyword.arg === 'inplace' &&
+          !(keyword.value.type === 'Constant' && keyword.value.constKind === 'bool')
+      )
+      if (name) {
+        const argumentsNames = this.visibleRoots([
+          ...args,
+          ...(node.keywords ?? []).map((keyword) => keyword.value)
+        ])
+        if (localReceiver) {
+          this.possiblyMutated.add(name)
+          this.unknown.add('opaque-mutation')
+        } else {
+          const chainArguments = this.receiverChainArguments(node.func.value as PyNode)
+          this.receiverCalls.push({
+            receiver: name,
+            member: node.func.attr ?? '',
+            ...(MUTATING_METHODS.has(node.func.attr ?? '') || inplace
+              ? { kind: 'mutating' as const }
+              : {}),
+            argumentNames: argumentsNames,
+            receiverChain: this.receiverCallChain(node.func.value as PyNode),
+            receiverChainFirstArgumentNames: this.receiverChainFirstArguments(
+              node.func.value as PyNode
+            ),
+            receiverChainPositionalArgumentNames: chainArguments.map(
+              (step) => step.positionalArgumentNames
+            ),
+            receiverChainPositionalStaticBooleans: chainArguments.map(
+              (step) => step.positionalStaticBooleans
+            ),
+            receiverChainKeywordArguments: chainArguments.map((step) => step.keywordArguments),
+            receiverValueNames: this.receiverValueRoots(node.func.value as PyNode),
+            positionalArgumentNames: args.map((argument) => this.expressionVisibleRoots(argument)),
+            positionalStaticBooleans: args.map((argument) =>
+              argument.type === 'Constant' && argument.constKind === 'bool'
+                ? Boolean(argument.value)
+                : null
+            ),
+            resultNames: this.callResultNames.get(node) ?? [],
+            keywordArguments: (node.keywords ?? []).map((keyword) =>
+              this.keywordArgumentRecord(keyword, true)
+            )
+          })
+          const effect = this.libraryCallEffect(node)
+          if (effect?.mutatesKeyword) {
+            for (const keyword of node.keywords ?? []) {
+              if (keyword.arg !== effect.mutatesKeyword) continue
+              const output = this.visibleRootName(keyword.value)
+              if (!output) continue
+              if (this.hasLocalRoot(keyword.value)) {
+                this.possiblyMutated.add(output)
+                this.unknown.add('opaque-mutation')
+              } else this.mutated.add(output)
+            }
+          }
+        }
+        if (possibleInplace) {
+          this.possiblyMutated.add(name)
+          this.unknown.add('opaque-mutation')
+        }
+      } else if (!literalReceiver) {
+        const possible = new Set(
+          [...args, ...(node.keywords ?? []).map((keyword) => keyword.value)]
+            .map((candidate) => this.visibleRootName(candidate))
+            .filter((item): item is string => Boolean(item))
+        )
+        if (possible.size) {
+          for (const item of possible) this.possiblyMutated.add(item)
+          this.unknown.add('opaque-mutation')
+        }
+        this.unknown.add('opaque-call')
+      }
+      if (name && this.builtinModuleNames.has(name)) this.unknown.add('dynamic-namespace')
+    } else if (!isPyNode(node.func) || node.func.type !== 'Name') {
+      const possible = new Set(
+        [...args, ...(node.keywords ?? []).map((keyword) => keyword.value)]
+          .map((candidate) => this.visibleRootName(candidate))
+          .filter((item): item is string => Boolean(item))
+      )
+      if (possible.size) {
+        for (const item of possible) this.possiblyMutated.add(item)
+        this.unknown.add('opaque-mutation')
+      }
+      this.unknown.add('opaque-call')
+    }
+    if (
+      isPyNode(node.func) &&
+      node.func.type === 'Name' &&
+      (node.func.id === 'setattr' || node.func.id === 'delattr') &&
+      args.length
+    ) {
+      const receiver = this.visibleRootName(args[0])
+      if (receiver) {
+        const member =
+          args[1]?.type === 'Constant' && args[1].constKind === 'str'
+            ? String(args[1].value)
+            : undefined
+        const typeWide = args[0]?.type === 'Attribute' && args[0].attr === '__class__'
+        this.memberWrites.push({
+          receiver,
+          ...(member ? { member } : {}),
+          ...(typeWide ? { scope: 'type' as const } : {})
+        })
+      }
+      if (receiver && this.builtinModuleNames.has(receiver)) this.unknown.add('dynamic-namespace')
+    }
+    this.genericVisit(node)
+  }
+}
+
+const factsFromAnalyzer = (
+  analyzer: Analyzer
+): Omit<Extract<NotebookRunDependencyFacts, { state: 'available' }>, 'state'> => {
+  const aliases: NotebookDependencyAlias[] = [
+    ...[...analyzer.aliases.entries()].map(([target, source]) => ({
+      target,
+      source,
+      kind: 'reference' as const
+    })),
+    ...[...analyzer.possibleAliases].sort().map((item) => {
+      const [target, source, access, member] = item.split('\0')
+      return {
+        target: target ?? '',
+        source: source ?? '',
+        kind: 'possible-reference' as const,
+        ...(access ? { access: access as 'attribute' | 'subscript' } : {}),
+        ...(member ? { member } : {})
+      }
+    })
+  ]
+  return {
+    definedNames: [...analyzer.defined].sort(),
+    usedNames: [...analyzer.used.keys()].sort(),
+    priorUsedNames: [...analyzer.priorUsed.keys()].sort(),
+    possiblyUsedNames: [...analyzer.possiblyUsed].sort(),
+    mutatedNames: [...analyzer.mutated].sort(),
+    possiblyMutatedNames: [...analyzer.possiblyMutated].sort(),
+    aliases,
+    builtinContainerNames: [...analyzer.builtinContainers].sort(),
+    safeCallNames: [...analyzer.safeCallNames].sort(),
+    safeCallArgumentNames: [...analyzer.safeCallArgumentNames].sort(),
+    typeSummaries: analyzer.typeSummaries,
+    typeBindings: analyzer.typeBindings,
+    receiverCalls: analyzer.receiverCalls,
+    memberWrites: analyzer.memberWrites
+  }
+}
+
+const analyzePythonTree = (root: Node): NotebookRunDependencyFacts => {
+  const tree = convertModule(root)
+  const analyzer = new Analyzer(scopedEffectLoops(tree))
+  analyzer.visit(tree)
+  const facts = factsFromAnalyzer(analyzer)
+  if (analyzer.unknown.size) {
+    return { state: 'unknown', reasons: [...analyzer.unknown].sort(), ...facts }
+  }
+  return { state: 'available', ...facts }
+}
+
+const analyzePythonSources = async (
+  sources: readonly string[]
+): Promise<NotebookRunDependencyFacts[]> => {
+  const results: NotebookRunDependencyFacts[] = []
+  for (const source of sources) {
+    const parsed = await parseNotebookSource('python', source)
+    if (parsed.state === 'error') {
+      results.push({ state: 'unknown', reasons: [parsed.reason] })
+      continue
+    }
+    results.push(analyzePythonTree(parsed.tree.rootNode))
+  }
+  return results
+}
+
+export { analyzePythonSources }

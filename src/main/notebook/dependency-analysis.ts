@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -19,26 +18,18 @@ import type {
   NotebookRunDependencyFacts,
   ProjectNotebookDependenciesRequest
 } from './dependency-analysis-types'
-import { PYTHON_ANALYZER } from './dependency-analysis-python'
-import { R_ANALYZER } from './dependency-analysis-r'
+import { analyzePythonSources } from './dependency-analysis-python'
+import { analyzeRSources } from './dependency-analysis-r'
 import {
   projectNotebookDependencies,
   unavailableNotebookDependencyProjection
 } from './dependency-projection'
 import { getNotebookSessionRoot, getRuntimeRoot, type NotebookRunRepository } from './repository'
-import {
-  condaActivatedPath,
-  envPrefix,
-  pythonBin,
-  resolveEnvName,
-  rScriptBin
-} from './runtime-paths'
+import { envPrefix, pythonBin, resolveEnvName, rScriptBin } from './runtime-paths'
 
 const ANALYZER_VERSION = 1 as const
-const ANALYZER_REVISION = 'scientific-run-execution-evidence'
+const ANALYZER_REVISION = 'tree-sitter-in-process-1'
 const SIDECAR_FILE = 'dependency-analysis.json'
-const ANALYZER_TIMEOUT_MS = 15_000
-const ANALYZER_OUTPUT_LIMIT = 2 * 1024 * 1024
 const MAX_NAMES_PER_RUN = 512
 const RETRYABLE_ANALYSIS_FAILURES = new Set([
   'analysis-unavailable',
@@ -701,337 +692,11 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
     : unknownFacts('invalid-parser-result')
 }
 
-const parseRAnalyzerOutput = (
-  output: string,
-  expectedCount: number
-): NotebookRunDependencyFacts[] | undefined => {
-  const results: NotebookRunDependencyFacts[] = []
-  let current: Record<string, unknown> | undefined
-  for (const line of output.split(/\r?\n/u)) {
-    if (!line) continue
-    if (line === '.') {
-      if (!current) return undefined
-      results.push(normalizeFacts(current))
-      current = undefined
-      continue
-    }
-    const separator = line.indexOf('\t')
-    if (separator === -1) return undefined
-    const prefix = line.slice(0, separator)
-    const rawValue = line.slice(separator + 1)
-    let value: string
-    try {
-      value = decodeURIComponent(rawValue)
-    } catch {
-      return undefined
-    }
-    if (prefix === 'S') {
-      if (current) return undefined
-      current = {
-        state: value,
-        definedNames: [],
-        usedNames: [],
-        priorUsedNames: [],
-        possiblyUsedNames: [],
-        mutatedNames: [],
-        possiblyMutatedNames: [],
-        reasons: [],
-        aliases: [],
-        copyOnModifyNames: [],
-        copyOnModifyBindings: [],
-        copyOnModifyInvalidatedNames: [],
-        safeCallNames: [],
-        safeCallArgumentNames: [],
-        typeSummaries: [],
-        typeBindings: [],
-        receiverCalls: [],
-        memberWrites: []
-      }
-      continue
-    }
-    if (!current) return undefined
-    if (prefix === 'K') {
-      const fields = line.split('\t')
-      if (fields.length < 3) return undefined
-      try {
-        ;(current.copyOnModifyBindings as NotebookDependencyCopyBinding[]).push({
-          target: decodeURIComponent(fields[1]!),
-          sourceNames: fields.slice(2).map((field) => decodeURIComponent(field))
-        })
-      } catch {
-        return undefined
-      }
-      continue
-    }
-    if (prefix === 'A') {
-      const fields = line.split('\t')
-      if (fields.length !== 4 && fields.length !== 6) return undefined
-      let target: string
-      let source: string
-      let member: string | undefined
-      try {
-        target = decodeURIComponent(fields[1]!)
-        source = decodeURIComponent(fields[2]!)
-        member = fields[5] ? decodeURIComponent(fields[5]) : undefined
-      } catch {
-        return undefined
-      }
-      const kind = fields[3]
-      if (kind !== 'reference' && kind !== 'possible-reference') return undefined
-      const access = fields[4] || undefined
-      if (access !== undefined && access !== 'attribute' && access !== 'subscript') {
-        return undefined
-      }
-      ;(current.aliases as NotebookDependencyAlias[]).push({
-        target,
-        source,
-        kind,
-        ...(access ? { access } : {}),
-        ...(member ? { member } : {})
-      })
-      continue
-    }
-    if (prefix === 'Y') {
-      const fields = line.split('\t')
-      if (fields.length !== 3 && fields.length !== 4) return undefined
-      let name: string
-      try {
-        name = decodeURIComponent(fields[1]!)
-      } catch {
-        return undefined
-      }
-      const kind = fields[2]
-      if (kind !== 'r-s4' && kind !== 'r-r6') return undefined
-      if (fields[3] !== undefined && fields[3] !== '0' && fields[3] !== '1') return undefined
-      ;(current.typeSummaries as NotebookDependencyTypeSummary[]).push({
-        name,
-        kind,
-        ...(fields[3] === '0' ? { complete: false } : {}),
-        fields: [],
-        methods: []
-      })
-      continue
-    }
-    if (prefix === 'F' || prefix === 'H') {
-      const fields = line.split('\t')
-      if ((prefix === 'F' && fields.length !== 4) || (prefix === 'H' && fields.length < 6)) {
-        return undefined
-      }
-      let typeName: string
-      let memberName: string
-      try {
-        typeName = decodeURIComponent(fields[1]!)
-        memberName = decodeURIComponent(fields[2]!)
-      } catch {
-        return undefined
-      }
-      const summary = (current.typeSummaries as NotebookDependencyTypeSummary[]).find(
-        (candidate) => candidate.name === typeName
-      )
-      if (!summary) return undefined
-      if (prefix === 'F') {
-        const relationship = fields[3]
-        if (
-          relationship !== 'reference' &&
-          relationship !== 'value' &&
-          relationship !== 'unknown'
-        ) {
-          return undefined
-        }
-        summary.fields.push({ name: memberName, relationship })
-      } else {
-        const effect = fields[3]
-        if (effect !== 'read' && effect !== 'mutate' && effect !== 'unknown') return undefined
-        const unknownScope = fields[4]
-        if (unknownScope !== 'receiver' && unknownScope !== 'namespace') return undefined
-        const usedNameCount = Number(fields[5])
-        if (!Number.isSafeInteger(usedNameCount) || usedNameCount < 0) return undefined
-        if (fields.length < 6 + usedNameCount) return undefined
-        let usedNames: string[]
-        let safeCallNames: string[]
-        try {
-          usedNames = fields.slice(6, 6 + usedNameCount).map((field) => decodeURIComponent(field))
-          safeCallNames = fields.slice(6 + usedNameCount).map((field) => decodeURIComponent(field))
-        } catch {
-          return undefined
-        }
-        summary.methods.push({
-          name: memberName,
-          effect,
-          unknownScope,
-          usedNames,
-          safeCallNames
-        })
-      }
-      continue
-    }
-    if (prefix === 'B' || prefix === 'V') {
-      const fields = line.split('\t')
-      if ((prefix === 'B' && fields.length < 3) || (prefix === 'V' && fields.length < 3)) {
-        return undefined
-      }
-      let first: string
-      let second: string
-      let argumentNames: string[]
-      try {
-        first = decodeURIComponent(fields[1]!)
-        second = decodeURIComponent(fields[2]!)
-        argumentNames = fields
-          .slice(prefix === 'B' ? 3 : 4)
-          .map((field) => decodeURIComponent(field))
-      } catch {
-        return undefined
-      }
-      if (prefix === 'B') {
-        ;(current.typeBindings as NotebookDependencyTypeBinding[]).push({
-          target: first,
-          typeName: second,
-          ...(argumentNames.length ? { argumentNames } : {})
-        })
-      } else {
-        const kind = fields[3] || 'receiver'
-        if (
-          kind !== 'receiver' &&
-          kind !== 'generic' &&
-          kind !== 'mutating' &&
-          kind !== 'callable'
-        ) {
-          return undefined
-        }
-        ;(current.receiverCalls as NotebookDependencyReceiverCall[]).push({
-          receiver: first,
-          member: second,
-          ...(kind === 'generic' || kind === 'mutating' || kind === 'callable' ? { kind } : {}),
-          ...(argumentNames.length ? { argumentNames } : {})
-        })
-      }
-      continue
-    }
-    if (prefix === 'W') {
-      const fields = line.split('\t')
-      if (fields.length !== 4) return undefined
-      let receiver: string
-      let member: string | undefined
-      try {
-        receiver = decodeURIComponent(fields[1]!)
-        member = fields[2] ? decodeURIComponent(fields[2]) : undefined
-      } catch {
-        return undefined
-      }
-      const scope = fields[3]
-      if (scope !== 'instance' && scope !== 'type') return undefined
-      ;(current.memberWrites as NotebookDependencyMemberWrite[]).push({
-        receiver,
-        ...(member ? { member } : {}),
-        ...(scope === 'type' ? { scope } : {})
-      })
-      continue
-    }
-    const field =
-      prefix === 'D'
-        ? 'definedNames'
-        : prefix === 'U'
-          ? 'usedNames'
-          : prefix === 'J'
-            ? 'priorUsedNames'
-            : prefix === 'Z'
-              ? 'possiblyUsedNames'
-              : prefix === 'M'
-                ? 'mutatedNames'
-                : prefix === 'P'
-                  ? 'possiblyMutatedNames'
-                  : prefix === 'X'
-                    ? 'reasons'
-                    : prefix === 'O'
-                      ? 'copyOnModifyNames'
-                      : prefix === 'I'
-                        ? 'copyOnModifyInvalidatedNames'
-                        : prefix === 'C'
-                          ? 'safeCallNames'
-                          : prefix === 'Q'
-                            ? 'safeCallArgumentNames'
-                            : undefined
-    if (!field) return undefined
-    ;(current[field] as string[]).push(value)
-  }
-  return !current && results.length === expectedCount ? results : undefined
-}
-
-const runInterpreter = (
-  interpreter: NotebookDependencyInterpreter,
+const analyzeNotebookSources = (
   language: 'python' | 'r',
-  sources: readonly string[],
-  platform: NodeJS.Platform = process.platform
+  sources: readonly string[]
 ): Promise<NotebookRunDependencyFacts[]> =>
-  new Promise((resolve) => {
-    const args = [
-      ...(interpreter.args ?? []),
-      ...(language === 'python' ? ['-I', '-S'] : ['--vanilla', '--slave']),
-      '-'
-    ]
-    const env = { ...process.env }
-    for (const name of language === 'python'
-      ? ['PYTHONHOME', 'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONUSERBASE']
-      : ['R_ENVIRON', 'R_ENVIRON_USER', 'R_PROFILE', 'R_PROFILE_USER']) {
-      delete env[name]
-    }
-    if (language === 'r' && interpreter.condaPrefix) {
-      env.PATH = condaActivatedPath(interpreter.condaPrefix, process.env.PATH, platform)
-    }
-    let settled = false
-    let stdout = ''
-    const child = spawn(interpreter.command, args, {
-      windowsHide: true,
-      stdio: 'pipe',
-      env
-    })
-    const finish = (facts: NotebookRunDependencyFacts[]): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      resolve(facts)
-    }
-    const fail = (reason: string): void => finish(sources.map(() => unknownFacts(reason)))
-    const timer = setTimeout(() => {
-      child.kill()
-      fail('parser-timeout')
-    }, ANALYZER_TIMEOUT_MS)
-    child.once('error', () => fail('parser-unavailable'))
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      stdout += chunk
-      if (Buffer.byteLength(stdout, 'utf8') > ANALYZER_OUTPUT_LIMIT) {
-        child.kill()
-        fail('parser-output-limit')
-      }
-    })
-    child.once('close', (code) => {
-      if (settled) return
-      if (code !== 0) return fail('parser-failed')
-      try {
-        const parsed: unknown =
-          language === 'python' ? JSON.parse(stdout) : parseRAnalyzerOutput(stdout, sources.length)
-        if (!Array.isArray(parsed) || parsed.length !== sources.length) {
-          fail('invalid-parser-result')
-          return
-        }
-        finish(parsed.map(normalizeFacts))
-      } catch {
-        fail('invalid-parser-result')
-      }
-    })
-    child.stdin.on('error', () => fail('parser-failed'))
-    child.stdin.end(
-      language === 'python'
-        ? `import base64, json\nNOTEBOOK_SOURCES = json.loads(base64.b64decode("${Buffer.from(
-            JSON.stringify(sources),
-            'utf8'
-          ).toString('base64')}"))\n${PYTHON_ANALYZER}\n`
-        : `.notebook_sources <- c(${sources
-            .map((source) => `"${Buffer.from(source, 'utf8').toString('base64')}"`)
-            .join(',')})\n${R_ANALYZER}\n`
-    )
-  })
+  language === 'python' ? analyzePythonSources(sources) : analyzeRSources(sources)
 
 const checksumFor = (run: NotebookRunRecord): string =>
   createHash('sha256')
@@ -1078,7 +743,6 @@ class NotebookDependencyAnalyzer {
       resolveInterpreter?: (
         run: NotebookRunRecord
       ) => Promise<NotebookDependencyInterpreter | undefined>
-      platform?: NodeJS.Platform
     }
   ) {}
 
@@ -1174,12 +838,7 @@ class NotebookDependencyAnalyzer {
     const sources = pending.map((run) => run.script)
     const facts = this.options.analyze
       ? await this.options.analyze(interpreter, language, sources)
-      : await runInterpreter(
-          interpreter,
-          language,
-          sources,
-          this.options.platform ?? process.platform
-        )
+      : await analyzeNotebookSources(language, sources)
     pending.forEach((run, index) => {
       sidecar.runs[run.runId] = {
         checksum: checksumFor(run),

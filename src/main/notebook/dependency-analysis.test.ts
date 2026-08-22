@@ -8,7 +8,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { findPythonCommand } from './python-command'
 import { findRCommand } from './r-command'
-import { condaActivatedPath } from './runtime-paths'
 import {
   NotebookDependencyAnalyzer,
   projectNotebookDependencies,
@@ -2207,24 +2206,10 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     ).resolves.toMatchObject({ stalenessByRunId: { 'run-1': { state: 'clear' } } })
   })
 
-  it('streams the Python analyzer through stdin instead of the command line', async () => {
-    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-stdin-'))
+  it('analyzes Python in-process without spawning an interpreter', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-in-process-'))
     temporaryRoots.push(storageRoot)
     const analyzedRun = run('run-1', 'prepare', 'x = 1', 1)
-    const wrapper = String.raw`
-const fs = require('node:fs')
-const input = fs.readFileSync(0, 'utf8')
-if (!process.argv.includes('-I') || !process.argv.includes('-S')) process.exit(2)
-if (process.argv.includes('-c') || !input.includes('class Analyzer')) process.exit(2)
-process.stdout.write(JSON.stringify([{
-  state: 'available',
-  definedNames: ['x'],
-  usedNames: [],
-  mutatedNames: []
-}]))
-`
-    const wrapperPath = join(storageRoot, 'python-analyzer-wrapper.cjs')
-    await writeFile(wrapperPath, wrapper)
     const analyzer = new NotebookDependencyAnalyzer({
       storageRoot,
       repository: { readSessionRuns: vi.fn(async () => [analyzedRun]) }
@@ -2235,28 +2220,19 @@ process.stdout.write(JSON.stringify([{
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun: analyzedRun,
-        interpreter: { command: process.execPath, args: [wrapperPath] }
+        interpreter: { command: 'unused-python' }
       })
     ).resolves.toMatchObject({ stalenessByRunId: { 'run-1': { state: 'clear' } } })
   })
 
-  it('runs the R analyzer without startup profiles', async () => {
-    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-isolated-'))
+  it('analyzes R in-process without spawning an interpreter', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-in-process-'))
     temporaryRoots.push(storageRoot)
     const analyzedRun = {
       ...run('run-1', 'prepare', 'x <- 1', 1),
       kernelKind: 'r' as const,
       environment: 'default-r'
     }
-    const wrapper = String.raw`
-const fs = require('node:fs')
-const input = fs.readFileSync(0, 'utf8')
-if (!process.argv.includes('--vanilla') || !process.argv.includes('--slave')) process.exit(2)
-if (!input.includes('analyze_source')) process.exit(2)
-process.stdout.write('S\tavailable\nD\tx\n.\n')
-`
-    const wrapperPath = join(storageRoot, 'r-analyzer-wrapper.cjs')
-    await writeFile(wrapperPath, wrapper)
     const analyzer = new NotebookDependencyAnalyzer({
       storageRoot,
       repository: { readSessionRuns: vi.fn(async () => [analyzedRun]) }
@@ -2267,46 +2243,10 @@ process.stdout.write('S\tavailable\nD\tx\n.\n')
         projectId: 'default-project',
         sessionId: 'session-1',
         completedRun: analyzedRun,
-        interpreter: { command: process.execPath, args: [wrapperPath] }
+        interpreter: { command: 'unused-rscript', condaPrefix: join(storageRoot, 'conda-env') }
       })
     ).resolves.toMatchObject({ stalenessByRunId: { 'run-1': { state: 'clear' } } })
   })
-
-  it.each(['win32', 'darwin'] as const)(
-    'activates R conda PATH for %s instead of assuming Windows',
-    async (platform) => {
-      const storageRoot = await mkdtemp(join(tmpdir(), `open-science-r-conda-path-${platform}-`))
-      temporaryRoots.push(storageRoot)
-      const analyzedRun = {
-        ...run('run-1', 'prepare', 'x <- 1', 1),
-        kernelKind: 'r' as const,
-        environment: 'default-r'
-      }
-      const prefix = join(storageRoot, 'conda-env')
-      const expectedPath = condaActivatedPath(prefix, process.env.PATH, platform)
-      const wrapper = `const fs = require('node:fs')
-fs.readFileSync(0, 'utf8')
-if (process.env.PATH !== ${JSON.stringify(expectedPath)}) process.exit(2)
-process.stdout.write('S\\tavailable\\nD\\tx\\n.\\n')
-`
-      const wrapperPath = join(storageRoot, 'r-conda-path-wrapper.cjs')
-      await writeFile(wrapperPath, wrapper)
-      const analyzer = new NotebookDependencyAnalyzer({
-        storageRoot,
-        repository: { readSessionRuns: vi.fn(async () => [analyzedRun]) },
-        platform
-      })
-
-      await expect(
-        analyzer.project({
-          projectId: 'default-project',
-          sessionId: 'session-1',
-          completedRun: analyzedRun,
-          interpreter: { command: process.execPath, args: [wrapperPath], condaPrefix: prefix }
-        })
-      ).resolves.toMatchObject({ stalenessByRunId: { 'run-1': { state: 'clear' } } })
-    }
-  )
 
   it('uses Python ast to detect dependencies when Python is available', async () => {
     const python = await findPythonCommand()
