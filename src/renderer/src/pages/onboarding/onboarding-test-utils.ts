@@ -6,7 +6,6 @@ import { vi } from 'vitest'
 
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
 import type { StorageInfo } from '../../../../shared/storage'
-import { createInitialNotebookEnvState, useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 // The Codex authentication picker is a Radix Select, which calls pointer-capture and scroll APIs
@@ -140,12 +139,8 @@ const selectOption = async (triggerLabel: string, optionText: string): Promise<v
 // Resets both stores to a clean baseline and stubs the actions the onboarding surfaces call. Merge
 // (not replace) on the settings store so its other actions stay intact — matches the pattern used
 // by the other render tests (e.g. SettingsPage.render.test.tsx), since a full replace would need
-// every SettingsStore action stubbed, not just the ones onboarding touches. The notebook-env store
-// gets a full replace (needs every action typed) so a stray real bridge call can never sneak in.
-const resetOnboardingStores = (): {
-  envInit: ReturnType<typeof vi.fn>
-  envProvision: ReturnType<typeof vi.fn>
-} => {
+// every SettingsStore action stubbed, not just the ones onboarding touches.
+const resetOnboardingStores = (): void => {
   useSettingsStore.setState({
     ...createInitialSettingsState(),
     checkEnvironment: vi.fn().mockResolvedValue(undefined),
@@ -163,21 +158,6 @@ const resetOnboardingStores = (): {
       .fn()
       .mockResolvedValue({ providerId: 'p1', validation: { ok: true, category: 'ok' } })
   })
-
-  const envInit = vi.fn(async () => {})
-  const envProvision = vi.fn(async () => {})
-  useNotebookEnvStore.setState(
-    {
-      ...createInitialNotebookEnvState(),
-      init: envInit,
-      provision: envProvision,
-      cancel: vi.fn(async () => {}),
-      retry: vi.fn(async () => {}),
-      reset: vi.fn(async () => {})
-    },
-    true
-  )
-  return { envInit, envProvision }
 }
 
 const stubWindowApi = (): void => {

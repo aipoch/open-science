@@ -41,7 +41,7 @@ afterEach(() => {
 
 type HarnessProps = {
   onBack?: () => void
-  onAdvance?: () => void
+  onAdvance?: () => Promise<void>
   initialValue?: ProviderFormValue
 }
 
@@ -49,7 +49,7 @@ type HarnessProps = {
 // step can be mounted directly.
 const Harness = ({
   onBack = vi.fn(),
-  onAdvance = vi.fn(),
+  onAdvance = vi.fn().mockResolvedValue(undefined),
   initialValue
 }: HarnessProps): React.JSX.Element => {
   const [value, setValue] = useState<ProviderFormValue>(

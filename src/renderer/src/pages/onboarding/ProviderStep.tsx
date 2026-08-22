@@ -53,7 +53,7 @@ type ProviderStepProps = {
   formValue: ProviderFormValue
   setFormValue: React.Dispatch<React.SetStateAction<ProviderFormValue>>
   onBack: () => void
-  onAdvance: () => void
+  onAdvance: () => Promise<void>
 }
 
 // Model provider step: configure and validate the provider new research sessions will use. Reuses
@@ -160,7 +160,7 @@ const ProviderStep = ({
           await setActiveProvider(claudeProviderIdRef.current)
         }
         setIsClaudeSignInOpen(false)
-        onAdvance()
+        await onAdvance()
       }
 
       return result
@@ -229,7 +229,7 @@ const ProviderStep = ({
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
-          onAdvance()
+          await onAdvance()
         }
         return
       }
@@ -268,7 +268,7 @@ const ProviderStep = ({
         if (validation.ok) {
           setIsClaudeSignInOpen(false)
           if (providerId) await setActiveProvider(providerId)
-          onAdvance()
+          await onAdvance()
         }
         return
       }
@@ -299,7 +299,7 @@ const ProviderStep = ({
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
-          onAdvance()
+          await onAdvance()
         }
         return
       }
@@ -319,7 +319,7 @@ const ProviderStep = ({
       setValidationMessage(describeValidation(validation, tSettings))
 
       if (validation.ok) {
-        onAdvance()
+        await onAdvance()
       }
     } catch (error) {
       setValidationOk(false)

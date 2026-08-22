@@ -410,8 +410,7 @@ const AgentPanel = ({
   const blockedInstallSources: Partial<Record<ClaudeInstallSource, string>> = {}
   const installBlockers =
     selectedEnvironmentCheck?.checks.filter(
-      (check) =>
-        check.status === 'failed' && (check.id === 'system' || check.id === 'install-network')
+      (check) => check.status === 'failed' && check.id !== 'agent'
     ) ?? []
   const agentCheckFailures =
     selectedEnvironmentCheck?.checks.filter(

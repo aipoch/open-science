@@ -1,81 +1,95 @@
+/* Hallmark · component: background runtime status · genre: editorial · theme: app tokens
+ * states: preparing · reconnecting · error · ready · Retry inherits the standard Button states
+ * contrast: pass (40–41) · tokens: pass (48) · responsive: pass (34, 49)
+ * pre-emit critique: P5 H5 E5 S5 R5 V4
+ */
+import { LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { DownloadProgressLine } from '@/components/DownloadProgressLine'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import type { ProvisionUiState } from './provisioning-view'
 
-// Floating top-of-app pill for the launch-time upgrade gate (spec §6.2). First-run python preparation
-// is surfaced by the onboarding step and the notebook pane gate instead, so this banner only shows for
-// an in-progress background upgrade or a blocking failure — never for the initial python bootstrap.
-// It overlays content instead of taking layout space: the pages below are h-screen with
-// overflow-hidden, so an in-flow banner would push their bottom edge (the composer toolbar) out of
-// the viewport and clip it (issue #244).
+type EnvStatusBannerPlacement = 'floating' | 'inline'
+
+// Background preparation stays subordinate to the user's current task: onboarding places the status
+// beside its explanatory copy, while the app shell uses a quiet edge-aligned label. Detailed progress
+// remains local to Notebook, where waiting is relevant. Failures stay globally actionable.
 const EnvStatusBanner = ({
   ui,
-  onRetry
+  onRetry,
+  placement = 'floating'
 }: {
   ui: ProvisionUiState
   onRetry?: () => void
+  placement?: EnvStatusBannerPlacement
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const show = (ui.kind === 'preparing' && ui.scope === 'upgrade') || ui.kind === 'error'
+  const show = (ui.kind === 'preparing' && ui.scope !== 'r') || ui.kind === 'error'
   if (!show) return null
 
-  // A preparing banner is a compact single-line pill; an error can carry a longer provisioner reason,
-  // so it uses a wider rounded card (matching the app's dialog chrome). This banner is the ONLY error
-  // surface outside the notebook pane (it renders globally from App, incl. Home where there is no
-  // EnvProvisionOverlay), so the reason must stay fully readable — bound it to a scrollable box rather
-  // than clamping lines, which could hide the actionable tail. The source excerpt is already short
-  // (provisioner-runtime.briefTail); full diagnostics also live in the logs.
-  const isError = ui.kind === 'error'
+  if (ui.kind === 'preparing') {
+    const activityLabel =
+      ui.download?.phase === 'reconnecting'
+        ? t('Connection lost, resuming… (attempt {{attempt}})', {
+            attempt: ui.download.attempt
+          })
+        : ui.scope === 'python'
+          ? t('Preparing Python environment…')
+          : t('Updating the notebook environment…')
 
+    return (
+      <div
+        data-testid="env-status-banner"
+        data-placement={placement}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className={cn(
+          'flex items-center gap-2 text-xs leading-4 text-muted-foreground',
+          placement === 'inline'
+            ? 'mt-4 max-w-60 border-t border-border-200 pt-3'
+            : 'pointer-events-none fixed top-4 right-4 z-50 max-w-[min(90vw,360px)] bg-bg-10 px-2 py-1'
+        )}
+      >
+        <LoaderCircle
+          data-testid="env-status-activity"
+          className="size-3.5 shrink-0 animate-spin text-primary motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+        <span>{activityLabel}</span>
+      </div>
+    )
+  }
+
+  // This is the only failure surface outside the Notebook pane, so keep the full actionable reason
+  // reachable in a bounded scroll area and preserve the established dialog chrome.
   return (
     <div
       data-testid="env-status-banner"
-      className={`fixed left-1/2 top-2 z-50 -translate-x-1/2 border border-border bg-card text-foreground shadow-dialog ${
-        isError
-          ? 'flex max-w-[min(90vw,560px)] items-start gap-3 rounded-xl px-4 py-3 text-left text-xs'
-          : 'flex max-w-[min(90vw,640px)] items-center justify-center gap-2 rounded-full px-3 py-1 text-center text-xs'
-      }`}
+      data-placement="floating"
+      role="alert"
+      className="fixed left-1/2 top-2 z-50 flex max-w-[min(90vw,560px)] -translate-x-1/2 items-start gap-3 rounded-xl border border-border bg-card px-4 py-3 text-left text-xs text-foreground shadow-dialog"
     >
-      {ui.kind === 'error' ? (
-        <>
-          <div className="min-w-0 flex-1">
-            <p className="font-medium text-foreground">{t('Environment update failed')}</p>
-            <p className="mt-0.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground">
-              {ui.message}
-            </p>
-          </div>
-          {onRetry ? (
-            <button
-              type="button"
-              data-testid="env-status-banner-retry"
-              onClick={onRetry}
-              className="shrink-0 rounded-lg border border-border px-2 py-0.5 text-xs text-foreground hover:bg-muted"
-            >
-              {t('Retry')}
-            </button>
-          ) : null}
-        </>
-      ) : ui.download ? (
-        // Task 8: keep the existing overall provision phase text (with its percent), and render the
-        // shared DownloadProgressLine (speed/ETA + resume bar) BELOW it — not a second overall bar.
-        <div className="flex min-w-56 flex-col text-left">
-          <span>
-            {t('Updating the notebook environment… {{percent}}%', {
-              percent: Math.round(ui.progress * 100)
-            })}
-          </span>
-          <DownloadProgressLine progress={ui.download} />
-        </div>
-      ) : (
-        <span>
-          {t('Updating the notebook environment… {{percent}}%', {
-            percent: Math.round(ui.progress * 100)
-          })}
-        </span>
-      )}
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-foreground">{t('Environment update failed')}</p>
+        <p className="mt-0.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground">
+          {ui.message}
+        </p>
+      </div>
+      {onRetry ? (
+        <Button
+          type="button"
+          variant="outline"
+          data-testid="env-status-banner-retry"
+          onClick={onRetry}
+          className="shrink-0"
+        >
+          {t('Retry')}
+        </Button>
+      ) : null}
     </div>
   )
 }
 
-export { EnvStatusBanner }
+export { EnvStatusBanner, type EnvStatusBannerPlacement }

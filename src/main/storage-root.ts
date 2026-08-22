@@ -3,6 +3,7 @@ import { basename, isAbsolute, join, normalize, resolve, sep } from 'node:path'
 
 import { app } from 'electron'
 
+import { NSIS_INSTALL_MARKER, windowsDataParentForExecutable } from './initial-data-root'
 import {
   DEV_SESSION_DIR_NAME,
   PROD_SESSION_DIR_NAME,
@@ -56,7 +57,26 @@ const dataFolderName = (): string => (app.isPackaged ? 'OpenScience' : 'OpenScie
 // at its parent - so this join is the single source of truth for the final path.
 const dataRootForParent = (parent: string): string => join(parent, dataFolderName())
 
-const defaultDataParent = (): string => resolveE2eStorageRoot() ?? app.getPath('home')
+// The parent used before install-drive defaults existed. Certification roots have always overridden
+// the real home directory, so startup compatibility checks must preserve that isolation too.
+const formerDefaultDataParent = (): string => resolveE2eStorageRoot() ?? app.getPath('home')
+
+const defaultDataParent = (): string => {
+  const e2eRoot = resolveE2eStorageRoot()
+  if (e2eRoot) return e2eRoot
+
+  const home = app.getPath('home')
+  const resourcesPath = process.resourcesPath
+  if (
+    process.platform !== 'win32' ||
+    !app.isPackaged ||
+    typeof resourcesPath !== 'string' ||
+    !existsSync(join(resourcesPath, NSIS_INSTALL_MARKER))
+  ) {
+    return home
+  }
+  return windowsDataParentForExecutable(home, app.getPath('exe'), dataFolderName()) ?? home
+}
 
 // Converts a user-PICKED directory into the data root. Normally appends the data folder name
 // (`<picked>/OpenScience`), but when the user navigated INTO and selected the OpenScience folder
@@ -152,6 +172,7 @@ export {
   dataRootForParent,
   dataRootForPicked,
   computeDefaultDataRoot,
+  formerDefaultDataParent,
   defaultDataParent,
   samePath,
   isPathInsideOrEqual

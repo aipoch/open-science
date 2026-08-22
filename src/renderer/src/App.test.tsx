@@ -42,7 +42,10 @@ const mocks = vi.hoisted(() => {
     sideChatRelayBox,
     environment: {
       ui: { state: 'idle' },
+      status: { pythonReady: false, rReady: false, provisioning: false },
+      statusError: undefined as string | undefined,
       init: vi.fn().mockResolvedValue(undefined),
+      provision: vi.fn().mockResolvedValue(undefined),
       retry: vi.fn().mockResolvedValue(undefined)
     },
     preview: {
@@ -103,9 +106,6 @@ const mocks = vi.hoisted(() => {
     startupView: 'app' as 'app' | 'onboarding',
     getStatus: vi.fn(),
     getInfo: vi.fn(),
-    onboarding: {
-      props: undefined as { loadStorageInfo: () => Promise<unknown> } | undefined
-    },
     syncWindowFindAppearance: vi.fn(),
     syncUnreadTaskView: vi.fn(),
     globalSearch: { props: undefined as { open: boolean } | undefined },
@@ -175,8 +175,10 @@ vi.mock('@/stores/session-store', () => ({
   }
 }))
 vi.mock('@/stores/notebook-env-store', () => ({
-  useNotebookEnvStore: <T,>(selector: (state: typeof mocks.environment) => T): T =>
-    selector(mocks.environment)
+  useNotebookEnvStore: Object.assign(
+    <T,>(selector: (state: typeof mocks.environment) => T): T => selector(mocks.environment),
+    { getState: () => mocks.environment }
+  )
 }))
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: <T,>(selector: (state: typeof mocks.preview) => T): T =>
@@ -278,10 +280,11 @@ vi.mock('@/pages/home/HomePage', () => ({
   }
 }))
 vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
-  OnboardingWizard: (props: { loadStorageInfo: () => Promise<unknown> }): React.JSX.Element => {
-    mocks.onboarding.props = props
-    return <div data-testid="onboarding-page" />
-  }
+  OnboardingWizard: ({
+    backgroundStatus
+  }: {
+    backgroundStatus?: React.ReactNode
+  }): React.JSX.Element => <div data-testid="onboarding-page">{backgroundStatus}</div>
 }))
 vi.mock('@/pages/settings/ConnectorApprovalDialog', () => ({
   ConnectorApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
@@ -414,7 +417,10 @@ describe('App startup routing', () => {
     mocks.preview.panelState = 'collapsed'
     mocks.deepLinkNavigation.mockClear()
     mocks.lifecycleSync.mockClear()
+    mocks.environment.status = { pythonReady: true, rReady: false, provisioning: false }
+    mocks.environment.statusError = undefined
     mocks.environment.init.mockClear()
+    mocks.environment.provision.mockClear()
     mocks.environment.retry.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
     mocks.syncUnreadTaskView.mockClear()
@@ -432,7 +438,6 @@ describe('App startup routing', () => {
       usage: { categories: [], totalBytes: 0 },
       availableBytes: 1_000_000_000
     })
-    mocks.onboarding.props = undefined
     window.api = {
       storage: { getStatus: mocks.getStatus, getInfo: mocks.getInfo },
       settings: {
@@ -1023,35 +1028,78 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
   })
 
-  it('uses lightweight storage status at startup and defers the full scan to onboarding', async () => {
+  it('uses lightweight storage status at startup without scanning usage for onboarding', async () => {
     mocks.settings.isLoaded = true
     mocks.startupView = 'onboarding'
 
     await render()
     expect(mocks.getStatus).toHaveBeenCalledOnce()
     expect(mocks.getInfo).not.toHaveBeenCalled()
-
-    await act(async () => {
-      await mocks.onboarding.props?.loadStorageInfo()
-    })
-
-    expect(mocks.getInfo).toHaveBeenCalledOnce()
   })
 
-  it('allows onboarding to retry a failed deferred storage scan', async () => {
+  it('starts Python preparation in the background for first-run users', async () => {
     mocks.settings.isLoaded = true
     mocks.startupView = 'onboarding'
-    mocks.getInfo.mockRejectedValueOnce(new Error('storage unavailable'))
+    mocks.environment.status = { pythonReady: false, rReady: false, provisioning: false }
 
     await render()
 
-    await expect(mocks.onboarding.props?.loadStorageInfo()).rejects.toThrow('storage unavailable')
-    await act(async () => {
-      await mocks.onboarding.props?.loadStorageInfo()
+    expect(mocks.environment.init).toHaveBeenCalledOnce()
+    expect(mocks.environment.provision).toHaveBeenCalledWith('python')
+  })
+
+  it('resumes first-run Python preparation after a failed status read is retried', async () => {
+    mocks.settings.isLoaded = true
+    mocks.startupView = 'onboarding'
+    mocks.environment.statusError = 'environment status unavailable'
+    mocks.environment.retry.mockImplementation(async () => {
+      mocks.environment.statusError = undefined
+      mocks.environment.status = { pythonReady: false, rReady: false, provisioning: false }
     })
 
-    expect(mocks.getStatus).toHaveBeenCalledOnce()
-    expect(mocks.getInfo).toHaveBeenCalledTimes(2)
+    await render()
+
+    expect(mocks.environment.provision).not.toHaveBeenCalled()
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="env-banner"]')
+    await act(async () => retry?.click())
+
+    expect(mocks.environment.retry).toHaveBeenCalledOnce()
+    expect(mocks.environment.provision).toHaveBeenCalledWith('python')
+  })
+
+  it('preserves first-run Python preparation when onboarding completes before status retry', async () => {
+    mocks.settings.isLoaded = true
+    mocks.startupView = 'onboarding'
+    mocks.environment.statusError = 'environment status unavailable'
+    mocks.environment.retry.mockImplementation(async () => {
+      mocks.environment.statusError = undefined
+      mocks.environment.status = { pythonReady: false, rReady: false, provisioning: false }
+    })
+
+    await render()
+    expect(mocks.environment.provision).not.toHaveBeenCalled()
+
+    mocks.settings.onboardingCompletedAt = Date.now()
+    mocks.startupView = 'app'
+    await act(async () => root.render(<App />))
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="env-banner"]')
+    await act(async () => retry?.click())
+
+    expect(mocks.environment.retry).toHaveBeenCalledOnce()
+    expect(mocks.environment.provision).toHaveBeenCalledWith('python')
+  })
+
+  it('does not prepare Python automatically after onboarding is complete', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.onboardingCompletedAt = Date.now()
+    mocks.environment.status = { pythonReady: false, rReady: false, provisioning: false }
+
+    await render()
+
+    expect(mocks.environment.init).toHaveBeenCalledOnce()
+    expect(mocks.environment.provision).not.toHaveBeenCalled()
   })
 
   it('falls back to legacy getInfo when storage status is unavailable', async () => {
@@ -1072,9 +1120,6 @@ describe('App startup routing', () => {
     })
 
     await render()
-    await act(async () => {
-      await mocks.onboarding.props?.loadStorageInfo()
-    })
 
     expect(mocks.getStatus).toHaveBeenCalledOnce()
     expect(mocks.getInfo).toHaveBeenCalledOnce()

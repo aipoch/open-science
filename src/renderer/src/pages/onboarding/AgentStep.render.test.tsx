@@ -44,13 +44,12 @@ afterEach(() => {
 })
 
 const renderStep = async (
-  onBack: () => void = vi.fn(),
   onContinue: () => void = vi.fn()
-): Promise<{ onBack: () => void; onContinue: () => void }> => {
+): Promise<{ onContinue: () => void }> => {
   await act(async () => {
-    root.render(<AgentStep onBack={onBack} onContinue={onContinue} />)
+    root.render(<AgentStep onContinue={onContinue} />)
   })
-  return { onBack, onContinue }
+  return { onContinue }
 }
 
 const continueButton = (): HTMLButtonElement | undefined =>
@@ -310,7 +309,7 @@ describe('AgentStep', () => {
     })
     const onContinue = vi.fn()
 
-    await renderStep(vi.fn(), onContinue)
+    await renderStep(onContinue)
 
     expect(continueButton()?.disabled).toBe(false)
     await clickButton(/^continue$/i)
@@ -358,17 +357,38 @@ describe('AgentStep', () => {
     expect(container.textContent).toContain('Complete every required item above to continue.')
   })
 
-  it('returns to the previous step from Back', async () => {
+  it('shows non-agent host failures inline now that Environment is not a separate step', async () => {
     useSettingsStore.setState({
       agentFrameworks: twoFrameworks,
-      environmentCheck: environment(true)
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      environmentCheck: {
+        ...environment(true),
+        ready: false,
+        canAutoInstall: false,
+        checks: [
+          {
+            id: 'storage',
+            label: 'Storage access',
+            status: 'failed',
+            summary: 'The data folder is not writable.'
+          }
+        ]
+      }
     })
-    const onBack = vi.fn()
 
-    await renderStep(onBack)
-    await clickButton(/^back$/i)
+    await renderStep()
 
-    expect(onBack).toHaveBeenCalledOnce()
+    expect(container.querySelector('[aria-label="Agent installation blockers"]')).not.toBeNull()
+    expect(container.textContent).toContain('The data folder is not writable.')
+    expect(continueButton()?.disabled).toBe(true)
   })
 
   it('prefers OpenCode when Claude is missing and OpenCode is installed', async () => {
@@ -648,7 +668,7 @@ describe('AgentStep', () => {
       environmentCheck: environment(false)
     })
 
-    await renderStep(vi.fn(), onContinue)
+    await renderStep(onContinue)
     await installFromManagedSource('OpenCode')
 
     expect(installOpencode).toHaveBeenCalledWith('managed')

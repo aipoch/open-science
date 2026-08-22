@@ -67,26 +67,21 @@ Open Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물
 
 ### 2. 최초 설정 완료
 
-처음 실행할 때 다섯 단계의 안내가 제공됩니다.
+처음 실행할 때 두 단계의 안내가 제공됩니다.
 
-1. **환경**에서 호환성, 앱 저장소, 안전한 자격 증명 저장소, 네트워크 액세스를 확인합니다.
-2. **에이전트 런타임**에서 Claude Code, OpenCode 또는 Codex를 선택하고 준비합니다. 앱 관리 런타임은 Node.js, npm 또는 관리자 암호 없이 설치할 수 있습니다.
-3. **모델 제공업체**에서 사용할 모델에 연결하고 테스트합니다. 기본 제공업체, 사용자 지정 게이트웨이, 기존 Claude 또는 Codex 구독 로그인을 선택할 수 있습니다.
-4. **Notebook 런타임**에서는 앱 관리 Python 및 R 환경을 선택적으로 준비하거나, 감지 또는 수동 등록한 각 언어 인터프리터를 활성화합니다.
-5. **데이터 위치**에서 대용량 아티팩트, Notebook, 업로드, 환경의 저장 위치를 선택합니다.
+1. **에이전트 런타임**에서 호스트를 확인하고 Claude Code, OpenCode 또는 Codex를 선택해 준비합니다. 앱 관리 런타임은 Node.js, npm 또는 관리자 암호 없이 설치할 수 있습니다.
+2. **모델 제공업체**에서 사용할 모델에 연결하고 테스트합니다. 기본 제공업체, 사용자 지정 게이트웨이, 기존 Claude 또는 Codex 구독 로그인을 선택할 수 있습니다.
 
 <table>
   <tr>
-    <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="Open Science의 자동 최초 실행 환경 검사"></td>
-    <td width="50%"><img src="../images/readme/onboarding-model-provider.jpg" alt="Open Science 최초 실행 모델 제공업체 구성"></td>
+    <td width="100%"><img src="../images/readme/onboarding-model-provider.jpg" alt="Open Science 최초 실행 모델 제공업체 구성"></td>
   </tr>
   <tr>
-    <td align="center"><sub>호스트 호환성, 저장소 및 네트워크 검사</sub></td>
     <td align="center"><sub>제공업체, API Key, 엔드포인트 및 모델 검증</sub></td>
   </tr>
 </table>
 
-Notebook 실행은 선택 사항입니다. 필수 환경 및 에이전트 런타임 검사를 모두 통과해야 `Continue`가 활성화되며, 모델 연결을 통과해야 설정을 완료할 수 있습니다. Notebook과 데이터 위치 설정은 기본값을 유지하고 나중에 설정에서 변경할 수 있습니다.
+Open Science는 관리형 Python 환경을 백그라운드에서 준비하지만 Python은 최초 설정 완료 조건이 아닙니다. Notebook 실행은 필요할 때 해당 환경이 준비될 때까지 기다립니다. Windows 설치 프로그램의 실제 최초 실행에서는 대용량 데이터 기본 폴더가 앱 폴더 내부가 아닌 설치 드라이브를 따릅니다. R, 사용자 지정 인터프리터, 이후 데이터 위치 변경은 설정에서 관리하며 저장소 변경에는 안전한 마이그레이션과 재시작이 적용됩니다.
 
 ### 3. 연구 프로젝트 시작
 
@@ -330,7 +325,7 @@ Open Science는 연구 실행과 기록 보관 도구이며 일반 채팅 래퍼
 
 ### Open Science를 처음 열면 무엇을 해야 하나요?
 
-답변: **Environment**, **Agent runtime**, **Model provider**, **Notebook runtime**, **Data location**의 다섯 설정 단계를 완료하세요. `Action needed`로 표시된 필수 항목을 해결하고, 선택한 에이전트의 설치 또는 복구가 제안되면 수행한 다음 모델 연결을 테스트하세요. Notebook 설정과 사용자 지정 데이터 위치는 선택 사항입니다.
+답변: **에이전트 런타임**과 **모델 제공업체** 두 단계를 완료하세요. 에이전트 화면에 표시된 필수 호스트 항목을 해결하고, 필요한 경우 선택한 에이전트를 설치하거나 복구한 다음 모델 연결을 테스트하세요. Python은 백그라운드에서 준비되며 런타임과 저장소 사용자 지정은 설정에서 관리합니다.
 
 ### API Key란 무엇이며 어디에서 받나요?
 

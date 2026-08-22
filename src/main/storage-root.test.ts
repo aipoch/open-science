@@ -22,6 +22,7 @@ const {
   dataFolderName,
   dataRootForParent,
   dataRootForPicked,
+  formerDefaultDataParent,
   initDataRoot,
   isPathInsideOrEqual,
   resolveConfigRoot,
@@ -159,6 +160,24 @@ describe('computeDefaultDataRoot', () => {
   it('defaults to <home>/OpenScience for a fresh config root', () => {
     // resolveConfigRoot() resolves under homeDir but nothing has been created there.
     expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience'))
+  })
+
+  it('falls back to home when a packaged Windows test host has no resourcesPath', () => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
+    const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+    try {
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+      Object.defineProperty(process, 'resourcesPath', { value: undefined, configurable: true })
+
+      expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience'))
+    } finally {
+      Object.defineProperty(process, 'platform', platformDescriptor)
+      if (resourcesPathDescriptor) {
+        Object.defineProperty(process, 'resourcesPath', resourcesPathDescriptor)
+      } else {
+        Reflect.deleteProperty(process, 'resourcesPath')
+      }
+    }
   })
 
   it('keeps packaged E2E config and data under the disposable certification root', () => {
@@ -356,6 +375,7 @@ describe('resolveStorageRoot', () => {
     vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', '/tmp/open-science-certification/storage')
 
     expect(resolveStorageRoot()).toBe(normalize('/tmp/open-science-certification/storage'))
+    expect(formerDefaultDataParent()).toBe(normalize('/tmp/open-science-certification/storage'))
     expect(appMock.getPath).not.toHaveBeenCalled()
   })
 

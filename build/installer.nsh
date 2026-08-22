@@ -2,6 +2,14 @@
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-runtime-cache-uninstall.ps1"'
 !macroend
 
+# Runtime code uses this installation-only marker to distinguish NSIS installs from portable ZIPs.
+# It carries no user path or data and is safely recreated by upgrades/reinstalls.
+!macro customInstall
+  FileOpen $R0 "$INSTDIR\resources\.open-science-nsis-install" w
+  FileWrite $R0 "1"
+  FileClose $R0
+!macroend
+
 !ifndef BUILD_UNINSTALLER
 !define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort
 

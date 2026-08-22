@@ -67,26 +67,21 @@ Open Science 支援機器學習、統計學、生命科學、化學、材料科�
 
 ### 2. 完成首次設定
 
-首次啟動包含五個引導步驟：
+首次啟動包含兩個引導步驟：
 
-1. **環境**檢查相容性、應用程式儲存空間、安全憑證儲存及網路存取。
-2. **智能體執行環境**選擇並準備 Claude Code、OpenCode 或 Codex。安裝由應用程式管理的執行環境不需要 Node.js、npm 或管理員密碼。
-3. **模型服務商**連線並測試你要使用的模型。可以選擇內建服務商、自訂閘道，或現有 Claude、Codex 訂閱登入。
-4. **Notebook 執行環境**可選擇準備由應用程式管理的 Python 與 R 環境，或啟用偵測到及手動註冊的兩種語言直譯器。
-5. **資料位置**選擇大型產物、Notebook、上傳內容與環境的儲存位置。
+1. **智能體執行環境**先檢查主機，再選擇並準備 Claude Code、OpenCode 或 Codex。安裝由應用程式管理的執行環境不需要 Node.js、npm 或管理員密碼。
+2. **模型服務商**連線並測試你要使用的模型。可以選擇內建服務商、自訂閘道，或現有 Claude、Codex 訂閱登入。
 
 <table>
   <tr>
-    <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="Open Science 自動進行首次啟動環境檢查"></td>
-    <td width="50%"><img src="../images/readme/onboarding-model-provider.jpg" alt="Open Science 首次啟動模型服務商設定"></td>
+    <td width="100%"><img src="../images/readme/onboarding-model-provider.jpg" alt="Open Science 首次啟動模型服務商設定"></td>
   </tr>
   <tr>
-    <td align="center"><sub>主機相容性、儲存空間及網路檢查</sub></td>
     <td align="center"><sub>服務商、API Key、端點與模型驗證</sub></td>
   </tr>
 </table>
 
-Notebook 執行為選用功能。所有必要的環境與智能體執行環境檢查通過後，`Continue` 才會啟用；模型連線必須通過，設定才能完成。Notebook 和資料位置可保留預設值，之後再到設定中變更。
+Open Science 會在背景準備由應用程式管理的 Python 環境，但 Python 不是完成首次設定的必要條件。真正執行 Notebook 時會等待該環境就緒。Windows 安裝版真正首次執行時，大型資料的預設資料夾會跟隨軟體安裝磁碟，但不會放進軟體目錄。R、自訂直譯器和後續資料位置調整保留在設定中；從設定變更 Storage 仍會安全移轉並重新啟動。
 
 ### 3. 開始研究專案
 
@@ -330,7 +325,7 @@ Open Science 是研究執行與記錄保存工具，而不是一般聊天包裝�
 
 ### 第一次開啟 Open Science 時該做什麼？
 
-答：完成五個設定步驟：**Environment**、**Agent runtime**、**Model provider**、**Notebook runtime** 和 **Data location**。修正標示為 `Action needed` 的必要項目；若提供選項，安裝或修復所選智能體；然後測試模型連線。Notebook 設定和自訂資料位置皆為選用。
+答：完成**智能體執行環境**和**模型服務商**兩步。處理智能體頁面顯示的必要主機項目；若提供選項，安裝或修復所選智能體；然後測試模型連線。Python 會在背景準備，執行環境和 Storage 自訂保留在設定中。
 
 ### 什麼是 API Key？要從哪裡取得？
 

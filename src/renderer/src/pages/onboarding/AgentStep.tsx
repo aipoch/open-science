@@ -6,7 +6,6 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { AgentPanel } from '../settings/AgentPanel'
 
 type AgentStepProps = {
-  onBack: () => void
   onContinue: () => void
 }
 
@@ -26,7 +25,7 @@ const useEnvironmentReady = (): boolean => {
 
 // The first-run step reuses the same runtime cards and repair/install behavior as Settings. Only the
 // surrounding Back/Continue gate is onboarding-specific.
-const AgentStep = ({ onBack, onContinue }: AgentStepProps): React.JSX.Element => {
+const AgentStep = ({ onContinue }: AgentStepProps): React.JSX.Element => {
   const { t } = useTranslation()
   const environmentReady = useEnvironmentReady()
 
@@ -47,14 +46,9 @@ const AgentStep = ({ onBack, onContinue }: AgentStepProps): React.JSX.Element =>
             ? t('All required environment checks passed.')
             : t('Complete every required item above to continue.')}
         </p>
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" onClick={onBack}>
-            {t('Back', { context: 'step' })}
-          </Button>
-          <Button type="button" onClick={onContinue} disabled={!environmentReady} className="px-4">
-            {t('Continue')}
-          </Button>
-        </div>
+        <Button type="button" onClick={onContinue} disabled={!environmentReady} className="px-4">
+          {t('Continue')}
+        </Button>
       </CardFooter>
     </>
   )

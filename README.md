@@ -66,26 +66,21 @@ Review the assets and verification information published on the release page. Se
 
 ### 2. Complete first-time setup
 
-The first launch has five guided steps:
+The first launch has two guided steps:
 
-1. **Environment** checks compatibility, app storage, secure credential storage, and network access.
-2. **Agent runtime** selects and prepares Claude Code, OpenCode, or Codex. App-managed runtimes can be installed without requiring Node.js, npm, or an administrator password.
-3. **Model provider** connects and tests the model you want to use. Choose a built-in provider, a custom gateway, or an existing Claude or Codex subscription login.
-4. **Notebook runtime** optionally prepares app-managed Python and R environments or enables detected and manually registered interpreters for either language.
-5. **Data location** chooses where large artifacts, notebooks, uploads, and environments are stored.
+1. **Agent runtime** checks the host, then selects and prepares Claude Code, OpenCode, or Codex. App-managed runtimes can be installed without Node.js, npm, or an administrator password.
+2. **Model provider** connects and tests the model you want to use. Choose a built-in provider, a custom gateway, or an existing Claude or Codex subscription login.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/readme/onboarding-environment.jpg" alt="Automatic first-run environment checks in Open Science"></td>
-    <td width="50%"><img src="docs/images/readme/onboarding-model-provider.jpg" alt="First-run model provider configuration in Open Science"></td>
+    <td width="100%"><img src="docs/images/readme/onboarding-model-provider.jpg" alt="First-run model provider configuration in Open Science"></td>
   </tr>
   <tr>
-    <td align="center"><sub>Host compatibility, storage, and network checks</sub></td>
     <td align="center"><sub>Provider, API Key, endpoint, and model validation</sub></td>
   </tr>
 </table>
 
-Notebook execution is optional. Every required environment and agent-runtime check must pass before `Continue` becomes available, and the model connection must pass before setup finishes. Notebook and data-location settings can keep their defaults and be changed later in Settings.
+Open Science prepares the managed Python environment in the background, but Python is not required to finish setup. Notebook execution waits for that environment when needed. On a true first run of the Windows installer, the default large-data folder follows the installation drive without being placed inside the app directory. R, custom interpreters, and later data-location changes remain in Settings; Storage changes made there still use the safe migration-and-restart flow.
 
 ### 3. Start a research project
 
@@ -341,7 +336,7 @@ Open Science is a research execution and record-keeping tool, not a generic chat
 
 ### What should I do the first time I open Open Science?
 
-A: Complete the five setup steps: **Environment**, **Agent runtime**, **Model provider**, **Notebook runtime**, and **Data location**. Fix required rows marked `Action needed`, install or repair the selected agent if offered, and test the model connection. Notebook setup and a custom data location are optional.
+A: Complete **Agent runtime** and **Model provider**. Fix any required host row shown with the agent, install or repair the selected agent if offered, and test the model connection. Python prepares in the background; runtime and Storage customization stay in Settings.
 
 ### What is an API Key, and where do I get one?
 

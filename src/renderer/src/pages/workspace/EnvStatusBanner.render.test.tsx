@@ -38,7 +38,7 @@ describe('EnvStatusBanner', () => {
     )
   })
 
-  it('shows the shared speed/ETA line during an upgrade pack download', () => {
+  it('keeps an upgrade download to one quiet status without transfer telemetry', () => {
     act(() =>
       root.render(
         <EnvStatusBanner
@@ -60,10 +60,11 @@ describe('EnvStatusBanner', () => {
         />
       )
     )
-    // Speed is surfaced (formatProgressLine renders "…/s"), not just a bare percent.
-    expect(container.querySelector('[data-testid="env-status-banner"]')?.textContent).toContain(
-      '/s'
-    )
+    const banner = container.querySelector('[data-testid="env-status-banner"]')
+    expect(banner?.textContent).toContain('Updating the notebook environment…')
+    expect(banner?.textContent).not.toContain('/s')
+    expect(banner?.textContent).not.toContain('%')
+    expect(banner?.querySelector('[style*="scaleX"]')).toBeNull()
   })
 
   it('surfaces a reconnect during an upgrade download instead of a frozen percent', () => {
@@ -109,6 +110,8 @@ describe('EnvStatusBanner', () => {
       '[data-testid="env-status-banner-retry"]'
     ) as HTMLButtonElement
     expect(button).not.toBeNull()
+    expect(button.className).toContain('h-8')
+    expect(button.className).not.toContain('min-h-11')
     act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(retried).toBe(1)
   })
@@ -142,7 +145,7 @@ describe('EnvStatusBanner', () => {
     expect(banner.textContent).toContain('Environment update failed')
   })
 
-  it('is hidden for a first-run python preparation (that is the onboarding/gate surface, not a banner)', () => {
+  it('shows first-run Python preparation without a percentage or progress card', () => {
     act(() =>
       root.render(
         <EnvStatusBanner
@@ -150,7 +153,26 @@ describe('EnvStatusBanner', () => {
         />
       )
     )
-    expect(container.querySelector('[data-testid="env-status-banner"]')).toBeNull()
+    const banner = container.querySelector<HTMLElement>('[data-testid="env-status-banner"]')
+    expect(banner?.textContent).toBe('Preparing Python environment…')
+    expect(banner?.getAttribute('role')).toBe('status')
+    expect(banner?.className).not.toContain('shadow-dialog')
+    expect(container.querySelector('[data-testid="env-status-activity"]')).not.toBeNull()
+  })
+
+  it('renders preparation inline when onboarding owns the status placement', () => {
+    act(() =>
+      root.render(
+        <EnvStatusBanner
+          placement="inline"
+          ui={{ kind: 'preparing', scope: 'python', phase: '', message: '', progress: 0.2 }}
+        />
+      )
+    )
+    const banner = container.querySelector<HTMLElement>('[data-testid="env-status-banner"]')
+    expect(banner?.dataset.placement).toBe('inline')
+    expect(banner?.className).not.toContain('fixed')
+    expect(banner?.className).toContain('border-t')
   })
 
   it('is hidden when ready', () => {

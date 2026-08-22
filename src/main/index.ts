@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Only lightweight, Electron-free bootstrap modules are imported statically here. The MCP server
@@ -243,7 +245,14 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc },
         { buildStartupDiagnostics },
         { getProjectDbClient },
-        { resolveStorageRoot },
+        {
+          dataFolderName,
+          dataRootForParent,
+          defaultDataParent,
+          formerDefaultDataParent,
+          resolveStorageRoot
+        },
+        { NSIS_INSTALL_MARKER, prepareInitialDataRoot },
         { SettingsDocumentStore },
         { SettingsRepository },
         { parseWebModeOptions }
@@ -260,6 +269,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./database/startup-diagnostics'),
         import('./projects/prisma-client'),
         import('./storage-root'),
+        import('./initial-data-root'),
         import('./settings/document-store'),
         import('./settings/repository'),
         import('./web-service/options')
@@ -275,9 +285,31 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // Create the settings document owner before any native surface. The startup locale repository
       // and the later application Settings repository share this store, so every settings.json
       // mutation uses one serialization queue and one atomic-write implementation.
-      const settingsStore = new SettingsDocumentStore(resolveStorageRoot())
+      const configRoot = resolveStorageRoot()
+      const hadSettingsDocument = existsSync(join(configRoot, 'settings.json'))
+      const settingsStore = new SettingsDocumentStore(configRoot)
       const startupSettingsRepository = new SettingsRepository(settingsStore)
-      const startupSettings = await startupSettingsRepository.getSettings()
+      let startupSettings = await startupSettingsRepository.getSettings()
+      // The NSIS marker distinguishes an installed build from the portable ZIP. Resolve the default
+      // once, before database/application owners capture the data root, so a fresh cross-drive install
+      // can use that drive without a relaunch. Existing and legacy users retain their prior root.
+      if (
+        process.platform === 'win32' &&
+        app.isPackaged &&
+        typeof process.resourcesPath === 'string' &&
+        existsSync(join(process.resourcesPath, NSIS_INSTALL_MARKER))
+      ) {
+        const preparedDataRoot = await prepareInitialDataRoot({
+          configRoot,
+          dataFolderName: dataFolderName(),
+          hadSettingsDocument,
+          homeDataRoot: dataRootForParent(formerDefaultDataParent()),
+          preferredFreshDataRoot: dataRootForParent(defaultDataParent()),
+          settingsDataRoot: startupSettings.dataRoot,
+          persistDataRoot: (dataRoot) => startupSettingsRepository.setDataRoot({ dataRoot })
+        })
+        if (preparedDataRoot) startupSettings = { ...startupSettings, dataRoot: preparedDataRoot }
+      }
       const localeOwner = new LocalePreferenceOwner(
         app.getPreferredSystemLanguages(),
         startupSettingsRepository,

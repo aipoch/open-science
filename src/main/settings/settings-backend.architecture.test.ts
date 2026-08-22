@@ -763,9 +763,8 @@ describe('Settings backend ownership architecture', () => {
     expect(computeIpc).toContain('legacyComputeGrants.addComputeGrant(grant)')
     const mainIpc = readSource(resolve(projectRoot, 'src/main/ipc.ts'))
     const mainIndex = readSource(resolve(projectRoot, 'src/main/index.ts'))
-    expect(mainIndex).toContain(
-      'const settingsStore = new SettingsDocumentStore(resolveStorageRoot())'
-    )
+    expect(mainIndex).toContain('const configRoot = resolveStorageRoot()')
+    expect(mainIndex).toContain('const settingsStore = new SettingsDocumentStore(configRoot)')
     expect(mainIndex).toContain(
       'const startupSettingsRepository = new SettingsRepository(settingsStore)'
     )

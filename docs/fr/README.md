@@ -67,26 +67,21 @@ Consultez les fichiers et les informations de vérification publiés sur la page
 
 ### 2. Terminer la configuration initiale
 
-Le premier lancement comporte cinq étapes guidées :
+Le premier lancement comporte deux étapes guidées :
 
-1. **Environnement** vérifie la compatibilité, le stockage de l'application, le stockage sécurisé des identifiants et l'accès réseau.
-2. **Environnement d'exécution de l'agent** sélectionne et prépare Claude Code, OpenCode ou Codex. Les environnements d'exécution gérés par l'application peuvent être installés sans Node.js, npm ni mot de passe administrateur.
-3. **Fournisseur de modèle** connecte et teste le modèle que vous souhaitez utiliser. Choisissez un fournisseur intégré, une passerelle personnalisée, ou une connexion par abonnement Claude ou Codex existante.
-4. **Environnement d'exécution Notebook** prépare éventuellement des environnements Python et R gérés par l'application, ou active des interpréteurs détectés et enregistrés manuellement pour l'une ou l'autre langue.
-5. **Emplacement des données** choisit où sont stockés les artefacts volumineux, les Notebooks, les téléversements et les environnements.
+1. **Environnement d'exécution de l'agent** vérifie l'hôte, puis sélectionne et prépare Claude Code, OpenCode ou Codex. Les environnements gérés par l'application peuvent être installés sans Node.js, npm ni mot de passe administrateur.
+2. **Fournisseur de modèle** connecte et teste le modèle que vous souhaitez utiliser. Choisissez un fournisseur intégré, une passerelle personnalisée, ou une connexion par abonnement Claude ou Codex existante.
 
 <table>
   <tr>
-    <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="Vérifications automatiques de l'environnement au premier lancement dans Open Science"></td>
-    <td width="50%"><img src="../images/readme/onboarding-model-provider.jpg" alt="Configuration du fournisseur de modèle au premier lancement dans Open Science"></td>
+    <td width="100%"><img src="../images/readme/onboarding-model-provider.jpg" alt="Configuration du fournisseur de modèle au premier lancement dans Open Science"></td>
   </tr>
   <tr>
-    <td align="center"><sub>Vérifications de compatibilité hôte, de stockage et de réseau</sub></td>
     <td align="center"><sub>Validation du fournisseur, de la clé API, du point de terminaison et du modèle</sub></td>
   </tr>
 </table>
 
-L'exécution Notebook est optionnelle. Toutes les vérifications d'environnement et de l'environnement d'exécution de l'agent requises doivent réussir avant que `Continue` ne devienne disponible, et la connexion au modèle doit réussir avant la fin de la configuration. Les paramètres Notebook et d'emplacement des données peuvent conserver leurs valeurs par défaut et être modifiés plus tard dans Paramètres.
+Open Science prépare l'environnement Python géré en arrière-plan, mais Python n'est pas requis pour terminer la configuration. L'exécution Notebook attend cet environnement si nécessaire. Lors du tout premier lancement de l'installateur Windows, le dossier de données volumineuses suit le disque d'installation sans être placé dans le dossier de l'application. R, les interpréteurs personnalisés et les changements ultérieurs d'emplacement restent dans Paramètres ; un changement de stockage conserve la migration sûre avec redémarrage.
 
 ### 3. Démarrer un projet de recherche
 
@@ -342,7 +337,7 @@ Open Science est un outil d'exécution de recherche et de tenue de registres, pa
 
 ### Que dois-je faire la première fois que j'ouvre Open Science ?
 
-R : Terminez les cinq étapes de configuration : **Environment**, **Agent runtime**, **Model provider**, **Notebook runtime** et **Data location**. Corrigez les lignes requises marquées `Action needed`, installez ou réparez l'agent sélectionné s'il est proposé, et testez la connexion au modèle. La configuration Notebook et un emplacement de données personnalisé sont optionnels.
+R : Terminez **l'environnement d'exécution de l'agent** et le **fournisseur de modèle**. Corrigez les exigences de l'hôte affichées avec l'agent, installez ou réparez l'agent sélectionné si nécessaire, puis testez la connexion au modèle. Python se prépare en arrière-plan ; les personnalisations d'environnement et de stockage restent dans Paramètres.
 
 ### Qu'est-ce qu'une clé API, et où l'obtenir ?
 

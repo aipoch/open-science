@@ -60,6 +60,14 @@ describe('packaging config', () => {
 describe('NSIS installer include (build/installer.nsh)', () => {
   const include = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8')
 
+  it('stamps installed builds so runtime defaults never mistake the portable ZIP for NSIS', () => {
+    expect(include).toMatch(/!macro customInstall\b/)
+    expect(include).toContain('$INSTDIR\\resources\\.open-science-nsis-install')
+    expect(readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')).not.toContain(
+      '.open-science-nsis-install'
+    )
+  })
+
   it('overrides the failed-uninstall handling for both registry passes', () => {
     // electron-builder's handleUninstallResult turns ANY non-zero old-uninstaller exit code into
     // a fatal "Failed to uninstall old application files" dialog. The assisted installer
@@ -419,5 +427,14 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(installerNsi.indexOf('!insertmacro customInit')).toBeLessThan(
       installerNsi.indexOf('Section "install"')
     )
+  })
+
+  it('the installed electron-builder still inserts customInstall after application files', () => {
+    const installSection = readFileSync(
+      join(appBuilderLibRoot, 'templates/nsis/installSection.nsh'),
+      'utf8'
+    )
+    expect(installSection).toContain('!ifmacrodef customInstall')
+    expect(installSection).toContain('!insertmacro customInstall')
   })
 })
