@@ -1,3 +1,6 @@
+import { z } from 'zod'
+
+import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 import type { ArtifactFile } from './artifacts'
 import type { NotebookRuntimeBindings } from './notebook-runtime'
 import type { OptionalProjectIdScope, ProjectIdScope } from './project-scope'
@@ -34,8 +37,43 @@ export type NotebookRunProvenanceContext = {
 }
 
 // Languages a notebook kernel can run in this phase; each runs as a persistent exec-loop process
-// (no ipykernel/IRkernel involved).
-export type NotebookLanguage = 'python' | 'r'
+// (no ipykernel/IRkernel involved). Renderer IPC must parse this at runtime — TypeScript unions
+// do not reject a compromised or stale client.
+export const NOTEBOOK_LANGUAGES = ['python', 'r'] as const
+export type NotebookLanguage = (typeof NOTEBOOK_LANGUAGES)[number]
+export const notebookLanguageSchema = z.enum(NOTEBOOK_LANGUAGES)
+
+export const parseNotebookLanguage = (value: unknown): NotebookLanguage => {
+  const parsed = notebookLanguageSchema.safeParse(value)
+  if (!parsed.success) {
+    throw new Error('Notebook language must be python or r.')
+  }
+  return parsed.data
+}
+
+export const parseOptionalNotebookLanguage = (value: unknown): NotebookLanguage | undefined => {
+  if (value === undefined) return undefined
+  return parseNotebookLanguage(value)
+}
+
+const languageAndOptionalOperationId = validationCodec(
+  z.union([z.tuple([notebookLanguageSchema]), z.tuple([notebookLanguageSchema, z.string()])])
+)
+
+export const notebookEnvironmentApplicationCommandContracts = Object.freeze({
+  provision: defineApplicationCommandContract(
+    languageAndOptionalOperationId,
+    validationCodec(z.undefined())
+  ),
+  repair: defineApplicationCommandContract(
+    languageAndOptionalOperationId,
+    validationCodec(z.undefined())
+  ),
+  cancel: defineApplicationCommandContract(
+    validationCodec(z.union([z.tuple([]), z.tuple([notebookLanguageSchema])])),
+    validationCodec(z.undefined())
+  )
+})
 
 // Identifies which kernel produced a run: python/r are analysis cells, repl/bash are
 // control-plane/shell.
