@@ -100,18 +100,34 @@ describe('AcpNativeFollowUpWorkflow', () => {
   })
 
   it('injects prepared attachment and skill blocks on advertised steering', async () => {
-    const prepareFollowUp = vi.fn(async () => [
-      {
-        type: 'text' as const,
-        text: 'Use the following skill(s) for this task: Research.\n\nsee file'
-      },
-      {
-        type: 'resource_link' as const,
-        uri: 'file:///notes.md',
-        name: 'notes.md',
-        mimeType: 'text/markdown'
-      }
-    ])
+    const prepareFollowUp = vi.fn(async () => ({
+      prompt: [
+        {
+          type: 'text' as const,
+          text: 'Use the following skill(s) for this task: Research.\n\nsee file'
+        },
+        {
+          type: 'resource_link' as const,
+          uri: 'file:///notes.md',
+          name: 'notes.md',
+          mimeType: 'text/markdown'
+        }
+      ],
+      uploads: [
+        {
+          id: 'upload-1',
+          sessionId: 'app-1',
+          name: 'notes.md',
+          originalName: 'notes.md',
+          path: '/managed/notes.md',
+          mimeType: 'text/markdown',
+          size: 12,
+          versionId: 'version-1',
+          versionNumber: 1,
+          checksum: 'abc'
+        }
+      ]
+    }))
     const { request, workflow } = createWorkflow({ prepareFollowUp })
     await expect(
       workflow.steerFollowUp({
@@ -157,8 +173,46 @@ describe('AcpNativeFollowUpWorkflow', () => {
     expect(published[0]).toMatchObject({
       sessionId: 'app-1',
       text: 'see file',
-      uploads: [expect.objectContaining({ id: 'upload-1', name: 'notes.md' })],
+      uploads: [
+        expect.objectContaining({
+          id: 'upload-1',
+          name: 'notes.md',
+          versionId: 'version-1',
+          sha256: 'abc'
+        })
+      ],
       parts: [{ type: 'text', text: 'see file' }]
+    })
+    expect(published[0]?.uploads?.[0]).not.toHaveProperty('path')
+  })
+
+  it('does not persist unfinalized attachments that session save cannot recover', async () => {
+    const { workflow } = createWorkflow()
+    await expect(
+      workflow.steerFollowUp({
+        sessionId: 'app-1',
+        text: 'see file',
+        attachments: [
+          {
+            id: 'upload-pending',
+            sessionId: '.pending',
+            name: 'notes.md',
+            originalName: 'notes.md',
+            path: '/tmp/notes.md',
+            mimeType: 'text/markdown',
+            size: 12
+          }
+        ]
+      })
+    ).resolves.toEqual({
+      injected: true,
+      transport: 'acp-steering',
+      messageId: 'message-steer-1'
+    })
+    expect(published[0]).toEqual({
+      sessionId: 'app-1',
+      messageId: 'message-steer-1',
+      text: 'see file'
     })
   })
 

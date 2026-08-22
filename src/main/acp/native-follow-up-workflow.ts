@@ -10,7 +10,11 @@ import type {
 } from '../../shared/acp'
 import type { MessagePart } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
-import { toPersistedUploadedAttachment, type PersistedUploadedAttachment } from '../../shared/uploads'
+import {
+  toPersistedUploadedAttachment,
+  type PersistedUploadedAttachment,
+  type UploadedAttachment
+} from '../../shared/uploads'
 import type { AcpOpenCodeUsageApi } from './backend-generation-owner'
 import type { AcpConnectionCapabilities } from './connection-resource-owner'
 import {
@@ -38,6 +42,11 @@ type NativeFollowUpUserMessage = Readonly<{
   parts?: readonly MessagePart[]
 }>
 
+type NativeFollowUpPreparedContent = Readonly<{
+  prompt: readonly ContentBlock[]
+  uploads?: readonly UploadedAttachment[]
+}>
+
 type NativeFollowUpWorkflowOptions = Readonly<{
   connection: () => ClientConnection | undefined
   capabilities: () => AcpConnectionCapabilities
@@ -47,10 +56,17 @@ type NativeFollowUpWorkflowOptions = Readonly<{
   hasLivePrompt: (appSessionId: string) => boolean
   sessionCwd: (appSessionId: string) => string | undefined
   publishUserMessage: (input: NativeFollowUpUserMessage) => void
-  prepareFollowUp?: (request: AcpSteerFollowUpRequest) => Promise<readonly ContentBlock[]>
+  prepareFollowUp?: (request: AcpSteerFollowUpRequest) => Promise<NativeFollowUpPreparedContent>
   createMessageId?: () => string
   fetchImpl?: typeof fetch
 }>
+
+const persistableUploads = (
+  attachments: readonly UploadedAttachment[]
+): PersistedUploadedAttachment[] =>
+  attachments
+    .filter((attachment) => Boolean(attachment.versionId))
+    .map(toPersistedUploadedAttachment)
 
 const log = createLogger('acp')
 
@@ -99,10 +115,15 @@ class AcpNativeFollowUpWorkflow {
     }
 
     let prompt: readonly ContentBlock[]
+    let preparedUploads: readonly UploadedAttachment[] | undefined
     try {
-      prompt = this.options.prepareFollowUp
-        ? await this.options.prepareFollowUp(request)
-        : steeringPromptFromText(text)
+      if (this.options.prepareFollowUp) {
+        const prepared = await this.options.prepareFollowUp(request)
+        prompt = prepared.prompt
+        preparedUploads = prepared.uploads
+      } else {
+        prompt = steeringPromptFromText(text)
+      }
     } catch {
       log.info('native follow-up refused', {
         sessionId: request.sessionId,
@@ -180,7 +201,7 @@ class AcpNativeFollowUpWorkflow {
     }
 
     const messageId = this.options.createMessageId?.() ?? `message-${randomUUID()}`
-    const uploads = attachments.map(toPersistedUploadedAttachment)
+    const uploads = persistableUploads(preparedUploads ?? attachments)
     const parts = request.parts ?? []
     this.options.publishUserMessage({
       sessionId: request.sessionId,
@@ -232,4 +253,8 @@ class AcpNativeFollowUpWorkflow {
 }
 
 export { AcpNativeFollowUpWorkflow }
-export type { NativeFollowUpUserMessage, NativeFollowUpWorkflowOptions }
+export type {
+  NativeFollowUpPreparedContent,
+  NativeFollowUpUserMessage,
+  NativeFollowUpWorkflowOptions
+}
