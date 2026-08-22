@@ -857,6 +857,67 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
   })
 
+  it('drains after native follow-up refusal when the run finished during inject', async () => {
+    let currentSession = session()
+    let notifySessionChanged: (() => void) | undefined
+    let finishSteer!: (result: { injected: false; reason: 'not-advertised' }) => void
+    const sendMessage = vi.fn(async () => ({ sessionId: 'session-a', messageId: 'message-sent' }))
+    const steerFollowUp = vi.fn(
+      () =>
+        new Promise<{ injected: false; reason: 'not-advertised' }>((resolve) => {
+          finishSteer = resolve
+        })
+    )
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      subscribeSessionChanges: (listener) => {
+        notifySessionChanged = listener
+        return () => {
+          notifySessionChanged = undefined
+        }
+      },
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage,
+        steerFollowUp
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(admission('late drain')))
+
+    let sendNow!: Promise<void>
+    act(() => {
+      sendNow = hook.result.current.actions.sendNow(hook.result.current.items[0].id)
+    })
+    await vi.waitFor(() => expect(steerFollowUp).toHaveBeenCalledOnce())
+    expect(hook.result.current.items[0]).toMatchObject({ text: 'late drain', phase: 'sending' })
+
+    currentSession = session('idle')
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession,
+        subscribeSessionChanges: input.subscribeSessionChanges,
+        runtime: input.runtime
+      })
+    )
+    act(() => notifySessionChanged?.())
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.items[0].phase).toBe('sending')
+
+    await act(async () => {
+      finishSteer({ injected: false, reason: 'not-advertised' })
+      await sendNow
+    })
+
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+  })
+
   it('injects a queued item with attachments through native follow-up', async () => {
     const attachment = {
       id: 'upload-1',

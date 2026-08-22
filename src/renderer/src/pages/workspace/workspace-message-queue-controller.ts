@@ -688,6 +688,15 @@ const useWorkspaceMessageQueueController = (
             // Native follow-up is fail-closed. Keep the current run and send after it finishes.
           }
           replaceItem(queue.sessionId, itemId, { phase: 'queued', error: undefined })
+          if (owner.dispatches.get(queue.sessionId) === displacedDispatch) {
+            owner.dispatches.delete(queue.sessionId)
+          }
+          const latest = owner.resolveOptions(optionsRef.current)
+          const latestSession = latest.getSession(queue.sessionId)
+          if (!latestSession || queueSessionIsSendable(latest, latestSession)) {
+            drainQueues()
+            return
+          }
           emit('Queued message will send after the current run finishes.')
           return
         }
