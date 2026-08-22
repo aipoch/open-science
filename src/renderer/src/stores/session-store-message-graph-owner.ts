@@ -141,24 +141,33 @@ export const createSessionMessageGraphOwner = <
     createdAt,
     attribution,
     responseToMessageId,
-    relayedFrom
+    relayedFrom,
+    uploads,
+    parts
   }) => {
     const trimmedContent = content.trim()
+    const persistedUploads = (uploads ?? []).map(createPersistedUpload)
     const session = get().sessions.find((candidate) => candidate.id === sessionId)
-    if (!session || !trimmedContent) return undefined
+    if (
+      !session ||
+      (!trimmedContent && persistedUploads.length === 0 && !(parts && parts.length > 0))
+    ) {
+      return undefined
+    }
     if (session.messages.some((message) => message.id === messageId)) {
       return { sessionId, messageId }
     }
-    const matchingFeedbackIndex = relayedFrom
-      ? -1
-      : session.messages.findIndex(
-          (message) =>
-            !message.relayedFrom &&
-            message.role === 'user' &&
-            message.content.trim() === trimmedContent &&
-            (message.id.startsWith('local-user-message-') ||
-              messageId.startsWith('local-user-message-'))
-        )
+    const matchingFeedbackIndex =
+      relayedFrom || !trimmedContent
+        ? -1
+        : session.messages.findIndex(
+            (message) =>
+              !message.relayedFrom &&
+              message.role === 'user' &&
+              message.content.trim() === trimmedContent &&
+              (message.id.startsWith('local-user-message-') ||
+                messageId.startsWith('local-user-message-'))
+          )
     const matchingFeedback = session.messages[matchingFeedbackIndex]
     const isLocalMessage = messageId.startsWith('local-user-message-')
     if (
@@ -178,7 +187,9 @@ export const createSessionMessageGraphOwner = <
       updatedAt: createdAt,
       ...(attribution ? { attribution } : {}),
       ...(relayedFrom ? { relayedFrom } : {}),
-      ...(responseToMessageId ? { responseToMessageId } : {})
+      ...(responseToMessageId ? { responseToMessageId } : {}),
+      ...(persistedUploads.length > 0 ? { uploads: persistedUploads } : {}),
+      ...(parts && parts.length > 0 ? { parts } : {})
     }
     const messages = matchingFeedback
       ? session.messages.map((existing, index) =>

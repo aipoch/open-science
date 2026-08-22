@@ -298,6 +298,40 @@ describe('session store', () => {
     ])
   })
 
+  it('persists a routed user Message with uploads when the text is empty', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'seed'
+    })
+    const routed = useSessionStore.getState().appendRoutedUserMessage({
+      sessionId: 'transport-session-1',
+      messageId: 'routed-upload-1',
+      eventId: 'routed-upload-event-1',
+      content: '   ',
+      createdAt: Date.now() + 1,
+      uploads: [
+        {
+          id: 'upload-1',
+          sessionId: 'transport-session-1',
+          name: 'notes.md',
+          originalName: 'notes.md',
+          mimeType: 'text/markdown',
+          size: 12
+        }
+      ]
+    })
+    expect(routed).toEqual({ sessionId: 'transport-session-1', messageId: 'routed-upload-1' })
+    expect(useSessionStore.getState().sessions[0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'routed-upload-1',
+          content: '',
+          uploads: [expect.objectContaining({ id: 'upload-1', name: 'notes.md' })]
+        })
+      ])
+    )
+  })
+
   it('tracks the first Agent output wait as transient session state', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

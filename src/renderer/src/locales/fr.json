@@ -3132,6 +3132,7 @@
   "Queued message moved to the composer for editing.": "Message en file d'attente déplacé vers la zone de saisie pour modification.",
   "Stopping the current run before sending the queued message.": "Arrêt de l'exécution en cours avant l'envoi du message en file d'attente.",
   "Sending the queued message into the current run.": "Envoi du message en file d'attente dans l'exécution en cours.",
+  "Queued message will send after the current run finishes.": "Le message en file d'attente sera envoyé une fois l'exécution en cours terminée.",
   "Category breakdown is unavailable for this run.": "La répartition par catégorie n’est pas disponible pour cette exécution.",
   "Category breakdown is unavailable for this snapshot.": "La répartition par catégorie n'est pas disponible pour cet instantané.",
   "One bar per terminal run; hover or focus to preview, then select to keep details visible.": "Une barre par exécution arrivée à un état final ; survolez-la ou placez le focus dessus pour afficher un aperçu, puis sélectionnez-la pour conserver les détails à l'écran.",

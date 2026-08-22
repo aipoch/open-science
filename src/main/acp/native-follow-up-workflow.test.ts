@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { AcpNativeFollowUpWorkflow } from './native-follow-up-workflow'
+import {
+  AcpNativeFollowUpWorkflow,
+  type NativeFollowUpUserMessage
+} from './native-follow-up-workflow'
 import { ACP_STEERING_METHOD } from './native-follow-up'
 
-const published: Array<{ sessionId: string; messageId: string; text: string }> = []
+const published: NativeFollowUpUserMessage[] = []
 
 const createWorkflow = (
   overrides: {
@@ -14,6 +17,7 @@ const createWorkflow = (
     providerSessionId?: string | undefined
     request?: (method: string, params: unknown) => Promise<unknown>
     fetchImpl?: typeof fetch
+    prepareFollowUp?: ConstructorParameters<typeof AcpNativeFollowUpWorkflow>[0]['prepareFollowUp']
   } = {}
 ): {
   request: (method: string, params: unknown) => Promise<unknown>
@@ -51,7 +55,8 @@ const createWorkflow = (
         published.push(input)
       },
       createMessageId: () => 'message-steer-1',
-      fetchImpl: overrides.fetchImpl
+      fetchImpl: overrides.fetchImpl,
+      ...(overrides.prepareFollowUp ? { prepareFollowUp: overrides.prepareFollowUp } : {})
     })
   }
 }
@@ -78,14 +83,83 @@ describe('AcpNativeFollowUpWorkflow', () => {
     ])
   })
 
-  it('refuses startedNewTurn and does not persist a user message', async () => {
+  it('treats startedNewTurn as injected because the adapter consumed the prompt', async () => {
     const { workflow } = createWorkflow({
       request: vi.fn(async () => ({ outcome: 'startedNewTurn' }))
     })
     await expect(
       workflow.steerFollowUp({ sessionId: 'app-1', text: 'focus on tests' })
-    ).resolves.toEqual({ injected: false, reason: 'started-new-turn' })
-    expect(published).toEqual([])
+    ).resolves.toEqual({
+      injected: true,
+      transport: 'acp-steering',
+      messageId: 'message-steer-1'
+    })
+    expect(published).toEqual([
+      { sessionId: 'app-1', messageId: 'message-steer-1', text: 'focus on tests' }
+    ])
+  })
+
+  it('injects prepared attachment and skill blocks on advertised steering', async () => {
+    const prepareFollowUp = vi.fn(async () => [
+      {
+        type: 'text' as const,
+        text: 'Use the following skill(s) for this task: Research.\n\nsee file'
+      },
+      {
+        type: 'resource_link' as const,
+        uri: 'file:///notes.md',
+        name: 'notes.md',
+        mimeType: 'text/markdown'
+      }
+    ])
+    const { request, workflow } = createWorkflow({ prepareFollowUp })
+    await expect(
+      workflow.steerFollowUp({
+        sessionId: 'app-1',
+        text: 'see file',
+        attachments: [
+          {
+            id: 'upload-1',
+            sessionId: 'app-1',
+            name: 'notes.md',
+            originalName: 'notes.md',
+            path: '/tmp/notes.md',
+            mimeType: 'text/markdown',
+            size: 12
+          }
+        ],
+        forcedSkillIds: ['research'],
+        parts: [{ type: 'text', text: 'see file' }]
+      })
+    ).resolves.toEqual({
+      injected: true,
+      transport: 'acp-steering',
+      messageId: 'message-steer-1'
+    })
+    expect(prepareFollowUp).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledWith(
+      ACP_STEERING_METHOD,
+      expect.objectContaining({
+        prompt: [
+          {
+            type: 'text',
+            text: 'Use the following skill(s) for this task: Research.\n\nsee file'
+          },
+          {
+            type: 'resource_link',
+            uri: 'file:///notes.md',
+            name: 'notes.md',
+            mimeType: 'text/markdown'
+          }
+        ]
+      })
+    )
+    expect(published[0]).toMatchObject({
+      sessionId: 'app-1',
+      text: 'see file',
+      uploads: [expect.objectContaining({ id: 'upload-1', name: 'notes.md' })],
+      parts: [{ type: 'text', text: 'see file' }]
+    })
   })
 
   it('posts OpenCode HTTP follow-up into the v1 session when ACP steering is not advertised', async () => {

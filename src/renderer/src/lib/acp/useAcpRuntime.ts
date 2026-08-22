@@ -5,6 +5,7 @@ import type {
   ElicitationResponse,
   AcpPermissionResponse,
   AcpPromptRequest,
+  AcpSteerFollowUpRequest,
   AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
@@ -90,7 +91,7 @@ const useAcpRuntime = (): {
   ) => Promise<AcpStateSnapshot | undefined>
   deleteSession: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
   cancel: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
-  steerFollowUp: (sessionId: string, text: string) => Promise<AcpSteerFollowUpResult>
+  steerFollowUp: (request: AcpSteerFollowUpRequest) => Promise<AcpSteerFollowUpResult>
   sendPrompt: (
     sessionId: string,
     text: string,
@@ -368,7 +369,7 @@ const useAcpRuntime = (): {
   )
 
   const steerFollowUp = useCallback(
-    (sessionId: string, text: string) => window.api.acp.steerFollowUp({ sessionId, text }),
+    (request: AcpSteerFollowUpRequest) => window.api.acp.steerFollowUp(request),
     []
   )
 

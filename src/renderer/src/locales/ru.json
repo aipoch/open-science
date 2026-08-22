@@ -3231,6 +3231,7 @@
   "Queued message moved to the composer for editing.": "Сообщение из очереди перемещено в редактор для редактирования.",
   "Stopping the current run before sending the queued message.": "Остановка текущего запуска перед отправкой сообщения из очереди.",
   "Sending the queued message into the current run.": "Отправка сообщения из очереди в текущий запуск.",
+  "Queued message will send after the current run finishes.": "Сообщение из очереди будет отправлено после завершения текущего запуска.",
   "Category breakdown is unavailable for this run.": "Разбивка по категориям недоступна для этого запуска.",
   "Category breakdown is unavailable for this snapshot.": "Разбивка по категориям недоступна для этого снимка.",
   "One bar per terminal run; hover or focus to preview, then select to keep details visible.": "Один столбец на запуск терминала; наведите мышь или сфокусируйтесь, чтобы открыть предпросмотр, затем выберите, чтобы сохранить детали.",

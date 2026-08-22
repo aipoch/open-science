@@ -2,6 +2,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import type {
   ActiveSession,
   ClientConnection,
+  ContentBlock,
   CreateElicitationResponse,
   PromptResponse
 } from '@agentclientprotocol/sdk'
@@ -118,6 +119,7 @@ import type { AcpProviderSessionCreator } from './provider-session-creator'
 import type { AcpProviderSessionResumer } from './provider-session-resumer'
 import type { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 import type { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
+import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
 import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
@@ -443,6 +445,7 @@ class AcpRuntime {
   private readonly sessionPlanWorkflow: AcpRuntimePlanWorkflow
   private readonly contextCompactionWorkflow: AcpContextCompactionWorkflow
   private readonly promptTurnWorkflow: AcpPromptTurnWorkflow
+  private readonly promptContent: AcpPromptContentOwner
   private readonly nativeFollowUp: AcpNativeFollowUpWorkflow
   private readonly connectionClose: AcpConnectionCloseWorkflow
   private readonly connectionLifecycle: AcpConnectionLifecycleWorkflow
@@ -502,6 +505,7 @@ class AcpRuntime {
     })
     this.contextCompactionWorkflow = prompt.contextCompactionWorkflow
     this.promptTurnWorkflow = prompt.promptTurnWorkflow
+    this.promptContent = base.promptContentOwner
     this.nativeFollowUp = new AcpNativeFollowUpWorkflow({
       connection: () => this.connection,
       capabilities: () => this.connectionResources.capabilities,
@@ -510,14 +514,17 @@ class AcpRuntime {
       activeProviderSessionId: (sessionId) => this.activeSessionFor(sessionId)?.sessionId,
       hasLivePrompt: (sessionId) => this.sessionInteractions.current(sessionId)?.kind === 'prompt',
       sessionCwd: (sessionId) => this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd,
-      publishUserMessage: ({ sessionId, messageId, text }) =>
+      prepareFollowUp: (request) => this.prepareNativeFollowUpContent(request),
+      publishUserMessage: ({ sessionId, messageId, text, uploads, parts }) =>
         this.publication.pushEvent({
           kind: 'message',
           level: 'info',
           sessionId,
           messageId,
           role: 'user',
-          text
+          text,
+          ...(uploads && uploads.length > 0 ? { uploads: [...uploads] } : {}),
+          ...(parts && parts.length > 0 ? { parts: [...parts] } : {})
         })
     })
     const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
@@ -1098,6 +1105,33 @@ class AcpRuntime {
   // Side-band follow-up into the live prompt. Does not open a second prompt interaction.
   async steerFollowUp(request: AcpSteerFollowUpRequest): Promise<AcpSteerFollowUpResult> {
     return this.withOperationLease(() => this.nativeFollowUp.steerFollowUp(request))
+  }
+
+  private async prepareNativeFollowUpContent(
+    request: AcpSteerFollowUpRequest
+  ): Promise<ContentBlock[]> {
+    const presented = await this.turnSkills.presentFollowUp({
+      frameworkId: this.framework.id,
+      text: request.text,
+      selectedSkillIds: request.forcedSkillIds ?? [],
+      codexHome: this.backendGeneration.current.adapter.codexHome
+    })
+    const prepared = await this.promptContent.prepare({
+      appSessionId: request.sessionId,
+      projectId: this.liveSessionProjectId(request.sessionId) ?? '',
+      connectionGeneration: this.connectionGeneration,
+      text: presented.text,
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: request.attachments ?? [],
+      references: request.referencedArtifacts ?? [],
+      codexSkillInputs: presented.codexSkillInputs,
+      skillImportEnabled: false
+    })
+    if (typeof prepared.content === 'string') {
+      return prepared.content.trim() ? [{ type: 'text', text: prepared.content }] : []
+    }
+    return prepared.content
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
