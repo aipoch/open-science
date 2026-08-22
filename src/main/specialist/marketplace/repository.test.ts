@@ -238,6 +238,47 @@ describe('MarketplaceRepository', () => {
     })
   })
 
+  it('keeps the newest release cache even when that payload alone exceeds the byte budget', async () => {
+    const repository = new MarketplaceRepository(
+      await mkdtemp(join(tmpdir(), 'marketplace-release-oversize-'))
+    )
+    const oversized = Buffer.alloc(MAX_MARKETPLACE_RELEASE_CACHE_BYTES + 1024, 0x61)
+    await repository.cacheRelease(
+      'github-example',
+      'releases/example/0.json',
+      (0).toString(16).padStart(64, '0'),
+      new TextEncoder().encode('older-release'),
+      '2026-08-18T00:00:00.000Z'
+    )
+    await repository.cacheRelease(
+      'github-example',
+      'releases/example/1.json',
+      (1).toString(16).padStart(64, '0'),
+      oversized,
+      '2026-08-18T00:00:01.000Z'
+    )
+
+    const document = await repository.getAll()
+    expect(document.releaseCaches).toHaveLength(1)
+    expect(document.releaseCaches[0]?.path).toBe('releases/example/1.json')
+    await expect(
+      repository.getCachedRelease(
+        'github-example',
+        'releases/example/0.json',
+        (0).toString(16).padStart(64, '0')
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      repository.getCachedRelease(
+        'github-example',
+        'releases/example/1.json',
+        (1).toString(16).padStart(64, '0')
+      )
+    ).resolves.toMatchObject({
+      cachedAt: '2026-08-18T00:00:01.000Z'
+    })
+  })
+
   it('trims a historical document that already stored too many release caches', async () => {
     const root = await mkdtemp(join(tmpdir(), 'marketplace-release-historical-'))
     await writeFile(

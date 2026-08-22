@@ -99,7 +99,9 @@ const isCanonicalBase64 = (value: unknown, maxLength: number): value is string =
     value.length === 0 ||
     value.length > maxLength ||
     value.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+    // A grouped `{4}*` pattern overflows the regex stack on multi-mebibyte
+    // release payloads. Alphabet + canonical round-trip is linear.
+    /[^A-Za-z0-9+/=]/.test(value)
   ) {
     return false
   }
@@ -258,6 +260,9 @@ const boundReleaseCaches = (caches: MarketplaceReleaseCache[]): MarketplaceRelea
   for (const entry of ranked) {
     const size = releaseCachePayloadBytes(entry.item)
     if (kept.length >= MAX_MARKETPLACE_RELEASE_CACHE_ENTRIES) continue
+    // Fetch allows an 8 MiB release JSON, which can exceed the 4 MiB working-set
+    // budget by itself. Keep that newest row so offline fallback still works;
+    // drop older rows rather than evicting the payload just viewed.
     if (kept.length > 0 && keptBytes + size > MAX_MARKETPLACE_RELEASE_CACHE_BYTES) continue
     kept.push(entry)
     keptBytes += size
