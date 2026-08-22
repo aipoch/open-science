@@ -1158,15 +1158,19 @@ class AcpRuntimeCoordinator {
     this.callbacks.onStateChanged?.(this.getSnapshot())
   }
 
-  // A framework change takes effect for every future turn and workflow. The old generation stays alive
-  // until its active prompts and workflow leases finish; idle sessions resume on demand.
-  async requestAgentFrameworkSwitch(): Promise<void> {
-    const retiring = this.activeRuntime
-    if (!retiring) return
+  // A framework change takes effect for every future turn and workflow. The old generations stay alive
+  // until their active prompts and workflow leases finish; idle sessions resume on demand. Managed
+  // runtime removal can scope this invalidation to the removed framework while still rotating the
+  // default generation whose selected backend changed.
+  async requestAgentFrameworkSwitch(frameworkId?: AgentFrameworkId): Promise<void> {
+    if (!frameworkId) {
+      await this.retireRuntimeGenerations(this.runtimes)
+      return
+    }
 
-    this.retiredRuntimes.add(retiring)
-    this.rotateActiveRuntime()
-    await retiring.requestRetirement()
+    const affected = new Set(this.runtimeGenerationsForFramework(frameworkId))
+    if (this.activeRuntime) affected.add(this.activeRuntime)
+    await this.retireRuntimeGenerations(affected)
   }
 
   // Provider edits reconnect the default generation only when it uses the affected default, plus every
@@ -1192,31 +1196,16 @@ class AcpRuntimeCoordinator {
   }
 
   async requestSkillsReload(): Promise<void> {
-    const retiring = this.activeRuntime
-    if (!retiring) return
-
-    // Skills are part of a runtime generation's tool list and context. Retire that generation
-    // immediately so idle conversations detach before the settings call returns; active turns finish
-    // on the old generation, while every later turn resumes through a freshly provisioned runtime.
-    this.retiredRuntimes.add(retiring)
-    this.rotateActiveRuntime()
-    this.callbacks.onStateChanged?.(this.getSnapshot())
-    await retiring.requestRetirement()
+    // Skills and connector tools are captured by every runtime generation, including generations
+    // pinned to an explicit Session target.
+    await this.retireRuntimeGenerations(this.runtimes)
   }
 
   async requestSkillsReloadForFramework(frameworkId: AgentFrameworkId): Promise<void> {
-    const active = this.activeRuntime
-    if (!active) return
-
     // A framework-scoped derived asset must not rotate an unrelated backend generation. An empty
     // generation has no session holding stale assets; its first Session will provision from the
     // current source of truth without an explicit reload.
-    const ownsFrameworkSession = active
-      .getSnapshot()
-      .sessionIds.some((sessionId) => active.isSessionUsingFramework(sessionId, frameworkId))
-    if (!ownsFrameworkSession) return
-
-    await this.requestSkillsReload()
+    await this.retireRuntimeGenerations(this.runtimeGenerationsForFramework(frameworkId))
   }
 
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
@@ -1576,6 +1565,31 @@ class AcpRuntimeCoordinator {
     }
     this.retiredRuntimes.add(runtime)
     await runtime.requestRetirement()
+  }
+
+  private runtimeGenerationsForFramework(frameworkId: AgentFrameworkId): AcpRuntime[] {
+    return Array.from(this.runtimes).filter(
+      (runtime) =>
+        !this.retiredRuntimes.has(runtime) &&
+        (this.runtimeTargets.get(runtime)?.frameworkId === frameworkId ||
+          runtime
+            .getSnapshot()
+            .sessionIds.some((sessionId) =>
+              runtime.isSessionUsingFramework(sessionId, frameworkId)
+            ))
+    )
+  }
+
+  private async retireRuntimeGenerations(runtimes: Iterable<AcpRuntime>): Promise<void> {
+    const retiring = [...new Set(runtimes)].filter(
+      (runtime) => this.runtimes.has(runtime) && !this.retiredRuntimes.has(runtime)
+    )
+    if (retiring.length === 0) return
+
+    for (const runtime of retiring) this.retiredRuntimes.add(runtime)
+    if (this.activeRuntime && retiring.includes(this.activeRuntime)) this.rotateActiveRuntime()
+    this.callbacks.onStateChanged?.(this.getSnapshot())
+    await Promise.all(retiring.map((runtime) => runtime.requestRetirement()))
   }
 
   private handleRuntimeState(runtime: AcpRuntime, snapshot: AcpStateSnapshot): void {

@@ -2453,8 +2453,8 @@ const createApplicationModules = async (
         void runtime.requestProviderReconnect(providerIds, includeDefault)
         if (includeDefault) void sideChatRuntime.requestProviderReconnect()
       },
-      requestAgentFrameworkSwitch: () => {
-        void runtime.requestAgentFrameworkSwitch()
+      requestAgentFrameworkSwitch: (frameworkId) => {
+        void runtime.requestAgentFrameworkSwitch(frameworkId)
         void sideChatRuntime.requestProviderReconnect()
       }
     },

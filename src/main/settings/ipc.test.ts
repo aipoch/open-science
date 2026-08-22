@@ -233,7 +233,7 @@ const asService = (fake: FakeSettingsService): SettingsService => fake as unknow
 type TestSettingsIpcOptions = {
   service: SettingsService
   onActiveProviderChanged?: () => void
-  onAgentFrameworkChanged?: () => void
+  onAgentFrameworkChanged?: SettingsWorkflowEffects['runtime']['requestAgentFrameworkSwitch']
   onSkillsChanged?: () => void
   onConnectorsChanged?: () => void
   onCustomServerRemoved?: (serverId: string) => Promise<void>
@@ -734,7 +734,7 @@ describe('settings IPC handlers', () => {
     }
   )
 
-  it('reconnects after uninstalling the active runtime when no fallback is ready', async () => {
+  it('retires matching generations after uninstalling the active runtime without a fallback', async () => {
     handlers.clear()
     const service = createFakeService()
     service.uninstallClaude.mockResolvedValue({
@@ -751,8 +751,9 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:uninstall-claude')
 
-    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
-    expect(onAgentFrameworkChanged).not.toHaveBeenCalled()
+    expect(onAgentFrameworkChanged).toHaveBeenCalledOnce()
+    expect(onAgentFrameworkChanged).toHaveBeenCalledWith('claude-code')
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 
   it('does not reconnect after uninstalling the inactive runtime', async () => {
@@ -957,7 +958,12 @@ describe('settings IPC handlers', () => {
     handlers.clear()
     const service = createFakeService()
     const onActiveProviderChanged = vi.fn()
-    registerTestSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+    const onAgentFrameworkChanged = vi.fn()
+    registerTestSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged,
+      onAgentFrameworkChanged
+    })
 
     expect(handlers.has('settings:detect-codex')).toBe(true)
     expect(handlers.has('settings:install-codex')).toBe(true)
@@ -970,7 +976,9 @@ describe('settings IPC handlers', () => {
     expect(service.detectCodex).toHaveBeenCalledOnce()
     expect(service.installCodex).toHaveBeenCalledWith({ source: 'managed' }, expect.any(Function))
     expect(service.uninstallCodex).toHaveBeenCalledOnce()
-    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    expect(onAgentFrameworkChanged).toHaveBeenCalledOnce()
+    expect(onAgentFrameworkChanged).toHaveBeenCalledWith('codex')
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 
   it('routes detect-opencode to the service and forwards its snapshot', async () => {

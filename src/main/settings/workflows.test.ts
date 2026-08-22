@@ -136,7 +136,7 @@ describe('SettingsWorkflows runtime effects', () => {
     }
   )
 
-  it('reconnects only when an affected uninstall keeps the same framework', async () => {
+  it('retires matching generations when an affected uninstall keeps the same framework', async () => {
     const { store, capability } = fakeStore()
     store.uninstallClaude.mockResolvedValue({
       snapshot: snapshot({ agentFrameworkId: 'claude-code' }),
@@ -150,8 +150,9 @@ describe('SettingsWorkflows runtime effects', () => {
       testEffects({ requestProviderReconnect, requestAgentFrameworkSwitch })
     ).runtime.uninstallRuntime('uninstallClaude', 'claude-code')
 
-    expect(requestProviderReconnect).toHaveBeenCalledOnce()
-    expect(requestAgentFrameworkSwitch).not.toHaveBeenCalled()
+    expect(requestAgentFrameworkSwitch).toHaveBeenCalledOnce()
+    expect(requestAgentFrameworkSwitch).toHaveBeenCalledWith('claude-code')
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
 
     store.uninstallClaude.mockResolvedValue({
       snapshot: snapshot({ agentFrameworkId: 'claude-code' }),
@@ -161,7 +162,8 @@ describe('SettingsWorkflows runtime effects', () => {
       capability,
       testEffects({ requestProviderReconnect, requestAgentFrameworkSwitch })
     ).runtime.uninstallRuntime('uninstallClaude', 'claude-code')
-    expect(requestProviderReconnect).toHaveBeenCalledOnce()
+    expect(requestAgentFrameworkSwitch).toHaveBeenCalledOnce()
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
   })
 
   it('reconnects after active provider edits, selection, and deletion only after persistence', async () => {
