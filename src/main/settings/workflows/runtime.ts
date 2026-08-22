@@ -37,7 +37,7 @@ type RuntimeSettingsWorkflowStore = Pick<
 
 type RuntimeSettingsWorkflowEffects = {
   requestProviderReconnect: (providerIds?: readonly string[], includeDefault?: boolean) => void
-  requestAgentFrameworkSwitch: () => void
+  requestAgentFrameworkSwitch: (frameworkId?: AgentFrameworkId) => void
 }
 
 type RuntimeUninstallMethod = 'uninstallClaude' | 'uninstallOpencode' | 'uninstallCodex'
@@ -67,7 +67,7 @@ class RuntimeSettingsWorkflows {
       if (result.snapshot.agentFrameworkId !== framework) {
         this.effects.requestAgentFrameworkSwitch()
       } else {
-        this.effects.requestProviderReconnect()
+        this.effects.requestAgentFrameworkSwitch(framework)
       }
     }
 

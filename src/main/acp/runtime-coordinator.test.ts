@@ -447,6 +447,115 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[2].requestProviderReconnect).not.toHaveBeenCalled()
   })
 
+  it('retires default and targeted generations after a global framework switch', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+      const fake = createFakeRuntime({
+        frameworkId: target?.frameworkId ?? 'claude-code',
+        sessionIds: [`session-${created.length}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const target = (frameworkId: 'claude-code' | 'opencode'): AcpSessionAgentTarget => ({
+      frameworkId,
+      providerId: `${frameworkId}-provider`,
+      model: `${frameworkId}-model`,
+      reasoningEffort: 'high'
+    })
+
+    await coordinator.createSession({ agentTarget: target('claude-code') })
+    await coordinator.createSession({ agentTarget: target('opencode') })
+    await coordinator.requestAgentFrameworkSwitch()
+
+    expect(created).toHaveLength(3)
+    expect(
+      created.every(({ requestRetirement }) => requestRetirement.mock.calls.length === 1)
+    ).toBe(true)
+  })
+
+  it('retires the default and matching targeted generations after a scoped framework switch', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+      const fake = createFakeRuntime({
+        frameworkId: target?.frameworkId ?? 'codex',
+        sessionIds: [`session-${created.length}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const target = (frameworkId: 'claude-code' | 'opencode'): AcpSessionAgentTarget => ({
+      frameworkId,
+      providerId: `${frameworkId}-provider`,
+      model: `${frameworkId}-model`,
+      reasoningEffort: 'high'
+    })
+
+    await coordinator.createSession({ agentTarget: target('claude-code') })
+    await coordinator.createSession({ agentTarget: target('opencode') })
+    await coordinator.requestAgentFrameworkSwitch('claude-code')
+
+    expect(created[0].requestRetirement).toHaveBeenCalledOnce()
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+    expect(created[2].requestRetirement).not.toHaveBeenCalled()
+  })
+
+  it('reloads Skills across default and targeted generations', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+      const fake = createFakeRuntime({
+        frameworkId: target?.frameworkId ?? 'codex',
+        sessionIds: [`session-${created.length}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const target: AcpSessionAgentTarget = {
+      frameworkId: 'opencode',
+      providerId: 'opencode-provider',
+      model: 'opencode-model',
+      reasoningEffort: 'high'
+    }
+
+    await coordinator.createSession()
+    await coordinator.createSession({ agentTarget: target })
+    await coordinator.requestSkillsReload()
+
+    expect(created).toHaveLength(2)
+    expect(created[0].requestRetirement).toHaveBeenCalledOnce()
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+  })
+
+  it('reloads framework Skills only for matching targeted generations', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+      const fake = createFakeRuntime({
+        frameworkId: target?.frameworkId ?? 'codex',
+        sessionIds: [`session-${created.length}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const target = (frameworkId: 'claude-code' | 'opencode'): AcpSessionAgentTarget => ({
+      frameworkId,
+      providerId: `${frameworkId}-provider`,
+      model: `${frameworkId}-model`,
+      reasoningEffort: 'high'
+    })
+
+    await coordinator.createSession({ agentTarget: target('claude-code') })
+    await coordinator.createSession({ agentTarget: target('opencode') })
+    await coordinator.requestSkillsReloadForFramework('opencode')
+
+    expect(created[0].requestRetirement).not.toHaveBeenCalled()
+    expect(created[1].requestRetirement).not.toHaveBeenCalled()
+    expect(created[2].requestRetirement).toHaveBeenCalledOnce()
+  })
+
   it('recreates a targeted runtime after synchronous shutdown clears ownership', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
