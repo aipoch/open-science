@@ -1691,7 +1691,7 @@ const createApplicationModules = async (
                     'Parent message dispatch fence was not acquired.'
                   )
                 }
-                if (!runtime.hasLiveSession(latest.projectId, latest.id)) {
+                if (!runtime.hasLiveSession(latest.projectId, latest.id) || agentTarget) {
                   await runtime.resumeSession({
                     sessionId: latest.id,
                     cwd: latest.cwd,
