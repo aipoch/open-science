@@ -80,6 +80,10 @@ export type StoredCustomMcpOAuthConfig = {
   clientMetadataUrl?: string
   authorizationServerUrl?: string
   scopes?: string[]
+  // Fixed port for the local OAuth callback server. When set, the callback server binds to this
+  // port instead of a random one, matching a pre-registered client's redirect_uri on the MCP server.
+  // Required when using pre-registered OAuth clients whose redirect_uris specify a fixed port.
+  redirectPort?: number
 }
 
 // The OAuth state is serialized into one encrypted safeStorage value. `oauthState` is a transient

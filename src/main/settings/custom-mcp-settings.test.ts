@@ -193,6 +193,59 @@ describe('sanitizeCustomMcpServer', () => {
       oauthRef: 'encrypted-oauth-state'
     })
   })
+
+  it('preserves valid redirectPort in oauth config', () => {
+    expect(
+      sanitizeCustomMcpServer({
+        id: 'srv-oauth-port',
+        name: 'OAuth Server with Port',
+        transport: 'streamable_http',
+        url: 'https://example.com/mcp',
+        enabled: true,
+        oauth: {
+          authorizationServerUrl: 'https://auth.example.com',
+          scopes: ['read'],
+          redirectPort: 8080
+        }
+      })
+    ).toMatchObject({
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.com',
+        scopes: ['read'],
+        redirectPort: 8080
+      }
+    })
+  })
+
+  it('drops invalid redirectPort values', () => {
+    // Port 0 is invalid
+    const result = sanitizeCustomMcpServer({
+      id: 'srv-oauth-port-invalid',
+      name: 'OAuth Server',
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      enabled: true,
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.com',
+        redirectPort: 0
+      }
+    })
+    expect(result?.oauth).not.toHaveProperty('redirectPort')
+
+    // Port > 65535 is invalid
+    const result2 = sanitizeCustomMcpServer({
+      id: 'srv-oauth-port-invalid2',
+      name: 'OAuth Server',
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      enabled: true,
+      oauth: {
+        authorizationServerUrl: 'https://auth.example.com',
+        redirectPort: 70000
+      }
+    })
+    expect(result2?.oauth).not.toHaveProperty('redirectPort')
+  })
 })
 
 describe('sanitizeConnectors customMcpServers', () => {

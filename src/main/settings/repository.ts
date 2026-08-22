@@ -325,9 +325,12 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
     const scopes = asStringArray(value.oauth.scopes)
       .map((scope) => scope.trim())
       .filter(Boolean)
+    const redirectPort = asNumber(value.oauth.redirectPort)
     if (clientMetadataUrl) oauth.clientMetadataUrl = clientMetadataUrl
     if (authorizationServerUrl) oauth.authorizationServerUrl = authorizationServerUrl
     if (scopes.length) oauth.scopes = [...new Set(scopes)]
+    if (redirectPort !== undefined && redirectPort > 0 && redirectPort <= 65535)
+      oauth.redirectPort = redirectPort
     server.oauth = oauth
   }
   const oauthRef = asString(value.oauthRef)

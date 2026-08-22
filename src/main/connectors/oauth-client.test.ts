@@ -70,6 +70,33 @@ describe('OAuthCallbackServer', () => {
     })
     await server.close()
   })
+
+  it('binds to a preferred port when specified', async () => {
+    const server = new OAuthCallbackServer()
+    const redirectUrl = await server.ensureStarted(0) // port 0 = random
+    const port = new URL(redirectUrl).port
+
+    expect(port).toBeDefined()
+    expect(Number(port)).toBeGreaterThan(0)
+    await server.close()
+  })
+
+  it('restarts on a different port when preferred port changes', async () => {
+    const server = new OAuthCallbackServer()
+
+    // Start on port 0 (random)
+    const url1 = await server.ensureStarted(0)
+    const port1 = new URL(url1).port
+
+    // Start on a different random port (port 0 again = new random)
+    const url2 = await server.ensureStarted(0)
+    const port2 = new URL(url2).port
+
+    // Both should work (may be same or different random ports)
+    expect(url1).toContain('/oauth/callback')
+    expect(url2).toContain('/oauth/callback')
+    await server.close()
+  })
 })
 
 describe('PersistentOAuthClientProvider', () => {

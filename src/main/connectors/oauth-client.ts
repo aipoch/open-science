@@ -34,10 +34,17 @@ export class OAuthCallbackServer {
   private starting: Promise<string> | undefined
   private readonly pending = new Map<string, PendingCallback>()
 
-  async ensureStarted(): Promise<string> {
+  async ensureStarted(preferredPort?: number): Promise<string> {
+    // If a specific port is requested and we're already running on a different port, restart.
+    if (this.redirectUrl && preferredPort !== undefined) {
+      const currentPort = new URL(this.redirectUrl).port
+      if (String(preferredPort) !== currentPort) {
+        await this.close()
+      }
+    }
     if (this.redirectUrl) return this.redirectUrl
 
-    const starting = this.starting ?? this.start()
+    const starting = this.starting ?? this.start(preferredPort)
     this.starting = starting
     try {
       return await starting
@@ -46,7 +53,7 @@ export class OAuthCallbackServer {
     }
   }
 
-  private async start(): Promise<string> {
+  private async start(preferredPort?: number): Promise<string> {
     const server = createServer((request, response) => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1')
       if (url.pathname !== '/oauth/callback') {
@@ -76,9 +83,10 @@ export class OAuthCallbackServer {
     })
 
     this.server = server
+    const port = preferredPort ?? 0
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
-      server.listen(0, '127.0.0.1', () => resolve())
+      server.listen(port, '127.0.0.1', () => resolve())
     })
     const address = server.address()
     if (!address || typeof address === 'string')

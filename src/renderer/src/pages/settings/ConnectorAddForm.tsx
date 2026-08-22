@@ -198,6 +198,11 @@ export function ConnectorAddForm({
   const [clientMetadataUrl, setClientMetadataUrl] = useState(
     editServer?.oauth?.clientMetadataUrl ?? initialTemplate?.oauth?.clientMetadataUrl ?? ''
   )
+  const [redirectPortText, setRedirectPortText] = useState(
+    (editServer?.oauth?.redirectPort ?? initialTemplate?.oauth?.redirectPort ?? '') as
+      | number
+      | ''
+  )
   const [headersText, setHeadersText] = useState(
     (initialTemplate?.requiredSecrets?.headers ?? []).map((header) => `${header}: `).join('\n')
   )
@@ -244,6 +249,10 @@ export function ConnectorAddForm({
         .split(/[\s,]+/)
         .map((scope) => scope.trim())
         .filter(Boolean)
+      const redirectPort =
+        typeof redirectPortText === 'number' && redirectPortText > 0
+          ? redirectPortText
+          : undefined
       // Omitted env/headers keep the stored (secret) values on edit; on add they are simply unset.
       const hasEnv = envText.trim().length > 0
       const hasHeaders = headersText.trim().length > 0
@@ -267,7 +276,8 @@ export function ConnectorAddForm({
                       ...(clientMetadataUrl.trim()
                         ? { clientMetadataUrl: clientMetadataUrl.trim() }
                         : {}),
-                      ...(oauthScopes.length ? { scopes: oauthScopes } : {})
+                      ...(oauthScopes.length ? { scopes: oauthScopes } : {}),
+                      ...(redirectPort !== undefined ? { redirectPort } : {})
                     }
                   : null
             })
@@ -592,6 +602,28 @@ export function ConnectorAddForm({
                     placeholder="Use dynamic client registration by default"
                     className="font-mono"
                     onChange={(event) => setClientMetadataUrl(event.target.value)}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  label={
+                    <>
+                      Redirect port <span className="text-muted-foreground">(optional)</span>
+                    </>
+                  }
+                  description="Fixed port for the local OAuth callback server. Required when using pre-registered OAuth clients."
+                >
+                  <Input
+                    id="connector-oauth-redirect-port"
+                    aria-label="Redirect port"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={redirectPortText}
+                    placeholder="Random (auto)"
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setRedirectPortText(value === '' ? '' : Number(value))
+                    }}
                   />
                 </SettingsRow>
               </>

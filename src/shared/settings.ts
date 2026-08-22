@@ -1121,6 +1121,9 @@ export type CustomServerView = {
     authorizationServerUrl?: string
     scopes?: string[]
     hasTokens: boolean
+    // Fixed port for the local OAuth callback server. When set, the callback server binds to this
+    // port instead of a random one, matching a pre-registered client's redirect_uri on the MCP server.
+    redirectPort?: number
   }
 }
 
@@ -1151,6 +1154,9 @@ export type AddCustomServerRequest = {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
     scopes?: string[]
+    // Fixed port for the local OAuth callback server. When set, the callback server binds to this
+    // port instead of a random one, matching a pre-registered client's redirect_uri on the MCP server.
+    redirectPort?: number
   } | null
 }
 export type SetCustomServerEnabledRequest = { id: string; enabled: boolean }
@@ -1179,6 +1185,9 @@ export type ConnectorTemplateDefinition = {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
     scopes?: string[]
+    // Fixed port for the local OAuth callback server. When set, the callback server binds to this
+    // port instead of a random one, matching a pre-registered client's redirect_uri on the MCP server.
+    redirectPort?: number
   }
 }
 
@@ -1228,6 +1237,9 @@ export type UpdateCustomServerRequest = {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
     scopes?: string[]
+    // Fixed port for the local OAuth callback server. When set, the callback server binds to this
+    // port instead of a random one, matching a pre-registered client's redirect_uri on the MCP server.
+    redirectPort?: number
   } | null
 }
 

@@ -515,6 +515,9 @@ class ConnectorSettingsModule {
                     ? { authorizationServerUrl: server.oauth.authorizationServerUrl }
                     : {}),
                   ...(server.oauth.scopes ? { scopes: server.oauth.scopes } : {}),
+                  ...(server.oauth.redirectPort !== undefined
+                    ? { redirectPort: server.oauth.redirectPort }
+                    : {}),
                   hasTokens: Boolean(server.oauthState?.tokens?.access_token)
                 }
               }

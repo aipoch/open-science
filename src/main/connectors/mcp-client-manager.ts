@@ -26,6 +26,9 @@ export type CustomMcpServerConfig = {
     authorizationServerUrl?: string
     scopes?: string[]
     state?: StoredCustomMcpOAuthState
+    // Fixed port for the local OAuth callback server. When set, the callback server binds to this
+    // port instead of a random one, matching a pre-registered client's redirect_uri on the MCP server.
+    redirectPort?: number
   }
 }
 
@@ -188,7 +191,7 @@ export class McpClientManager {
       if (generation !== this.generation(config.id)) {
         throw new Error(`custom MCP server "${config.name}" connection was superseded`)
       }
-      const redirectUrl = await this.callbackServer.ensureStarted()
+      const redirectUrl = await this.callbackServer.ensureStarted(config.oauth?.redirectPort)
       if (generation !== this.generation(config.id)) {
         throw new Error(`custom MCP server "${config.name}" connection was superseded`)
       }
@@ -273,7 +276,7 @@ export class McpClientManager {
     generation: number
   ): Promise<Client> {
     if (!config.oauth) return this.createClient(config)
-    const redirectUrl = await this.callbackServer.ensureStarted()
+    const redirectUrl = await this.callbackServer.ensureStarted(config.oauth.redirectPort)
     return this.createClient(config, this.oauthProvider(config, redirectUrl, generation))
   }
 
