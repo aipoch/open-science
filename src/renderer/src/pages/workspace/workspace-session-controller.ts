@@ -270,6 +270,7 @@ const useWorkspaceSessionController = ({
       expectedArchivedAt: null
     })
       .then((archived) => {
+        reconfiguration.clearIdleRetry(session.id)
         enqueueSessionArchive(archived)
         if (selectedSessionId === session.id) clearSelection()
       })
@@ -282,7 +283,6 @@ const useWorkspaceSessionController = ({
         })
       })
   }
-
   const openDelete = (session: ChatSession): void => {
     if (isPersistenceHydrated && canDeleteConversations && deletingIdsRef.current.size === 0) {
       setDeleteDialog({
@@ -292,7 +292,6 @@ const useWorkspaceSessionController = ({
       })
     }
   }
-
   const confirmDelete = (): void => {
     if (!isPersistenceHydrated || !canDeleteConversations || !deleteDialog) return
     useNavigationStore.getState().recordUserNavigation()
@@ -309,6 +308,7 @@ const useWorkspaceSessionController = ({
         const deleted = result.status === 'deleted'
         settleSessionDeletion(sessionId, deleted)
         if (deleted) {
+          reconfiguration.clearIdleRetry(sessionId)
           setDeleteDialog((current) => (current?.session.id === sessionId ? null : current))
           return
         }

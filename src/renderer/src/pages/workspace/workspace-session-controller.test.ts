@@ -411,6 +411,60 @@ describe('workspace session controller', () => {
     })
   })
 
+  it('discards an idle Specialist failure after its Session is deleted', async () => {
+    const active = session({ specialistId: 'specialist-a' })
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const setSessionSpecialist = vi.fn().mockRejectedValue(new Error('switch rejected'))
+    window.api = { specialist: { setSessionSpecialist } } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [specialist('specialist-b', 'Specialist B')]
+    })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.selectSpecialist('specialist-b')
+      await Promise.resolve()
+    })
+    act(() => hook.result.current.actions.openDelete(active))
+    await act(async () => {
+      hook.result.current.actions.confirmDelete()
+      await Promise.resolve()
+    })
+    hook.rerender(session({ id: active.id }))
+
+    expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+  })
+
+  it('discards an idle Specialist failure after its Session is archived', async () => {
+    const active = session({ specialistId: 'specialist-a' })
+    const updateSessionArchive = vi.fn().mockResolvedValue({ ...active, archivedAt: 2 })
+    useSessionStore.setState({
+      sessions: [active],
+      selectedSessionId: active.id,
+      updateSessionArchive
+    })
+    const setSessionSpecialist = vi.fn().mockRejectedValue(new Error('switch rejected'))
+    window.api = { specialist: { setSessionSpecialist } } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [specialist('specialist-b', 'Specialist B')]
+    })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.selectSpecialist('specialist-b')
+      await Promise.resolve()
+    })
+    await act(async () => {
+      hook.result.current.actions.archive(active)
+      await Promise.resolve()
+    })
+    hook.rerender(session({ id: active.id }))
+
+    expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+  })
+
   it('keeps recovery available when switching back to Main Agent rejects', async () => {
     const active = session({ specialistId: 'specialist-a' })
     useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
