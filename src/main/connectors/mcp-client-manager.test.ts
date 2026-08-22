@@ -237,6 +237,7 @@ describe('McpClientManager', () => {
       const redirectUrl = url.searchParams.get('redirect_uri')
       const state = url.searchParams.get('state')
       if (!redirectUrl || !state) throw new Error('test authorization URL is incomplete')
+      expect(new URL(redirectUrl).pathname).toBe('/callback')
       const response = await fetch(`${redirectUrl}?code=code-1&state=${state}`)
       expect(response.status).toBe(200)
     })
@@ -269,7 +270,7 @@ describe('McpClientManager', () => {
         name: 'OAuth server',
         transport: 'streamable_http',
         url: 'https://mcp.example.test',
-        oauth: {}
+        oauth: { redirectUri: 'http://127.0.0.1:8080/callback' }
       })
 
       expect(openExternal).toHaveBeenCalledOnce()

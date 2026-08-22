@@ -14,6 +14,7 @@ import {
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
+import { localizeConnectorError } from './connector-error-message'
 
 type ConnectorImportViewProps = {
   onUse: (definition: ConnectorTemplateDefinition) => void
@@ -198,7 +199,7 @@ export function ConnectorImportView({
                 className={`flex items-start gap-2 text-xs ${diagnosticClassName(item)}`}
               >
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                <span>{item.message}</span>
+                <span>{localizeConnectorError(item.message, t)}</span>
               </div>
             ))}
           </div>

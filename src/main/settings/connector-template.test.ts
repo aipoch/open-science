@@ -57,6 +57,28 @@ describe('Connector configuration templates', () => {
     })
   })
 
+  it('requires a pre-registered client ID for redirect_uri', () => {
+    const preview = parseConnectorTemplate(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'redirect-without-client',
+        display_name: 'Redirect without client',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test/mcp',
+        oauth: { redirect_uri: 'http://127.0.0.1:8080/callback' }
+      })
+    )
+
+    expect(preview.ready).toBe(false)
+    expect(preview.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'connector-template.oauth-redirect-uri-client',
+        path: 'oauth.redirect_uri'
+      })
+    )
+  })
+
   it('requires an explicit stable name separate from the display name', () => {
     const valid = parseConnectorTemplate(
       JSON.stringify({
@@ -341,7 +363,8 @@ describe('Connector configuration templates', () => {
       oauth: {
         authorizationServerUrl: 'https://auth.example.test',
         scopes: ['openid'],
-        clientId: 'registered-client'
+        clientId: 'registered-client',
+        redirectUri: 'http://127.0.0.1:8080/callback'
       },
       hasOAuthClientSecret: true
     })
@@ -351,14 +374,18 @@ describe('Connector configuration templates', () => {
     expect(exported.oauth).toEqual({
       authorization_server_url: 'https://auth.example.test',
       scopes: ['openid'],
-      client_id: 'registered-client'
+      client_id: 'registered-client',
+      redirect_uri: 'http://127.0.0.1:8080/callback'
     })
     expect(exported.required_secrets).toEqual({ oauth_client_secret: true })
     expect(exported.oauth).not.toHaveProperty('client_secret')
 
     expect(parseConnectorTemplate(result.contents!).definition).toMatchObject({
       schemaVersion: 1,
-      oauth: { clientId: 'registered-client' },
+      oauth: {
+        clientId: 'registered-client',
+        redirectUri: 'http://127.0.0.1:8080/callback'
+      },
       requiredSecrets: { oauthClientSecret: true }
     })
   })
@@ -374,13 +401,20 @@ describe('Connector configuration templates', () => {
         url: 'https://mcp.example.test',
         oauth: {
           authorization_server_url: 'https://auth.example.test',
-          client_id: 'registered-client'
+          client_id: 'registered-client',
+          redirect_uri: 'http://127.0.0.1:8080/callback'
         }
       })
     )
     expect(extended).toMatchObject({
       ready: true,
-      definition: { schemaVersion: 1, oauth: { clientId: 'registered-client' } }
+      definition: {
+        schemaVersion: 1,
+        oauth: {
+          clientId: 'registered-client',
+          redirectUri: 'http://127.0.0.1:8080/callback'
+        }
+      }
     })
 
     const legacy = parseConnectorTemplate(

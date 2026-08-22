@@ -7,6 +7,7 @@ import type {
 } from '../../shared/settings'
 import { isCodexSubscriptionProvider } from '../../shared/settings'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
+import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
 import type { PackageMirror } from '../../shared/mirror'
 import { isOfficialVendorId } from '../../shared/provider-registry'
 import {
@@ -271,6 +272,7 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
     const clientMetadataUrl = asString(value.oauth.clientMetadataUrl)
     const authorizationServerUrl = asString(value.oauth.authorizationServerUrl)
     const clientId = asString(value.oauth.clientId)
+    const redirectUri = asString(value.oauth.redirectUri)
     const scopes = asStringArray(value.oauth.scopes)
       .map((scope) => scope.trim())
       .filter(Boolean)
@@ -278,6 +280,13 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
     if (authorizationServerUrl) oauth.authorizationServerUrl = authorizationServerUrl
     if (scopes.length) oauth.scopes = [...new Set(scopes)]
     if (clientId) oauth.clientId = clientId
+    if (redirectUri) {
+      try {
+        oauth.redirectUri = normalizeLoopbackOAuthRedirectUri(redirectUri)
+      } catch {
+        // Ignore invalid persisted values at the settings trust boundary.
+      }
+    }
     server.oauth = oauth
   }
   const oauthRef = asString(value.oauthRef)

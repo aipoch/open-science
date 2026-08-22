@@ -94,6 +94,7 @@ export type StoredCustomMcpOAuthConfig = {
   authorizationServerUrl?: string
   scopes?: string[]
   clientId?: string
+  redirectUri?: string
 }
 
 // The OAuth state is serialized into one encrypted safeStorage value. `oauthState` is a transient

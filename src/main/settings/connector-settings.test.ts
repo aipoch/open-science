@@ -620,7 +620,8 @@ describe('ConnectorSettingsModule', () => {
       oauth: {
         authorizationServerUrl: 'https://auth.example.test',
         clientId: 'registered-client',
-        clientSecret: 'local-client-secret'
+        clientSecret: 'local-client-secret',
+        redirectUri: 'http://127.0.0.1:8080/callback'
       }
     })
     const id = added.customServers[0].id
@@ -628,6 +629,7 @@ describe('ConnectorSettingsModule', () => {
     expect(added.customServers[0].oauth).toEqual({
       authorizationServerUrl: 'https://auth.example.test',
       clientId: 'registered-client',
+      redirectUri: 'http://127.0.0.1:8080/callback',
       hasTokens: false,
       hasClientSecret: true
     })
@@ -635,6 +637,7 @@ describe('ConnectorSettingsModule', () => {
     const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
     expect(storedJson).toContain('oauthClientSecretRef')
     expect(storedJson).toContain('registered-client')
+    expect(storedJson).toContain('http://127.0.0.1:8080/callback')
     expect(storedJson).not.toContain('local-client-secret')
     expect((await service.getConnectors())?.customMcpServers?.[0].oauthClientSecret).toBe(
       'local-client-secret'
@@ -644,7 +647,8 @@ describe('ConnectorSettingsModule', () => {
     expect(JSON.parse(exported.contents!).schema_version).toBe(1)
     expect(JSON.parse(exported.contents!).oauth).toEqual({
       authorization_server_url: 'https://auth.example.test',
-      client_id: 'registered-client'
+      client_id: 'registered-client',
+      redirect_uri: 'http://127.0.0.1:8080/callback'
     })
     expect(JSON.parse(exported.contents!).required_secrets).toEqual({
       oauth_client_secret: true
@@ -660,7 +664,8 @@ describe('ConnectorSettingsModule', () => {
       url: 'https://mcp.example.test',
       oauth: {
         authorizationServerUrl: 'https://auth.example.test',
-        clientId: 'registered-client'
+        clientId: 'registered-client',
+        redirectUri: 'http://127.0.0.1:8080/callback'
       }
     })
     let stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
@@ -674,6 +679,7 @@ describe('ConnectorSettingsModule', () => {
       oauth: {
         authorizationServerUrl: 'https://auth.example.test',
         clientId: 'registered-client',
+        redirectUri: 'http://127.0.0.1:8080/callback',
         clientSecret: null
       }
     })
@@ -692,6 +698,17 @@ describe('ConnectorSettingsModule', () => {
         oauth: { clientId: 'registered-client' }
       })
     ).rejects.toThrow('Authorization server URL is required')
+  })
+
+  it('requires a pre-registered client ID for a redirect URI', async () => {
+    await expect(
+      addCustomServer({
+        name: 'oauth-redirect-without-client',
+        transport: 'streamable_http',
+        url: 'https://mcp.example.test',
+        oauth: { redirectUri: 'http://127.0.0.1:8080/callback' }
+      })
+    ).rejects.toThrow('OAuth redirect URI requires a pre-registered client ID.')
   })
 
   it('clears a saved client secret when its bound authorization-server issuer changes', async () => {

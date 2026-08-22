@@ -31,6 +31,7 @@ export type CustomMcpServerConfig = {
     scopes?: string[]
     clientId?: string
     clientSecret?: string
+    redirectUri?: string
     state?: StoredCustomMcpOAuthState
   }
 }
@@ -268,7 +269,7 @@ export class McpClientManager {
       if (generation !== this.generation(config.id)) {
         throw new Error(`custom MCP server "${config.name}" connection was superseded`)
       }
-      const redirectUrl = await this.callbackServer.ensureStarted()
+      const redirectUrl = await this.callbackServer.ensureStarted(config.oauth.redirectUri)
       if (generation !== this.generation(config.id)) {
         throw new Error(`custom MCP server "${config.name}" connection was superseded`)
       }
@@ -379,7 +380,7 @@ export class McpClientManager {
   ): Promise<Client> {
     signal.throwIfAborted()
     if (!config.oauth) return this.createClient(config, undefined, signal)
-    const redirectUrl = await this.callbackServer.ensureStarted()
+    const redirectUrl = await this.callbackServer.ensureStarted(config.oauth.redirectUri)
     signal.throwIfAborted()
     return this.createClient(config, this.oauthProvider(config, redirectUrl, generation), signal)
   }

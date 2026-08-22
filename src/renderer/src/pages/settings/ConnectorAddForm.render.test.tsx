@@ -371,6 +371,59 @@ describe('ConnectorAddForm (remote server)', () => {
     expect(document.body.querySelector('[aria-label="Server URL"]')).not.toBeNull()
   })
 
+  it('reveals uncommon OAuth registration settings only when selected', () => {
+    act(() => {
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />
+      )
+    })
+
+    openAdvancedSettings()
+    selectOption('Authentication', 'OAuth')
+
+    const scopesField = document.body.querySelector('[aria-label="OAuth scopes"]')
+    expect(scopesField).not.toBeNull()
+    expect(scopesField?.closest('[data-slot="settings-editor-field"]')?.textContent).not.toContain(
+      '(optional)'
+    )
+    expect(document.body.querySelector('[aria-label="Authorization server URL"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Client metadata URL"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Client ID"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Client secret"]')).toBeNull()
+
+    const discoveryButton = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Configure OAuth discovery')
+    act(() => discoveryButton?.click())
+    const authorizationServer = document.body.querySelector(
+      '[aria-label="Authorization server URL"]'
+    )
+    expect(authorizationServer).not.toBeNull()
+    expect(
+      authorizationServer?.closest('[data-slot="settings-editor-field"]')?.textContent
+    ).not.toContain('(optional)')
+    expect(document.body.querySelector('[aria-label="Client metadata URL"]')).not.toBeNull()
+
+    const preRegistered = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Use a pre-registered OAuth client"]'
+    )
+    expect(preRegistered?.checked).toBe(false)
+    act(() => preRegistered?.click())
+
+    expect(document.body.textContent).not.toContain(
+      'Authorization server URL is required for a pre-registered client.'
+    )
+    expect(document.body.querySelector('[aria-label="Client metadata URL"]')).toBeNull()
+    for (const label of ['Authorization server URL', 'Client ID', 'Client secret']) {
+      const field = document.body.querySelector(`[aria-label="${label}"]`)
+      expect(field).not.toBeNull()
+      expect(field?.closest('[data-slot="settings-editor-field"]')?.textContent).not.toContain(
+        '(optional)'
+      )
+    }
+    expect(document.body.querySelector('[aria-label="Default callback URI"]')).not.toBeNull()
+  })
+
   it('adds a remote OAuth server with scopes and discovery overrides', async () => {
     const created = {
       id: 'oauth-mcp',
@@ -396,6 +449,10 @@ describe('ConnectorAddForm (remote server)', () => {
     openAdvancedSettings()
     selectOption('Authentication', 'OAuth')
     setValue('OAuth scopes', 'openid profile')
+    const discoveryButton = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Configure OAuth discovery')
+    act(() => discoveryButton?.click())
     setValue('Authorization server URL', 'https://auth.example.test')
     setValue('Client metadata URL', 'https://client.example.test/metadata.json')
     for (const label of [
@@ -436,6 +493,45 @@ describe('ConnectorAddForm (remote server)', () => {
     expect(onDone).toHaveBeenCalledOnce()
   })
 
+  it('shows the default callback before revealing a different registered URI', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    })
+    act(() => {
+      root.render(
+        <ConnectorAddForm initialTransport="remote" onDone={vi.fn()} onCancel={vi.fn()} />
+      )
+    })
+
+    openAdvancedSettings()
+    selectOption('Authentication', 'OAuth')
+    const preRegistered = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Use a pre-registered OAuth client"]'
+    )
+    act(() => preRegistered?.click())
+    setValue('Client ID', 'registered-client')
+
+    expect(document.body.querySelector('[aria-label="Redirect URI"]')).toBeNull()
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Default callback URI"]')?.value
+    ).toBe('http://127.0.0.1/oauth/callback')
+
+    const copy = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Copy'
+    )
+    await act(async () => copy?.click())
+    expect(writeText).toHaveBeenCalledWith('http://127.0.0.1/oauth/callback')
+
+    const useDifferentUri = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.includes('Already registered a different callback URI?'))
+    act(() => useDifferentUri?.click())
+
+    expect(document.body.querySelector('[aria-label="Redirect URI"]')).not.toBeNull()
+  })
+
   it('requires an imported OAuth client secret locally and submits pre-registered credentials', async () => {
     act(() => {
       root.render(
@@ -449,7 +545,8 @@ describe('ConnectorAddForm (remote server)', () => {
             url: 'https://mcp.example.test',
             oauth: {
               authorizationServerUrl: 'https://auth.example.test',
-              clientId: 'registered-client'
+              clientId: 'registered-client',
+              redirectUri: 'http://127.0.0.1:8080/callback'
             },
             requiredSecrets: { oauthClientSecret: true }
           }}
@@ -462,6 +559,9 @@ describe('ConnectorAddForm (remote server)', () => {
     expect(document.body.querySelector<HTMLInputElement>('[aria-label="Client ID"]')?.value).toBe(
       'registered-client'
     )
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Redirect URI"]')?.value
+    ).toBe('http://127.0.0.1:8080/callback')
     checkTrust()
     expect(addButton()?.disabled).toBe(true)
     setValue('Client secret', 'local-client-secret')
@@ -473,7 +573,8 @@ describe('ConnectorAddForm (remote server)', () => {
         oauth: expect.objectContaining({
           authorizationServerUrl: 'https://auth.example.test',
           clientId: 'registered-client',
-          clientSecret: 'local-client-secret'
+          clientSecret: 'local-client-secret',
+          redirectUri: 'http://127.0.0.1:8080/callback'
         })
       })
     )

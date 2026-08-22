@@ -191,6 +191,7 @@ describe('sanitizeCustomMcpServer', () => {
           authorizationServerUrl: 42,
           scopes: ['openid', ' openid ', 'profile', 42],
           clientId: 'registered-client',
+          redirectUri: 'https://example.com/callback',
           clientSecret: 'must-not-be-persisted'
         },
         oauthRef: 'encrypted-oauth-state',
