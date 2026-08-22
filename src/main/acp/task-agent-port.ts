@@ -76,8 +76,12 @@ const createAcpTaskAgentPort = (
     }
   },
   resumeSession: async (request) => {
-    const agentTarget = await resolveSessionAgentTarget?.(request.agentConfiguration)
-    return runtime.resumeSession({
+    const agentTarget = await resolveSessionAgentTarget?.({
+      agentBackendId: request.previousBackendId,
+      agentModel: request.previousModel,
+      agentConfiguration: request.agentConfiguration
+    })
+    const response = await runtime.resumeSession({
       sessionId: request.sessionId,
       cwd: request.cwd,
       projectId: request.projectId,
@@ -90,6 +94,10 @@ const createAcpTaskAgentPort = (
       ...(request.specialistBindingPending === true ? { specialistBindingPending: true } : {}),
       ...(agentTarget ? { agentTarget } : {})
     })
+    return {
+      ...response,
+      ...(agentTarget ? { agentConfiguration: toSessionAgentConfiguration(agentTarget) } : {})
+    }
   },
   setPermissionProfile: (sessionId, profile) =>
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),

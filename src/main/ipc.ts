@@ -44,7 +44,9 @@ import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
 import {
+  materializeSessionAgentConfiguration,
   toAcpSessionAgentTarget,
+  toSessionAgentConfiguration,
   type SessionAgentTargetResolver
 } from './acp/session-agent-target'
 import { ArtifactCodeReconstructionRunner } from './acp/artifact-code-reconstruction-runner'
@@ -278,9 +280,11 @@ import {
   CONNECTOR_TEMPLATE_MAX_BYTES,
   type AppIconPreview,
   type AppIconVariant,
-  type RespondApprovalRequest
+  type RespondApprovalRequest,
+  type SessionAgentConfiguration
 } from '../shared/settings'
 import type { AcpSessionAgentTarget } from '../shared/acp'
+import type { PersistedChatSession } from '../shared/session-persistence'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import { withDataRootWrite } from './storage/migration-state'
@@ -425,11 +429,11 @@ const createApplicationModules = async (
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
   }))
-  const resolveSessionAgentTarget: SessionAgentTargetResolver = async (configuration) => {
-    if (!configuration) return undefined
+  const resolveSessionAgentTarget: SessionAgentTargetResolver = async (source) => {
+    const settings = await settingsService.getSettingsView()
     return toAcpSessionAgentTarget(
-      (await settingsService.getSettingsView()).agentFrameworkId,
-      configuration
+      settings.agentFrameworkId,
+      materializeSessionAgentConfiguration(source, settings.reasoningEffort)
     )
   }
   const resolveDefaultSessionAgentTarget = async (): Promise<AcpSessionAgentTarget> => {
@@ -1654,7 +1658,7 @@ const createApplicationModules = async (
                 }
               },
               async () => {
-                const latest = await sessionRepository.loadSession(
+                let latest = await sessionRepository.loadSession(
                   delivery.session.projectId,
                   delivery.session.sessionId
                 )
@@ -1674,7 +1678,13 @@ const createApplicationModules = async (
                     'Parent message root Branch changed before dispatch.'
                   )
                 }
-                const agentTarget = await resolveSessionAgentTarget(latest.agentConfiguration)
+                const agentTarget = await resolveSessionAgentTarget(latest)
+                if (!latest.agentConfiguration && agentTarget) {
+                  latest = await sessionPersistenceCoordinator.saveSession({
+                    ...latest,
+                    agentConfiguration: toSessionAgentConfiguration(agentTarget)
+                  })
+                }
                 const started = await delivery.startDispatch()
                 if (started !== 'started') {
                   throw new DelegateMessageParkedError(
@@ -2929,6 +2939,14 @@ const createApplicationModules = async (
     mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
     resolveSessionAgentTarget,
+    saveSessionAgentConfiguration: (
+      session: PersistedChatSession,
+      configuration: SessionAgentConfiguration
+    ) =>
+      sessionPersistenceCoordinator.saveSession({
+        ...session,
+        agentConfiguration: configuration
+      }),
     withSessionMutation: <Result>(
       projectId: string,
       sessionId: string,
