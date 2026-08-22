@@ -106,6 +106,8 @@ const GeneralPanel = (): React.JSX.Element => {
 
   return (
     <div className="space-y-5 p-5">
+      <AppVersionSection />
+
       <SettingsSection
         title={t('Appearance')}
         description={t(
@@ -383,8 +385,6 @@ const GeneralPanel = (): React.JSX.Element => {
           </a>
         </div>
       </SettingsSection>
-
-      <AppVersionSection />
     </div>
   )
 }
