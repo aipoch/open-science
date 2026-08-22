@@ -447,6 +447,63 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[2].requestProviderReconnect).not.toHaveBeenCalled()
   })
 
+  it('retires an unused targeted runtime after Session creation fails', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+      const fake = createFakeRuntime({
+        frameworkId: target?.frameworkId ?? 'claude-code',
+        sessionIds: [`session-${created.length}`],
+        callbacks
+      })
+      if (target) fake.createSession.mockRejectedValue(new Error('create failed'))
+      created.push(fake)
+      return fake.runtime
+    })
+    const agentTarget = {
+      frameworkId: 'opencode',
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high'
+    } as const
+
+    await expect(coordinator.createSession({ agentTarget })).rejects.toThrow('create failed')
+
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+    await expect(coordinator.createSession({ agentTarget })).rejects.toThrow('create failed')
+    expect(created).toHaveLength(3)
+  })
+
+  it('retires an unused targeted runtime after Session resume fails', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+      const fake = createFakeRuntime({
+        frameworkId: target?.frameworkId ?? 'claude-code',
+        sessionIds: [`session-${created.length}`],
+        callbacks
+      })
+      if (target) fake.resumeSession.mockRejectedValue(new Error('resume failed'))
+      created.push(fake)
+      return fake.runtime
+    })
+    const session = await coordinator.createSession()
+
+    await expect(
+      coordinator.resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        agentTarget: {
+          frameworkId: 'opencode',
+          providerId: 'provider-a',
+          model: 'model-a',
+          reasoningEffort: 'high'
+        }
+      })
+    ).rejects.toThrow('resume failed')
+
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+    expect(created[0].requestRetirement).not.toHaveBeenCalled()
+  })
+
   it('retires default and targeted generations after a global framework switch', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
