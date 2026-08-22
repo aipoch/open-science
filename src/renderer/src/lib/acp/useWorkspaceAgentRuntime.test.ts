@@ -4426,8 +4426,15 @@ describe('resuming an interrupted session on demand', () => {
     }
     seedDetachedSession()
 
+    const agentTarget = {
+      frameworkId: 'codex',
+      providerId: 'codex-isolated',
+      model: 'gpt-5',
+      reasoningEffort: 'high'
+    } as const
     await resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
-      historyReplayDescriptor: { target: 'codex-bridge' }
+      historyReplayDescriptor: { target: 'codex-bridge' },
+      agentTarget
     })
 
     expect(runtime.resumeSession).toHaveBeenCalledWith(
@@ -4440,7 +4447,8 @@ describe('resuming an interrupted session on demand', () => {
       undefined,
       undefined,
       undefined,
-      undefined
+      undefined,
+      agentTarget
     )
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
@@ -5671,9 +5679,13 @@ describe('recovering from a request-size overflow', () => {
       planContinuation: { artifactVersionId: 'plan-version-1', revision: 9 }
     })
     owner.processRuntimeEvents(runtime, [overflowEvent], {
+      getAgentTarget: () => undefined,
+      getSupportsImageInput: () => undefined,
       getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
     })
     owner.processRuntimeEvents(runtime, [overflowEvent], {
+      getAgentTarget: () => undefined,
+      getSupportsImageInput: () => undefined,
       getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
     })
 
@@ -5721,7 +5733,21 @@ describe('recovering from a request-size overflow', () => {
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
-    const recovered = await recoverContextOverflowWorkspaceSession(runtime, 'session-1', false)
+    const agentTarget = {
+      frameworkId: 'codex',
+      providerId: 'provider-b',
+      model: 'model-b',
+      reasoningEffort: 'high'
+    } as const
+    const recovered = await recoverContextOverflowWorkspaceSession(
+      runtime,
+      'session-1',
+      false,
+      undefined,
+      undefined,
+      undefined,
+      agentTarget
+    )
     await flushRuntimeTasks()
 
     expect(recovered).toBe(true)
@@ -5739,6 +5765,19 @@ describe('recovering from a request-size overflow', () => {
     expect(preamble).not.toContain('now compare with this new screenshot')
     expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
     expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
+    expect(runtime.resumeSession).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask',
+      'codex',
+      'codex:new',
+      undefined,
+      'provider-session-new',
+      'continuity-new',
+      undefined,
+      agentTarget
+    )
     expect(toPersistedSession(useSessionStore.getState().sessions[0])).toMatchObject({
       agentFrameworkId: 'codex',
       agentBackendId: 'codex:new',

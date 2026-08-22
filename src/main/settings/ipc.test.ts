@@ -625,7 +625,10 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:delete-provider', { id: CLAUDE_ISOLATED_PROVIDER_ID })
 
-    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    expect(onActiveProviderChanged).toHaveBeenCalledWith(
+      [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID],
+      true
+    )
   })
 
   it('drops the agent connection when the edited provider is the active one', async () => {
@@ -672,7 +675,7 @@ describe('settings IPC handlers', () => {
     }
   )
 
-  it('does not drop the connection when editing a non-active provider', async () => {
+  it('targets Sessions using an edited non-active provider without reconnecting the default', async () => {
     handlers.clear()
     const service = createFakeService()
     service.upsertProvider.mockResolvedValue({ claude: {}, activeProviderId: 'p1', providers: [] })
@@ -681,7 +684,7 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:upsert-provider', { id: 'p2', type: 'custom', name: 'Other' })
 
-    expect(onActiveProviderChanged).not.toHaveBeenCalled()
+    expect(onActiveProviderChanged).toHaveBeenCalledWith(['p2'], false)
   })
 
   it('does not drop the connection when creating a new provider', async () => {

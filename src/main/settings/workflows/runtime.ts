@@ -36,11 +36,16 @@ type RuntimeSettingsWorkflowStore = Pick<
 >
 
 type RuntimeSettingsWorkflowEffects = {
-  requestProviderReconnect: () => void
+  requestProviderReconnect: (providerIds?: readonly string[], includeDefault?: boolean) => void
   requestAgentFrameworkSwitch: () => void
 }
 
 type RuntimeUninstallMethod = 'uninstallClaude' | 'uninstallOpencode' | 'uninstallCodex'
+
+const affectedProviderIds = (providerId: string): readonly string[] =>
+  providerId === CLAUDE_SHARED_PROVIDER_ID || providerId === CLAUDE_ISOLATED_PROVIDER_ID
+    ? [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID]
+    : [providerId]
 
 // Owns post-persistence runtime and authentication effects. Its required effect port makes an
 // incomplete production composition fail at construction instead of silently skipping a reconnect.
@@ -75,11 +80,11 @@ class RuntimeSettingsWorkflows {
     const before = await this.settings.getSettingsView()
     const snapshot = await this.settings.upsertProvider(request)
 
-    if (
-      request.id &&
-      (request.id === before.activeProviderId || request.id === snapshot.activeProviderId)
-    ) {
-      this.effects.requestProviderReconnect()
+    if (request.id) {
+      this.effects.requestProviderReconnect(
+        affectedProviderIds(request.id),
+        request.id === before.activeProviderId || request.id === snapshot.activeProviderId
+      )
     }
 
     return snapshot
@@ -90,9 +95,10 @@ class RuntimeSettingsWorkflows {
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['deleteProvider']>>> {
     const before = await this.settings.getSettingsView()
     const snapshot = await this.settings.deleteProvider(id)
-    if (before.activeProviderId !== snapshot.activeProviderId) {
-      this.effects.requestProviderReconnect()
-    }
+    this.effects.requestProviderReconnect(
+      affectedProviderIds(id),
+      before.activeProviderId !== snapshot.activeProviderId
+    )
     return snapshot
   }
 
@@ -122,15 +128,10 @@ class RuntimeSettingsWorkflows {
     const result = await this.settings.loginClaudeShared()
     if (result.ok) {
       const snapshot = await this.settings.getSettingsView()
-      const active = snapshot.providers.find(
-        (provider) => provider.id === snapshot.activeProviderId
+      this.effects.requestProviderReconnect(
+        [CLAUDE_SHARED_PROVIDER_ID],
+        snapshot.activeProviderId === CLAUDE_SHARED_PROVIDER_ID
       )
-      if (
-        snapshot.activeProviderId === CLAUDE_SHARED_PROVIDER_ID &&
-        active?.type === 'claude-shared'
-      ) {
-        this.effects.requestProviderReconnect()
-      }
     }
     return result
   }
@@ -141,9 +142,10 @@ class RuntimeSettingsWorkflows {
     const result = await this.settings.logoutClaudeShared()
     if (result.ok) {
       const snapshot = await this.settings.getSettingsView()
-      if (snapshot.activeProviderId === CLAUDE_SHARED_PROVIDER_ID) {
-        this.effects.requestProviderReconnect()
-      }
+      this.effects.requestProviderReconnect(
+        [CLAUDE_SHARED_PROVIDER_ID],
+        snapshot.activeProviderId === CLAUDE_SHARED_PROVIDER_ID
+      )
     }
     return result
   }
@@ -166,9 +168,10 @@ class RuntimeSettingsWorkflows {
     const result = await this.settings.logoutIsolatedClaude()
     if (result.ok) {
       const snapshot = await this.settings.getSettingsView()
-      if (snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID) {
-        this.effects.requestProviderReconnect()
-      }
+      this.effects.requestProviderReconnect(
+        [CLAUDE_ISOLATED_PROVIDER_ID],
+        snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID
+      )
     }
     return result
   }
@@ -179,16 +182,10 @@ class RuntimeSettingsWorkflows {
     const result = await this.settings.loginIsolatedCodex()
     if (result.ok && result.applied !== false) {
       const snapshot = await this.settings.getSettingsView()
-      const active = snapshot.providers.find(
-        (provider) => provider.id === snapshot.activeProviderId
+      this.effects.requestProviderReconnect(
+        [CODEX_SUBSCRIPTION_PROVIDER_ID],
+        snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID
       )
-      if (
-        snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID &&
-        active?.type === 'codex-isolated' &&
-        active.codexAuthMode === 'isolated'
-      ) {
-        this.effects.requestProviderReconnect()
-      }
     }
     return result
   }
@@ -199,9 +196,10 @@ class RuntimeSettingsWorkflows {
     const result = await this.settings.logoutIsolatedCodex()
     if (result.ok) {
       const snapshot = await this.settings.getSettingsView()
-      if (snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID) {
-        this.effects.requestProviderReconnect()
-      }
+      this.effects.requestProviderReconnect(
+        [CODEX_SUBSCRIPTION_PROVIDER_ID],
+        snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID
+      )
     }
     return result
   }
@@ -240,15 +238,10 @@ class RuntimeSettingsWorkflows {
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['loginIsolatedClaude']>>> {
     if (result.ok && result.applied !== false) {
       const snapshot = await this.settings.getSettingsView()
-      const active = snapshot.providers.find(
-        (provider) => provider.id === snapshot.activeProviderId
+      this.effects.requestProviderReconnect(
+        [CLAUDE_ISOLATED_PROVIDER_ID],
+        snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID
       )
-      if (
-        snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID &&
-        active?.type === 'claude-isolated'
-      ) {
-        this.effects.requestProviderReconnect()
-      }
     }
     return result
   }

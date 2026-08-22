@@ -136,6 +136,7 @@ class AcpRuntimeCoordinator {
   private readonly reviewerRuntimes = new WeakMap<ActiveSession, AcpRuntime>()
   private readonly runtimeIds = new WeakMap<AcpRuntime, string>()
   private readonly runtimeTargetKeys = new WeakMap<AcpRuntime, string>()
+  private readonly runtimeTargets = new WeakMap<AcpRuntime, AcpSessionAgentTarget>()
   private readonly targetedRuntimes = new Map<string, AcpRuntime>()
   private readonly publishedRuntimeEventIds = new WeakMap<AcpRuntime, Set<string>>()
   private readonly applicationEvents: AcpRuntimeEvent[] = []
@@ -565,6 +566,7 @@ class AcpRuntimeCoordinator {
     // draining owner cannot classify later prompt failures as disconnects.
     this.sessionConnectionStatuses.set(response.sessionId, runtime.getSnapshot().status)
     this.lastRuntime = runtime
+    if (transfersOwnership) await this.retireUnusedTargetedRuntime(owner)
     if (transfersOwnership) this.callbacks.onStateChanged?.(this.getSnapshot())
     try {
       await this.sessionResumeObserver?.(request, response)
@@ -1077,6 +1079,7 @@ class AcpRuntimeCoordinator {
     await this.delegatedWork?.deleteSession(request.sessionId)
     await this.teardownCallbacks.beforeSessionDelete?.(request.sessionId)
     await runtime.deleteSession(request)
+    await this.retireUnusedTargetedRuntime(runtime)
     const ownerAfterDelete = this.sessionRuntimes.get(request.sessionId)
     // Attached deletes emit a runtime state change, whose reconciliation already notifies exactly once.
     // Detached cleanup deliberately emits no state, so complete its session-scoped teardown here. A
@@ -1166,11 +1169,26 @@ class AcpRuntimeCoordinator {
     await retiring.requestRetirement()
   }
 
-  // Reconnect-triggering settings target the generation that owns future turns. Retiring generations
-  // stay pinned to the backend of the workflow they are finishing; reconnecting them here can strand a
-  // later workflow operation behind a barrier that its own activity lease prevents from resolving.
-  requestProviderReconnect(): Promise<void> {
-    return this.getActiveRuntime().requestProviderReconnect()
+  // Provider edits reconnect the default generation only when it uses the affected default, plus every
+  // live targeted generation pinned to that provider. Retiring generations stay on their old settings
+  // while active workflows drain.
+  async requestProviderReconnect(
+    providerIds?: readonly string[],
+    includeDefault = true
+  ): Promise<void> {
+    const affected = new Set<AcpRuntime>()
+    if (includeDefault) affected.add(this.getActiveRuntime())
+    if (providerIds) {
+      for (const runtime of this.runtimes) {
+        if (
+          !this.retiredRuntimes.has(runtime) &&
+          providerIds.includes(this.runtimeTargets.get(runtime)?.providerId ?? '')
+        ) {
+          affected.add(runtime)
+        }
+      }
+    }
+    await Promise.all(Array.from(affected, (runtime) => runtime.requestProviderReconnect()))
   }
 
   async requestSkillsReload(): Promise<void> {
@@ -1541,8 +1559,22 @@ class AcpRuntimeCoordinator {
     )
     this.runtimeSequence += 1
     this.runtimeIds.set(runtime, `runtime-${this.runtimeSequence}-${this.eventNamespace}`)
+    if (target) this.runtimeTargets.set(runtime, target)
     this.runtimes.add(runtime)
     return runtime
+  }
+
+  private async retireUnusedTargetedRuntime(runtime: AcpRuntime | undefined): Promise<void> {
+    if (
+      !runtime ||
+      !this.runtimeTargets.has(runtime) ||
+      this.retiredRuntimes.has(runtime) ||
+      Array.from(this.sessionRuntimes.values()).includes(runtime)
+    ) {
+      return
+    }
+    this.retiredRuntimes.add(runtime)
+    await runtime.requestRetirement()
   }
 
   private handleRuntimeState(runtime: AcpRuntime, snapshot: AcpStateSnapshot): void {
