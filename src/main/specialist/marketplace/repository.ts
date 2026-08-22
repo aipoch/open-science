@@ -73,6 +73,11 @@ const emptyDocument = (): MarketplaceDocument => ({
   releaseCaches: []
 })
 
+// Distinct release paths are stored as base64 in the same JSON document every
+// marketplace read parses. Cap the working set; root caches stay 1:1 with sources.
+export const MAX_MARKETPLACE_RELEASE_CACHE_ENTRIES = 16
+export const MAX_MARKETPLACE_RELEASE_CACHE_BYTES = 4 * 1024 * 1024
+
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string')
 
@@ -225,6 +230,41 @@ const sanitizeReleaseCache = (value: unknown): MarketplaceReleaseCache | undefin
   }
 }
 
+const releaseCachePayloadBytes = (item: MarketplaceReleaseCache): number =>
+  Buffer.byteLength(item.bytesBase64, 'base64')
+
+const boundReleaseCaches = (caches: MarketplaceReleaseCache[]): MarketplaceReleaseCache[] => {
+  if (caches.length <= MAX_MARKETPLACE_RELEASE_CACHE_ENTRIES) {
+    let totalBytes = 0
+    let withinBudget = true
+    for (const item of caches) {
+      totalBytes += releaseCachePayloadBytes(item)
+      if (totalBytes > MAX_MARKETPLACE_RELEASE_CACHE_BYTES) {
+        withinBudget = false
+        break
+      }
+    }
+    if (withinBudget) return caches
+  }
+
+  const ranked = caches
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const time = Date.parse(right.item.cachedAt) - Date.parse(left.item.cachedAt)
+      return time !== 0 ? time : right.index - left.index
+    })
+  const kept: { item: MarketplaceReleaseCache; index: number }[] = []
+  let keptBytes = 0
+  for (const entry of ranked) {
+    const size = releaseCachePayloadBytes(entry.item)
+    if (kept.length >= MAX_MARKETPLACE_RELEASE_CACHE_ENTRIES) continue
+    if (kept.length > 0 && keptBytes + size > MAX_MARKETPLACE_RELEASE_CACHE_BYTES) continue
+    kept.push(entry)
+    keptBytes += size
+  }
+  return kept.sort((left, right) => left.index - right.index).map((entry) => entry.item)
+}
+
 const sanitizeDocument = (value: unknown): MarketplaceDocument => {
   if (!value || typeof value !== 'object') return emptyDocument()
   const document = value as {
@@ -250,9 +290,11 @@ const sanitizeDocument = (value: unknown): MarketplaceDocument => {
     rootCaches: Array.isArray(document.rootCaches)
       ? document.rootCaches.flatMap((item) => sanitizeRootCache(item) ?? [])
       : [],
-    releaseCaches: Array.isArray(document.releaseCaches)
-      ? document.releaseCaches.flatMap((item) => sanitizeReleaseCache(item) ?? [])
-      : []
+    releaseCaches: boundReleaseCaches(
+      Array.isArray(document.releaseCaches)
+        ? document.releaseCaches.flatMap((item) => sanitizeReleaseCache(item) ?? [])
+        : []
+    )
   }
 }
 
@@ -398,12 +440,12 @@ export class MarketplaceRepository {
     }
     await this.mutate((document) => ({
       ...document,
-      releaseCaches: [
+      releaseCaches: boundReleaseCaches([
         ...document.releaseCaches.filter(
           (item) => item.sourceId !== sourceId || item.path !== path
         ),
         cache
-      ]
+      ])
     }))
   }
 
