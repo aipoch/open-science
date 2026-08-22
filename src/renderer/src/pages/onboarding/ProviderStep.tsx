@@ -82,6 +82,7 @@ const ProviderStep = ({
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
   const persistProvider = useSettingsStore((state) => state.persistProvider)
+  const validateProvider = useSettingsStore((state) => state.validateProvider)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
   const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
@@ -322,16 +323,29 @@ const ProviderStep = ({
       if (formValue.type === 'xai-subscription') {
         const providerId = await persistProvider(toUpsertRequest(formValue))
         xaiLoginCancelledRef.current = false
-        const session = await beginXaiOAuthLogin()
         xaiLoginPendingRef.current = true
-        setXaiSession(session)
-        await waitXaiOAuthLogin().finally(() => {
+        try {
+          const session = await beginXaiOAuthLogin()
+          if (xaiLoginCancelledRef.current) return
+          setXaiSession(session)
+          await waitXaiOAuthLogin()
+        } finally {
           xaiLoginPendingRef.current = false
-        })
+        }
         if (xaiLoginCancelledRef.current) return
         setXaiSession(undefined)
-        if (providerId) await setActiveProvider(providerId)
-        onAdvance()
+        const validation = await validateProvider({ providerId })
+        if (validation.applied === false) {
+          setValidationOk(false)
+          setValidationMessage(t('The provider changed during testing. Try again.'))
+          return
+        }
+        setValidationOk(validation.ok)
+        setValidationMessage(describeValidation(validation, tSettings))
+        if (validation.ok) {
+          await setActiveProvider(providerId)
+          onAdvance()
+        }
         return
       }
 

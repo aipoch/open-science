@@ -328,22 +328,27 @@ const ProvidersPanel = ({
   const handleXaiLogin = async (): Promise<void> => {
     setProviderTestError(undefined)
     xaiLoginCancelledRef.current = false
+    isXaiLoginPendingRef.current = true
+    setIsXaiLoginPending(true)
     try {
       const session = await beginXaiOAuthLogin()
+      if (xaiLoginCancelledRef.current) return
       setXaiSession(session)
-      setIsXaiLoginPending(true)
       await waitXaiOAuthLogin()
+      if (xaiLoginCancelledRef.current) return
       setXaiSession(undefined)
     } catch (error) {
       if (xaiLoginCancelledRef.current) return
       setProviderTestError(error instanceof Error ? error.message : t('Could not sign in to xAI.'))
     } finally {
+      isXaiLoginPendingRef.current = false
       setIsXaiLoginPending(false)
     }
   }
 
   const handleCancelXaiLogin = (): void => {
     xaiLoginCancelledRef.current = true
+    isXaiLoginPendingRef.current = false
     void cancelXaiOAuthLogin()
     setXaiSession(undefined)
     setIsXaiLoginPending(false)

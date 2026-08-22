@@ -77,6 +77,7 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
   private readonly now: () => number
   private readonly wait: (milliseconds: number, signal: AbortSignal) => Promise<void>
   private discovery?: Discovery
+  private beginAbort?: AbortController
   private pending?: PendingLogin
   private access?: { token: string; expiresAt: number }
   private refreshPromise?: Promise<string>
@@ -89,42 +90,55 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
 
   async beginLogin(): Promise<XaiOAuthDeviceAuthorization> {
     this.cancelLogin()
-    const discovery = await this.getDiscovery()
-    const response = await this.fetch(discovery.device_authorization_endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: form({ client_id: CLIENT_ID, scope: SCOPE })
-    })
-    const body = (await response.json()) as Record<string, unknown>
-    if (
-      !response.ok ||
-      typeof body.device_code !== 'string' ||
-      typeof body.user_code !== 'string'
-    ) {
-      throw new Error('xAI could not start device sign-in.')
+    const beginAbort = new AbortController()
+    this.beginAbort = beginAbort
+    try {
+      const discovery = await this.getDiscovery(beginAbort.signal)
+      const response = await this.fetch(discovery.device_authorization_endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: form({ client_id: CLIENT_ID, scope: SCOPE }),
+        signal: beginAbort.signal
+      })
+      const body = (await response.json()) as Record<string, unknown>
+      if (
+        !response.ok ||
+        typeof body.device_code !== 'string' ||
+        typeof body.user_code !== 'string'
+      ) {
+        throw new Error('xAI could not start device sign-in.')
+      }
+      const verificationUri =
+        typeof body.verification_uri === 'string'
+          ? trustedEndpoint(body.verification_uri)
+          : undefined
+      if (!verificationUri) throw new Error('xAI returned an invalid verification address.')
+      const expiresIn = typeof body.expires_in === 'number' ? body.expires_in : 900
+      const interval = typeof body.interval === 'number' ? Math.max(1, body.interval) : 5
+      const stored = await this.options.store.load()
+      if (beginAbort.signal.aborted) throw new Error('xAI sign-in was cancelled.')
+      const publicSession: XaiOAuthDeviceAuthorization = {
+        userCode: body.user_code,
+        verificationUri,
+        ...(typeof body.verification_uri_complete === 'string'
+          ? { verificationUriComplete: trustedEndpoint(body.verification_uri_complete) }
+          : {}),
+        expiresAt: this.now() + expiresIn * 1000,
+        intervalSeconds: interval
+      }
+      this.pending = {
+        deviceCode: body.device_code,
+        expectedKeyRef: stored.keyRef,
+        public: publicSession,
+        abort: new AbortController()
+      }
+      return publicSession
+    } catch (error) {
+      if (beginAbort.signal.aborted) throw new Error('xAI sign-in was cancelled.')
+      throw error
+    } finally {
+      if (this.beginAbort === beginAbort) this.beginAbort = undefined
     }
-    const verificationUri =
-      typeof body.verification_uri === 'string' ? trustedEndpoint(body.verification_uri) : undefined
-    if (!verificationUri) throw new Error('xAI returned an invalid verification address.')
-    const expiresIn = typeof body.expires_in === 'number' ? body.expires_in : 900
-    const interval = typeof body.interval === 'number' ? Math.max(1, body.interval) : 5
-    const stored = await this.options.store.load()
-    const publicSession: XaiOAuthDeviceAuthorization = {
-      userCode: body.user_code,
-      verificationUri,
-      ...(typeof body.verification_uri_complete === 'string'
-        ? { verificationUriComplete: trustedEndpoint(body.verification_uri_complete) }
-        : {}),
-      expiresAt: this.now() + expiresIn * 1000,
-      intervalSeconds: interval
-    }
-    this.pending = {
-      deviceCode: body.device_code,
-      expectedKeyRef: stored.keyRef,
-      public: publicSession,
-      abort: new AbortController()
-    }
-    return publicSession
   }
 
   async waitForLogin(): Promise<{ accountEmail?: string }> {
@@ -174,6 +188,8 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
   }
 
   cancelLogin(): void {
+    this.beginAbort?.abort()
+    this.beginAbort = undefined
     this.pending?.abort.abort()
     this.pending = undefined
   }
@@ -221,10 +237,11 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
     return tokens.access_token
   }
 
-  private async getDiscovery(): Promise<Discovery> {
+  private async getDiscovery(signal?: AbortSignal): Promise<Discovery> {
     if (this.discovery) return this.discovery
-    const response = await this.fetch(`${ISSUER}/.well-known/openid-configuration`)
+    const response = await this.fetch(`${ISSUER}/.well-known/openid-configuration`, { signal })
     const body = (await response.json()) as Record<string, unknown>
+    if (signal?.aborted) throw new Error('xAI sign-in was cancelled.')
     if (
       !response.ok ||
       body.issuer !== ISSUER ||

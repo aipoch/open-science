@@ -105,4 +105,27 @@ describe('XaiOAuthController', () => {
     const controller = new XaiOAuthController({ store, fetch })
     await expect(controller.beginLogin()).rejects.toThrow('untrusted OAuth endpoint')
   })
+
+  it('aborts discovery when device sign-in is cancelled before it starts', async () => {
+    let requestSignal: AbortSignal | undefined
+    const fetch = vi.fn(
+      (_url: string | URL | globalThis.Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          requestSignal = init?.signal ?? undefined
+          requestSignal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          )
+        })
+    )
+    const controller = new XaiOAuthController({ store, fetch })
+
+    const pending = controller.beginLogin()
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+    controller.cancelLogin()
+
+    expect(requestSignal?.aborted).toBe(true)
+    await expect(pending).rejects.toThrow('xAI sign-in was cancelled')
+  })
 })

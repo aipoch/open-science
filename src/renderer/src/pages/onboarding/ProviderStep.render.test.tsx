@@ -655,6 +655,7 @@ describe('ProviderStep', () => {
         })
     )
     const persistProvider = vi.fn().mockResolvedValue('builtin-xai-subscription')
+    const validateProvider = vi.fn().mockResolvedValue({ ok: true, category: 'ok', applied: true })
     const setActiveProvider = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       ...codexReadyState(),
@@ -673,6 +674,7 @@ describe('ProviderStep', () => {
         expiresAt: Date.now() + 300_000
       }),
       waitXaiOAuthLogin,
+      validateProvider,
       setActiveProvider
     })
     const onAdvance = vi.fn()
@@ -692,9 +694,67 @@ describe('ProviderStep', () => {
       expect(persistProvider).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'xai-subscription', model: 'grok-4.6' })
       )
+      expect(validateProvider).toHaveBeenCalledWith({
+        providerId: 'builtin-xai-subscription'
+      })
       expect(setActiveProvider).toHaveBeenCalledWith('builtin-xai-subscription')
       expect(onAdvance).toHaveBeenCalledOnce()
     })
+  })
+
+  it('cancels xAI device authorization while the device session is starting', async () => {
+    let finishBegin!: (session: {
+      userCode: string
+      verificationUri: string
+      expiresAt: number
+      intervalSeconds: number
+    }) => void
+    const beginXaiOAuthLogin = vi.fn(
+      () =>
+        new Promise<{
+          userCode: string
+          verificationUri: string
+          expiresAt: number
+          intervalSeconds: number
+        }>((resolve) => {
+          finishBegin = resolve
+        })
+    )
+    const waitXaiOAuthLogin = vi.fn()
+    const cancelXaiOAuthLogin = vi.fn().mockResolvedValue(undefined)
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportedApiTypes: ['responses'],
+          supportsSkills: true
+        }
+      ],
+      persistProvider: vi.fn().mockResolvedValue('builtin-xai-subscription'),
+      beginXaiOAuthLogin,
+      waitXaiOAuthLogin,
+      cancelXaiOAuthLogin
+    })
+
+    await renderStep({ onAdvance })
+    await selectOption('Provider type', 'xAI (Grok) OAuth')
+    await clickButton(/sign in & continue/i)
+    await clickButton(/cancel sign-in/i)
+
+    expect(cancelXaiOAuthLogin).toHaveBeenCalledOnce()
+    await act(async () =>
+      finishBegin({
+        userCode: 'GROK-0000',
+        verificationUri: 'https://auth.x.ai/activate',
+        expiresAt: Date.now() + 300_000,
+        intervalSeconds: 1
+      })
+    )
+    expect(waitXaiOAuthLogin).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
   })
 
   it('cancels an in-flight xAI device authorization when the step unmounts', async () => {
