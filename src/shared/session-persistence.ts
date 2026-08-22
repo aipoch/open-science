@@ -584,6 +584,7 @@ export type SessionConflictRebaseField =
   | 'title'
   | 'permissionProfile'
   | 'autoReviewEnabled'
+  | 'agentConfiguration'
   | 'enabledComputeHosts'
   | 'selectedComputeHosts'
   | 'pinned'

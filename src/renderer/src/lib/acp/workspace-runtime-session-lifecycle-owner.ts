@@ -574,6 +574,12 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
     NonNullable<SendWorkspaceMessageIntent['planContinuation']>
   >()
   const admittedAgentTargetBySessionId = new Map<string, AcpSessionAgentTarget>()
+  const pruneAdmittedAgentTargets = (): void => {
+    const liveSessionIds = new Set(useSessionStore.getState().sessions.map((session) => session.id))
+    for (const sessionId of admittedAgentTargetBySessionId.keys()) {
+      if (!liveSessionIds.has(sessionId)) admittedAgentTargetBySessionId.delete(sessionId)
+    }
+  }
 
   return {
     recordPromptPlanAuthority(
@@ -582,6 +588,7 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
       }
     ): void {
       if (!input.sessionId) return
+      pruneAdmittedAgentTargets()
       if (input.planContinuation) {
         planContinuationBySessionId.set(input.sessionId, input.planContinuation)
       } else {
@@ -601,6 +608,7 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
         getHistoryReplayDescriptor: (sessionId: string) => HistoryReplayDescriptor
       }
     ): void {
+      pruneAdmittedAgentTargets()
       processContextOverflowRecovery(
         runtime,
         events,

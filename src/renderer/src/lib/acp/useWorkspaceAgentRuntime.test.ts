@@ -5993,6 +5993,72 @@ describe('recovering from a request-size overflow', () => {
     )
   })
 
+  it('drops admitted Session targets when the Session is deleted', async () => {
+    seedOverflowedConversation()
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+    const owner = createWorkspaceRuntimeSessionLifecycleOwner()
+    owner.recordPromptPlanAuthority({
+      sessionId: 'session-1',
+      agentTarget: {
+        frameworkId: 'codex',
+        providerId: 'admitted-provider',
+        model: 'admitted-model',
+        reasoningEffort: 'high'
+      }
+    })
+    useSessionStore.setState({ sessions: [] })
+    owner.processRuntimeEvents(runtime, [], {
+      getAgentTarget: () => undefined,
+      getSupportsImageInput: () => undefined,
+      getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
+    })
+    seedOverflowedConversation()
+    const laterTarget = {
+      frameworkId: 'codex' as const,
+      providerId: 'later-provider',
+      model: 'later-model',
+      reasoningEffort: 'low' as const
+    }
+    owner.processRuntimeEvents(
+      runtime,
+      [
+        createEvent({
+          id: 'owner-overflow-after-delete',
+          kind: 'error',
+          level: 'error',
+          recoverable: 'context-overflow',
+          sessionId: 'session-1'
+        })
+      ],
+      {
+        getAgentTarget: () => laterTarget,
+        getSupportsImageInput: () => undefined,
+        getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
+      }
+    )
+
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledTimes(1))
+    expect(runtime.resumeSession.mock.calls.at(-1)?.at(-1)).toEqual(laterTarget)
+  })
+
   it('persists the reset provider identity and re-sends the failed turn with a text preamble', async () => {
     vi.stubGlobal('window', {
       api: { acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) } }

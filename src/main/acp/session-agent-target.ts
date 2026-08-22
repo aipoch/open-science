@@ -1,6 +1,10 @@
 import type { AcpSessionAgentTarget } from '../../shared/acp'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import type { AgentFrameworkId, SessionAgentConfiguration } from '../../shared/settings'
+import {
+  canonicalSessionProviderId,
+  type AgentFrameworkId,
+  type SessionAgentConfiguration
+} from '../../shared/settings'
 
 type SessionAgentTargetSource = Pick<
   PersistedChatSession,
@@ -26,7 +30,9 @@ const materializeSessionAgentConfiguration = (
   if (source.agentConfiguration) return source.agentConfiguration
   if (!source.agentBackendId) return undefined
   const separator = source.agentBackendId.indexOf(':')
-  const providerId = source.agentBackendId.slice(separator < 0 ? 0 : separator + 1).trim()
+  const providerId = canonicalSessionProviderId(
+    source.agentBackendId.slice(separator < 0 ? 0 : separator + 1).trim()
+  )
   if (!providerId) return undefined
   return {
     providerId,

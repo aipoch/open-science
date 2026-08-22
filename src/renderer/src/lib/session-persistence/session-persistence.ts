@@ -73,6 +73,7 @@ const SESSION_CONFLICT_REBASE_FIELDS = [
   'title',
   'permissionProfile',
   'autoReviewEnabled',
+  'agentConfiguration',
   'pinned'
 ] as const satisfies readonly SessionConflictRebaseField[]
 
@@ -81,6 +82,9 @@ const conflictRebaseFieldChanged = (
   next: ChatSession,
   field: SessionConflictRebaseField
 ): boolean => {
+  if (field === 'agentConfiguration') {
+    return JSON.stringify(previous.agentConfiguration) !== JSON.stringify(next.agentConfiguration)
+  }
   return previous[field] !== next[field]
 }
 

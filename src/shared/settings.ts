@@ -82,6 +82,9 @@ export const isCodexSubscriptionProviderId = (id: string): boolean =>
   id === CODEX_SHARED_PROVIDER_ID ||
   id === CODEX_ISOLATED_PROVIDER_ID
 
+export const canonicalSessionProviderId = (providerId: string): string =>
+  isCodexSubscriptionProviderId(providerId) ? CODEX_SUBSCRIPTION_PROVIDER_ID : providerId
+
 export const isClaudeSubscriptionProvider = (
   type: ProviderType
 ): type is 'claude-shared' | 'claude-isolated' =>

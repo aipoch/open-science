@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { toAcpSessionAgentTarget } from './session-agent-target'
+import { CODEX_ISOLATED_PROVIDER_ID, CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
+import {
+  materializeSessionAgentConfiguration,
+  toAcpSessionAgentTarget
+} from './session-agent-target'
 
 describe('Session agent target', () => {
   it('combines the active framework with a durable Session configuration', () => {
@@ -17,5 +21,18 @@ describe('Session agent target', () => {
       reasoningEffort: 'high'
     })
     expect(toAcpSessionAgentTarget('codex')).toBeUndefined()
+  })
+
+  it('normalizes legacy Codex provider aliases when materializing a Session target', () => {
+    expect(
+      materializeSessionAgentConfiguration(
+        { agentBackendId: `codex:${CODEX_ISOLATED_PROVIDER_ID}`, agentModel: 'gpt-5.4' },
+        'high'
+      )
+    ).toEqual({
+      providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      model: 'gpt-5.4',
+      reasoningEffort: 'high'
+    })
   })
 })
