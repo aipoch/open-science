@@ -13,7 +13,7 @@ type FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respo
 const createWorkflow = (
   overrides: {
     advertised?: boolean
-    livePrompt?: boolean
+    livePrompt?: boolean | (() => boolean)
     frameworkId?: 'claude-code' | 'opencode' | 'codex'
     openCodeHttp?: boolean
     providerSessionId?: string | null
@@ -53,7 +53,10 @@ const createWorkflow = (
         overrides.providerSessionId === undefined
           ? 'provider-1'
           : (overrides.providerSessionId ?? undefined),
-      hasLivePrompt: () => overrides.livePrompt ?? true,
+      hasLivePrompt: () =>
+        typeof overrides.livePrompt === 'function'
+          ? overrides.livePrompt()
+          : (overrides.livePrompt ?? true),
       sessionCwd: () => '/workspace',
       publishUserMessage: (input) => {
         published.push(input)
@@ -262,6 +265,37 @@ describe('AcpNativeFollowUpWorkflow', () => {
       })
     )
     expect(published).toHaveLength(1)
+  })
+
+  it('refuses OpenCode HTTP follow-up when the live prompt ends during preparation', async () => {
+    let livePrompt = true
+    const fetchImpl = vi.fn<FetchImpl>(
+      async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            info: { id: 'msg_1', role: 'user', sessionID: 'provider-1' },
+            parts: [{ type: 'text', text: 'late' }]
+          })
+        }) as Response
+    )
+    const { workflow } = createWorkflow({
+      advertised: false,
+      frameworkId: 'opencode',
+      openCodeHttp: true,
+      livePrompt: () => livePrompt,
+      fetchImpl,
+      prepareFollowUp: async () => {
+        livePrompt = false
+        return { prompt: [{ type: 'text' as const, text: 'late' }] }
+      }
+    })
+    await expect(workflow.steerFollowUp({ sessionId: 'app-1', text: 'late' })).resolves.toEqual({
+      injected: false,
+      reason: 'no-live-turn'
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(published).toEqual([])
   })
 
   it('refuses OpenCode v2 inbox admission that never lands in the ACP session', async () => {

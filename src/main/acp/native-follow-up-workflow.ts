@@ -141,6 +141,15 @@ class AcpNativeFollowUpWorkflow {
       return refused('empty-text')
     }
 
+    if (!this.options.hasLivePrompt(request.sessionId)) {
+      log.info('native follow-up refused', {
+        sessionId: request.sessionId,
+        reason: 'no-live-turn',
+        transport: route.transport
+      })
+      return refused('no-live-turn')
+    }
+
     if (route.transport === 'acp-steering') {
       let result: unknown
       try {
