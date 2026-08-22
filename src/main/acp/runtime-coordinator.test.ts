@@ -365,6 +365,61 @@ describe('AcpRuntimeCoordinator', () => {
     })
   })
 
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'routes a background activity resume through its explicit %s Session target',
+    async (frameworkId) => {
+      const targets: Array<AcpSessionAgentTarget | undefined> = []
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+        targets.push(target)
+        const fake = createFakeRuntime({
+          frameworkId: target?.frameworkId ?? 'claude-code',
+          sessionIds: [`session-${created.length}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const agentTarget = {
+        frameworkId,
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'high'
+      } as const
+
+      await coordinator.withActivity(
+        {
+          session: {
+            sessionId: 'detached-session',
+            cwd: '/workspace',
+            projectId: 'project-1',
+            agentTarget
+          }
+        },
+        (runtime) =>
+          runtime.sendApplicationPrompt(
+            { sessionId: 'detached-session', text: '[Auditor] correct this' },
+            {
+              kind: 'application',
+              feature: 'reviewer',
+              purpose: 'correction',
+              causeReviewId: 'review-1'
+            }
+          )
+      )
+
+      expect(targets).toEqual([undefined, agentTarget])
+      expect(created[1].resumeSession).toHaveBeenCalledWith({
+        sessionId: 'detached-session',
+        cwd: '/workspace',
+        projectId: 'project-1',
+        agentTarget
+      })
+      expect(vi.mocked(created[1].runtime.sendApplicationPrompt)).toHaveBeenCalledOnce()
+      expect(vi.mocked(created[0].runtime.sendApplicationPrompt)).not.toHaveBeenCalled()
+    }
+  )
+
   it('reconnects only targeted runtimes using the edited provider', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {

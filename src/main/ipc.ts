@@ -43,6 +43,10 @@ import { SideChatRelayOwner } from './acp/side-chat-relay-owner'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
+import {
+  toAcpSessionAgentTarget,
+  type SessionAgentTargetResolver
+} from './acp/session-agent-target'
 import { ArtifactCodeReconstructionRunner } from './acp/artifact-code-reconstruction-runner'
 import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
 import { ImageInputCompatibilityOwner } from './acp/image-input-compatibility-owner'
@@ -420,6 +424,13 @@ const createApplicationModules = async (
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
   }))
+  const resolveSessionAgentTarget: SessionAgentTargetResolver = async (configuration) => {
+    if (!configuration) return undefined
+    return toAcpSessionAgentTarget(
+      (await settingsService.getSettingsView()).agentFrameworkId,
+      configuration
+    )
+  }
   const storedSettings = await settingsService.getStoredSettings()
   const storageLog = createLogger('storage')
   await networkProxyRuntime.apply(storedSettings.networkProxy)
@@ -1653,12 +1664,7 @@ const createApplicationModules = async (
                     'Parent message root Branch changed before dispatch.'
                   )
                 }
-                const agentTarget = latest.agentConfiguration
-                  ? {
-                      frameworkId: (await settingsService.getSettingsView()).agentFrameworkId,
-                      ...latest.agentConfiguration
-                    }
-                  : undefined
+                const agentTarget = await resolveSessionAgentTarget(latest.agentConfiguration)
                 const started = await delivery.startDispatch()
                 if (started !== 'started') {
                   throw new DelegateMessageParkedError(
@@ -2234,7 +2240,8 @@ const createApplicationModules = async (
     runtime,
     createSessionWorkflow,
     taskNotifications,
-    archiveCoordinator
+    archiveCoordinator,
+    resolveSessionAgentTarget
   )
   {
     // Framework-specific adapters declare their own session selector. The registry resolves those
@@ -2910,6 +2917,7 @@ const createApplicationModules = async (
     projectRuntime: reviewerProjectRuntime,
     mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
+    resolveSessionAgentTarget,
     withSessionMutation: <Result>(
       projectId: string,
       sessionId: string,

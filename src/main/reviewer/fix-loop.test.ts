@@ -425,7 +425,13 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
       reviewRepository: repository,
       acpRuntime: runtime,
       artifactStorageRoot: temporaryRoot!,
-      mainSessionId: 'main-session-1'
+      mainSessionId: 'main-session-1',
+      agentTarget: {
+        frameworkId: 'codex',
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'high'
+      }
     })
 
     // Exactly 1 [Auditor] injection for 1 round.
@@ -442,7 +448,13 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
       {
         session: expect.objectContaining({
           specialistId: 'specialist-new',
-          specialistBindingPending: true
+          specialistBindingPending: true,
+          agentTarget: {
+            frameworkId: 'codex',
+            providerId: 'provider-1',
+            model: 'model-1',
+            reasoningEffort: 'high'
+          }
         })
       },
       expect.any(Function)

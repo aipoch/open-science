@@ -1612,6 +1612,11 @@ describe('TaskRunner', () => {
   it('resumes a detached session without duplicating the new prompt in history replay', async () => {
     const existing: PersistedChatSession = {
       ...session,
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'high'
+      },
       messages: [
         {
           id: 'old-user',
@@ -1682,7 +1687,11 @@ describe('TaskRunner', () => {
     expect(saveCount).toBeGreaterThanOrEqual(1)
 
     expect(resumeRequests).toEqual([
-      expect.objectContaining({ sessionId: existing.id, permissionProfile: 'auto' })
+      expect.objectContaining({
+        sessionId: existing.id,
+        permissionProfile: 'auto',
+        agentConfiguration: existing.agentConfiguration
+      })
     ])
     expect(prompts).toEqual([
       {

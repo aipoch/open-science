@@ -23,7 +23,7 @@ import {
   type Project,
   type UpdateProjectRequest
 } from '../../shared/projects'
-import type { AgentFrameworkId } from '../../shared/settings'
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../shared/settings'
 import type {
   DelegationPolicy,
   PersistedArtifact,
@@ -103,6 +103,7 @@ type TaskAgentResumeSessionRequest = {
   previousBackendId?: string
   specialistId?: string
   specialistBindingPending?: true
+  agentConfiguration?: SessionAgentConfiguration
 }
 
 type TaskAgentPromptRequest = {
@@ -879,7 +880,10 @@ class TaskRunner {
           providerSessionId: existing.providerSessionId,
           providerContinuityToken: existing.providerContinuityToken,
           ...(specialistId ? { specialistId } : {}),
-          ...(existing.specialistBindingPending === true ? { specialistBindingPending: true } : {})
+          ...(existing.specialistBindingPending === true ? { specialistBindingPending: true } : {}),
+          ...(existing.agentConfiguration
+            ? { agentConfiguration: existing.agentConfiguration }
+            : {})
         })
       }
     } else {
