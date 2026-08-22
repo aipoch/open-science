@@ -220,8 +220,8 @@ describe('AcpNativeFollowUpWorkflow', () => {
   })
 
   it('posts OpenCode HTTP follow-up into the v1 session when ACP steering is not advertised', async () => {
-    const fetchImpl = vi.fn(
-      async (): Promise<Response> =>
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
         ({
           ok: true,
           json: async () => ({
@@ -263,8 +263,8 @@ describe('AcpNativeFollowUpWorkflow', () => {
   })
 
   it('refuses OpenCode v2 inbox admission that never lands in the ACP session', async () => {
-    const fetchImpl = vi.fn(
-      async (): Promise<Response> =>
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
         ({
           ok: true,
           json: async () => ({
