@@ -31,11 +31,15 @@ export type HostFollowUpBlocker =
   | (typeof PRODUCTION_HOST_FOLLOW_UP_BLOCKERS)[number]
   | 'no-steering-side-band'
   | 'framework-unsupported'
+  | 'acp-adapter-unverified'
 
 export type NativeSendNowCapability = Readonly<{
   kind: NativeSendNowKind
   delivery: NativeSendNowDelivery
   method?: typeof ACP_STEERING_METHOD
+  // Native CLI/TUI mid-turn input (Codex turn/steer, OpenCode session.steer / busy queue).
+  nativeCliHasMidTurnInput: boolean
+  // Shipped ACP adapter is known to accept a second `session/prompt` while one is outstanding.
   frameworkCanDispatch: boolean
   hostCanDispatch: boolean
   usesSecondSessionPrompt: boolean
@@ -46,7 +50,8 @@ export type SecondSessionPromptAdmission =
   | Readonly<{ allowed: true; mode: 'queued-prompt-adopt-after-stop' }>
   | Readonly<{
       allowed: false
-      reason: 'framework-unsupported' | 'wrong-mechanism' | 'host-not-ready'
+      reason:
+        'framework-unsupported' | 'wrong-mechanism' | 'host-not-ready' | 'acp-adapter-unverified'
       hostBlockers: readonly HostFollowUpBlocker[]
     }>
 
@@ -147,6 +152,7 @@ const advertisedSteering = (): NativeSendNowCapability =>
       kind: 'steering-extension',
       delivery: 'safe-breakpoint',
       method: ACP_STEERING_METHOD,
+      nativeCliHasMidTurnInput: true,
       frameworkCanDispatch: true,
       usesSecondSessionPrompt: false
     },
@@ -165,6 +171,7 @@ export const resolveShippedNativeSendNowCapability = (
       {
         kind: 'queued-prompt',
         delivery: 'next-model-pause',
+        nativeCliHasMidTurnInput: true,
         frameworkCanDispatch: true,
         usesSecondSessionPrompt: true
       },
@@ -172,14 +179,18 @@ export const resolveShippedNativeSendNowCapability = (
     )
   }
 
+  // Codex CLI and OpenCode both have native mid-turn steer/queue. The shipped ACP
+  // adapters have not been live-probed: do not treat missing advertisement as
+  // "the CLI cannot do it", and do not invent overlapping-prompt support.
   return withHostBlockers(
     {
       kind: 'none',
       delivery: 'unavailable',
+      nativeCliHasMidTurnInput: true,
       frameworkCanDispatch: false,
       usesSecondSessionPrompt: false
     },
-    ['framework-unsupported']
+    ['acp-adapter-unverified']
   )
 }
 
@@ -192,6 +203,13 @@ export const admitSecondSessionPrompt = (
     return Object.freeze({
       allowed: false,
       reason: 'wrong-mechanism',
+      hostBlockers: capability.hostBlockers
+    })
+  }
+  if (capability.hostBlockers.includes('acp-adapter-unverified')) {
+    return Object.freeze({
+      allowed: false,
+      reason: 'acp-adapter-unverified',
       hostBlockers: capability.hostBlockers
     })
   }

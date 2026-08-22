@@ -120,6 +120,7 @@ describe('native Send now capability spike', () => {
         kind: 'steering-extension',
         delivery: 'safe-breakpoint',
         method: ACP_STEERING_METHOD,
+        nativeCliHasMidTurnInput: true,
         frameworkCanDispatch: true,
         hostCanDispatch: false,
         usesSecondSessionPrompt: false,
@@ -138,6 +139,7 @@ describe('native Send now capability spike', () => {
     expect(capability).toEqual({
       kind: 'queued-prompt',
       delivery: 'next-model-pause',
+      nativeCliHasMidTurnInput: true,
       frameworkCanDispatch: true,
       hostCanDispatch: false,
       usesSecondSessionPrompt: true,
@@ -155,31 +157,36 @@ describe('native Send now capability spike', () => {
     ['codex', 'codex-responses'],
     ['codex', 'codex-responses-compatibility'],
     ['codex', 'codex-bridge']
-  ] as const)('has no unadvertised native Send now for %s %s', (frameworkId, route) => {
-    const capability = resolveShippedNativeSendNowCapability({
-      frameworkId,
-      ...(route ? { route } : {})
-    })
-    expect(capability).toEqual({
-      kind: 'none',
-      delivery: 'unavailable',
-      frameworkCanDispatch: false,
-      hostCanDispatch: false,
-      usesSecondSessionPrompt: false,
-      hostBlockers: ['framework-unsupported']
-    })
-    expect(admitSecondSessionPrompt(capability)).toEqual({
-      allowed: false,
-      reason: 'framework-unsupported',
-      hostBlockers: ['framework-unsupported']
-    })
-  })
+  ] as const)(
+    'does not invent ACP overlapping-prompt support for unadvertised %s %s',
+    (frameworkId, route) => {
+      const capability = resolveShippedNativeSendNowCapability({
+        frameworkId,
+        ...(route ? { route } : {})
+      })
+      expect(capability).toEqual({
+        kind: 'none',
+        delivery: 'unavailable',
+        nativeCliHasMidTurnInput: true,
+        frameworkCanDispatch: false,
+        hostCanDispatch: false,
+        usesSecondSessionPrompt: false,
+        hostBlockers: ['acp-adapter-unverified']
+      })
+      expect(admitSecondSessionPrompt(capability)).toEqual({
+        allowed: false,
+        reason: 'acp-adapter-unverified',
+        hostBlockers: ['acp-adapter-unverified']
+      })
+    }
+  )
 
   it('would admit a second session/prompt only after host blockers are gone', () => {
     expect(
       admitSecondSessionPrompt({
         kind: 'queued-prompt',
         delivery: 'next-model-pause',
+        nativeCliHasMidTurnInput: true,
         frameworkCanDispatch: true,
         hostCanDispatch: true,
         usesSecondSessionPrompt: true,

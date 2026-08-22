@@ -122,14 +122,14 @@ describe('overlapping session/prompt protocol spike', () => {
     )
   })
 
-  it('does not treat OpenCode-like serialization as Send now', async () => {
+  it('shows a serialize-until-idle adapter is wait-until-idle, not Send now', async () => {
     const order: string[] = []
     let gate!: () => void
     const firstTurn = new Promise<void>((resolve) => {
       gate = resolve
     })
     let chain = Promise.resolve()
-    const agent = initializeAgent('opencode-serial-fake').onRequest(
+    const agent = initializeAgent('serial-until-idle-fake').onRequest(
       acp.methods.agent.session.prompt,
       (ctx) => {
         const text = promptText(ctx.params)
@@ -165,7 +165,7 @@ describe('overlapping session/prompt protocol spike', () => {
     })
   })
 
-  it('rejects a Codex-like busy second prompt without cancelling the first', async () => {
+  it('shows a busy-reject adapter can refuse the second prompt without cancelling the first', async () => {
     let busy = false
     let releaseFirst!: () => void
     const firstTurn = new Promise<void>((resolve) => {
@@ -175,7 +175,7 @@ describe('overlapping session/prompt protocol spike', () => {
     const firstEntered = new Promise<void>((resolve) => {
       enteredFirst = resolve
     })
-    const agent = initializeAgent('codex-busy-fake').onRequest(
+    const agent = initializeAgent('busy-reject-fake').onRequest(
       acp.methods.agent.session.prompt,
       async () => {
         if (busy) throw RequestError.invalidRequest({ reason: 'session_busy' }, 'Session is busy')
@@ -207,6 +207,26 @@ describe('overlapping session/prompt protocol spike', () => {
       await expect(second).rejects.toThrow(/busy/i)
       releaseFirst()
       await expect(first).resolves.toEqual({ stopReason: 'end_turn' })
+    })
+  })
+
+  it('lets the ACP SDK send a second session/prompt without throwing', async () => {
+    const texts: string[] = []
+    const agent = initializeAgent('sdk-overlap-fake').onRequest(
+      acp.methods.agent.session.prompt,
+      async (ctx) => {
+        texts.push(promptText(ctx.params))
+        return { stopReason: 'end_turn' }
+      }
+    )
+
+    await connectSpike(agent, async (ctx) => {
+      const session = await ctx.buildSession('/tmp').start()
+      const first = session.prompt('one')
+      const second = session.prompt('two')
+      await expect(first).resolves.toEqual({ stopReason: 'end_turn' })
+      await expect(second).resolves.toEqual({ stopReason: 'end_turn' })
+      expect(texts).toEqual(['one', 'two'])
     })
   })
 })
