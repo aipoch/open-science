@@ -206,7 +206,9 @@ const abortOnNextStdinWrite = (
     const result =
       typeof encoding === 'function'
         ? originalWrite(chunk, encoding)
-        : originalWrite(chunk, encoding, cb)
+        : encoding === undefined
+          ? originalWrite(chunk, cb)
+          : originalWrite(chunk, encoding, cb)
     if (abortOnWrite) {
       abortOnWrite = false
       child.stdin.write = originalWrite

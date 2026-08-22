@@ -34,6 +34,7 @@ const startLoop = (
 ): {
   child: ChildProcessWithoutNullStreams
   send: (code: string) => Promise<KernelLoopResponse>
+  waitFor: (reqId: string) => Promise<KernelLoopResponse>
 } => {
   const child = spawn(rscript, [LOOP], { env: { ...process.env, ...env } })
   const rl = createInterface({ input: child.stdout })
@@ -66,13 +67,17 @@ const startLoop = (
       w.resolve(msg)
     }
   })
-  const send = (code: string): Promise<KernelLoopResponse> =>
+  const waitFor = (reqId: string): Promise<KernelLoopResponse> =>
     new Promise((resolve, reject) => {
-      const reqId = randomUUID()
       waiters.set(reqId, { resolve, reject })
-      child.stdin.write(frameRRequest(reqId, code))
     })
-  return { child, send }
+  const send = (code: string): Promise<KernelLoopResponse> => {
+    const reqId = randomUUID()
+    const pending = waitFor(reqId)
+    child.stdin.write(frameRRequest(reqId, code))
+    return pending
+  }
+  return { child, send, waitFor }
 }
 
 // Resolved lazily inside each `it` (not at describe-body scope) so a skipped describe.skip run
@@ -180,6 +185,33 @@ gate('r_loop.R', () => {
       child.kill()
     }
   }, 60_000)
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps the protocol aligned when SIGINT arrives in the middle of a framed body',
+    async () => {
+      const { child, send, waitFor } = startLoop(rscriptBin(), {})
+      try {
+        expect((await send('aligned <- 41'))?.error).toBeNull()
+        const reqId = randomUUID()
+        const frame = frameRRequest(reqId, 'cat("split-ok")')
+        const mid = Math.max(1, Math.floor(frame.length / 2))
+        const pending = waitFor(reqId)
+        child.stdin.write(frame.subarray(0, mid))
+        child.kill('SIGINT')
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        child.stdin.write(frame.subarray(mid))
+
+        const split = await pending
+        expect(split.error === 'interrupted' || split.stdout.includes('split-ok')).toBe(true)
+        const next = await send('cat(aligned + 1)')
+        expect(next.error).toBeNull()
+        expect(next.stdout).toContain('42')
+      } finally {
+        child.kill()
+      }
+    },
+    60_000
+  )
 
   it.skipIf(process.platform === 'win32')(
     'acknowledges SIGINT that arrives while the next request is still being read',
