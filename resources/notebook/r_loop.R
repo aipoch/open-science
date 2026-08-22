@@ -1303,11 +1303,14 @@ local({
         }
       )
       if (length(header) == 0L) {
+        if (!isOpen(con, rw = "read")) return(NULL)
+        if (isTRUE(state$during_read)) next
         empty_streak <- empty_streak + 1L
-        if (!isOpen(con, rw = "read") || empty_streak >= 2L) return(NULL)
+        if (empty_streak >= 2L) return(NULL)
         state$during_read <- TRUE
         next
       }
+      empty_streak <- 0L
       parts <- strsplit(header, " ", fixed = TRUE)[[1]]
       req_id <- parts[1]
       n <- as.integer(parts[2])
@@ -1322,9 +1325,13 @@ local({
             raw()
           }
         )
+        # Keep draining the declared frame. An interrupt is not EOF: counting it
+        # as an empty read would close the loop and desynchronize the next request.
         if (length(chunk) == 0L) {
+          if (!isOpen(con, rw = "read")) return(NULL)
+          if (isTRUE(state$during_read)) next
           body_empty <- body_empty + 1L
-          if (!isOpen(con, rw = "read") || body_empty >= 2L) return(NULL)
+          if (body_empty >= 2L) return(NULL)
           state$during_read <- TRUE
           next
         }
