@@ -1,4 +1,4 @@
-import { link, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -399,6 +399,91 @@ describe('Specialist package source adapters', () => {
         expect.objectContaining({ code: 'package.hard-link-forbidden' })
       ])
       expect(JSON.stringify(result.preview)).not.toContain('secret')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts the directory file-count boundary and blocks the first file above it', async () => {
+    const extraAtLimit = SPECIALIST_PACKAGE_ARCHIVE_LIMITS.fileCount - 3
+    const writePackage = async (root: string, extraFiles: number): Promise<void> => {
+      await writeFile(
+        join(root, 'manifest.json'),
+        await readFile(join(fixtureRoot, 'manifest.json'))
+      )
+      await writeFile(
+        join(root, 'specialist.json'),
+        await readFile(join(fixtureRoot, 'specialist.json'))
+      )
+      await writeFile(join(root, 'README.txt'), await readFile(join(fixtureRoot, 'README.txt')))
+      await mkdir(join(root, 'skills', 'example', 'references'), { recursive: true })
+      await Promise.all(
+        Array.from({ length: extraFiles }, (_, index) =>
+          writeFile(join(root, 'skills', 'example', 'references', `${index}.md`), '')
+        )
+      )
+    }
+    const atLimitRoot = await mkdtemp(join(tmpdir(), 'specialist-dir-count-limit-'))
+    const aboveLimitRoot = await mkdtemp(join(tmpdir(), 'specialist-dir-count-overflow-'))
+    try {
+      await writePackage(atLimitRoot, extraAtLimit)
+      await writePackage(aboveLimitRoot, extraAtLimit + 1)
+
+      const atLimit = await validateSpecialistDirectory(atLimitRoot, catalog)
+      const aboveLimit = await validateSpecialistDirectory(aboveLimitRoot, catalog)
+
+      expect(atLimit.preview.diagnostics).not.toContainEqual(
+        expect.objectContaining({ code: 'package.archive-file-count-exceeded' })
+      )
+      expect(aboveLimit.preview.installable).toBe(false)
+      expect(aboveLimit.preview.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: 'package.archive-file-count-exceeded',
+          actual: SPECIALIST_PACKAGE_ARCHIVE_LIMITS.fileCount + 1,
+          limit: SPECIALIST_PACKAGE_ARCHIVE_LIMITS.fileCount,
+          unit: 'files'
+        })
+      )
+      expect(aboveLimit.preview.diagnostics).not.toContainEqual(
+        expect.objectContaining({ code: 'skill.document-missing' })
+      )
+    } finally {
+      await rm(atLimitRoot, { recursive: true, force: true })
+      await rm(aboveLimitRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an oversized directory file from metadata before reading it', async () => {
+    const actual = SPECIALIST_PACKAGE_ARCHIVE_LIMITS.fileBytes + 1
+    const root = await mkdtemp(join(tmpdir(), 'specialist-dir-file-size-'))
+    try {
+      await writeFile(
+        join(root, 'manifest.json'),
+        await readFile(join(fixtureRoot, 'manifest.json'))
+      )
+      await writeFile(
+        join(root, 'specialist.json'),
+        await readFile(join(fixtureRoot, 'specialist.json'))
+      )
+      const handle = await open(join(root, 'payload.bin'), 'w')
+      await handle.truncate(actual)
+      await handle.close()
+
+      const result = await validateSpecialistDirectory(root, catalog)
+
+      expect(result.preview.installable).toBe(false)
+      expect(result.preview.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: 'package.archive-file-size-exceeded',
+          path: 'payload.bin',
+          actual,
+          limit: SPECIALIST_PACKAGE_ARCHIVE_LIMITS.fileBytes,
+          unit: 'bytes'
+        })
+      )
+      expect(result.preview.diagnostics).not.toContainEqual(
+        expect.objectContaining({ code: 'package.top-level-content-forbidden' })
+      )
     } finally {
       await rm(root, { recursive: true, force: true })
     }
