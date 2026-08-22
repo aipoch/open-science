@@ -103,6 +103,16 @@ const customMcpFailureCategory = (
   availability: CustomMcpFailureAvailability
 ): 'connector_unavailable' | 'connector_unauthenticated' => `connector_${availability}`
 
+const CUSTOM_MCP_RETRY_BASE_MS = 1_000
+const CUSTOM_MCP_RETRY_MAX_MS = 30_000
+
+type CustomMcpFailureState = {
+  category: 'connector_unavailable' | 'connector_unauthenticated'
+  failureCount: number
+  retryAt?: number
+  probing: boolean
+}
+
 const stableRecordEntries = (record: Record<string, string> | undefined): [string, string][] =>
   Object.entries(record ?? {}).sort(([left], [right]) => left.localeCompare(right))
 
@@ -148,11 +158,9 @@ class ConnectorGateError extends Error {
 export class ConnectorService {
   private readonly engine: ParserEngine
   // A connector that cannot authenticate or start is physically unavailable to every scope. Main
-  // enablement is only a logical preference and may be overridden by a Specialist; this state may not.
-  private readonly unavailableCustomConnectors = new Map<
-    string,
-    'connector_unavailable' | 'connector_unauthenticated'
-  >()
+  // enablement is only a logical preference and may be overridden by a Specialist; this state may
+  // not. Transient transport failures become eligible for one demand-driven probe after backoff.
+  private readonly unavailableCustomConnectors = new Map<string, CustomMcpFailureState>()
   private readonly customServerFailureEpochs = new Map<string, number>()
   private readonly permissionBroker: ConnectorPermissionBroker
   private readonly customServerGenerations = new Map<string, number>()
@@ -328,7 +336,9 @@ export class ConnectorService {
     const generation = this.assertCustomServerCurrent(custom)
     const failureEpoch = this.customServerFailureEpochs.get(custom.id) ?? 0
     const physicalFailure = this.unavailableCustomConnectors.get(custom.id)
-    if (physicalFailure) throw new ConnectorGateError(physicalFailure)
+    if (physicalFailure && !this.isCustomServerProbeDue(physicalFailure)) {
+      throw new ConnectorGateError(physicalFailure.category)
+    }
     if (!access.bypassMainEnablement && !custom.enabled) {
       throw new ConnectorGateError(
         'connector_disabled',
@@ -356,6 +366,7 @@ export class ConnectorService {
       signal
     )
     const config = toCustomMcpConfig(authorization.custom)
+    if (physicalFailure) this.claimCustomServerProbe(custom.id, physicalFailure)
 
     let tools: Array<{ name: string }>
     try {
@@ -363,7 +374,10 @@ export class ConnectorService {
         ? await this.deps.mcpClientManager.listTools(config, signal)
         : await this.deps.mcpClientManager.listTools(config)
     } catch (error) {
-      if (signal?.aborted) throw error
+      if (signal?.aborted) {
+        if (physicalFailure) this.releaseCustomServerProbe(custom.id, physicalFailure)
+        throw error
+      }
       // Never relay a transport error: custom server URLs, headers, or server-provided diagnostics
       // can contain credentials. Record only the availability category for subsequent fail-closed
       // dispatches; a successful connection clears the transient state.
@@ -371,6 +385,8 @@ export class ConnectorService {
       this.recordCustomServerFailure(custom.id, failureEpoch, availability)
       throw new ConnectorGateError(customMcpFailureCategory(availability))
     }
+
+    this.publishCustomServerRecovery(custom.id, failureEpoch)
 
     if (!tools.some((tool) => tool.name === method)) {
       throw new ConnectorGateError(
@@ -409,11 +425,7 @@ export class ConnectorService {
       const result = signal
         ? await this.deps.mcpClientManager.call(config, method, args, signal)
         : await this.deps.mcpClientManager.call(config, method, args)
-      if ((this.customServerFailureEpochs.get(custom.id) ?? 0) === failureEpoch) {
-        if (this.unavailableCustomConnectors.delete(custom.id)) {
-          this.deps.onCustomServerAvailabilityChanged?.(custom.id, undefined)
-        }
-      }
+      this.publishCustomServerRecovery(custom.id, failureEpoch)
       return result
     } catch (error) {
       if (signal?.aborted) throw error
@@ -436,8 +448,54 @@ export class ConnectorService {
     availability: CustomMcpFailureAvailability
   ): void {
     if ((this.customServerFailureEpochs.get(serverId) ?? 0) === expectedEpoch) {
-      this.unavailableCustomConnectors.set(serverId, customMcpFailureCategory(availability))
+      const category = customMcpFailureCategory(availability)
+      const previous = this.unavailableCustomConnectors.get(serverId)
+      const failureCount =
+        category === 'connector_unavailable' && previous?.category === category
+          ? previous.failureCount + 1
+          : 1
+      const retryDelay = Math.min(
+        CUSTOM_MCP_RETRY_BASE_MS * 2 ** (failureCount - 1),
+        CUSTOM_MCP_RETRY_MAX_MS
+      )
+      this.unavailableCustomConnectors.set(serverId, {
+        category,
+        failureCount,
+        ...(category === 'connector_unavailable' ? { retryAt: Date.now() + retryDelay } : {}),
+        probing: false
+      })
       this.deps.onCustomServerAvailabilityChanged?.(serverId, availability)
+    }
+  }
+
+  private isCustomServerProbeDue(failure: CustomMcpFailureState): boolean {
+    return (
+      failure.category === 'connector_unavailable' &&
+      !failure.probing &&
+      failure.retryAt !== undefined &&
+      Date.now() >= failure.retryAt
+    )
+  }
+
+  private claimCustomServerProbe(serverId: string, expected: CustomMcpFailureState): void {
+    const current = this.unavailableCustomConnectors.get(serverId)
+    if (!current) return
+    if (current !== expected || !this.isCustomServerProbeDue(current)) {
+      throw new ConnectorGateError(current.category)
+    }
+    current.probing = true
+  }
+
+  private releaseCustomServerProbe(serverId: string, expected: CustomMcpFailureState): void {
+    if (this.unavailableCustomConnectors.get(serverId) === expected) expected.probing = false
+  }
+
+  private publishCustomServerRecovery(serverId: string, expectedEpoch: number): void {
+    if (
+      (this.customServerFailureEpochs.get(serverId) ?? 0) === expectedEpoch &&
+      this.unavailableCustomConnectors.delete(serverId)
+    ) {
+      this.deps.onCustomServerAvailabilityChanged?.(serverId, undefined)
     }
   }
 
