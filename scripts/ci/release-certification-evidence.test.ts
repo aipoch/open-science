@@ -291,6 +291,27 @@ describe('release certification evidence', () => {
       platforms: expect.arrayContaining([expect.objectContaining({ platform: 'windows-x64' })])
     })
 
+    await expect(
+      aggregateEvidence({ argv: [...args, '--require-signed-windows'] })
+    ).rejects.toThrow(/Windows Authenticode did not pass/)
+    await writeFile(
+      join(root, 'certification-windows-x64.json'),
+      JSON.stringify({
+        ...recordFor('windows-x64'),
+        checks: { ...recordFor('windows-x64').checks, authenticode: 'passed' }
+      })
+    )
+    await expect(
+      aggregateEvidence({ argv: [...args, '--require-signed-windows'] })
+    ).resolves.toMatchObject({
+      platforms: expect.arrayContaining([
+        expect.objectContaining({
+          platform: 'windows-x64',
+          checks: expect.objectContaining({ authenticode: 'passed' })
+        })
+      ])
+    })
+
     await writeFile(
       join(root, 'certification-macos-arm64.json'),
       JSON.stringify({

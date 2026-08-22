@@ -98,7 +98,7 @@ describe('post-merge Windows validation', () => {
     expect(smoke['timeout-minutes']).toBe(10)
   })
 
-  it('keeps Windows packaging unsigned until signing credentials are available', () => {
+  it('keeps electron-builder unsigned while baking in the expected updater publisher', () => {
     const build = readWorkflow('build.yml')
     const job = build.jobs.build
     const names = job.steps?.map(({ name }) => name) ?? []
@@ -122,7 +122,8 @@ describe('post-merge Windows validation', () => {
     expect(prepareMacSigning.run).toContain("grep -q 'Developer ID Application:'")
     expect(packageStep.env).toEqual({
       CSC_KEYCHAIN: '${{ steps.mac_signing.outputs.keychain }}',
-      NODE_OPTIONS: '--max-old-space-size=8192'
+      NODE_OPTIONS: '--max-old-space-size=8192',
+      WINDOWS_PUBLISHER_NAME: '${{ inputs.windows_publisher_name }}'
     })
     expect(packageStep.run).toContain(
       'if [ "${{ steps.mac_signing.outputs.enabled }}" = "true" ]; then'
@@ -143,27 +144,44 @@ describe('post-merge Windows validation', () => {
       'rm -f "$MAC_SIGNING_CERTIFICATE" "$MAC_SIGNING_KEYCHAIN_LIST"'
     )
     expect(packageStep.run).toContain('unsigned_args=(-c.dmg.sign=false)')
-    expect(packageStep.run).not.toContain('publisherName')
+    expect(packageStep.run).toContain(
+      '-c.win.signtoolOptions.publisherName="$WINDOWS_PUBLISHER_NAME"'
+    )
   })
 
   it('provides an isolated Windows-only SignPath dry-run', () => {
     const build = readWorkflow('build.yml')
     const inputs = build.on?.workflow_call?.inputs
     const workflow = readWorkflow('signpath-test.yml')
-    const sign = workflow.jobs['sign-installer']
+    const finalizer = readWorkflow('signpath-windows.yml')
+    const sign = finalizer.jobs.sign
     const uploadUnsigned = findStep(sign, 'Upload raw installer for SignPath')
-    const submit = findStep(sign, 'Submit SignPath test signing request')
-    const verify = findStep(sign, 'Verify Authenticode signature was added')
-    const uploadSigned = findStep(sign, 'Upload signed installer')
+    const submit = findStep(sign, 'Submit SignPath signing request')
+    const verify = findStep(sign, 'Verify and install signed artifact')
+    const uploadSigned = findStep(sign, 'Upload finalized Windows artifact')
 
     expect(inputs?.platform_name).toMatchObject({ type: 'string', default: '' })
+    expect(inputs?.windows_publisher_name).toMatchObject({ type: 'string', default: '' })
     expect(workflow.on).toEqual({ workflow_dispatch: null })
     expect(workflow).toMatchObject({ permissions: { actions: 'read', contents: 'read' } })
     expect(workflow.jobs.build).toMatchObject({
       uses: './.github/workflows/build.yml',
-      with: { platform_name: 'windows-x64', skip_verify: true }
+      with: {
+        platform_name: 'windows-x64',
+        skip_verify: true,
+        windows_publisher_name: "CN=Test certificate for 'Open Science [OSS]'"
+      }
     })
-    expect(sign).toMatchObject({ needs: 'build', 'runs-on': 'windows-latest' })
+    expect(workflow.jobs['sign-installer']).toMatchObject({
+      needs: 'build',
+      uses: './.github/workflows/signpath-windows.yml',
+      with: {
+        signing_policy_slug: 'test-signing',
+        test_certificate: true,
+        output_artifact_name: 'signpath-test-windows-x64'
+      },
+      secrets: 'inherit'
+    })
     expect(findStep(sign, 'Select unsigned NSIS installer').run).toContain('*-win-x64-setup.exe')
     expect(uploadUnsigned).toMatchObject({
       id: 'upload-unsigned-installer',
@@ -176,7 +194,7 @@ describe('post-merge Windows validation', () => {
         'api-token': '${{ secrets.SIGNPATH_API_TOKEN }}',
         'organization-id': '${{ vars.SIGNPATH_ORGANIZATION_ID }}',
         'project-slug': 'open-science',
-        'signing-policy-slug': 'test-signing',
+        'signing-policy-slug': '${{ inputs.signing_policy_slug }}',
         'artifact-configuration-slug': 'windows-installer',
         'github-artifact-id': '${{ steps.upload-unsigned-installer.outputs.artifact-id }}',
         'skip-decompress': true,
@@ -185,7 +203,7 @@ describe('post-merge Windows validation', () => {
     })
     expect(verify.run).toContain('Get-AuthenticodeSignature')
     expect(verify.run).toContain(
-      '$expectedTestCertificateSubject = "CN=Test certificate for \'Open Science [OSS]\'"'
+      '$expectedSubject = "CN=Test certificate for \'Open Science [OSS]\'"'
     )
     expect(verify.run).toContain('$expectedUntrustedRootMessage =')
     expect(verify.run).toContain("$signature.Status -eq 'UnknownError'")
@@ -193,13 +211,85 @@ describe('post-merge Windows validation', () => {
       '$signature.SignerCertificate.Subject -eq $signature.SignerCertificate.Issuer'
     )
     expect(verify.run).toContain('$signature.StatusMessage -eq $expectedUntrustedRootMessage')
+    expect(verify.run).toContain('if (-not $isExpectedCertificate)')
     expect(verify.run).not.toContain('X509Store')
     expect(uploadSigned.with).toMatchObject({
-      name: 'signpath-test-windows-x64',
+      name: '${{ inputs.output_artifact_name }}',
       'retention-days': 7,
       'if-no-files-found': 'error'
     })
     expect(workflow.jobs).not.toHaveProperty('publish')
+  })
+
+  it('finalizes the Windows release artifact through one reusable SignPath workflow', () => {
+    const release = readWorkflow('release.yml')
+    const dryRun = readWorkflow('signpath-test.yml')
+    const finalizer = readWorkflow('signpath-windows.yml')
+    const sign = finalizer.jobs.sign
+
+    expect(finalizer.on?.workflow_call?.inputs).toMatchObject({
+      signing_policy_slug: { type: 'string' },
+      test_certificate: { type: 'boolean', default: false },
+      output_artifact_name: { type: 'string' }
+    })
+    expect(release.jobs['sign-windows']).toMatchObject({
+      needs: 'build',
+      uses: './.github/workflows/signpath-windows.yml',
+      with: {
+        signing_policy_slug: 'release-signing',
+        test_certificate: false,
+        output_artifact_name: 'windows-x64'
+      }
+    })
+    expect(release.jobs['package-smoke'].needs).toEqual(['build', 'sign-windows'])
+    expect(dryRun.jobs['sign-installer']).toMatchObject({
+      needs: 'build',
+      uses: './.github/workflows/signpath-windows.yml',
+      with: {
+        signing_policy_slug: 'test-signing',
+        test_certificate: true,
+        output_artifact_name: 'signpath-test-windows-x64'
+      }
+    })
+    expect(findStep(sign, 'Submit SignPath signing request').with).toMatchObject({
+      'signing-policy-slug': '${{ inputs.signing_policy_slug }}'
+    })
+    expect(findStep(sign, 'Refresh Windows release metadata').run).toContain(
+      'scripts/refresh-windows-release-metadata.mjs'
+    )
+    expect(findStep(sign, 'Upload finalized Windows artifact').with).toMatchObject({
+      name: '${{ inputs.output_artifact_name }}',
+      overwrite: true
+    })
+    const cleanup = findStep(sign, 'Delete temporary unsigned artifact')
+    expect(cleanup.if).toContain('always()')
+    expect(cleanup.run).toContain('actions/artifacts/$env:ARTIFACT_ID')
+    expect(finalizer.permissions).toMatchObject({ actions: 'write', contents: 'read' })
+    expect(release.jobs['sign-windows'].permissions).toMatchObject({
+      actions: 'write',
+      contents: 'read'
+    })
+  })
+
+  it('requires production Authenticode during stable Windows package smoke', () => {
+    const release = readWorkflow('release.yml')
+    const smokeWorkflow = readWorkflow('package-smoke.yml')
+    const smoke = smokeWorkflow.jobs.smoke
+    const verify = findStep(smoke, 'Verify Windows Authenticode signature')
+    const evidence = findStep(smoke, 'Record platform certification evidence')
+
+    expect(smokeWorkflow.on?.workflow_call?.inputs?.require_windows_authenticode).toMatchObject({
+      type: 'boolean',
+      default: false
+    })
+    expect(release.jobs['package-smoke'].with?.require_windows_authenticode).toBe(
+      "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}"
+    )
+    expect(verify.if).toBe("matrix.platform == 'win' && inputs.require_windows_authenticode")
+    expect(verify.run).toContain('Get-AuthenticodeSignature')
+    expect(verify.run).toContain("$signature.Status -ne 'Valid'")
+    expect(verify.env?.EXPECTED_PUBLISHER).toBe('${{ vars.SIGNPATH_WINDOWS_PUBLISHER_NAME }}')
+    expect(evidence.run).toContain('authenticode=passed')
   })
 
   it('separates immutable builds from blocking package smoke and advisory regressions', () => {
@@ -317,7 +407,7 @@ describe('post-merge Windows validation', () => {
     expect(release.jobs.build.uses).toBe('./.github/workflows/build.yml')
     expect(release).toMatchObject({ permissions: { actions: 'read', contents: 'write' } })
     expect(release.jobs['package-smoke']).toMatchObject({
-      needs: 'build',
+      needs: ['build', 'sign-windows'],
       uses: './.github/workflows/package-smoke.yml'
     })
     expect(release.jobs['notarize-mac'].needs).toEqual(['build', 'package-smoke'])
@@ -363,7 +453,7 @@ describe('post-merge Windows validation', () => {
     expect(commands.some((command) => command.startsWith('npm run typecheck'))).toBe(false)
   })
 
-  it('records unsigned Windows update diagnostics without blocking publishing', () => {
+  it('requires signed Windows evidence without making the historical upgrade drill blocking', () => {
     const release = readWorkflow('release.yml')
     const upgrade = readWorkflow('windows-upgrade-smoke.yml').jobs['windows-upgrade-smoke']
 
@@ -467,7 +557,7 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(release.jobs.publish.needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
-    ).not.toContain('--require-signed-windows')
+    ).toContain('--require-signed-windows')
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
     ).not.toContain('--require-windows-update')
@@ -526,7 +616,14 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
       run: 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main'
     })
     expect(release.jobs.build.needs).toBe('release-preflight')
-    expect(release.jobs.build.with?.require_windows_signing).toBeUndefined()
+    expect(release.jobs.build.with?.windows_publisher_name).toBe(
+      '${{ vars.SIGNPATH_WINDOWS_PUBLISHER_NAME }}'
+    )
+    const requireWindowsSigning = findStep(preflight, 'Require Windows signing configuration')
+    expect(requireWindowsSigning.if).toBe(stableTagCondition)
+    expect(requireWindowsSigning.env?.WINDOWS_PUBLISHER_NAME).toBe(
+      '${{ vars.SIGNPATH_WINDOWS_PUBLISHER_NAME }}'
+    )
     expect(release.jobs['notarize-mac'].if).toBe(stableTagCondition)
     expect(release.jobs['windows-upgrade-smoke']).toBeUndefined()
     expect(release.jobs.publish.if).toBe(stableTagCondition)
@@ -588,7 +685,7 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
       'notarize-mac.yml',
       'package-smoke.yml',
       'release.yml',
-      'signpath-test.yml',
+      'signpath-windows.yml',
       'mirror-to-website.yml',
       'windows-upgrade-smoke.yml'
     ]) {

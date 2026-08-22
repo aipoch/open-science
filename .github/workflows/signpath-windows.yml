@@ -1,0 +1,175 @@
+name: Finalize Windows installer with SignPath
+
+# Reusable post-build boundary for Windows releases. SignPath changes the final NSIS installer
+# bytes, so this workflow also rebuilds the blockmap and updates latest.yml before re-emitting the
+# complete artifact consumed by package smoke and publication.
+on:
+  workflow_call:
+    inputs:
+      signing_policy_slug:
+        description: SignPath signing policy to use (`test-signing` or `release-signing`).
+        required: true
+        type: string
+      test_certificate:
+        description: Accept the Foundation self-signed test certificate instead of requiring trust.
+        required: false
+        type: boolean
+        default: false
+      output_artifact_name:
+        description: Artifact name containing the signed installer and refreshed update metadata.
+        required: true
+        type: string
+    secrets:
+      SIGNPATH_API_TOKEN:
+        required: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  sign:
+    name: Sign and finalize Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout finalization tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install metadata dependencies
+        run: npm ci --ignore-scripts --omit=optional --no-audit --no-fund
+
+      - name: Download Windows build artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-x64
+          path: windows
+
+      - name: Select unsigned NSIS installer
+        id: installer
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem -Path windows -Filter '*-win-x64-setup.exe' -File -Recurse)
+          if ($installers.Count -ne 1) {
+            Write-Error "Expected exactly one Windows setup EXE, found $($installers.Count)."
+            exit 1
+          }
+          "path=$($installers[0].FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      # The SignPath artifact configuration is a raw <pe-file>; do not wrap this upload in ZIP.
+      - name: Upload raw installer for SignPath
+        id: upload-unsigned-installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signpath-unsigned-windows-installer
+          path: ${{ steps.installer.outputs.path }}
+          archive: false
+          overwrite: true
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Submit SignPath signing request
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: open-science
+          signing-policy-slug: ${{ inputs.signing_policy_slug }}
+          artifact-configuration-slug: windows-installer
+          github-artifact-id: ${{ steps.upload-unsigned-installer.outputs.artifact-id }}
+          skip-decompress: true
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 900
+          output-artifact-directory: ${{ runner.temp }}/signpath-signed
+
+      - name: Verify and install signed artifact
+        shell: pwsh
+        env:
+          EXPECTED_PUBLISHER: ${{ vars.SIGNPATH_WINDOWS_PUBLISHER_NAME }}
+        run: |
+          $signedInstallers = @(
+            Get-ChildItem -Path '${{ runner.temp }}/signpath-signed' -Filter '*.exe' -File -Recurse
+          )
+          if ($signedInstallers.Count -ne 1) {
+            Write-Error "Expected exactly one signed EXE, found $($signedInstallers.Count)."
+            exit 1
+          }
+
+          $signedInstaller = $signedInstallers[0]
+          $signature = Get-AuthenticodeSignature -FilePath $signedInstaller.FullName
+          if ($null -eq $signature.SignerCertificate) {
+            Write-Error "SignPath returned an artifact without a signer certificate. Status: $($signature.Status)."
+            exit 1
+          }
+
+          Write-Host "Signature status: $($signature.Status)"
+          Write-Host "Status message: $($signature.StatusMessage)"
+          Write-Host "Signer: $($signature.SignerCertificate.Subject)"
+
+          $testCertificate = '${{ inputs.test_certificate }}' -eq 'true'
+          if ($testCertificate) {
+            $expectedSubject = "CN=Test certificate for 'Open Science [OSS]'"
+            $expectedUntrustedRootMessage = 'A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider.'
+            $isExpectedCertificate = (
+              $signature.SignerCertificate.Subject -eq $signature.SignerCertificate.Issuer -and
+              $signature.SignerCertificate.Subject -eq $expectedSubject
+            )
+            $isExpectedStatus = (
+              $signature.Status -eq 'NotTrusted' -or
+              ($signature.Status -eq 'UnknownError' -and
+                $signature.StatusMessage -eq $expectedUntrustedRootMessage)
+            )
+            if (-not $isExpectedCertificate) {
+              Write-Error "SignPath returned the wrong test signer: $($signature.SignerCertificate.Subject)"
+              exit 1
+            }
+            if ($signature.Status -ne 'Valid' -and -not $isExpectedStatus) {
+              Write-Error "SignPath returned an unacceptable test signature: $($signature.Status) — $($signature.StatusMessage)"
+              exit 1
+            }
+          } else {
+            if ($signature.Status -ne 'Valid') {
+              Write-Error "Production Authenticode signature is not trusted: $($signature.Status) — $($signature.StatusMessage)"
+              exit 1
+            }
+            if ([string]::IsNullOrWhiteSpace($env:EXPECTED_PUBLISHER)) {
+              Write-Error 'SIGNPATH_WINDOWS_PUBLISHER_NAME is required for production verification.'
+              exit 1
+            }
+            if ($signature.SignerCertificate.Subject -ne $env:EXPECTED_PUBLISHER) {
+              Write-Error "Unexpected production publisher: $($signature.SignerCertificate.Subject)"
+              exit 1
+            }
+          }
+
+          Copy-Item -LiteralPath $signedInstaller.FullName -Destination '${{ steps.installer.outputs.path }}' -Force
+
+      - name: Refresh Windows release metadata
+        run: node scripts/refresh-windows-release-metadata.mjs --artifact-dir windows
+
+      - name: Upload finalized Windows artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ inputs.output_artifact_name }}
+          overwrite: true
+          retention-days: 7
+          path: windows/*
+          if-no-files-found: error
+
+      # publish downloads every artifact in the run. Remove the raw unsigned input even when a
+      # preceding signing/finalization step fails so it can never collide with release assets.
+      - name: Delete temporary unsigned artifact
+        if: always() && steps.upload-unsigned-installer.outputs.artifact-id != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.upload-unsigned-installer.outputs.artifact-id }}
+        run: >-
+          gh api --method DELETE
+          "repos/$env:GITHUB_REPOSITORY/actions/artifacts/$env:ARTIFACT_ID"
