@@ -268,12 +268,14 @@ const WorkspacePage = ({
     }
     return selected
   })
+  const includeAllClaudeSubscriptions = activeSession !== undefined
   const configuredModelCatalog = useMemo(
     () =>
       buildConfiguredModelCatalog({
         providers,
         activeProviderId,
         claudeSubscriptionProviderId,
+        includeAllClaudeSubscriptions,
         frameworkId: agentFrameworkId,
         frameworkEndpoints
       }),
@@ -282,6 +284,7 @@ const WorkspacePage = ({
       agentFrameworkId,
       claudeSubscriptionProviderId,
       frameworkEndpoints,
+      includeAllClaudeSubscriptions,
       providers
     ]
   )

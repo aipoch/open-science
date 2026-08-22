@@ -5,8 +5,12 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ProviderView } from '../../../../shared/settings'
-import type { SessionAgentConfiguration } from '../../../../shared/settings'
+import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
+  CLAUDE_SHARED_PROVIDER_ID,
+  type ProviderView,
+  type SessionAgentConfiguration
+} from '../../../../shared/settings'
 import {
   reasoningEffortProfile,
   resolveReasoningEffortControl
@@ -81,20 +85,27 @@ const provider = (overrides: Partial<ProviderView>): ProviderView => ({
   ...overrides
 })
 
-const render = (unavailable = false): void => {
+const render = (
+  unavailable = false,
+  includeAllClaudeSubscriptions = false,
+  configurationOverride?: SessionAgentConfiguration
+): void => {
   const state = useSettingsStore.getState()
-  const configuration = state.activeProviderId
-    ? {
-        providerId: state.activeProviderId,
-        ...(state.activeModel ? { model: state.activeModel } : {}),
-        reasoningEffort: state.reasoningEffort
-      }
-    : undefined
+  const configuration =
+    configurationOverride ??
+    (state.activeProviderId
+      ? {
+          providerId: state.activeProviderId,
+          ...(state.activeModel ? { model: state.activeModel } : {}),
+          reasoningEffort: state.reasoningEffort
+        }
+      : undefined)
   act(() =>
     root.render(
       <ComposerModelPicker
         configuration={configuration}
         unavailable={unavailable}
+        includeAllClaudeSubscriptions={includeAllClaudeSubscriptions}
         onChange={onChange}
       />
     )
@@ -183,6 +194,45 @@ describe('ComposerModelPicker', () => {
     expect(trigger).not.toBeNull()
     await openMenu(trigger!)
     expect(subTriggers().some((item) => item.textContent?.includes('Reasoning effort'))).toBe(true)
+  })
+
+  it('lists both Claude subscription Providers for an existing Session', async () => {
+    useSettingsStore.setState({
+      providers: [
+        provider({
+          id: CLAUDE_SHARED_PROVIDER_ID,
+          type: 'claude-shared',
+          name: 'Claude subscription',
+          models: ['shared-model'],
+          apiEndpoints: ['anthropic']
+        }),
+        provider({
+          id: CLAUDE_ISOLATED_PROVIDER_ID,
+          type: 'claude-isolated',
+          name: 'Claude isolated',
+          models: ['isolated-model'],
+          apiEndpoints: ['anthropic']
+        })
+      ],
+      activeProviderId: CLAUDE_SHARED_PROVIDER_ID,
+      activeModel: 'shared-model',
+      claudeSubscriptionProviderId: CLAUDE_SHARED_PROVIDER_ID
+    })
+    render(false, true, {
+      providerId: CLAUDE_ISOLATED_PROVIDER_ID,
+      model: 'isolated-model',
+      reasoningEffort: 'high'
+    })
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    expect(trigger?.textContent).toContain('isolated-model')
+    await openMenu(trigger!)
+    const modelRow = modelRowTrigger()
+    expect(modelRow).toBeDefined()
+    await openSubmenu(modelRow!)
+    expect(document.body.textContent).toContain('Claude subscription')
+    expect(document.body.textContent).toContain('Claude isolated')
   })
 
   it('warns (does not hide) when the only provider is incompatible with the framework', () => {

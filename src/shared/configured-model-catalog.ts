@@ -54,6 +54,7 @@ export const buildConfiguredModelInventory = (
     providers: readonly ProviderView[]
     activeProviderId?: string
     claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
+    includeAllClaudeSubscriptions?: boolean
   }>
 ): readonly ConfiguredModelInventoryEntry[] => {
   const selectedClaudeProvider = selectClaudeSubscriptionProvider(
@@ -75,6 +76,7 @@ export const buildConfiguredModelInventory = (
     .filter(
       (provider) =>
         (!isClaudeSubscriptionProvider(provider.type) ||
+          input.includeAllClaudeSubscriptions === true ||
           provider.id === selectedClaudeProvider?.id) &&
         !providerValidationFailed(provider)
     )
@@ -100,6 +102,7 @@ export const buildConfiguredModelCatalog = (
     providers: readonly ProviderView[]
     activeProviderId?: string
     claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
+    includeAllClaudeSubscriptions?: boolean
     frameworkId: AgentFrameworkId
     frameworkEndpoints: readonly ChatApiEndpoint[]
   }>
