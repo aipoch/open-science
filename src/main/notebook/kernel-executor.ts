@@ -239,11 +239,13 @@ const interpreterIdentity = (request: NotebookExecutionRequest): string => {
 // Converts process, spawn, timeout, and loop errors into normal notebook execution results.
 const errorToExecutionResult = (
   error: unknown,
-  request: NotebookExecutionRequest
+  request: NotebookExecutionRequest,
+  kernelDispatched = false
 ): NotebookExecutionResult => {
   if (error instanceof NotebookExecutionCancelledError) {
     return {
       status: 'cancelled',
+      kernelDispatched,
       stdout: '',
       stderr: '',
       traceback: '',
@@ -257,6 +259,7 @@ const errorToExecutionResult = (
 
   return {
     status: error instanceof NotebookExecutionTimeoutError ? 'timeout' : 'failed',
+    kernelDispatched,
     stdout: '',
     stderr: message,
     traceback: message,
@@ -307,6 +310,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   // Sends one cell to the kind's loop and resolves with the mapped execution result.
   async execute(request: NotebookExecutionRequest): Promise<NotebookExecutionResult> {
     let workingFileObservation: WorkingFileObservation | undefined
+    let kernelDispatched = false
     try {
       if (request.signal?.aborted) throw new NotebookExecutionCancelledError()
       const kind = resolveProcessKind(request)
@@ -321,7 +325,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       workingFileObservation = await startWorkingFileObservation(request)
       const reqId = randomUUID()
-      const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request)
+      const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request, () => {
+        kernelDispatched = true
+      })
       const workingFiles = await workingFileObservation.finish()
       workingFileObservation = undefined
 
@@ -347,6 +353,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       return {
         status,
+        kernelDispatched,
         stdout: mapped.stdout,
         stderr: mapped.stderr,
         traceback: cancelled ? '' : mapped.traceback,
@@ -360,7 +367,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       }
     } catch (error) {
       await workingFileObservation?.finish()
-      return errorToExecutionResult(error, request)
+      return errorToExecutionResult(error, request, kernelDispatched)
     }
   }
 
@@ -659,7 +666,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private sendRequest(
     proc: ProcState,
     reqId: string,
-    request: NotebookExecutionRequest
+    request: NotebookExecutionRequest,
+    onDispatch: () => void
   ): Promise<{ response: KernelLoopResponse; timedOut: boolean; cancelled: boolean }> {
     return new Promise((resolve, reject) => {
       if (request.signal?.aborted) {
@@ -745,11 +753,21 @@ class NotebookKernelExecutor implements NotebookExecutor {
         request.signal.addEventListener('abort', pending.abortListener, { once: true })
       }
 
-      if (proc.kind === 'r') {
-        proc.child.stdin.write(frameRRequest(reqId, request.code))
-      } else {
-        // Python and the repl (JS) loop share the same JSON-lines request framing.
-        proc.child.stdin.write(framePythonRequest(reqId, request.code, request.controlInvocationId))
+      try {
+        if (proc.kind === 'r') {
+          proc.child.stdin.write(frameRRequest(reqId, request.code))
+        } else {
+          // Python and the repl (JS) loop share the same JSON-lines request framing.
+          proc.child.stdin.write(
+            framePythonRequest(reqId, request.code, request.controlInvocationId)
+          )
+        }
+        onDispatch()
+      } catch (error) {
+        this.clearPendingResources(pending)
+        if (proc.pending === pending) proc.pending = undefined
+        reject(error)
+        return
       }
       if (timeout && timeoutMs !== undefined) timeout.arm(timeoutMs)
     })

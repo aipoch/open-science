@@ -309,10 +309,50 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     try {
       const result = await executor.execute({ ...baseRequest(cwdDir), code: 'hello' })
       expect(result.status).toBe('completed')
+      expect(result.kernelDispatched).toBe(true)
       expect(result.stdout).toBe('hello')
       // The loop reports its resolved cwd (macOS maps /var -> /private/var).
       expect(result.cwdAfter).toBe(realpathSync(cwdDir))
       expect(result.outputs).toContainEqual({ type: 'stream', name: 'stdout', text: 'hello' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('records cancellation before kernel dispatch', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-pre-dispatch-cancel-')
+    const executor = makeExecutor()
+    const cancellation = new AbortController()
+    cancellation.abort()
+    try {
+      await expect(
+        executor.execute({
+          ...baseRequest(cwdDir),
+          code: 'never-runs',
+          signal: cancellation.signal
+        })
+      ).resolves.toMatchObject({ status: 'cancelled', kernelDispatched: false })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('does not record dispatch when writing the kernel request throws', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-write-failure-')
+    const executor = makeExecutor()
+    try {
+      await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+      const child = procFor(executor, 'python')?.child as ChildProcessWithoutNullStreams
+      vi.spyOn(child.stdin, 'write').mockImplementationOnce(() => {
+        throw new Error('kernel pipe is closed')
+      })
+
+      await expect(
+        executor.execute({ ...baseRequest(cwdDir), code: 'never-runs' })
+      ).resolves.toMatchObject({ status: 'failed', kernelDispatched: false })
+      await expect(
+        executor.execute({ ...baseRequest(cwdDir), code: 'after-failure' })
+      ).resolves.toMatchObject({ status: 'completed', kernelDispatched: true })
     } finally {
       await executor.shutdown()
     }

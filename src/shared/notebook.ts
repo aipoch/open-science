@@ -324,6 +324,15 @@ export type NotebookRunRecord = {
   // App-owned one-shot identity joining an authorized ACP tool call to the execution admitted by
   // the authenticated Notebook RPC bridge. Optional keeps existing run.json documents readable.
   executionInvocationId?: string
+  // Identifies one live persistent-kernel generation. A new value is allocated after process/app
+  // restart; optional keeps legacy run.json documents readable without a migration.
+  kernelEpochId?: string
+  // Whether this run's source was handed to the persistent data kernel. Pre-dispatch failures set
+  // false so dependency projection never invents mutations; absent legacy evidence stays conservative.
+  kernelDispatched?: boolean
+  // Stable identity of the external runtime used by this run. Managed runs are reproducible from
+  // their environment; external runs need this identity to rebuild a missing derived sidecar.
+  runtimeId?: string
   cellId: string
   source: NotebookRunSource
   inputKind?: NotebookRunInputKind
@@ -363,6 +372,23 @@ export type NotebookRunRecord = {
   // Optional keeps existing run.json documents readable without a migration.
   interruptionReason?: 'app-terminated' | 'execution-error'
 }
+
+// Orthogonal to NotebookRunStatus: a completed run may later become stale when a name it depended
+// on is redefined in the same persistent-kernel generation.
+export type NotebookRunStaleness =
+  | { state: 'clear' }
+  | { state: 'stale'; causedByRunId: string; names: string[]; path: string[] }
+  | { state: 'unknown'; reasons: string[] }
+
+type NotebookAffectedRun = {
+  runId: string
+  cellId: string
+  names: string[]
+}
+
+export type NotebookInvalidatedRun =
+  | (NotebookAffectedRun & { state: 'stale' })
+  | (NotebookAffectedRun & { state: 'unknown'; reasons: string[] })
 
 // The complete JSON document persisted at each notebook session's run.json path.
 export type NotebookRunDocument = ProjectIdScope & {
@@ -458,6 +484,9 @@ export type NotebookSessionState = {
   historySummary?: NotebookRunHistorySummary
   runs: NotebookRunRecord[]
   recentRuns: NotebookRunRecord[]
+  // Derived from run history and the rebuildable dependency-analysis sidecar; never written into
+  // run.json. Optional keeps older renderer/remote clients compatible.
+  runStaleness?: Record<string, NotebookRunStaleness>
   // Live per-(kind, env) kernel status view (design D6); empty until the session spawns a kernel.
   environments: NotebookEnvironmentStatus[]
 }
@@ -483,6 +512,8 @@ export type NotebookRunSummary = Omit<NotebookRunRecord, 'inputFiles'> & {
   runtimeRoot: string
   pythonPath?: string
   kernelName: string
+  staleness?: NotebookRunStaleness
+  invalidatedRuns?: NotebookInvalidatedRun[]
 }
 
 // Common routing fields required by every notebook command.

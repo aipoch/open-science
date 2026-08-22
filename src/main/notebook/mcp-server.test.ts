@@ -136,6 +136,13 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
       'The notebook runtime does not classify files for you'
     )
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('not an execution verdict')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
+      '`stale` means a tracked dependency changed after that run'
+    )
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
+      'does not mean the run failed or its captured output is incorrect'
+    )
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('write_artifact_file')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('open-science-artifacts')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain(
@@ -1164,6 +1171,43 @@ describe('compactNotebookExecutionResult', () => {
     expect(compact.outputs).toEqual([{ type: 'display', data: { 'text/plain': '42' } }])
   })
 
+  it('returns dependency invalidations to the agent after execution', () => {
+    const compact = compactNotebookExecutionResult({
+      ...runSummary({}),
+      staleness: { state: 'clear' },
+      invalidatedRuns: [{ runId: 'run-2', cellId: 'make-result', names: ['df'], state: 'stale' }]
+    })
+
+    expect(compact).toMatchObject({
+      staleness: { state: 'clear' },
+      invalidatedRuns: [{ runId: 'run-2', cellId: 'make-result', names: ['df'], state: 'stale' }]
+    })
+  })
+
+  it('bounds dependency staleness before execution-result serialization', () => {
+    const compact = compactNotebookExecutionResult({
+      ...runSummary({ stdout: 'done' }),
+      staleness: {
+        state: 'stale',
+        causedByRunId: 'run-cause',
+        names: Array.from({ length: 1_000 }, (_, index) => `variable-${index}`),
+        path: Array.from({ length: 1_000 }, (_, index) => `run-${index}`)
+      }
+    })
+    const serialized = serializeNotebookToolResult(compact, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    const parsed = JSON.parse(serialized) as {
+      preview?: string
+      staleness?: { names: string[]; path: string[] }
+      truncated?: boolean
+    }
+
+    expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    expect(parsed.preview).toBeUndefined()
+    expect(parsed.staleness?.names.length).toBeLessThan(1_000)
+    expect(parsed.staleness?.path.length).toBeLessThan(1_000)
+    expect(parsed.truncated).toBe(true)
+  })
+
   it('keeps a practical diagnostic stream inline for the next agent step', () => {
     const stdout = 'x'.repeat(7_500)
 
@@ -1344,6 +1388,42 @@ describe('compactNotebookStateResult', () => {
     expect(compact.recentRuns[0]).not.toHaveProperty('outputPreview')
     expect(compact.recentRuns[1]).toHaveProperty('outputPreview', '{"total_count":42}')
     expect(JSON.stringify(compact)).not.toContain('image/png')
+  })
+
+  it('bounds dependency staleness on compact recent runs', () => {
+    const recentRuns = Array.from({ length: 10 }, (_, index) => ({
+      runId: `run-${index}`,
+      cellId: `cell-${index}`,
+      status: 'completed'
+    }))
+    const runStaleness = Object.fromEntries(
+      recentRuns.map((run) => [
+        run.runId,
+        {
+          state: 'stale',
+          causedByRunId: 'run-cause',
+          names: Array.from({ length: 1_000 }, (_, index) => `variable-${index}`),
+          path: Array.from({ length: 1_000 }, (_, index) => `run-${index}`)
+        }
+      ])
+    )
+    const compact = compactNotebookStateResult({
+      sessionId: 'session-1',
+      runs: recentRuns,
+      recentRuns,
+      runStaleness
+    })
+    const serialized = serializeNotebookToolResult(compact, NOTEBOOK_MCP_STATE_RESULT_LIMIT)
+    const parsed = JSON.parse(serialized) as {
+      preview?: string
+      recentRuns?: Array<{ staleness?: { names: string[]; path: string[] } }>
+    }
+
+    expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_STATE_RESULT_LIMIT)
+    expect(parsed.preview).toBeUndefined()
+    expect(parsed.recentRuns).toHaveLength(10)
+    expect(parsed.recentRuns?.[0]?.staleness?.names.length).toBeLessThan(1_000)
+    expect(parsed.recentRuns?.[0]?.staleness?.path.length).toBeLessThan(1_000)
   })
 
   it('passes through non-object state results', () => {

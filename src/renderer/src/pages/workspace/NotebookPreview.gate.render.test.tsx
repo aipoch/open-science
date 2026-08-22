@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
 
-import type { NotebookEnvironmentStatus, NotebookRunRecord } from '../../../../shared/notebook'
+import type {
+  NotebookEnvironmentStatus,
+  NotebookRunRecord,
+  NotebookSessionState
+} from '../../../../shared/notebook'
 import type { ProvisionStatus } from '../../../../shared/notebook-env'
 import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores/notebook-env-store'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
@@ -280,7 +284,8 @@ describe('NotebookPreview per-kernel tabs', () => {
 
   const mountWithRuns = async (
     runs: NotebookRunRecord[],
-    environments: NotebookEnvironmentStatus[] = []
+    environments: NotebookEnvironmentStatus[] = [],
+    runStaleness: NotebookSessionState['runStaleness'] = {}
   ): Promise<void> => {
     const readyStatus: ProvisionStatus = {
       pythonReady: true,
@@ -308,6 +313,7 @@ describe('NotebookPreview per-kernel tabs', () => {
             cells: [],
             runs,
             recentRuns: runs,
+            runStaleness,
             environments
           })
         ),
@@ -354,6 +360,166 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(
       container.querySelector('[data-testid="notebook-terminal-header"]')?.textContent
     ).toContain('Python kernel')
+  })
+
+  it('describes later variable changes without implying an execution error', async () => {
+    await mountWithRuns(
+      [
+        makeRun({ runId: 'run-1', cellId: 'prepare-data', script: 'x = 1' }),
+        makeRun({ runId: 'run-2', cellId: 'make-result', script: 'y = x + 1' }),
+        makeRun({ runId: 'run-3', cellId: 'update-data', script: 'x = 2' })
+      ],
+      [],
+      {
+        'run-2': {
+          state: 'stale',
+          causedByRunId: 'run-3',
+          names: ['x'],
+          path: ['run-1', 'run-2']
+        }
+      }
+    )
+
+    const badge = container.querySelector<HTMLButtonElement>('[data-testid="notebook-cell-stale"]')
+    expect(badge?.textContent).toBe('Variable changed after this run')
+    expect(badge?.querySelector('.lucide-variable')).not.toBeNull()
+    expect(container.textContent).not.toContain(
+      'Run [2] later changed x. This output is the snapshot recorded before that change; this run completed normally.'
+    )
+    fireEvent.focus(badge as HTMLButtonElement)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Run [2] later changed x. This output is the snapshot recorded before that change; this run completed normally.'
+    )
+    expect(container.textContent).not.toContain('run-3')
+    expect(container.textContent).not.toContain('out of date')
+  })
+
+  it('does not show a change notice when the alleged later run is absent', async () => {
+    await mountWithRuns(
+      [
+        makeRun({ runId: 'run-0', cellId: 'define-x', script: 'x = [10, 20, 30]' }),
+        makeRun({ runId: 'run-1', cellId: 'sum-x', script: 'y = sum(x)' })
+      ],
+      [],
+      {
+        'run-1': {
+          state: 'stale',
+          causedByRunId: 'run-3',
+          names: ['x'],
+          path: ['run-0', 'run-1']
+        }
+      }
+    )
+
+    expect(container.querySelector('[data-testid="notebook-cell-stale"]')).toBeNull()
+    expect(container.textContent).not.toContain('Variable changed after this run')
+  })
+
+  it('describes incomplete dependency tracking without questioning the output', async () => {
+    await mountWithRuns(
+      [makeRun({ runId: 'run-2', cellId: 'make-result', script: 'model.refresh()' })],
+      [],
+      {
+        'run-2': {
+          state: 'unknown',
+          reasons: ['opaque-mutation']
+        }
+      }
+    )
+
+    const badge = container.querySelector<HTMLButtonElement>(
+      '[data-testid="notebook-cell-dependency-unknown"]'
+    )
+    expect(badge?.textContent).toBe('Variable tracking is limited')
+    expect(badge?.querySelector('.lucide-variable')).not.toBeNull()
+    expect(container.textContent).not.toContain(
+      'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
+    )
+    fireEvent.focus(badge as HTMLButtonElement)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
+    )
+    expect(container.textContent).not.toContain('result is current')
+  })
+
+  it('keeps incomplete-tracking metadata on every run when a cell is reused', async () => {
+    await mountWithRuns(
+      [
+        makeRun({ runId: 'run-1', cellId: 'shared-cell', script: 'x = 1' }),
+        makeRun({ runId: 'run-2', cellId: 'shared-cell', script: 'x = 2' })
+      ],
+      [],
+      {
+        'run-1': {
+          state: 'unknown',
+          reasons: ['opaque-mutation']
+        },
+        'run-2': {
+          state: 'unknown',
+          reasons: ['opaque-mutation']
+        }
+      }
+    )
+
+    expect(container.textContent?.match(/Variable tracking is limited/g)).toHaveLength(2)
+  })
+
+  it('keeps later-update metadata on an earlier execution when a cell is reused', async () => {
+    await mountWithRuns(
+      [
+        makeRun({ runId: 'run-1', cellId: 'shared-cell', script: 'x = 1' }),
+        makeRun({ runId: 'run-2', cellId: 'shared-cell', script: 'x = 2' })
+      ],
+      [],
+      {
+        'run-1': {
+          state: 'stale',
+          causedByRunId: 'run-2',
+          names: ['x'],
+          path: ['run-1']
+        },
+        'run-2': { state: 'clear' }
+      }
+    )
+
+    expect(container.querySelector('[data-testid="notebook-cell-stale"]')).not.toBeNull()
+  })
+
+  it('shows a change notice when its cause is later in the selected Agent Frame', async () => {
+    await mountWithRuns(
+      [
+        makeRun({
+          runId: 'root-run',
+          cellId: 'shared-cell',
+          rootFrameId: 'root-frame-session-1',
+          agentFrameId: 'root-frame-session-1'
+        }),
+        makeRun({
+          runId: 'child-run',
+          cellId: 'shared-cell',
+          rootFrameId: 'root-frame-session-1',
+          agentFrameId: 'child-frame-session-1'
+        }),
+        makeRun({
+          runId: 'root-update',
+          cellId: 'root-update-cell',
+          rootFrameId: 'root-frame-session-1',
+          agentFrameId: 'root-frame-session-1'
+        })
+      ],
+      [],
+      {
+        'root-run': {
+          state: 'stale',
+          causedByRunId: 'root-update',
+          names: ['x'],
+          path: ['root-run']
+        },
+        'child-run': { state: 'clear' }
+      }
+    )
+
+    expect(container.querySelector('[data-testid="notebook-cell-stale"]')).not.toBeNull()
   })
 
   // The header's three strings were unwrapped while their translations already sat in the catalog —

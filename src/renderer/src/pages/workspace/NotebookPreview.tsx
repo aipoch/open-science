@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Variable } from 'lucide-react'
 
 import type { PreviewToolItem } from '@/stores/preview-workbench-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
@@ -13,12 +14,14 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 import type {
   NotebookEnvironmentStatus,
   NotebookKernelKind,
   NotebookLanguage,
   NotebookRunRecord,
+  NotebookRunStaleness,
   NotebookSessionReference,
   NotebookSessionState
 } from '../../../../shared/notebook'
@@ -103,14 +106,61 @@ const getRunOutputText = (run: NotebookRunRecord | undefined): string => {
     .join('\n')
 }
 
+const DependencyStatusBadge = ({
+  staleness,
+  causedByRunIndex
+}: {
+  staleness: Exclude<NotebookRunStaleness, { state: 'clear' }>
+  causedByRunIndex?: number
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const isStale = staleness.state === 'stale'
+  const label = isStale ? t('Variable changed after this run') : t('Variable tracking is limited')
+  const detail = isStale
+    ? t(
+        'Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.',
+        { names: staleness.names.join(', '), index: causedByRunIndex }
+      )
+    : t(
+        'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
+      )
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              'inline-flex cursor-help items-center gap-1 rounded px-1.5 py-0.5',
+              isStale ? 'bg-warning-100 text-warning-900' : 'bg-bg-300 text-text-200'
+            )}
+            data-testid={isStale ? 'notebook-cell-stale' : 'notebook-cell-dependency-unknown'}
+          >
+            <Variable className="size-3 shrink-0" aria-hidden="true" />
+            {label}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-[320px] px-3 py-2 leading-5">
+          {detail}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
 // Displays one durable execution record from run.json in chronological order. The zero-based index
 // is the cell number shown in [n], and a failed run marks the offending line.
 const NotebookRunCell = ({
   run,
-  index
+  index,
+  staleness,
+  causedByRunIndex
 }: {
   run: NotebookRunRecord
   index: number
+  staleness?: NotebookRunStaleness
+  causedByRunIndex?: number
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
@@ -142,6 +192,11 @@ const NotebookRunCell = ({
             )
           ) : statusLabel ? (
             <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{t(statusLabel)}</span>
+          ) : null}
+          {staleness?.state === 'stale' ? (
+            <DependencyStatusBadge staleness={staleness} causedByRunIndex={causedByRunIndex} />
+          ) : staleness?.state === 'unknown' ? (
+            <DependencyStatusBadge staleness={staleness} />
           ) : null}
         </div>
         {originLabel ? (
@@ -417,6 +472,16 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const visibleRuns = showEnvSelector
     ? kindRuns.filter((run) => resolveRunEnvironment(run) === effectiveActiveEnv)
     : kindRuns
+  const visibleRunIndexById = new Map(visibleRuns.map((run, index) => [run.runId, index]))
+  const visibleStalenessForRun = (run: NotebookRunRecord): NotebookRunStaleness | undefined => {
+    const staleness = notebookState?.runStaleness?.[run.runId]
+    if (staleness?.state !== 'stale') return staleness
+    const runIndex = visibleRunIndexById.get(run.runId)
+    const causeIndex = visibleRunIndexById.get(staleness.causedByRunId)
+    return runIndex !== undefined && causeIndex !== undefined && causeIndex > runIndex
+      ? staleness
+      : undefined
+  }
 
   // Live status for one env option in the selector, matched by (kind, env) against the per-env
   // status view (defaulting the env name the same way resolveRunEnvironment does).
@@ -605,9 +670,22 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             data-testid="notebook-cells"
           >
             <div className="divide-y divide-border-100">
-              {visibleRuns.map((run, index) => (
-                <NotebookRunCell key={run.runId} run={run} index={index} />
-              ))}
+              {visibleRuns.map((run, index) => {
+                const staleness = visibleStalenessForRun(run)
+                return (
+                  <NotebookRunCell
+                    key={run.runId}
+                    run={run}
+                    index={index}
+                    staleness={staleness}
+                    causedByRunIndex={
+                      staleness?.state === 'stale'
+                        ? visibleRunIndexById.get(staleness.causedByRunId)
+                        : undefined
+                    }
+                  />
+                )
+              })}
             </div>
           </div>
         </ResizablePanel>

@@ -65,6 +65,8 @@ import {
 import type { NotebookShellProcess } from './shell-process'
 import { NOTEBOOK_CODE_LIMIT_BYTES } from './content-limits'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
+import { projectNotebookDependencies, type AnalyzedNotebookRun } from './dependency-analysis'
+import { NotebookRuntimeBindingOwner } from './runtime-binding'
 
 let storageRoot: string | undefined
 
@@ -734,6 +736,68 @@ describe('notebook runtime service', () => {
     expect(service.peekHandoffContext('session-1')).toBeUndefined()
   })
 
+  it('reports stale downstream runs when a new cell redefines their input', async () => {
+    const root = await createStorageRoot()
+    const analyzedRuns: AnalyzedNotebookRun[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      dependencyAnalyzer: {
+        project: async ({ completedRun }) => {
+          if (completedRun && !analyzedRuns.some(({ run }) => run.runId === completedRun.runId)) {
+            analyzedRuns.push({
+              run: completedRun,
+              facts: completedRun.script.startsWith('y')
+                ? {
+                    state: 'available',
+                    definedNames: ['y'],
+                    usedNames: ['x'],
+                    mutatedNames: []
+                  }
+                : {
+                    state: 'available',
+                    definedNames: ['x'],
+                    usedNames: [],
+                    mutatedNames: []
+                  }
+            })
+          }
+          return projectNotebookDependencies(analyzedRuns)
+        }
+      },
+      executorFactory: () => ({
+        execute: async (request) => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: 'x = 1' })
+    const downstream = await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'y = x + 1'
+    })
+    const replacement = await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'x = 2'
+    })
+
+    expect(replacement.invalidatedRuns).toEqual([
+      { runId: downstream.runId, cellId: downstream.cellId, names: ['x'], state: 'stale' }
+    ])
+  })
+
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
@@ -868,6 +932,7 @@ describe('notebook runtime service', () => {
 
     expect(summary).toMatchObject({
       runId: 'notebook-run-42-1',
+      kernelEpochId: expect.any(String),
       cellId: begin.cellId,
       source: 'agent',
       script: "print('hello')",
@@ -919,6 +984,7 @@ describe('notebook runtime service', () => {
     expect(JSON.parse(rawRunJson).runs).toHaveLength(1)
     expect(JSON.parse(rawRunJson).runs[0]).toMatchObject({
       status: 'completed',
+      kernelEpochId: expect.any(String),
       environmentCapture: {
         state: 'available',
         manifestChecksum: 'a'.repeat(64)
@@ -1197,6 +1263,7 @@ describe('notebook runtime service', () => {
 
   it('persists a fail-closed default-runtime admission without dispatching or capturing evidence', async () => {
     const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
     const defaultInterpreter = pythonBin(envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV))
     const execute = vi.fn(
       async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
@@ -1213,7 +1280,7 @@ describe('notebook runtime service', () => {
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
-      repository: new NotebookRunRepository(root),
+      repository,
       notebookRuntimeSettings: {
         getSnapshot: async (language) => ({
           language,
@@ -1251,6 +1318,9 @@ describe('notebook runtime service', () => {
     expect(execute).not.toHaveBeenCalled()
     expect(environmentStateTracker.prepareRun).not.toHaveBeenCalled()
     expect(environmentStateTracker.captureCompletedRun).not.toHaveBeenCalled()
+    await expect(repository.findExisting('default-project', 'session-1')).resolves.toMatchObject({
+      runs: [expect.objectContaining({ kernelDispatched: false })]
+    })
   })
 
   it('rejects install.packages in an R cell before the managed kernel executes it', async () => {
@@ -3754,7 +3824,11 @@ describe('notebook runtime service', () => {
         repository
       })
 
-      await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+      const firstRun = await service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: '1'
+      })
       const before = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       const runJsonBefore = await readFile(before.runJsonPath, 'utf8')
       const changedCountBefore = changedSessions.length
@@ -3774,6 +3848,13 @@ describe('notebook runtime service', () => {
       ).toBe('idle')
       expect(await readFile(before.runJsonPath, 'utf8')).toBe(runJsonBefore)
       expect(changedSessions).toHaveLength(changedCountBefore)
+
+      const nextRun = await service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: '2'
+      })
+      expect(nextRun.kernelEpochId).not.toBe(firstRun.kernelEpochId)
     }
   )
 
@@ -6795,9 +6876,11 @@ describe('v4 runtime bindings & agent tools', () => {
 
   it('binds an enabled external runtime and runs the user interpreter without touching the managed default', async () => {
     const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
     const executions: NotebookExecutionRequest[] = []
     const provisionPython = vi.fn(async () => undefined)
     const service = bindingService(root, {
+      repository,
       enablement: { enabled: { [userPyA.envId]: true }, installAuthorized: {} },
       executions
     })
@@ -6812,14 +6895,61 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(bound.bindings.python?.runtimeId).toBe(userPyA.envId)
     expect(bound.bindings.python?.source).toBe('external')
 
-    await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'python' })
+    const summary = await service.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      code: '1',
+      language: 'python'
+    })
     // The bound external interpreter is threaded to the executor, and the managed default is NOT built.
     expect(executions[0].resolvedInterpreter?.command).toBe(userPyA.interpreterPath)
     expect(provisionPython).not.toHaveBeenCalled()
+    expect(summary).not.toHaveProperty('kernelDispatched')
+    expect(summary).not.toHaveProperty('runtimeId')
+    await expect(repository.findExisting('default-project', 's')).resolves.toMatchObject({
+      runs: [expect.objectContaining({ kernelDispatched: true, runtimeId: userPyA.envId })]
+    })
 
     // notebook_state surfaces the current binding.
     const state = await service.state({ sessionId: 's', workspaceCwd: root })
     expect(state.runtimeBindings.python?.runtimeId).toBe(userPyA.envId)
+  })
+
+  it('rotates the kernel epoch when first binding an external runtime after managed execution', async () => {
+    const root = await createStorageRoot()
+    const terminations: string[] = []
+    const service = bindingService(root, {
+      enablement: { enabled: { [userPyA.envId]: true }, installAuthorized: {} },
+      terminations
+    })
+
+    const managedRun = await service.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      code: 'managed_value = 1',
+      language: 'python'
+    })
+    await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+    const externalRun = await service.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      code: 'external_value = 1',
+      language: 'python'
+    })
+    await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+
+    expect(terminations).toEqual(['python:default-python'])
+    expect(externalRun.kernelEpochId).not.toBe(managedRun.kernelEpochId)
   })
 
   it('switch tears down the language kernel, clears its state, and rebinds to the new runtime', async () => {
@@ -7299,6 +7429,10 @@ describe('v4 runtime bindings & agent tools', () => {
       command: `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
       condaPrefix: prefix
     })
+    const dependencyInterpreter = await (
+      service as unknown as { runtimeBindingOwner: NotebookRuntimeBindingOwner }
+    ).runtimeBindingOwner.dependencyInterpreter('r', windowsCondaR.envId)
+    expect(dependencyInterpreter).toMatchObject({ condaPrefix: prefix })
   })
 
   it('does not infer Windows conda activation from a Windows-shaped R path on another platform', async () => {

@@ -3196,5 +3196,9 @@
   "Finish later": "後で完了",
   "{{name}} needs sign-in": "{{name}} へのサインインが必要です",
   "Authorization expired or was revoked. Sign in again to keep this Connector available.": "認証の有効期限が切れたか、取り消されました。このコネクタを引き続き使用するには、もう一度サインインしてください。",
-  "Open Connectors": "コネクタを開く"
+  "Open Connectors": "コネクタを開く",
+  "Variable changed after this run": "この実行後に変数が変更されました",
+  "Variable tracking is limited": "変数の追跡に制限があります",
+  "Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.": "実行 [{{index}}] が後で {{names}} を変更しました。これは変更前に記録された出力であり、この実行自体は正常に完了しています。",
+  "This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.": "この実行は正常に完了しました。このコード内の一部の変数関係を自動的に判定できなかったため、後の変数変更がこの実行に関連付けられない場合があります。"
 }

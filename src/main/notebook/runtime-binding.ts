@@ -17,7 +17,11 @@ import {
 import { getRuntimeRoot, type NotebookRunRepository } from './repository'
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from './runtime-paths'
 import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
-import type { NotebookSessionAggregate, NotebookSessionRuntimeBinding } from './session-aggregate'
+import type {
+  NotebookSessionAggregate,
+  NotebookSessionResolvedInterpreter,
+  NotebookSessionRuntimeBinding
+} from './session-aggregate'
 
 type RuntimeBindingSession = Pick<
   NotebookSessionAggregate,
@@ -178,10 +182,32 @@ export class NotebookRuntimeBindingOwner {
     return { runtimes, bindings: this.snapshot(session) }
   }
 
+  async dependencyInterpreter(
+    language: NotebookLanguage,
+    runtimeId: string
+  ): Promise<
+    Pick<NotebookSessionResolvedInterpreter, 'command' | 'args' | 'condaPrefix'> | undefined
+  > {
+    try {
+      const binding = await this.resolveEnabledRuntime(language, runtimeId)
+      const interpreter = binding.source === 'external' ? binding.resolvedInterpreter : undefined
+      return interpreter
+        ? {
+            command: interpreter.command,
+            ...(interpreter.args ? { args: interpreter.args } : {}),
+            ...(interpreter.condaPrefix ? { condaPrefix: interpreter.condaPrefix } : {})
+          }
+        : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   async bind(
     session: RuntimeBindingSession,
     language: NotebookLanguage,
-    runtimeId: string
+    runtimeId: string,
+    beforeBind?: (binding: NotebookSessionRuntimeBinding) => Promise<void>
   ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
     const binding = await this.resolveEnabledRuntime(language, runtimeId)
     const existing = session.runtimeBinding(language)
@@ -191,6 +217,7 @@ export class NotebookRuntimeBindingOwner {
           'notebook_switch_runtime to change it (it tears down the current kernel first).'
       )
     }
+    if (!existing) await beforeBind?.(binding)
     session.setRuntimeBinding(language, binding)
     await this.persist(session)
     return { bound: this.toWireBinding(binding), bindings: this.snapshot(session) }

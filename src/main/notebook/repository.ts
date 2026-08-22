@@ -129,6 +129,10 @@ const notebookRunCandidate = (value: unknown): boolean => {
     ) ||
     typeof value.startedAt !== 'number' ||
     !Number.isFinite(value.startedAt) ||
+    (value.kernelEpochId !== undefined &&
+      (typeof value.kernelEpochId !== 'string' || value.kernelEpochId.length === 0)) ||
+    (value.kernelDispatched !== undefined && typeof value.kernelDispatched !== 'boolean') ||
+    (value.runtimeId !== undefined && typeof value.runtimeId !== 'string') ||
     (value.kernelKind !== undefined &&
       value.kernelKind !== 'python' &&
       value.kernelKind !== 'r' &&

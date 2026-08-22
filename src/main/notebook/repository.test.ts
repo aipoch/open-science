@@ -117,6 +117,65 @@ describe('notebook run repository', () => {
     expect(document.runs[0]?.agentFrameId).toBe('root-frame-session-1')
   })
 
+  it('round-trips optional kernel dispatch and external runtime evidence', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    const document = await repository.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane
+    })
+    await repository.appendRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: {
+        runId: 'external-run',
+        cellId: 'cell-external-run',
+        source: 'agent',
+        kernelKind: 'python',
+        kernelEpochId: 'epoch-1',
+        kernelDispatched: true,
+        runtimeId: '/external/python',
+        script: 'x = 1',
+        status: 'completed',
+        startedAt: 1,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: []
+      }
+    })
+
+    await expect(
+      new NotebookRunRepository(root).findExisting('default-project', 'session-1')
+    ).resolves.toMatchObject({
+      runs: [
+        expect.objectContaining({
+          runId: 'external-run',
+          kernelEpochId: 'epoch-1',
+          kernelDispatched: true,
+          runtimeId: '/external/python'
+        })
+      ]
+    })
+
+    const malformed = JSON.parse(
+      await readFile(join(document.notebookSessionRoot, 'run.json'), 'utf8')
+    ) as { runs: Array<Record<string, unknown>> }
+    malformed.runs[0]!.kernelEpochId = ''
+    await writeFile(
+      join(document.notebookSessionRoot, 'run.json'),
+      JSON.stringify(malformed),
+      'utf8'
+    )
+    await expect(
+      new NotebookRunRepository(root).findExisting('default-project', 'session-1')
+    ).rejects.toThrow('Notebook document is corrupt.')
+  })
+
   it('isolates Frame workspaces while root keeps the legacy Session work surface', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

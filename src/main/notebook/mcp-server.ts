@@ -40,6 +40,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'The notebook already runs inside a writable session workspace. The cwd is already the session data dir; use plain relative paths for normal inputs and outputs. The connector handoff directory is outside that cwd and must be resolved from `OPEN_SCIENCE_HANDOFF_DIR`. Never copy a saved file onto the same path. Do not modify original user files.',
   'Use `inspect_packages` for version checks and `manage_packages` for installs. Never install inside a cell or shell. App-managed runtime contents belong under `$OPEN_SCIENCE_RUNTIME_DIR`, never the project, workspace, system Python, or a user global environment.',
   'MCP execution replies include bounded output for the next step; use it directly when sufficient. Full output remains in the notebook preview. Inspect stdout, stderr, traceback, outputs, and workingFiles, then revise and rerun if needed. The notebook runtime does not classify files for you.',
+  'Dependency metadata in notebook tool results describes execution order, not an execution verdict: `clear` means no later tracked dependency change was found, `stale` means a tracked dependency changed after that run, and `unknown` means variable changes could not be fully tracked. `stale` does not mean the run failed or its captured output is incorrect; rerun only when the task requires output from the current variable state.',
   'For a final user-facing file, call `write_artifact_file` from the `open-science-artifacts` server before announcing it. Use `source: { "kind": "localPath", "path": "plot.png" }` with the SAME relative filename you saved with and `producerRunId` set to the exact `runId` returned by the execution that last wrote it. Use inline content only for small text.',
   '</open_science_notebook_instructions>'
 ].join('\n')
@@ -365,6 +366,8 @@ const MAX_EXECUTION_FILES = 10
 const MAX_STATE_CELLS = 20
 const MAX_STATE_RUNS = 10
 const MAX_PACKAGE_RESULTS = 50
+const EXECUTION_STALENESS_LIMITS = { items: 20, text: 160 } as const
+const STATE_STALENESS_LIMITS = { items: 2, text: 48 } as const
 
 const isImageMime = (mime: string): boolean => mime.startsWith('image/')
 
@@ -393,6 +396,47 @@ const pickDefined = (
     if (record[field] !== undefined) picked[field] = record[field]
   }
   return picked
+}
+
+const compactStaleness = (
+  value: unknown,
+  limits: { items: number; text: number }
+): { value?: Record<string, unknown>; truncated: boolean } => {
+  const record = asRecord(value)
+  if (!record) return { truncated: false }
+  let truncated = false
+  const text = (candidate: unknown): unknown => {
+    if (typeof candidate !== 'string' || candidate.length <= limits.text) return candidate
+    truncated = true
+    return `${candidate.slice(0, limits.text - 1)}…`
+  }
+  const list = (candidate: unknown, preserveEndpoints = false): unknown[] | undefined => {
+    if (!Array.isArray(candidate)) return undefined
+    const strings = candidate.filter((item): item is string => typeof item === 'string')
+    if (strings.length !== candidate.length) truncated = true
+    const selected =
+      preserveEndpoints && strings.length > limits.items
+        ? [
+            ...strings.slice(0, Math.ceil(limits.items / 2)),
+            ...strings.slice(-Math.floor(limits.items / 2))
+          ]
+        : strings.slice(0, limits.items)
+    if (selected.length < strings.length) truncated = true
+    return selected.map(text)
+  }
+  const names = list(record.names)
+  const path = list(record.path, true)
+  const reasons = list(record.reasons)
+  return {
+    value: {
+      ...pickDefined(record, ['state']),
+      ...(record.causedByRunId !== undefined ? { causedByRunId: text(record.causedByRunId) } : {}),
+      ...(names ? { names } : {}),
+      ...(path ? { path } : {}),
+      ...(reasons ? { reasons } : {})
+    },
+    truncated
+  }
 }
 
 const compactRuntimeBinding = (value: unknown): Record<string, unknown> | undefined => {
@@ -544,6 +588,7 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
   const compactOutputs = compactExecutionOutputs(record.outputs, stream('traceback'))
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const artifacts = compactArtifacts(record.artifacts)
+  const staleness = compactStaleness(record.staleness, EXECUTION_STALENESS_LIMITS)
   const filesOmitted =
     (Array.isArray(record.workingFiles) && record.workingFiles.length > workingFiles.length) ||
     (Array.isArray(record.artifacts) && record.artifacts.length > artifacts.length)
@@ -552,10 +597,25 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
     stderr.clipped ||
     traceback.clipped ||
     compactOutputs.truncated ||
-    filesOmitted
+    filesOmitted ||
+    staleness.truncated
   const captureTruncated = record.truncated === true
   const truncated = captureTruncated || resultCompacted
-
+  const invalidatedRuns = Array.isArray(record.invalidatedRuns)
+    ? record.invalidatedRuns.slice(0, 50).flatMap((value) => {
+        const invalidated = asRecord(value)
+        if (!invalidated) return []
+        return [
+          {
+            ...pickDefined(invalidated, ['runId', 'cellId', 'state']),
+            names: Array.isArray(invalidated.names) ? invalidated.names.slice(0, 20) : [],
+            ...(Array.isArray(invalidated.reasons)
+              ? { reasons: invalidated.reasons.slice(0, 20) }
+              : {})
+          }
+        ]
+      })
+    : []
   return {
     ...pickDefined(record, [
       'runId',
@@ -569,6 +629,8 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
       'endedAt',
       'exitCode'
     ]),
+    ...(staleness.value ? { staleness: staleness.value } : {}),
+    ...(invalidatedRuns.length ? { invalidatedRuns } : {}),
     ...(stdout.text ? { stdout: stdout.text } : {}),
     ...(stderr.text ? { stderr: stderr.text } : {}),
     ...(traceback.text ? { traceback: traceback.text } : {}),
@@ -592,7 +654,11 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
   }
 }
 
-const compactStateRun = (value: unknown, includeOutputPreview: boolean): unknown => {
+const compactStateRun = (
+  value: unknown,
+  includeOutputPreview: boolean,
+  staleness?: unknown
+): unknown => {
   const record = asRecord(value)
   if (!record) return value
   const text = asRecord(record.text)
@@ -614,6 +680,7 @@ const compactStateRun = (value: unknown, includeOutputPreview: boolean): unknown
       ? clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT).text
       : undefined
   const workingFiles = compactWorkingFiles(record.workingFiles)
+  const compactedStaleness = compactStaleness(staleness, STATE_STALENESS_LIMITS)
 
   return {
     ...pickDefined(record, [
@@ -629,6 +696,7 @@ const compactStateRun = (value: unknown, includeOutputPreview: boolean): unknown
       'truncated'
     ]),
     ...(workingFiles.length ? { workingFiles } : {}),
+    ...(compactedStaleness.value ? { staleness: compactedStaleness.value } : {}),
     ...(outputPreview ? { outputPreview } : {})
   }
 }
@@ -642,6 +710,7 @@ const compactNotebookStateResult = (raw: unknown): unknown => {
   const runs = Array.isArray(record.runs) ? record.runs : []
   const recentSource = Array.isArray(record.recentRuns) ? record.recentRuns : runs
   const recentRuns = recentSource.slice(-MAX_STATE_RUNS)
+  const runStaleness = asRecord(record.runStaleness)
   const cells = Array.isArray(record.cells)
     ? record.cells.slice(-MAX_STATE_CELLS).flatMap((cell) => {
         const cellRecord = asRecord(cell)
@@ -676,16 +745,19 @@ const compactNotebookStateResult = (raw: unknown): unknown => {
     ...(cells.length ? { cells } : {}),
     runCount:
       typeof record.runCount === 'number' ? record.runCount : runs.length || recentSource.length,
-    recentRuns: recentRuns.map((run, index) =>
-      compactStateRun(run, index === recentRuns.length - 1)
-    ),
+    recentRuns: recentRuns.map((run, index) => {
+      const runRecord = asRecord(run)
+      const staleness =
+        typeof runRecord?.runId === 'string' ? runStaleness?.[runRecord.runId] : undefined
+      return compactStateRun(run, index === recentRuns.length - 1, staleness)
+    }),
     environmentCount: Array.isArray(record.environments) ? record.environments.length : 0,
     ...(environments.length ? { environments } : {}),
     ...(Array.isArray(record.environments) && record.environments.length > environments.length
       ? { omittedEnvironmentCount: record.environments.length - environments.length }
       : {}),
     historyCompacted: true,
-    note: 'Only recent run metadata and the latest output preview are returned; full history remains in the notebook preview.'
+    note: 'Only recent run metadata and the latest output preview are returned; dependency details may be shortened, and full history remains in the notebook preview.'
   }
 }
 
