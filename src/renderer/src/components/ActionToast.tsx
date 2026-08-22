@@ -1,6 +1,6 @@
 /* Hallmark · component: action toast · genre: modern-minimal · theme: project app tokens */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: project tokens · slop: pass */
-import { useEffect, useState } from 'react'
+import { useEffect, useEffectEvent, useState } from 'react'
 import { X } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
@@ -29,12 +29,13 @@ const ActionToast = ({
   testId
 }: ActionToastProps): React.JSX.Element => {
   const [paused, setPaused] = useState(false)
+  const dismissAfterTimeout = useEffectEvent(onDismiss)
 
   useEffect(() => {
     if (!autoDismissMs || paused) return
-    const timeout = window.setTimeout(onDismiss, autoDismissMs)
+    const timeout = window.setTimeout(dismissAfterTimeout, autoDismissMs)
     return () => window.clearTimeout(timeout)
-  }, [autoDismissMs, onDismiss, paused])
+  }, [autoDismissMs, paused])
 
   return (
     <div

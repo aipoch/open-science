@@ -238,6 +238,29 @@ describe('settings Connectors slice', () => {
     expect(store.getState().connectorAuthNotice).toBeUndefined()
   })
 
+  it('clears an auth notice when reauthentication succeeds', async () => {
+    const authenticated = {
+      ...server('oauth'),
+      transport: 'streamable_http' as const,
+      url: 'https://mcp.example.test',
+      oauth: { hasTokens: true }
+    }
+    const unauthenticated = {
+      ...authenticated,
+      enabled: false,
+      availability: 'unauthenticated' as const
+    }
+    store.setState({
+      customServers: [unauthenticated],
+      connectorAuthNotice: { id: 'oauth', displayName: 'oauth' }
+    })
+    vi.mocked(commands.authenticateCustomServer).mockResolvedValue(snapshot([], [authenticated]))
+
+    await store.getState().authenticateCustomServer({ id: 'oauth' })
+
+    expect(store.getState().connectorAuthNotice).toBeUndefined()
+  })
+
   it('does not let an older runtime snapshot overwrite a newer mutation', async () => {
     let runtimeChanged: (() => void) | undefined
     let settleRuntimeSnapshot!: (result: ConnectorsSnapshot) => void

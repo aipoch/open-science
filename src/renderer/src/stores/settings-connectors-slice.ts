@@ -135,7 +135,7 @@ export const createSettingsConnectorsSlice = ({
     if (generation === reconcileGeneration) {
       const projected = projectOptimisticToggles(projection, projectionGeneration)
       setState((state) => {
-        const connectorAuthNotice =
+        const runtimeAuthNotice =
           source === 'runtime'
             ? projected.customServers.find((server) => {
                 const previous = state.customServers.find(({ id }) => id === server.id)
@@ -147,17 +147,22 @@ export const createSettingsConnectorsSlice = ({
                 )
               })
             : undefined
+        const candidateAuthNotice = runtimeAuthNotice
+          ? { id: runtimeAuthNotice.id, displayName: runtimeAuthNotice.displayName }
+          : state.connectorAuthNotice
+        const candidateServer = candidateAuthNotice
+          ? projected.customServers.find(({ id }) => id === candidateAuthNotice.id)
+          : undefined
+        const connectorAuthNotice =
+          candidateAuthNotice &&
+          candidateServer?.oauth &&
+          (candidateServer.availability === 'unauthenticated' || !candidateServer.oauth.hasTokens)
+            ? candidateAuthNotice
+            : undefined
         return {
           ...projected,
           connectorsLoaded: true,
-          ...(connectorAuthNotice
-            ? {
-                connectorAuthNotice: {
-                  id: connectorAuthNotice.id,
-                  displayName: connectorAuthNotice.displayName
-                }
-              }
-            : {})
+          connectorAuthNotice
         }
       })
     }

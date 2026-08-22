@@ -53,4 +53,27 @@ describe('ActionToast', () => {
     await act(async () => vi.advanceTimersByTime(6000))
     expect(onDismiss).toHaveBeenCalledOnce()
   })
+
+  it('keeps its dismissal deadline when a parent passes a new callback', async () => {
+    const onDismiss = vi.fn()
+    const renderToast = (): void => {
+      root.render(
+        <ActionToast
+          title="Connector needs sign-in"
+          actionLabel="Open Connectors"
+          dismissLabel="Dismiss"
+          onAction={vi.fn()}
+          onDismiss={() => onDismiss()}
+          autoDismissMs={6000}
+        />
+      )
+    }
+    await act(async () => renderToast())
+
+    await act(async () => vi.advanceTimersByTime(3000))
+    await act(async () => renderToast())
+    await act(async () => vi.advanceTimersByTime(3000))
+
+    expect(onDismiss).toHaveBeenCalledOnce()
+  })
 })
