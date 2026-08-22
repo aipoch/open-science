@@ -585,32 +585,49 @@ describe('installAppLifecycle', () => {
     expect(windows[0].focused).toBe(true)
   })
 
-  it.each(['renderer-failed', 'send-failed', 'timeout'] as const)(
-    'keeps the app open when the renderer persistence preflight returns %s',
+  it('keeps the app open when the renderer persistence preflight reports a failed flush', async () => {
+    const flushSessionPersistence = vi.fn(async () => 'renderer-failed' as const)
+    const {
+      app,
+      closeOpts,
+      prepareForQuit,
+      abortQuitPreparation,
+      shutdownBackends,
+      tray,
+      windows
+    } = setup({ flushSessionPersistence })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(flushSessionPersistence).toHaveBeenCalledOnce()
+    expect(prepareForQuit).not.toHaveBeenCalled()
+    expect(abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(tray?.destroy).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+    expect(windows[0].visible).toBe(true)
+    expect(windows[0].focused).toBe(true)
+  })
+
+  it.each(['send-failed', 'timeout'] as const)(
+    'continues quit when the renderer persistence preflight returns %s',
     async (outcome) => {
       const flushSessionPersistence = vi.fn(async () => outcome)
-      const {
-        app,
-        closeOpts,
-        prepareForQuit,
-        abortQuitPreparation,
-        shutdownBackends,
-        tray,
-        windows
-      } = setup({ flushSessionPersistence })
+      const { app, closeOpts, prepareForQuit, abortQuitPreparation, shutdownBackends } = setup({
+        flushSessionPersistence
+      })
       closeOpts[0].requestQuit()
 
       app.emit('before-quit')
       await flush()
 
-      expect(flushSessionPersistence).toHaveBeenCalledOnce()
-      expect(prepareForQuit).not.toHaveBeenCalled()
-      expect(abortQuitPreparation).toHaveBeenCalledOnce()
-      expect(shutdownBackends).not.toHaveBeenCalled()
-      expect(tray?.destroy).not.toHaveBeenCalled()
-      expect(app.exit).not.toHaveBeenCalled()
-      expect(windows[0].visible).toBe(true)
-      expect(windows[0].focused).toBe(true)
+      expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+      expect(prepareForQuit).toHaveBeenCalledOnce()
+      expect(abortQuitPreparation).not.toHaveBeenCalled()
+      expect(shutdownBackends).toHaveBeenCalledOnce()
+      expect(app.exit).toHaveBeenCalledWith(0)
     }
   )
 
@@ -643,22 +660,45 @@ describe('installAppLifecycle', () => {
     expect(windows[0].focused).toBe(true)
   })
 
-  it.each(['renderer-failed', 'send-failed', 'timeout'] as const)(
-    'keeps the app open when the terminal renderer flush returns %s',
+  it('keeps the app open when the terminal renderer flush reports a failed write', async () => {
+    const flushSessionPersistence = vi
+      .fn()
+      .mockResolvedValueOnce('completed' as const)
+      .mockResolvedValueOnce('renderer-failed' as const)
+    const {
+      app,
+      closeOpts,
+      prepareForQuit,
+      abortQuitPreparation,
+      shutdownBackends,
+      tray,
+      windows
+    } = setup({ flushSessionPersistence })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+    expect(prepareForQuit).toHaveBeenCalledOnce()
+    expect(abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(tray?.destroy).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+    expect(windows[0].visible).toBe(true)
+    expect(windows[0].focused).toBe(true)
+  })
+
+  it.each(['send-failed', 'timeout'] as const)(
+    'continues quit when the terminal renderer flush returns %s',
     async (outcome) => {
       const flushSessionPersistence = vi
         .fn()
         .mockResolvedValueOnce('completed' as const)
         .mockResolvedValueOnce(outcome)
-      const {
-        app,
-        closeOpts,
-        prepareForQuit,
-        abortQuitPreparation,
-        shutdownBackends,
-        tray,
-        windows
-      } = setup({ flushSessionPersistence })
+      const { app, closeOpts, prepareForQuit, abortQuitPreparation, shutdownBackends } = setup({
+        flushSessionPersistence
+      })
       closeOpts[0].requestQuit()
 
       app.emit('before-quit')
@@ -666,12 +706,9 @@ describe('installAppLifecycle', () => {
 
       expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
       expect(prepareForQuit).toHaveBeenCalledOnce()
-      expect(abortQuitPreparation).toHaveBeenCalledOnce()
-      expect(shutdownBackends).not.toHaveBeenCalled()
-      expect(tray?.destroy).not.toHaveBeenCalled()
-      expect(app.exit).not.toHaveBeenCalled()
-      expect(windows[0].visible).toBe(true)
-      expect(windows[0].focused).toBe(true)
+      expect(abortQuitPreparation).not.toHaveBeenCalled()
+      expect(shutdownBackends).toHaveBeenCalledOnce()
+      expect(app.exit).toHaveBeenCalledWith(0)
     }
   )
 
