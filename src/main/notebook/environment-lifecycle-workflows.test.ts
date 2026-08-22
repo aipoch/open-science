@@ -112,6 +112,13 @@ describe('createNotebookEnvironmentLifecycle', () => {
     expect(provisioner.cancel).not.toHaveBeenCalled()
   })
 
+  it('treats a JSON-null optional language as omit-all cancel', () => {
+    const provisioner = fakeProvisioner()
+    const lifecycle = createLifecycle(provisioner)
+    lifecycle.cancel(null as unknown as undefined)
+    expect(provisioner.cancel).toHaveBeenCalledWith(undefined)
+  })
+
   it('tags a failure that occurs before provision progress is emitted', async () => {
     const failure = new Error('provision rejected before startup')
     const provisioner = fakeProvisioner({ provisionPython: vi.fn().mockRejectedValue(failure) })

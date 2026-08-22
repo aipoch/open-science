@@ -365,4 +365,32 @@ describe('Notebook application commands', () => {
     expect(repair).not.toHaveBeenCalled()
     expect(cancel).not.toHaveBeenCalled()
   })
+
+  it('treats JSON-null optional Environment arguments as omitted', async () => {
+    const provision = vi.fn(async () => undefined)
+    const repair = vi.fn(async () => undefined)
+    const cancel = vi.fn()
+    const router = createApplicationCommandRouter()
+    installNotebookEnvironmentApplicationCommands(router.registrar, {
+      status: vi.fn(),
+      provision,
+      repair,
+      cancel,
+      startup: vi.fn()
+    })
+
+    await router.dispatcher.invoke(notebookEnvironmentCancelCommand, invocation([null] as never))
+    await router.dispatcher.invoke(
+      notebookEnvironmentProvisionCommand,
+      invocation(['python', null] as never)
+    )
+    await router.dispatcher.invoke(
+      notebookEnvironmentRepairCommand,
+      invocation(['r', null] as never)
+    )
+
+    expect(cancel).toHaveBeenCalledWith(undefined)
+    expect(provision).toHaveBeenCalledWith('python', undefined)
+    expect(repair).toHaveBeenCalledWith('r', undefined)
+  })
 })

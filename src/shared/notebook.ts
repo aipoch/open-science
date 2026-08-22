@@ -1,6 +1,10 @@
 import { z } from 'zod'
 
-import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
+import {
+  defineApplicationCommandContract,
+  validationCodec,
+  type RuntimeCodec
+} from './application-command-contract'
 import type { ArtifactFile } from './artifacts'
 import type { NotebookRuntimeBindings } from './notebook-runtime'
 import type { OptionalProjectIdScope, ProjectIdScope } from './project-scope'
@@ -52,11 +56,25 @@ export const parseNotebookLanguage = (value: unknown): NotebookLanguage => {
 }
 
 export const parseOptionalNotebookLanguage = (value: unknown): NotebookLanguage | undefined => {
-  if (value === undefined) return undefined
+  if (value == null) return undefined
   return parseNotebookLanguage(value)
 }
 
-const languageAndOptionalOperationId = validationCodec(
+// JSON RPC encodes omitted optional slots as null. Drop trailing nulls so cancel() and
+// provision/repair without an operation id stay valid, while a null required language still fails.
+const omitTrailingNull = (value: unknown): unknown => {
+  if (!Array.isArray(value)) return value
+  const args = [...value]
+  while (args.length > 0 && args[args.length - 1] === null) args.pop()
+  return args
+}
+
+const parsedArgs = <Args extends readonly unknown[]>(schema: z.ZodType<Args>): RuntimeCodec<Args> =>
+  Object.freeze({
+    parse: (value: unknown): Args => schema.parse(omitTrailingNull(value))
+  })
+
+const languageAndOptionalOperationId = parsedArgs(
   z.union([z.tuple([notebookLanguageSchema]), z.tuple([notebookLanguageSchema, z.string()])])
 )
 
@@ -70,7 +88,7 @@ export const notebookEnvironmentApplicationCommandContracts = Object.freeze({
     validationCodec(z.undefined())
   ),
   cancel: defineApplicationCommandContract(
-    validationCodec(z.union([z.tuple([]), z.tuple([notebookLanguageSchema])])),
+    parsedArgs(z.union([z.tuple([]), z.tuple([notebookLanguageSchema])])),
     validationCodec(z.undefined())
   )
 })

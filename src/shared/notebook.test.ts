@@ -12,8 +12,10 @@ describe('shared notebook types', () => {
     expect(parseNotebookLanguage('python')).toBe('python')
     expect(parseNotebookLanguage('r')).toBe('r')
     expect(parseOptionalNotebookLanguage(undefined)).toBeUndefined()
+    expect(parseOptionalNotebookLanguage(null)).toBeUndefined()
     expect(() => parseNotebookLanguage('julia')).toThrow(/python or r/i)
     expect(() => parseNotebookLanguage('R')).toThrow(/python or r/i)
+    expect(() => parseNotebookLanguage(null)).toThrow(/python or r/i)
     expect(() => parseOptionalNotebookLanguage('julia')).toThrow(/python or r/i)
   })
 
@@ -28,6 +30,16 @@ describe('shared notebook types', () => {
     expect(notebookEnvironmentApplicationCommandContracts.cancel.args.parse(['python'])).toEqual([
       'python'
     ])
+    expect(notebookEnvironmentApplicationCommandContracts.cancel.args.parse([null])).toEqual([])
+    expect(
+      notebookEnvironmentApplicationCommandContracts.provision.args.parse(['python', null])
+    ).toEqual(['python'])
+    expect(notebookEnvironmentApplicationCommandContracts.repair.args.parse(['r', null])).toEqual([
+      'r'
+    ])
+    expect(() =>
+      notebookEnvironmentApplicationCommandContracts.provision.args.parse([null])
+    ).toThrow()
     expect(() =>
       notebookEnvironmentApplicationCommandContracts.provision.args.parse(['julia'])
     ).toThrow()
