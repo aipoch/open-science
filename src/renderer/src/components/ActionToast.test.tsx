@@ -42,7 +42,14 @@ describe('ActionToast', () => {
     const action = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Open Connectors'
     )
-    act(() => action?.focus())
+    const toast = container.querySelector('[role="status"]')
+    act(() => {
+      action?.focus()
+      toast?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      toast?.dispatchEvent(
+        new MouseEvent('pointerout', { bubbles: true, relatedTarget: document.body })
+      )
+    })
     action?.click()
     expect(onAction).toHaveBeenCalledOnce()
 

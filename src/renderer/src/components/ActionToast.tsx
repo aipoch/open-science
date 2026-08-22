@@ -28,7 +28,9 @@ const ActionToast = ({
   className,
   testId
 }: ActionToastProps): React.JSX.Element => {
-  const [paused, setPaused] = useState(false)
+  const [hovered, setHovered] = useState(false)
+  const [focusedWithin, setFocusedWithin] = useState(false)
+  const paused = hovered || focusedWithin
   const dismissAfterTimeout = useEffectEvent(onDismiss)
 
   useEffect(() => {
@@ -41,11 +43,11 @@ const ActionToast = ({
     <div
       role="status"
       data-testid={testId}
-      onPointerEnter={() => setPaused(true)}
-      onPointerLeave={() => setPaused(false)}
-      onFocusCapture={() => setPaused(true)}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocusCapture={() => setFocusedWithin(true)}
       onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setPaused(false)
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocusedWithin(false)
       }}
       className={cn(
         'fixed right-3 top-3 z-toast flex w-[min(24rem,calc(100vw-1.5rem))] items-center gap-3 rounded-lg border border-border-100 bg-bg-200 px-3 py-2 text-sm text-text-100 shadow-lg',

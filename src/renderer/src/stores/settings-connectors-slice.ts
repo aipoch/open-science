@@ -136,7 +136,7 @@ export const createSettingsConnectorsSlice = ({
       const projected = projectOptimisticToggles(projection, projectionGeneration)
       setState((state) => {
         const runtimeAuthNotice =
-          source === 'runtime'
+          source === 'runtime' || runtimeRefreshPending
             ? projected.customServers.find((server) => {
                 const previous = state.customServers.find(({ id }) => id === server.id)
                 return Boolean(

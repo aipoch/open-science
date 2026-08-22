@@ -334,6 +334,59 @@ describe('settings Connectors slice', () => {
     )
   })
 
+  it('preserves OAuth expiry observed during an in-flight mutation', async () => {
+    let runtimeChanged: (() => void) | undefined
+    let settleMutation!: (result: ConnectorsSnapshot) => void
+    let settleDeferredRefresh!: (result: ConnectorsSnapshot) => void
+    const mutation = new Promise<ConnectorsSnapshot>((resolve) => {
+      settleMutation = resolve
+    })
+    const deferredRefresh = new Promise<ConnectorsSnapshot>((resolve) => {
+      settleDeferredRefresh = resolve
+    })
+    const authenticated = {
+      ...server('oauth'),
+      transport: 'streamable_http' as const,
+      url: 'https://mcp.example.test',
+      oauth: { hasTokens: true }
+    }
+    const unauthenticated = {
+      ...authenticated,
+      enabled: false,
+      availability: 'unauthenticated' as const
+    }
+    const runtimeCommands: ConnectorCommands = {
+      ...createCommands(),
+      listConnectors: vi
+        .fn()
+        .mockResolvedValueOnce(snapshot([], [authenticated]))
+        .mockReturnValueOnce(deferredRefresh),
+      setCustomServerEnabled: vi.fn(() => mutation),
+      onConnectorRuntimeChanged: vi.fn((listener: () => void) => {
+        runtimeChanged = listener
+        return () => undefined
+      })
+    }
+    ;({ store, commands } = createHarness(runtimeCommands))
+
+    await store.getState().loadConnectors()
+    const pendingMutation = store.getState().setCustomServerEnabled('oauth', false)
+    runtimeChanged?.()
+    settleMutation(snapshot([], [unauthenticated]))
+    await pendingMutation
+
+    expect(store.getState().connectorAuthNotice).toEqual({
+      id: 'oauth',
+      displayName: 'oauth'
+    })
+    settleDeferredRefresh(snapshot([], [unauthenticated]))
+    await vi.waitFor(() => expect(commands.listConnectors).toHaveBeenCalledTimes(2))
+    expect(store.getState().connectorAuthNotice).toEqual({
+      id: 'oauth',
+      displayName: 'oauth'
+    })
+  })
+
   it('optimistically enables a Connector before authoritative reconciliation', async () => {
     let settle!: (result: ConnectorsSnapshot) => void
     vi.mocked(commands.setConnectorEnabled).mockReturnValue(
