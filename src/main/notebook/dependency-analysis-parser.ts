@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { Language, Parser, type Node, type Tree } from 'web-tree-sitter'
+import type { Language, Node, Tree } from 'web-tree-sitter'
 
 const here = typeof __dirname === 'string' ? __dirname : dirname(fileURLToPath(import.meta.url))
 
@@ -34,15 +34,19 @@ const resolveTreeSitterDir = (): string | undefined => {
 }
 
 let initPromise: Promise<string | undefined> | undefined
+let parserRuntime: typeof import('web-tree-sitter') | undefined
 const languages = new Map<NotebookParserLanguage, Language>()
 
 const ensureParserRuntime = (): Promise<string | undefined> => {
   initPromise ??= (async () => {
     const dir = resolveTreeSitterDir()
     if (!dir) return undefined
-    await Parser.init({
+    const runtime = await import('web-tree-sitter').catch(() => undefined)
+    if (!runtime) return undefined
+    await runtime.Parser.init({
       locateFile: (scriptName: string) => join(dir, scriptName)
     })
+    parserRuntime = runtime
     return dir
   })()
   return initPromise
@@ -52,8 +56,8 @@ const loadLanguage = async (language: NotebookParserLanguage): Promise<Language 
   const cached = languages.get(language)
   if (cached) return cached
   const dir = await ensureParserRuntime()
-  if (!dir) return undefined
-  const loaded = await Language.load(join(dir, wasmFile(language)))
+  if (!dir || !parserRuntime) return undefined
+  const loaded = await parserRuntime.Language.load(join(dir, wasmFile(language)))
   languages.set(language, loaded)
   return loaded
 }
@@ -67,8 +71,9 @@ const withParsedNotebookSource = async <T>(
   analyze: (root: Node) => T
 ): Promise<ParsedNotebookSource<T>> => {
   const grammar = await loadLanguage(language)
-  if (!grammar) return { state: 'error', reason: 'parser-unavailable' }
-  const parser = new Parser()
+  const runtime = parserRuntime
+  if (!grammar || !runtime) return { state: 'error', reason: 'parser-unavailable' }
+  const parser = new runtime.Parser()
   let tree: Tree | null = null
   try {
     parser.setLanguage(grammar)
