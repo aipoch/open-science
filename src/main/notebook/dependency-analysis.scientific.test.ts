@@ -5,9 +5,12 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+import {
+  NotebookDependencyAnalyzer,
+  type NotebookDependencyInterpreter
+} from './dependency-analysis'
 
-const unusedInterpreter = (kernelKind: 'python' | 'r') => ({
+const unusedInterpreter = (kernelKind: 'python' | 'r'): NotebookDependencyInterpreter => ({
   command: kernelKind === 'python' ? 'unused-python' : 'unused-rscript'
 })
 

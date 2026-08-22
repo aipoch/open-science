@@ -776,7 +776,7 @@ class NotebookDependencyAnalyzer {
 
     const missingByInterpreter = new Map<
       string,
-      { interpreter: NotebookDependencyInterpreter; runs: NotebookRunRecord[] }
+      { interpreter?: NotebookDependencyInterpreter; runs: NotebookRunRecord[] }
     >()
     const resolvedExternalInterpreters = new Map<
       string,
@@ -789,6 +789,13 @@ class NotebookDependencyAnalyzer {
         attemptedRunIds.has(run.runId) ||
         cachedAnalysisIsReusable(sidecar.runs[run.runId], checksum)
       ) {
+        continue
+      }
+      if (!this.options.analyze) {
+        const key = `in-process:${run.kernelKind}`
+        const group = missingByInterpreter.get(key) ?? { runs: [] }
+        group.runs.push(run)
+        missingByInterpreter.set(key, group)
         continue
       }
       const interpreter = run.runtimeId
@@ -827,7 +834,7 @@ class NotebookDependencyAnalyzer {
   private async analyzeGroup(
     sidecar: NotebookDependencyAnalysisSidecar,
     runs: readonly NotebookRunRecord[],
-    interpreter: NotebookDependencyInterpreter
+    interpreter?: NotebookDependencyInterpreter
   ): Promise<boolean> {
     const pending = runs.filter(
       (run) => !cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run))
@@ -836,9 +843,10 @@ class NotebookDependencyAnalyzer {
     const language = pending[0]?.kernelKind
     if (language !== 'python' && language !== 'r') return false
     const sources = pending.map((run) => run.script)
-    const facts = this.options.analyze
-      ? await this.options.analyze(interpreter, language, sources)
-      : await analyzeNotebookSources(language, sources)
+    const facts =
+      this.options.analyze && interpreter
+        ? await this.options.analyze(interpreter, language, sources)
+        : await analyzeNotebookSources(language, sources)
     pending.forEach((run, index) => {
       sidecar.runs[run.runId] = {
         checksum: checksumFor(run),

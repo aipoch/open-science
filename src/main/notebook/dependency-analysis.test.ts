@@ -1256,6 +1256,34 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     expect(analyze).not.toHaveBeenCalled()
   })
 
+  it('analyzes historical in-process facts when an external runtime is gone', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-missing-runtime-in-process-'))
+    temporaryRoots.push(storageRoot)
+    const runs = [
+      { ...run('run-1', 'prepare-data', 'x = 1', 1), runtimeId: '/missing/python' },
+      { ...run('run-2', 'make-result', 'y = x', 2), runtimeId: '/missing/python' },
+      { ...run('run-3', 'new-call', 'x = 2', 3), runtimeId: '/missing/python' }
+    ]
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) },
+      resolveInterpreter: vi.fn(async () => undefined)
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1'
+    })
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.stalenessByRunId['run-2']).toEqual({
+      state: 'stale',
+      causedByRunId: 'run-3',
+      names: ['x'],
+      path: ['run-1', 'run-2']
+    })
+    expect(projection.stalenessByRunId['run-3']).toEqual({ state: 'clear' })
+  })
+
   it('resolves each external runtime once while rebuilding a history', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-external-runtime-cache-'))
     temporaryRoots.push(storageRoot)
