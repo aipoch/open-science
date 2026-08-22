@@ -7,6 +7,7 @@ import type {
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { TaskAgentPort, TaskAgentPromptRequest } from '../tasks/task-runner'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
+import type { SessionAgentTargetResolver } from './session-agent-target'
 
 type AcpTaskAgentRuntime = {
   getSnapshot(): { sessionIds: string[] }
@@ -47,7 +48,8 @@ const createAcpTaskAgentPort = (
   runtime: AcpTaskAgentRuntime,
   createSessionWorkflow: AcpCreateSessionWorkflow,
   notifications?: TaskPromptNotifications,
-  archiveAvailability?: SessionArchiveAvailability
+  archiveAvailability?: SessionArchiveAvailability,
+  resolveSessionAgentTarget?: SessionAgentTargetResolver
 ): TaskAgentPort => ({
   withSessionAvailable: (projectId, sessionId, operation) =>
     archiveAvailability
@@ -61,8 +63,9 @@ const createAcpTaskAgentPort = (
       ...(request.cwd ? { cwd: request.cwd } : {}),
       ...(request.specialistId ? { specialistId: request.specialistId } : {})
     }),
-  resumeSession: (request) =>
-    runtime.resumeSession({
+  resumeSession: async (request) => {
+    const agentTarget = await resolveSessionAgentTarget?.(request.agentConfiguration)
+    return runtime.resumeSession({
       sessionId: request.sessionId,
       cwd: request.cwd,
       projectId: request.projectId,
@@ -72,8 +75,10 @@ const createAcpTaskAgentPort = (
       providerSessionId: request.providerSessionId,
       providerContinuityToken: request.providerContinuityToken,
       ...(request.specialistId ? { specialistId: request.specialistId } : {}),
-      ...(request.specialistBindingPending === true ? { specialistBindingPending: true } : {})
-    }),
+      ...(request.specialistBindingPending === true ? { specialistBindingPending: true } : {}),
+      ...(agentTarget ? { agentTarget } : {})
+    })
+  },
   setPermissionProfile: (sessionId, profile) =>
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),
   prompt: async (request, observer) => {

@@ -271,6 +271,31 @@ describe('reviewer IPC handlers', () => {
     expect(passed.model).toBe('reviewer-model')
   })
 
+  it('resolves and forwards the persisted Session target to background reviews', async () => {
+    const agentConfiguration = {
+      providerId: 'provider-1',
+      model: 'model-1',
+      reasoningEffort: 'high' as const
+    }
+    const agentTarget = { frameworkId: 'opencode' as const, ...agentConfiguration }
+    const resolveSessionAgentTarget = vi.fn(async () => agentTarget)
+    sessionLoadOne.mockResolvedValue({ id: 'session-1', agentConfiguration })
+    const owner = createReviewerCommandOwner({
+      acpRuntime,
+      resolveSessionAgentTarget
+    })
+
+    await expect(owner.run(createRequest())).resolves.toEqual({ started: true })
+    await vi.waitFor(() => expect(runReview).toHaveBeenCalledOnce())
+
+    expect(resolveSessionAgentTarget).toHaveBeenCalledWith(agentConfiguration)
+    expect(runReview.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        agentTarget
+      })
+    )
+  })
+
   it('lets injected options override the config/data split independently', async () => {
     runReview.mockClear()
     // Reset the captured-roots recorders so this test only observes its own wiring.

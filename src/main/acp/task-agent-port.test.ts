@@ -38,16 +38,25 @@ describe('ACP Task Agent port', () => {
       cancelPrompt: vi.fn(async () => undefined)
     }
     const withSessionAvailable = vi.fn()
-    const port = createAcpTaskAgentPort(runtime, { create }, undefined, {
-      withSessionAvailable: async <Result>(
-        projectId: string,
-        sessionId: string,
-        operation: () => Promise<Result>
-      ) => {
-        withSessionAvailable(projectId, sessionId, operation)
-        return operation()
-      }
-    })
+    const resolveSessionAgentTarget = vi.fn(async (configuration) =>
+      configuration ? ({ frameworkId: 'opencode' as const, ...configuration } as const) : undefined
+    )
+    const port = createAcpTaskAgentPort(
+      runtime,
+      { create },
+      undefined,
+      {
+        withSessionAvailable: async <Result>(
+          projectId: string,
+          sessionId: string,
+          operation: () => Promise<Result>
+        ) => {
+          withSessionAvailable(projectId, sessionId, operation)
+          return operation()
+        }
+      },
+      resolveSessionAgentTarget
+    )
 
     const admitted = vi.fn(async () => 'admitted')
     await expect(port.withSessionAvailable('project-1', 'session-stable', admitted)).resolves.toBe(
@@ -74,7 +83,12 @@ describe('ACP Task Agent port', () => {
         permissionProfile: 'ask',
         previousFrameworkId: 'codex',
         previousBackendId: 'codex:shared',
-        specialistId: 'specialist-1'
+        specialistId: 'specialist-1',
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-1',
+          reasoningEffort: 'high'
+        }
       })
     ).resolves.toMatchObject({
       sessionId: 'session-resumed',
@@ -100,6 +114,11 @@ describe('ACP Task Agent port', () => {
       specialistId: 'specialist-1'
     })
     expect(withSessionAvailable).toHaveBeenCalledWith('project-1', 'session-stable', admitted)
+    expect(resolveSessionAgentTarget).toHaveBeenCalledWith({
+      providerId: 'provider-1',
+      model: 'model-1',
+      reasoningEffort: 'high'
+    })
     expect(runtime.resumeSession).toHaveBeenCalledWith({
       sessionId: 'session-stable',
       cwd: '/workspace/stable',
@@ -107,7 +126,13 @@ describe('ACP Task Agent port', () => {
       permissionProfile: 'ask',
       previousFrameworkId: 'codex',
       previousBackendId: 'codex:shared',
-      specialistId: 'specialist-1'
+      specialistId: 'specialist-1',
+      agentTarget: {
+        frameworkId: 'opencode',
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'high'
+      }
     })
     expect(runtime.setPermissionProfile).toHaveBeenCalledWith({
       sessionId: 'session-stable',

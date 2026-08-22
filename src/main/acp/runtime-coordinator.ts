@@ -1242,7 +1242,7 @@ class AcpRuntimeCoordinator {
     work: (runtime: AcpRuntimeActivity) => Promise<T>
   ): Promise<T> {
     this.assertPromptAdmissionOpen()
-    const runtime = this.getActiveRuntime()
+    const runtime = this.runtimeForTarget(options.session?.agentTarget)
     const scopedRuntime = this.createScopedActivityRuntime(runtime, options)
 
     return runtime.withActivity(options, () => {
@@ -1289,7 +1289,8 @@ class AcpRuntimeCoordinator {
           ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}),
           ...(session.providerContinuityToken
             ? { providerContinuityToken: session.providerContinuityToken }
-            : {})
+            : {}),
+          ...(session.agentTarget ? { agentTarget: session.agentTarget } : {})
         }
         resumeInFlight = runtime.resumeSession(resumeRequest).then(async (response) => {
           this.sessionRuntimes.set(response.sessionId, runtime)

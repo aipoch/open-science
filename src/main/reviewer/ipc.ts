@@ -26,6 +26,7 @@ import { broadcastToRenderers } from '../renderer-broadcast'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { acquireDataRootWriter } from '../storage/migration-state'
 import { ReviewerProjectRuntimeOwner, type ReviewerProjectAdmission } from './project-runtime-owner'
+import type { SessionAgentTargetResolver } from '../acp/session-agent-target'
 
 const log = createLogger('reviewer:ipc')
 
@@ -100,6 +101,7 @@ type ReviewerIpcOptions = {
     >
   }>
   projectRuntime?: Pick<ReviewerProjectRuntimeOwner, 'admit'>
+  resolveSessionAgentTarget?: SessionAgentTargetResolver
 }
 
 type ReviewerCommandOwner = Readonly<{
@@ -310,6 +312,19 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       return finishBeforeBackground({ started: false, reason: 'not-found' })
     }
 
+    let agentTarget
+    try {
+      agentTarget = await options.resolveSessionAgentTarget?.(session.agentConfiguration)
+    } catch (error) {
+      inFlightReviewKeys.delete(inFlightKey)
+      log.error('review start failed: could not resolve Session agent target', {
+        sessionId,
+        turnMessageId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return finishBeforeBackground({ started: false, reason: 'run-failed' })
+    }
+
     log.info('review triggered', { sessionId, turnMessageId })
 
     let modelAdmission: Awaited<
@@ -385,6 +400,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           ? (mutation) => options.withSessionMutation!(projectId, sessionId, mutation)
           : undefined,
         acpRuntime: options.acpRuntime,
+        ...(agentTarget ? { agentTarget } : {}),
         ...(modelAdmission.reviewerAcpRuntime
           ? { reviewerAcpRuntime: modelAdmission.reviewerAcpRuntime }
           : {}),
