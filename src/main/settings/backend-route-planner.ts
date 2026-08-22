@@ -1,8 +1,11 @@
 import { z } from 'zod'
 import {
   CODEX_ISOLATED_PROVIDER_ID,
+  canUseClaudeProviderTransport,
   DEFAULT_REASONING_EFFORT,
   isCodexSubscriptionProvider,
+  shareProviderTransportFamily,
+  usesAppProviderTransport,
   type ReasoningEffort
 } from '../../shared/settings'
 import {
@@ -209,7 +212,7 @@ class BackendRoutePlanner {
       input.effortIntent
     )
     const claudeModelConfig =
-      input.frameworkId === 'claude-code' && input.target.provider.type === 'custom'
+      input.frameworkId === 'claude-code' && usesAppProviderTransport(input.target.provider.type)
         ? this.claudeModelConfig(routeCandidates)
         : undefined
     return Object.freeze({
@@ -240,7 +243,7 @@ class BackendRoutePlanner {
     const route = modelRouteFor(input.frameworkId, input.target)
     const candidates = this.routeCandidates(input.settings, input.target, input.frameworkId, route)
     const retargetable = new Set(candidates.map(({ providerId }) => providerId)).size >= 2
-    const customTarget = input.target.provider.type === 'custom'
+    const customTarget = usesAppProviderTransport(input.target.provider.type)
     const hasClaudeTransport =
       input.frameworkId === 'claude-code' && customTarget && candidates.includes(input.target)
     const hasProviderTransport =
@@ -300,7 +303,9 @@ class BackendRoutePlanner {
     effortIntent: ReasoningEffort
   ): BackendTransportPlan {
     if (frameworkId === 'claude-code') {
-      if (active.provider.type !== 'custom') return Object.freeze({ kind: 'direct' })
+      if (!usesAppProviderTransport(active.provider.type)) {
+        return Object.freeze({ kind: 'direct' })
+      }
       const targets = candidates.flatMap((candidate): AnthropicProviderBridgeTarget[] => {
         const model = candidate.effectiveModel ?? candidate.provider.model
         const baseUrl = normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
@@ -383,6 +388,7 @@ class BackendRoutePlanner {
     const seen = new Set<string>()
     return this.enumerateCandidates(settings, active, frameworkId).filter((candidate) => {
       const model = candidate.effectiveModel ?? candidate.provider.model
+      if (!shareProviderTransportFamily(active.provider.type, candidate.provider.type)) return false
       const endpoint =
         frameworkId === 'claude-code'
           ? normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
@@ -402,10 +408,7 @@ class BackendRoutePlanner {
         : undefined
       if (
         !candidate.frameworkCompatible ||
-        (frameworkId === 'claude-code' &&
-          (candidate.provider.type !== 'custom' ||
-            !candidate.apiEndpoints.includes('anthropic') ||
-            !candidate.provider.key)) ||
+        (frameworkId === 'claude-code' && !canUseClaudeProviderTransport(candidate.provider)) ||
         (frameworkId === 'codex' && !candidate.modelBridgeSupported) ||
         modelRouteFor(frameworkId, candidate) !== route ||
         !model ||

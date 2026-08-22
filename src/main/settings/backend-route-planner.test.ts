@@ -185,6 +185,46 @@ describe('BackendRoutePlanner route matrix', () => {
 
     expect(plan.transport).toEqual({ kind: 'direct' })
   })
+
+  it.each([
+    ['claude-code', false, 'claude-anthropic'],
+    ['opencode', false, 'opencode-openai'],
+    ['codex', true, 'codex-responses-compatibility']
+  ] as const)(
+    'routes xAI OAuth through the app-owned %s transport without a stored API key',
+    (frameworkId, needsNativeResponsesCompatibility, kind) => {
+      const provider = makeStoredProvider({
+        id: 'builtin-xai-subscription',
+        type: 'xai-subscription',
+        name: 'xAI (Grok) OAuth',
+        baseUrl: 'https://api.x.ai/v1',
+        model: 'grok-4.6',
+        keyRef: undefined
+      })
+      const target = makeTarget(provider, {
+        needsNativeResponsesCompatibility,
+        provider: {
+          type: 'xai-subscription',
+          vendorId: 'xai',
+          baseUrl: 'https://api.x.ai/v1',
+          openaiBaseUrl: 'https://api.x.ai/v1',
+          model: 'grok-4.6',
+          key: undefined
+        }
+      })
+
+      const plan = makePlanner().planBackend({
+        settings: { ...makeSettings(provider), agentFrameworkId: frameworkId },
+        frameworkId,
+        target,
+        effortIntent: 'high',
+        conversationSkillImportEnabled: true
+      })
+
+      expect(plan.transport.kind).toBe(kind)
+      expect(JSON.stringify(plan.transport)).not.toContain('plain-provider-key')
+    }
+  )
 })
 
 describe('BackendRoutePlanner provider candidates', () => {

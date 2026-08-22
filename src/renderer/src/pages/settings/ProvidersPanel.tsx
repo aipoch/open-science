@@ -3,7 +3,11 @@ import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { useSettingsStore } from '@/stores/settings-store'
-import type { ProviderView, ValidateProviderResult } from '../../../../shared/settings'
+import type {
+  ProviderView,
+  ValidateProviderResult,
+  XaiOAuthDeviceAuthorization
+} from '../../../../shared/settings'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
@@ -11,6 +15,7 @@ import { ReasoningEffortSelect } from './ReasoningEffortSelect'
 import { ReviewerModelSelect, SubagentModelSelect, VisionModelSelect } from './SubagentModelSelect'
 import { SettingsSection } from './SettingsLayout'
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
+import { XaiOAuthSignInDialog } from './XaiOAuthSignInDialog'
 
 type ProvidersPanelProps = {
   // Navigation callbacks into the page-level history: the add/edit provider form is a breadcrumb
@@ -52,6 +57,10 @@ const ProvidersPanel = ({
   const loginIsolatedClaudeBrowser = useSettingsStore((state) => state.loginIsolatedClaudeBrowser)
   const cancelIsolatedClaudeLogin = useSettingsStore((state) => state.cancelIsolatedClaudeLogin)
   const logoutIsolatedClaude = useSettingsStore((state) => state.logoutIsolatedClaude)
+  const beginXaiOAuthLogin = useSettingsStore((state) => state.beginXaiOAuthLogin)
+  const waitXaiOAuthLogin = useSettingsStore((state) => state.waitXaiOAuthLogin)
+  const cancelXaiOAuthLogin = useSettingsStore((state) => state.cancelXaiOAuthLogin)
+  const logoutXaiOAuth = useSettingsStore((state) => state.logoutXaiOAuth)
 
   // The last connection-test/sign-in failure, shown as an error line under the list.
   const [providerTestError, setProviderTestError] = useState<string | undefined>(undefined)
@@ -66,6 +75,9 @@ const ProvidersPanel = ({
   // user whose browser didn't open (or who prefers a token) can paste one. The wizard uses its own
   // flow, so this state lives on the panel rather than the store.
   const [isClaudeSignInOpen, setIsClaudeSignInOpen] = useState(false)
+  const [xaiSession, setXaiSession] = useState<XaiOAuthDeviceAuthorization>()
+  const [isXaiLoginPending, setIsXaiLoginPending] = useState(false)
+  const xaiLoginCancelledRef = useRef(false)
   // Guards the race between the two isolated sign-in paths. The browser flow (setup-token + its
   // localhost callback) and a manual paste both write the same provider token; whichever finishes
   // first wins. When the manual paste wins we cancel the background browser login, and this flag
@@ -102,6 +114,18 @@ const ProvidersPanel = ({
       if (isClaudeIsolatedLoginPendingRef.current) void cancelIsolatedClaudeLogin()
     }
   }, [cancelSharedClaudeLogin, cancelIsolatedClaudeLogin])
+  const isXaiLoginPendingRef = useRef(isXaiLoginPending)
+  useEffect(() => {
+    isXaiLoginPendingRef.current = isXaiLoginPending
+  }, [isXaiLoginPending])
+  useEffect(() => {
+    return () => {
+      if (isXaiLoginPendingRef.current) {
+        xaiLoginCancelledRef.current = true
+        void cancelXaiOAuthLogin()
+      }
+    }
+  }, [cancelXaiOAuthLogin])
 
   // Codex + Claude subscription pseudo-providers only make sense while their matching framework is the
   // active one. Hide claude-isolated and claude-shared from non-claude-code frameworks (same rule as codex).
@@ -301,6 +325,39 @@ const ProvidersPanel = ({
     }
   }
 
+  const handleXaiLogin = async (): Promise<void> => {
+    setProviderTestError(undefined)
+    xaiLoginCancelledRef.current = false
+    try {
+      const session = await beginXaiOAuthLogin()
+      setXaiSession(session)
+      setIsXaiLoginPending(true)
+      await waitXaiOAuthLogin()
+      setXaiSession(undefined)
+    } catch (error) {
+      if (xaiLoginCancelledRef.current) return
+      setProviderTestError(error instanceof Error ? error.message : t('Could not sign in to xAI.'))
+    } finally {
+      setIsXaiLoginPending(false)
+    }
+  }
+
+  const handleCancelXaiLogin = (): void => {
+    xaiLoginCancelledRef.current = true
+    void cancelXaiOAuthLogin()
+    setXaiSession(undefined)
+    setIsXaiLoginPending(false)
+  }
+
+  const handleXaiLogout = async (): Promise<void> => {
+    setProviderTestError(undefined)
+    try {
+      await logoutXaiOAuth()
+    } catch (error) {
+      setProviderTestError(error instanceof Error ? error.message : t('Could not sign out of xAI.'))
+    }
+  }
+
   return (
     <div className="space-y-5 p-5">
       {/* Active model is its own section so the current selection reads separately from provider
@@ -398,6 +455,10 @@ const ProvidersPanel = ({
           }}
           onLoginIsolatedClaudePaste={() => setIsClaudeSignInOpen(true)}
           onLogoutIsolatedClaude={() => void handleClaudeLogout()}
+          isXaiLoginPending={isXaiLoginPending}
+          onLoginXai={() => void handleXaiLogin()}
+          onCancelXaiLogin={handleCancelXaiLogin}
+          onLogoutXai={() => void handleXaiLogout()}
         />
         {providerTestError ? (
           <p className="mt-2 text-sm text-destructive" role="alert">
@@ -422,6 +483,12 @@ const ProvidersPanel = ({
         onOpenChange={setIsClaudeSignInOpen}
         onSubmit={(token) => handleClaudeSignIn(token)}
         browserSignInPending={isClaudeIsolatedLoginPending}
+      />
+      <XaiOAuthSignInDialog
+        open={Boolean(xaiSession)}
+        session={xaiSession}
+        error={providerTestError}
+        onCancel={handleCancelXaiLogin}
       />
     </div>
   )

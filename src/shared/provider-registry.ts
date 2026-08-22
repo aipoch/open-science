@@ -169,8 +169,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   },
   {
     id: 'xai',
-    label: 'Grok (xAI)',
-    // xAI documents four selectable effort values for Grok 4.5. Models with a different capability
+    label: 'xAI (Grok)',
+    // xAI documents four selectable effort values for Grok 4.6. Models with a different capability
     // override this default below; models without a documented effort control stay unsupported.
     reasoningEffort: 'low-medium-high-xhigh',
     // xAI serves OpenAI-compatible Chat Completions and native Responses from the same versioned
@@ -184,6 +184,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // audio, and video generation models, so exposing refresh would pollute the chat-model picker.
     // Experimental Grok 4.20 beta variants are intentionally omitted from the stable default list.
     models: [
+      { id: 'grok-4.6', contextWindow: 500_000 },
       { id: 'grok-4.5', contextWindow: 500_000 },
       {
         id: 'grok-4.3',

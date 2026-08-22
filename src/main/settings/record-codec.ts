@@ -31,7 +31,8 @@ const PROVIDER_TYPES = new Set<ProviderType>([
   'claude-isolated',
   'official',
   'codex-shared',
-  'codex-isolated'
+  'codex-isolated',
+  'xai-subscription'
 ])
 
 const VALIDATION_CATEGORIES = new Set<ValidationCategory>([
@@ -152,6 +153,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const region = asString(value.region)
   const keyRef = asString(value.keyRef)
   const keyMask = asString(value.keyMask)
+  const accountEmail = asString(value.accountEmail)
   const lastValidatedAt = asNumber(value.lastValidatedAt)
   const lastValidationFailure = sanitizeValidationFailure(value.lastValidationFailure)
   const expiresAt = asNumber(value.expiresAt)
@@ -202,6 +204,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
   if (keyRef) provider.keyRef = keyRef
   if (keyMask) provider.keyMask = keyMask
+  if (accountEmail && type === 'xai-subscription') provider.accountEmail = accountEmail
   if (lastValidatedAt !== undefined) provider.lastValidatedAt = lastValidatedAt
   if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
   if (expiresAt !== undefined) provider.expiresAt = expiresAt

@@ -69,6 +69,8 @@ export type StoredProvider = {
   // Model ids fetched live from the vendor (via "refresh from vendor"). When present, these take
   // precedence over the bundled registry catalog for this provider.
   fetchedModels?: string[]
+  // Non-secret identity returned by xAI after device authorization.
+  accountEmail?: string
   keyRef?: string
   keyMask?: string
   // Timestamp of the last successful connectivity/key check on the provider's first model.

@@ -262,7 +262,8 @@ class SettingsService {
       connectors: this.connectors,
       storageRoot: this.storageRoot,
       userClaudeDir: this.userClaudeDir,
-      skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? ''
+      skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? '',
+      getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh)
     })
     this.subagentModels = createSubagentModels(
       this.repository,
@@ -795,6 +796,23 @@ class SettingsService {
 
   async deleteProvider(id: string): Promise<SettingsSnapshot> {
     await this.providers.deleteProvider(id)
+    return this.getSettingsView()
+  }
+
+  beginXaiOAuthLogin(): ReturnType<ProviderAccountsModule['beginXaiOAuthLogin']> {
+    return this.providers.beginXaiOAuthLogin()
+  }
+
+  waitXaiOAuthLogin(): ReturnType<ProviderAccountsModule['waitXaiOAuthLogin']> {
+    return this.providers.waitXaiOAuthLogin()
+  }
+
+  cancelXaiOAuthLogin(): void {
+    this.providers.cancelXaiOAuthLogin()
+  }
+
+  async logoutXaiOAuth(): Promise<SettingsSnapshot> {
+    await this.providers.logoutXaiOAuth()
     return this.getSettingsView()
   }
 

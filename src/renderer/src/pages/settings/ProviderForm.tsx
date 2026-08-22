@@ -210,6 +210,7 @@ const ProviderForm = ({
   const isOfficial = value.type === 'official'
   const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
   const isClaudeSubscription = value.type === 'claude-shared' || value.type === 'claude-isolated'
+  const isXaiSubscription = value.type === 'xai-subscription'
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
   const [advancedOpen, setAdvancedOpen] = useState(
     () =>
@@ -361,7 +362,7 @@ const ProviderForm = ({
         </Select>
       </div>
 
-      {!isCodexSubscription && !isClaudeSubscription ? (
+      {!isCodexSubscription && !isClaudeSubscription && !isXaiSubscription ? (
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="provider-name">
             {t('Name')}
@@ -377,7 +378,17 @@ const ProviderForm = ({
         </div>
       ) : null}
 
-      {isCodexSubscription ? (
+      {isXaiSubscription ? (
+        <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+          <p className="text-sm font-medium text-foreground">{t('One xAI login, every agent')}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              'Save this provider, then sign in from its card with a device code. Open Science securely refreshes the login and exposes Messages, Chat Completions, and Responses locally.'
+            )}
+          </p>
+          <code className="font-mono text-xs text-muted-foreground">{t('grok-4.6 · 500K')}</code>
+        </div>
+      ) : isCodexSubscription ? (
         <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
           <div className="space-y-1.5">
             <span className={fieldLabelClassName}>{t('Codex authentication')}</span>

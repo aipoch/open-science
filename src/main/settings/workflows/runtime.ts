@@ -2,6 +2,7 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
+  XAI_SUBSCRIPTION_PROVIDER_ID,
   type SetActiveProviderRequest,
   type SetAgentFrameworkRequest,
   type SetReasoningEffortRequest,
@@ -31,6 +32,10 @@ type RuntimeSettingsWorkflowStore = Pick<
   | 'logoutIsolatedClaude'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
+  | 'beginXaiOAuthLogin'
+  | 'waitXaiOAuthLogin'
+  | 'cancelXaiOAuthLogin'
+  | 'logoutXaiOAuth'
 >
 
 type RuntimeSettingsWorkflowEffects = {
@@ -220,6 +225,35 @@ class RuntimeSettingsWorkflows {
       }
     }
     return result
+  }
+
+  beginXaiOAuthLogin(): ReturnType<RuntimeSettingsWorkflowStore['beginXaiOAuthLogin']> {
+    return this.settings.beginXaiOAuthLogin()
+  }
+
+  async waitXaiOAuthLogin(): Promise<
+    Awaited<ReturnType<RuntimeSettingsWorkflowStore['waitXaiOAuthLogin']>>
+  > {
+    const result = await this.settings.waitXaiOAuthLogin()
+    const snapshot = await this.settings.getSettingsView()
+    if (snapshot.activeProviderId === XAI_SUBSCRIPTION_PROVIDER_ID) {
+      this.effects.requestProviderReconnect()
+    }
+    return result
+  }
+
+  cancelXaiOAuthLogin(): void {
+    this.settings.cancelXaiOAuthLogin()
+  }
+
+  async logoutXaiOAuth(): Promise<
+    Awaited<ReturnType<RuntimeSettingsWorkflowStore['logoutXaiOAuth']>>
+  > {
+    const snapshot = await this.settings.logoutXaiOAuth()
+    if (snapshot.activeProviderId === XAI_SUBSCRIPTION_PROVIDER_ID) {
+      this.effects.requestProviderReconnect()
+    }
+    return snapshot
   }
 
   private async finishIsolatedClaudeLogin(

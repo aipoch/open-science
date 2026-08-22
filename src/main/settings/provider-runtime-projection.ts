@@ -2,6 +2,7 @@ import type { ChatApiEndpoint, ProviderView } from '../../shared/settings'
 import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
+  isXaiSubscriptionProvider,
   isProviderUsableByFramework,
   providerEndpoints,
   requiresChatCompletionsBridge
@@ -65,6 +66,7 @@ const requiresNativeResponsesCompatibility = (
 // and ephemeral runtime targets without mutating durable selection or entering account lifecycles.
 class ProviderRuntimeProjectionOwner {
   resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ChatApiEndpoint[] {
+    if (isXaiSubscriptionProvider(provider.type)) return ['anthropic', 'openai', 'responses']
     if (provider.type === 'official' && provider.vendorId) {
       const vendorEndpoints = resolveVendorApiEndpoints(provider.vendorId)
       const modelToCheck = activeModel ?? defaultVendorModel(provider.vendorId)
@@ -106,6 +108,7 @@ class ProviderRuntimeProjectionOwner {
       region: provider.region,
       models: this.availableModels(provider),
       maskedKey: provider.keyMask,
+      accountEmail: provider.accountEmail,
       hasKey,
       needsKey,
       lastValidatedAt: provider.lastValidatedAt,
@@ -194,7 +197,25 @@ class ProviderRuntimeProjectionOwner {
   }
 
   resolveProvider(provider: StoredProvider, modelOverride?: string): ResolvedProvider {
-    const key = provider.keyRef ? tryDecryptKey(provider.keyRef) : undefined
+    const key =
+      provider.type === 'xai-subscription'
+        ? undefined
+        : provider.keyRef
+          ? tryDecryptKey(provider.keyRef)
+          : undefined
+    if (isXaiSubscriptionProvider(provider.type)) {
+      const model = modelOverride ?? provider.model ?? defaultVendorModel('xai')
+      return {
+        type: provider.type,
+        vendorId: 'xai',
+        baseUrl: resolveVendorBaseUrl('xai'),
+        openaiBaseUrl: resolveVendorOpenAiBaseUrl('xai'),
+        model,
+        contextWindow: resolveModelContextWindow('xai', model),
+        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        supportsImageInput: isVendorModelMultimodal('xai', model)
+      }
+    }
     if (provider.type === 'official' && provider.vendorId) {
       const model = modelOverride ?? defaultVendorModel(provider.vendorId)
       const contextWindow = resolveModelContextWindow(provider.vendorId, model)
@@ -242,6 +263,7 @@ class ProviderRuntimeProjectionOwner {
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
     if (isCodexSubscriptionProvider(provider.type)) return true
     if (isClaudeSubscriptionProvider(provider.type)) return true
+    if (isXaiSubscriptionProvider(provider.type)) return true
     if (provider.type === 'custom') return provider.supportsImageInput === true
     if (provider.type === 'official' && provider.vendorId) {
       return isVendorModelMultimodal(
@@ -255,6 +277,11 @@ class ProviderRuntimeProjectionOwner {
   private availableModels(provider: StoredProvider): string[] {
     if (isCodexSubscriptionProvider(provider.type)) {
       return getOfficialVendorModelIds('openai')
+    }
+    if (isXaiSubscriptionProvider(provider.type)) {
+      return provider.fetchedModels?.length
+        ? provider.fetchedModels
+        : getOfficialVendorModelIds('xai')
     }
     if (provider.type === 'official' && provider.vendorId) {
       if (provider.fetchedModels && provider.fetchedModels.length > 0) {

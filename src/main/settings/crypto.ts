@@ -1,6 +1,6 @@
 import { safeStorage } from 'electron'
 
-// Wraps Electron safeStorage for API-key material. Plaintext keys exist only transiently in main
+// Wraps Electron safeStorage for provider credential material. Plaintext values exist only transiently in main
 // memory (during validation and env assembly); at rest they are OS-encrypted ciphertext, and the
 // renderer only ever sees the masked hint produced by maskKey().
 

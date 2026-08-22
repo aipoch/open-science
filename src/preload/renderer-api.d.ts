@@ -229,6 +229,7 @@ import type {
   ClaudeInstallResult,
   DeleteProviderRequest,
   EnvironmentCheckResult,
+  XaiOAuthDeviceAuthorization,
   InstallClaudeRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
@@ -528,6 +529,10 @@ export interface OpenScienceAPI {
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     cancelCodexLogin(): Promise<void>
     cancelClaudeLogin(): Promise<void>
+    beginXaiOAuthLogin(): Promise<XaiOAuthDeviceAuthorization>
+    waitXaiOAuthLogin(): Promise<{ accountEmail?: string }>
+    cancelXaiOAuthLogin(): Promise<void>
+    logoutXaiOAuth(): Promise<SettingsSnapshot>
     loginIsolatedCodex(): Promise<ValidateProviderResult>
     logoutIsolatedCodex(): Promise<ValidateProviderResult>
     loginSharedClaude(): Promise<ValidateProviderResult>

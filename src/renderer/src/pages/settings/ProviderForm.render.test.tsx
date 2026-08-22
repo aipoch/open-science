@@ -166,7 +166,7 @@ describe('ProviderForm field switching', () => {
     render(
       createEmptyProviderFormValue({
         type: 'official',
-        name: 'Grok (xAI)',
+        name: 'xAI (Grok)',
         vendorId: 'xai',
         apiEndpoint: 'responses'
       })
@@ -175,10 +175,10 @@ describe('ProviderForm field switching', () => {
     const providerType = container.querySelector('[aria-label="Provider type"]')
     const icon = providerType?.querySelector('img')
 
-    expect(providerType?.textContent).toContain('Grok (xAI)')
+    expect(providerType?.textContent).toContain('xAI (Grok)')
     expect(icon?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/)
     expect(decodeURIComponent(icon?.getAttribute('src') ?? '')).toContain('<title>Grok</title>')
-    expect(container.textContent).toContain('grok-4.5')
+    expect(container.textContent).toContain('grok-4.6')
   })
 
   it('renders the bundled Bailian brand mark and regional catalog', () => {

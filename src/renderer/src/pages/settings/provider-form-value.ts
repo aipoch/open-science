@@ -1,6 +1,7 @@
 import {
   claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
+  xaiSubscriptionProviderIdentity,
   preferredEndpoint,
   type AgentFrameworkId,
   type ChatApiEndpoint,
@@ -194,10 +195,10 @@ export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
 // Grouping for the provider-type picker. 'codex' / 'claude' = each vendor's own subscription
 // sign-in, surfaced as its own section (only one is shown at a time, gated on the active
 // framework); 'api' = official vendors via their standard API key; 'other' = the custom gateway.
-export type ProviderKindGroup = 'codex' | 'claude' | 'api' | 'other'
+export type ProviderKindGroup = 'codex' | 'claude' | 'subscription' | 'api' | 'other'
 
 export type ProviderKindGroupLabelKey =
-  'Codex subscription' | 'Claude subscription' | 'Official API' | 'Other'
+  'Codex subscription' | 'Claude subscription' | 'Subscription' | 'Official API' | 'Other'
 
 // A provider kind's one-line description, as English copy (its own catalog key). The `label` beside it stays a plain
 // string: it is a vendor name from the registry (`Anthropic`, `Moonshot`) or a subscription identity,
@@ -205,6 +206,7 @@ export type ProviderKindGroupLabelKey =
 export type ProviderKindDescriptionKey =
   | 'Use an existing Codex profile or sign in with a separate Open Science profile.'
   | 'Use an existing Claude profile or sign in with a separate Open Science profile.'
+  | 'Sign in to your xAI subscription with a browser device code.'
   | 'API key — models provided'
   | 'Base URL, key, and model for a Messages or Chat Completions endpoint'
 
@@ -216,6 +218,7 @@ export const PROVIDER_KIND_GROUPS: {
 }[] = [
   { id: 'codex', labelKey: 'Codex subscription' },
   { id: 'claude', labelKey: 'Claude subscription' },
+  { id: 'subscription', labelKey: 'Subscription' },
   { id: 'api', labelKey: 'Official API' },
   { id: 'other', labelKey: 'Other' }
 ]
@@ -231,6 +234,12 @@ export type ProviderKind = {
 } & ({ label: string; labelKey?: never } | { labelKey: 'Custom Gateway'; label?: never })
 
 export const PROVIDER_KINDS: ProviderKind[] = [
+  {
+    key: 'xai-subscription',
+    label: xaiSubscriptionProviderIdentity().name,
+    descriptionKey: 'Sign in to your xAI subscription with a browser device code.',
+    group: 'subscription'
+  },
   {
     key: 'codex-subscription',
     label: codexSubscriptionProviderIdentity().name,
@@ -303,6 +312,23 @@ export const providerKindPatch = (
     }
   }
 
+  if (key === 'xai-subscription') {
+    const identity = xaiSubscriptionProviderIdentity()
+    return {
+      type: 'xai-subscription',
+      name: identity.name,
+      apiEndpoint: 'responses',
+      baseUrl: '',
+      model: 'grok-4.6',
+      contextWindow: '',
+      maxInputTokens: '',
+      maxOutputTokens: '',
+      key: '',
+      vendorId: undefined,
+      region: undefined
+    }
+  }
+
   if (key.startsWith('official:')) {
     const vendorId = key.slice('official:'.length) as OfficialVendorId
     const vendor = getOfficialVendor(vendorId)
@@ -343,6 +369,7 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
   if (value.type === 'codex-shared' || value.type === 'codex-isolated') {
     return 'codex-subscription'
   }
+  if (value.type === 'xai-subscription') return 'xai-subscription'
 
   return value.vendorId ? `official:${value.vendorId}` : 'custom'
 }
@@ -355,4 +382,6 @@ export const providerKindKey = (type: ProviderType, vendorId?: OfficialVendorId)
       ? 'codex-subscription'
       : type === 'claude-shared' || type === 'claude-isolated'
         ? 'claude-subscription'
-        : type
+        : type === 'xai-subscription'
+          ? 'xai-subscription'
+          : type

@@ -37,6 +37,8 @@ type JsonObject = Record<string, any>
 type NativeResponsesCompatibilityTarget = {
   baseUrl: string
   key?: string
+  resolveKey?: (forceRefresh?: boolean) => Promise<string>
+  sanitizeRequest?: (body: JsonObject) => JsonObject
   model?: string
   reviewerScope?: {
     namespacedTools: ResponsesBridgeNamespacedTool[]
@@ -428,11 +430,12 @@ export class NativeResponsesCompatibilityProxy {
     }, this.options.skillSelectorTimeoutMs ?? 15_000)
     timer.unref?.()
     try {
+      const resolvedKey = this.target.resolveKey ? await this.target.resolveKey() : this.target.key
       const response = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          ...(this.target.key ? { authorization: `Bearer ${this.target.key}` } : {})
+          ...(resolvedKey ? { authorization: `Bearer ${resolvedKey}` } : {})
         },
         body: JSON.stringify({
           model: this.target.model,
@@ -623,9 +626,13 @@ export class NativeResponsesCompatibilityProxy {
       const routedBody = this.target.model
         ? { ...scopedBody, model: this.target.model }
         : scopedBody
-      const { request: upstreamRequest, aliases } = flattenNativeResponsesRequest(routedBody)
+      const { request: flattenedRequest, aliases } = flattenNativeResponsesRequest(routedBody)
+      const upstreamRequest = this.target.sanitizeRequest
+        ? this.target.sanitizeRequest(flattenedRequest)
+        : flattenedRequest
       const upstreamRequestBody = JSON.stringify(upstreamRequest)
-      const headersToForward = upstreamHeaders(request, this.target.key)
+      const resolvedKey = this.target.resolveKey ? await this.target.resolveKey() : this.target.key
+      const headersToForward = upstreamHeaders(request, resolvedKey)
       const replayKey = providerRequestFingerprint(
         this.target.baseUrl,
         providerRequestHeadersFingerprint(headersToForward),
@@ -685,12 +692,21 @@ export class NativeResponsesCompatibilityProxy {
         this.options.responseHeaderTimeoutMs ?? DEFAULT_RESPONSE_HEADER_TIMEOUT_MS,
         'Native Responses upstream did not return response headers in time.'
       )
-      const upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+      let upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
         method: 'POST',
         headers: headersToForward,
         body: upstreamRequestBody,
         signal: AbortSignal.any([request.signal, upstreamAbort.signal])
       })
+      if (upstream.status === 401 && this.target.resolveKey) {
+        const refreshedKey = await this.target.resolveKey(true)
+        upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+          method: 'POST',
+          headers: upstreamHeaders(request, refreshedKey),
+          body: upstreamRequestBody,
+          signal: AbortSignal.any([request.signal, upstreamAbort.signal])
+        })
+      }
       clearUpstreamTimeout()
       const contentType = upstream.headers.get('content-type') ?? ''
       const responseType = upstreamResponseType(contentType)

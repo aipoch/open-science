@@ -319,7 +319,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('settings', 'settings', [
     ['onChanged', 'settings:changed', EVENT],
     ['addCustomServer', 'settings:add-custom-server'], ['authenticateCustomServer', 'settings:authenticate-custom-server', LOCAL], ['cancelCustomServerAuthentication', 'settings:cancel-custom-server-authentication', LOCAL], ['cancelClaudeLogin', 'settings:cancel-claude-login', LOCAL],
-    ['cancelCodexLogin', 'settings:cancel-codex-login', LOCAL], ['cancelIsolatedClaudeLogin', 'settings:cancel-isolated-claude-login', LOCAL],
+    ['cancelCodexLogin', 'settings:cancel-codex-login', LOCAL], ['cancelIsolatedClaudeLogin', 'settings:cancel-isolated-claude-login', LOCAL], ['beginXaiOAuthLogin', 'settings:begin-xai-oauth-login', LOCAL], ['waitXaiOAuthLogin', 'settings:wait-xai-oauth-login', LOCAL], ['cancelXaiOAuthLogin', 'settings:cancel-xai-oauth-login', LOCAL],
     ['checkEnvironment', 'settings:check-environment'], ['createSkill', 'settings:create-skill'], ['deleteProvider', 'settings:delete-provider'],
     ['deleteSkill', 'settings:delete-skill'], ['detectClaude', 'settings:detect-claude'], ['detectCodex', 'settings:detect-codex'],
     ['detectOpencode', 'settings:detect-opencode'], ['exportCustomServerTemplate', 'settings:export-custom-server-template', ELECTRON], ['exportSkill', 'settings:export-skill', ELECTRON], ['getConnectorDetail', 'settings:get-connector-detail'],
@@ -333,7 +333,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['loginIsolatedClaude', 'settings:login-isolated-claude', LOCAL], ['loginIsolatedClaudeBrowser', 'settings:login-isolated-claude-browser', LOCAL],
     ['loginIsolatedCodex', 'settings:login-isolated-codex', LOCAL], ['loginSharedClaude', 'settings:login-shared-claude', LOCAL],
     ['logoutIsolatedClaude', 'settings:logout-isolated-claude', LOCAL], ['logoutIsolatedCodex', 'settings:logout-isolated-codex', LOCAL],
-    ['logoutSharedClaude', 'settings:logout-shared-claude', LOCAL], ['markOnboardingComplete', 'settings:mark-onboarding-complete'],
+    ['logoutSharedClaude', 'settings:logout-shared-claude', LOCAL], ['logoutXaiOAuth', 'settings:logout-xai-oauth', LOCAL], ['markOnboardingComplete', 'settings:mark-onboarding-complete'],
     ['onConnectorApprovalRequest', 'connectors:approval-request', EVENT], ['onConnectorApprovalSettled', 'connectors:approval-settled', EVENT], ['onConnectorRuntimeChanged', 'settings:connector-runtime-changed', EVENT], ['onInstallLog', 'settings:install-log', EVENT],
     ['onSkillCatalogChanged', 'skills:catalog-changed', EVENT],
     ['onSkillImportApprovalRequest', 'skills:conversation-import-request', EVENT],

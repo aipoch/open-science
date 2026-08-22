@@ -24,7 +24,13 @@ export const SETTINGS_FILE_VERSION = 2
 // OAuth login via `claude auth login`); claude-isolated uses an app-owned CLAUDE_CONFIG_DIR
 // (setup-token paste, no ~/.claude touch).
 export type ProviderType =
-  'custom' | 'claude-shared' | 'claude-isolated' | 'official' | 'codex-shared' | 'codex-isolated'
+  | 'custom'
+  | 'claude-shared'
+  | 'claude-isolated'
+  | 'official'
+  | 'codex-shared'
+  | 'codex-isolated'
+  | 'xai-subscription'
 
 // The stored Codex subscription always uses the app-owned runtime type. This discriminator preserves
 // which setup choice produced it so editing an imported profile does not masquerade as an isolated
@@ -48,6 +54,17 @@ export const CODEX_SUBSCRIPTION_PROVIDER_ID = 'builtin-codex-subscription'
 
 export const CLAUDE_SHARED_PROVIDER_ID = 'builtin-claude-shared'
 export const CLAUDE_ISOLATED_PROVIDER_ID = 'builtin-claude-isolated'
+export const XAI_SUBSCRIPTION_PROVIDER_ID = 'builtin-xai-subscription'
+
+export const xaiSubscriptionProviderIdentity = (): { id: string; name: string } => ({
+  id: XAI_SUBSCRIPTION_PROVIDER_ID,
+  name: 'xAI (Grok) OAuth'
+})
+
+export const isXaiSubscriptionProvider = (type: ProviderType): type is 'xai-subscription' =>
+  type === 'xai-subscription'
+export const usesAppProviderTransport = (type: ProviderType): boolean =>
+  type === 'custom' || type === 'xai-subscription'
 export type ClaudeSubscriptionProviderId =
   typeof CLAUDE_SHARED_PROVIDER_ID | typeof CLAUDE_ISOLATED_PROVIDER_ID
 
@@ -119,6 +136,18 @@ export const providerEndpoints = (provider: {
   provider.apiEndpoints && provider.apiEndpoints.length > 0
     ? [...provider.apiEndpoints]
     : ['anthropic']
+
+export const shareProviderTransportFamily = (left: ProviderType, right: ProviderType): boolean =>
+  isXaiSubscriptionProvider(left) === isXaiSubscriptionProvider(right)
+
+export const canUseClaudeProviderTransport = (provider: {
+  type: ProviderType
+  apiEndpoints?: readonly ChatApiEndpoint[]
+  key?: string
+}): boolean =>
+  usesAppProviderTransport(provider.type) &&
+  providerEndpoints(provider).includes('anthropic') &&
+  (provider.type !== 'custom' || Boolean(provider.key))
 
 // A provider's endpoints are compatible with a framework only when they share at least one endpoint.
 // Codex's Responses-compatible bridge is a separate local gateway: it does not change the provider's
@@ -267,6 +296,8 @@ export type ProviderView = {
   models: string[]
   // A short, non-secret hint like "sk-…abcd" for display only.
   maskedKey?: string
+  // Non-secret account label returned by the provider during subscription sign-in.
+  accountEmail?: string
   // True when a key is stored (custom/official providers). Lets the form show "leave blank to keep".
   hasKey: boolean
   // True when a stored key could not be decrypted and must be re-entered before use.
@@ -281,6 +312,14 @@ export type ProviderView = {
   // lifetime — today that is `claude setup-token` (Anthropic documents a one-year lifetime).
   // The Settings card surfaces this as "Expires <date>".
   expiresAt?: number
+}
+
+export type XaiOAuthDeviceAuthorization = {
+  userCode: string
+  verificationUri: string
+  verificationUriComplete?: string
+  expiresAt: number
+  intervalSeconds: number
 }
 
 // True when a provider's most recent validation failed (and no later one succeeded). A failed

@@ -126,7 +126,7 @@ describe('provider registry', () => {
 
   it('exposes the first catalog entry as the default model', () => {
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
-    expect(defaultVendorModel('xai')).toBe('grok-4.5')
+    expect(defaultVendorModel('xai')).toBe('grok-4.6')
     expect(defaultVendorModel('zhipu')).toBe('glm-5.2')
   })
 
@@ -294,7 +294,7 @@ describe('provider registry', () => {
     // xAI's live catalog also includes image, audio, and video generation models, so keep refresh
     // hidden and expose only the curated language-model catalog.
     expect(resolveVendorModelsUrl('xai')).toBeUndefined()
-    expect(defaultVendorModel('xai')).toBe('grok-4.5')
+    expect(defaultVendorModel('xai')).toBe('grok-4.6')
   })
 
   it('routes Kimi through both APIs so Codex can bridge it', () => {
