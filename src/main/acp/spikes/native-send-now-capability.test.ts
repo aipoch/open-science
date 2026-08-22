@@ -4,8 +4,10 @@ import { AcpSessionInteractionOwner } from '../session-interaction-owner'
 import {
   ACP_STEERING_METHOD,
   HOST_CONCURRENT_PROMPT_POLICY,
+  PRODUCTION_HOST_FOLLOW_UP_BLOCKERS,
   SHIPPED_CLAUDE_AGENT_ACP_VERSION,
   SHIPPED_CODEX_ACP_VERSION,
+  admitSecondSessionPrompt,
   buildSteerRequest,
   parseSteerOutcome,
   readSteeringAdvertisement,
@@ -113,20 +115,38 @@ describe('native Send now capability spike', () => {
         advertisement: advertised
       }
     ]) {
-      expect(resolveShippedNativeSendNowCapability(lookup)).toEqual({
+      const capability = resolveShippedNativeSendNowCapability(lookup)
+      expect(capability).toMatchObject({
         kind: 'steering-extension',
         delivery: 'safe-breakpoint',
         method: ACP_STEERING_METHOD,
-        hostCanDispatch: false
+        frameworkCanDispatch: true,
+        hostCanDispatch: false,
+        usesSecondSessionPrompt: false,
+        hostBlockers: ['no-steering-side-band']
+      })
+      expect(admitSecondSessionPrompt(capability)).toEqual({
+        allowed: false,
+        reason: 'wrong-mechanism',
+        hostBlockers: ['no-steering-side-band']
       })
     }
   })
 
-  it('treats unadvertised Claude Code as adapter-queued prompt, not interrupt-free steer', () => {
-    expect(resolveShippedNativeSendNowCapability({ frameworkId: 'claude-code' })).toEqual({
+  it('treats unadvertised Claude Code as adapter-queued prompt blocked by the host', () => {
+    const capability = resolveShippedNativeSendNowCapability({ frameworkId: 'claude-code' })
+    expect(capability).toEqual({
       kind: 'queued-prompt',
       delivery: 'next-model-pause',
-      hostCanDispatch: false
+      frameworkCanDispatch: true,
+      hostCanDispatch: false,
+      usesSecondSessionPrompt: true,
+      hostBlockers: [...PRODUCTION_HOST_FOLLOW_UP_BLOCKERS]
+    })
+    expect(admitSecondSessionPrompt(capability)).toEqual({
+      allowed: false,
+      reason: 'host-not-ready',
+      hostBlockers: [...PRODUCTION_HOST_FOLLOW_UP_BLOCKERS]
     })
   })
 
@@ -136,23 +156,44 @@ describe('native Send now capability spike', () => {
     ['codex', 'codex-responses-compatibility'],
     ['codex', 'codex-bridge']
   ] as const)('has no unadvertised native Send now for %s %s', (frameworkId, route) => {
-    expect(
-      resolveShippedNativeSendNowCapability({
-        frameworkId,
-        ...(route ? { route } : {})
-      })
-    ).toEqual({
+    const capability = resolveShippedNativeSendNowCapability({
+      frameworkId,
+      ...(route ? { route } : {})
+    })
+    expect(capability).toEqual({
       kind: 'none',
       delivery: 'unavailable',
-      hostCanDispatch: false
+      frameworkCanDispatch: false,
+      hostCanDispatch: false,
+      usesSecondSessionPrompt: false,
+      hostBlockers: ['framework-unsupported']
     })
+    expect(admitSecondSessionPrompt(capability)).toEqual({
+      allowed: false,
+      reason: 'framework-unsupported',
+      hostBlockers: ['framework-unsupported']
+    })
+  })
+
+  it('would admit a second session/prompt only after host blockers are gone', () => {
+    expect(
+      admitSecondSessionPrompt({
+        kind: 'queued-prompt',
+        delivery: 'next-model-pause',
+        frameworkCanDispatch: true,
+        hostCanDispatch: true,
+        usesSecondSessionPrompt: true,
+        hostBlockers: []
+      })
+    ).toEqual({ allowed: true, mode: 'queued-prompt-adopt-after-stop' })
   })
 
   it('keeps the host from admitting a second prompt while one is already running', () => {
     const owner = new AcpSessionInteractionOwner()
-    owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    const first = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
     expect(() => owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })).toThrow(
       'An ACP interaction is already running for this session'
     )
+    expect(owner.current('session-1')).toBe(first)
   })
 })
