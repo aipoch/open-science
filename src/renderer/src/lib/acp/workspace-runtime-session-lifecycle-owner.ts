@@ -573,15 +573,22 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
     string,
     NonNullable<SendWorkspaceMessageIntent['planContinuation']>
   >()
+  const admittedAgentTargetBySessionId = new Map<string, AcpSessionAgentTarget>()
 
   return {
     recordPromptPlanAuthority(
-      input: Pick<SendWorkspaceMessageIntent, 'sessionId' | 'planContinuation'>
+      input: Pick<SendWorkspaceMessageIntent, 'sessionId' | 'planContinuation'> & {
+        agentTarget?: AcpSessionAgentTarget
+      }
     ): void {
-      if (input.sessionId && input.planContinuation) {
+      if (!input.sessionId) return
+      if (input.planContinuation) {
         planContinuationBySessionId.set(input.sessionId, input.planContinuation)
-      } else if (input.sessionId) {
+      } else {
         planContinuationBySessionId.delete(input.sessionId)
+      }
+      if (input.agentTarget) {
+        admittedAgentTargetBySessionId.set(input.sessionId, input.agentTarget)
       }
     },
     processRuntimeEvents(
@@ -610,7 +617,7 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
             cancelledOverflowRecoverySessionIds,
             options.getHistoryReplayDescriptor(sessionId),
             planContinuation,
-            options.getAgentTarget(sessionId),
+            admittedAgentTargetBySessionId.get(sessionId) ?? options.getAgentTarget(sessionId),
             options.supportsImageRelay
           ).finally(() => planContinuationBySessionId.delete(sessionId))
         }
@@ -635,6 +642,7 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
       return resumeInterruptedWorkspaceSession(runtime, sessionId, drainRuntimeEvents, options)
     },
     cancel(runtime: WorkspaceCancellationRuntime, sessionId: string): Promise<void> {
+      admittedAgentTargetBySessionId.delete(sessionId)
       return cancelWorkspaceRun(
         runtime,
         sessionId,

@@ -5922,6 +5922,77 @@ describe('recovering from a request-size overflow', () => {
     })
   })
 
+  it('recovers overflow with the admitted Session target after a later Composer change', async () => {
+    seedOverflowedConversation()
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+    const owner = createWorkspaceRuntimeSessionLifecycleOwner()
+    const admittedTarget = {
+      frameworkId: 'codex' as const,
+      providerId: 'admitted-provider',
+      model: 'admitted-model',
+      reasoningEffort: 'high' as const
+    }
+    owner.recordPromptPlanAuthority({
+      sessionId: 'session-1',
+      agentTarget: admittedTarget
+    })
+    owner.processRuntimeEvents(
+      runtime,
+      [
+        createEvent({
+          id: 'owner-overflow-admitted-target',
+          kind: 'error',
+          level: 'error',
+          recoverable: 'context-overflow',
+          sessionId: 'session-1'
+        })
+      ],
+      {
+        getAgentTarget: () => ({
+          frameworkId: 'codex',
+          providerId: 'later-provider',
+          model: 'later-model',
+          reasoningEffort: 'low'
+        }),
+        getSupportsImageInput: () => undefined,
+        getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
+      }
+    )
+
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledTimes(1))
+    expect(runtime.resumeSession).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      admittedTarget
+    )
+  })
+
   it('persists the reset provider identity and re-sends the failed turn with a text preamble', async () => {
     vi.stubGlobal('window', {
       api: { acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) } }
