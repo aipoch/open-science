@@ -4,6 +4,7 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
+  XAI_SUBSCRIPTION_PROVIDER_ID,
   type SettingsSnapshot
 } from '../../shared/settings'
 import {
@@ -86,6 +87,8 @@ const fakeStore = () => {
     logoutIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     logoutIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+    waitXaiOAuthLogin: vi.fn().mockResolvedValue({ ok: true }),
+    logoutXaiOAuth: vi.fn().mockResolvedValue(snapshot()),
     setSkillEnabled: vi.fn().mockResolvedValue([]),
     setSkillsEnabled: vi.fn().mockResolvedValue([]),
     createSkill: vi.fn().mockResolvedValue([]),
@@ -308,6 +311,28 @@ describe('SettingsWorkflows authentication follow-up', () => {
 
     expect(requestProviderReconnect).toHaveBeenCalledOnce()
     expect(requestProviderReconnect).toHaveBeenCalledWith([CLAUDE_SHARED_PROVIDER_ID], false)
+  })
+
+  it('reconnects targeted XAI Sessions after login even when another provider is active', async () => {
+    const { store, capability } = fakeStore()
+    store.getSettingsView.mockResolvedValue(snapshot({ activeProviderId: 'other' }))
+    const requestProviderReconnect = vi.fn()
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ requestProviderReconnect })
+    ).runtime.waitXaiOAuthLogin()
+    expect(requestProviderReconnect).toHaveBeenCalledWith([XAI_SUBSCRIPTION_PROVIDER_ID], false)
+  })
+
+  it('reconnects targeted XAI Sessions after logout even when another provider is active', async () => {
+    const { store, capability } = fakeStore()
+    store.logoutXaiOAuth.mockResolvedValue(snapshot({ activeProviderId: 'other' }))
+    const requestProviderReconnect = vi.fn()
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ requestProviderReconnect })
+    ).runtime.logoutXaiOAuth()
+    expect(requestProviderReconnect).toHaveBeenCalledWith([XAI_SUBSCRIPTION_PROVIDER_ID], false)
   })
 
   it.each([
