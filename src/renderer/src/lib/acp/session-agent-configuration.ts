@@ -1,6 +1,11 @@
 import type { ConfiguredModelCatalogEntry } from '../../../../shared/configured-model-catalog'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
-import type { ReasoningEffort, SessionAgentConfiguration } from '../../../../shared/settings'
+import {
+  isClaudeSubscriptionProvider,
+  isCodexSubscriptionProvider,
+  type ReasoningEffort,
+  type SessionAgentConfiguration
+} from '../../../../shared/settings'
 
 type SessionAgentConfigurationSource = Pick<
   PersistedChatSession,
@@ -52,13 +57,18 @@ const resolveSelectableConfiguration = (
       candidate.providerId === providerId &&
       (model === undefined || candidate.model === model)
   )
-  return option
-    ? {
-        providerId,
-        ...(option.model ? { model: option.model } : {}),
-        reasoningEffort
-      }
-    : undefined
+  if (!option) return undefined
+  // Subscription defaults are account/CLI-owned. Copying the first catalog model would pin
+  // foreground turns to an explicit id while Main resume still uses provider-default.
+  const preserveAccountOwnedDefault =
+    model === undefined &&
+    (isCodexSubscriptionProvider(option.providerType) ||
+      isClaudeSubscriptionProvider(option.providerType))
+  return {
+    providerId,
+    ...(!preserveAccountOwnedDefault && option.model ? { model: option.model } : {}),
+    reasoningEffort
+  }
 }
 
 const resolveSessionAgentConfiguration = (input: {

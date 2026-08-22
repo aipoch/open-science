@@ -917,6 +917,7 @@ describe('Session Store architecture', () => {
       'removeSessionsForProject',
       'renameSession',
       'selectSession',
+      'setAgentConfiguration',
       'setAutoReviewEnabled',
       'setBranchSwitchBlocked',
       'setContextUsage',

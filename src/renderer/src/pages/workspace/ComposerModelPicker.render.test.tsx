@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
+  CODEX_SHARED_PROVIDER_ID,
   type ProviderView,
   type SessionAgentConfiguration
 } from '../../../../shared/settings'
@@ -233,6 +234,38 @@ describe('ComposerModelPicker', () => {
     await openSubmenu(modelRow!)
     expect(document.body.textContent).toContain('Claude subscription')
     expect(document.body.textContent).toContain('Claude isolated')
+  })
+
+  it('shows the Codex provider name when the Session omits the account-owned default model', () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportedApiTypes: ['responses'],
+          supportsSkills: true
+        }
+      ],
+      providers: [
+        provider({
+          id: CODEX_SHARED_PROVIDER_ID,
+          type: 'codex-shared',
+          name: 'Codex subscription',
+          models: ['gpt-5.4', 'gpt-5'],
+          apiEndpoints: ['responses']
+        })
+      ],
+      activeProviderId: CODEX_SHARED_PROVIDER_ID
+    })
+    render(false, false, {
+      providerId: CODEX_SHARED_PROVIDER_ID,
+      reasoningEffort: 'default'
+    })
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger?.textContent).toContain('Codex subscription')
+    expect(trigger?.textContent).not.toContain('gpt-5.4')
   })
 
   it('warns (does not hide) when the only provider is incompatible with the framework', () => {

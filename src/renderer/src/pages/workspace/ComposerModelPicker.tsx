@@ -35,7 +35,7 @@ const triggerClassName =
   'flex h-8 min-w-0 max-w-[220px] shrink items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
 
 // Label for an option: the model name, or the provider name when the option carries no concrete model.
-const optionLabel = (option: ConfiguredModelCatalogEntry): string => option.label
+const optionLabel = (option: Pick<ConfiguredModelCatalogEntry, 'label'>): string => option.label
 
 // One radio row shape shared by both submenus: menuitemradio semantics, bold + trailing Check when
 // picked, optional leading icon and trailing hint. The three call sites (default effort, effort
@@ -160,11 +160,24 @@ const ComposerModelPicker = ({
   if (options.length === 1 && hasUsable && !unavailable && !showEffortRow) return null
 
   // The active option matches by provider and model; an undefined activeModel maps to the empty-model
-  // "default" entry.
+  // "default" entry. Account-owned subscription defaults omit the model, so the trigger shows the
+  // provider name instead of pinning the first catalog row.
   const activeKeyModel = selectedModel ?? ''
   const current = options.find(
     (option) => option.providerId === selectedProviderId && option.model === activeKeyModel
   )
+  const displayCurrent =
+    current ??
+    (selectedModel === undefined && selectedProvider
+      ? {
+          providerId: selectedProvider.id,
+          providerName: selectedProvider.name,
+          providerType: selectedProvider.type,
+          ...(selectedProvider.vendorId ? { vendorId: selectedProvider.vendorId } : {}),
+          model: '',
+          label: selectedProvider.name
+        }
+      : undefined)
 
   // Group options by provider so official vendors show their catalog under one heading.
   const groups = providers
@@ -194,19 +207,19 @@ const ComposerModelPicker = ({
         >
           {hasUsable && !unavailable ? (
             <>
-              {current ? (
+              {displayCurrent ? (
                 <ProviderKindIcon
-                  kindKey={providerKindKey(current.providerType, current.vendorId)}
+                  kindKey={providerKindKey(displayCurrent.providerType, displayCurrent.vendorId)}
                   className="size-4"
                 />
               ) : null}
               <span className="flex min-w-0 items-center">
-                {current ? (
+                {displayCurrent ? (
                   <>
                     {/* The model name alone ellipsizes under the trigger's max width; the effort
                         suffix is the newer signal and stays fully visible. */}
                     <span className="truncate font-medium text-text-100">
-                      {optionLabel(current)}
+                      {optionLabel(displayCurrent)}
                     </span>
                     {effortSuffixLabel ? (
                       <span className="ml-1.5 shrink-0 whitespace-nowrap text-text-300">
@@ -303,18 +316,21 @@ const ComposerModelPicker = ({
                 with its own icon over the model name. The capsule is two lines tall, so it uses
                 a soft rounded-lg corner rather than the single-line pill's rounded-full; long
                 names ellipsize against the max width. */}
-            {current ? (
+            {displayCurrent ? (
               <span className="flex shrink-0 items-center gap-1.5 rounded-lg bg-bg-200 px-2 py-1">
                 <span className="flex max-w-[12rem] flex-col items-end text-right">
                   <span className="flex max-w-full items-center gap-1 text-[11px] font-semibold leading-4 text-text-300">
                     <ProviderKindIcon
-                      kindKey={providerKindKey(current.providerType, current.vendorId)}
+                      kindKey={providerKindKey(
+                        displayCurrent.providerType,
+                        displayCurrent.vendorId
+                      )}
                       className="size-3 shrink-0"
                     />
-                    <span className="min-w-0 truncate">{current.providerName}</span>
+                    <span className="min-w-0 truncate">{displayCurrent.providerName}</span>
                   </span>
                   <span className="block max-w-full truncate text-[13px] font-medium leading-5">
-                    {optionLabel(current)}
+                    {optionLabel(displayCurrent)}
                   </span>
                 </span>
                 <ChevronRight
