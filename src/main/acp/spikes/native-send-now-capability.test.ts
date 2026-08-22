@@ -7,6 +7,7 @@ import {
   PRODUCTION_HOST_FOLLOW_UP_BLOCKERS,
   SHIPPED_CLAUDE_AGENT_ACP_VERSION,
   SHIPPED_CODEX_ACP_VERSION,
+  SHIPPED_OPENCODE_VERSION,
   admitSecondSessionPrompt,
   buildSteerRequest,
   parseSteerOutcome,
@@ -18,6 +19,7 @@ describe('native Send now capability spike', () => {
   it('pins the shipped adapter versions this spike inspected', () => {
     expect(SHIPPED_CLAUDE_AGENT_ACP_VERSION).toBe('0.60.0')
     expect(SHIPPED_CODEX_ACP_VERSION).toBe('1.1.4')
+    expect(SHIPPED_OPENCODE_VERSION).toBe('1.18.3')
     expect(ACP_STEERING_METHOD).toBe('_session/steering')
     expect(HOST_CONCURRENT_PROMPT_POLICY).toBe('reject')
   })
@@ -120,6 +122,7 @@ describe('native Send now capability spike', () => {
         kind: 'steering-extension',
         delivery: 'safe-breakpoint',
         method: ACP_STEERING_METHOD,
+        overlappingPrompt: 'none',
         nativeCliHasMidTurnInput: true,
         frameworkCanDispatch: true,
         hostCanDispatch: false,
@@ -139,6 +142,7 @@ describe('native Send now capability spike', () => {
     expect(capability).toEqual({
       kind: 'queued-prompt',
       delivery: 'next-model-pause',
+      overlappingPrompt: 'queue-and-handoff',
       nativeCliHasMidTurnInput: true,
       frameworkCanDispatch: true,
       hostCanDispatch: false,
@@ -152,40 +156,94 @@ describe('native Send now capability spike', () => {
     })
   })
 
-  it.each([
-    ['opencode', undefined],
-    ['codex', 'codex-responses'],
-    ['codex', 'codex-responses-compatibility'],
-    ['codex', 'codex-bridge']
-  ] as const)(
-    'does not invent ACP overlapping-prompt support for unadvertised %s %s',
-    (frameworkId, route) => {
+  it('treats unadvertised OpenCode as admit-and-join-runner, not Send now', () => {
+    const capability = resolveShippedNativeSendNowCapability({ frameworkId: 'opencode' })
+    expect(capability).toEqual({
+      kind: 'none',
+      delivery: 'unavailable',
+      overlappingPrompt: 'admit-and-join-runner',
+      nativeCliHasMidTurnInput: true,
+      frameworkCanDispatch: true,
+      hostCanDispatch: false,
+      usesSecondSessionPrompt: false,
+      hostBlockers: ['admit-and-join-runner']
+    })
+    expect(admitSecondSessionPrompt(capability)).toEqual({
+      allowed: false,
+      reason: 'admit-and-join-runner',
+      hostBlockers: ['admit-and-join-runner']
+    })
+  })
+
+  it.each(['codex-responses', 'codex-responses-compatibility', 'codex-bridge'] as const)(
+    'treats unadvertised Codex %s as replace-and-interrupt, not Send now',
+    (route) => {
       const capability = resolveShippedNativeSendNowCapability({
-        frameworkId,
-        ...(route ? { route } : {})
+        frameworkId: 'codex',
+        route
       })
       expect(capability).toEqual({
         kind: 'none',
         delivery: 'unavailable',
+        overlappingPrompt: 'replace-and-interrupt',
         nativeCliHasMidTurnInput: true,
-        frameworkCanDispatch: false,
+        frameworkCanDispatch: true,
         hostCanDispatch: false,
         usesSecondSessionPrompt: false,
-        hostBlockers: ['acp-adapter-unverified']
+        hostBlockers: ['replace-and-interrupt']
       })
       expect(admitSecondSessionPrompt(capability)).toEqual({
         allowed: false,
-        reason: 'acp-adapter-unverified',
-        hostBlockers: ['acp-adapter-unverified']
+        reason: 'replace-and-interrupt',
+        hostBlockers: ['replace-and-interrupt']
       })
     }
   )
+
+  it('does not admit OpenCode join even after host blockers are cleared', () => {
+    expect(
+      admitSecondSessionPrompt({
+        kind: 'none',
+        delivery: 'unavailable',
+        overlappingPrompt: 'admit-and-join-runner',
+        nativeCliHasMidTurnInput: true,
+        frameworkCanDispatch: true,
+        hostCanDispatch: true,
+        usesSecondSessionPrompt: false,
+        hostBlockers: []
+      })
+    ).toEqual({
+      allowed: false,
+      reason: 'admit-and-join-runner',
+      hostBlockers: []
+    })
+  })
+
+  it('does not admit Codex replace-and-interrupt even after host blockers are cleared', () => {
+    expect(
+      admitSecondSessionPrompt({
+        kind: 'none',
+        delivery: 'unavailable',
+        overlappingPrompt: 'replace-and-interrupt',
+        nativeCliHasMidTurnInput: true,
+        frameworkCanDispatch: true,
+        hostCanDispatch: true,
+        usesSecondSessionPrompt: false,
+        hostBlockers: []
+      })
+    ).toEqual({
+      allowed: false,
+      reason: 'replace-and-interrupt',
+      hostBlockers: []
+    })
+  })
 
   it('would admit a second session/prompt only after host blockers are gone', () => {
     expect(
       admitSecondSessionPrompt({
         kind: 'queued-prompt',
         delivery: 'next-model-pause',
+        overlappingPrompt: 'queue-and-handoff',
         nativeCliHasMidTurnInput: true,
         frameworkCanDispatch: true,
         hostCanDispatch: true,
