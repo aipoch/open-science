@@ -27,7 +27,7 @@ describe('AcpBackendGenerationOwner', () => {
         contextUsageModel: 'provider-model',
         authentication: { methodId: 'codex-login' },
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'https://provider.example',
           headers: { authorization: 'Bearer provider-secret' }
@@ -79,7 +79,7 @@ describe('AcpBackendGenerationOwner', () => {
     const owner = new AcpBackendGenerationOwner(claudeCodeFramework)
     const authentication = { methodId: 'codex-login', _meta: { token: 'auth-secret' } }
     const providerConfiguration = {
-      providerId: 'custom-gateway' as const,
+      providerId: 'openai' as const,
       apiType: 'openai' as const,
       baseUrl: 'https://provider.example',
       headers: { authorization: 'Bearer provider-secret' }

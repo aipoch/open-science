@@ -18,6 +18,7 @@ export const WEB_INVOKE_CHANNELS = {
   'acp.saveAsSkill': 'acp:save-as-skill',
   'acp.sendPrompt': 'acp:send-prompt',
   'acp.setPermissionProfile': 'acp:set-permission-profile',
+  'acp.steerFollowUp': 'acp:steer-follow-up',
   'artifacts.finalizeRunArtifacts': 'artifacts:finalize-run',
   'artifacts.generateCodeReconstruction': 'artifacts:generate-code-reconstruction',
   'artifacts.getCodeReconstruction': 'artifacts:get-code-reconstruction',

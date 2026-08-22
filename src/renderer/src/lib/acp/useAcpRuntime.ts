@@ -4,6 +4,8 @@ import type {
   ElicitationResponse,
   AcpPermissionResponse,
   AcpPromptRequest,
+  AcpSteerFollowUpRequest,
+  AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
   AcpRuntimeEvent,
@@ -86,6 +88,7 @@ const useAcpRuntime = (): {
   ) => Promise<AcpStateSnapshot | undefined>
   deleteSession: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
   cancel: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
+  steerFollowUp: (request: AcpSteerFollowUpRequest) => Promise<AcpSteerFollowUpResult>
   sendPrompt: (
     sessionId: string,
     text: string,
@@ -353,6 +356,11 @@ const useAcpRuntime = (): {
     [runSnapshotAction]
   )
 
+  const steerFollowUp = useCallback(
+    (request: AcpSteerFollowUpRequest) => window.api.acp.steerFollowUp(request),
+    []
+  )
+
   // Sends a prompt turn plus any finalized upload references to one runtime session.
   const sendPrompt = useCallback(
     (
@@ -470,6 +478,7 @@ const useAcpRuntime = (): {
     compactSession,
     deleteSession,
     cancel,
+    steerFollowUp,
     sendPrompt,
     respondToPermission,
     respondToElicitation,

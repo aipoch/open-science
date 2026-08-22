@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Only lightweight, Electron-free bootstrap modules are imported statically here. The MCP server
@@ -109,6 +110,19 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // never rotate or append to the primary process's file sink. These two modules are lightweight; all
   // backend imports remain behind the lock.
   app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
+  // Unpackaged isolate: a second electron-vite from a worktree would otherwise lose the
+  // macOS bundle-id lock and attach to an already-running main `npm run dev`.
+  if (!app.isPackaged) {
+    const isolateUserData = process.env.OPEN_SCIENCE_USER_DATA?.trim()
+    if (isolateUserData) {
+      if (!isAbsolute(isolateUserData)) {
+        throw new Error('OPEN_SCIENCE_USER_DATA must be an absolute path.')
+      }
+      app.setPath('userData', isolateUserData)
+    }
+  }
+  const allowMultiInstance =
+    !app.isPackaged && process.env.OPEN_SCIENCE_ALLOW_MULTI_INSTANCE === '1'
   const [
     { acquireSingleInstanceLock },
     {
@@ -122,6 +136,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   ] = await Promise.all([import('./single-instance'), import('./app-startup')])
   const preStartupSecondInstanceRelay = createSecondInstanceRelay()
   if (
+    !allowMultiInstance &&
     !acquireSingleInstanceLock({
       onSecondInstance: (argv) => preStartupSecondInstanceRelay.signal(argv)
     })

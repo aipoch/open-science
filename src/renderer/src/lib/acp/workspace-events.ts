@@ -577,7 +577,9 @@ const applyWorkspaceRuntimeEvent = async (
       ...(sanitizeMessageAttribution(event.attribution)
         ? { attribution: sanitizeMessageAttribution(event.attribution) }
         : {}),
-      ...(event.promptMessageId ? { responseToMessageId: event.promptMessageId } : {})
+      ...(event.promptMessageId ? { responseToMessageId: event.promptMessageId } : {}),
+      ...(event.uploads && event.uploads.length > 0 ? { uploads: event.uploads } : {}),
+      ...(event.parts && event.parts.length > 0 ? { parts: event.parts } : {})
     })
     return true
   }

@@ -36,14 +36,14 @@ import { createLogger } from '../logger'
 import { stripCodexCredentialEnv } from './process-tree'
 import { terminateProcessTree } from '../process-tree'
 
-export const CODEX_ACP_VERSION = '1.1.4'
+export const CODEX_ACP_VERSION = '1.6.2'
 export const CODEX_VERSION = '0.144.6'
 
 const log = createLogger('managed-codex')
 const MAX_INITIALIZE_DIAGNOSTIC_CHARS = 4 * 1024
 
 export const CODEX_ACP_INTEGRITY =
-  'sha512-DzusIpGwlQwMWuHgJhU8FWMsyQvzjenB93IEzQATkdbNulo5Rd9GKOz8+B+/C9iWWxmyXgtgmjzaL+iRFyDryQ=='
+  'sha512-2eF1mbs1gTqkZJSLYOun/pFDx37sYa7W63HOPezC37b/R8AYms5O1nfQu8lrqFSGDrwDZkASVORymLcqjCNqyA=='
 
 export const CODEX_INTEGRITIES: Readonly<Record<string, string>> = {
   'darwin-arm64':
@@ -521,7 +521,7 @@ export const patchCodexAcpContextUsageSource = (source: string): string => {
   return source
 }
 
-// Codex ACP 1.1.4 projects only tokenUsage.last into PromptResponse.usage. Preserve that latest
+// Codex ACP 1.1.4 and 1.6.2 project tokenUsage.last into PromptResponse.usage. Preserve that latest
 // request for context reconciliation while accumulating whole-turn deltas into an app-owned _meta
 // field for the transcript footer. Falling back to `last` for the first update keeps resumed sessions
 // from attributing their historical cumulative total to the first new response.
@@ -598,10 +598,13 @@ export const patchCodexAcpTurnUsageSource = (source: string): string => {
   const metaMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_META_REPLACEMENT).length - 1
   const finishMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_FINISH_SOURCE).length - 1
 
+  // 1.1.4 has three PromptResponse usage sites. 1.6.2 adds a fourth in
+  // terminalFailurePromptResponse; that site spreads quota _meta rather than
+  // assigning `buildQuotaMeta` directly, so the meta count stays three.
   if (
     updateMatches === 1 &&
     startMatches === 1 &&
-    responseMatches === 3 &&
+    (responseMatches === 3 || responseMatches === 4) &&
     metaMatches === 3 &&
     finishMatches === 1
   ) {

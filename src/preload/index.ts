@@ -151,6 +151,7 @@ const api: OpenScienceAPI = {
     resetSessionContext: (request) =>
       electronRendererContracts.invoke('acp.resetSessionContext', request),
     sendPrompt: (request) => electronRendererContracts.invoke('acp.sendPrompt', request),
+    steerFollowUp: (request) => electronRendererContracts.invoke('acp.steerFollowUp', request),
     saveAsSkill: (request) => electronRendererContracts.invoke('acp.saveAsSkill', request),
     compactSession: (request) => electronRendererContracts.invoke('acp.compactSession', request),
     cancel: (request) => electronRendererContracts.invoke('acp.cancel', request),

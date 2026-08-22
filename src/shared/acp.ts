@@ -6,10 +6,14 @@ import type {
   Usage
 } from '@agentclientprotocol/sdk'
 import type { ArtifactFile, FileReference } from './artifacts'
-import type { UploadedAttachment } from './uploads'
+import type { PersistedUploadedAttachment, UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
 import type { AgentFrameworkId } from './settings'
-import type { DelegatedQuestionAnswer, MessageAttribution } from './session-persistence'
+import type {
+  DelegatedQuestionAnswer,
+  MessageAttribution,
+  MessagePart
+} from './session-persistence'
 import type {
   AgentTurnProvenanceContext,
   ElicitationProjection,
@@ -530,6 +534,9 @@ export type AcpRuntimeEvent = {
   artifactSessionId?: string
   artifactClaimId?: string
   artifacts?: ArtifactFile[]
+  // Mid-turn injected user messages persist composer uploads/parts without opening a new run.
+  uploads?: PersistedUploadedAttachment[]
+  parts?: MessagePart[]
   raw?: unknown
 }
 
@@ -813,6 +820,40 @@ export type AcpPromptRequest = {
     historyImages?: AcpReplayMessageImage[]
   }
 }
+
+export type AcpSteerFollowUpRequest = {
+  sessionId: string
+  text: string
+  attachments?: UploadedAttachment[]
+  referencedArtifacts?: FileReference[]
+  forcedSkillIds?: string[]
+  parts?: MessagePart[]
+}
+
+export type AcpSteerFollowUpTransport = 'acp-steering' | 'opencode-http'
+
+export type AcpSteerFollowUpRefuseReason =
+  | 'empty-text'
+  | 'attachments'
+  | 'no-live-turn'
+  | 'not-advertised'
+  | 'started-new-turn'
+  | 'prompt-required'
+  | 'unrecognized-success'
+  | 'missing-outcome'
+  | 'unknown-outcome'
+  | 'dispatch-failed'
+
+export type AcpSteerFollowUpResult =
+  | {
+      injected: true
+      transport: AcpSteerFollowUpTransport
+      messageId: string
+    }
+  | {
+      injected: false
+      reason: AcpSteerFollowUpRefuseReason
+    }
 
 export type AcpCancelPromptRequest = {
   sessionId: string

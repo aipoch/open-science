@@ -54,7 +54,7 @@ const attachAndPublish = (
     framework: 'claude-code',
     bridgeLease: undefined
   })
-  return attempt.publish({ close: true, delete: false, resume: true })
+  return attempt.publish({ close: true, delete: false, resume: true, steering: false })
 }
 
 describe('AcpConnectionResourceOwner', () => {
@@ -96,12 +96,17 @@ describe('AcpConnectionResourceOwner', () => {
       })
       attached.resolve()
       await canPublish.promise
-      return attempt.publish({ close: false, delete: false, resume: true })
+      return attempt.publish({ close: false, delete: false, resume: true, steering: false })
     })
 
     await attached.promise
     expect(owner.connection).toBeUndefined()
-    expect(owner.capabilities).toEqual({ close: false, delete: false, resume: false })
+    expect(owner.capabilities).toEqual({
+      close: false,
+      delete: false,
+      resume: false,
+      steering: false
+    })
 
     canPublish.resolve()
     const handle = await pending
@@ -123,7 +128,7 @@ describe('AcpConnectionResourceOwner', () => {
       })
       attached.resolve()
       await canPublish.promise
-      return attempt.publish({ close: false, delete: false, resume: false })
+      return attempt.publish({ close: false, delete: false, resume: false, steering: false })
     })
     await attached.promise
 
@@ -188,7 +193,7 @@ describe('AcpConnectionResourceOwner', () => {
         framework: 'claude-code',
         bridgeLease: undefined
       })
-      return attempt.publish({ close: true, delete: false, resume: true })
+      return attempt.publish({ close: true, delete: false, resume: true, steering: false })
     })
     const teardownEpoch = owner.supersede()
     expect(owner.restorePublished(teardownEpoch)).toBe(true)
@@ -209,7 +214,7 @@ describe('AcpConnectionResourceOwner', () => {
       })
       attached.resolve()
       await canPublish.promise
-      return attempt.publish({ close: false, delete: false, resume: false })
+      return attempt.publish({ close: false, delete: false, resume: false, steering: false })
     })
     await attached.promise
 
@@ -240,7 +245,7 @@ describe('AcpConnectionResourceOwner', () => {
           release
         }
       })
-      return attempt.publish({ close: true, delete: false, resume: true })
+      return attempt.publish({ close: true, delete: false, resume: true, steering: false })
     })
     const teardownEpoch = owner.supersede()
 
@@ -270,7 +275,7 @@ describe('AcpConnectionResourceOwner', () => {
         bridgeLease: undefined,
         anthropicBridgeLease: { setTarget, release }
       })
-      return attempt.publish({ close: true, delete: false, resume: true })
+      return attempt.publish({ close: true, delete: false, resume: true, steering: false })
     })
 
     expect(owner.anthropicBridgeAvailable).toBe(true)
@@ -296,7 +301,7 @@ describe('AcpConnectionResourceOwner', () => {
         bridgeLease: undefined,
         providerTransportLease: { setTarget, release }
       })
-      return attempt.publish({ close: true, delete: false, resume: true })
+      return attempt.publish({ close: true, delete: false, resume: true, steering: false })
     })
 
     expect(owner.providerTransportAvailable).toBe(true)
@@ -330,7 +335,7 @@ describe('AcpConnectionResourceOwner', () => {
           release
         }
       })
-      return attempt.publish({ close: true, delete: false, resume: true })
+      return attempt.publish({ close: true, delete: false, resume: true, steering: false })
     })
 
     ownerErrorLog.mockImplementation(() => {
@@ -363,7 +368,7 @@ describe('AcpConnectionResourceOwner', () => {
         framework: 'claude-code',
         bridgeLease: undefined
       })
-      return attempt.publish({ close: true, delete: false, resume: true })
+      return attempt.publish({ close: true, delete: false, resume: true, steering: false })
     })
     await asyncOwner.teardown(asyncOwner.supersede())
 
@@ -381,7 +386,7 @@ describe('AcpConnectionResourceOwner', () => {
         framework: 'claude-code',
         bridgeLease: undefined
       })
-      return attempt.publish({ close: true, delete: false, resume: true })
+      return attempt.publish({ close: true, delete: false, resume: true, steering: false })
     })
     syncOwner.shutdownSynchronously(vi.fn())
 
@@ -430,7 +435,7 @@ describe('AcpConnectionResourceOwner', () => {
           release
         }
       })
-      return attempt.publish({ close: true, delete: false, resume: true })
+      return attempt.publish({ close: true, delete: false, resume: true, steering: false })
     })
 
     owner.cleanupUnexpectedClose(owner.epoch)

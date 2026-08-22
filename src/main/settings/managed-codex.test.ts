@@ -242,7 +242,7 @@ describe('managed Codex paths and platform resolution', () => {
     const root = '/data/open-science'
     const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
 
-    expect(CODEX_ACP_VERSION).toBe('1.1.4')
+    expect(CODEX_ACP_VERSION).toBe('1.6.2')
     expect(CODEX_VERSION).toBe('0.144.6')
     expect(CODEX_ACP_INTEGRITY).toMatch(/^sha512-/)
     expect(Object.keys(CODEX_INTEGRITIES).sort()).toEqual([
@@ -520,7 +520,7 @@ describe('installManagedCodex', () => {
       codexVersion: '0.144.6'
     })
     expect(metadataUrls).toEqual([
-      'https://reg/@agentclientprotocol%2fcodex-acp/1.1.4',
+      'https://reg/@agentclientprotocol%2fcodex-acp/1.6.2',
       'https://reg/@openai%2fcodex/0.144.6-darwin-arm64'
     ])
     expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('codex-acp')
@@ -1712,6 +1712,31 @@ describe('patchCodexAcpTurnUsageSource', () => {
     const mixedResponseSites = `${patched}\n${overwrittenUsage}`
 
     expect(patchCodexAcpTurnUsageSource(mixedResponseSites)).toBe(`${patched}\n${latestUsage}`)
+  })
+
+  it('patches Codex ACP 1.6.2 extra terminalFailure usage site', () => {
+    const adapter162 = fixture.replace(
+      '    cancelledResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), _meta: this.buildQuotaMeta(sessionState), }; },',
+      [
+        '    cancelledResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), _meta: this.buildQuotaMeta(sessionState), }; },',
+        '    terminalFailureResponse() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), _meta: { ...this.buildQuotaMeta(sessionState) } }; },'
+      ].join('\n')
+    )
+
+    expect(() => patchCodexAcpTurnUsageSource(adapter162)).not.toThrow()
+    const patched = patchCodexAcpTurnUsageSource(adapter162)
+    expect(
+      patched.split('usage: this.buildPromptUsage(\n  sessionState.lastTokenUsage\n),').length - 1
+    ).toBe(4)
+    expect(patched).toContain('promptTokenUsageObserved')
+  })
+
+  it('fails closed when PromptResponse usage sites drift past the known 1.1.4 and 1.6.2 shapes', () => {
+    const drifted = `${fixture}\n    extraA() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), }; }\n    extraB() { return { usage: this.buildPromptUsage(sessionState.lastTokenUsage), }; }`
+
+    expect(() => patchCodexAcpTurnUsageSource(drifted)).toThrow(
+      /turn-usage patch no longer matches/
+    )
   })
 
   it('composes with the context-usage patch without duplicate declarations', () => {

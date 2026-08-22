@@ -600,7 +600,8 @@ describe('ACP module transport seam', () => {
       'acp:revoke-permission-grant',
       'acp:save-as-skill',
       'acp:send-prompt',
-      'acp:set-permission-profile'
+      'acp:set-permission-profile',
+      'acp:steer-follow-up'
     ])
     expect(invokeChannels).toEqual([...handlers.keys()].sort())
     expect(eventChannels).toEqual([
