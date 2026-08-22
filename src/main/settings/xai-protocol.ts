@@ -83,6 +83,12 @@ export const anthropicToResponses = (body: Json, model: string): Json => {
   const input: unknown[] = []
   for (const message of Array.isArray(body.messages) ? body.messages : []) {
     if (!object(message) || typeof message.role !== 'string') continue
+    if (typeof message.content === 'string') {
+      if (message.content.length > 0) {
+        input.push({ role: message.role, content: message.content })
+      }
+      continue
+    }
     const parts = Array.isArray(message.content) ? message.content : [message.content]
     const messageContent: unknown[] = []
     for (const part of parts) {
@@ -154,7 +160,14 @@ export const chatToResponses = (body: Json, model: string): Json => {
       })
       continue
     }
-    input.push({ role: message.role, content: contentParts(message.content) })
+    const converted = contentParts(message.content)
+    if (
+      converted != null &&
+      converted !== '' &&
+      !(Array.isArray(converted) && converted.length === 0)
+    ) {
+      input.push({ role: message.role, content: converted })
+    }
     if (Array.isArray(message.tool_calls)) {
       for (const call of message.tool_calls) {
         if (!object(call) || !object(call.function)) continue

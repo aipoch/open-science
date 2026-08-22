@@ -28,6 +28,14 @@ describe('xAI protocol projection', () => {
     })
   })
 
+  it('keeps primitive Anthropic message content as text instead of a string array', () => {
+    const request = anthropicToResponses(
+      { messages: [{ role: 'user', content: 'hello' }] },
+      'grok-4.6'
+    )
+    expect(request.input).toEqual([{ role: 'user', content: 'hello' }])
+  })
+
   it('maps Chat Completions and tool history to Responses', () => {
     const request = chatToResponses(
       {
@@ -44,6 +52,37 @@ describe('xAI protocol projection', () => {
       reasoning: { effort: 'xhigh' },
       input: [{ type: 'function_call_output', call_id: 'call_1', output: '42' }]
     })
+  })
+
+  it('omits empty assistant Chat messages when projecting tool-call history', () => {
+    const request = chatToResponses(
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: { name: 'lookup', arguments: '{"q":"x"}' }
+              }
+            ]
+          },
+          { role: 'tool', tool_call_id: 'call_1', content: '42' }
+        ]
+      },
+      'grok-4.6'
+    )
+    expect(request.input).toEqual([
+      {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'lookup',
+        arguments: '{"q":"x"}'
+      },
+      { type: 'function_call_output', call_id: 'call_1', output: '42' }
+    ])
   })
 
   it('maps Responses output to both downstream response shapes', () => {

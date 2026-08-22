@@ -172,4 +172,32 @@ describe('XaiOAuthController', () => {
     expect(requestSignal?.aborted).toBe(true)
     await expect(pending).rejects.toThrow('xAI sign-in was cancelled')
   })
+
+  it('discards an in-flight refresh so logout cannot reuse the signed-out token', async () => {
+    stored = { keyRef: 'old-ref', refreshToken: 'old-refresh' }
+    let finishRefresh: ((response: Response) => void) | undefined
+    const fetch = vi.fn(async (url: string | URL | globalThis.Request) => {
+      if (String(url).includes('openid-configuration')) {
+        return new Response(JSON.stringify(discovery))
+      }
+      return await new Promise<Response>((resolve) => {
+        finishRefresh = resolve
+      })
+    })
+    const controller = new XaiOAuthController({ store, fetch })
+
+    const pending = controller.getAccessToken()
+    await vi.waitFor(() => expect(finishRefresh).toBeDefined())
+    await controller.logout()
+    finishRefresh!(
+      new Response(JSON.stringify({ access_token: 'stale-access', expires_in: 3600 }))
+    )
+
+    await expect(pending).rejects.toThrow('Sign in to xAI (Grok) OAuth to continue.')
+    await expect(controller.getAccessToken()).rejects.toThrow(
+      'Sign in to xAI (Grok) OAuth to continue.'
+    )
+    expect(store.save).not.toHaveBeenCalled()
+    expect(stored).toEqual({})
+  })
 })

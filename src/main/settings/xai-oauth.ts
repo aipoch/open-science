@@ -97,6 +97,7 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
   private pending?: PendingLogin
   private access?: { token: string; expiresAt: number }
   private refreshPromise?: Promise<string>
+  private refreshGeneration = 0
 
   constructor(private readonly options: XaiOAuthControllerOptions) {
     this.fetch = options.fetch ?? netFetchStandard
@@ -216,24 +217,30 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
       return this.access.token
     }
     if (this.refreshPromise) return this.refreshPromise
-    this.refreshPromise = this.refreshAccessToken()
+    const generation = this.refreshGeneration
+    const pending = this.refreshAccessToken(generation)
+    this.refreshPromise = pending
     try {
-      return await this.refreshPromise
+      return await pending
     } finally {
-      this.refreshPromise = undefined
+      if (this.refreshPromise === pending) this.refreshPromise = undefined
     }
   }
 
   async logout(): Promise<void> {
+    this.refreshGeneration += 1
+    this.refreshPromise = undefined
     this.cancelLogin()
     this.access = undefined
     await this.options.store.clear()
   }
 
-  private async refreshAccessToken(): Promise<string> {
+  private async refreshAccessToken(generation: number): Promise<string> {
     const stored = await this.options.store.load()
+    this.assertCurrentRefresh(generation)
     if (!stored.refreshToken) throw new Error('Sign in to xAI (Grok) OAuth to continue.')
     const discovery = await this.getDiscovery()
+    this.assertCurrentRefresh(generation)
     const response = await this.fetch(discovery.token_endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -244,14 +251,23 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
       })
     })
     const body = (await response.json()) as Record<string, unknown>
+    this.assertCurrentRefresh(generation)
     if (!response.ok) throw new Error('Your xAI sign-in expired. Sign in again.')
     const tokens = this.parseTokens(body)
     if (tokens.refresh_token && tokens.refresh_token !== stored.refreshToken) {
+      this.assertCurrentRefresh(generation)
       const saved = await this.options.store.save(stored.keyRef, tokens.refresh_token)
       if (!saved) throw new Error('The xAI provider changed while refreshing sign-in.')
     }
+    this.assertCurrentRefresh(generation)
     this.cache(tokens)
     return tokens.access_token
+  }
+
+  private assertCurrentRefresh(generation: number): void {
+    if (generation !== this.refreshGeneration) {
+      throw new Error('Sign in to xAI (Grok) OAuth to continue.')
+    }
   }
 
   private async getDiscovery(signal?: AbortSignal): Promise<Discovery> {
