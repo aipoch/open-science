@@ -310,6 +310,7 @@
   "Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.": "Выберите протокол, указанный в документации шлюза. Название модели не определяет протокол. Поставщика можно выбрать только для фреймворка агента, поддерживающего его формат.",
   "Messages API uses the framework's Anthropic-compatible thinking request automatically.": "Messages API автоматически использует Anthropic-совместимый формат запроса рассуждений, заданный фреймворком.",
   "Open Science maps five relative strengths onto the exact levels accepted by this model.": "Open Science сопоставляет пять относительных уровней с точными уровнями, поддерживаемыми этой моделью.",
+  "Examples reflect common native model APIs. A gateway may use different mappings.": "Примеры отражают распространённые нативные API моделей. Шлюз может использовать другое сопоставление.",
   "Reasoning request format": "Формат запроса рассуждений",
   "Responses API uses its native reasoning request automatically.": "Responses API автоматически использует собственный формат запроса рассуждений.",
   "Supported effort levels": "Поддерживаемые уровни глубины рассуждений",

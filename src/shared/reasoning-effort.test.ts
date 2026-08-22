@@ -12,10 +12,18 @@ import {
 
 describe('CUSTOM_REASONING_EFFORT_PRESETS', () => {
   it('puts provider-guided presets before unlabeled level combinations', () => {
-    expect(CUSTOM_REASONING_EFFORT_PRESETS.slice(0, 3).map(({ id }) => id)).toEqual([
-      'standard-5',
-      'high-max',
-      'none-high'
+    expect(CUSTOM_REASONING_EFFORT_PRESETS.slice(0, 5)).toEqual([
+      {
+        id: 'standard-5',
+        label: 'Low / Medium / High / XHigh / Max — GPT / Claude'
+      },
+      { id: 'low-high-max', label: 'Low / High / Max — GLM-5.3 / Kimi K3' },
+      { id: 'none-high-max', label: 'None / High / Max — GLM-5.2' },
+      { id: 'high-max', label: 'High / Max — DeepSeek' },
+      {
+        id: 'none-high',
+        label: 'None / High — MiniMax / MiMo / Kimi K2.5–K2.6'
+      }
     ])
   })
 })

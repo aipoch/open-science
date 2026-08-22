@@ -307,6 +307,7 @@
   "Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.": "Choisissez le protocole indiqué dans la documentation de la passerelle. Le nom du modèle ne détermine pas le protocole. Un fournisseur ne peut être sélectionné qu'avec un framework d'agents prenant en charge son format.",
   "Messages API uses the framework's Anthropic-compatible thinking request automatically.": "L'API Messages utilise automatiquement le format de requête de réflexion compatible Anthropic du framework.",
   "Open Science maps five relative strengths onto the exact levels accepted by this model.": "Open Science associe cinq intensités relatives aux niveaux exacts acceptés par ce modèle.",
+  "Examples reflect common native model APIs. A gateway may use different mappings.": "Les exemples reflètent les API natives courantes des modèles. Une passerelle peut utiliser des correspondances différentes.",
   "Reasoning request format": "Format de requête de raisonnement",
   "Responses API uses its native reasoning request automatically.": "L'API Responses utilise automatiquement son format de requête de raisonnement natif.",
   "Supported effort levels": "Niveaux d'effort pris en charge",

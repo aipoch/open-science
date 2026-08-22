@@ -58,8 +58,10 @@ export const CUSTOM_REASONING_EFFORT_PRESETS: ReadonlyArray<{
   label: string
 }> = [
   { id: 'standard-5', label: 'Low / Medium / High / XHigh / Max — GPT / Claude' },
+  { id: 'low-high-max', label: 'Low / High / Max — GLM-5.3 / Kimi K3' },
+  { id: 'none-high-max', label: 'None / High / Max — GLM-5.2' },
   { id: 'high-max', label: 'High / Max — DeepSeek' },
-  { id: 'none-high', label: 'None / High — MiniMax / MiMo' },
+  { id: 'none-high', label: 'None / High — MiniMax / MiMo / Kimi K2.5–K2.6' },
   { id: 'low-medium-xhigh', label: 'Low / Medium / XHigh' },
   { id: 'low-medium-high-xhigh-ultra', label: 'Low / Medium / High / XHigh / Ultra' },
   { id: 'low-medium-high-max', label: 'Low / Medium / High / Max' },
@@ -69,9 +71,7 @@ export const CUSTOM_REASONING_EFFORT_PRESETS: ReadonlyArray<{
   { id: 'minimal-low-medium-high', label: 'Minimal / Low / Medium / High' },
   { id: 'low-medium-high', label: 'Low / Medium / High' },
   { id: 'medium-high-xhigh', label: 'Medium / High / XHigh' },
-  { id: 'none-high-max', label: 'None / High / Max' },
   { id: 'none-high-xhigh', label: 'None / High / XHigh' },
-  { id: 'low-high-max', label: 'Low / High / Max' },
   { id: 'low-high', label: 'Low / High' }
 ]
 

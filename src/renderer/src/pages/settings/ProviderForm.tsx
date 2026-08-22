@@ -647,6 +647,11 @@ const ProviderForm = ({
                                     'Open Science maps five relative strengths onto the exact levels accepted by this model.'
                                   )}
                                 </span>
+                                <span className="mt-1 block">
+                                  {t(
+                                    'Examples reflect common native model APIs. A gateway may use different mappings.'
+                                  )}
+                                </span>
                                 {value.apiEndpoint === 'anthropic' ? (
                                   <span className="mt-1 block">
                                     {t(

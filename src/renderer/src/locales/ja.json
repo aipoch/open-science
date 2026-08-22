@@ -297,6 +297,7 @@
   "Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.": "ゲートウェイのドキュメントに記載されたプロトコルを選択してください。モデル名だけではプロトコルは決まりません。プロバイダーは、その形式に対応するエージェントフレームワークでのみ選択できます。",
   "Messages API uses the framework's Anthropic-compatible thinking request automatically.": "Messages API は、フレームワークの Anthropic 互換思考リクエスト形式を自動的に使用します。",
   "Open Science maps five relative strengths onto the exact levels accepted by this model.": "Open Science は、5 段階の相対的な強度をこのモデルが実際に受け付けるレベルに対応付けます。",
+  "Examples reflect common native model APIs. A gateway may use different mappings.": "例は一般的なモデルのネイティブ API に基づいています。ゲートウェイでは異なるマッピングが使用される場合があります。",
   "Reasoning request format": "推論リクエスト形式",
   "Responses API uses its native reasoning request automatically.": "Responses API はネイティブの推論リクエスト形式を自動的に使用します。",
   "Supported effort levels": "対応する推論強度",

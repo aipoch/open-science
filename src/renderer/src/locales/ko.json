@@ -297,6 +297,7 @@
   "Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.": "게이트웨이 문서에 명시된 프로토콜을 선택하세요. 모델 이름만으로 프로토콜이 결정되지는 않습니다. 해당 형식을 지원하는 에이전트 프레임워크에서만 모델 제공업체를 선택할 수 있습니다.",
   "Messages API uses the framework's Anthropic-compatible thinking request automatically.": "메시지 API는 프레임워크의 Anthropic 호환 사고 요청 형식을 자동으로 사용합니다.",
   "Open Science maps five relative strengths onto the exact levels accepted by this model.": "Open Science는 5단계의 상대 강도를 이 모델이 실제로 지원하는 단계에 대응시킵니다.",
+  "Examples reflect common native model APIs. A gateway may use different mappings.": "예시는 일반적인 모델 네이티브 API를 기준으로 합니다. 게이트웨이는 다른 매핑을 사용할 수 있습니다.",
   "Reasoning request format": "추론 요청 형식",
   "Responses API uses its native reasoning request automatically.": "Responses API는 자체 추론 요청 형식을 자동으로 사용합니다.",
   "Supported effort levels": "지원되는 추론 강도",

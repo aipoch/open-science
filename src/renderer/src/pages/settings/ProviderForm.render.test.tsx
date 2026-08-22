@@ -264,6 +264,9 @@ describe('ProviderForm field switching', () => {
     ).find((button) => button.parentElement?.textContent?.includes('Supported effort levels'))
     await act(async () => effortHelp?.focus())
     expect(document.body.textContent).toContain('exact levels accepted by this model')
+    expect(document.body.textContent).toContain(
+      'Examples reflect common native model APIs. A gateway may use different mappings.'
+    )
     expect(
       container.querySelector('[aria-label="Reasoning effort request format"]')?.textContent
     ).toContain('DeepSeek — thinking + reasoning_effort')

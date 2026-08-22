@@ -387,6 +387,7 @@
   "Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.": "选择网关文档注明的协议。模型名称本身不能决定协议。模型服务商只能在支持该格式的智能体框架下使用。",
   "Messages API uses the framework's Anthropic-compatible thinking request automatically.": "Messages API 会自动使用智能体框架的 Anthropic 兼容思考请求格式。",
   "Open Science maps five relative strengths onto the exact levels accepted by this model.": "Open Science 会将五档相对强度映射到该模型实际支持的档位。",
+  "Examples reflect common native model APIs. A gateway may use different mappings.": "示例基于常见的模型原生 API。网关可能采用不同的映射。",
   "Reasoning request format": "推理请求格式",
   "Responses API uses its native reasoning request automatically.": "Responses API 会自动使用其原生推理请求格式。",
   "Supported effort levels": "支持的推理强度",
