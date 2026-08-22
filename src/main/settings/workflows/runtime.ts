@@ -213,9 +213,10 @@ class RuntimeSettingsWorkflows {
   > {
     const result = await this.settings.waitXaiOAuthLogin()
     const snapshot = await this.settings.getSettingsView()
-    if (snapshot.activeProviderId === XAI_SUBSCRIPTION_PROVIDER_ID) {
-      this.effects.requestProviderReconnect()
-    }
+    this.effects.requestProviderReconnect(
+      [XAI_SUBSCRIPTION_PROVIDER_ID],
+      snapshot.activeProviderId === XAI_SUBSCRIPTION_PROVIDER_ID
+    )
     return result
   }
 
@@ -227,9 +228,10 @@ class RuntimeSettingsWorkflows {
     Awaited<ReturnType<RuntimeSettingsWorkflowStore['logoutXaiOAuth']>>
   > {
     const snapshot = await this.settings.logoutXaiOAuth()
-    if (snapshot.activeProviderId === XAI_SUBSCRIPTION_PROVIDER_ID) {
-      this.effects.requestProviderReconnect()
-    }
+    this.effects.requestProviderReconnect(
+      [XAI_SUBSCRIPTION_PROVIDER_ID],
+      snapshot.activeProviderId === XAI_SUBSCRIPTION_PROVIDER_ID
+    )
     return snapshot
   }
 
