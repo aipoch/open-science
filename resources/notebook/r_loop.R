@@ -1305,7 +1305,9 @@ base::local({
       if (length(header) == 1L && is.na(header)) next
       if (length(header) == 0L) {
         empty_streak <- empty_streak + 1L
-        if (!isOpen(con, rw = "read") || empty_streak >= 2L) return(NULL)
+        if (!isOpen(con) || empty_streak >= 2L) return(NULL)
+        # SIGINT on a blocked read often returns empty without raising interrupt.
+        state$during_read <- TRUE
         next
       }
       empty_streak <- 0L
@@ -1326,7 +1328,8 @@ base::local({
         if (isTRUE(attr(chunk, "interrupt"))) next
         if (length(chunk) == 0L) {
           body_empty <- body_empty + 1L
-          if (!isOpen(con, rw = "read") || body_empty >= 2L) return(NULL)
+          if (!isOpen(con) || body_empty >= 2L) return(NULL)
+          state$during_read <- TRUE
           next
         }
         body_empty <- 0L
