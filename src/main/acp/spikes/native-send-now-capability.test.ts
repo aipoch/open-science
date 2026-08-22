@@ -5,6 +5,11 @@ import {
   ACP_STEERING_METHOD,
   HOST_CONCURRENT_PROMPT_POLICY,
   PRODUCTION_HOST_FOLLOW_UP_BLOCKERS,
+  FIRST_CLAUDE_STEERING_ACP_VERSION,
+  FIRST_CODEX_STEERING_ACP_VERSION,
+  LATEST_CLAUDE_AGENT_ACP_VERSION,
+  LATEST_CODEX_ACP_VERSION,
+  LATEST_OPENCODE_VERSION,
   SHIPPED_CLAUDE_AGENT_ACP_VERSION,
   SHIPPED_CODEX_ACP_VERSION,
   SHIPPED_OPENCODE_VERSION,
@@ -12,6 +17,7 @@ import {
   buildSteerRequest,
   parseSteerOutcome,
   readSteeringAdvertisement,
+  resolveLatestNativeSendNowCapability,
   resolveShippedNativeSendNowCapability
 } from './native-send-now-capability'
 
@@ -20,6 +26,11 @@ describe('native Send now capability spike', () => {
     expect(SHIPPED_CLAUDE_AGENT_ACP_VERSION).toBe('0.60.0')
     expect(SHIPPED_CODEX_ACP_VERSION).toBe('1.1.4')
     expect(SHIPPED_OPENCODE_VERSION).toBe('1.18.3')
+    expect(FIRST_CLAUDE_STEERING_ACP_VERSION).toBe('0.61.0')
+    expect(FIRST_CODEX_STEERING_ACP_VERSION).toBe('1.2.0')
+    expect(LATEST_CLAUDE_AGENT_ACP_VERSION).toBe('0.70.0')
+    expect(LATEST_CODEX_ACP_VERSION).toBe('1.6.2')
+    expect(LATEST_OPENCODE_VERSION).toBe('1.18.3')
     expect(ACP_STEERING_METHOD).toBe('_session/steering')
     expect(HOST_CONCURRENT_PROMPT_POLICY).toBe('reject')
   })
@@ -251,6 +262,38 @@ describe('native Send now capability spike', () => {
         hostBlockers: []
       })
     ).toEqual({ allowed: true, mode: 'queued-prompt-adopt-after-stop' })
+  })
+
+  it.each([
+    ['claude-code', undefined],
+    ['codex', 'codex-responses'],
+    ['codex', 'codex-bridge']
+  ] as const)(
+    'treats latest unadvertised %s %s as advertised steering, not overlapping prompt',
+    (frameworkId, route) => {
+      const capability = resolveLatestNativeSendNowCapability({
+        frameworkId,
+        ...(route ? { route } : {})
+      })
+      expect(capability).toMatchObject({
+        kind: 'steering-extension',
+        method: ACP_STEERING_METHOD,
+        hostCanDispatch: false,
+        usesSecondSessionPrompt: false,
+        hostBlockers: ['no-steering-side-band']
+      })
+      expect(admitSecondSessionPrompt(capability)).toEqual({
+        allowed: false,
+        reason: 'wrong-mechanism',
+        hostBlockers: ['no-steering-side-band']
+      })
+    }
+  )
+
+  it('keeps latest OpenCode on admit-and-join-runner', () => {
+    const capability = resolveLatestNativeSendNowCapability({ frameworkId: 'opencode' })
+    expect(capability.overlappingPrompt).toBe('admit-and-join-runner')
+    expect(admitSecondSessionPrompt(capability).allowed).toBe(false)
   })
 
   it('keeps the host from admitting a second prompt while one is already running', () => {
