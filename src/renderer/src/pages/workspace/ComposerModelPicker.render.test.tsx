@@ -162,11 +162,27 @@ const modelRowTrigger = (): HTMLElement | undefined =>
 
 describe('ComposerModelPicker', () => {
   it('renders nothing when there is a single selectable option', () => {
-    useSettingsStore.setState({ providers: [provider({ id: 'p1', models: ['only'] })] })
+    useSettingsStore.setState({
+      providers: [provider({ id: 'p1', models: ['only'], reasoningEffortPreset: 'unsupported' })]
+    })
     render()
 
     expect(container.querySelector('[aria-label="Select model"]')).toBeNull()
     expect(container.querySelector('[aria-label="No model available — open settings"]')).toBeNull()
+  })
+
+  it('keeps a single-model picker visible when the model supports Session effort', async () => {
+    useSettingsStore.setState({
+      providers: [provider({ id: 'p1', models: ['only'], reasoningEffortPreset: 'none-high' })],
+      activeProviderId: 'p1',
+      activeModel: 'only'
+    })
+    render()
+
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger).not.toBeNull()
+    await openMenu(trigger!)
+    expect(subTriggers().some((item) => item.textContent?.includes('Reasoning effort'))).toBe(true)
   })
 
   it('warns (does not hide) when the only provider is incompatible with the framework', () => {

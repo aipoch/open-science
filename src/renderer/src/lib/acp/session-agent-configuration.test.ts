@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ConfiguredModelCatalogEntry } from '../../../../shared/configured-model-catalog'
-import { resolveSessionAgentConfiguration } from './session-agent-configuration'
+import {
+  isConfigurationSelectable,
+  resolveSessionAgentConfiguration
+} from './session-agent-configuration'
 
 const option = (
   providerId: string,
@@ -30,6 +33,30 @@ describe('Session agent configuration', () => {
         activeReasoningEffort: 'low'
       })
     ).toEqual({ status: 'ready', configuration, changed: false })
+  })
+
+  it('lazily resolves a provider-default Session model without switching providers', () => {
+    const configuration = { providerId: 'session', reasoningEffort: 'high' as const }
+    const catalog = [option('session', 'provider-default'), option('active', 'new')]
+
+    expect(isConfigurationSelectable(configuration, catalog)).toBe(true)
+    expect(
+      resolveSessionAgentConfiguration({
+        session: { agentConfiguration: configuration },
+        catalog,
+        activeProviderId: 'active',
+        activeModel: 'new',
+        activeReasoningEffort: 'low'
+      })
+    ).toEqual({
+      status: 'ready',
+      configuration: {
+        providerId: 'session',
+        model: 'provider-default',
+        reasoningEffort: 'high'
+      },
+      changed: false
+    })
   })
 
   it('lazily replaces an unavailable Session model with a valid active default', () => {

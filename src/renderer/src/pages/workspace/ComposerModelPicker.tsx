@@ -151,10 +151,10 @@ const ComposerModelPicker = ({
     )
   }
 
-  // A single usable option leaves nothing to switch between, so the picker stays hidden. When the
-  // sole provider is incompatible we instead fall through to the dropdown (hasUsable is false) so its
-  // incompatibility reason stays reachable — an all-incompatible framework must never silently vanish.
-  if (options.length === 1 && hasUsable && !unavailable) return null
+  // A single usable option leaves nothing to switch between unless it still exposes the Session's
+  // reasoning-effort control. An incompatible sole provider also stays visible so its reason remains
+  // reachable — an all-incompatible framework must never silently vanish.
+  if (options.length === 1 && hasUsable && !unavailable && !showEffortRow) return null
 
   // The active option matches by provider and model; an undefined activeModel maps to the empty-model
   // "default" entry.
