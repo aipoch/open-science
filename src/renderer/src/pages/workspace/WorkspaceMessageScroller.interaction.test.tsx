@@ -1915,7 +1915,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(lifecycle?.textContent).toContain('Continued with Data analyst')
   })
 
-  it('upserts and activates the clicked artifact in the preview store, scoped to the active session', async () => {
+  it('opens a generated artifact from both its card and hover icon', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({
       id: 'session-42',
@@ -1973,6 +1973,19 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       size: 2048,
       mtimeMs: 1710000000100
     })
+
+    upsertAndActivateItem.mockClear()
+    const openIcon = card?.querySelector<HTMLElement>('[data-slot="generated-artifact-open-icon"]')
+    expect(openIcon).not.toBeNull()
+
+    await act(async () => {
+      openIcon?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(upsertAndActivateItem).toHaveBeenCalledTimes(1)
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'artifact-1', sessionId: 'session-42' })
+    )
   })
 
   it('routes Markdown artifact links to the panel and Markdown artifact images to the dialog', async () => {

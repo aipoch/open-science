@@ -8,6 +8,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
 import {
+  ArrowUpRight,
   Bot,
   Brain,
   Check,
@@ -448,7 +449,7 @@ const TurnTokenUsage = ({
 }
 
 const artifactCardClassName =
-  'h-[82px] w-[128px] shrink-0 overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left text-text-000 shadow-none transition-colors hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
+  'h-[82px] w-[128px] shrink-0 cursor-pointer overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left text-text-000 shadow-none transition-colors hover:bg-bg-200 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60 disabled:cursor-not-allowed disabled:opacity-50'
 const artifactPreviewClassName = 'h-[56px] w-full overflow-hidden bg-bg-200'
 const artifactGalleryClassName = 'grid max-w-full grid-cols-[repeat(auto-fill,128px)] gap-2 pb-1'
 
@@ -881,6 +882,13 @@ const ArtifactCard = ({
             {t(FILE_MISSING_TAG_KEY)}
           </span>
         ) : null}
+        <span
+          data-slot="generated-artifact-open-icon"
+          className="absolute right-1 top-1 flex size-7 items-center justify-center rounded-md bg-bg-000/90 text-text-100 opacity-0 shadow-sm transition-[opacity,background-color,color] duration-150 hover:bg-bg-300 hover:text-text-000 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
+          aria-hidden="true"
+        >
+          <ArrowUpRight className="size-4" strokeWidth={1.75} />
+        </span>
       </div>
       <div className="flex min-w-0 flex-1 items-center px-1.5">
         <ExtensionPreservingFileName
