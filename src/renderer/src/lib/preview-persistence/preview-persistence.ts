@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 
 import {
   PREVIEW_STATE_VERSION,
+  createEmptyPersistedPreviewState,
+  normalizePersistedPreviewState,
   type PersistedPreviewState,
   type PreviewStateSnapshot,
   type SavePreviewStateResult,
@@ -22,12 +24,76 @@ type PreviewSave = (request: SavePreviewStateRequest) => Promise<SavePreviewStat
 type PreviewSaveInput = Omit<SavePreviewStateRequest, 'expectedRevision'>
 type PreviewSaveScheduler = {
   schedule: (request: PreviewSaveInput) => void
-  setRevision: (projectId: string, revision: number) => void
+  getGeneration: (projectId: string) => number
+  acceptLoadedRevision: (projectId: string, generation: number, revision: number) => boolean
+  hasFailure: (projectId: string) => boolean
+  waitForIdle: (projectId: string) => Promise<void>
   flush: () => Promise<void>
 }
 
 const reportPersistenceError = (error: unknown): void => {
   console.warn('Preview persistence failed', error)
+}
+
+const previewValuesEqual = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => previewValuesEqual(value, right[index]))
+    )
+  }
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord)
+  return (
+    leftKeys.length === Object.keys(rightRecord).length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(rightRecord, key) && previewValuesEqual(leftRecord[key], rightRecord[key])
+    )
+  )
+}
+
+// Applies only the changes made after `base` to the authoritative state. This preserves remote tabs
+// while retaining user actions that happened after the conflicting save had already started.
+const rebasePreviewState = (
+  base: PersistedPreviewState,
+  local: PersistedPreviewState,
+  authoritative: PersistedPreviewState
+): PersistedPreviewState => {
+  const baseItems = new Map(base.items.map((item) => [item.id, item]))
+  const localItems = new Map(local.items.map((item) => [item.id, item]))
+  const mergedItems = authoritative.items
+    .filter((item) => !(baseItems.has(item.id) && !localItems.has(item.id)))
+    .map((item) => {
+      const localItem = localItems.get(item.id)
+      const baseItem = baseItems.get(item.id)
+      return localItem && (!baseItem || !previewValuesEqual(localItem, baseItem)) ? localItem : item
+    })
+  const mergedIds = new Set(mergedItems.map((item) => item.id))
+
+  for (const localItem of local.items) {
+    const baseItem = baseItems.get(localItem.id)
+    if (!mergedIds.has(localItem.id) && (!baseItem || !previewValuesEqual(localItem, baseItem))) {
+      mergedItems.push(localItem)
+    }
+  }
+
+  return normalizePersistedPreviewState({
+    ...authoritative,
+    panelState: local.panelState !== base.panelState ? local.panelState : authoritative.panelState,
+    activeItemId:
+      local.activeItemId !== base.activeItemId ? local.activeItemId : authoritative.activeItemId,
+    items: mergedItems,
+    subagents: !previewValuesEqual(local.subagents, base.subagents)
+      ? local.subagents
+      : authoritative.subagents
+  })
 }
 
 // Serializes saves per Project while coalescing queued snapshots to the newest state. Different
@@ -41,6 +107,7 @@ const createPreviewSaveScheduler = (
     string,
     {
       pendingState: PersistedPreviewState | undefined
+      pendingBaseState: PersistedPreviewState | undefined
       drain: Promise<void> | undefined
     }
   >()
@@ -52,11 +119,22 @@ const createPreviewSaveScheduler = (
     }
   >()
   const revisions = new Map<string, number>()
+  const generations = new Map<string, number>()
+
+  const bumpGeneration = (projectId: string): void => {
+    generations.set(projectId, (generations.get(projectId) ?? 0) + 1)
+  }
 
   const schedule = ({ projectId, state }: PreviewSaveInput): void => {
-    const queue = queues.get(projectId) ?? { pendingState: undefined, drain: undefined }
+    const queue = queues.get(projectId) ?? {
+      pendingState: undefined,
+      pendingBaseState: undefined,
+      drain: undefined
+    }
     queue.pendingState = state
+    queue.pendingBaseState = undefined
     queues.set(projectId, queue)
+    bumpGeneration(projectId)
 
     if (queue.drain) return
 
@@ -64,7 +142,9 @@ const createPreviewSaveScheduler = (
       try {
         while (queue.pendingState) {
           const nextState = queue.pendingState
+          const nextBaseState = queue.pendingBaseState
           queue.pendingState = undefined
+          queue.pendingBaseState = undefined
 
           try {
             const result = await save({
@@ -73,16 +153,41 @@ const createPreviewSaveScheduler = (
               expectedRevision: revisions.get(projectId) ?? 0
             })
             if (result.status === 'conflict') {
-              queue.pendingState = undefined
-              revisions.set(projectId, result.snapshot?.revision ?? 0)
+              const authoritativeState =
+                result.snapshot?.state ?? createEmptyPersistedPreviewState()
+              const localState = queue.pendingState ?? (nextBaseState ? nextState : undefined)
+              const localBaseState = queue.pendingState ? nextState : nextBaseState
+              const revision = result.snapshot?.revision ?? 0
+              revisions.set(projectId, revision)
+              bumpGeneration(projectId)
               failures.delete(projectId)
-              restoreConflict(projectId, result.snapshot)
+
+              if (localState && localBaseState) {
+                const rebasedState = rebasePreviewState(
+                  localBaseState,
+                  localState,
+                  authoritativeState
+                )
+                restoreConflict(projectId, { state: rebasedState, revision })
+                if (!previewValuesEqual(rebasedState, authoritativeState)) {
+                  queue.pendingState = rebasedState
+                  queue.pendingBaseState = authoritativeState
+                  continue
+                }
+              } else {
+                restoreConflict(projectId, result.snapshot)
+              }
+
+              queue.pendingState = undefined
+              queue.pendingBaseState = undefined
               break
             }
             revisions.set(projectId, Math.max(revisions.get(projectId) ?? 0, result.revision))
+            bumpGeneration(projectId)
             failures.delete(projectId)
           } catch (error) {
             failures.set(projectId, { state: nextState, error })
+            bumpGeneration(projectId)
             reportError(error)
           }
         }
@@ -112,11 +217,36 @@ const createPreviewSaveScheduler = (
     }
   }
 
-  const setRevision = (projectId: string, revision: number): void => {
-    revisions.set(projectId, revision)
+  const getGeneration = (projectId: string): number => generations.get(projectId) ?? 0
+
+  const hasFailure = (projectId: string): boolean => failures.has(projectId)
+
+  const waitForIdle = async (projectId: string): Promise<void> => {
+    let drain = queues.get(projectId)?.drain
+    while (drain) {
+      await drain
+      drain = queues.get(projectId)?.drain
+    }
   }
 
-  return { schedule, setRevision, flush }
+  const acceptLoadedRevision = (
+    projectId: string,
+    generation: number,
+    revision: number
+  ): boolean => {
+    if (
+      generation !== getGeneration(projectId) ||
+      queues.has(projectId) ||
+      failures.has(projectId)
+    ) {
+      return false
+    }
+
+    revisions.set(projectId, Math.max(revisions.get(projectId) ?? 0, revision))
+    return true
+  }
+
+  return { schedule, getGeneration, acceptLoadedRevision, hasFailure, waitForIdle, flush }
 }
 
 // Projects the live store slice down to its durable subset: file previews plus the one Session-scoped
@@ -300,26 +430,43 @@ export const usePreviewPersistence = (
     if (!activeProjectId) return
 
     let cancelled = false
+    const loadLatest = async (): Promise<void> => {
+      const loadGeneration = previewSaveScheduler.getGeneration(activeProjectId)
+      const snapshot = await window.api.preview.load({ projectId: activeProjectId })
+      if (cancelled) return
 
-    void window.api.preview
-      .load({ projectId: activeProjectId })
-      .then((snapshot) => {
-        if (cancelled) return
+      if (
+        !previewSaveScheduler.acceptLoadedRevision(
+          activeProjectId,
+          loadGeneration,
+          snapshot?.revision ?? 0
+        )
+      ) {
+        const currentStore = usePreviewWorkbenchStore.getState()
+        if (currentStore.activeProjectId === activeProjectId) return
+        if (previewSaveScheduler.hasFailure(activeProjectId)) {
+          currentStore.activateProject(activeProjectId)
+          return
+        }
 
-        previewSaveScheduler.setRevision(activeProjectId, snapshot?.revision ?? 0)
+        await previewSaveScheduler.waitForIdle(activeProjectId)
+        if (!cancelled) await loadLatest()
+        return
+      }
 
-        const projectSessions = useSessionStore
-          .getState()
-          .sessions.filter((session) => session.projectId === activeProjectId)
+      const projectSessions = useSessionStore
+        .getState()
+        .sessions.filter((session) => session.projectId === activeProjectId)
 
-        usePreviewWorkbenchStore
-          .getState()
-          .activateProject(
-            activeProjectId,
-            snapshot ? toRestoredSlice(snapshot.state, projectSessions) : undefined
-          )
-      })
-      .catch(reportPersistenceError)
+      usePreviewWorkbenchStore
+        .getState()
+        .activateProject(
+          activeProjectId,
+          snapshot ? toRestoredSlice(snapshot.state, projectSessions) : undefined
+        )
+    }
+
+    void loadLatest().catch(reportPersistenceError)
 
     return () => {
       cancelled = true
