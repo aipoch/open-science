@@ -15,6 +15,7 @@ import {
   RESUME_WORKSPACE_MISSING_MESSAGE,
   VISION_EVIDENCE_INVALID_MESSAGE,
   VISION_MODEL_NOT_CONFIGURED_MESSAGE,
+  isClaudeApiConnectionFailure,
   isReportableRunFailure,
   visionRunFailureMessage
 } from './run-error-classification'
@@ -53,7 +54,7 @@ describe('isReportableRunFailure (text tier)', () => {
     }
   })
 
-  it('does NOT recognize provider error TEXT at this tier — the structural flag suppresses those', () => {
+  it('does NOT recognize ordinary provider error TEXT at this tier — the structural flag suppresses those', () => {
     // These come from the model/provider and are hidden by `providerError`/`errorReportable=false`, set
     // structurally at the ACP layer. The text tier must NOT try to recognize them (that heuristic was
     // fragile and swallowed genuine app errors), so here — text only — they read as reportable.
@@ -68,6 +69,25 @@ describe('isReportableRunFailure (text tier)', () => {
     ]) {
       expect(isReportableRunFailure(providerText)).toBe(true)
     }
+  })
+
+  it('recognizes the Claude Code unreachable-API wrapper without the structural flag', () => {
+    // createSession failRun and persisted pre-flag sessions have no providerError tag. The distinctive
+    // Claude wrapper is recognized so Report stays hidden; nearby "connect" wording is not.
+    const live = 'Internal error: API Error: Unable to connect to API (ConnectionRefused)'
+    const wrapped = `Error invoking remote method 'acp:send-prompt': Error: ${live}`
+
+    expect(isClaudeApiConnectionFailure(live)).toBe(true)
+    expect(isClaudeApiConnectionFailure(wrapped)).toBe(true)
+    expect(isReportableRunFailure(live)).toBe(false)
+    expect(isReportableRunFailure(wrapped)).toBe(false)
+    expect(
+      isReportableRunFailure('Internal error: unable to connect to API (ConnectionRefused)')
+    ).toBe(true)
+    expect(
+      isReportableRunFailure('Internal error: Unable to connect to workspace (ConnectionRefused)')
+    ).toBe(true)
+    expect(isReportableRunFailure('Run failed: connection reset')).toBe(true)
   })
 
   it('does not swallow an ordinary app error that merely mentions a provider word', () => {

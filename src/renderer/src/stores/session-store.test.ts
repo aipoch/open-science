@@ -2989,6 +2989,16 @@ describe('session store', () => {
       .getState()
       .failRun('transport-session-1', 'Session workspace is missing; start a new conversation.')
     expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+
+    // Claude Code's unreachable-API wrapper is recognized without an explicit flag (createSession /
+    // persisted pre-flag sessions).
+    useSessionStore
+      .getState()
+      .failRun(
+        'transport-session-1',
+        'Internal error: API Error: Unable to connect to API (ConnectionRefused)'
+      )
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
   })
 
   it('honors an explicit reportable flag (the runtime tags a model-provider failure)', () => {

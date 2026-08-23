@@ -1,4 +1,7 @@
-import { PROVIDER_RESOURCE_NOT_FOUND_PREFIX } from '../../shared/run-error-classification'
+import {
+  isClaudeApiConnectionFailure,
+  PROVIDER_RESOURCE_NOT_FOUND_PREFIX
+} from '../../shared/run-error-classification'
 
 // Turns an agent prompt failure into user-visible text. Agents (opencode) relay an upstream provider
 // HTTP error wrapped as a JSON-RPC failure like
@@ -24,12 +27,10 @@ type UpstreamDetail = { text: string; type?: string }
 // bare "not found" substring, so a benign message like "rate limit config not found" isn't reworded.
 const NOT_FOUND_PATTERN =
   /resource[\s_-]?not[\s_-]?found|no such (?:model|resource)|not[\s_-]?found\s*:/i
-// Claude Code wraps upstream provider HTTP 4xx as `Internal error: API Error: 4xx …`. It also uses the
-// same wrapper for a failed TCP/TLS handshake (`Unable to connect to API (<code>)`) when the model
-// endpoint is unreachable. Both are provider-owned, not ACP-layer defects. 5xx stays excluded: an
-// untagged internal 5xx may still be an adapter defect.
-const CLAUDE_PROVIDER_API_ERROR_PATTERN =
-  /^\s*internal error:\s*api error:\s*(?:4\d{2}\b|unable to connect to api\b)/i
+// Claude Code wraps upstream provider HTTP 4xx as `Internal error: API Error: 4xx …`. Unreachable-API
+// connection failures use the shared `API Error: Unable to connect to API` matcher. 5xx stays excluded:
+// an untagged internal 5xx may still be an adapter defect.
+const CLAUDE_PROVIDER_CLIENT_ERROR_PATTERN = /^\s*internal error:\s*api error:\s*4\d{2}\b/i
 
 // Converts an unknown thrown value into its base message string.
 const rawErrorMessage = (error: unknown): string =>
@@ -184,7 +185,8 @@ const isClaudeProviderApiError = (error: unknown): boolean =>
   error instanceof Error &&
   error.name === 'RequestError' &&
   errorCode(error) === -32603 &&
-  CLAUDE_PROVIDER_API_ERROR_PATTERN.test(error.message)
+  (CLAUDE_PROVIDER_CLIENT_ERROR_PATTERN.test(error.message) ||
+    isClaudeApiConnectionFailure(error.message))
 
 // Whether a failed prompt originates from the model provider (an upstream LLM/HTTP failure the agent
 // relayed) rather than from the app's own ACP layer. Provider failures are the user's/provider's to
