@@ -580,10 +580,6 @@ class SessionPersistenceStateOwner {
       delete rendererOwnedSession.specialistId
       delete rendererOwnedSession.specialistBindingPending
     }
-    const delegationPolicyChanged =
-      authority !== undefined &&
-      (rendererOwnedSession.delegationPolicy === 'deny' ? 'deny' : 'allow') !==
-        (authority.delegationPolicy === 'deny' ? 'deny' : 'allow')
     if (authority) delete rendererOwnedSession.delegationPolicy
     const permissionOwnedStatus =
       authority?.runtimeContext?.permission?.state === 'pending'
@@ -624,16 +620,13 @@ class SessionPersistenceStateOwner {
           }
         : {}),
       ...(mainOwnedStatus ? { status: mainOwnedStatus } : {}),
-      updatedAt:
-        authority?.runtimeContext ||
-        mainOwnedStatus ||
-        authority?.enabledComputeHosts !== undefined ||
-        authority?.selectedComputeHosts !== undefined ||
-        authority?.specialistBindingPending !== undefined ||
-        specialistBindingChanged ||
-        delegationPolicyChanged
-          ? Math.max(rendererOwnedSession.updatedAt, (authority?.updatedAt ?? -1) + 1, Date.now())
-          : rendererOwnedSession.updatedAt
+      // Merging unchanged Main-owned authority is storage maintenance, not conversation activity.
+      // Preserve the newest real activity time so opening a lazily loaded Session cannot move it into
+      // the Workspace Active section. The dedicated Specialist binding transaction remains an
+      // explicit mutation and therefore advances the timestamp here.
+      updatedAt: specialistBindingChanged
+        ? Math.max(rendererOwnedSession.updatedAt, (authority?.updatedAt ?? -1) + 1, Date.now())
+        : Math.max(rendererOwnedSession.updatedAt, authority?.updatedAt ?? -1)
     }
 
     let materializedSession = materializeSessionConversationGraph(mergedSession)
