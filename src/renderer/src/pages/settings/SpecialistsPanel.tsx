@@ -2020,25 +2020,30 @@ const InstalledSpecialistsPanel = ({
                     data-slot="settings-list-row"
                     className="flex min-h-14 items-center gap-2 py-2.5"
                   >
+                    <button
+                      type="button"
+                      onClick={() => onNavigate({ kind: 'builtin', id: item.id })}
+                      aria-label={t('View {{name}}', { name: item.displayName ?? item.name })}
+                      className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <SpecialistAvatar iconKey={item.iconKey} colorKey={item.colorKey} />
+                    </button>
                     <div className="min-w-0 flex-1">
                       <button
                         type="button"
                         onClick={() => onNavigate({ kind: 'builtin', id: item.id })}
                         aria-label={t('View {{name}}', { name: item.displayName ?? item.name })}
-                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="block w-full min-w-0 cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
-                        <SpecialistAvatar iconKey={item.iconKey} colorKey={item.colorKey} />
-                        <div className="min-w-0 flex-1">
-                          <span className="block truncate text-sm text-foreground">
-                            {item.displayName ?? item.name}
-                          </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {item.description}
-                          </span>
-                        </div>
+                        <span className="block truncate text-sm text-foreground">
+                          {item.displayName ?? item.name}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {item.description}
+                        </span>
                       </button>
                       <div
-                        className="mt-0.5 ml-9 flex min-w-0 items-center gap-2"
+                        className="mt-0.5 flex min-w-0 items-center gap-2"
                         data-specialist-metadata-group={item.id}
                       >
                         <button
@@ -2071,11 +2076,8 @@ const InstalledSpecialistsPanel = ({
                     data-slot="settings-list-row"
                     className="flex min-h-14 items-center gap-2 py-2.5"
                   >
-                    <span
-                      className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-[13px] text-primary"
-                      aria-hidden="true"
-                    >
-                      ✓
+                    <span className="flex size-11 shrink-0 items-center justify-center">
+                      <SpecialistAvatar iconKey="bug" colorKey="teal" />
                     </span>
                     <div className="min-w-0 flex-1">
                       <span className="block truncate text-sm text-foreground">

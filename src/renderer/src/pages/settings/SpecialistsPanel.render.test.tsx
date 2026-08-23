@@ -1176,6 +1176,18 @@ describe('SpecialistsPanel', () => {
     expect(
       document.body.querySelector('[aria-label="Change appearance for Builtin Curator"]')
     ).toBeNull()
+    const builtinRow = builtin?.closest('[data-slot="settings-list-row"]')
+    expect(builtinRow?.firstElementChild?.className).toContain('size-11')
+    expect(builtinRow?.children[1]?.className).toContain('flex-1')
+
+    const reviewerLabel = Array.from(document.body.querySelectorAll('span')).find(
+      (element) => element.textContent === 'Reviewer'
+    )
+    const reviewerRow = reviewerLabel?.closest('[data-slot="settings-list-row"]')
+    expect(reviewerRow?.firstElementChild?.className).toContain('size-11')
+    expect(reviewerRow?.children[1]?.className).toContain('flex-1')
+    expect(reviewerRow?.querySelector('[data-specialist-icon="bug"]')).not.toBeNull()
+
     await act(async () => builtin!.click())
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'builtin', id: 'builtin-curator' })
 
