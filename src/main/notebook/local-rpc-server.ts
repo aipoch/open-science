@@ -2019,8 +2019,11 @@ class NotebookLocalRpcServer {
     // handler can attribute side effects to the session that invoked it.
     if (method === 'mcpCall') {
       if (!this.connectorService) throw new Error('Connector service is not configured.')
-      const server = typeof params.server === 'string' ? params.server : ''
-      const toolMethod = typeof params.method === 'string' ? params.method : ''
+      if (typeof params.server !== 'string' || typeof params.method !== 'string') {
+        throw new Error('mcpCall requires string server and method names.')
+      }
+      const server = params.server
+      const toolMethod = params.method
       const args = isRecord(params.args) ? params.args : {}
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
       const projectId = typeof params.projectId === 'string' ? params.projectId : undefined

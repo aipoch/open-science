@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { AgentComputeService } from '../compute/agent-compute-service'
+import { ConnectorService } from '../connectors/service'
 import { NotebookLocalRpcServer } from './local-rpc-server'
+import type { SpecialistProfileView } from '../../shared/specialist'
 
 const fakeConnector = {
   call: async (s: string, m: string, a: Record<string, unknown>) => ({ s, m, a })
@@ -116,6 +118,52 @@ describe('mcpCall RPC', () => {
     })
     expect(await res.json()).toEqual({
       result: { s: 'chemistry', m: 'pubchem_get_properties', a: { cids: [1] } }
+    })
+  })
+
+  it('rejects a tool name passed as the server without reporting a Specialist permission denial', async () => {
+    const specialist: SpecialistProfileView = {
+      id: 'literature-specialist',
+      name: 'Literature Specialist',
+      description: '',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: {
+        skillIds: [],
+        connectorIds: ['literature'],
+        connectorTools: []
+      },
+      revision: 1
+    }
+    const connectorService = new ConnectorService({
+      getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
+      resolveApiKey: () => undefined,
+      resolveSpecialistProfile: async () => specialist
+    })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      connectorService
+    })
+    server.registerSessionSpecialist('s-42', specialist.id)
+    const { endpoint, token } = await sessionConnection(server)
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'mcpCall',
+        params: {
+          server: 'openalex_search_works',
+          method: { query: 'osimertinib EGFR T790M resistance NSCLC' }
+        }
+      })
+    })
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toEqual({
+      error: 'mcpCall requires string server and method names.'
     })
   })
 
