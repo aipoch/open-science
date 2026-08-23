@@ -4883,17 +4883,29 @@ describe('SettingsService: uninstall managed runtime', () => {
   it('falls through to ready Codex when earlier fallback runtimes are unavailable', async () => {
     const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
     const codexAdapter = join(storageRoot, 'fallback', 'codex-acp')
+    const nativePath = join(storageRoot, 'fallback', 'codex')
     await mkdir(dirname(opencodeBin), { recursive: true })
     await mkdir(dirname(codexAdapter), { recursive: true })
     await writeFile(opencodeBin, '', 'utf8')
     await writeFile(codexAdapter, '', 'utf8')
+    await writeFile(nativePath, '', 'utf8')
     await repository.setOpencodeInfo(opencodeBin, '1.18.3')
-    await repository.setCodexInfo({ resolvedPath: codexAdapter, version: '1.6.2' })
+    await repository.setCodexInfo({
+      resolvedPath: codexAdapter,
+      version: '1.6.2',
+      nativePath,
+      nativeVersion: '0.144.6'
+    })
     await repository.setAgentFramework('opencode')
     const service = createService(
       { found: false },
       {
-        codexDetected: { path: codexAdapter, version: 'codex-acp 1.6.2' }
+        codexDetected: {
+          path: codexAdapter,
+          version: 'codex-acp 1.6.2',
+          nativePath,
+          nativeVersion: 'codex-cli 0.144.6'
+        }
       }
     )
 
