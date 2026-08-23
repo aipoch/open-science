@@ -71,7 +71,11 @@ type NativeFollowUpRegisterTurnInputs = (request: {
 type NativeFollowUpLivePrompt = Readonly<{
   turnToken: string
   signal: AbortSignal
+  promptMessageId?: string
 }>
+
+type SideChatAdvisoryFollowUpResult =
+  Readonly<{ injected: true; promptMessageId: string }> | Readonly<{ injected: false }>
 
 type NativeFollowUpWorkflowOptions = Readonly<{
   connection: () => ClientConnection | undefined
@@ -163,7 +167,26 @@ const injected = (transport: NativeFollowUpTransport, messageId: string): AcpSte
 class AcpNativeFollowUpWorkflow {
   constructor(private readonly options: NativeFollowUpWorkflowOptions) {}
 
+  async steerSideChatAdvisory(
+    request: AcpSteerFollowUpRequest
+  ): Promise<SideChatAdvisoryFollowUpResult> {
+    const live = this.options.livePrompt?.(request.sessionId)
+    if (!live?.promptMessageId) return Object.freeze({ injected: false })
+    const result = await this.dispatch(request, false, live.turnToken)
+    return result.injected
+      ? Object.freeze({ injected: true, promptMessageId: live.promptMessageId })
+      : Object.freeze({ injected: false })
+  }
+
   async steerFollowUp(request: AcpSteerFollowUpRequest): Promise<AcpSteerFollowUpResult> {
+    return this.dispatch(request, true)
+  }
+
+  private async dispatch(
+    request: AcpSteerFollowUpRequest,
+    publishUserMessage: boolean,
+    expectedTurnToken?: string
+  ): Promise<AcpSteerFollowUpResult> {
     const text = typeof request.text === 'string' ? request.text : ''
     const attachments = request.attachments ?? []
     const forcedSkillIds = request.forcedSkillIds ?? []
@@ -229,6 +252,14 @@ class AcpNativeFollowUpWorkflow {
 
     const live = this.options.livePrompt?.(request.sessionId)
     if (!this.options.hasLivePrompt(request.sessionId) || (this.options.livePrompt && !live)) {
+      log.info('native follow-up refused', {
+        sessionId: request.sessionId,
+        reason: 'no-live-turn',
+        transport: route.transport
+      })
+      return refused('no-live-turn')
+    }
+    if (expectedTurnToken && live?.turnToken !== expectedTurnToken) {
       log.info('native follow-up refused', {
         sessionId: request.sessionId,
         reason: 'no-live-turn',
@@ -324,13 +355,15 @@ class AcpNativeFollowUpWorkflow {
     const messageId = this.options.createMessageId?.() ?? `message-${randomUUID()}`
     const uploads = persistableUploads(preparedUploads ?? attachments)
     const parts = request.parts ?? []
-    this.options.publishUserMessage({
-      sessionId: request.sessionId,
-      messageId,
-      text,
-      ...(uploads.length > 0 ? { uploads } : {}),
-      ...(parts.length > 0 ? { parts } : {})
-    })
+    if (publishUserMessage) {
+      this.options.publishUserMessage({
+        sessionId: request.sessionId,
+        messageId,
+        text,
+        ...(uploads.length > 0 ? { uploads } : {}),
+        ...(parts.length > 0 ? { parts } : {})
+      })
+    }
     log.info('native follow-up injected', {
       sessionId: request.sessionId,
       transport: route.transport,
@@ -426,5 +459,6 @@ export { AcpNativeFollowUpWorkflow, finalizeNativeFollowUpPreparedContent }
 export type {
   NativeFollowUpPreparedContent,
   NativeFollowUpUserMessage,
-  NativeFollowUpWorkflowOptions
+  NativeFollowUpWorkflowOptions,
+  SideChatAdvisoryFollowUpResult
 }

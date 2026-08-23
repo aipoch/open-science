@@ -16,7 +16,8 @@ const createWorkflow = (
     advertised?: boolean
     livePrompt?: boolean | (() => boolean)
     pendingPermission?: boolean | (() => boolean)
-    livePromptTurn?: () => { turnToken: string; signal: AbortSignal } | undefined
+    livePromptTurn?: () =>
+      { turnToken: string; signal: AbortSignal; promptMessageId?: string } | undefined
     frameworkId?: 'claude-code' | 'opencode' | 'codex'
     openCodeHttp?: boolean
     providerSessionId?: string | null
@@ -78,7 +79,13 @@ const createWorkflow = (
           typeof overrides.livePrompt === 'function'
             ? overrides.livePrompt()
             : (overrides.livePrompt ?? true)
-        return isLive ? { turnToken: 'turn-1', signal: new AbortController().signal } : undefined
+        return isLive
+          ? {
+              turnToken: 'turn-1',
+              signal: new AbortController().signal,
+              promptMessageId: 'prompt-live'
+            }
+          : undefined
       },
       sessionCwd: () => '/workspace',
       publishUserMessage: (input) => {
@@ -117,6 +124,58 @@ describe('AcpNativeFollowUpWorkflow', () => {
     expect(published).toEqual([
       { sessionId: 'app-1', messageId: 'message-steer-1', text: 'focus on tests' }
     ])
+  })
+
+  it('injects an advisory without publishing an ordinary user message', async () => {
+    const { workflow } = createWorkflow()
+
+    await expect(
+      workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'Context-only advisory' })
+    ).resolves.toEqual({
+      injected: true,
+      promptMessageId: 'prompt-live'
+    })
+    expect(published).toEqual([])
+  })
+
+  it('refuses an advisory when the live prompt has no durable message identity', async () => {
+    const { workflow } = createWorkflow({
+      livePromptTurn: () => ({
+        turnToken: 'turn-1',
+        signal: new AbortController().signal
+      })
+    })
+
+    await expect(
+      workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'Context-only advisory' })
+    ).resolves.toEqual({ injected: false })
+    expect(published).toEqual([])
+  })
+
+  it('refuses an advisory when Main changes turns while the advisory is prepared', async () => {
+    let livePromptReads = 0
+    const request = vi.fn(async () => ({ outcome: 'injected' }))
+    const { workflow } = createWorkflow({
+      request,
+      livePromptTurn: () => {
+        livePromptReads += 1
+        return {
+          turnToken: livePromptReads === 1 ? 'turn-1' : 'turn-2',
+          signal: new AbortController().signal,
+          promptMessageId: livePromptReads === 1 ? 'prompt-1' : 'prompt-2'
+        }
+      },
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text' as const, text: 'Context-only advisory' }],
+        uploads: []
+      })
+    })
+
+    await expect(
+      workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'Context-only advisory' })
+    ).resolves.toEqual({ injected: false })
+    expect(request).not.toHaveBeenCalled()
+    expect(published).toEqual([])
   })
 
   it('treats startedNewTurn as injected because the adapter consumed the prompt', async () => {

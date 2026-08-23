@@ -1056,6 +1056,19 @@ class AcpRuntimeCoordinator {
       : dispatch()
   }
 
+  async steerSideChatAdvisory(
+    request: AcpSteerFollowUpRequest
+  ): ReturnType<AcpRuntime['steerSideChatAdvisory']> {
+    this.assertPromptAdmissionOpen()
+    await this.waitForInitialization()
+    this.assertPromptAdmissionOpen()
+    const dispatch = (): ReturnType<AcpRuntime['steerSideChatAdvisory']> =>
+      this.runtimeForSession(request.sessionId).steerSideChatAdvisory(request)
+    return this.promptDispatchAdmissionGuard
+      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
+      : dispatch()
+  }
+
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
     if (request.scope === 'subagents') {
       await this.delegatedWork?.stopActiveBranch?.(request.sessionId)

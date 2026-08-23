@@ -75,6 +75,7 @@ const createFakeRuntime = (options: {
   sendPrompt: ReturnType<typeof vi.fn>
   sendAppContinuation: ReturnType<typeof vi.fn>
   steerFollowUp: ReturnType<typeof vi.fn>
+  steerSideChatAdvisory: ReturnType<typeof vi.fn>
   applyReasoningEffortChange: ReturnType<typeof vi.fn>
   applyModelChange: ReturnType<typeof vi.fn>
   captureBackend: ReturnType<typeof vi.fn>
@@ -215,6 +216,10 @@ const createFakeRuntime = (options: {
     transport: 'acp-steering' as const,
     messageId: 'message-steer-1'
   }))
+  const steerSideChatAdvisory = vi.fn(async () => ({
+    injected: true as const,
+    promptMessageId: 'prompt-live'
+  }))
   const sendApplicationPrompt = vi.fn(
     (
       ...[request, _attribution, promptAttemptId]: Parameters<AcpRuntime['sendApplicationPrompt']>
@@ -253,6 +258,7 @@ const createFakeRuntime = (options: {
     sendApplicationPrompt,
     sendAppContinuation,
     steerFollowUp,
+    steerSideChatAdvisory,
     withActivity: vi.fn(
       async (_activityOptions: unknown, work: (scopedRuntime: AcpRuntime) => Promise<unknown>) =>
         work(runtime)
@@ -296,6 +302,7 @@ const createFakeRuntime = (options: {
     sendPrompt,
     sendAppContinuation,
     steerFollowUp,
+    steerSideChatAdvisory,
     applyReasoningEffortChange,
     applyModelChange,
     captureBackend,
@@ -2220,6 +2227,46 @@ describe('AcpRuntimeCoordinator', () => {
       coordinator.steerFollowUp({ sessionId: session.sessionId, text: 'focus on tests' })
     ).rejects.toThrow(/Close Side chat/)
     expect(createdRuntime.steerFollowUp).not.toHaveBeenCalled()
+  })
+
+  it('admits a Side chat advisory through the deletion fence without opening a Main prompt', async () => {
+    const dispatchAdmission = createDeferred<void>()
+    let createdRuntime!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      createdRuntime = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return createdRuntime.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    const promptAdmissionGuard = vi.fn(async () => {
+      throw new Error('Side chat owns Main prompt admission.')
+    })
+    coordinator.setPromptAdmissionGuard(promptAdmissionGuard)
+    coordinator.setPromptDispatchAdmissionGuard(async (_sessionId, dispatch) => {
+      await dispatchAdmission.promise
+      return dispatch()
+    })
+
+    const advisory = coordinator.steerSideChatAdvisory({
+      sessionId: session.sessionId,
+      text: 'context-only advisory'
+    })
+    await Promise.resolve()
+    expect(createdRuntime.steerSideChatAdvisory).not.toHaveBeenCalled()
+
+    dispatchAdmission.resolve()
+    await expect(advisory).resolves.toEqual({
+      injected: true,
+      promptMessageId: 'prompt-live'
+    })
+    expect(promptAdmissionGuard).not.toHaveBeenCalled()
+    expect(createdRuntime.steerSideChatAdvisory).toHaveBeenCalledWith({
+      sessionId: session.sessionId,
+      text: 'context-only advisory'
+    })
   })
 
   it('does not reacquire dispatch admission for an already admitted continuation', async () => {

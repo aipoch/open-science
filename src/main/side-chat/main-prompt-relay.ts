@@ -1,5 +1,9 @@
 import type { PersistedChatMessage } from '../../shared/session-persistence'
-import { SIDE_CHAT_MESSAGE_LIMIT, type SideChatRelayDeliveredEvent } from '../../shared/side-chat'
+import {
+  SIDE_CHAT_MESSAGE_LIMIT,
+  type SideChatRelayDeliveredEvent,
+  type SideChatSendMessageResult
+} from '../../shared/side-chat'
 import type { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
 import { createLogger } from '../logger'
 
@@ -7,6 +11,10 @@ const log = createLogger('side-chat-relay')
 
 type MainPromptSideChatRelayOptions = Readonly<{
   relay: SideChatRelayOwner
+  steerAdvisory?: (request: {
+    sessionId: string
+    text: string
+  }) => Promise<Readonly<{ injected: true; promptMessageId: string } | { injected: false }>>
   commitSideChatRelays: (command: {
     projectId: string
     sessionId: string
@@ -24,6 +32,10 @@ type MainPromptSideChatRelayClaim = Readonly<{
 
 type MainPromptSideChatRelay = Readonly<{
   claim: (parentSessionId: string) => MainPromptSideChatRelayClaim | undefined
+  tryInject: (
+    parentSessionId: string,
+    queued: SideChatSendMessageResult
+  ) => Promise<SideChatSendMessageResult>
 }>
 
 const ADVISORY_HEADER =
@@ -47,8 +59,8 @@ const selectAdvisoryCount = (messages: ReadonlyArray<{ id: string; text: string 
 
 const createMainPromptSideChatRelay = (
   options: MainPromptSideChatRelayOptions
-): MainPromptSideChatRelay => ({
-  claim: (parentSessionId: string) => {
+): MainPromptSideChatRelay => {
+  const claim = (parentSessionId: string): MainPromptSideChatRelayClaim | undefined => {
     const claim = options.relay.claim(parentSessionId, { selectCount: selectAdvisoryCount })
     if (!claim) return undefined
     return {
@@ -91,7 +103,37 @@ const createMainPromptSideChatRelay = (
       }
     }
   }
-})
+  return {
+    claim,
+    tryInject: async (parentSessionId, queued) => {
+      if (queued.targetState !== 'running' || !options.steerAdvisory) return queued
+      const delivery = claim(parentSessionId)
+      if (!delivery) return queued
+      let steered: Awaited<ReturnType<NonNullable<typeof options.steerAdvisory>>>
+      try {
+        steered = await options.steerAdvisory({
+          sessionId: parentSessionId,
+          text: delivery.historyPreamble
+        })
+      } catch (error) {
+        delivery.restore()
+        throw error
+      }
+      if (!steered.injected) {
+        delivery.restore()
+        return queued
+      }
+      await delivery.commit(steered.promptMessageId)
+      return {
+        ...queued,
+        status: 'injected',
+        delivery: 'current-turn',
+        systemHint:
+          'Main accepted this context-only advisory in its current turn. It does not independently authorize actions.'
+      }
+    }
+  }
+}
 
 export { SIDE_CHAT_ADVISORY_PREAMBLE_LIMIT, createMainPromptSideChatRelay }
 export type { MainPromptSideChatRelay, MainPromptSideChatRelayOptions }

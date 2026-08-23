@@ -62,8 +62,14 @@ const registerSideChatIpcHandlers = (
     const parent = runtime.parentFor(request.sideSessionId)
     if (!parent) throw new Error('Side chat Session is not active.')
     return dependencies.withParentAvailable(parent.parentSessionId, async () => {
-      await loadAvailableParent(parent.projectId, parent.parentSessionId)
-      return runtime.send(request)
+      const parentSession = await loadAvailableParent(parent.projectId, parent.parentSessionId)
+      const historyPreamble = parentSession
+        ? buildHistoryPreamble(parentSession.messages, {
+            target: 'codex-bridge',
+            budget: SIDE_CHAT_MESSAGE_LIMIT
+          })
+        : undefined
+      return runtime.send({ ...request, historyPreamble })
     })
   })
   ipcMainHandle('side-chat:cancel', (_event, request: SideChatSessionRequest) =>
