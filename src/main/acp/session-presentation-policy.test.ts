@@ -40,7 +40,7 @@ const ARTIFACT_FILE_APPEND = [
   'Pass the filename, MIME type, and either inline content or a local source path to `write_artifact_file`; the app assigns the project, session, Artifact run, and final message location.',
   'If a Notebook, REPL, or shell execution produced the file, also pass `producerRunId` with the exact `runId` returned by the execution that created or last modified it. Omit `producerRunId` only when no Notebook execution produced the file; never use the Artifact run ID as the producer.',
   'Only claim a generated file is available after `write_artifact_file` succeeds. If it fails or is denied, state that the local file may exist but was not saved as an Artifact, and do not present it as downloadable.',
-  'After using the tool, mention the generated filename rather than an absolute filesystem path. The app will display the generated file list below your message.',
+  'After `write_artifact_file` succeeds, end the final response with one compact bullet per newly saved Artifact using `- [filename](filename) — short description`. For an image that benefits from inline viewing, also include `![description](filename)` before the list. Use the exact relative filename, describe what the file contains, and list only Artifacts successfully saved in this turn. Never emit absolute paths, `file://` URLs, Artifact IDs, or app-internal tags. The app will also display the generated file list below your message.',
   'Never write files inside a skill directory — loaded skills are read-only; route any file a skill generates through `write_artifact_file`.',
   '</open_science_artifact_instructions>'
 ].join('\n')
@@ -79,6 +79,18 @@ describe('ACP Session presentation policy', () => {
       REMOTE_COMPUTE_AWARENESS_APPEND
     ])
     expect(appends.join('\n\n')).not.toContain('<open_science_skill_privacy_instructions>')
+  })
+
+  it('guides generated Artifact replies to include previewable Markdown references', () => {
+    const artifactAppend = policy
+      .applicationSystemPromptAppends({ artifacts: true, notebook: false, skillImport: false })
+      .find((append) => append.includes('<open_science_artifact_instructions>'))
+
+    expect(artifactAppend).toContain('`- [filename](filename) — short description`')
+    expect(artifactAppend).toContain('`![description](filename)`')
+    expect(artifactAppend).toContain('exact relative filename')
+    expect(artifactAppend).toContain('only Artifacts successfully saved in this turn')
+    expect(artifactAppend).not.toContain('{{artifact:')
   })
 
   it('presents the same static Remote Compute awareness without dynamic host data', () => {
