@@ -638,7 +638,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     await act(async () => i18next.changeLanguage('en'))
   })
 
-  it('always shows Python while keeping other tabs history-driven', async () => {
+  it('shows only kernels present in the projected history', async () => {
     await mountWithRuns([
       makeRun({ runId: 'p1', kernelKind: 'python' }),
       makeRun({ runId: 'x1', kernelKind: 'repl', script: 'await host.notebook.run(...)' }),
@@ -745,17 +745,15 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(userBadge?.className).toContain('dark:text-blue-300')
   })
 
-  it('shows only Python before another kernel has produced a run', async () => {
+  it('shows no kernel tabs before a kernel has produced a run', async () => {
     await mountWithRuns([])
 
     const switcher = container.querySelector('[data-testid="kernel-switcher"]') as HTMLElement
-    expect(switcher.querySelector('[data-testid="kernel-switcher-python"]')).not.toBeNull()
+    expect(switcher.querySelector('[data-testid="kernel-switcher-python"]')).toBeNull()
     expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).toBeNull()
     expect(switcher.querySelector('[data-testid="kernel-switcher-repl"]')).toBeNull()
+    expect(switcher.querySelector('[data-testid="kernel-switcher-bash"]')).toBeNull()
     expect(container.querySelector('[data-testid="kernel-terminal-input"]')).toBeNull()
-    expect(
-      container.querySelector('[data-testid="notebook-read-only-status"]')?.textContent
-    ).toContain('Python · view only; the agent must activate this kernel first')
   })
 
   it('hides unused R, Agent SDK, and Bash tabs for a python-only run set', async () => {
@@ -765,6 +763,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     ])
 
     const switcher = container.querySelector('[data-testid="kernel-switcher"]') as HTMLElement
+    expect(switcher.querySelector('[data-testid="kernel-switcher-python"]')).not.toBeNull()
     expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).toBeNull()
     expect(switcher.querySelector('[data-testid="kernel-switcher-repl"]')).toBeNull()
     expect(switcher.querySelector('[data-testid="kernel-switcher-bash"]')).toBeNull()
@@ -790,24 +789,34 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(container.textContent).not.toContain('print("py")')
   })
 
-  it('defaults to the executable Python tab when only Agent SDK history exists', async () => {
+  it('shows and selects only R when only R history exists', async () => {
+    await mountWithRuns([makeRun({ runId: 'r1', kernelKind: 'r', script: 'print("r")' })])
+
+    const switcher = container.querySelector('[data-testid="kernel-switcher"]') as HTMLElement
+    const rTab = switcher.querySelector('[data-testid="kernel-switcher-r"]') as HTMLButtonElement
+    expect(switcher.querySelector('[data-testid="kernel-switcher-python"]')).toBeNull()
+    expect(switcher.querySelector('[data-testid="kernel-switcher-repl"]')).toBeNull()
+    expect(switcher.querySelector('[data-testid="kernel-switcher-bash"]')).toBeNull()
+    expect(rTab.className).toContain('bg-bg-300')
+    expect(container.textContent).toContain('print("r")')
+  })
+
+  it('shows and selects only Agent SDK when only Agent SDK history exists', async () => {
     await mountWithRuns([
       makeRun({ runId: 'x1', kernelKind: 'repl', script: 'host.notebook.run(...)' })
     ])
 
     const switcher = container.querySelector('[data-testid="kernel-switcher"]') as HTMLElement
-    const pythonTab = switcher.querySelector(
-      '[data-testid="kernel-switcher-python"]'
-    ) as HTMLButtonElement
     const replTab = switcher.querySelector(
       '[data-testid="kernel-switcher-repl"]'
     ) as HTMLButtonElement
+    expect(switcher.querySelector('[data-testid="kernel-switcher-python"]')).toBeNull()
     expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).toBeNull()
-    expect(pythonTab.className).toContain('bg-bg-300')
-    expect(replTab.className).not.toContain('bg-bg-300')
+    expect(switcher.querySelector('[data-testid="kernel-switcher-bash"]')).toBeNull()
+    expect(replTab.className).toContain('bg-bg-300')
 
-    expect(container.querySelectorAll('[data-testid="notebook-cell"]').length).toBe(0)
-    expect(container.textContent).not.toContain('host.notebook.run')
+    expect(container.querySelectorAll('[data-testid="notebook-cell"]').length).toBe(1)
+    expect(container.textContent).toContain('host.notebook.run')
   })
 
   it('routes R input to the selected kernel and renders the result as a you call block', async () => {

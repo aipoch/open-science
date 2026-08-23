@@ -457,12 +457,12 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     ? projectNotebookRunsForFrame(frameRuns, effectiveFrameFilter)
     : []
 
-  // Python is the default executable target. Other kernels appear only after producing a run.
+  // Kernels appear only after producing a run in the current projected history.
   const kindsWithRuns = new Set(projectedRuns.map(resolveRunKernelKind))
-  const visibleKinds = KERNEL_KIND_ORDER.filter(
-    (kind) => kind === 'python' || kindsWithRuns.has(kind)
-  )
-  const effectiveActiveKind = visibleKinds.includes(activeKind) ? activeKind : 'python'
+  const visibleKinds = KERNEL_KIND_ORDER.filter((kind) => kindsWithRuns.has(kind))
+  const effectiveActiveKind = visibleKinds.includes(activeKind)
+    ? activeKind
+    : (visibleKinds[0] ?? 'python')
   const kindRuns = projectedRuns.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
 
   // Per-environment selector (design D6): only python/r are env-scoped. Distinct env names among
