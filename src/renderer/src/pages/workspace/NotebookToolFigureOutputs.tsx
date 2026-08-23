@@ -40,34 +40,34 @@ const NotebookToolFigureCard = ({
   const [setCardElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
 
   return (
-    <div className="rounded-xl bg-bg-000 p-2.5 shadow-sm sm:p-3">
+    <div className="rounded-[10px] bg-bg-000 p-2 shadow-sm">
       <button
         ref={setCardElement}
         type="button"
         data-testid="notebook-tool-figure-button"
-        className="group relative block w-full max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left transition-[border-color,transform] duration-150 ease-out hover:border-border-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none motion-reduce:active:translate-y-0 md:w-[52rem]"
+        className="group relative block w-fit max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left transition-[border-color,transform] duration-150 ease-out hover:border-border-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none motion-reduce:active:translate-y-0"
         aria-label={t('Preview {{name}}', { name: filename })}
         onClick={(event) => onOpen(figure, event.currentTarget)}
       >
-        <span className="flex min-h-36 max-w-full items-center justify-center">
+        <span className="flex max-w-full items-center justify-center">
           {isNearViewport ? (
             <img
               data-testid="notebook-tool-figure-image"
               src={`data:${figure.mimeType};base64,${figure.payload}`}
               alt={filename}
-              className="block h-auto max-h-[32rem] max-w-full object-contain"
+              className="block h-auto max-h-[300px] w-auto max-w-full object-contain"
               decoding="async"
               draggable={false}
             />
           ) : (
-            <span className="h-36 w-[52rem] max-w-full bg-bg-100" aria-hidden="true" />
+            <span className="h-36 w-60 max-w-full bg-bg-100" aria-hidden="true" />
           )}
         </span>
-        <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-3 bg-gradient-to-t from-black/75 via-black/25 to-transparent px-3.5 pb-2.5 pt-9 text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">
-          <span className="min-w-0 flex-1 truncate font-mono text-[12px] leading-5">
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-gradient-to-t from-black/55 to-transparent px-2 pb-1 pt-3.5 text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">
+          <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] leading-4">
             {filename}
           </span>
-          <Maximize2 className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+          <Maximize2 className="size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
         </span>
       </button>
     </div>
