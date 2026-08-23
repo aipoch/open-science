@@ -19,6 +19,7 @@ import { ProfileService } from '../service'
 import { MarketplaceOperationCoordinator } from '../marketplace/operation-coordinator'
 import { SpecialistPackageService, specialistExportFileName } from './service'
 import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT, type SpecialistPackageSkillPort } from './skill-port'
+import { specialistLegacyPayloadContentHash } from './validator'
 import { validateSpecialistZip } from './zip-adapter'
 
 const encoder = new TextEncoder()
@@ -1278,6 +1279,52 @@ describe('SpecialistPackageService', () => {
     const downgrade = await initial.preview(validZip({ version: '1.2.0' }))
     expect(downgrade.diagnostics.map((item) => item.code)).toContain(
       'specialist.overwrite-downgrade'
+    )
+  })
+
+  it('blocks same-version payload changes for legacy import baselines', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const legacyPayload = {
+      name: 'Research Synthesizer',
+      description: 'Synthesizes research.',
+      systemPrompt: 'Private imported instructions.',
+      skillIds: [],
+      connectorIds: []
+    }
+    await repository.insert({
+      id: 'research-synth',
+      ...legacyPayload,
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.3.0',
+      origin: 'imported',
+      ownedSkillIds: [],
+      importBaseline: {
+        importedAt: '2026-08-03T00:00:00.000Z',
+        archiveDigest: 'legacy-archive-digest',
+        contentDigest: specialistLegacyPayloadContentHash(legacyPayload),
+        packageVersion: '1.3.0'
+      }
+    })
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog
+    })
+
+    const unchanged = await service.preview(validZip())
+    expect(unchanged.installable).toBe(true)
+    expect(unchanged.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-content-without-version-bump' })
+    )
+
+    const changed = await service.preview(validZip({ description: 'Changed package content.' }))
+    expect(changed.installable).toBe(false)
+    expect(changed.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-content-without-version-bump' })
     )
   })
 

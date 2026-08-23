@@ -30,7 +30,10 @@ import { SpecialistRepository } from '../repository'
 import { validateSpecialistZip } from './zip-adapter'
 import { compareSemver } from './semver'
 import { buildDeterministicSpecialistZip } from './contribution-template'
-import { specialistContentModifiedSinceImport } from './validator'
+import {
+  specialistContentModifiedSinceImport,
+  specialistLegacyPayloadContentHash
+} from './validator'
 import {
   SpecialistPackageRecoveryError,
   SpecialistPackageRevisionConflictError,
@@ -516,9 +519,13 @@ export class SpecialistPackageService {
             message: 'Local edits differ from the imported baseline and will be replaced.',
             relatedId: existing.id
           })
-        const baselineContentDigest = existing.importBaseline?.packageContentDigest
+        const baseline = existing.importBaseline
+        const baselineContentDigest = baseline?.packageContentDigest ?? baseline?.contentDigest
+        const incomingContentDigest = baseline?.packageContentDigest
+          ? result.plan.contentHash
+          : specialistLegacyPayloadContentHash(result.plan.payload)
         const contentChanged =
-          baselineContentDigest !== undefined && baselineContentDigest !== result.plan.contentHash
+          baselineContentDigest !== undefined && baselineContentDigest !== incomingContentDigest
         if (contentChanged && versionOrder === 0) {
           diagnostics.push({
             severity: 'error',
