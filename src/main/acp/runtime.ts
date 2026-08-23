@@ -78,7 +78,7 @@ import type {
   AppGeneratedArtifactProducer,
   ArtifactRpcCapabilityBinding
 } from '../../shared/artifact-provenance'
-import type { HistoryReplayDescriptor } from '../../shared/history-preamble'
+import { resolveFileTextBudget, type HistoryReplayDescriptor } from '../../shared/history-preamble'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import type { AcpAppContinuationOwner } from './app-continuation-owner'
 import type { ContextUsageTracker } from './context-usage-tracker'
@@ -92,7 +92,10 @@ import type {
 } from './reviewer-session-owner'
 import type { ArtifactTurnOwner } from './artifact-turn-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
-import { AcpNativeFollowUpWorkflow } from './native-follow-up-workflow'
+import {
+  AcpNativeFollowUpWorkflow,
+  finalizeNativeFollowUpPreparedContent
+} from './native-follow-up-workflow'
 import type { AcpSessionRegistry } from './session-registry'
 import type {
   AcpConnectionResourceOwner,
@@ -1124,6 +1127,9 @@ class AcpRuntime {
         .specialistId,
       codexHome: this.backendGeneration.current.adapter.codexHome
     })
+    const livePrompt = this.sessionInteractions.current(request.sessionId)
+    const supportsImageInput = this.backendGeneration.current.context.supportsImageInput
+    const imageCompatibility = this.options.imageInputCompatibility
     const prepared = await this.promptContent.prepare({
       appSessionId: request.sessionId,
       projectId: this.liveSessionProjectId(request.sessionId) ?? '',
@@ -1134,18 +1140,27 @@ class AcpRuntime {
       currentUploads: request.attachments ?? [],
       references: request.referencedArtifacts ?? [],
       codexSkillInputs: presented.codexSkillInputs,
-      skillImportEnabled: false
+      skillImportEnabled: false,
+      imageCompatibilityRelay: supportsImageInput === false && imageCompatibility !== undefined,
+      fileTextBudget: resolveFileTextBudget(this.backendGeneration.current.context.window)
     })
-    if (typeof prepared.content === 'string') {
-      return {
-        prompt: prepared.content.trim() ? [{ type: 'text', text: prepared.content }] : [],
-        uploads: [...(prepared.turnInputs?.uploads ?? [])]
-      }
-    }
-    return {
-      prompt: prepared.content,
-      uploads: [...(prepared.turnInputs?.uploads ?? [])]
-    }
+    return finalizeNativeFollowUpPreparedContent({
+      content: prepared.content,
+      ...(prepared.turnInputs ? { turnInputs: prepared.turnInputs } : {}),
+      projectId: this.liveSessionProjectId(request.sessionId) ?? '',
+      sessionId: request.sessionId,
+      ...(livePrompt?.kind === 'prompt' && livePrompt.promptMessageId
+        ? { livePromptMessageId: livePrompt.promptMessageId }
+        : {}),
+      supportsImageInput,
+      ...(prepared.imageSources ? { imageSources: prepared.imageSources } : {}),
+      historyImageCount: prepared.historyImageCount,
+      ...(livePrompt?.kind === 'prompt' ? { signal: livePrompt.signal } : {}),
+      ...(imageCompatibility ? { imageCompatibility } : {}),
+      ...(this.options.notebook?.registerTurnInputs
+        ? { registerTurnInputs: this.options.notebook.registerTurnInputs }
+        : {})
+    })
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.

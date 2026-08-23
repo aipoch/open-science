@@ -8,6 +8,7 @@ import type {
   AcpSteerFollowUpRequest,
   AcpSteerFollowUpResult
 } from '../../shared/acp'
+import type { FileReference } from '../../shared/artifacts'
 import type { MessagePart } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
 import {
@@ -62,6 +63,75 @@ type NativeFollowUpWorkflowOptions = Readonly<{
   fetchImpl?: typeof fetch
   followUpTimeoutMs?: number
 }>
+
+type NativeFollowUpTurnInputs = Readonly<{
+  uploads: readonly UploadedAttachment[]
+  references: readonly FileReference[]
+}>
+
+type NativeFollowUpMediaInput = Readonly<{
+  content: string | ContentBlock[]
+  turnInputs?: NativeFollowUpTurnInputs
+  projectId: string
+  sessionId: string
+  livePromptMessageId?: string
+  supportsImageInput: boolean
+  imageSources?: readonly unknown[]
+  historyImageCount: number
+  signal?: AbortSignal
+  imageCompatibility?: {
+    prepare: (input: {
+      content: string | ContentBlock[]
+      supportsImageInput: boolean
+      projectId?: string
+      sessionId?: string
+      imageSources?: readonly unknown[]
+      historyImageCount?: number
+      signal?: AbortSignal
+    }) => Promise<string | ContentBlock[]>
+  }
+  registerTurnInputs?: (request: {
+    projectId: string
+    appSessionId: string
+    promptMessageId: string
+    uploads: UploadedAttachment[]
+    references: FileReference[]
+  }) => Promise<void>
+}>
+
+const nativeFollowUpPromptBlocks = (content: string | ContentBlock[]): ContentBlock[] => {
+  if (typeof content !== 'string') return content
+  return content.trim() ? [{ type: 'text', text: content }] : []
+}
+
+const finalizeNativeFollowUpPreparedContent = async (
+  input: NativeFollowUpMediaInput
+): Promise<NativeFollowUpPreparedContent> => {
+  const content = input.imageCompatibility
+    ? await input.imageCompatibility.prepare({
+        content: input.content,
+        supportsImageInput: input.supportsImageInput,
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        imageSources: input.imageSources,
+        historyImageCount: input.historyImageCount,
+        ...(input.signal ? { signal: input.signal } : {})
+      })
+    : input.content
+  if (input.registerTurnInputs && input.turnInputs && input.livePromptMessageId) {
+    await input.registerTurnInputs({
+      projectId: input.projectId,
+      appSessionId: input.sessionId,
+      promptMessageId: input.livePromptMessageId,
+      uploads: [...input.turnInputs.uploads],
+      references: [...input.turnInputs.references]
+    })
+  }
+  return {
+    prompt: nativeFollowUpPromptBlocks(content),
+    uploads: [...(input.turnInputs?.uploads ?? [])]
+  }
+}
 
 const persistableUploads = (
   attachments: readonly UploadedAttachment[]
@@ -278,7 +348,7 @@ class AcpNativeFollowUpWorkflow {
   }
 }
 
-export { AcpNativeFollowUpWorkflow }
+export { AcpNativeFollowUpWorkflow, finalizeNativeFollowUpPreparedContent }
 export type {
   NativeFollowUpPreparedContent,
   NativeFollowUpUserMessage,

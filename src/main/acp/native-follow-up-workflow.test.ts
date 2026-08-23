@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   AcpNativeFollowUpWorkflow,
+  finalizeNativeFollowUpPreparedContent,
   type NativeFollowUpUserMessage
 } from './native-follow-up-workflow'
 import { ACP_STEERING_METHOD } from './native-follow-up'
@@ -381,5 +382,81 @@ describe('AcpNativeFollowUpWorkflow', () => {
     ).resolves.toEqual({ injected: false, reason: 'not-advertised' })
     expect(request).not.toHaveBeenCalled()
     expect(published).toEqual([])
+  })
+})
+
+describe('finalizeNativeFollowUpPreparedContent', () => {
+  it('relays content through image compatibility without changing the live prompt id', async () => {
+    const prepare = vi.fn(async () => [{ type: 'text' as const, text: 'relayed image' }])
+    await expect(
+      finalizeNativeFollowUpPreparedContent({
+        content: [{ type: 'image', data: 'abc', mimeType: 'image/png' }],
+        projectId: 'project-1',
+        sessionId: 'app-1',
+        livePromptMessageId: 'prompt-live',
+        supportsImageInput: false,
+        historyImageCount: 0,
+        imageCompatibility: { prepare }
+      })
+    ).resolves.toEqual({
+      prompt: [{ type: 'text', text: 'relayed image' }],
+      uploads: []
+    })
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        supportsImageInput: false,
+        sessionId: 'app-1',
+        projectId: 'project-1'
+      })
+    )
+  })
+
+  it('registers turn inputs against the live prompt instead of minting a new id', async () => {
+    const registerTurnInputs = vi.fn(async () => undefined)
+    const upload = {
+      id: 'upload-1',
+      sessionId: 'app-1',
+      name: 'notes.md',
+      originalName: 'notes.md',
+      mimeType: 'text/markdown',
+      size: 4,
+      versionId: 'version-1'
+    }
+    await expect(
+      finalizeNativeFollowUpPreparedContent({
+        content: [{ type: 'text', text: 'see file' }],
+        turnInputs: { uploads: [upload], references: [] },
+        projectId: 'project-1',
+        sessionId: 'app-1',
+        livePromptMessageId: 'prompt-live',
+        supportsImageInput: true,
+        historyImageCount: 0,
+        registerTurnInputs
+      })
+    ).resolves.toEqual({
+      prompt: [{ type: 'text', text: 'see file' }],
+      uploads: [upload]
+    })
+    expect(registerTurnInputs).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'app-1',
+      promptMessageId: 'prompt-live',
+      uploads: [upload],
+      references: []
+    })
+  })
+
+  it('skips notebook registration when the live prompt has no message id', async () => {
+    const registerTurnInputs = vi.fn(async () => undefined)
+    await finalizeNativeFollowUpPreparedContent({
+      content: 'see file',
+      turnInputs: { uploads: [], references: [] },
+      projectId: 'project-1',
+      sessionId: 'app-1',
+      supportsImageInput: true,
+      historyImageCount: 0,
+      registerTurnInputs
+    })
+    expect(registerTurnInputs).not.toHaveBeenCalled()
   })
 })
