@@ -5050,6 +5050,7 @@ describe('session store public contract', () => {
         'failRun',
         'finishCompaction',
         'finishRun',
+        'hydrateSessionSummaries',
         'hydrateSessions',
         'interruptRun',
         'markDisconnected',

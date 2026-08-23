@@ -279,7 +279,9 @@ describe('session persistence startup', () => {
       await Promise.resolve()
     })
 
-    expect(loadAll).toHaveBeenCalledTimes(2)
+    // Web has no loadOne command: conflict recovery falls back to loadAll once, then the explicit
+    // retry reloads the full durable snapshot again.
+    expect(loadAll).toHaveBeenCalledTimes(3)
     expect(saveSession).toHaveBeenCalledOnce()
   })
 
