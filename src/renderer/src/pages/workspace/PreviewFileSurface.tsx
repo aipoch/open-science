@@ -404,10 +404,11 @@ const PreviewFileSurface = ({
     (state) =>
       state.sessions.find((session) => session.id === previewItem.sessionId)?.filesRevision ?? 0
   )
-  // A GENERATED-card click updates selectedVersionId on the stable preview tab. Refetch even when the
-  // Artifact identity is unchanged; the cached lineage may predate that immutable Version.
-  const lineageRequestKey = `${lineageKey}:${sessionFilesRevision}:${previewItem.selectedVersionId ?? ''}`
-  const lineage = lineageResult?.key === lineageKey ? lineageResult.value : undefined
+  // A GENERATED-card click or origin lifecycle refresh can update the stable preview tab while its
+  // Artifact identity stays unchanged. Refetch and stop consuming the prior snapshot until the
+  // matching lineage resolves.
+  const lineageRequestKey = `${lineageKey}:${sessionFilesRevision}:${previewItem.selectedVersionId ?? ''}:${previewItem.originSession?.state ?? ''}`
+  const lineage = lineageResult?.key === lineageRequestKey ? lineageResult.value : undefined
   const exactSelectedVersion = lineage?.versions.find(
     (version) => version.versionId === previewItem.selectedVersionId
   )
@@ -442,7 +443,7 @@ const PreviewFileSurface = ({
         artifactId: previewItem.artifactId
       })
       .then((value) => {
-        if (active) setLineageResult({ key: lineageKey, value })
+        if (active) setLineageResult({ key: lineageRequestKey, value })
       })
       .catch(() => undefined)
 

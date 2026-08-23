@@ -757,6 +757,49 @@ describe('PreviewFileSurface View in context entry', () => {
     expect(document.body.querySelector('[role="menu"]')?.textContent).toContain('View in context')
   })
 
+  it('stops using active lineage while a newer deleting item snapshot is refreshing', async () => {
+    seedWorkspaceStores()
+    const getLineage = vi
+      .fn()
+      .mockResolvedValueOnce({
+        artifactId: 'artifact-1',
+        filename: 'sin.png',
+        originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+        versions: [descriptor, secondDescriptor]
+      })
+      .mockImplementationOnce(() => new Promise(() => undefined))
+    window.api.artifacts.getLineage = getLineage
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, originSession: { state: 'active' } }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, originSession: { state: 'deleting' } }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+
+    expect(getLineage).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[role="menu"]')?.textContent).not.toContain(
+      'View in context'
+    )
+  })
+
   it('does not notify View in context consumers when the guard rejects the navigation', async () => {
     seedWorkspaceStores()
     // The origin session vanished after render (deleted mid-flight): the guard must reject the
