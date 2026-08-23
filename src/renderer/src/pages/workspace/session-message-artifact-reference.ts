@@ -76,6 +76,23 @@ const escapeHtmlAttribute = (value: string): string =>
     .replace(/</gu, '&lt;')
     .replace(/>/gu, '&gt;')
 
+const stripBlockquotePrefixes = (
+  line: string,
+  maxDepth = Number.POSITIVE_INFINITY
+): { content: string; depth: number } => {
+  let content = line
+  let depth = 0
+  while (depth < maxDepth) {
+    const prefix = content.match(/^\s{0,3}>\s?/u)?.[0]
+    if (!prefix) break
+    content = content.slice(prefix.length)
+    depth += 1
+  }
+  return { content, depth }
+}
+
+const stripListMarker = (line: string): string => line.replace(/^\s{0,3}(?:[-+*]|\d+[.)])\s+/u, '')
+
 // Artifact reference rewriting operates on raw streaming Markdown before Streamdown parses it.
 // Fenced and indented code stay byte-for-byte intact; Marked's inline lexer protects code spans
 // and gives link/image structure without reserializing unrelated Markdown.
@@ -84,6 +101,7 @@ const transformMarkdownOutsideCode = (
   transform: (markdown: string) => string
 ): string => {
   const fenceTracker = createCodeFenceTracker()
+  let fenceBlockquoteDepth = 0
   const lines = content.match(/[^\n]*(?:\n|$)/gu)?.filter(Boolean) ?? []
 
   return lines
@@ -91,8 +109,14 @@ const transformMarkdownOutsideCode = (
       const hasNewline = rawLine.endsWith('\n')
       const line = hasNewline ? rawLine.slice(0, -1) : rawLine
       const fenceWasOpen = fenceTracker.isOpen()
-      const fenceIsOpen = fenceTracker.feed(line)
-      const isCodeLine = fenceWasOpen || fenceIsOpen || /^(?: {4}|\t)/u.test(line)
+      const blockquote = stripBlockquotePrefixes(line)
+      const fenceContent = fenceWasOpen
+        ? stripBlockquotePrefixes(line, fenceBlockquoteDepth).content
+        : stripListMarker(blockquote.content)
+      const fenceIsOpen = fenceTracker.feed(fenceContent)
+      if (!fenceWasOpen && fenceIsOpen) fenceBlockquoteDepth = blockquote.depth
+      if (fenceWasOpen && !fenceIsOpen) fenceBlockquoteDepth = 0
+      const isCodeLine = fenceWasOpen || fenceIsOpen || /^(?: {4}|\t)/u.test(blockquote.content)
       const normalizedLine = isCodeLine ? line : transform(line)
       return hasNewline ? `${normalizedLine}\n` : normalizedLine
     })

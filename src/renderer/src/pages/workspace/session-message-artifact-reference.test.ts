@@ -164,6 +164,7 @@ describe('session message artifact references', () => {
       '`![Inline](sin_curve.png)` and ``[Inline link](sin_curve.png)``',
       '```md',
       '![Fenced](sin_curve.png)',
+      '> ```',
       '[Fenced link](sin_curve.png)',
       '```',
       '    ![Indented](sin_curve.png)',
@@ -176,10 +177,39 @@ describe('session message artifact references', () => {
         '`![Inline](sin_curve.png)` and ``[Inline link](sin_curve.png)``',
         '```md',
         '![Fenced](sin_curve.png)',
+        '> ```',
         '[Fenced link](sin_curve.png)',
         '```',
         '    ![Indented](sin_curve.png)',
         '[Rendered link](/.open-science/artifact/version-1)'
+      ].join('\n')
+    )
+  })
+
+  it('preserves artifact syntax inside blockquoted and list-nested fences', () => {
+    const content = [
+      '> ```md',
+      '> ![Quoted code](sin_curve.png)',
+      '> ```',
+      '> ![Quoted preview](sin_curve.png)',
+      '',
+      '- ```md',
+      '  [List code](sin_curve.png)',
+      '  ```',
+      '- [List preview](sin_curve.png)'
+    ].join('\n')
+
+    expect(normalizeSessionArtifactReferences(content, [createArtifact()])).toBe(
+      [
+        '> ```md',
+        '> ![Quoted code](sin_curve.png)',
+        '> ```',
+        '> <session-artifact-image artifact_ref="version-1" alt_text="Quoted preview"></session-artifact-image>',
+        '',
+        '- ```md',
+        '  [List code](sin_curve.png)',
+        '  ```',
+        '- [List preview](/.open-science/artifact/version-1)'
       ].join('\n')
     )
   })
