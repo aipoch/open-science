@@ -38,6 +38,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { specialistDiagnosticCopy } from '@/lib/specialist-diagnostics'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
@@ -63,7 +64,6 @@ import {
   type SpecialistMarketplaceView
 } from './SpecialistMarketplace'
 import { SettingsSearchInput } from './SettingsSearchInput'
-import { SettingsSegmentedControl } from './SettingsSegmentedControl'
 import { SpecialistAppearancePicker } from './SpecialistAppearancePicker'
 import { SpecialistAvatar } from './specialist-avatar'
 import { SpecialistSkillConflictChoices } from './SpecialistSkillConflictChoices'
@@ -201,6 +201,9 @@ const InstalledSpecialistsPanel = ({
   const [filter, setFilter] = useState<CategoryFilter>('all')
   const [query, setQuery] = useState('')
   const [tagFilter, setTagFilter] = useState('all')
+  const [collapsed, setCollapsed] = useState<
+    Partial<Record<Exclude<CategoryFilter, 'all'>, boolean>>
+  >({})
   const tagAssignments = useTagStore((state) => state.assignments)
   const [deletingItem, setDeletingItem] = useState<{
     id: string
@@ -344,6 +347,15 @@ const InstalledSpecialistsPanel = ({
   // Keep runnable builtins distinct from the Reviewer placeholder even though Settings groups both
   // under Built-in. Only runnable builtins enter the Session picker.
   const reviewerItems = items.filter((i) => i.kind === 'reviewer')
+  const filterCounts: Record<CategoryFilter, number> = {
+    all: items.length,
+    custom: customItems.length,
+    marketplace: marketplaceItems.length,
+    builtin: builtinItems.length + reviewerItems.length
+  }
+  const marketplaceExpanded = !collapsed.marketplace
+  const customExpanded = !collapsed.custom
+  const builtinExpanded = !collapsed.builtin
   const visibleBuiltinItems = useMemo(() => {
     if (filter === 'custom' || filter === 'marketplace') return []
     const term = query.trim().toLowerCase()
@@ -1346,53 +1358,20 @@ const InstalledSpecialistsPanel = ({
       </div>
       {/* Toolbar */}
       <div data-slot="specialists-toolbar" className="mb-4 flex flex-wrap items-center gap-2">
-        <select
-          value={filter}
-          onChange={(event) => setFilter(event.target.value as CategoryFilter)}
-          aria-label={t('Filter specialists by category')}
-          className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring active:bg-muted sm:hidden"
-        >
-          {(['all', 'custom', 'marketplace', 'builtin'] as const).map((key) => (
-            <option key={key} value={key}>
-              {getFilterLabel(key, t)} (
-              {key === 'all'
-                ? items.length
-                : key === 'custom'
-                  ? customItems.length
-                  : key === 'marketplace'
-                    ? marketplaceItems.length
-                    : builtinItems.length + reviewerItems.length}
-              )
-            </option>
-          ))}
-        </select>
-        <SettingsSegmentedControl
-          value={filter}
-          options={(['all', 'custom', 'marketplace', 'builtin'] as const).map((key) => {
-            const count =
-              key === 'all'
-                ? items.length
-                : key === 'custom'
-                  ? customItems.length
-                  : key === 'marketplace'
-                    ? marketplaceItems.length
-                    : builtinItems.length + reviewerItems.length
-            return {
-              value: key,
-              label: (
-                <>
-                  {getFilterLabel(key, t)}
-                  <span className="ml-1 tabular-nums text-muted-foreground">({count})</span>
-                </>
-              )
-            }
-          })}
-          onValueChange={setFilter}
-          ariaLabel={t('Filter specialists by category')}
-          semantics="tab"
-          columnWidth="6.5rem"
-          className="hidden sm:grid"
-        />
+        <Select value={filter} onValueChange={(value) => setFilter(value as CategoryFilter)}>
+          <SelectTrigger aria-label={t('Filter specialists by category')} className="w-36">
+            <span>
+              {getFilterLabel(filter, t)} ({filterCounts[filter]})
+            </span>
+          </SelectTrigger>
+          <SelectContent>
+            {(['all', 'custom', 'marketplace', 'builtin'] as const).map((key) => (
+              <SelectItem key={key} value={key}>
+                {getFilterLabel(key, t)} ({filterCounts[key]})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <TagFilter resourceType="catalog.specialist" value={tagFilter} onChange={setTagFilter} />
         <SettingsSearchInput
           aria-label={t('Search specialists')}
@@ -1529,15 +1508,36 @@ const InstalledSpecialistsPanel = ({
           {filter !== 'custom' &&
           filter !== 'builtin' &&
           (marketplaceItems.length > 0 || filter === 'marketplace') ? (
-            <div>
-              <div className="mb-1 flex flex-col gap-0.5">
-                <span className="text-sm font-semibold text-foreground">{t('Marketplace')}</span>
+            <div data-slot="specialists-source-group" data-source="marketplace">
+              <button
+                type="button"
+                aria-expanded={marketplaceExpanded}
+                onClick={() =>
+                  setCollapsed((previous) => ({
+                    ...previous,
+                    marketplace: !previous.marketplace
+                  }))
+                }
+                className="flex w-full flex-col items-start gap-0.5 text-left"
+              >
+                <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
+                  {t('Marketplace')}
+                  <ChevronDown
+                    className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
+                      marketplaceExpanded ? '' : '-rotate-90'
+                    }`}
+                    aria-hidden="true"
+                  />
+                </span>
                 <span className="text-xs text-muted-foreground">
                   {t('Installed from Marketplace and managed by its publisher.')}
                 </span>
-              </div>
+              </button>
               {visibleMarketplaceItems.length > 0 ? (
-                <ul className="mt-2 flex flex-col divide-y divide-border">
+                <ul
+                  hidden={!marketplaceExpanded}
+                  className="mt-2 flex flex-col divide-y divide-border"
+                >
                   {visibleMarketplaceItems.map((item) => {
                     if (item.kind !== 'custom' || item.origin !== 'marketplace') return null
                     const listing = marketplaceSnapshot?.specialists.find(
@@ -1564,58 +1564,78 @@ const InstalledSpecialistsPanel = ({
                             }).then(() => undefined)
                           }
                         />
-                        <button
-                          type="button"
-                          onClick={() => onNavigate({ kind: 'edit', id: item.id })}
-                          aria-label={t('View {{name}}', { name: item.displayName ?? item.name })}
-                          className="min-w-0 flex-1 cursor-pointer rounded-md text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-muted/50"
-                        >
-                          <span className="block truncate text-sm text-foreground">
-                            {item.displayName ?? item.name}
-                          </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {item.description}
-                          </span>
-                          <span className="mt-1 flex flex-wrap items-center gap-1">
-                            <Badge
-                              variant="secondary"
-                              className="h-5 px-1.5 text-[11px] font-normal"
-                            >
-                              {t('Marketplace')}
-                            </Badge>
-                            <Badge
-                              variant="outline"
-                              className="h-5 px-1.5 text-[11px] font-normal tabular-nums text-muted-foreground"
-                            >
-                              {t('Version {{version}}', {
-                                version: item.packageVersion ?? '0.1.0'
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                            aria-label={t('View {{name}}', {
+                              name: item.displayName ?? item.name
+                            })}
+                            className="block w-full min-w-0 cursor-pointer rounded-md text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-muted/50"
+                          >
+                            <span className="block truncate text-sm text-foreground">
+                              {item.displayName ?? item.name}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {item.description}
+                            </span>
+                          </button>
+                          <span
+                            className="mt-1 flex min-w-0 flex-wrap items-center gap-1"
+                            data-specialist-metadata-group={item.id}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                              aria-label={t('View {{name}}', {
+                                name: item.displayName ?? item.name
                               })}
-                            </Badge>
-                            {item.marketplaceProvenance?.publisher ? (
+                              className="flex min-w-0 cursor-pointer flex-wrap items-center gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              <Badge
+                                variant="secondary"
+                                className="h-5 px-1.5 text-[11px] font-normal"
+                                data-specialist-metadata="source"
+                              >
+                                {t('Marketplace')}
+                              </Badge>
                               <Badge
                                 variant="outline"
-                                className="h-5 max-w-full px-1.5 text-[11px] font-normal text-muted-foreground"
+                                className="h-5 px-1.5 text-[11px] font-normal tabular-nums text-muted-foreground"
+                                data-specialist-metadata="version"
                               >
-                                <span className="truncate">
-                                  {t('By {{publisher}}', {
-                                    publisher: item.marketplaceProvenance.publisher
-                                  })}
-                                </span>
+                                {t('Version {{version}}', {
+                                  version: item.packageVersion ?? '0.1.0'
+                                })}
                               </Badge>
-                            ) : null}
-                            {listing?.updateAvailable ? (
-                              <Badge className="h-5 border-primary/20 bg-primary/10 px-1.5 text-[11px] font-normal text-primary">
-                                {t('Update available')}
-                              </Badge>
-                            ) : null}
+                              {item.marketplaceProvenance?.publisher ? (
+                                <Badge
+                                  variant="outline"
+                                  className="h-5 max-w-full px-1.5 text-[11px] font-normal text-muted-foreground"
+                                  data-specialist-metadata="publisher"
+                                >
+                                  <span className="truncate">
+                                    {t('By {{publisher}}', {
+                                      publisher: item.marketplaceProvenance.publisher
+                                    })}
+                                  </span>
+                                </Badge>
+                              ) : null}
+                              {listing?.updateAvailable ? (
+                                <Badge className="h-5 border-primary/20 bg-primary/10 px-1.5 text-[11px] font-normal text-primary">
+                                  {t('Update available')}
+                                </Badge>
+                              ) : null}
+                            </button>
+                            <ResourceTagBadges
+                              reference={{
+                                resourceType: 'catalog.specialist',
+                                resourceId: item.id
+                              }}
+                              onOpenTag={onOpenTag}
+                            />
                           </span>
-                        </button>
-                        <span className="hidden md:inline-flex">
-                          <ResourceTagBadges
-                            reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
-                            onOpenTag={onOpenTag}
-                          />
-                        </span>
+                        </div>
                         <ResourceTagMenu
                           reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
                         />
@@ -1690,7 +1710,10 @@ const InstalledSpecialistsPanel = ({
                   })}
                 </ul>
               ) : (
-                <p className="mt-2 py-2 text-xs text-muted-foreground">
+                <p
+                  hidden={!marketplaceExpanded}
+                  className="mt-2 py-2 text-xs text-muted-foreground"
+                >
                   {t('No Marketplace Specialists installed.')}
                 </p>
               )}
@@ -1701,14 +1724,32 @@ const InstalledSpecialistsPanel = ({
           {filter !== 'builtin' &&
           filter !== 'marketplace' &&
           (customItems.length > 0 || filter === 'custom' || items.length === 0) ? (
-            <div>
-              <div className="mb-1 flex flex-col gap-0.5">
-                <span className="text-sm font-semibold text-foreground">{t('Custom')}</span>
+            <div data-slot="specialists-source-group" data-source="custom">
+              <button
+                type="button"
+                aria-expanded={customExpanded}
+                onClick={() =>
+                  setCollapsed((previous) => ({
+                    ...previous,
+                    custom: !previous.custom
+                  }))
+                }
+                className="flex w-full flex-col items-start gap-0.5 text-left"
+              >
+                <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
+                  {t('Custom')}
+                  <ChevronDown
+                    className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
+                      customExpanded ? '' : '-rotate-90'
+                    }`}
+                    aria-hidden="true"
+                  />
+                </span>
                 <span className="text-xs text-muted-foreground">{t('Created by you.')}</span>
-              </div>
+              </button>
 
               {visibleCustomItems.length > 0 ? (
-                <ul className="mt-2 flex flex-col divide-y divide-border">
+                <ul hidden={!customExpanded} className="mt-2 flex flex-col divide-y divide-border">
                   {visibleCustomItems.map((item) => {
                     if (item.kind !== 'custom') return null
                     return (
@@ -1938,7 +1979,7 @@ const InstalledSpecialistsPanel = ({
                   })}
                 </ul>
               ) : (
-                <p className="mt-2 py-2 text-xs text-muted-foreground">
+                <p hidden={!customExpanded} className="mt-2 py-2 text-xs text-muted-foreground">
                   {t('No specialists yet. Use "Add specialist" to create one.')}
                 </p>
               )}
@@ -1947,14 +1988,32 @@ const InstalledSpecialistsPanel = ({
 
           {/* Built-in group: runnable repository profiles plus the separate Reviewer placeholder. */}
           {visibleBuiltinItems.length > 0 || visibleReviewerItems.length > 0 ? (
-            <div>
-              <div className="mb-1 flex flex-col gap-0.5">
-                <span className="text-sm font-semibold text-foreground">{t('Built-in')}</span>
+            <div data-slot="specialists-source-group" data-source="builtin">
+              <button
+                type="button"
+                aria-expanded={builtinExpanded}
+                onClick={() =>
+                  setCollapsed((previous) => ({
+                    ...previous,
+                    builtin: !previous.builtin
+                  }))
+                }
+                className="flex w-full flex-col items-start gap-0.5 text-left"
+              >
+                <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
+                  {t('Built-in')}
+                  <ChevronDown
+                    className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
+                      builtinExpanded ? '' : '-rotate-90'
+                    }`}
+                    aria-hidden="true"
+                  />
+                </span>
                 <span className="text-xs text-muted-foreground">
                   {t('Shipped with the app. Not configurable.')}
                 </span>
-              </div>
-              <ul className="mt-2 flex flex-col divide-y divide-border">
+              </button>
+              <ul hidden={!builtinExpanded} className="mt-2 flex flex-col divide-y divide-border">
                 {visibleBuiltinItems.map((item) => (
                   <li
                     key={item.id}
