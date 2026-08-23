@@ -104,6 +104,22 @@ const canPrepareExistingWorkspacePrompt = ({
       )
     }).actions.startTurn.allowed)
 
+const canAdmitExistingWorkspacePrompt = (
+  runtimeState: ExistingWorkspacePromptAdmission['runtimeState'],
+  command: { sessionId?: string; allowCompactionRecovery?: boolean }
+): boolean => {
+  const sessionId = command.sessionId
+  return Boolean(
+    sessionId &&
+    canPrepareExistingWorkspacePrompt({
+      sessionId,
+      session: useSessionStore.getState().sessions.find((session) => session.id === sessionId),
+      runtimeState,
+      allowCompactionRecovery: command.allowCompactionRecovery === true
+    })
+  )
+}
+
 const isReplayImage = (attachment: Pick<UploadedAttachment, 'name' | 'mimeType'>): boolean =>
   imageAttachmentMimeType(attachment.name, attachment.mimeType) !== undefined
 
@@ -440,6 +456,7 @@ const prepareExistingWorkspacePrompt = async (
 
 export {
   acquireWorkspacePromptPreparation,
+  canAdmitExistingWorkspacePrompt,
   canPrepareExistingWorkspacePrompt,
   getResumeFailureMessage,
   isWorkspacePromptPreparationInFlight,

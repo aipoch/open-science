@@ -21,7 +21,7 @@ import {
   type HistoryReplayDescriptor
 } from './history-preamble'
 import {
-  canPrepareExistingWorkspacePrompt,
+  canAdmitExistingWorkspacePrompt,
   prepareExistingWorkspacePrompt
 } from './workspace-runtime-prompt-preparation-owner'
 import {
@@ -172,6 +172,9 @@ const ownsPrompt = (sessionId: string, messageId: string): boolean => {
   return session?.status === 'running' && session.activeRun?.promptMessageId === messageId
 }
 
+const isOverlappingPromptRejection = (error: unknown): boolean =>
+  /An ACP (?:prompt|interaction) is already running/i.test(errorMessage(error))
+
 type PromptDispatch = {
   sessionId: string
   messageId: string
@@ -214,6 +217,8 @@ const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatc
   void result
     .then(() => request.accepted?.())
     .catch((error) => {
+      if (isOverlappingPromptRejection(error) && !ownsPrompt(request.sessionId, request.messageId))
+        return
       const message = errorMessage(error).trim() || 'Agent run failed'
       void failPrompt(request.sessionId, message, priorErrorEventId)
     })
@@ -447,15 +452,7 @@ const sendWorkspaceMessage = async (
     const sessionId = input.sessionId
     const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
     if (input.requireExistingSession && !session) return undefined
-    if (
-      !canPrepareExistingWorkspacePrompt({
-        sessionId,
-        session,
-        runtimeState: runtime.state,
-        allowCompactionRecovery: input.allowCompactionRecovery === true
-      })
-    )
-      return undefined
+    if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
     const projectId = input.projectId ?? session?.projectId
     if (input.planContinuation && !projectId) return undefined
 
@@ -543,6 +540,7 @@ const sendWorkspaceMessage = async (
       useSessionStore.getState().failRun(sessionId, errorMessage(error))
       return undefined
     }
+    if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
     if (input.truncateFromMessageId) {
       if (promptAttachments.length > 0) {
         useSessionStore.getState().replaceMessageUploads({

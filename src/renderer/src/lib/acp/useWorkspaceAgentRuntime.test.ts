@@ -4319,6 +4319,59 @@ describe('workspace agent message sending', () => {
     expect(runtime.sendPrompt).toHaveBeenCalledTimes(1)
   })
 
+  it('admits only one local user Message when two sends race an attached idle Session', async () => {
+    vi.stubGlobal('window', {
+      api: { acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) } }
+    })
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Previous prompt',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    const firstGate = createDeferred<AcpStateSnapshot>()
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi
+        .fn()
+        .mockImplementationOnce(() => firstGate.promise)
+        .mockRejectedValueOnce(new Error('An ACP prompt is already running for this session'))
+    }
+
+    const [first, second] = await Promise.all([
+      sendWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        text: 'first',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      }),
+      sendWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        text: 'second',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      })
+    ])
+    await flushRuntimeTasks()
+    await flushRuntimeTasks()
+
+    expect([first, second].filter(Boolean)).toHaveLength(1)
+    const session = useSessionStore.getState().sessions[0]
+    expect(
+      session.messages
+        .filter((message) => message.role === 'user')
+        .map((message) => message.content)
+    ).toEqual(['Previous prompt', first ? 'first' : 'second'])
+    expect(session.status).not.toBe('error')
+    firstGate.resolve(createSnapshot(['session-1']))
+  })
+
   it('does not append a prompt while the runtime owns the session for compaction', async () => {
     const runtime = {
       state: {
