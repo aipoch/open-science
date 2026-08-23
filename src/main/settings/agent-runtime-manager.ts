@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access } from 'node:fs/promises'
+import { access, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createServer } from 'node:net'
 import { promisify } from 'node:util'
@@ -715,7 +715,8 @@ export class AgentRuntimeManager {
   async provisionClaudeRuntimeConfig(
     settings: StoredSettings,
     forcedSkillIds: ReadonlySet<string> = new Set(),
-    modelConfig?: ClaudeRuntimeModelConfig | null
+    modelConfig?: ClaudeRuntimeModelConfig | null,
+    includeSkillAndConnectorContext = true
   ): Promise<ClaudeRuntimeAssets> {
     return provisionClaudeRuntime({
       storageRoot: this.storageRoot,
@@ -723,6 +724,10 @@ export class AgentRuntimeManager {
         provisionAppClaudePrivateProfile(privateProfileDir, modelConfig),
       materializeProjection: async (projectionRoot) => {
         const claudeProjectConfigRoot = join(projectionRoot, '.claude')
+        if (!includeSkillAndConnectorContext) {
+          await mkdir(join(claudeProjectConfigRoot, 'skills'), { recursive: true })
+          return
+        }
         const connectors = await this.connectors.getConnectors()
         await this.materializeSkillProjection(
           settings,

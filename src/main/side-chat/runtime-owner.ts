@@ -97,7 +97,7 @@ type SideChatRuntimeOwnerOptions = Readonly<{
     target: ExplicitAgentBackendTarget,
     context: {
       systemPromptAppends: string[]
-      includeBaselineSystemPromptGuidance: false
+      includeSkillAndConnectorContext: false
       forceCodexNativeResponsesCompatibility: true
     }
   ) => Promise<ResolvedAgentBackend>
@@ -403,7 +403,7 @@ class SideChatRuntimeOwner {
         const target = await this.options.captureTarget()
         let resolved = await this.options.resolveTarget(target, {
           systemPromptAppends: [SIDE_CHAT_SYSTEM_PROMPT],
-          includeBaselineSystemPromptGuidance: false,
+          includeSkillAndConnectorContext: false,
           forceCodexNativeResponsesCompatibility: true
         })
         resolved = await prepareSideChatBackend(resolved, profileRoot)
@@ -888,7 +888,7 @@ class SideChatRuntimeOwner {
         const target = await this.options.captureTarget()
         let resolved = await this.options.resolveTarget(target, {
           systemPromptAppends: [SIDE_CHAT_SYSTEM_PROMPT],
-          includeBaselineSystemPromptGuidance: false,
+          includeSkillAndConnectorContext: false,
           forceCodexNativeResponsesCompatibility: true
         })
         resolved = await prepareSideChatBackend(resolved, profileRoot)

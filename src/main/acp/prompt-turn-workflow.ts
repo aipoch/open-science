@@ -193,6 +193,7 @@ class AcpPromptTurnWorkflow {
       const planPreflight = this.options.plan.preflight(request)
       plan = planPreflight instanceof Promise ? await planPreflight : planPreflight
       const authorization = this.options.skills.authorize({
+        role: this.options.environment.role?.(),
         specialistId: this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
           .specialistId,
         selectedSkillIds: request.forcedSkillIds,

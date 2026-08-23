@@ -7,6 +7,7 @@ import type {
   ResponsesBridgeSkillInput
 } from '../settings/responses-bridge'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
+import type { SessionCapabilityPolicy } from './session-capability-owner'
 const log = createLogger('acp-turn-skill-owner')
 const presentation = new AcpSessionPresentationPolicy()
 type AcpTurnSkillHooks = Readonly<{
@@ -55,6 +56,7 @@ class AcpTurnSkillOwner {
     }>
   ) {}
   authorize(input: {
+    role?: SessionCapabilityPolicy['role']
     specialistId?: string
     selectedSkillIds?: readonly string[]
     signal?: AbortSignal
@@ -97,6 +99,11 @@ class AcpTurnSkillOwner {
         ? this.options.skills.needForceLoad([...selected]).then(create)
         : create([])
     }
+    const role = input.role ?? 'primary'
+    if (role !== 'primary') {
+      if (selected.length > 0) throw new Error('Skills are not available to this session.')
+      return finish()
+    }
     if (!input.specialistId) return finish({ kind: 'main' })
     if (!this.options.resolveSpecialistSkills) return finish()
     return this.options
@@ -118,14 +125,18 @@ class AcpTurnSkillOwner {
     frameworkId: AgentFrameworkId
     text: string
     selectedSkillIds: readonly string[]
+    role?: SessionCapabilityPolicy['role']
     specialistId?: string
     codexHome?: string
   }): Promise<ProviderPreparation> {
     const selected = Object.freeze([...input.selectedSkillIds])
-    let scope: EffectiveSpecialistSkills | undefined = input.specialistId
-      ? undefined
-      : { kind: 'main' }
-    if (input.specialistId && this.options.resolveSpecialistSkills) {
+    const role = input.role ?? 'primary'
+    if (role !== 'primary' && selected.length > 0) {
+      throw new Error('Skills are not available to this session.')
+    }
+    let scope: EffectiveSpecialistSkills | undefined =
+      role !== 'primary' ? undefined : input.specialistId ? undefined : { kind: 'main' }
+    if (role === 'primary' && input.specialistId && this.options.resolveSpecialistSkills) {
       try {
         scope = await this.options.resolveSpecialistSkills(input.specialistId)
       } catch {
@@ -194,7 +205,7 @@ class AcpTurnSkillOwner {
         : state.scope?.kind === 'specialist'
           ? [
               '<open_science_specialist_skill_scope>',
-              'Skill discovery for this Specialist is limited to the following Skills. This list does not grant tool or Connector permissions.',
+              'Current Specialist Skill discovery is limited to the following exact list. It supersedes and revokes every earlier Specialist Skill or Connector scope in this conversation. This list does not grant tool or Connector permissions.',
               ...state.scope.frameworkNames.map((name) => `- ${name}`),
               '</open_science_specialist_skill_scope>'
             ].join('\n')

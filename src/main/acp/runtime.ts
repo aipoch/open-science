@@ -1133,6 +1133,7 @@ class AcpRuntime {
       frameworkId: this.framework.id,
       text: request.text,
       selectedSkillIds: request.forcedSkillIds ?? [],
+      role: this.sessionEnvironment.role(),
       specialistId: this.sessionRegistry.lookup(request.sessionId)?.aggregate.snapshot()
         .specialistId,
       codexHome: this.backendGeneration.current.adapter.codexHome

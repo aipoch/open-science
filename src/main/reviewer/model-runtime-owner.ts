@@ -118,7 +118,7 @@ class ReviewerModelRuntimeOwner {
       backend = await this.options.resolveTarget(target, {
         forcedSkillIds: [],
         systemPromptAppends: [],
-        includeBaselineSystemPromptGuidance: false
+        includeSkillAndConnectorContext: false
       })
     } catch (error) {
       if (this.shuttingDown) throw new Error('Reviewer model runtime is shutting down.')

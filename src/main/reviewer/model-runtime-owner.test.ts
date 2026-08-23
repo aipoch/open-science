@@ -98,7 +98,7 @@ describe('ReviewerModelRuntimeOwner', () => {
       expect(resolveTarget).toHaveBeenCalledWith(target, {
         forcedSkillIds: [],
         systemPromptAppends: [],
-        includeBaselineSystemPromptGuidance: false
+        includeSkillAndConnectorContext: false
       })
       expect(() =>
         runtimeOptions?.resolveBackend?.({ forcedSkillIds: [], systemPromptAppends: [] })

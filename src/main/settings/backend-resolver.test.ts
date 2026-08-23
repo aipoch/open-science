@@ -557,7 +557,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
           'third-party/model-a': 'third-party/model-a',
           'third-party/model-b': 'third-party/model-b'
         }
-      }
+      },
+      true
     )
     expect(JSON.stringify(modelConfig)).not.toContain('plain:key-a')
   })
@@ -604,7 +605,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledWith(
         harness.getSettings(),
         new Set(),
-        null
+        null,
+        true
       )
       expect(backend.env).toMatchObject({
         ANTHROPIC_MODEL: 'sonnet',
@@ -725,44 +727,50 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       frameworkId: 'codex' as const,
       target: { provider: { apiEndpoints: ['responses'] as const } }
     }
-  ])(
-    'omits baseline Skill and Connector guidance for a restricted $name backend',
-    async (testCase) => {
-      const harness = makeHarness({
-        connectorIds: ['pubmed'],
-        targetOverride: () => testCase.target
-      })
-      const restrictedPrompt = 'Restricted single-purpose prompt.'
+  ])('omits Skill and Connector context for a restricted $name backend', async (testCase) => {
+    const harness = makeHarness({
+      connectorIds: ['pubmed'],
+      targetOverride: () => testCase.target
+    })
+    const restrictedPrompt = 'Restricted single-purpose prompt.'
 
-      const backend = await harness.resolver.resolveExplicitTarget(
-        {
-          frameworkId: testCase.frameworkId,
-          providerId: 'provider-a',
-          model: { kind: 'provider-default' },
-          reasoningEffort: 'high'
-        },
-        {
-          systemPromptAppends: [restrictedPrompt],
-          includeBaselineSystemPromptGuidance: false
-        }
-      )
-      const instructions =
-        testCase.frameworkId === 'claude-code'
-          ? backend.systemPromptAppends?.join('\n\n')
-          : backend.persistentSystemPrompt
-
-      if (testCase.frameworkId === 'claude-code') {
-        expect(instructions).toBe('')
-      } else {
-        expect(instructions).toBe(restrictedPrompt)
+    const backend = await harness.resolver.resolveExplicitTarget(
+      {
+        frameworkId: testCase.frameworkId,
+        providerId: 'provider-a',
+        model: { kind: 'provider-default' },
+        reasoningEffort: 'high'
+      },
+      {
+        systemPromptAppends: [restrictedPrompt],
+        includeSkillAndConnectorContext: false
       }
-      expect(instructions).not.toContain('<open_science_user_skill_directories>')
-      expect(instructions).not.toContain('# Open Science data connector conventions')
-      await backend.anthropicBridgeLease?.release()
-      await backend.responsesBridgeLease?.release()
-      await backend.providerTransportLease?.release()
+    )
+    const instructions =
+      testCase.frameworkId === 'claude-code'
+        ? backend.systemPromptAppends?.join('\n\n')
+        : backend.persistentSystemPrompt
+
+    if (testCase.frameworkId === 'claude-code') {
+      expect(instructions).toBe('')
+    } else {
+      expect(instructions).toBe(restrictedPrompt)
     }
-  )
+    expect(instructions).not.toContain('<open_science_user_skill_directories>')
+    expect(instructions).not.toContain('# Open Science data connector conventions')
+    expect(harness.runtime.materializeAgentSkills).not.toHaveBeenCalled()
+    if (testCase.frameworkId === 'claude-code') {
+      expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledWith(
+        harness.getSettings(),
+        new Set(),
+        expect.anything(),
+        false
+      )
+    }
+    await backend.anthropicBridgeLease?.release()
+    await backend.responsesBridgeLease?.release()
+    await backend.providerTransportLease?.release()
+  })
 
   it('keeps a single Claude target behind loopback and projects its model target', async () => {
     const harness = makeHarness()
@@ -1394,7 +1402,8 @@ describe('AgentBackendResolver runtime delegation', () => {
         {
           availableModels: ['model-a'],
           modelOverrides: { 'model-a': 'model-a' }
-        }
+        },
+        true
       )
       expect(harness.runtime.materializeAgentSkills).not.toHaveBeenCalled()
       expect(harness.runtime.materializeAgentConfigFiles).not.toHaveBeenCalled()

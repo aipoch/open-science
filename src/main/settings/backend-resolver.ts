@@ -61,7 +61,7 @@ export type AdmittedAgentBackendTarget = ExplicitAgentBackendTarget &
 export type AgentBackendResolutionContext = {
   forcedSkillIds?: string[]
   systemPromptAppends?: string[]
-  includeBaselineSystemPromptGuidance?: boolean
+  includeSkillAndConnectorContext?: boolean
   forceCodexNativeResponsesCompatibility?: boolean
 }
 
@@ -174,7 +174,8 @@ export class AgentBackendResolver {
       target,
       new Set(context.forcedSkillIds ?? []),
       executablePath,
-      plan.claudeModelConfig
+      plan.claudeModelConfig,
+      context.includeSkillAndConnectorContext !== false
     )
   }
 
@@ -309,13 +310,12 @@ export class AgentBackendResolver {
       )
     }
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
-    const includeBaselineSystemPromptGuidance =
-      context.includeBaselineSystemPromptGuidance !== false
-    const userSkillDirectoryGuidance = includeBaselineSystemPromptGuidance
+    const includeSkillAndConnectorContext = context.includeSkillAndConnectorContext !== false
+    const userSkillDirectoryGuidance = includeSkillAndConnectorContext
       ? userSkillDirectorySystemPromptAppend(this.storageRoot)
       : undefined
     let connectorInstructions =
-      includeBaselineSystemPromptGuidance && framework.id === 'claude-code'
+      includeSkillAndConnectorContext && framework.id === 'claude-code'
         ? renderConnectorInstructions(this.connectors.connectorSkillNames(settings.connectors))
         : ''
     const executablePath =
@@ -362,7 +362,8 @@ export class AgentBackendResolver {
         target,
         forcedSkillIds,
         executablePath,
-        plan.claudeModelConfig
+        plan.claudeModelConfig,
+        includeSkillAndConnectorContext
       )
       const transport = await this.transports.acquire({ activeTarget: target, plan })
       return {
@@ -395,12 +396,10 @@ export class AgentBackendResolver {
           ? codexSubscriptionStorageDir(this.storageRoot)
           : codexStorageDir(this.storageRoot)
         : opencodeConfigDir(this.storageRoot)
-    const materializedConnectorSkillNames = await this.runtime.materializeAgentSkills(
-      settings,
-      skillsRoot,
-      forcedSkillIds
-    )
-    connectorInstructions = includeBaselineSystemPromptGuidance
+    const materializedConnectorSkillNames = includeSkillAndConnectorContext
+      ? await this.runtime.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
+      : []
+    connectorInstructions = includeSkillAndConnectorContext
       ? renderConnectorInstructions(materializedConnectorSkillNames)
       : ''
 
@@ -502,7 +501,8 @@ export class AgentBackendResolver {
     target: ProviderRuntimeTarget,
     forcedSkillIds: ReadonlySet<string>,
     resolvedExecutablePath?: string,
-    modelConfig?: ClaudeRuntimeModelConfig
+    modelConfig?: ClaudeRuntimeModelConfig,
+    includeSkillAndConnectorContext = true
   ): Promise<AgentSpawnConfig> {
     const executablePath =
       resolvedExecutablePath ??
@@ -514,7 +514,8 @@ export class AgentBackendResolver {
     const runtimeConfig = await this.runtime.provisionClaudeRuntimeConfig(
       settings,
       forcedSkillIds,
-      modelConfig ?? null
+      modelConfig ?? null,
+      includeSkillAndConnectorContext
     )
     const envOverrides = buildProviderEnv(provider, {
       storageRoot: this.storageRoot,

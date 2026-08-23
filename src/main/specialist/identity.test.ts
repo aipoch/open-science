@@ -24,7 +24,13 @@ describe('buildSpecialistIdentityAppend', () => {
 
   it('includes the specialist name', () => {
     const text = buildSpecialistIdentityAppend(makeProfile())
-    expect(text).toContain('RNA-seq Reviewer')
+    expect(text).toContain('Current Specialist: RNA-seq Reviewer')
+  })
+
+  it('revokes every earlier Specialist identity and behavior', () => {
+    const text = buildSpecialistIdentityAppend(makeProfile())
+    expect(text).toContain('supersedes and revokes every earlier Specialist identity')
+    expect(text).toContain('Specialist-specific behavior')
   })
 
   it('includes the systemPrompt content verbatim', () => {

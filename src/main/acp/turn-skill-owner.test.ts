@@ -51,6 +51,25 @@ describe('AcpTurnSkillOwner', () => {
     }
   )
 
+  it('does not label a restricted session as Main Agent or authorize Skills', async () => {
+    const owner = new AcpTurnSkillOwner({ requestSkillsReload: vi.fn() })
+    const handle = owner.authorize({ role: 'side-chat' })
+    if (handle instanceof Promise)
+      throw new Error('Restricted authorization must stay synchronous.')
+
+    const prepared = await handle.prepareProvider({
+      frameworkId: codexFramework.id,
+      selectionText: 'continue',
+      promptText: 'continue'
+    })
+
+    expect(prepared.skillScopeGuidance).toBeUndefined()
+    expect(prepared.text).toBe('continue')
+    expect(() =>
+      owner.authorize({ role: 'reviewer', selectedSkillIds: ['unexpected-skill'] })
+    ).toThrow('Skills are not available to this session.')
+  })
+
   it('rejects a Main-disabled Skill instead of force-loading it for Main Agent', async () => {
     const owner = new AcpTurnSkillOwner({
       resolveSpecialistSkills: async () => reloadTestScope,
@@ -292,6 +311,9 @@ describe('AcpTurnSkillOwner', () => {
 
     expect(prepared.text).toBe('Use the following skill(s) for this task: Research.\n\nfind papers')
     expect(prepared.skillScopeGuidance).toContain('<open_science_specialist_skill_scope>')
+    expect(prepared.skillScopeGuidance).toContain(
+      'supersedes and revokes every earlier Specialist Skill or Connector scope'
+    )
     expect(prepared.skillScopeGuidance).toContain(
       'This list does not grant tool or Connector permissions.'
     )
