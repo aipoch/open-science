@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-import { ZoomIn, X } from 'lucide-react'
+import { Maximize2, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Dialog } from 'radix-ui'
@@ -19,6 +19,10 @@ type NotebookToolFigureOutputsProps = {
   run: NotebookRunRecord
 }
 
+type NotebookToolFigureOutputContentProps = {
+  figures: NotebookRunFigure[]
+}
+
 type NotebookToolFigureCardProps = {
   figure: NotebookRunFigure
   filename: string
@@ -36,50 +40,47 @@ const NotebookToolFigureCard = ({
   const [setCardElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
 
   return (
-    <button
-      ref={setCardElement}
-      type="button"
-      data-testid="notebook-tool-figure-button"
-      className="group relative block w-full cursor-zoom-in overflow-hidden rounded-xl border border-border-200 bg-bg-000 text-left shadow-sm transition-[border-color,transform] duration-150 ease-out hover:border-border-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none motion-reduce:active:translate-y-0"
-      aria-label={t('Preview {{name}}', { name: filename })}
-      onClick={(event) => onOpen(figure, event.currentTarget)}
-    >
-      <span className="flex min-h-36 w-full items-center justify-center p-3 sm:p-4">
-        {isNearViewport ? (
-          <img
-            data-testid="notebook-tool-figure-image"
-            src={`data:${figure.mimeType};base64,${figure.payload}`}
-            alt={filename}
-            className="block max-h-[32rem] max-w-full object-contain"
-            decoding="async"
-            draggable={false}
-          />
-        ) : (
-          <span className="h-32 w-full rounded-lg bg-bg-100" aria-hidden="true" />
-        )}
-      </span>
-      <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-3 bg-gradient-to-t from-black/75 via-black/35 to-transparent px-4 pb-3 pt-16 text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">
-        <span className="min-w-0 flex-1 truncate font-mono text-[12px] leading-5">{filename}</span>
-        <ZoomIn className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-      </span>
-    </button>
+    <div className="rounded-xl bg-bg-000 p-2.5 shadow-sm sm:p-3">
+      <button
+        ref={setCardElement}
+        type="button"
+        data-testid="notebook-tool-figure-button"
+        className="group relative block w-full max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left transition-[border-color,transform] duration-150 ease-out hover:border-border-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none motion-reduce:active:translate-y-0 md:w-[52rem]"
+        aria-label={t('Preview {{name}}', { name: filename })}
+        onClick={(event) => onOpen(figure, event.currentTarget)}
+      >
+        <span className="flex min-h-36 max-w-full items-center justify-center">
+          {isNearViewport ? (
+            <img
+              data-testid="notebook-tool-figure-image"
+              src={`data:${figure.mimeType};base64,${figure.payload}`}
+              alt={filename}
+              className="block h-auto max-h-[32rem] max-w-full object-contain"
+              decoding="async"
+              draggable={false}
+            />
+          ) : (
+            <span className="h-36 w-[52rem] max-w-full bg-bg-100" aria-hidden="true" />
+          )}
+        </span>
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-3 bg-gradient-to-t from-black/75 via-black/25 to-transparent px-3.5 pb-2.5 pt-9 text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">
+          <span className="min-w-0 flex-1 truncate font-mono text-[12px] leading-5">
+            {filename}
+          </span>
+          <Maximize2 className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+        </span>
+      </button>
+    </div>
   )
 }
 
-// Transcript-only figure treatment. It deliberately sits beside the tool row rather than inside
-// that row's detail panel, so the row can collapse without hiding the result. The owning tool group
-// still controls whether this subtree exists.
-const NotebookToolFigureOutputs = ({
-  run
-}: NotebookToolFigureOutputsProps): React.JSX.Element | null => {
+const NotebookToolFigureOutputContent = ({
+  figures
+}: NotebookToolFigureOutputContentProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const figures = resolveNotebookRunFigures(run)
   const [selectedFigure, setSelectedFigure] = useState<NotebookRunFigure>()
   const previewTriggerRef = useRef<HTMLButtonElement | null>(null)
   const dialogFigure = useRetainedDialogValue(selectedFigure)
-
-  if (figures.length === 0) return null
-
   const selectedFilename = dialogFigure ? formatNotebookFigureFilename(dialogFigure, t) : undefined
 
   return (
@@ -164,6 +165,17 @@ const NotebookToolFigureOutputs = ({
       </Dialog.Root>
     </>
   )
+}
+
+// Transcript-only figure treatment. It deliberately sits beside the tool row rather than inside
+// that row's detail panel, so the row can collapse without hiding the result. The owning tool group
+// still controls whether this subtree exists. The stateful child mounts only when figures exist, so
+// a run changing from no figures to figures cannot alter this component's hook order.
+const NotebookToolFigureOutputs = ({
+  run
+}: NotebookToolFigureOutputsProps): React.JSX.Element | null => {
+  const figures = resolveNotebookRunFigures(run)
+  return figures.length > 0 ? <NotebookToolFigureOutputContent figures={figures} /> : null
 }
 
 export { NotebookToolFigureOutputs }

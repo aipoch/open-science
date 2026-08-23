@@ -386,6 +386,39 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(figureButton.querySelector('img')).toBeNull()
   })
 
+  it('mounts the stateful figure subtree when a run gains its first figure', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { code: 'plot(1:3)', kernelKind: 'r' },
+      rawOutput: { runId: 'notebook-run-1', status: 'completed' }
+    })
+    const details = buildToolActivityDetails(activity)
+    const renderRow = (notebookRun: NotebookRunRecord): void => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          notebookRun={notebookRun}
+          isExpanded={false}
+          onToggle={vi.fn()}
+        />
+      )
+    }
+
+    root = createRoot(container)
+    await act(async () => {
+      renderRow(
+        createNotebookRun({ outputs: [{ type: 'stream', name: 'stdout', text: 'working\n' }] })
+      )
+    })
+    expect(container.querySelector('[data-testid="notebook-tool-figure-button"]')).toBeNull()
+
+    await act(async () => {
+      renderRow(createNotebookRun())
+    })
+    expect(container.querySelector('[data-testid="notebook-tool-figure-button"]')).not.toBeNull()
+  })
+
   it('shows done beside the figure count when a completed run has no text output', async () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-notebook__notebook_execute',
@@ -463,6 +496,32 @@ describe('WorkspaceToolDetailsRow', () => {
     })
 
     expect(onNotebookRunNearViewport).toHaveBeenCalledWith('historical-run-1', true)
+  })
+
+  it('keeps a hydrated notebook run registered while its row remains near the viewport', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { code: 'plot(1:3)', kernelKind: 'r' },
+      rawOutput: { runId: 'notebook-run-1', status: 'completed' }
+    })
+    const details = buildToolActivityDetails(activity)
+    const onNotebookRunNearViewport = vi.fn()
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          notebookRun={createNotebookRun()}
+          isExpanded={false}
+          onNotebookRunNearViewport={onNotebookRunNearViewport}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(onNotebookRunNearViewport).toHaveBeenCalledWith('notebook-run-1', true)
   })
 
   it('translates figure count meta', async () => {

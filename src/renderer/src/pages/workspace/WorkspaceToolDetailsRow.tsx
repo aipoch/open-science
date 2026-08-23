@@ -162,17 +162,16 @@ const WorkspaceToolDetailsRow = ({
   const translateKnownCopy = (value: string): string =>
     TRANSLATABLE_TOOL_DETAIL_COPY.has(value) ? t(value) : value
 
-  // Full Notebook records are intentionally bounded. Ask the transcript owner to hydrate a missing
-  // historical run only while its collapsed row is near the viewport; the owner's LRU keeps this
-  // independent of row expansion without retaining an unbounded image history in renderer memory.
+  // Keep every near row registered even after hydration so the owner's LRU cannot evict a figure
+  // that remains visible. The owner batches targeted IPC reads and trims records after rows leave.
   useEffect(() => {
-    if (!notebookRunId || notebookRun || !onNotebookRunNearViewport) return undefined
+    if (!notebookRunId || !onNotebookRunNearViewport) return undefined
 
     onNotebookRunNearViewport(notebookRunId, isNearViewport)
     return () => {
       if (isNearViewport) onNotebookRunNearViewport(notebookRunId, false)
     }
-  }, [isNearViewport, notebookRun, notebookRunId, onNotebookRunNearViewport])
+  }, [isNearViewport, notebookRunId, onNotebookRunNearViewport])
 
   const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
     if (section.kind === 'diff') {

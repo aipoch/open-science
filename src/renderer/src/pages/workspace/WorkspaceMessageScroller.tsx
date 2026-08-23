@@ -78,10 +78,7 @@ import type { PendingElicitationRequest } from '../../../../shared/acp'
 import { isHumanUserMessage } from '../../../../shared/session-persistence'
 import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
 import { useHandoffLifecycleEvents } from './useHandoffLifecycleEvents'
-import {
-  NOTEBOOK_STATE_TARGET_RUN_LIMIT,
-  type NotebookSessionReference
-} from '../../../../shared/notebook'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
 import { useNotebookRunsById } from './use-notebook-runs-by-id'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
@@ -546,13 +543,7 @@ const WorkspaceMessageScrollerImpl = ({
         const hadRunId = runIds.has(runId)
 
         if (isNearViewport) {
-          runIds.delete(runId)
           runIds.add(runId)
-          while (runIds.size > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
-            const oldestRunId = runIds.values().next().value
-            if (oldestRunId === undefined) break
-            runIds.delete(oldestRunId)
-          }
         } else {
           runIds.delete(runId)
         }

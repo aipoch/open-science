@@ -426,7 +426,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(agentRow?.getAttribute('data-scroll-anchor')).toBeNull()
   })
 
-  it('hydrates a near-viewport historical notebook figure while its tool row stays collapsed', async () => {
+  it('keeps more than one targeted batch of near-viewport historical figures stable while rows stay collapsed', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const notebookReference: NotebookSessionReference = {
       sessionId: 'session-1',
@@ -437,21 +437,21 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       runtimeRoot: '/workspace/runtime',
       runJsonPath: '/workspace/run.json'
     }
-    const historicalRun: NotebookRunRecord = {
-      runId: 'historical-run-1',
-      executionInvocationId: 'invocation-1',
-      cellId: 'cell-1',
+    const historicalRuns: NotebookRunRecord[] = Array.from({ length: 21 }, (_, index) => ({
+      runId: `historical-run-${index + 1}`,
+      executionInvocationId: `invocation-${index + 1}`,
+      cellId: `cell-${index + 1}`,
       source: 'agent',
       kernelKind: 'r',
-      script: 'plot(1:3)',
+      script: `plot(${index + 1})`,
       status: 'completed',
-      startedAt: 1,
-      endedAt: 2,
+      startedAt: index + 1,
+      endedAt: index + 2,
       text: { stdout: '', stderr: '', traceback: '', plain: [] },
       outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }],
       artifacts: [],
       workingFiles: []
-    }
+    }))
     const makeNotebookState = (runs: NotebookRunRecord[]): NotebookSessionState => ({
       id: 'notebook-1',
       sessionId: notebookReference.sessionId,
@@ -470,7 +470,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     })
     const loadNotebookState = vi.fn(
       async (request: { runIds?: string[] }): Promise<NotebookSessionState> =>
-        makeNotebookState(request.runIds?.includes(historicalRun.runId) ? [historicalRun] : [])
+        makeNotebookState(
+          historicalRuns.filter((run) => request.runIds?.includes(run.runId) === true)
+        )
     )
     window.api = {
       ...window.api,
@@ -479,36 +481,38 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         onChanged: vi.fn(() => vi.fn())
       }
     } as unknown as Window['api']
-    const activity = createActivity({
-      id: 'notebook-tool-1',
-      status: 'completed',
-      providerToolName: 'mcp__open-science-notebook__notebook_execute',
-      executionInvocationId: historicalRun.executionInvocationId,
-      rawInput: { code: historicalRun.script, kernelKind: historicalRun.kernelKind },
-      rawOutput: { runId: historicalRun.runId, status: historicalRun.status }
-    })
+    const activities = historicalRuns.map((run, index) =>
+      createActivity({
+        id: `notebook-tool-${index + 1}`,
+        status: 'completed',
+        providerToolName: 'mcp__open-science-notebook__notebook_execute',
+        executionInvocationId: run.executionInvocationId,
+        rawInput: { code: run.script, kernelKind: run.kernelKind },
+        rawOutput: { runId: run.runId, status: run.status }
+      })
+    )
 
     root = createRoot(container)
     await act(async () => {
       root.render(
         <WorkspaceMessageScroller
-          activeSession={createSession({ status: 'idle', activities: [activity] })}
+          activeSession={createSession({ status: 'idle', activities })}
           notebookReference={notebookReference}
           onSendEditedMessage={vi.fn()}
         />
       )
     })
 
+    await waitFor(() => {
+      const targetedRunIds = loadNotebookState.mock.calls.flatMap(
+        ([request]) => request.runIds ?? []
+      )
+      expect(new Set(targetedRunIds)).toEqual(new Set(historicalRuns.map((run) => run.runId)))
+    })
     await waitFor(() =>
-      expect(loadNotebookState).toHaveBeenCalledWith({
-        sessionId: 'session-1',
-        projectId: 'default',
-        workspaceCwd: '/workspace',
-        runIds: ['historical-run-1']
-      })
-    )
-    await waitFor(() =>
-      expect(container.querySelector('[data-testid="notebook-tool-figure-button"]')).not.toBeNull()
+      expect(
+        container.querySelectorAll('[data-testid="notebook-tool-figure-button"]')
+      ).toHaveLength(21)
     )
     expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
   })
