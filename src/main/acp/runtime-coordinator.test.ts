@@ -73,6 +73,7 @@ const createFakeRuntime = (options: {
   requestProviderReconnect: ReturnType<typeof vi.fn>
   sendPrompt: ReturnType<typeof vi.fn>
   sendAppContinuation: ReturnType<typeof vi.fn>
+  steerFollowUp: ReturnType<typeof vi.fn>
   applyReasoningEffortChange: ReturnType<typeof vi.fn>
   applyModelChange: ReturnType<typeof vi.fn>
   captureBackend: ReturnType<typeof vi.fn>
@@ -199,6 +200,11 @@ const createFakeRuntime = (options: {
     }
   }
   const sendPrompt = vi.fn(runPrompt)
+  const steerFollowUp = vi.fn(async () => ({
+    injected: true as const,
+    transport: 'acp-steering' as const,
+    messageId: 'message-steer-1'
+  }))
   const sendApplicationPrompt = vi.fn(
     (
       ...[request, _attribution, promptAttemptId]: Parameters<AcpRuntime['sendApplicationPrompt']>
@@ -236,6 +242,7 @@ const createFakeRuntime = (options: {
     sendPrompt,
     sendApplicationPrompt,
     sendAppContinuation,
+    steerFollowUp,
     withActivity: vi.fn(
       async (_activityOptions: unknown, work: (scopedRuntime: AcpRuntime) => Promise<unknown>) =>
         work(runtime)
@@ -278,6 +285,7 @@ const createFakeRuntime = (options: {
     requestProviderReconnect,
     sendPrompt,
     sendAppContinuation,
+    steerFollowUp,
     applyReasoningEffortChange,
     applyModelChange,
     captureBackend,
@@ -2051,6 +2059,72 @@ describe('AcpRuntimeCoordinator', () => {
 
     expect(admittedSessionIds).toEqual([session.sessionId])
     expect(createdRuntime.sendAppContinuation).toHaveBeenCalledOnce()
+  })
+
+  it('applies prompt admission and deletion fences to native follow-up', async () => {
+    const admission = createDeferred<void>()
+    const dispatchAdmission = createDeferred<void>()
+    let createdRuntime!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      createdRuntime = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return createdRuntime.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    coordinator.setPromptAdmissionGuard(async () => admission.promise)
+    const admittedSessionIds: string[] = []
+    coordinator.setPromptDispatchAdmissionGuard(async (sessionId, dispatch) => {
+      admittedSessionIds.push(sessionId)
+      await dispatchAdmission.promise
+      return dispatch()
+    })
+
+    const followUp = coordinator.steerFollowUp({
+      sessionId: session.sessionId,
+      text: 'focus on tests'
+    })
+    await Promise.resolve()
+    expect(createdRuntime.steerFollowUp).not.toHaveBeenCalled()
+
+    admission.resolve()
+    await Promise.resolve()
+    expect(createdRuntime.steerFollowUp).not.toHaveBeenCalled()
+
+    dispatchAdmission.resolve()
+    await expect(followUp).resolves.toEqual({
+      injected: true,
+      transport: 'acp-steering',
+      messageId: 'message-steer-1'
+    })
+    expect(admittedSessionIds).toEqual([session.sessionId])
+    expect(createdRuntime.steerFollowUp).toHaveBeenCalledWith({
+      sessionId: session.sessionId,
+      text: 'focus on tests'
+    })
+  })
+
+  it('refuses native follow-up when prompt admission rejects', async () => {
+    let createdRuntime!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      createdRuntime = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return createdRuntime.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    coordinator.setPromptAdmissionGuard(async () => {
+      throw new Error('Close Side chat before sending a message to Main.')
+    })
+
+    await expect(
+      coordinator.steerFollowUp({ sessionId: session.sessionId, text: 'focus on tests' })
+    ).rejects.toThrow(/Close Side chat/)
+    expect(createdRuntime.steerFollowUp).not.toHaveBeenCalled()
   })
 
   it('does not reacquire dispatch admission for an already admitted continuation', async () => {

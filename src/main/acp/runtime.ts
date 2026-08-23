@@ -522,6 +522,9 @@ class AcpRuntime {
       hasLivePrompt: (sessionId) => this.sessionInteractions.current(sessionId)?.kind === 'prompt',
       sessionCwd: (sessionId) => this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd,
       prepareFollowUp: (request) => this.prepareNativeFollowUpContent(request),
+      ...(this.options.notebook?.registerTurnInputs
+        ? { registerTurnInputs: this.options.notebook.registerTurnInputs }
+        : {}),
       publishUserMessage: ({ sessionId, messageId, text, uploads, parts }) =>
         this.publication.pushEvent({
           kind: 'message',
@@ -1156,10 +1159,7 @@ class AcpRuntime {
       ...(prepared.imageSources ? { imageSources: prepared.imageSources } : {}),
       historyImageCount: prepared.historyImageCount,
       ...(livePrompt?.kind === 'prompt' ? { signal: livePrompt.signal } : {}),
-      ...(imageCompatibility ? { imageCompatibility } : {}),
-      ...(this.options.notebook?.registerTurnInputs
-        ? { registerTurnInputs: this.options.notebook.registerTurnInputs }
-        : {})
+      ...(imageCompatibility ? { imageCompatibility } : {})
     })
   }
 

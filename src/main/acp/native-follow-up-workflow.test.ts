@@ -22,6 +22,9 @@ const createWorkflow = (
     followUpTimeoutMs?: number
     fetchImpl?: typeof fetch
     prepareFollowUp?: ConstructorParameters<typeof AcpNativeFollowUpWorkflow>[0]['prepareFollowUp']
+    registerTurnInputs?: ConstructorParameters<
+      typeof AcpNativeFollowUpWorkflow
+    >[0]['registerTurnInputs']
   } = {}
 ): {
   request: (method: string, params: unknown) => Promise<unknown>
@@ -66,6 +69,7 @@ const createWorkflow = (
       createMessageId: () => 'message-steer-1',
       fetchImpl: overrides.fetchImpl,
       ...(overrides.prepareFollowUp ? { prepareFollowUp: overrides.prepareFollowUp } : {}),
+      ...(overrides.registerTurnInputs ? { registerTurnInputs: overrides.registerTurnInputs } : {}),
       ...(overrides.followUpTimeoutMs !== undefined
         ? { followUpTimeoutMs: overrides.followUpTimeoutMs }
         : {})
@@ -383,6 +387,65 @@ describe('AcpNativeFollowUpWorkflow', () => {
     expect(request).not.toHaveBeenCalled()
     expect(published).toEqual([])
   })
+
+  it('registers notebook inputs only after steering injects', async () => {
+    const registerTurnInputs = vi.fn(async () => undefined)
+    const request = vi.fn(async () => {
+      expect(registerTurnInputs).not.toHaveBeenCalled()
+      return { outcome: 'injected' }
+    })
+    const { workflow } = createWorkflow({
+      request,
+      registerTurnInputs,
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text' as const, text: 'see file' }],
+        notebookTurnInputs: {
+          projectId: 'project-1',
+          sessionId: 'app-1',
+          livePromptMessageId: 'prompt-live',
+          uploads: [],
+          references: []
+        }
+      })
+    })
+    await expect(workflow.steerFollowUp({ sessionId: 'app-1', text: 'see file' })).resolves.toEqual(
+      {
+        injected: true,
+        transport: 'acp-steering',
+        messageId: 'message-steer-1'
+      }
+    )
+    expect(registerTurnInputs).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'app-1',
+      promptMessageId: 'prompt-live',
+      uploads: [],
+      references: []
+    })
+  })
+
+  it('does not register notebook inputs when steering is refused', async () => {
+    const registerTurnInputs = vi.fn(async () => undefined)
+    const { workflow } = createWorkflow({
+      request: vi.fn(async () => ({})),
+      registerTurnInputs,
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text' as const, text: 'see file' }],
+        notebookTurnInputs: {
+          projectId: 'project-1',
+          sessionId: 'app-1',
+          livePromptMessageId: 'prompt-live',
+          uploads: [],
+          references: []
+        }
+      })
+    })
+    await expect(workflow.steerFollowUp({ sessionId: 'app-1', text: 'see file' })).resolves.toEqual(
+      { injected: false, reason: 'unrecognized-success' }
+    )
+    expect(registerTurnInputs).not.toHaveBeenCalled()
+    expect(published).toEqual([])
+  })
 })
 
 describe('finalizeNativeFollowUpPreparedContent', () => {
@@ -411,8 +474,7 @@ describe('finalizeNativeFollowUpPreparedContent', () => {
     )
   })
 
-  it('registers turn inputs against the live prompt instead of minting a new id', async () => {
-    const registerTurnInputs = vi.fn(async () => undefined)
+  it('defers live-prompt notebook inputs until inject is confirmed', async () => {
     const upload = {
       id: 'upload-1',
       sessionId: 'app-1',
@@ -430,33 +492,34 @@ describe('finalizeNativeFollowUpPreparedContent', () => {
         sessionId: 'app-1',
         livePromptMessageId: 'prompt-live',
         supportsImageInput: true,
-        historyImageCount: 0,
-        registerTurnInputs
+        historyImageCount: 0
       })
     ).resolves.toEqual({
       prompt: [{ type: 'text', text: 'see file' }],
-      uploads: [upload]
-    })
-    expect(registerTurnInputs).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      appSessionId: 'app-1',
-      promptMessageId: 'prompt-live',
       uploads: [upload],
-      references: []
+      notebookTurnInputs: {
+        projectId: 'project-1',
+        sessionId: 'app-1',
+        livePromptMessageId: 'prompt-live',
+        uploads: [upload],
+        references: []
+      }
     })
   })
 
-  it('skips notebook registration when the live prompt has no message id', async () => {
-    const registerTurnInputs = vi.fn(async () => undefined)
-    await finalizeNativeFollowUpPreparedContent({
-      content: 'see file',
-      turnInputs: { uploads: [], references: [] },
-      projectId: 'project-1',
-      sessionId: 'app-1',
-      supportsImageInput: true,
-      historyImageCount: 0,
-      registerTurnInputs
+  it('skips notebook inputs when the live prompt has no message id', async () => {
+    await expect(
+      finalizeNativeFollowUpPreparedContent({
+        content: 'see file',
+        turnInputs: { uploads: [], references: [] },
+        projectId: 'project-1',
+        sessionId: 'app-1',
+        supportsImageInput: true,
+        historyImageCount: 0
+      })
+    ).resolves.toEqual({
+      prompt: [{ type: 'text', text: 'see file' }],
+      uploads: []
     })
-    expect(registerTurnInputs).not.toHaveBeenCalled()
   })
 })

@@ -1035,7 +1035,13 @@ class AcpRuntimeCoordinator {
     this.assertPromptAdmissionOpen()
     await this.waitForInitialization()
     this.assertPromptAdmissionOpen()
-    return this.runtimeForSession(request.sessionId).steerFollowUp(request)
+    await this.promptAdmissionGuard?.(request.sessionId)
+    this.assertPromptAdmissionOpen()
+    const dispatch = (): Promise<AcpSteerFollowUpResult> =>
+      this.runtimeForSession(request.sessionId).steerFollowUp(request)
+    return this.promptDispatchAdmissionGuard
+      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
+      : dispatch()
   }
 
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {

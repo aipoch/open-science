@@ -44,10 +44,27 @@ type NativeFollowUpUserMessage = Readonly<{
   parts?: readonly MessagePart[]
 }>
 
+type NativeFollowUpNotebookTurnInputs = Readonly<{
+  projectId: string
+  sessionId: string
+  livePromptMessageId: string
+  uploads: readonly UploadedAttachment[]
+  references: readonly FileReference[]
+}>
+
 type NativeFollowUpPreparedContent = Readonly<{
   prompt: readonly ContentBlock[]
   uploads?: readonly UploadedAttachment[]
+  notebookTurnInputs?: NativeFollowUpNotebookTurnInputs
 }>
+
+type NativeFollowUpRegisterTurnInputs = (request: {
+  projectId: string
+  appSessionId: string
+  promptMessageId: string
+  uploads: UploadedAttachment[]
+  references: FileReference[]
+}) => Promise<void>
 
 type NativeFollowUpWorkflowOptions = Readonly<{
   connection: () => ClientConnection | undefined
@@ -59,6 +76,7 @@ type NativeFollowUpWorkflowOptions = Readonly<{
   sessionCwd: (appSessionId: string) => string | undefined
   publishUserMessage: (input: NativeFollowUpUserMessage) => void
   prepareFollowUp?: (request: AcpSteerFollowUpRequest) => Promise<NativeFollowUpPreparedContent>
+  registerTurnInputs?: NativeFollowUpRegisterTurnInputs
   createMessageId?: () => string
   fetchImpl?: typeof fetch
   followUpTimeoutMs?: number
@@ -90,13 +108,6 @@ type NativeFollowUpMediaInput = Readonly<{
       signal?: AbortSignal
     }) => Promise<string | ContentBlock[]>
   }
-  registerTurnInputs?: (request: {
-    projectId: string
-    appSessionId: string
-    promptMessageId: string
-    uploads: UploadedAttachment[]
-    references: FileReference[]
-  }) => Promise<void>
 }>
 
 const nativeFollowUpPromptBlocks = (content: string | ContentBlock[]): ContentBlock[] => {
@@ -118,18 +129,20 @@ const finalizeNativeFollowUpPreparedContent = async (
         ...(input.signal ? { signal: input.signal } : {})
       })
     : input.content
-  if (input.registerTurnInputs && input.turnInputs && input.livePromptMessageId) {
-    await input.registerTurnInputs({
-      projectId: input.projectId,
-      appSessionId: input.sessionId,
-      promptMessageId: input.livePromptMessageId,
-      uploads: [...input.turnInputs.uploads],
-      references: [...input.turnInputs.references]
-    })
-  }
   return {
     prompt: nativeFollowUpPromptBlocks(content),
-    uploads: [...(input.turnInputs?.uploads ?? [])]
+    uploads: [...(input.turnInputs?.uploads ?? [])],
+    ...(input.turnInputs && input.livePromptMessageId
+      ? {
+          notebookTurnInputs: {
+            projectId: input.projectId,
+            sessionId: input.sessionId,
+            livePromptMessageId: input.livePromptMessageId,
+            uploads: [...input.turnInputs.uploads],
+            references: [...input.turnInputs.references]
+          }
+        }
+      : {})
   }
 }
 
@@ -188,11 +201,13 @@ class AcpNativeFollowUpWorkflow {
 
     let prompt: readonly ContentBlock[]
     let preparedUploads: readonly UploadedAttachment[] | undefined
+    let notebookTurnInputs: NativeFollowUpNotebookTurnInputs | undefined
     try {
       if (this.options.prepareFollowUp) {
         const prepared = await this.options.prepareFollowUp(request)
         prompt = prepared.prompt
         preparedUploads = prepared.uploads
+        notebookTurnInputs = prepared.notebookTurnInputs
       } else {
         prompt = steeringPromptFromText(text)
       }
@@ -294,6 +309,7 @@ class AcpNativeFollowUpWorkflow {
       }
     }
 
+    await this.commitNotebookTurnInputs(notebookTurnInputs)
     const messageId = this.options.createMessageId?.() ?? `message-${randomUUID()}`
     const uploads = persistableUploads(preparedUploads ?? attachments)
     const parts = request.parts ?? []
@@ -310,6 +326,27 @@ class AcpNativeFollowUpWorkflow {
       messageId
     })
     return injected(route.transport, messageId)
+  }
+
+  private async commitNotebookTurnInputs(
+    notebookTurnInputs: NativeFollowUpNotebookTurnInputs | undefined
+  ): Promise<void> {
+    if (!notebookTurnInputs || !this.options.registerTurnInputs) return
+    try {
+      await this.options.registerTurnInputs({
+        projectId: notebookTurnInputs.projectId,
+        appSessionId: notebookTurnInputs.sessionId,
+        promptMessageId: notebookTurnInputs.livePromptMessageId,
+        uploads: [...notebookTurnInputs.uploads],
+        references: [...notebookTurnInputs.references]
+      })
+    } catch (error) {
+      log.info('native follow-up notebook registration failed', {
+        sessionId: notebookTurnInputs.sessionId,
+        promptMessageId: notebookTurnInputs.livePromptMessageId,
+        reason: error instanceof Error ? error.message : String(error)
+      })
+    }
   }
 
   private async postOpenCodeSteer(
