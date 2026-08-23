@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { codexFramework, opencodeFramework } from '../agent-framework'
-import { AcpTurnSkillOwner } from './turn-skill-owner'
+import { AcpTurnSkillOwner, followUpPromptText } from './turn-skill-owner'
 
 describe('AcpTurnSkillOwner', () => {
   it('keeps ordinary Main turns synchronous when no Skill work can yield', () => {
@@ -231,6 +231,58 @@ describe('AcpTurnSkillOwner', () => {
     expect(presented.text).toBe(
       'Use the following skill(s) for this task: Research.\n\nfind papers'
     )
+  })
+
+  it('includes Specialist skill allowlist guidance in mid-turn follow-up text', async () => {
+    const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => ({
+        kind: 'specialist' as const,
+        skillIds: ['personal-research'],
+        frameworkNames: ['Research', 'mcp-pubmed'],
+        missingSkillIds: []
+      }),
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => ['Research']
+      },
+      requestSkillsReload: vi.fn()
+    })
+
+    const presented = await owner.presentFollowUp({
+      frameworkId: opencodeFramework.id,
+      text: 'find papers',
+      selectedSkillIds: ['personal-research'],
+      specialistId: 'specialist-1'
+    })
+
+    expect(presented.specialistSkillGuidance).toContain(
+      'Allowed Specialist Skills for this session'
+    )
+    expect(presented.specialistSkillGuidance).toContain('mcp-pubmed')
+    expect(followUpPromptText(presented)).toContain('Allowed Specialist Skills for this session')
+    expect(followUpPromptText(presented)).toContain(
+      'Use the following skill(s) for this task: Research.\n\nfind papers'
+    )
+  })
+
+  it('propagates follow-up Skill preparation failures instead of dropping selected Skills', async () => {
+    const owner = new AcpTurnSkillOwner({
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => {
+          throw new Error('catalog unavailable')
+        }
+      },
+      requestSkillsReload: vi.fn()
+    })
+
+    await expect(
+      owner.presentFollowUp({
+        frameworkId: opencodeFramework.id,
+        text: 'find papers',
+        selectedSkillIds: ['personal-research']
+      })
+    ).rejects.toThrow('catalog unavailable')
   })
 
   it('rejects out-of-scope follow-up Skills without force-loading', async () => {

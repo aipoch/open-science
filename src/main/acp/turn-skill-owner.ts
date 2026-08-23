@@ -133,27 +133,23 @@ class AcpTurnSkillOwner {
         }
       }
     }
-    try {
-      return await this.prepareProvider(
-        { selectedSkillIds: selected, ...(scope ? { scope } : {}) },
-        {
-          frameworkId: input.frameworkId,
-          selectionText: input.text,
-          promptText: input.text,
-          ...(input.frameworkId === 'codex'
-            ? {
-                codex: {
-                  home: input.codexHome,
-                  bridgeSkillsAvailable: false,
-                  selectSkills: async () => []
-                }
+    return this.prepareProvider(
+      { selectedSkillIds: selected, ...(scope ? { scope } : {}) },
+      {
+        frameworkId: input.frameworkId,
+        selectionText: input.text,
+        promptText: input.text,
+        ...(input.frameworkId === 'codex'
+          ? {
+              codex: {
+                home: input.codexHome,
+                bridgeSkillsAvailable: false,
+                selectSkills: async () => []
               }
-            : {})
-        }
-      )
-    } catch {
-      return Object.freeze({ text: input.text, codexSkillInputs: Object.freeze([]) })
-    }
+            }
+          : {})
+      }
+    )
   }
   private close(state: Authorization, outcome: TurnSkillOutcome): void {
     if (state.outcome) return
@@ -226,5 +222,13 @@ class AcpTurnSkillOwner {
   }
 }
 
-export { AcpTurnSkillOwner }
+const followUpPromptText = (presented: {
+  text: string
+  specialistSkillGuidance?: string
+}): string =>
+  presented.specialistSkillGuidance
+    ? `${presented.specialistSkillGuidance}\n\n${presented.text}`
+    : presented.text
+
+export { AcpTurnSkillOwner, followUpPromptText }
 export type { AcpTurnSkillHooks, TurnSkillHandle, TurnSkillOutcome }

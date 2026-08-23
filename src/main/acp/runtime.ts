@@ -123,7 +123,11 @@ import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
 import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
-import type { AcpTurnSkillHooks, AcpTurnSkillOwner } from './turn-skill-owner'
+import {
+  followUpPromptText,
+  type AcpTurnSkillHooks,
+  type AcpTurnSkillOwner
+} from './turn-skill-owner'
 import type { PlanResponseResult, PlanServiceDependencies } from '../session-plan/plan-service'
 import { SessionPlanContinuationOwner } from './session-plan-continuation-owner'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
@@ -1124,7 +1128,7 @@ class AcpRuntime {
       appSessionId: request.sessionId,
       projectId: this.liveSessionProjectId(request.sessionId) ?? '',
       connectionGeneration: this.connectionGeneration,
-      text: presented.text,
+      text: followUpPromptText(presented),
       historyImages: [],
       historyUploads: [],
       currentUploads: request.attachments ?? [],
