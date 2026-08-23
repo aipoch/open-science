@@ -520,6 +520,7 @@ class AcpRuntime {
       openCodeUsageApi: () => this.backendGeneration.openCodeUsageApi(),
       activeProviderSessionId: (sessionId) => this.activeSessionFor(sessionId)?.sessionId,
       hasLivePrompt: (sessionId) => this.sessionInteractions.current(sessionId)?.kind === 'prompt',
+      hasPendingPermission: (sessionId) => this.permissionContext.hasPendingForSession(sessionId),
       livePrompt: (sessionId) => {
         const current = this.sessionInteractions.current(sessionId)
         return current?.kind === 'prompt'

@@ -80,6 +80,7 @@ type NativeFollowUpWorkflowOptions = Readonly<{
   openCodeUsageApi: () => AcpOpenCodeUsageApi | undefined
   activeProviderSessionId: (appSessionId: string) => string | undefined
   hasLivePrompt: (appSessionId: string) => boolean
+  hasPendingPermission: (appSessionId: string) => boolean
   livePrompt?: (appSessionId: string) => NativeFollowUpLivePrompt | undefined
   sessionCwd: (appSessionId: string) => string | undefined
   publishUserMessage: (input: NativeFollowUpUserMessage) => void
@@ -234,6 +235,15 @@ class AcpNativeFollowUpWorkflow {
         transport: route.transport
       })
       return refused('no-live-turn')
+    }
+    if (this.options.hasPendingPermission(request.sessionId)) {
+      log.info('native follow-up refused', {
+        sessionId: request.sessionId,
+        reason: 'prompt-required',
+        pendingPermission: true,
+        transport: route.transport
+      })
+      return refused('prompt-required')
     }
 
     const transportSignal = this.transportTimeout(route.transport)

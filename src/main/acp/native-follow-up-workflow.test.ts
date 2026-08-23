@@ -15,6 +15,7 @@ const createWorkflow = (
   overrides: {
     advertised?: boolean
     livePrompt?: boolean | (() => boolean)
+    pendingPermission?: boolean | (() => boolean)
     livePromptTurn?: () => { turnToken: string; signal: AbortSignal } | undefined
     frameworkId?: 'claude-code' | 'opencode' | 'codex'
     openCodeHttp?: boolean
@@ -67,6 +68,10 @@ const createWorkflow = (
         typeof overrides.livePrompt === 'function'
           ? overrides.livePrompt()
           : (overrides.livePrompt ?? true),
+      hasPendingPermission: () =>
+        typeof overrides.pendingPermission === 'function'
+          ? overrides.pendingPermission()
+          : (overrides.pendingPermission ?? false),
       livePrompt: () => {
         if (overrides.livePromptTurn) return overrides.livePromptTurn()
         const isLive =
@@ -246,6 +251,44 @@ describe('AcpNativeFollowUpWorkflow', () => {
       messageId: 'message-steer-1',
       text: 'see file'
     })
+  })
+
+  it.each(['claude-code', 'codex'] as const)(
+    'refuses %s ACP steering when permission becomes pending during preparation',
+    async (frameworkId) => {
+      let pendingPermission = false
+      const { request, workflow } = createWorkflow({
+        frameworkId,
+        pendingPermission: () => pendingPermission,
+        prepareFollowUp: async () => {
+          pendingPermission = true
+          return { prompt: [{ type: 'text' as const, text: 'late follow-up' }] }
+        }
+      })
+
+      await expect(
+        workflow.steerFollowUp({ sessionId: 'app-1', text: 'late follow-up' })
+      ).resolves.toEqual({ injected: false, reason: 'prompt-required' })
+      expect(request).not.toHaveBeenCalled()
+      expect(published).toEqual([])
+    }
+  )
+
+  it('refuses OpenCode HTTP follow-up while permission is pending', async () => {
+    const fetchImpl = vi.fn<FetchImpl>()
+    const { workflow } = createWorkflow({
+      advertised: false,
+      frameworkId: 'opencode',
+      openCodeHttp: true,
+      pendingPermission: true,
+      fetchImpl
+    })
+
+    await expect(
+      workflow.steerFollowUp({ sessionId: 'app-1', text: 'http-steer' })
+    ).resolves.toEqual({ injected: false, reason: 'prompt-required' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(published).toEqual([])
   })
 
   it('posts OpenCode HTTP follow-up into the v1 session when ACP steering is not advertised', async () => {
