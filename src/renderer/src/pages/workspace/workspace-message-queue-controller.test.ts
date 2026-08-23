@@ -747,7 +747,7 @@ describe('workspace message queue controller', () => {
         error: { kind: 'send', detail: resumeError }
       })
     )
-    expect(input.runtime.cancelRun).toHaveBeenCalledWith('session-a')
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
   })
 
   it('keeps a generic admission miss when Send now fails without a new session error', async () => {
@@ -992,7 +992,7 @@ describe('workspace message queue controller', () => {
     expect(input.composer.discardSnapshot).toHaveBeenCalledTimes(2)
   })
 
-  it('stops the current run and sends immediately when native follow-up is unavailable', async () => {
+  it('keeps Send now queued until the current run finishes when native follow-up is unavailable', async () => {
     const order: string[] = []
     let currentSession = session()
     const input = options(currentSession, {
@@ -1013,12 +1013,18 @@ describe('workspace message queue controller', () => {
     act(() => hook.result.current.lifecycle.enqueue(admission('wait')))
 
     await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
-    expect(order).toEqual(['cancel'])
-    expect(hook.result.current.items[0]).toMatchObject({ text: 'wait', phase: 'interrupting' })
+    expect(order).toEqual([])
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+    expect(hook.result.current.items[0]).toMatchObject({
+      text: 'wait',
+      phase: 'queued',
+      deferredUntilIdle: true
+    })
     expect(hook.result.current.announcement).toBe(
-      'Stopping the current run before sending the queued message.'
+      'Queued message will send after the current run finishes.'
     )
 
+    currentSession = session('idle')
     hook.rerender(
       options(currentSession, {
         ...input,
@@ -1027,8 +1033,8 @@ describe('workspace message queue controller', () => {
         getSession: () => currentSession
       })
     )
-    await vi.waitFor(() => expect(order).toEqual(['cancel', 'send']))
-    await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
+    await vi.waitFor(() => expect(order).toEqual(['send']))
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
   })
 
   it('keeps Send now queued while a durable permission response is in flight', async () => {
@@ -1108,16 +1114,26 @@ describe('workspace message queue controller', () => {
       completions[0]()
       await sendNow
     })
-    expect(input.runtime.cancelRun).toHaveBeenCalledWith('session-a')
-    expect(sendMessage).toHaveBeenCalledTimes(2)
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+    expect(sendMessage).toHaveBeenCalledOnce()
     expect(hook.result.current.items.map((item) => item.text)).toEqual(['second'])
-    expect(hook.result.current.items[0]?.phase).toBe('sending')
+    expect(hook.result.current.items[0]?.phase).toBe('queued')
 
+    currentSession = session('idle')
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession
+      })
+    )
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2))
     await act(async () => completions[1]())
     await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
   })
 
-  it('surfaces a cancellation failure when native follow-up is unavailable', async () => {
+  it('does not cancel the current run when native follow-up is unavailable', async () => {
     const input = options(session(), {
       runtime: {
         cancelRun: vi.fn(async () => {
@@ -1135,10 +1151,10 @@ describe('workspace message queue controller', () => {
     expect(hook.result.current.items).toHaveLength(1)
     expect(hook.result.current.items[0]).toMatchObject({
       text: 'keep me',
-      phase: 'error',
-      error: { kind: 'cancel', detail: 'runtime refused cancellation' }
+      phase: 'queued',
+      deferredUntilIdle: true
     })
-    expect(input.runtime.cancelRun).toHaveBeenCalledWith('session-a')
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
@@ -1271,7 +1287,7 @@ describe('workspace message queue controller', () => {
     expect(hook.result.current.items).toEqual([])
   })
 
-  it('interrupts and sends when native follow-up is refused', async () => {
+  it('requeues when native follow-up is refused instead of interrupting', async () => {
     let currentSession = session()
     const input = options(currentSession, {
       getSession: () => currentSession,
@@ -1291,11 +1307,12 @@ describe('workspace message queue controller', () => {
     act(() => hook.result.current.lifecycle.enqueue(admission('fallback')))
 
     await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
-    expect(input.runtime.cancelRun).toHaveBeenCalledWith('session-a')
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
     expect(hook.result.current.items[0]).toMatchObject({
       text: 'fallback',
-      phase: 'interrupting'
+      phase: 'queued',
+      deferredUntilIdle: true
     })
 
     currentSession = session('idle')

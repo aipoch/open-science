@@ -601,10 +601,10 @@ colors communicate a successful or failed probe/migration result.
   Up/Arrow Down keyboard reordering, Edit, Remove, and Send now. Edit moves an item back into an
   unchanged empty composer. Send now promotes the item and first tries to inject it into the current
   run through the agent framework's native follow-up, without cancelling that run. While inject is in
-  flight, the row shows a sending state. If inject is unavailable or refused, Send now stops the live
-  turn and dispatches the promoted item as soon as the Session becomes sendable; the row shows a
-  stopping state while cancellation is in flight. Stop remains the explicit control for cancelling a
-  live turn without sending a queued message. Branch, admission, cancellation, or edit failures keep
+  flight, the row shows a sending state. If inject is unavailable or refused, Send now keeps the live
+  turn and sends the promoted item after that run finishes; the row returns to queued. Stop remains
+  the explicit control for cancelling a live turn without sending a queued message. Branch, admission,
+  cancellation, or edit failures keep
   the row and show a recoverable inline error.
 - Queued messages are transient and Session-scoped. They are not persisted across renderer restart.
   Bind each item to its admission Message Branch and block branch switching or inline message edits

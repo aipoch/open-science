@@ -245,7 +245,7 @@ const sendQueuedItemNow = async (
           return
         }
       } catch {
-        // Fall back to interrupting the live turn below.
+        // Native follow-up is fail-closed. Keep the current run and send after it finishes.
       }
     }
     if (liveTurn && hasPayload) {
@@ -264,26 +264,15 @@ const sendQueuedItemNow = async (
         drainQueuedSessions(owner, optionsRef)
         return
       }
-      const contextError = queueItemContextError(latestSession, item)
-      if (contextError) {
-        owner.replaceItem(sessionId, itemId, {
-          phase: 'error',
-          error: contextError,
-          deferredUntilIdle: false
-        })
-        return
-      }
       owner.replaceItem(sessionId, itemId, {
-        phase: 'interrupting',
+        phase: 'queued',
         error: undefined,
-        deferredUntilIdle: false
+        deferredUntilIdle: true
       })
-      owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.interrupting)
-      await latest.runtime.cancelRun(sessionId)
       if (owner.dispatches.get(sessionId) === displacedDispatch) {
         owner.dispatches.delete(sessionId)
       }
-      drainQueuedSessions(owner, optionsRef)
+      owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.deferredUntilIdle)
       return
     }
     if (liveTurn) {
