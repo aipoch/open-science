@@ -118,6 +118,7 @@
         "src/renderer/src/pages/workspace/workspace-composer-controller.ts",
         "src/renderer/src/pages/workspace/workspace-conversation-controller.ts",
         "src/renderer/src/pages/workspace/workspace-message-queue-controller.ts",
+        "src/renderer/src/pages/workspace/workspace-message-queue-owner.ts",
         "src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts",
         "src/renderer/src/pages/workspace/use-side-chat-controller.ts",
         "src/renderer/src/pages/workspace/workspace-session-controller.ts",
