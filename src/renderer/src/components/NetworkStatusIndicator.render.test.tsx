@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
@@ -23,6 +23,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  delete (window as unknown as { api?: unknown }).api
   useNetworkStore.setState({ isOnline: true, connectivity: 'unknown' })
   useSettingsStore.setState({ isSettingsOpen: false, pendingSettingsIntent: undefined })
 })
@@ -103,8 +104,29 @@ describe('NetworkStatusIndicator', () => {
     })
 
     const button = container.querySelector('button')
-    expect(button?.getAttribute('aria-label')).toBe('Internet unreachable')
+    expect(button?.getAttribute('aria-label')).toBe('Package registries unreachable')
     expect(button?.textContent).toContain('Unreachable')
+  })
+
+  it('clears the unreachable pill after a silent focus re-probe succeeds', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    ;(window as unknown as { api: unknown }).api = { network: { checkConnectivity } }
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
+
+    await act(async () => {
+      root.render(<NetworkStatusIndicator variant="pill" />)
+    })
+    expect(container.querySelector('button')?.textContent).toContain('Unreachable')
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(container.querySelector('button')).toBeNull()
+      })
+    })
+    expect(checkConnectivity).toHaveBeenCalledTimes(1)
   })
 
   it('renders a retry entry point when the internet check fails', async () => {

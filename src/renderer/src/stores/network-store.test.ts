@@ -209,3 +209,74 @@ describe('probeConnectivity', () => {
     expect(useNetworkStore.getState().connectivity).toBe('reachable')
   })
 })
+
+describe('startNetworkMonitor silent recovery', () => {
+  it('silently re-probes when the window is focused while unreachable', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    stubCheckConnectivity(checkConnectivity)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
+
+    window.dispatchEvent(new Event('focus'))
+    await vi.waitFor(() => {
+      expect(useNetworkStore.getState().connectivity).toBe('reachable')
+    })
+    expect(checkConnectivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('silently re-probes when the document becomes visible while probe-failed', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    stubCheckConnectivity(checkConnectivity)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'probe-failed' })
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.waitFor(() => {
+      expect(useNetworkStore.getState().connectivity).toBe('reachable')
+    })
+    expect(checkConnectivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not re-probe on focus while already reachable', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(false)
+    stubCheckConnectivity(checkConnectivity)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+
+    window.dispatchEvent(new Event('focus'))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(checkConnectivity).not.toHaveBeenCalled()
+    expect(useNetworkStore.getState().connectivity).toBe('reachable')
+  })
+
+  it('does not re-probe on focus while the link is down', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    stubCheckConnectivity(checkConnectivity)
+    setNavigatorOnline(false)
+    useNetworkStore.setState({ isOnline: false, connectivity: 'unreachable' })
+
+    window.dispatchEvent(new Event('focus'))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(checkConnectivity).not.toHaveBeenCalled()
+    expect(useNetworkStore.getState()).toMatchObject({
+      isOnline: false,
+      connectivity: 'unreachable'
+    })
+  })
+
+  it('does not re-probe when visibilitychange leaves the document hidden', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    stubCheckConnectivity(checkConnectivity)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+
+    document.dispatchEvent(new Event('visibilitychange'))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(checkConnectivity).not.toHaveBeenCalled()
+    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+  })
+})

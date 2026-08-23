@@ -83,7 +83,7 @@ describe('NetworkPanel offline retry', () => {
       root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
     })
     expect(container.textContent).toContain(
-      'The network link is up, but the internet is unreachable.'
+      'The network link is up, but package registries are unreachable.'
     )
 
     await act(async () => {
@@ -95,9 +95,31 @@ describe('NetworkPanel offline retry', () => {
       await vi.advanceTimersByTimeAsync(500)
     })
     expect(container.textContent).toContain(
-      'The network link is up, but the internet is unreachable.'
+      'The network link is up, but package registries are unreachable.'
     )
     expect(buttonWithText('Check again')).not.toBeUndefined()
     expect(checkConnectivity).toHaveBeenCalledOnce()
+  })
+
+  it('shows an explicit error when local network info cannot be loaded', async () => {
+    const getInfo = vi.fn().mockRejectedValue(new Error('ipc down'))
+    ;(window as unknown as { api: unknown }).api = {
+      network: {
+        getInfo,
+        checkConnectivity: vi.fn().mockResolvedValue(true)
+      }
+    }
+    Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true })
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+
+    await act(async () => {
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('Could not load local network details.')
+    expect(getInfo).toHaveBeenCalledOnce()
   })
 })
