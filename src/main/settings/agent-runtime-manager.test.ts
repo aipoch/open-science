@@ -540,6 +540,7 @@ describe('AgentRuntimeManager', () => {
 
   it('updates only the managed adapter when Codex CLI is user-owned', async () => {
     const externalCodexPath = join(storageRoot, 'user-bin', 'codex')
+    inventory.codexNative.set(externalCodexPath, 'codex-cli 0.144.6')
     await repository.setCodexInfo({
       resolvedPath: managedAdapterPath,
       version: '1.1.4',
@@ -566,6 +567,36 @@ describe('AgentRuntimeManager', () => {
       resolvedPath: managedAdapterPath,
       version: '1.6.2',
       nativePath: externalCodexPath,
+      nativeVersion: '0.144.6'
+    })
+  })
+
+  it('falls back to the managed Codex CLI when the stored user-owned path is stale', async () => {
+    const staleCodexPath = join(storageRoot, 'missing-user-bin', 'codex')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.1.4',
+      nativePath: staleCodexPath,
+      nativeVersion: '0.144.6'
+    })
+    const installManagedCodexImpl: NonNullable<ManagerOptions['installManagedCodexImpl']> = vi.fn(
+      async ({ installId }) => ({
+        result: { installId, ok: true },
+        adapterPath: managedAdapterPath,
+        adapterVersion: '1.6.2',
+        codexPath: managedCodexPath,
+        codexVersion: '0.144.6'
+      })
+    )
+    manager = createManager({ installManagedCodexImpl })
+
+    await manager.installCodex({ source: 'managed' }, vi.fn())
+
+    expect(installManagedCodexImpl).toHaveBeenCalledWith(
+      expect.not.objectContaining({ existingCodexPath: expect.anything() })
+    )
+    expect((await repository.getSettings()).codex).toMatchObject({
+      nativePath: managedCodexPath,
       nativeVersion: '0.144.6'
     })
   })

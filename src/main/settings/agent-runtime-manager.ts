@@ -561,9 +561,13 @@ export class AgentRuntimeManager {
       const configuredCodexPath = settings.codex?.nativePath
       const managedCodexPath =
         this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.storageRoot)
-      const existingCodexPath =
+      const externalCodexPath =
         configuredCodexPath && configuredCodexPath !== managedCodexPath
           ? configuredCodexPath
+          : undefined
+      const existingCodexPath =
+        externalCodexPath && (await this.codexDetectDeps.getCodexVersion(externalCodexPath))
+          ? externalCodexPath
           : undefined
       const outcome = await this.installManagedCodexImpl({
         installId,
