@@ -261,6 +261,10 @@ const AppContent = (): React.JSX.Element | null => {
     return 'handled'
   }, [appShellPresentation])
   useCloseActivePaneShortcut(resolveCloseRequest)
+  const allowsArchiveUndoShortcut = useCallback(
+    () => appShellPresentation.allowsShortcut('archiveUndo'),
+    [appShellPresentation]
+  )
 
   const retrySettingsInitialization = useCallback(async (): Promise<void> => {
     if (await loadSettings({ force: true })) await checkEnvironment()
@@ -664,7 +668,7 @@ const AppContent = (): React.JSX.Element | null => {
         />
         <ConnectorAuthToast />
         <NotificationLiveToast />
-        <PermissionUndoSnackbar />
+        <PermissionUndoSnackbar allowsArchiveShortcut={allowsArchiveUndoShortcut} />
       </div>
       <WebEventRecoveryDialog
         active={activePresentation === 'webEventRecovery'}

@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
-import { PermissionUndoSnackbar } from './PermissionUndoSnackbar'
+import { PermissionUndoSnackbar as PermissionUndoSnackbarComponent } from './PermissionUndoSnackbar'
+
+const PermissionUndoSnackbar = (): React.JSX.Element => (
+  <PermissionUndoSnackbarComponent allowsArchiveShortcut={() => true} />
+)
 
 const archivedProjectNotice = (
   id = 'project-1',
@@ -211,6 +215,50 @@ describe('PermissionUndoSnackbar', () => {
       expectedArchivedAt: 20
     })
     expect(restore).not.toHaveBeenCalled()
+  })
+
+  it('leaves Cmd+Z untouched when the App Shell presentation owner blocks archive Undo', async () => {
+    useArchiveUndoStore.setState({
+      notices: [archivedProjectNotice()],
+      restoringKey: undefined
+    })
+    await act(async () =>
+      root.render(<PermissionUndoSnackbarComponent allowsArchiveShortcut={() => false} />)
+    )
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'z',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+
+    await act(async () => window.dispatchEvent(shortcut))
+
+    expect(shortcut.defaultPrevented).toBe(false)
+    expect(updateProjectArchive).not.toHaveBeenCalled()
+  })
+
+  it('moves the shortcut hint to the latest remaining unexpired archive receipt', async () => {
+    const expiring = archivedProjectNotice('project-2', 20, 'Expiring')
+    expiring.expiresAt = Date.now() + 1_000
+    const remaining = archivedProjectNotice('project-1', 10, 'Remaining')
+    useArchiveUndoStore.setState({ notices: [expiring, remaining], restoringKey: undefined })
+    await act(async () => root.render(<PermissionUndoSnackbar />))
+    const firstSnackbar = container.querySelector<HTMLElement>(
+      '[data-testid="archive-undo-snackbar"]'
+    )
+    await act(async () =>
+      firstSnackbar?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    )
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000))
+
+    const actions = container.querySelectorAll<HTMLButtonElement>(
+      '[data-testid="archive-undo-snackbar"] button:not([aria-label])'
+    )
+    expect(actions[0]?.hasAttribute('aria-keyshortcuts')).toBe(false)
+    expect(actions[1]?.getAttribute('aria-keyshortcuts')).toBe('Meta+Z')
+    expect(actions[1]?.textContent).toContain('⌘Z')
   })
 
   it('uses Ctrl+Z outside macOS', async () => {

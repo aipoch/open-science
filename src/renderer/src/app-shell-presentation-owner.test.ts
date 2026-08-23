@@ -84,17 +84,20 @@ describe('App Shell presentation owner', () => {
     const base = resolveAppShellPresentation(input())
     expect(base.allowsShortcut('settings')).toBe(true)
     expect(base.allowsShortcut('globalSearch')).toBe(true)
+    expect(base.allowsShortcut('archiveUndo')).toBe(true)
 
     const nestedDialog = document.createElement('div')
     nestedDialog.setAttribute('role', 'dialog')
     document.body.appendChild(nestedDialog)
     expect(base.allowsShortcut('settings')).toBe(false)
     expect(base.allowsShortcut('globalSearch')).toBe(false)
+    expect(base.allowsShortcut('archiveUndo')).toBe(false)
     nestedDialog.remove()
 
     const search = resolveAppShellPresentation(input({ globalSearch: true }))
     expect(search.allowsShortcut('globalSearch')).toBe(true)
     expect(search.allowsShortcut('settings')).toBe(false)
+    expect(search.allowsShortcut('archiveUndo')).toBe(false)
     expect(
       resolveAppShellPresentation(input({ settings: true })).allowsShortcut('globalSearch')
     ).toBe(false)

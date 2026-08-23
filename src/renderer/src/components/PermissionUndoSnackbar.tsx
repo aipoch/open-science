@@ -244,7 +244,11 @@ const ArchiveUndoItem = ({
 
 // App-root ownership keeps Undo available when Settings closes. The Registry receipt remains the
 // authority; this component only owns its short-lived renderer presentation.
-const PermissionUndoSnackbar = (): React.JSX.Element | null => {
+const PermissionUndoSnackbar = ({
+  allowsArchiveShortcut
+}: {
+  allowsArchiveShortcut: () => boolean
+}): React.JSX.Element | null => {
   const undo = usePermissionGrantsStore((state) => state.undo)
   const undoQueue = usePermissionGrantsStore((state) => state.undoQueue)
   const restore = usePermissionGrantsStore((state) => state.restore)
@@ -255,6 +259,26 @@ const PermissionUndoSnackbar = (): React.JSX.Element | null => {
   const restoreArchive = useArchiveUndoStore((state) => state.undo)
   const dismissArchive = useArchiveUndoStore((state) => state.dismiss)
   const archiveRestoringKey = useArchiveUndoStore((state) => state.restoringKey)
+  const [archiveProjectionTime, setArchiveProjectionTime] = useState(() => Date.now())
+  const archiveShortcutTargetKey = archiveNotices.find(
+    (notice) => notice.expiresAt > archiveProjectionTime
+  )?.key
+
+  useEffect(() => {
+    const nextExpiry = archiveNotices
+      .filter((notice) => notice.expiresAt > archiveProjectionTime)
+      .reduce<number | undefined>(
+        (earliest, notice) =>
+          earliest === undefined ? notice.expiresAt : Math.min(earliest, notice.expiresAt),
+        undefined
+      )
+    if (nextExpiry === undefined) return
+    const timer = window.setTimeout(
+      () => setArchiveProjectionTime(Date.now()),
+      Math.max(0, nextExpiry - Date.now())
+    )
+    return () => window.clearTimeout(timer)
+  }, [archiveNotices, archiveProjectionTime])
 
   useEffect(() => {
     const undoLatestArchive = (event: KeyboardEvent): void => {
@@ -270,22 +294,25 @@ const PermissionUndoSnackbar = (): React.JSX.Element | null => {
         !primaryModifier ||
         event.altKey ||
         event.shiftKey ||
-        isEditableShortcutTarget(event.target)
+        isEditableShortcutTarget(event.target) ||
+        !allowsArchiveShortcut()
       ) {
         return
       }
 
       const archiveUndo = useArchiveUndoStore.getState()
-      const latest = archiveUndo.notices.find((notice) => notice.expiresAt > Date.now())
-      if (!latest || archiveUndo.restoringKey !== undefined) return
+      const target = archiveUndo.notices.find(
+        (notice) => notice.key === archiveShortcutTargetKey && notice.expiresAt > Date.now()
+      )
+      if (!target || archiveUndo.restoringKey !== undefined) return
 
       event.preventDefault()
-      void archiveUndo.undo(latest.key)
+      void archiveUndo.undo(target.key)
     }
 
     window.addEventListener('keydown', undoLatestArchive)
     return () => window.removeEventListener('keydown', undoLatestArchive)
-  }, [])
+  }, [allowsArchiveShortcut, archiveShortcutTargetKey])
 
   const items = useMemo(
     () => [undo, ...undoQueue].filter((item): item is PermissionUndo => Boolean(item)),
@@ -312,14 +339,14 @@ const PermissionUndoSnackbar = (): React.JSX.Element | null => {
             isRestoring={isRestoring}
           />
         ))}
-        {archiveNotices.map((item, index) => (
+        {archiveNotices.map((item) => (
           <ArchiveUndoItem
             key={item.key}
             undo={item}
             dismiss={dismissArchive}
             restore={restoreArchive}
             isRestoring={archiveRestoringKey === item.key}
-            isShortcutTarget={index === 0}
+            isShortcutTarget={item.key === archiveShortcutTargetKey}
           />
         ))}
       </div>

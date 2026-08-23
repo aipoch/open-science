@@ -128,6 +128,7 @@ describe('App Shell presentation owner architecture', () => {
     )
     expect(appSource).toContain("!appShellPresentation.allowsShortcut('settings')")
     expect(appSource).toContain("!appShellPresentation.allowsShortcut('globalSearch')")
+    expect(appSource).toContain("appShellPresentation.allowsShortcut('archiveUndo')")
     expect(appSource).toContain('const action = appShellPresentation.resolveCloseAction()')
     expect(appSource).not.toContain('STREAMDOWN_FULLSCREEN_SELECTOR')
     expect(appSource).not.toContain('document.querySelector')
