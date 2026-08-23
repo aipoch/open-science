@@ -105,7 +105,7 @@ describe('AgentMarkdown streaming presentation', () => {
 
   it('passes a normalized artifact target to a supplied link component', async () => {
     vi.useRealTimers()
-    const Link = ({ href }: React.ComponentProps<'a'>): React.JSX.Element => (
+    const Link = ({ href }: React.ComponentProps<'a'> & { node?: unknown }): React.JSX.Element => (
       <button data-testid="managed-file-link">{href}</button>
     )
 
