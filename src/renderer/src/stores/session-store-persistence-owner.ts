@@ -303,6 +303,16 @@ const withTransientSessionState = (
   }
 }
 
+const withAcknowledgedUnsavedTitle = (
+  projected: ChatSession,
+  durable: PersistedChatSession
+): ChatSession => {
+  if (projected.unsavedTitle !== true || projected.title !== durable.title) return projected
+  const next = { ...projected }
+  delete next.unsavedTitle
+  return next
+}
+
 const projectDurablePlanAuthority = (
   current: ChatSession,
   durable: PersistedChatSession
@@ -643,14 +653,25 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           !graph?.changed &&
           projected === merged &&
           sessionRevision(session) <= sessionRevision(current)
-        )
-          return state
+        ) {
+          const acknowledged = withAcknowledgedUnsavedTitle(current, session)
+          if (acknowledged === current) return state
+          markExternallyHydratedSession(acknowledged, session)
+          return {
+            sessions: state.sessions.map((candidate) =>
+              candidate.id === session.id ? acknowledged : candidate
+            )
+          } as Partial<State>
+        }
       }
 
-      projected = {
-        ...projected,
-        revision: Math.max(sessionRevision(projected), sessionRevision(session))
-      }
+      projected = withAcknowledgedUnsavedTitle(
+        {
+          ...projected,
+          revision: Math.max(sessionRevision(projected), sessionRevision(session))
+        },
+        session
+      )
       markExternallyHydratedSession(projected, session)
       return {
         sessions: state.sessions.map((candidate) =>

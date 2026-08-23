@@ -1167,6 +1167,94 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].title).toBe('Remote title')
   })
 
+  it('clears an unsaved title after a durable save acknowledgement even if the live Session advanced', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Original',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+    useSessionStore.getState().renameSession('session-1', 'Local draft')
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().togglePinned('session-1')
+    const live = useSessionStore.getState().sessions[0]
+    expect(live).not.toBe(source)
+    expect(live.unsavedTitle).toBe(true)
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(live),
+        title: 'Local draft',
+        revision: 2,
+        updatedAt: live.updatedAt + 1
+      },
+      mode: 'replace-persisted-if-current'
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Local draft',
+      pinned: true
+    })
+    expect(useSessionStore.getState().sessions[0].unsavedTitle).toBeUndefined()
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Remote later',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 3,
+      messages: [],
+      createdAt: 1,
+      updatedAt: Date.now() + 2
+    })
+    expect(useSessionStore.getState().sessions[0].title).toBe('Remote later')
+  })
+
+  it('keeps a newer unsaved title when a durable save acknowledgement is for the previous title', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Original',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+    useSessionStore.getState().renameSession('session-1', 'Local draft')
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().renameSession('session-1', 'Even newer')
+    expect(useSessionStore.getState().sessions[0]).not.toBe(source)
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        title: 'Local draft',
+        revision: 2,
+        updatedAt: source.updatedAt + 1
+      },
+      mode: 'replace-persisted-if-current'
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Even newer',
+      unsavedTitle: true
+    })
+  })
+
   it('merges a stale-timestamp child completion by durable identities without clearing root transient state', () => {
     const rootMessage = {
       id: 'root-message',
