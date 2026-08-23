@@ -82,6 +82,9 @@ type SessionMetadataLoader = {
   sessionMetadataSnapshot: () => Promise<SessionMetadataSnapshot>
 }
 
+type ProjectDeletionRecoveryForSessionRead =
+  { isComplete: true } | { isComplete: false; result: LoadAllSessionsResult }
+
 const withProjectDeletionRecoveryStatus = (
   result: LoadAllSessionsResult,
   isProjectDeletionRecoveryComplete: boolean
@@ -98,6 +101,32 @@ const withProjectDeletionRecoveryStatus = (
 const canReconcileSessionAbsences = (result: LoadAllSessionsResult): boolean =>
   result.diagnostics?.isProjectDeletionRecoveryComplete === true &&
   isSessionCatalogAuthoritative(result.diagnostics)
+
+const recoverProjectDeletionsForSessionRead = async (
+  projectRecovery: ProjectDeletionRecoveryBackend,
+  sessionLoader: Pick<SessionStartupLoader, 'loadAllReadOnly'>,
+  log: Pick<Logger, 'warn'> = createLogger('session-persistence')
+): Promise<ProjectDeletionRecoveryForSessionRead> => {
+  try {
+    await projectRecovery.recoverPendingDeletions()
+    return { isComplete: true }
+  } catch (error) {
+    try {
+      log.warn('project deletion recovery failed', {
+        operation: 'session-hydration',
+        phase: 'recover-project-deletions',
+        outcome: 'degraded',
+        ...diagnosticErrorFields(error)
+      })
+    } catch {
+      // Diagnostics must never prevent the explicit read-only recovery path.
+    }
+    return {
+      isComplete: false,
+      result: withProjectDeletionRecoveryStatus(await sessionLoader.loadAllReadOnly(), false)
+    }
+  }
+}
 
 // Cached metadata must not overtake queued Project deletion work. Let recovery failures reject so
 // Permissions reports the Session store as incomplete instead of publishing stale navigation labels.
@@ -117,21 +146,8 @@ const loadSessionsAfterProjectRecovery = async (
   sessionLoader: SessionStartupLoader,
   log: Pick<Logger, 'warn'> = createLogger('session-persistence')
 ): Promise<LoadAllSessionsResult> => {
-  try {
-    await projectRecovery.recoverPendingDeletions()
-  } catch (error) {
-    try {
-      log.warn('project deletion recovery failed', {
-        operation: 'session-hydration',
-        phase: 'recover-project-deletions',
-        outcome: 'degraded',
-        ...diagnosticErrorFields(error)
-      })
-    } catch {
-      // Diagnostics must never prevent the explicit read-only recovery path.
-    }
-    return withProjectDeletionRecoveryStatus(await sessionLoader.loadAllReadOnly(), false)
-  }
+  const recovery = await recoverProjectDeletionsForSessionRead(projectRecovery, sessionLoader, log)
+  if (!recovery.isComplete) return recovery.result
 
   return withProjectDeletionRecoveryStatus(await sessionLoader.loadAll(), true)
 }
@@ -297,6 +313,11 @@ export {
   createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
+  recoverProjectDeletionsForSessionRead,
   registerSessionPersistenceIpcHandlers
 }
-export type { SessionPersistenceBackend, SessionPersistenceHandlers }
+export type {
+  ProjectDeletionRecoveryForSessionRead,
+  SessionPersistenceBackend,
+  SessionPersistenceHandlers
+}

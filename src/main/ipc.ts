@@ -174,6 +174,7 @@ import {
   createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
+  recoverProjectDeletionsForSessionRead,
   registerSessionPersistenceIpcHandlers
 } from './session-persistence/ipc'
 import {
@@ -902,13 +903,36 @@ const createApplicationModules = async (
     // Reconcile a JSON write from a committed Project tombstone before deletion recovery removes
     // that temporary authority. Its SQLite facts remain part of retained Project history.
     await sessionRepository.reconcilePendingSessionProjection()
-    await projectDeletionCoordinator.recoverPendingDeletions()
-    const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
+    const recovery = await recoverProjectDeletionsForSessionRead(
+      projectDeletionCoordinator,
+      sessionPersistenceCoordinator
+    )
+    let readOnlyResult: Promise<LoadAllSessionsResult> | undefined
+    const loadReadOnlyResult = (): Promise<LoadAllSessionsResult> => {
+      readOnlyResult ??= (async () => {
+        if (recovery.isComplete) throw new Error('Read-only Session recovery is unavailable.')
+        if (!sessionEnabledComputeHostsOwnerRef.current) {
+          throw new Error('Session enabled Compute Host ownership is not initialized.')
+        }
+        return {
+          ...recovery.result,
+          sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
+            recovery.result.sessions,
+            false
+          )
+        }
+      })()
+      return readOnlyResult
+    }
+    const projection = await sessionRepository.ensureSessionProjection(
+      recovery.isComplete ? loadAllSessions : loadReadOnlyResult
+    )
+    const result = recovery.isComplete ? projection.result : await loadReadOnlyResult()
     await sessionPersistenceCoordinator.replaceSessionMetadata(
       projection.sessions,
-      projection.result ? canReconcileSessionAbsences(projection.result) : true
+      result ? canReconcileSessionAbsences(result) : true
     )
-    return projection
+    return { ...projection, result }
   }
   const sessionPersistenceBackend: SessionPersistenceBackend = {
     loadAll: loadAllSessions,
@@ -929,7 +953,15 @@ const createApplicationModules = async (
       return sessionRepository.loadSessionUsageProjection()
     },
     loadOne: async ({ projectId, sessionId }) => {
-      await projectDeletionCoordinator.recoverPendingDeletions()
+      const recovery = await recoverProjectDeletionsForSessionRead(
+        projectDeletionCoordinator,
+        sessionPersistenceCoordinator
+      )
+      if (!recovery.isComplete) {
+        return recovery.result.sessions.find(
+          (session) => session.projectId === projectId && session.id === sessionId
+        )
+      }
       const session = await sessionRepository.loadSession(projectId, sessionId)
       if (session) {
         await sessionEnabledComputeHostsOwnerRef.current?.reconcile([session], false)

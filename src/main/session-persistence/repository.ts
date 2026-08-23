@@ -304,7 +304,7 @@ class SessionRepository {
             continue
           }
         }
-        await this.projection.commitDelete(pending.sessionId)
+        await this.projection.commitDelete(pending.projectId, pending.sessionId)
       }
     })
   }
@@ -710,7 +710,9 @@ class SessionRepository {
     const revisionKey = `${safeProjectId}:${safeSessionId}`
     if (diagnostic.status === 'missing') {
       this.sessionRevisions.delete(revisionKey)
-      if (!this.projectionWritesSuspended) await this.projection?.commitDelete(safeSessionId)
+      if (!this.projectionWritesSuspended) {
+        await this.projection?.commitDelete(safeProjectId, safeSessionId)
+      }
       return
     }
 
@@ -742,7 +744,9 @@ class SessionRepository {
       force: true,
       recursive: false
     })
-    if (!this.projectionWritesSuspended) await this.projection?.commitDelete(safeSessionId)
+    if (!this.projectionWritesSuspended) {
+      await this.projection?.commitDelete(safeProjectId, safeSessionId)
+    }
     this.sessionRevisions.delete(revisionKey)
   }
 

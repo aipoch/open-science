@@ -154,7 +154,7 @@ describe('Session projection', () => {
 
     const first = await repository.prepareSave(session('session-1'))
     await repository.commitSave(first)
-    await repository.commitDelete(first.id)
+    await repository.commitDelete(first.projectId, first.id)
 
     await expect(repository.list()).resolves.toEqual([])
     await expect(repository.usage()).resolves.toMatchObject({
@@ -199,6 +199,35 @@ describe('Session projection', () => {
       id: first.id,
       deletedAtMs: expect.any(BigInt)
     })
+  })
+
+  it('refuses to tombstone a Session through another Project identity', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-delete-ownership-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.createMany({
+      data: [
+        { id: 'project-1', name: 'First Project', createdAt: new Date(50) },
+        { id: 'project-2', name: 'Second Project', createdAt: new Date(60) }
+      ]
+    })
+    const repository = new SessionProjectionRepository(async () => client!)
+    const owned = await repository.prepareSave({
+      ...session('session-1'),
+      projectId: 'project-2'
+    })
+    await repository.commitSave(owned)
+
+    await expect(repository.commitDelete('project-1', owned.id)).rejects.toThrow('another Project')
+    await expect(client.session.findUnique({ where: { id: owned.id } })).resolves.toMatchObject({
+      projectId: 'project-2',
+      deletedAtMs: null
+    })
+    await expect(client.sessionTurnUsage.count({ where: { sessionId: owned.id } })).resolves.toBe(1)
+    await expect(client.sessionRun.count({ where: { sessionId: owned.id } })).resolves.toBe(1)
+    await expect(client.sessionArtifactRef.count({ where: { sessionId: owned.id } })).resolves.toBe(
+      1
+    )
   })
 
   it('retains Project metadata and Session Usage when the whole Project is deleted', async () => {

@@ -430,17 +430,28 @@ export class SessionProjectionRepository {
     })
   }
 
-  async commitDelete(sessionId: string): Promise<void> {
+  async commitDelete(projectId: string, sessionId: string): Promise<void> {
     const client = await this.client()
     await client.$transaction(async (tx) => {
+      const existing = await tx.session.findUnique({
+        where: { id: sessionId },
+        select: { projectId: true }
+      })
+      if (existing && existing.projectId !== projectId) {
+        throw new Error('Cannot delete a Session owned by another Project.')
+      }
+      if (!existing) {
+        await tx.pendingSessionReconciliation.deleteMany({ where: { projectId, sessionId } })
+        return
+      }
       await tx.sessionTurnUsage.deleteMany({ where: { sessionId } })
       await tx.sessionRun.deleteMany({ where: { sessionId } })
       await tx.sessionArtifactRef.deleteMany({ where: { sessionId } })
       await tx.session.updateMany({
-        where: { id: sessionId, deletedAtMs: null },
+        where: { id: sessionId, projectId, deletedAtMs: null },
         data: { deletedAtMs: BigInt(Date.now()) }
       })
-      await tx.pendingSessionReconciliation.deleteMany({ where: { sessionId } })
+      await tx.pendingSessionReconciliation.deleteMany({ where: { projectId, sessionId } })
     })
   }
 
