@@ -123,6 +123,7 @@ type ApplicationCommandComposition = Readonly<{
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'sessions:export-conversation',
+  'sessions:load-one',
   'uploads:stage-local-file'
 ])
 
