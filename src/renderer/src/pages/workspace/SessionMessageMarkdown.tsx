@@ -58,10 +58,11 @@ const SessionArtifactImage = ({
   const hasFailed = failedRequestKey === requestKey
   const resourceState = useManagedPreviewResource(request, !hasFailed)
   const accessibleAlt = alt || t('Preview of {{name}}', { name })
+  const hasError = hasFailed || resourceState.status === 'error'
 
   if (resourceState.status !== 'ready') {
     return (
-      <span data-session-artifact-image-status="" data-state={hasFailed ? 'error' : 'loading'}>
+      <span data-session-artifact-image-status="" data-state={hasError ? 'error' : 'loading'}>
         {accessibleAlt}
       </span>
     )

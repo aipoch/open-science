@@ -10,6 +10,9 @@ const markdownHarness = vi.hoisted(() => ({
   artifactRef: 'version-1',
   renderedContent: ''
 }))
+const previewResourceHarness = vi.hoisted(() => ({
+  status: 'ready' as 'ready' | 'error'
+}))
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   PresentedAgentMarkdown: ({
@@ -40,10 +43,13 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
 }))
 
 vi.mock('./previews/useManagedPreviewResource', () => ({
-  useManagedPreviewResource: () => ({
-    status: 'ready',
-    resource: { id: 'resource-1', url: 'preview-resource://sin-curve' }
-  })
+  useManagedPreviewResource: () =>
+    previewResourceHarness.status === 'ready'
+      ? {
+          status: 'ready',
+          resource: { id: 'resource-1', url: 'preview-resource://sin-curve' }
+        }
+      : { status: 'error', error: new Error('Preview unavailable') }
 }))
 
 const { SessionMessageMarkdown } = await import('./SessionMessageMarkdown')
@@ -68,6 +74,7 @@ describe('SessionMessageMarkdown', () => {
     markdownHarness.href = 'sin_curve.png'
     markdownHarness.artifactRef = 'version-1'
     markdownHarness.renderedContent = ''
+    previewResourceHarness.status = 'ready'
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -133,5 +140,25 @@ describe('SessionMessageMarkdown', () => {
 
     expect(container.querySelector('[data-fallback-session-link]')).not.toBeNull()
     expect(container.querySelector('[data-session-artifact-link]')).toBeNull()
+  })
+
+  it('shows an error state when the artifact preview resource cannot be acquired', async () => {
+    previewResourceHarness.status = 'error'
+
+    await act(async () => {
+      root.render(
+        <SessionMessageMarkdown
+          content="![Sine curve](sin_curve.png)"
+          artifacts={[artifact]}
+          onPreviewArtifact={vi.fn()}
+          onPreviewArtifactModal={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-session-artifact-image]')).toBeNull()
+    expect(
+      container.querySelector('[data-session-artifact-image-status]')?.getAttribute('data-state')
+    ).toBe('error')
   })
 })

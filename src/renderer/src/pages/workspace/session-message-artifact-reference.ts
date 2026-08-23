@@ -1,4 +1,5 @@
 import type { ChatSession } from '@/stores/session-store'
+import { createCodeFenceTracker } from '@/components/streamdown/code-fence'
 
 import { getArtifactName, getArtifactPreviewFormat } from './artifact-preview-utils'
 
@@ -73,29 +74,92 @@ const escapeHtmlAttribute = (value: string): string =>
     .replace(/</gu, '&lt;')
     .replace(/>/gu, '&gt;')
 
+const transformOutsideInlineCode = (
+  line: string,
+  transform: (markdown: string) => string
+): string => {
+  let output = ''
+  let cursor = 0
+  let searchFrom = 0
+
+  for (;;) {
+    const openerStart = line.indexOf('`', searchFrom)
+    if (openerStart === -1) break
+
+    let openerEnd = openerStart + 1
+    while (line[openerEnd] === '`') openerEnd += 1
+    const markerLength = openerEnd - openerStart
+    let closerStart = openerEnd
+
+    for (;;) {
+      closerStart = line.indexOf('`', closerStart)
+      if (closerStart === -1) break
+
+      let closerEnd = closerStart + 1
+      while (line[closerEnd] === '`') closerEnd += 1
+      if (closerEnd - closerStart === markerLength) {
+        output += transform(line.slice(cursor, openerStart))
+        output += line.slice(openerStart, closerEnd)
+        cursor = closerEnd
+        searchFrom = closerEnd
+        break
+      }
+      closerStart = closerEnd
+    }
+
+    if (closerStart === -1) break
+  }
+
+  return output + transform(line.slice(cursor))
+}
+
+// Artifact reference rewriting operates on raw streaming Markdown before Streamdown parses it.
+// Keep code examples byte-for-byte intact while transforming ordinary prose line by line.
+const transformMarkdownOutsideCode = (
+  content: string,
+  transform: (markdown: string) => string
+): string => {
+  const fenceTracker = createCodeFenceTracker()
+  const lines = content.match(/[^\n]*(?:\n|$)/gu)?.filter(Boolean) ?? []
+
+  return lines
+    .map((rawLine) => {
+      const hasNewline = rawLine.endsWith('\n')
+      const line = hasNewline ? rawLine.slice(0, -1) : rawLine
+      const fenceWasOpen = fenceTracker.isOpen()
+      const fenceIsOpen = fenceTracker.feed(line)
+      const isCodeLine = fenceWasOpen || fenceIsOpen || /^(?: {4}|\t)/u.test(line)
+      const normalizedLine = isCodeLine ? line : transformOutsideInlineCode(line, transform)
+      return hasNewline ? `${normalizedLine}\n` : normalizedLine
+    })
+    .join('')
+}
+
 // Converts only images that resolve to a managed artifact attached to this message. Remote and
 // unresolved Markdown images stay owned by Streamdown with their existing controls.
 const normalizeSessionArtifactImages = (
   content: string,
   artifacts: readonly MessageArtifact[]
 ): string =>
-  content.replace(MARKDOWN_IMAGE_PATTERN, (match, alt: string, destination: string) => {
-    const reference =
-      destination.startsWith('<') && destination.endsWith('>')
-        ? destination.slice(1, -1)
-        : destination
-    const artifact = resolveMessageArtifactReference(reference, artifacts)
-    if (
-      !artifact ||
-      artifact.kind !== 'managed-file' ||
-      getArtifactPreviewFormat(artifact) !== 'image'
-    ) {
-      return match
-    }
+  transformMarkdownOutsideCode(content, (markdown) =>
+    markdown.replace(MARKDOWN_IMAGE_PATTERN, (match, alt: string, destination: string) => {
+      const reference =
+        destination.startsWith('<') && destination.endsWith('>')
+          ? destination.slice(1, -1)
+          : destination
+      const artifact = resolveMessageArtifactReference(reference, artifacts)
+      if (
+        !artifact ||
+        artifact.kind !== 'managed-file' ||
+        getArtifactPreviewFormat(artifact) !== 'image'
+      ) {
+        return match
+      }
 
-    const artifactRef = artifact.versionId ?? artifact.id
-    return `<session-artifact-image artifact_ref="${escapeHtmlAttribute(artifactRef)}" alt_text="${escapeHtmlAttribute(alt)}"></session-artifact-image>`
-  })
+      const artifactRef = artifact.versionId ?? artifact.id
+      return `<session-artifact-image artifact_ref="${escapeHtmlAttribute(artifactRef)}" alt_text="${escapeHtmlAttribute(alt)}"></session-artifact-image>`
+    })
+  )
 
 // Rewrites only links already proven to reference a same-message managed artifact. Streamdown's
 // security sanitizer intentionally drops bare filenames, artifact tokens, and file URLs; an
@@ -104,19 +168,21 @@ const normalizeSessionArtifactLinks = (
   content: string,
   artifacts: readonly MessageArtifact[]
 ): string =>
-  content.replace(
-    MARKDOWN_LINK_PATTERN,
-    (match, leading: string, opening: string, destination: string, closing: string) => {
-      const reference =
-        destination.startsWith('<') && destination.endsWith('>')
-          ? destination.slice(1, -1)
-          : destination
-      const artifact = resolveMessageArtifactReference(reference, artifacts)
-      if (!artifact || artifact.kind !== 'managed-file') return match
+  transformMarkdownOutsideCode(content, (markdown) =>
+    markdown.replace(
+      MARKDOWN_LINK_PATTERN,
+      (match, leading: string, opening: string, destination: string, closing: string) => {
+        const reference =
+          destination.startsWith('<') && destination.endsWith('>')
+            ? destination.slice(1, -1)
+            : destination
+        const artifact = resolveMessageArtifactReference(reference, artifacts)
+        if (!artifact || artifact.kind !== 'managed-file') return match
 
-      const artifactRef = artifact.versionId ?? artifact.id
-      return `${leading}${opening}${INTERNAL_ARTIFACT_REFERENCE_PREFIX}${encodeURIComponent(artifactRef)}${closing}`
-    }
+        const artifactRef = artifact.versionId ?? artifact.id
+        return `${leading}${opening}${INTERNAL_ARTIFACT_REFERENCE_PREFIX}${encodeURIComponent(artifactRef)}${closing}`
+      }
+    )
   )
 
 const normalizeSessionArtifactReferences = (

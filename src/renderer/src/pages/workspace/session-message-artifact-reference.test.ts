@@ -104,4 +104,30 @@ describe('session message artifact references', () => {
       ].join('\n\n')
     )
   })
+
+  it('leaves artifact-like Markdown inside code unchanged', () => {
+    const content = [
+      '![Rendered](sin_curve.png)',
+      '`![Inline](sin_curve.png)` and ``[Inline link](sin_curve.png)``',
+      '```md',
+      '![Fenced](sin_curve.png)',
+      '[Fenced link](sin_curve.png)',
+      '```',
+      '    ![Indented](sin_curve.png)',
+      '[Rendered link](sin_curve.png)'
+    ].join('\n')
+
+    expect(normalizeSessionArtifactReferences(content, [createArtifact()])).toBe(
+      [
+        '<session-artifact-image artifact_ref="version-1" alt_text="Rendered"></session-artifact-image>',
+        '`![Inline](sin_curve.png)` and ``[Inline link](sin_curve.png)``',
+        '```md',
+        '![Fenced](sin_curve.png)',
+        '[Fenced link](sin_curve.png)',
+        '```',
+        '    ![Indented](sin_curve.png)',
+        '[Rendered link](/.open-science/artifact/version-1)'
+      ].join('\n')
+    )
+  })
 })
