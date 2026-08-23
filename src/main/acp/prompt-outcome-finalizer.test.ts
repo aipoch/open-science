@@ -410,6 +410,27 @@ describe('AcpPromptOutcomeFinalizer', () => {
     expect(harness.context.supersede).toHaveBeenCalledOnce()
   })
 
+  it('does not wait on automatic compaction after a cancelled provider stop', async () => {
+    const harness = createHarness()
+    const compact = deferred()
+    harness.handles.autoCompactIfNeeded = vi.fn(async () => compact.promise)
+    expect(harness.interactions.captureTerminal(harness.interaction, 'cancelled')).toBe(true)
+
+    const finalization = new AcpPromptOutcomeFinalizer().finalize(
+      harness.handles,
+      stopped({ stopReason: 'cancelled' })
+    )
+    const completed = Promise.race([
+      finalization.then(() => 'settled' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+    ])
+
+    await expect(completed).resolves.toBe('settled')
+    expect(harness.handles.autoCompactIfNeeded).not.toHaveBeenCalled()
+    expect(harness.interactions.current('s1')).toBeUndefined()
+    compact.resolve()
+  })
+
   it('publishes a cancelled stop for a current prompt that was not dispatched', async () => {
     const harness = createHarness({ now: () => 456 })
 

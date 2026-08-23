@@ -1066,6 +1066,50 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it.each([
+    ['Claude Code', 'claude-code'],
+    ['OpenCode', 'opencode'],
+    ['Codex Responses', 'codex'],
+    ['Codex bridge', 'codex']
+  ] as const)(
+    'admits a %s follow-up startPrompt after cancel without waiting for the cancelled turn to settle',
+    async (_route, frameworkId) => {
+      const firstTurn = createDeferred<unknown>()
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          prompt: () => firstTurn.promise
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession()
+
+      await coordinator.startPrompt({
+        sessionId: session.sessionId,
+        text: 'live turn'
+      })
+      expect(created.sendPrompt).toHaveBeenCalledOnce()
+
+      await coordinator.cancelPrompt({ sessionId: session.sessionId })
+
+      await expect(
+        coordinator.startPrompt({
+          sessionId: session.sessionId,
+          text: 'Send now follow-up'
+        })
+      ).resolves.toBeUndefined()
+      expect(created.sendPrompt).toHaveBeenCalledTimes(2)
+
+      firstTurn.resolve({ stopReason: 'cancelled' })
+      await vi.waitFor(() =>
+        expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+      )
+    }
+  )
+
   it('acknowledges a blocking provider prompt after local dispatch without waiting for output', async () => {
     const completion = createDeferred<unknown>()
     let created!: ReturnType<typeof createFakeRuntime>

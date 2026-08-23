@@ -251,10 +251,14 @@ export class AcpPromptOutcomeFinalizer {
       await emitArtifact()
       safeLog('info', 'prompt stopped', { stopReason: response.stopReason })
       publishObservedStop()
-      try {
-        await handles.autoCompactIfNeeded()
-      } catch (error) {
-        safeLog('warn', 'automatic context compaction failed', errorLogFields(error))
+      // Cancelled turns must not start native compact: that second provider prompt can block
+      // behind the aborting stream and leave the next `acp:send-prompt` without a reply.
+      if (response.stopReason !== 'cancelled') {
+        try {
+          await handles.autoCompactIfNeeded()
+        } catch (error) {
+          safeLog('warn', 'automatic context compaction failed', errorLogFields(error))
+        }
       }
       return response
     } catch (error) {
