@@ -1,6 +1,6 @@
 import type { ChatSession } from '@/stores/session-store'
 
-import { getArtifactName } from './artifact-preview-utils'
+import { getArtifactName, getArtifactPreviewFormat } from './artifact-preview-utils'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
   resolvedProjectId?: string
@@ -8,8 +8,8 @@ type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
 }
 
 const ARTIFACT_REFERENCE_PATTERN = /^\{\{artifact:([^}\s]+)\}\}$/u
-const ARTIFACT_IMAGE_PATTERN =
-  /!\[([^\]]*)\]\(\s*\{\{artifact:([^}\s]+)\}\}\s*(?:["'][^"']*["'])?\s*\)/gu
+const MARKDOWN_IMAGE_PATTERN =
+  /!\[([^\]]*)\]\(\s*(<[^>\n]+>|\{\{artifact:[^}\s]+\}\}|[^\s)]+)\s*(?:["'][^"']*["'])?\s*\)/gu
 const EXTERNAL_SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/iu
 
 const decodeReference = (reference: string): string => {
@@ -65,10 +65,27 @@ const escapeHtmlAttribute = (value: string): string =>
     .replace(/</gu, '&lt;')
     .replace(/>/gu, '&gt;')
 
-// Converts only the app's explicit artifact-image syntax; ordinary Markdown images stay owned by
-// Streamdown, including its existing loading, fallback, and download controls.
-const normalizeSessionArtifactImages = (content: string): string =>
-  content.replace(ARTIFACT_IMAGE_PATTERN, (_match, alt: string, artifactRef: string) => {
+// Converts only images that resolve to a managed artifact attached to this message. Remote and
+// unresolved Markdown images stay owned by Streamdown with their existing controls.
+const normalizeSessionArtifactImages = (
+  content: string,
+  artifacts: readonly MessageArtifact[]
+): string =>
+  content.replace(MARKDOWN_IMAGE_PATTERN, (match, alt: string, destination: string) => {
+    const reference =
+      destination.startsWith('<') && destination.endsWith('>')
+        ? destination.slice(1, -1)
+        : destination
+    const artifact = resolveMessageArtifactReference(reference, artifacts)
+    if (
+      !artifact ||
+      artifact.kind !== 'managed-file' ||
+      getArtifactPreviewFormat(artifact) !== 'image'
+    ) {
+      return match
+    }
+
+    const artifactRef = artifact.versionId ?? artifact.id
     return `<session-artifact-image artifact_ref="${escapeHtmlAttribute(artifactRef)}" alt_text="${escapeHtmlAttribute(alt)}"></session-artifact-image>`
   })
 

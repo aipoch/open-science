@@ -85,7 +85,7 @@ describe('SessionMessageMarkdown', () => {
     await act(async () => {
       root.render(
         <SessionMessageMarkdown
-          content="![Sine curve]({{artifact:version-1}})"
+          content="![Sine curve](sin_curve.png)"
           artifacts={[artifact]}
           onPreviewArtifact={onPreviewArtifact}
           onPreviewArtifactModal={onPreviewArtifactModal}

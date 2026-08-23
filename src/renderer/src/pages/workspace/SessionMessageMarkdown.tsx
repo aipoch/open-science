@@ -94,7 +94,10 @@ const SessionMessageMarkdown = memo(
     onPreviewArtifact,
     onPreviewArtifactModal
   }: SessionMessageMarkdownProps): React.JSX.Element => {
-    const normalizedContent = useMemo(() => normalizeSessionArtifactImages(content), [content])
+    const normalizedContent = useMemo(
+      () => normalizeSessionArtifactImages(content, artifacts),
+      [artifacts, content]
+    )
     const components = useMemo<Components>(
       () => ({
         a: ({

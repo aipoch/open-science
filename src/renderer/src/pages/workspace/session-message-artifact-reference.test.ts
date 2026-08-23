@@ -12,7 +12,7 @@ const createArtifact = (overrides: Partial<MessageArtifact> = {}): MessageArtifa
   versionId: 'version-1',
   kind: 'managed-file',
   path: '/managed/session/sin_curve.png',
-  fileUrl: 'artifact://version-1',
+  fileUrl: 'file:///managed/session/sin_curve.png',
   name: 'sin_curve.png',
   mimeType: 'image/png',
   size: 1024,
@@ -27,6 +27,12 @@ describe('session message artifact references', () => {
     expect(resolveMessageArtifactReference('{{artifact:version-1}}', [artifact])).toBe(artifact)
     expect(resolveMessageArtifactReference('sin_curve.png', [artifact])).toBe(artifact)
     expect(resolveMessageArtifactReference('./sin_curve.png', [artifact])).toBe(artifact)
+    expect(resolveMessageArtifactReference('/managed/session/sin_curve.png', [artifact])).toBe(
+      artifact
+    )
+    expect(
+      resolveMessageArtifactReference('file:///managed/session/sin_curve.png', [artifact])
+    ).toBe(artifact)
   })
 
   it('leaves external and ambiguous filename links unresolved', () => {
@@ -45,8 +51,23 @@ describe('session message artifact references', () => {
     const content =
       '![Curve <one> & "two"]({{artifact:version-1}})\n\n![Remote](https://example.com/a.png)'
 
-    expect(normalizeSessionArtifactImages(content)).toBe(
+    expect(normalizeSessionArtifactImages(content, [createArtifact()])).toBe(
       '<session-artifact-image artifact_ref="version-1" alt_text="Curve &lt;one&gt; &amp; &quot;two&quot;"></session-artifact-image>\n\n![Remote](https://example.com/a.png)'
     )
+  })
+
+  it('converts relative, absolute, and file URL images that resolve to the message artifact', () => {
+    const artifact = createArtifact()
+
+    for (const reference of [
+      'sin_curve.png',
+      './sin_curve.png',
+      '/managed/session/sin_curve.png',
+      'file:///managed/session/sin_curve.png'
+    ]) {
+      expect(normalizeSessionArtifactImages(`![Curve](${reference})`, [artifact])).toBe(
+        '<session-artifact-image artifact_ref="version-1" alt_text="Curve"></session-artifact-image>'
+      )
+    }
   })
 })
