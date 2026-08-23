@@ -760,9 +760,9 @@ describe('NotebookPreview per-kernel tabs', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(container.querySelector('[data-testid="notebook-terminal-header"]')?.textContent).toContain(
-      'idle'
-    )
+    expect(
+      container.querySelector('[data-testid="notebook-terminal-header"]')?.textContent
+    ).toContain('idle')
     expect(
       (container.querySelector('[data-testid="kernel-terminal-input"]') as HTMLTextAreaElement)
         .disabled
