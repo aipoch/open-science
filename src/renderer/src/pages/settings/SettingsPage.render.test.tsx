@@ -4013,7 +4013,7 @@ describe('SettingsPage Codex framework', () => {
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
       providers: [],
-      agentFrameworkId: 'claude-code',
+      agentFrameworkId: 'codex',
       agentFrameworks: frameworks,
       claudeManaged: true,
       opencodeManaged: false,
@@ -4023,8 +4023,8 @@ describe('SettingsPage Codex framework', () => {
       claudeReady: true,
       opencodeReady: false,
       codexReady: false,
-      agentFrameworkId: 'claude-code',
-      agentReady: true,
+      agentFrameworkId: 'codex',
+      agentReady: false,
       activeProviderReady: false
     })
 
@@ -4037,6 +4037,12 @@ describe('SettingsPage Codex framework', () => {
     expect(document.body.textContent).toContain('Available · 1')
     expect(document.body.textContent).toContain('Update required')
     expect(document.body.querySelector('[aria-label="Update Codex"]')).not.toBeNull()
+    const frameworkRadios = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="radio"][aria-label^="Use "]')
+    )
+    expect(frameworkRadios).toHaveLength(1)
+    expect(frameworkRadios[0]?.getAttribute('aria-label')).toBe('Use Claude Agent')
+    expect(frameworkRadios[0]?.tabIndex).toBe(0)
   })
 
   it('routes isolated subscription sign-out from the provider list', async () => {

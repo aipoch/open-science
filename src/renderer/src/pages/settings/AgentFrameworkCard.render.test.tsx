@@ -269,7 +269,7 @@ describe('AgentFrameworkCard', () => {
     expect(onInstall).toHaveBeenCalledWith('managed')
   })
 
-  it('keeps npm as a secondary update source and labels update progress distinctly', () => {
+  it('labels update progress distinctly and exposes only the managed update path', () => {
     const onInstall = vi.fn()
     renderCard({
       name: 'Codex',
@@ -300,16 +300,9 @@ describe('AgentFrameworkCard', () => {
       version: '1.1.4',
       onInstall
     })
-    openRadixMenu(
-      container.querySelector<HTMLButtonElement>(
-        '[aria-label="Choose another update source for Codex"]'
-      )
-    )
-    const npmItem = Array.from(
-      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
-    ).find((item) => item.textContent?.includes('npm (global install)'))
-    clickRadixMenuItem(npmItem)
-    expect(onInstall).toHaveBeenCalledWith('npm')
+    expect(
+      container.querySelector('[aria-label="Choose another update source for Codex"]')
+    ).toBeNull()
   })
 
   it('requests repair instead of selecting when a broken card is clicked', () => {

@@ -82,40 +82,21 @@ const AgentInstallSourceMenu = ({
 
   if (intent === 'update') {
     return (
-      <div className="flex shrink-0 items-center gap-1">
-        <Button
-          type="button"
-          size={buttonSize}
-          disabled={installing || disabled || Boolean(managedUnavailableReason)}
-          title={managedUnavailableReason}
-          aria-label={t('{{action}} {{name}}', { action: label, name })}
-          onClick={() => onInstall('managed')}
-        >
-          {installing ? (
-            <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
-          ) : (
-            <Icon aria-hidden="true" />
-          )}
-          {installing ? busyLabel : label}
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size={buttonSize === 'default' ? 'icon' : 'icon-sm'}
-              disabled={installing || disabled}
-              aria-label={t('Choose another update source for {{name}}', { name })}
-            >
-              <ChevronDown aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="z-[70] w-80">
-            <DropdownMenuLabel>{t('Other update options')}</DropdownMenuLabel>
-            {sourceItems(sources.filter((source) => source.id !== 'managed'))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      <Button
+        type="button"
+        size={buttonSize}
+        disabled={installing || disabled || Boolean(managedUnavailableReason)}
+        title={managedUnavailableReason}
+        aria-label={t('{{action}} {{name}}', { action: label, name })}
+        onClick={() => onInstall('managed')}
+      >
+        {installing ? (
+          <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        ) : (
+          <Icon aria-hidden="true" />
+        )}
+        {installing ? busyLabel : label}
+      </Button>
     )
   }
 

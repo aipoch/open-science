@@ -503,8 +503,8 @@ const AgentPanel = ({
 
   const pendingRepairCard = frameworkCards.find((card) => card.key === pendingRepair)
   const installedRadioId =
-    installedFrameworks.find((card) => card.frameworkId === agentFrameworkId)?.frameworkId ??
-    installedFrameworks[0]?.frameworkId
+    installedFrameworks.find((card) => card.ready && card.frameworkId === agentFrameworkId)
+      ?.frameworkId ?? installedFrameworks.find((card) => card.ready)?.frameworkId
 
   const handleFrameworkRadioKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'radio') {
