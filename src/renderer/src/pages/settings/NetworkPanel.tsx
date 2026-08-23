@@ -62,20 +62,25 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   const [message, setMessage] = useState<string | undefined>(undefined)
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null)
   const [networkInfoError, setNetworkInfoError] = useState(false)
+  const networkInfoRequestRef = useRef(0)
 
   // Local interface details come from the main process; window.api.network is Electron-only,
   // so stay with placeholders when the preload bridge is unavailable. A rejected IPC call is
-  // an explicit load failure, not "no interface".
+  // an explicit load failure, not "no interface". Overlapping refreshes (list remount, Retry)
+  // keep only the latest response so a stale rejection cannot wipe a newer success.
   const refreshNetworkInfo = useCallback((): void => {
     const getInfo = window.api?.network?.getInfo
     if (!getInfo) return
+    const request = ++networkInfoRequestRef.current
 
     void getInfo().then(
       (info) => {
+        if (request !== networkInfoRequestRef.current) return
         setNetworkInfo(info)
         setNetworkInfoError(false)
       },
       () => {
+        if (request !== networkInfoRequestRef.current) return
         setNetworkInfo(null)
         setNetworkInfoError(true)
       }
@@ -170,14 +175,14 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
             id: NETWORK_CHECK_ID,
             label: networkLabel,
             status: 'warning',
-            summary: t('Could not check whether the internet is reachable.'),
+            summary: t('Could not check whether package registries are reachable.'),
             detail: interfaceDetail
           }
         : {
             id: NETWORK_CHECK_ID,
             label: networkLabel,
             status: 'passed',
-            summary: t('The internet is reachable.'),
+            summary: t('Package registries are reachable.'),
             detail: interfaceDetail
           }
 
@@ -200,7 +205,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
         <section aria-label={t('Network status')}>
           <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Network status')}</h3>
           <p className="mb-3 text-xs text-muted-foreground">
-            {t('Whether this machine can currently reach the internet.')}
+            {t('Whether this machine can currently reach the package registries.')}
           </p>
 
           <div className="rounded-xl border border-border px-4">
