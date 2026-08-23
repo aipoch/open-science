@@ -94,6 +94,49 @@ describe('XaiOAuthController', () => {
     expect(store.save).toHaveBeenCalledWith('old-ref', 'new-refresh')
   })
 
+  it('does not write a second force-refresh with a stale expected key ref after the first refresh settles', async () => {
+    stored = { keyRef: 'ref-0', refreshToken: 'refresh-1' }
+    store.save = vi.fn(async (expectedKeyRef, refreshToken, accountEmail) => {
+      if (stored.keyRef !== expectedKeyRef) return false
+      stored = { keyRef: `ref-after-${refreshToken}`, refreshToken, accountEmail }
+      return true
+    })
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(discovery)))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: 'access-1',
+            refresh_token: 'refresh-2',
+            expires_in: 3600
+          })
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: 'access-2',
+            refresh_token: 'refresh-3',
+            expires_in: 3600
+          })
+        )
+      )
+    const controller = new XaiOAuthController({ store, fetch })
+
+    await expect(controller.getAccessToken(true)).resolves.toBe('access-1')
+    await expect(controller.getAccessToken(true)).resolves.toBe('access-2')
+
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(store.save).toHaveBeenNthCalledWith(1, 'ref-0', 'refresh-2')
+    expect(store.save).toHaveBeenNthCalledWith(2, 'ref-after-refresh-2', 'refresh-3')
+    expect(store.save).not.toHaveBeenCalledWith('ref-0', 'refresh-3')
+    expect(stored).toEqual({
+      keyRef: 'ref-after-refresh-3',
+      refreshToken: 'refresh-3'
+    })
+  })
+
   it('accepts xAI account verification URLs on accounts.x.ai', async () => {
     const fetch = vi
       .fn()
