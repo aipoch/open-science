@@ -372,10 +372,12 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).toContain('<WorkspaceMessageItem')
     expect(workspaceMessageItemSource).toContain("scrollAnchor={message.role === 'user'}")
     expect(workspaceMessageItemSource).toContain('messageId={message.id}')
-    expect(workspaceMessageItemSource).toContain('<PresentedAgentMarkdown')
+    expect(workspaceMessageItemSource).toContain('<SessionMessageMarkdown')
     expect(workspaceMessageItemSource).toContain('content={assistantPresentation.content}')
     expect(workspaceMessageItemSource).toContain('useSmoothStreamingContent(')
-    expect(workspaceMessageItemSource).toContain('sessionLinks')
+    expect(workspaceMessageItemSource).toContain('artifacts={artifacts}')
+    expect(workspaceMessageItemSource).toContain('onPreviewArtifact={onPreviewArtifact}')
+    expect(workspaceMessageItemSource).toContain('onPreviewArtifactModal={onPreviewArtifactModal}')
   })
 
   // The transcript shares the composer's centered content track; agent replies fill that track,
@@ -563,7 +565,7 @@ describe('conversation message scroller integration', () => {
       'canExpand={Boolean(details.query || details.resultCount)}'
     )
     expect(workspaceMessageItemSource).toContain('const WorkspaceMessageItem')
-    expect(workspaceMessageItemSource).toContain('<PresentedAgentMarkdown')
+    expect(workspaceMessageItemSource).toContain('<SessionMessageMarkdown')
     expect(workspaceMessageItemSource).toContain('content={assistantPresentation.content}')
     expect(workspaceAgentLoadingRowSource).toContain('const WorkspaceAgentLoadingRow')
     expect(workspaceAgentLoadingRowSource).toContain('thinking')
