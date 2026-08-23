@@ -940,30 +940,46 @@ export type InstallManagedCodexOptions = {
 const parseVersion = (output: string): string | undefined =>
   output.match(/\d+\.\d+\.\d+[\w.-]*/)?.[0]
 
-const runVersion = (
+export type ManagedCodexVersionSpawn = (
+  executable: string,
+  args: readonly string[],
+  options: {
+    encoding: 'utf8'
+    timeout: number
+    windowsHide: true
+    env?: NodeJS.ProcessEnv
+    shell?: boolean
+  }
+) => { status: number | null; stdout: string }
+
+export const runManagedCodexVersion = (
   executable: string,
   args: string[],
-  env?: NodeJS.ProcessEnv
+  env?: NodeJS.ProcessEnv,
+  _platform: NodeJS.Platform = process.platform,
+  spawnVersion: ManagedCodexVersionSpawn = spawnSync as unknown as ManagedCodexVersionSpawn
 ): string | undefined => {
-  const result = spawnSync(executable, args, {
+  const useShell = _platform === 'win32' && /\.(cmd|bat)$/i.test(executable)
+  const result = spawnVersion(useShell ? `"${executable}"` : executable, args, {
     encoding: 'utf8',
     timeout: 10_000,
     windowsHide: true,
-    env
+    env,
+    ...(useShell ? { shell: true } : {})
   })
 
   return result.status === 0 ? parseVersion(result.stdout) : undefined
 }
 
 const defaultVerifyAdapter: VersionVerifier = async (adapterPath) =>
-  runVersion(process.execPath, [adapterPath, '--version'], {
+  runManagedCodexVersion(process.execPath, [adapterPath, '--version'], {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
     NO_BROWSER: '1'
   })
 
 const defaultVerifyCodex: VersionVerifier = async (codexPath) =>
-  runVersion(codexPath, ['--version'], { ...process.env, NO_BROWSER: '1' })
+  runManagedCodexVersion(codexPath, ['--version'], { ...process.env, NO_BROWSER: '1' })
 
 // Keeps adapter stderr useful for troubleshooting while preventing credentials or unbounded child
 // output from entering the app log. The installer never logs the child environment or initialize body.

@@ -186,10 +186,30 @@ import {
   patchCodexAcpSkillInputSource,
   patchCodexAcpTurnUsageSource,
   resolveManagedCodexPlatform,
+  runManagedCodexVersion,
   sanitizeManagedCodexDiagnostic,
   verifyManagedCodexPair,
   uninstallManagedCodex
 } from './managed-codex'
+
+it('runs Windows Codex command shims through the shell during version verification', () => {
+  const spawnVersion = vi.fn(() => ({ status: 0, stdout: 'codex-cli 0.144.6' }))
+
+  expect(
+    runManagedCodexVersion(
+      'C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd',
+      ['--version'],
+      { NO_BROWSER: '1' },
+      'win32',
+      spawnVersion
+    )
+  ).toBe('0.144.6')
+  expect(spawnVersion).toHaveBeenCalledWith(
+    '"C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd"',
+    ['--version'],
+    expect.objectContaining({ shell: true })
+  )
+})
 
 const tarEntry = (name: string, content: Buffer, mode = 0o644): Buffer => {
   const header = Buffer.alloc(512)

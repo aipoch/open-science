@@ -234,7 +234,7 @@ describe('AgentStep', () => {
       agentFrameworks: threeFrameworks,
       claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
       opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '0.9.0' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2' },
       preflight: {
         claudeReady: true,
         opencodeReady: true,
@@ -265,7 +265,7 @@ describe('AgentStep', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
       claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '0.9.0' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2' },
       preflight: {
         claudeReady: true,
         opencodeReady: false,
@@ -402,7 +402,7 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      codex: { resolvedPath: '/bin/codex-acp', version: '0.9.0' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2' },
       setAgentFramework,
       preflight: {
         claudeReady: false,
@@ -420,6 +420,31 @@ describe('AgentStep', () => {
     expect(setAgentFramework).toHaveBeenCalledWith('codex')
   })
 
+  it('does not auto-select an outdated Codex adapter from a stale ready preflight', async () => {
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: threeFrameworks,
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.1.4' },
+      setAgentFramework,
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        codexReady: true,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await renderStep()
+
+    expect(setAgentFramework).not.toHaveBeenCalled()
+    expect(container.querySelector('[aria-label="Use Codex"]')).toBeNull()
+    expect(container.textContent).toContain('Update required')
+  })
+
   it('queues the user choice behind the initial installed-agent preference', async () => {
     let releaseAutoSelect: (() => void) | undefined
     const setAgentFramework = vi.fn().mockImplementation(
@@ -432,7 +457,7 @@ describe('AgentStep', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
       opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '0.9.0' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2' },
       setAgentFramework,
       preflight: {
         claudeReady: false,
@@ -472,7 +497,7 @@ describe('AgentStep', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
       claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '0.9.0' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2' },
       installOpencode,
       setAgentFramework,
       checkEnvironment,

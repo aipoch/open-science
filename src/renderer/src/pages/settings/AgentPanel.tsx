@@ -242,6 +242,8 @@ const AgentPanel = ({
   const pendingSwitchName = agentFrameworks.find(
     (framework) => framework.id === pendingSwitch
   )?.displayName
+  const codexReady =
+    preflight.codexReady && (!codex.version || isSupportedCodexAcpVersion(codex.version))
 
   // First-run users should land on a runtime they can actually use. Registry order is the stable
   // tie-breaker, and this onboarding-only preference never changes Settings selection behavior.
@@ -257,7 +259,7 @@ const AgentPanel = ({
     const readyByFramework: Record<AgentFrameworkId, boolean> = {
       'claude-code': preflight.claudeReady,
       opencode: preflight.opencodeReady,
-      codex: preflight.codexReady
+      codex: codexReady
     }
     if (readyByFramework[agentFrameworkId]) return
 
@@ -271,7 +273,7 @@ const AgentPanel = ({
     agentFrameworks,
     isOnboarding,
     preflight.claudeReady,
-    preflight.codexReady,
+    codexReady,
     preflight.opencodeReady,
     queueOnboardingSwitch
   ])
@@ -384,7 +386,7 @@ const AgentPanel = ({
       name: 'Codex',
       icon: <AgentFrameworkIcon frameworkId="codex" size={24} />,
       description: t("OpenAI's coding agent, connected through the Codex ACP adapter."),
-      ready: preflight.codexReady,
+      ready: codexReady,
       updateRequired: Boolean(
         codex.resolvedPath && codex.version && !isSupportedCodexAcpVersion(codex.version)
       ),
