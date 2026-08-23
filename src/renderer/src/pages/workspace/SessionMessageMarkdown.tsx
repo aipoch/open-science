@@ -4,6 +4,7 @@ import { memo, useMemo, useState, type ComponentProps, type ReactNode } from 're
 import { useTranslation } from 'react-i18next'
 import type { Components } from 'streamdown'
 
+import { ArtifactPreview } from './artifact-preview'
 import { getArtifactName, getArtifactPreviewFormat } from './artifact-preview-utils'
 import { createPreviewResourceKey } from './previews/preview-resource-key'
 import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
@@ -45,6 +46,8 @@ const SessionArtifactImage = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const name = getArtifactName(artifact)
+  const previewFormat = getArtifactPreviewFormat(artifact)
+  const isTiff = previewFormat === 'tiff'
   const request = {
     path: artifact.path,
     projectId: artifact.resolvedProjectId,
@@ -58,9 +61,30 @@ const SessionArtifactImage = ({
   const [failedRequestKey, setFailedRequestKey] = useState<string>()
   const [setElement, isNearViewport] = useNearViewport<HTMLButtonElement | HTMLSpanElement>()
   const hasFailed = failedRequestKey === requestKey
-  const resourceState = useManagedPreviewResource(request, isNearViewport && !hasFailed)
+  const resourceState = useManagedPreviewResource(request, !isTiff && isNearViewport && !hasFailed)
   const accessibleAlt = alt || t('Preview of {{name}}', { name })
   const hasError = hasFailed || resourceState.status === 'error'
+
+  if (isTiff) {
+    return (
+      <button
+        ref={setElement}
+        type="button"
+        data-session-artifact-image=""
+        aria-label={t('Preview {{name}}', { name })}
+        onClick={onPreview}
+      >
+        <span data-session-artifact-tiff-preview="">
+          <ArtifactPreview
+            artifact={artifact}
+            projectId={artifact.resolvedProjectId}
+            sessionId={artifact.resolvedSessionId}
+            isVisible={isNearViewport}
+          />
+        </span>
+      </button>
+    )
+  }
 
   if (resourceState.status !== 'ready') {
     return (
@@ -152,7 +176,7 @@ const SessionMessageMarkdown = memo(
           if (
             !artifact ||
             artifact.kind !== 'managed-file' ||
-            getArtifactPreviewFormat(artifact) !== 'image'
+            !['image', 'tiff'].includes(getArtifactPreviewFormat(artifact))
           ) {
             return <>{alt}</>
           }

@@ -43,6 +43,10 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   )
 }))
 
+vi.mock('./artifact-preview', () => ({
+  ArtifactPreview: () => <span data-artifact-preview="" />
+}))
+
 vi.mock('./previews/useManagedPreviewResource', () => ({
   useManagedPreviewResource: (_request: unknown, enabled = true) => {
     previewResourceHarness.enabled = enabled
@@ -69,6 +73,14 @@ const artifact: MessageArtifact = {
   mimeType: 'image/png',
   size: 1024,
   mtimeMs: 1710000000000
+}
+const tiffArtifact: MessageArtifact = {
+  ...artifact,
+  id: 'version-tiff',
+  versionId: 'version-tiff',
+  path: '/managed/session/scan.tiff',
+  name: 'scan.tiff',
+  mimeType: 'image/tiff'
 }
 
 describe('SessionMessageMarkdown', () => {
@@ -214,5 +226,31 @@ describe('SessionMessageMarkdown', () => {
     })
     expect(previewResourceHarness.enabled).toBe(false)
     expect(container.querySelector('[data-session-artifact-image]')).toBeNull()
+  })
+
+  it('routes TIFF images through the existing artifact thumbnail and modal', async () => {
+    const onPreviewArtifactModal = vi.fn()
+    markdownHarness.artifactRef = 'version-tiff'
+
+    await act(async () => {
+      root.render(
+        <SessionMessageMarkdown
+          content="![Scan](scan.tiff)"
+          artifacts={[tiffArtifact]}
+          onPreviewArtifact={vi.fn()}
+          onPreviewArtifactModal={onPreviewArtifactModal}
+        />
+      )
+    })
+
+    const artifactImage = container.querySelector<HTMLButtonElement>(
+      '[data-session-artifact-image]'
+    )
+    expect(container.querySelector('[data-session-artifact-tiff-preview]')).not.toBeNull()
+    expect(container.querySelector('[data-artifact-preview]')).not.toBeNull()
+    expect(previewResourceHarness.enabled).toBe(false)
+
+    await act(async () => artifactImage?.click())
+    expect(onPreviewArtifactModal).toHaveBeenCalledWith(tiffArtifact)
   })
 })

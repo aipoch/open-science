@@ -585,6 +585,12 @@
       display: block;
     }
 
+    & > [data-session-artifact-tiff-preview] {
+      @apply block overflow-hidden rounded-lg bg-sd-surface-subtle;
+      width: min(100%, 32rem);
+      aspect-ratio: 4 / 3;
+    }
+
     &:focus-visible,
     &.is-focus {
       @apply outline-2 outline-offset-2 outline-ring;

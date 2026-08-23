@@ -49,6 +49,26 @@ describe('session message artifact references', () => {
     expect(resolveMessageArtifactReference('sin_curve.png', artifacts)).toBe(undefined)
   })
 
+  it('resolves Windows absolute artifact paths before checking URL schemes', () => {
+    const artifact = createArtifact({
+      path: 'C:/managed/session/sin_curve.png',
+      fileUrl: 'file:///C:/managed/session/sin_curve.png'
+    })
+
+    expect(resolveMessageArtifactReference('C:/managed/session/sin_curve.png', [artifact])).toBe(
+      artifact
+    )
+    expect(resolveMessageArtifactReference('C:/other/sin_curve.png', [artifact])).toBe(artifact)
+    expect(
+      normalizeSessionArtifactReferences(
+        '![Curve](C:/managed/session/sin_curve.png)\n[Curve](C:/managed/session/sin_curve.png)',
+        [artifact]
+      )
+    ).toBe(
+      '<session-artifact-image artifact_ref="version-1" alt_text="Curve"></session-artifact-image>\n[Curve](/.open-science/artifact/version-1)'
+    )
+  })
+
   it('converts only explicit artifact image Markdown and escapes its alt text', () => {
     const content =
       '![Curve <one> & "two"]({{artifact:version-1}})\n\n![Remote](https://example.com/a.png)'
@@ -71,6 +91,18 @@ describe('session message artifact references', () => {
         '<session-artifact-image artifact_ref="version-1" alt_text="Curve"></session-artifact-image>'
       )
     }
+  })
+
+  it('converts TIFF Markdown images to the managed preview component', () => {
+    const artifact = createArtifact({
+      path: '/managed/session/scan.tiff',
+      name: 'scan.tiff',
+      mimeType: 'image/tiff'
+    })
+
+    expect(normalizeSessionArtifactImages('![Scan](scan.tiff)', [artifact])).toBe(
+      '<session-artifact-image artifact_ref="version-1" alt_text="Scan"></session-artifact-image>'
+    )
   })
 
   it('rewrites supported artifact links to an inert internal target', () => {

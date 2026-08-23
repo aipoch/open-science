@@ -12,6 +12,7 @@ type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
 const ARTIFACT_REFERENCE_PATTERN = /^\{\{artifact:([^}\s]+)\}\}$/u
 const INTERNAL_ARTIFACT_REFERENCE_PREFIX = '/.open-science/artifact/'
 const EXTERNAL_SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/iu
+const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-z]:[\\/]/iu
 
 const decodeReference = (reference: string): string => {
   try {
@@ -49,12 +50,16 @@ const resolveMessageArtifactReference = (
   )
   if (identityMatch) return identityMatch
 
-  if (EXTERNAL_SCHEME_PATTERN.test(normalizedReference) || normalizedReference.startsWith('//')) {
-    return undefined
-  }
-
   const pathMatch = artifacts.find((artifact) => artifact.path === normalizedReference)
   if (pathMatch) return pathMatch
+
+  if (
+    (EXTERNAL_SCHEME_PATTERN.test(normalizedReference) &&
+      !WINDOWS_ABSOLUTE_PATH_PATTERN.test(normalizedReference)) ||
+    normalizedReference.startsWith('//')
+  ) {
+    return undefined
+  }
 
   const referenceName = getPathName(normalizedReference)
   const nameMatches = artifacts.filter(
@@ -99,10 +104,11 @@ const createArtifactImageMarkup = (
   artifacts: readonly MessageArtifact[]
 ): string | undefined => {
   const artifact = resolveMessageArtifactReference(image.href, artifacts)
+  const previewFormat = artifact ? getArtifactPreviewFormat(artifact) : undefined
   if (
     !artifact ||
     artifact.kind !== 'managed-file' ||
-    getArtifactPreviewFormat(artifact) !== 'image'
+    (previewFormat !== 'image' && previewFormat !== 'tiff')
   ) {
     return undefined
   }
