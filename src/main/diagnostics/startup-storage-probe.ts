@@ -163,6 +163,8 @@ const startIsolatedProbe = (deps: StartupStorageProbeDeps): IsolatedStartupStora
       eval: true,
       workerData: { probePath }
     })
+    // Diagnostic only: do not pin a fatal startup exit to the 1.5s probe timeout.
+    worker.unref()
   } catch {
     return {
       result: Promise.resolve(UNKNOWN_RESULT),
