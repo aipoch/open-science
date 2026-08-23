@@ -454,6 +454,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     effectiveActiveKind === 'python' || effectiveActiveKind === 'r'
       ? effectiveActiveKind
       : undefined
+  const executionEnvironment = activeDataLanguage
+    ? (notebookState?.executionEnvironments?.[activeDataLanguage] ??
+      (activeDataLanguage === 'r' ? 'default-r' : 'default-python'))
+    : undefined
   const envNames = activeDataLanguage
     ? Array.from(
         new Set(
@@ -462,7 +466,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             ...(notebookState?.environments.flatMap((entry) =>
               entry.kind === activeDataLanguage && entry.environment ? [entry.environment] : []
             ) ?? []),
-            notebookState?.latestRunEnvironments?.[activeDataLanguage]
+            notebookState?.latestRunEnvironments?.[activeDataLanguage],
+            executionEnvironment
           ].filter((env): env is string => env !== undefined)
         )
       ).sort((a, b) => {
@@ -478,7 +483,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const effectiveActiveEnv = activeDataLanguage
     ? envNames.includes(activeEnv ?? '')
       ? (activeEnv as string)
-      : (envNames[0] ?? (activeDataLanguage === 'r' ? 'default-r' : 'default-python'))
+      : (executionEnvironment ?? envNames[0])
     : undefined
   const visibleRuns = activeDataLanguage
     ? kindRuns.filter((run) => resolveRunEnvironment(run) === effectiveActiveEnv)
@@ -520,6 +525,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       (activeDataLanguage === 'python' &&
         activeEnvName === 'default-python' &&
         notebookState?.kernelStatus === 'terminated'))
+  const isHistoricalEnvironmentView =
+    activeDataLanguage !== undefined &&
+    activeEnvName !== undefined &&
+    executionEnvironment !== undefined &&
+    activeEnvName !== executionEnvironment
   const selectedTarget =
     activeDataLanguage && activeEnvName ? `${activeDataLanguage}:${activeEnvName}` : undefined
   const activeRun = runs.find((run) => run.runId === notebookState?.activeRunId)
@@ -554,6 +564,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       !code ||
       !activeDataLanguage ||
       !activeEnvName ||
+      isHistoricalEnvironmentView ||
       notebookState?.activeWrite ||
       notebookState?.activeRunId
     ) {
@@ -571,8 +582,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         code,
         source: 'user',
         inputKind: 'terminal',
-        language: activeDataLanguage,
-        environment: activeEnvName
+        language: activeDataLanguage
       })
 
       await loadNotebookState()
@@ -764,7 +774,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </div>
       ) : null}
 
-      {!activeDataLanguage || isNamespaceLost ? (
+      {!activeDataLanguage || isNamespaceLost || isHistoricalEnvironmentView ? (
         <div className="min-h-0 flex-1 overflow-hidden">{notebookCells}</div>
       ) : (
         <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 flex-col">
@@ -825,15 +835,20 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </ResizablePanelGroup>
       )}
 
-      {isNamespaceLost ? (
+      {isNamespaceLost || isHistoricalEnvironmentView ? (
         <footer
           className="flex h-7 shrink-0 items-center justify-between gap-3 border-t border-border-200 bg-bg-000 px-2 text-[11px] text-text-300"
           data-testid="notebook-read-only-status"
         >
           <span className="min-w-0 truncate">
-            {activeDataLanguage === 'r'
-              ? t("R · view only; this kernel's namespace no longer exists")
-              : t("Python · view only; this kernel's namespace no longer exists")}
+            {isHistoricalEnvironmentView
+              ? t('{{environment}} · history only; new code runs in {{activeEnvironment}}', {
+                  environment: activeEnvName,
+                  activeEnvironment: executionEnvironment
+                })
+              : activeDataLanguage === 'r'
+                ? t("R · view only; this kernel's namespace no longer exists")
+                : t("Python · view only; this kernel's namespace no longer exists")}
           </span>
           <span className="shrink-0 tabular-nums">
             {t('{{count}} cells', {

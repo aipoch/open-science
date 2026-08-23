@@ -23,7 +23,7 @@ import type { NotebookSessionSnapshot } from './session-aggregate'
 import type { NotebookLaneIdentity } from './lane-identity'
 import { resolveProjectId } from '../../shared/project-scope'
 import { NOTEBOOK_RENDERER_RUN_LIMIT } from './content-limits'
-import { DEFAULT_PY_ENV } from './runtime-paths'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from './runtime-paths'
 import {
   unavailableNotebookDependencyProjection,
   type NotebookDependencyAnalyzer,
@@ -99,6 +99,7 @@ type NotebookSessionReadModelOptions<Session extends NotebookSessionReadSource> 
   dependencyAnalyzer: Pick<NotebookDependencyAnalyzer, 'project'>
   findSession: (sessionId: string) => Session | undefined
   runtimeBindings: (session: Session) => NotebookRuntimeBindings
+  runtimeEnvironment?: (session: Session, language: NotebookLanguage) => string
   isRestartRecommended: (processKey: string) => boolean
 }
 
@@ -221,6 +222,10 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       activeRunId: snapshot.activeRunId,
       runCount: runWindow.total,
       latestRunEnvironments: runWindow.latestRunEnvironments,
+      executionEnvironments: {
+        python: this.options.runtimeEnvironment?.(session, 'python') ?? DEFAULT_PY_ENV,
+        r: this.options.runtimeEnvironment?.(session, 'r') ?? DEFAULT_R_ENV
+      },
       ...(runWindow.historySummary ? { historySummary: runWindow.historySummary } : {}),
       runs: runWindow.runs.map((run) => this.toPublicRunRecord(run)),
       recentRuns: sparseRunRead

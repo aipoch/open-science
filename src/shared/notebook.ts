@@ -536,6 +536,9 @@ export type NotebookSessionState = {
   runCount: number
   // Latest durable environment evidence per data kernel, independent of the bounded run window.
   latestRunEnvironments: Partial<Record<'python' | 'r', string>>
+  // Live execution target derived from each language's Session runtime binding. This is not
+  // persisted; optional keeps older renderer/remote clients compatible.
+  executionEnvironments?: Partial<Record<'python' | 'r', string>>
   // Present only when state() requested one Agent's complete-history discovery metadata.
   historySummary?: NotebookRunHistorySummary
   runs: NotebookRunRecord[]

@@ -120,6 +120,7 @@ const makeReadModel = (
         status: 'active'
       }
     }),
+    runtimeEnvironment: (_session, language) => (language === 'r' ? 'analysis' : 'default-python'),
     isRestartRecommended: (processKey) => processKey === 'r:analysis'
   })
 
@@ -199,6 +200,7 @@ describe('NotebookSessionReadModel', () => {
           restartRecommended: true
         }
       ],
+      executionEnvironments: { python: 'default-python', r: 'analysis' },
       runtimeBindings: { python: { runtimeId: 'managed-python' } }
     })
   })

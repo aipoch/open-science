@@ -1502,6 +1502,7 @@
   "Python · view only; this kernel's namespace no longer exists": "Python · 僅供檢視；此核心的命名空間已不存在",
   "R kernel · shared with the agent": "R 核心 · 與智能體共用",
   "R · view only; this kernel's namespace no longer exists": "R · 僅供檢視；此核心的命名空間已不存在",
+  "{{environment}} · history only; new code runs in {{activeEnvironment}}": "{{environment}} · 僅供檢視歷史記錄；新程式碼將在 {{activeEnvironment}} 中執行",
   "Python package index (pip)": "Python 套件索引（pip）",
   "Python/R environments are rebuilt at the new location on first use (not moved).": "Python/R 環境會在首次使用時於新位置重建（不遷移）。",
   "Question from {{name}}": "來自 {{name}} 的提問",

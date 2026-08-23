@@ -719,7 +719,7 @@ describe('NotebookPreview per-kernel tabs', () => {
           source: 'user',
           inputKind: 'terminal',
           kernelKind: request.language ?? 'python',
-          environment: request.environment,
+          environment: request.language === 'r' ? 'default-r' : 'default-python',
           script: request.code
         })
       )
@@ -739,8 +739,7 @@ describe('NotebookPreview per-kernel tabs', () => {
         code: 'x <- 1',
         source: 'user',
         inputKind: 'terminal',
-        language: 'r',
-        environment: 'default-r'
+        language: 'r'
       })
     )
     const userCell = [...container.querySelectorAll('[data-testid="notebook-cell"]')].find((cell) =>
@@ -881,7 +880,8 @@ describe('NotebookPreview per-environment selector', () => {
 
   const mountWithRuns = async (
     runs: NotebookRunRecord[],
-    environments: NotebookEnvironmentStatus[] = []
+    environments: NotebookEnvironmentStatus[] = [],
+    executionEnvironments: NotebookSessionState['executionEnvironments'] = undefined
   ): Promise<void> => {
     const readyStatus: ProvisionStatus = {
       pythonReady: true,
@@ -909,7 +909,8 @@ describe('NotebookPreview per-environment selector', () => {
             cells: [],
             runs,
             recentRuns: runs,
-            environments
+            environments,
+            executionEnvironments
           })
         ),
         execute: vi.fn(() => Promise.resolve({})),
@@ -952,14 +953,18 @@ describe('NotebookPreview per-environment selector', () => {
     expect(container.querySelectorAll('[data-testid="notebook-cell"]').length).toBe(2)
   })
 
-  it('submits to the only custom environment even when its selector is hidden', async () => {
-    await mountWithRuns([
-      makeRun({
-        runId: 'p1',
-        kernelKind: 'python',
-        environment: 'my-analysis'
-      })
-    ])
+  it('submits through the current custom runtime binding even when its selector is hidden', async () => {
+    await mountWithRuns(
+      [
+        makeRun({
+          runId: 'p1',
+          kernelKind: 'python',
+          environment: 'my-analysis'
+        })
+      ],
+      [],
+      { python: 'my-analysis', r: 'default-r' }
+    )
 
     const input = container.querySelector(
       '[data-testid="kernel-terminal-input"]'
@@ -971,9 +976,11 @@ describe('NotebookPreview per-environment selector', () => {
 
     expect(window.api.notebook.execute).toHaveBeenCalledWith(
       expect.objectContaining({
-        language: 'python',
-        environment: 'my-analysis'
+        language: 'python'
       })
+    )
+    expect(window.api.notebook.execute).toHaveBeenCalledWith(
+      expect.not.objectContaining({ environment: expect.anything() })
     )
   })
 
@@ -1010,6 +1017,10 @@ describe('NotebookPreview per-environment selector', () => {
     expect(container.querySelectorAll('[data-testid="notebook-cell"]').length).toBe(1)
     expect(container.textContent).toContain('print("analysis")')
     expect(container.textContent).not.toContain('print("default")')
+    expect(container.querySelector('[data-testid="kernel-terminal-input"]')).toBeNull()
+    expect(container.querySelector('[data-testid="notebook-read-only-status"]')?.textContent).toBe(
+      'my-analysis · history only; new code runs in default-python2 cells'
+    )
   })
 
   it('groups a legacy run with no environment field under default-python', async () => {

@@ -1487,6 +1487,7 @@
   "Python · view only; this kernel's namespace no longer exists": "Python · lecture seule; l’espace de noms de ce noyau n’existe plus",
   "R kernel · shared with the agent": "Noyau R · partagé avec l'agent",
   "R · view only; this kernel's namespace no longer exists": "R · lecture seule; l’espace de noms de ce noyau n’existe plus",
+  "{{environment}} · history only; new code runs in {{activeEnvironment}}": "{{environment}} · historique uniquement; le nouveau code s’exécute dans {{activeEnvironment}}",
   "Python package index (pip)": "Index des paquets Python (pip)",
   "Python/R environments are rebuilt at the new location on first use (not moved).": "Les environnements Python/R sont reconstruits au nouvel emplacement lors de la première utilisation (non déplacés).",
   "Question from {{name}}": "Question de {{name}}",

@@ -410,6 +410,7 @@ class NotebookRuntimeService {
       dependencyAnalyzer: this.dependencyAnalyzer,
       findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
       runtimeBindings: (session) => this.runtimeBindingOwner.snapshot(session),
+      runtimeEnvironment: (session, language) => this.resolveRunEnv(session, language),
       isRestartRecommended: (processKey) =>
         this.environmentOperations.isRestartRecommended(processKey)
     })
