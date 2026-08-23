@@ -180,6 +180,13 @@ const queueItemContextError = (
   return undefined
 }
 
+const queuePermissionIsPending = (
+  options: WorkspaceMessageQueueControllerOptions,
+  session: ChatSession
+): boolean =>
+  session.runtimeContext?.permission?.state === 'pending' ||
+  options.hasPendingPermissionRequest(session.id)
+
 const queueSessionIsSendable = (
   options: WorkspaceMessageQueueControllerOptions,
   session: ChatSession
@@ -191,7 +198,7 @@ const queueSessionIsSendable = (
   !options.promptInFlightSessionIds.includes(session.id) &&
   !options.sendPreparationInFlightSessionIds.includes(session.id) &&
   !options.saveAsSkillInFlightSessionIds.includes(session.id) &&
-  !options.hasPendingPermissionRequest(session.id) &&
+  !queuePermissionIsPending(options, session) &&
   !session.fixLoopActive &&
   !session.conversationGraphSyncBlocked &&
   !session.compacting &&
@@ -521,6 +528,15 @@ const useWorkspaceMessageQueueController = (
             return
           }
           if (!current.isSpecialistReady(queue.sessionId)) {
+            replaceItem(queue.sessionId, itemId, {
+              phase: 'queued',
+              error: undefined,
+              deferredUntilIdle: true
+            })
+            emit('Queued message will send after the current run finishes.')
+            return
+          }
+          if (queuePermissionIsPending(current, liveSession)) {
             replaceItem(queue.sessionId, itemId, {
               phase: 'queued',
               error: undefined,

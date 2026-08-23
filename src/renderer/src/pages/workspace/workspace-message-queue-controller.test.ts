@@ -66,6 +66,29 @@ const session = (status: ChatSession['status'] = 'running'): ChatSession => ({
   }
 })
 
+const sessionWithPendingPermission = (
+  status: ChatSession['status'] = 'waiting-permission'
+): ChatSession => ({
+  ...session(status),
+  runtimeContext: {
+    version: 1,
+    revision: 1,
+    permission: {
+      state: 'pending',
+      request: {
+        requestId: 'permission-1',
+        sessionId: 'session-a',
+        toolCallId: 'tool-1',
+        title: 'Run command',
+        options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+      },
+      originatingPromptMessageId: 'message-a',
+      fingerprint: 'a'.repeat(64),
+      createdAt: 1
+    }
+  }
+})
+
 const admission = (text: string): MessageQueueAdmission => ({
   session: session(),
   snapshot: { draftKey: 'session-a', version: 1, doc: textDoc(text), attachments: [] },
@@ -559,6 +582,29 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
   })
 
+  it('keeps a queued prompt blocked while a durable permission response is in flight', async () => {
+    const pendingPermissionSession = sessionWithPendingPermission('error')
+    const input = options(pendingPermissionSession, {
+      // The approval card is hidden optimistically as soon as the user responds. The durable
+      // Session authority remains pending until Main settles that response.
+      hasPendingPermissionRequest: () => false
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('wait for approval'),
+        session: pendingPermissionSession
+      })
+    )
+
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.items).toEqual([
+      expect.objectContaining({ text: 'wait for approval', phase: 'queued' })
+    ])
+  })
+
   it('pauses dispatch until the captured Specialist is ready', async () => {
     const idle = session('idle')
     let specialistReady = false
@@ -715,6 +761,42 @@ describe('workspace message queue controller', () => {
     )
     await vi.waitFor(() => expect(order).toEqual(['send']))
     expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+  })
+
+  it('keeps Send now queued while a durable permission response is in flight', async () => {
+    const pendingPermissionSession = sessionWithPendingPermission()
+    const steerFollowUp = vi.fn(async () => ({
+      injected: true as const,
+      transport: 'acp-steering' as const,
+      messageId: 'message-steer'
+    }))
+    const input = options(pendingPermissionSession, {
+      getSession: () => pendingPermissionSession,
+      hasPendingPermissionRequest: () => false,
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage: vi.fn(),
+        steerFollowUp
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('wait for approval'),
+        session: pendingPermissionSession
+      })
+    )
+
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+
+    expect(steerFollowUp).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.items[0]).toMatchObject({
+      text: 'wait for approval',
+      phase: 'queued',
+      deferredUntilIdle: true
+    })
   })
 
   it('serializes Send now behind an in-flight admission', async () => {
