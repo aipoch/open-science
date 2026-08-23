@@ -160,18 +160,16 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   const { log } = diagnostics
   startupDiagnostics = diagnostics.operation
   startupFlush = diagnostics.flush
-  startupDiagnostics.phase('storage-probe')
-  const storageProbe = await import('./diagnostics/startup-storage-probe').then(
-    ({ timedStartupStorageProbe }) =>
+  // Disk classification is diagnostic only. Do not await it on the path to failure capture,
+  // bootstrap assets, or the first window; log the result whenever the probe settles.
+  void import('./diagnostics/startup-storage-probe')
+    .then(({ timedStartupStorageProbe }) =>
       timedStartupStorageProbe({ probeDir: app.getPath('logs') }, 1_500)
-  )
-  log.info('startup storage probe', storageProbe)
-  startupDiagnostics.phase('storage-probe-complete', {
-    sequentialMs: storageProbe.sequentialMs,
-    syncWriteMs: storageProbe.syncWriteMs,
-    kind: storageProbe.kind,
-    timedOut: storageProbe.timedOut === true
-  })
+    )
+    .then((storageProbe) => {
+      log.info('startup storage probe', storageProbe)
+    })
+    .catch(() => undefined)
 
   // Register process-level failure capture before loading the application modules. Keep renderer
   // diagnostics on a separate, one-way channel while the central IPC registry is being refactored.

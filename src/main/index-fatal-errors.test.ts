@@ -73,6 +73,14 @@ vi.mock('./diagnostics/startup', () => ({
   reportApplicationStartupFailure: mocks.reportApplicationStartupFailure
 }))
 
+vi.mock('./diagnostics/startup-storage-probe', () => ({
+  timedStartupStorageProbe: vi.fn(async () => ({
+    sequentialMs: 0,
+    syncWriteMs: 0,
+    kind: 'unknown'
+  }))
+}))
+
 vi.mock('./logger', () => ({
   createLogger: vi.fn(() => mocks.log),
   diagnosticErrorFields: vi.fn((error: unknown) => ({ error })),
