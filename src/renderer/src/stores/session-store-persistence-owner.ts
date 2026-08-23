@@ -458,7 +458,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           ? { planHistoryProjections: existing.planHistoryProjections }
           : {}
       const unsavedLocalTitle =
-        existing?.unsavedTitle === true
+        existing?.unsavedTitle === true && existing.title !== session.title
           ? { title: existing.title, unsavedTitle: true as const }
           : {}
       const hydratedWithTransientState = {

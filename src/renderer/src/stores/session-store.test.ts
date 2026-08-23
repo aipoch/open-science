@@ -1167,6 +1167,83 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].title).toBe('Remote title')
   })
 
+  it('does not mark a no-op rename as an unsaved title', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Original',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+    const before = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().renameSession('session-1', '  Original  ')
+    expect(useSessionStore.getState().sessions[0]).toBe(before)
+    expect(useSessionStore.getState().sessions[0].unsavedTitle).toBeUndefined()
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Remote title',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 2,
+      messages: [],
+      createdAt: 1,
+      updatedAt: Date.now() + 1
+    })
+    expect(useSessionStore.getState().sessions[0].title).toBe('Remote title')
+  })
+
+  it('clears an unsaved title when a newer remote projection already has the local title', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Original',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+    useSessionStore.getState().renameSession('session-1', 'Local draft')
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Local draft',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 2,
+      messages: [],
+      createdAt: 1,
+      updatedAt: Date.now() + 1
+    })
+    expect(useSessionStore.getState().sessions[0].title).toBe('Local draft')
+    expect(useSessionStore.getState().sessions[0].unsavedTitle).toBeUndefined()
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Remote later',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 3,
+      messages: [],
+      createdAt: 1,
+      updatedAt: Date.now() + 2
+    })
+    expect(useSessionStore.getState().sessions[0].title).toBe('Remote later')
+  })
+
   it('clears an unsaved title after a durable save acknowledgement even if the live Session advanced', () => {
     useSessionStore.getState().hydrateSessions([
       {

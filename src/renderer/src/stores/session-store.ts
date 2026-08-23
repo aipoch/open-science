@@ -293,18 +293,20 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
 
     if (!trimmedTitle) return
 
-    set((state) => ({
-      sessions: state.sessions.map((session) =>
-        session.id === sessionId
-          ? {
-              ...session,
-              title: trimmedTitle,
-              unsavedTitle: true,
-              updatedAt: Date.now()
-            }
-          : session
-      )
-    }))
+    set((state) => {
+      let changed = false
+      const sessions = state.sessions.map((session) => {
+        if (session.id !== sessionId || session.title === trimmedTitle) return session
+        changed = true
+        return {
+          ...session,
+          title: trimmedTitle,
+          unsavedTitle: true,
+          updatedAt: Date.now()
+        }
+      })
+      return changed ? { sessions } : state
+    })
   },
 
   // Removes a session and falls selection back to the next session within the same project.
