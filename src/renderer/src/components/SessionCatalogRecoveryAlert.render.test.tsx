@@ -39,6 +39,7 @@ describe('SessionCatalogRecoveryAlert', () => {
       '[data-testid="session-persistence-retry"]'
     )
     expect(repair?.textContent).toBe('Repair index')
+    expect(container.querySelector('[data-testid="session-persistence-dismiss"]')).not.toBeNull()
     act(() => repair?.click())
     expect(onRetry).toHaveBeenCalledOnce()
   })
@@ -60,6 +61,29 @@ describe('SessionCatalogRecoveryAlert', () => {
     expect(container.textContent).toContain('A damaged saved conversation was moved aside')
     expect(container.textContent).toContain('You can still permanently delete the project')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+    const dismiss = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-dismiss"]'
+    )
+    expect(dismiss?.getAttribute('aria-label')).toBe('Dismiss storage warning')
+    act(() => dismiss?.click())
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).toBeNull()
+  })
+
+  it('does not offer overlay dismissal on the Settings archive reminder', () => {
+    act(() =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          inline
+          recovery={{
+            kind: 'damaged-authority',
+            affectedFileCount: 1
+          }}
+        />
+      )
+    )
+
+    expect(container.textContent).toContain('Project archive needs attention')
+    expect(container.querySelector('[data-testid="session-persistence-dismiss"]')).toBeNull()
   })
 
   it('requires an app update without offering a destructive repair for future Session files', () => {
