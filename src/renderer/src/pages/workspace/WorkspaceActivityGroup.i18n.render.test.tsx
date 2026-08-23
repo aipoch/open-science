@@ -9,14 +9,18 @@ import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
+const { scrollToMessage } = vi.hoisted(() => ({ scrollToMessage: vi.fn() }))
+
 vi.mock('@/components/ui/message-scroller', () => ({
-  MessageScrollerItem: ({ children }: { children: ReactNode }) => <div>{children}</div>
+  MessageScrollerItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  useMessageScroller: () => ({ scrollToMessage })
 }))
 
 let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  scrollToMessage.mockReset()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -29,6 +33,54 @@ afterEach(async () => {
 })
 
 describe('WorkspaceActivityGroup i18n', () => {
+  it('anchors the group in view before toggling its height', () => {
+    const onToggleGroup = vi.fn()
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-anchor-1',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-anchor-1',
+                kind: 'tool',
+                title: 'Bash',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 2,
+                toolKind: 'execute',
+                providerToolName: 'bash',
+                rawInput: { command: 'pwd' },
+                rawOutput: 'done'
+              }
+            ]
+          }}
+          isExpanded={false}
+          onToggleGroup={onToggleGroup}
+          expansionOverrides={{}}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="tool-group-header"]')?.click()
+    })
+
+    expect(scrollToMessage).toHaveBeenCalledWith('group-anchor-1', {
+      align: 'nearest',
+      behavior: 'auto'
+    })
+    expect(scrollToMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      onToggleGroup.mock.invocationCallOrder[0]!
+    )
+  })
+
   it('re-renders a completed group when the interface language changes', async () => {
     act(() => {
       root.render(

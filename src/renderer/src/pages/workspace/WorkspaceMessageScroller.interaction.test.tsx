@@ -184,7 +184,12 @@ vi.mock('@/components/ui/message-scroller', () => {
     MessageScrollerViewport: Viewport,
     MessageScrollerContent: Content,
     MessageScrollerItem: Item,
-    MessageScrollerButton: Button
+    MessageScrollerButton: Button,
+    useMessageScroller: () => ({
+      scrollToEnd: vi.fn(),
+      scrollToMessage: vi.fn(),
+      scrollToStart: vi.fn()
+    })
   }
 })
 

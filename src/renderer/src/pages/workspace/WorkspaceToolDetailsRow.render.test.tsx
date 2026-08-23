@@ -281,9 +281,13 @@ describe('WorkspaceToolDetailsRow', () => {
 
     expect(figure).not.toBeNull()
     expect(figures).toHaveLength(1)
+    expect(figure?.className).toContain('md:w-[52rem]')
+    expect(figure?.className).toContain('max-w-full')
     expect(figure?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,QUJD')
+    expect(figure?.querySelector('img')?.className).toContain('max-h-[32rem]')
     expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
-    expect(container.textContent).toContain('Figure 1.png')
+    expect(container.textContent).toContain('plot.png')
+    expect(container.textContent).not.toContain('Figure 1.png')
     expect(container.textContent).toContain('1 figure · 1 line of output')
     expect(container.textContent).not.toContain('Saved:')
 
@@ -295,7 +299,7 @@ describe('WorkspaceToolDetailsRow', () => {
     const dialog = document.body.querySelector('[data-testid="notebook-figure-preview-dialog"]')
     expect(dialog).not.toBeNull()
     expect(dialog?.querySelector('[data-testid="notebook-figure-preview-image"]')).not.toBeNull()
-    expect(dialog?.textContent).toContain('Figure 1.png')
+    expect(dialog?.textContent).toContain('plot.png')
     expect(dialog?.textContent).toContain('Esc to close')
     expect(dialog?.querySelector('[aria-label="Close preview"]')).not.toBeNull()
 
