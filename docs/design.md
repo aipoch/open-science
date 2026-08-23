@@ -593,12 +593,13 @@ colors communicate a successful or failed probe/migration result.
   hairline separators rather than nested cards. Dragging over another row moves neighboring rows
   aside to preview whether the item will land before or after it. Each row also supports Arrow
   Up/Arrow Down keyboard reordering, Edit, Remove, and Send now. Edit moves an item back into an
-  unchanged empty composer. Send now promotes the item and tries to inject it into the current run
-  through the agent framework's native follow-up, without cancelling that run. While inject is in
-  flight, the row shows a sending state. If inject is unavailable or refused, the item stays queued,
-  the row explains that it will send after the current run finishes, and the queue drains it when
-  the Session becomes sendable. Stop remains the explicit control for cancelling a live turn. Branch,
-  admission, or edit failures keep the row and show a recoverable inline error.
+  unchanged empty composer. Send now promotes the item and first tries to inject it into the current
+  run through the agent framework's native follow-up, without cancelling that run. While inject is in
+  flight, the row shows a sending state. If inject is unavailable or refused, Send now stops the live
+  turn and dispatches the promoted item as soon as the Session becomes sendable; the row shows a
+  stopping state while cancellation is in flight. Stop remains the explicit control for cancelling a
+  live turn without sending a queued message. Branch, admission, cancellation, or edit failures keep
+  the row and show a recoverable inline error.
 - Queued messages are transient and Session-scoped. They are not persisted across renderer restart.
   Bind each item to its admission Message Branch and block branch switching or inline message edits
   while that Session has queued work so a later dispatch cannot silently retarget it. Pause queue

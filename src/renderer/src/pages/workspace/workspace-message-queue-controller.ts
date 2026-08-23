@@ -588,24 +588,48 @@ const useWorkspaceMessageQueueController = (
               return
             }
           } catch {
-            // Native follow-up is fail-closed. Keep the current run and send after it finishes.
+            // Fall back to interrupting the live turn below.
           }
-          replaceItem(queue.sessionId, itemId, { phase: 'queued', error: undefined })
-          if (owner.dispatches.get(queue.sessionId) === displacedDispatch) {
-            owner.dispatches.delete(queue.sessionId)
-          }
+        }
+        if (liveTurn && hasPayload) {
           const latest = owner.resolveOptions(optionsRef.current)
           const latestSession = latest.getSession(queue.sessionId)
-          if (!latestSession || queueSessionIsSendable(latest, latestSession)) {
+          const latestLiveTurn =
+            latestSession?.status === 'running' ||
+            latestSession?.status === 'waiting-for-user' ||
+            latestSession?.status === 'waiting-permission'
+          if (!latestSession || !latestLiveTurn || queueSessionIsSendable(latest, latestSession)) {
+            replaceItem(queue.sessionId, itemId, {
+              phase: 'queued',
+              error: undefined,
+              deferredUntilIdle: false
+            })
+            if (owner.dispatches.get(queue.sessionId) === displacedDispatch) {
+              owner.dispatches.delete(queue.sessionId)
+            }
             drainQueues()
             return
           }
+          const contextError = queueItemContextError(latestSession, item)
+          if (contextError) {
+            replaceItem(queue.sessionId, itemId, {
+              phase: 'error',
+              error: contextError,
+              deferredUntilIdle: false
+            })
+            return
+          }
           replaceItem(queue.sessionId, itemId, {
-            phase: 'queued',
+            phase: 'interrupting',
             error: undefined,
-            deferredUntilIdle: true
+            deferredUntilIdle: false
           })
-          emit('Queued message will send after the current run finishes.')
+          emit('Stopping the current run before sending the queued message.')
+          await latest.runtime.cancelRun(queue.sessionId)
+          if (owner.dispatches.get(queue.sessionId) === displacedDispatch) {
+            owner.dispatches.delete(queue.sessionId)
+          }
+          drainQueues()
           return
         }
         if (liveTurn) {
