@@ -116,11 +116,19 @@ export const startNetworkMonitor = (): void => {
   })
 
   let silentRecheckQueued = false
+  let silentProbeInFlight = false
   const silentlyRecheckIfStale = (): void => {
     const { isOnline, connectivity } = useNetworkStore.getState()
     if (!isOnline) return
     if (connectivity !== 'unreachable' && connectivity !== 'probe-failed') return
-    void useNetworkStore.getState().probeConnectivity()
+    if (silentProbeInFlight) return
+    silentProbeInFlight = true
+    void useNetworkStore
+      .getState()
+      .probeConnectivity()
+      .finally(() => {
+        silentProbeInFlight = false
+      })
   }
   const scheduleSilentRecheck = (): void => {
     if (silentRecheckQueued) return

@@ -266,6 +266,28 @@ describe('startNetworkMonitor silent recovery', () => {
     })
   })
 
+  it('does not start a second silent probe while one is still in flight', async () => {
+    let resolveFirst!: (reachable: boolean) => void
+    const firstResult = new Promise<boolean>((resolve) => {
+      resolveFirst = resolve
+    })
+    const checkConnectivity = vi.fn().mockReturnValueOnce(firstResult).mockResolvedValueOnce(false)
+    stubCheckConnectivity(checkConnectivity)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
+
+    window.dispatchEvent(new Event('focus'))
+    await Promise.resolve()
+    window.dispatchEvent(new Event('focus'))
+    await Promise.resolve()
+    expect(checkConnectivity).toHaveBeenCalledTimes(1)
+
+    resolveFirst(true)
+    await vi.waitFor(() => {
+      expect(useNetworkStore.getState().connectivity).toBe('reachable')
+    })
+    expect(checkConnectivity).toHaveBeenCalledTimes(1)
+  })
+
   it('does not re-probe when visibilitychange leaves the document hidden', async () => {
     const checkConnectivity = vi.fn().mockResolvedValue(true)
     stubCheckConnectivity(checkConnectivity)
