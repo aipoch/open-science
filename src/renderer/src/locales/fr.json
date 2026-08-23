@@ -576,7 +576,7 @@
   "Could not update project pin.": "Impossible de mettre à jour le code PIN du projet.",
   "Could not update the command-line tool.": "Impossible de mettre à jour l'outil de ligne de commande.",
   "Couldn't fetch models: {{reason}}. Using the bundled list.": "Impossible de récupérer les modèles : {{reason}}. Utilisation de la liste groupée.",
-  "Couldn't load hosts: {{message}}": "Impossible de charger les hôtes : {{message}}",
+  "Couldn't load hosts.": "Impossible de charger les hôtes.",
   "Create a project to search sessions and artifacts.": "Créez un projet pour rechercher des sessions et des artefacts.",
   "Create a skill to teach Claude a workflow you use.": "Créez une compétence pour enseigner à Claude un flux de travail que vous utilisez.",
   "Create agent": "Créer un agent",

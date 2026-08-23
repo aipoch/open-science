@@ -611,7 +611,7 @@
   "Could not update project pin.": "無法更新專案置頂狀態。",
   "Could not update the command-line tool.": "無法更新命令列工具。",
   "Couldn't fetch models: {{reason}}. Using the bundled list.": "無法取得模型：{{reason}}。將使用內建清單。",
-  "Couldn't load hosts: {{message}}": "無法載入主機：{{message}}",
+  "Couldn't load hosts.": "無法載入主機。",
   "Create a project to search sessions and artifacts.": "新增一個專案，即可搜尋會話和產物。",
   "Create a skill to teach Claude a workflow you use.": "建立一個技能，把你常用的流程教給 Claude。",
   "Create agent": "建立智能體",

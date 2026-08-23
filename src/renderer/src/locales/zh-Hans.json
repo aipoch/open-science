@@ -612,7 +612,7 @@
   "Could not update project pin.": "无法更新项目置顶状态。",
   "Could not update the command-line tool.": "无法更新命令行工具。",
   "Couldn't fetch models: {{reason}}. Using the bundled list.": "无法获取模型：{{reason}}。将使用内置列表。",
-  "Couldn't load hosts: {{message}}": "无法加载主机：{{message}}",
+  "Couldn't load hosts.": "无法加载主机。",
   "Create a project to search sessions and artifacts.": "新建一个项目，即可搜索会话和产物。",
   "Create a skill to teach Claude a workflow you use.": "创建一个技能，把你常用的流程教给 Claude。",
   "Create agent": "创建智能体",

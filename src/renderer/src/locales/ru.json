@@ -564,7 +564,7 @@
   "Could not update project pin.": "Не удалось изменить закрепление проекта.",
   "Could not update the command-line tool.": "Не удалось обновить инструмент командной строки.",
   "Couldn't fetch models: {{reason}}. Using the bundled list.": "Не удалось загрузить модели: {{reason}}. Используется встроенный список.",
-  "Couldn't load hosts: {{message}}": "Не удалось загрузить хосты: {{message}}",
+  "Couldn't load hosts.": "Не удалось загрузить хосты.",
   "Create a project to search sessions and artifacts.": "Создайте проект, чтобы искать сессии и артефакты.",
   "Create a skill to teach Claude a workflow you use.": "Создайте навык, чтобы научить Claude работе с рабочим процессом, который вы используете.",
   "Create agent": "Создать агента",

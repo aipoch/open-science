@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import { useEffect, useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -9,6 +10,8 @@ import type {
   XaiOAuthDeviceAuthorization
 } from '../../../../shared/settings'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
+import { DiagnosticDetails } from '@/components/diagnostic-details'
+import { errorDetail } from '@/lib/error-detail'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
@@ -26,6 +29,50 @@ type ProvidersPanelProps = {
   // the owner lives in SettingsPage and is passed down.
   busyProviderId?: string
   onBusyProviderChange: (providerId: string | undefined) => void
+}
+
+type ProviderActionError = {
+  action:
+    | 'test'
+    | 'codex-sign-in'
+    | 'codex-sign-out'
+    | 'codex-reimport'
+    | 'claude-token-save'
+    | 'claude-sign-in'
+    | 'claude-sign-out'
+    | 'claude-disconnect'
+    | 'xai-sign-in'
+    | 'xai-sign-out'
+  detail?: string
+}
+
+type ProviderPanelError = string | ProviderActionError
+
+const providerErrorCopy = (error: ProviderPanelError, t: TFunction): string => {
+  if (typeof error === 'string') return error
+
+  switch (error.action) {
+    case 'test':
+      return t('Could not test the provider connection.')
+    case 'codex-sign-in':
+      return t('Could not sign in to Codex.')
+    case 'codex-sign-out':
+      return t('Could not sign out of Codex.')
+    case 'codex-reimport':
+      return t('Could not re-import the Codex login.')
+    case 'claude-token-save':
+      return t('Could not save the Claude token.')
+    case 'claude-sign-in':
+      return t('Could not sign in to Claude.')
+    case 'claude-sign-out':
+      return t('Could not sign out of Claude.')
+    case 'claude-disconnect':
+      return t('Could not disconnect Claude from Open Science.')
+    case 'xai-sign-in':
+      return t('Could not sign in to xAI.')
+    case 'xai-sign-out':
+      return t('Could not sign out of xAI.')
+  }
 }
 
 // The Model settings panel: active-model selection, reasoning effort, and the provider list with
@@ -63,7 +110,9 @@ const ProvidersPanel = ({
   const logoutXaiOAuth = useSettingsStore((state) => state.logoutXaiOAuth)
 
   // The last connection-test/sign-in failure, shown as an error line under the list.
-  const [providerTestError, setProviderTestError] = useState<string | undefined>(undefined)
+  const [providerTestError, setProviderTestError] = useState<ProviderPanelError | undefined>(
+    undefined
+  )
   // True while the explicit isolated Codex sign-in is open in the browser; drives the cancel action.
   const [isCodexLoginPending, setIsCodexLoginPending] = useState(false)
   // True while the explicit shared Claude sign-in is open in the browser.
@@ -146,9 +195,7 @@ const ProvidersPanel = ({
       // separate status line.
       await validateProvider({ providerId: provider.id })
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not test the provider connection.')
-      )
+      setProviderTestError({ action: 'test', detail: errorDetail(error) })
     } finally {
       onBusyProviderChange(undefined)
     }
@@ -164,9 +211,7 @@ const ProvidersPanel = ({
     try {
       await loginIsolatedCodex()
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not sign in to Codex.')
-      )
+      setProviderTestError({ action: 'codex-sign-in', detail: errorDetail(error) })
     } finally {
       setIsCodexLoginPending(false)
     }
@@ -183,9 +228,7 @@ const ProvidersPanel = ({
         setProviderTestError(result.message ?? t('Codex sign-out did not complete. Try again.'))
       }
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not sign out of Codex.')
-      )
+      setProviderTestError({ action: 'codex-sign-out', detail: errorDetail(error) })
     }
   }
 
@@ -203,9 +246,7 @@ const ProvidersPanel = ({
         reimportCodexAuthentication: true
       })
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not re-import the Codex login.')
-      )
+      setProviderTestError({ action: 'codex-reimport', detail: errorDetail(error) })
     } finally {
       onBusyProviderChange(undefined)
     }
@@ -232,9 +273,7 @@ const ProvidersPanel = ({
 
       return result
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not save the Claude token.')
-      )
+      setProviderTestError({ action: 'claude-token-save', detail: errorDetail(error) })
 
       return undefined
     }
@@ -268,9 +307,7 @@ const ProvidersPanel = ({
       }
     } catch (error) {
       if (manualClaudePasteWonRef.current) return
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not sign in to Claude.')
-      )
+      setProviderTestError({ action: 'claude-sign-in', detail: errorDetail(error) })
     } finally {
       setIsClaudeIsolatedLoginPending(false)
     }
@@ -285,9 +322,7 @@ const ProvidersPanel = ({
         setProviderTestError(result.message ?? t('Claude sign-out did not complete. Try again.'))
       }
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not sign out of Claude.')
-      )
+      setProviderTestError({ action: 'claude-sign-out', detail: errorDetail(error) })
     }
   }
 
@@ -302,9 +337,7 @@ const ProvidersPanel = ({
         setProviderTestError(result.message ?? t('Could not sign in to Claude. Try again.'))
       }
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not sign in to Claude.')
-      )
+      setProviderTestError({ action: 'claude-sign-in', detail: errorDetail(error) })
     } finally {
       setIsClaudeSharedLoginPending(false)
     }
@@ -319,9 +352,7 @@ const ProvidersPanel = ({
         setProviderTestError(result.message ?? t('Could not disconnect Claude from Open Science.'))
       }
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not disconnect Claude from Open Science.')
-      )
+      setProviderTestError({ action: 'claude-disconnect', detail: errorDetail(error) })
     }
   }
 
@@ -339,7 +370,7 @@ const ProvidersPanel = ({
       setXaiSession(undefined)
     } catch (error) {
       if (xaiLoginCancelledRef.current) return
-      setProviderTestError(error instanceof Error ? error.message : t('Could not sign in to xAI.'))
+      setProviderTestError({ action: 'xai-sign-in', detail: errorDetail(error) })
     } finally {
       isXaiLoginPendingRef.current = false
       setIsXaiLoginPending(false)
@@ -359,7 +390,7 @@ const ProvidersPanel = ({
     try {
       await logoutXaiOAuth()
     } catch (error) {
-      setProviderTestError(error instanceof Error ? error.message : t('Could not sign out of xAI.'))
+      setProviderTestError({ action: 'xai-sign-out', detail: errorDetail(error) })
     }
   }
 
@@ -466,9 +497,14 @@ const ProvidersPanel = ({
           onLogoutXai={() => void handleXaiLogout()}
         />
         {providerTestError ? (
-          <p className="mt-2 text-sm text-destructive" role="alert">
-            {providerTestError}
-          </p>
+          <div className="mt-2">
+            <p className="text-sm text-destructive" role="alert">
+              {providerErrorCopy(providerTestError, t)}
+            </p>
+            <DiagnosticDetails
+              detail={typeof providerTestError === 'string' ? undefined : providerTestError.detail}
+            />
+          </div>
         ) : null}
         {/* The add action lives with the list: a dashed ghost row appended after the last provider,
             matching the Available-group placeholder treatment. */}
@@ -492,7 +528,7 @@ const ProvidersPanel = ({
       <XaiOAuthSignInDialog
         open={Boolean(xaiSession)}
         session={xaiSession}
-        error={providerTestError}
+        error={providerTestError ? providerErrorCopy(providerTestError, t) : undefined}
         onCancel={handleCancelXaiLogin}
       />
     </div>

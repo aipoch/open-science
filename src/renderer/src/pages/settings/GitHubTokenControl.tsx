@@ -1,16 +1,36 @@
 /* Hallmark · component: credential disclosure · genre: modern-minimal · theme: existing Settings system */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+import type { TFunction } from 'i18next'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CheckCircle2, KeyRound, LoaderCircle } from 'lucide-react'
 
 import type { GitHubTokenStatus } from '../../../../shared/settings'
+import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { errorDetail } from '@/lib/error-detail'
 
-type Feedback = { kind: 'error' | 'success'; text: string; suffix?: string }
+type Feedback =
+  | { kind: 'success'; action: 'saved' | 'removed' }
+  | { kind: 'error'; action: 'status' | 'verify' | 'remove'; detail?: string }
 type Availability = 'checking' | 'available' | 'unavailable'
+
+const feedbackCopy = (feedback: Feedback, t: TFunction): string => {
+  switch (feedback.action) {
+    case 'saved':
+      return t('Token verified and saved.')
+    case 'removed':
+      return t('Saved token removed.')
+    case 'status':
+      return t('Could not read GitHub token status.')
+    case 'verify':
+      return `${t('Token verification failed.')} ${t('Your saved token was not changed.')}`
+    case 'remove':
+      return t('Could not remove the saved token.')
+  }
+}
 
 const isLocalOnlyActionError = (error: unknown): boolean =>
   error instanceof Error && error.message.includes('only available in the local desktop app')
@@ -43,7 +63,8 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
         setAvailability('available')
         setFeedback({
           kind: 'error',
-          text: error instanceof Error ? error.message : 'Could not read GitHub token status.'
+          action: 'status',
+          detail: errorDetail(error)
         })
       })
       .finally(() => {
@@ -63,13 +84,12 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
       const next = await window.api.settings.saveGitHubToken({ token: candidate })
       setStatus(next)
       setToken('')
-      setFeedback({ kind: 'success', text: 'Token verified and saved.' })
+      setFeedback({ kind: 'success', action: 'saved' })
     } catch (error) {
-      const detail = error instanceof Error ? error.message : 'Token verification failed.'
       setFeedback({
         kind: 'error',
-        text: detail,
-        suffix: 'Your saved token was not changed.'
+        action: 'verify',
+        detail: errorDetail(error)
       })
     } finally {
       setBusy(null)
@@ -83,11 +103,12 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
     try {
       setStatus(await window.api.settings.removeGitHubToken())
       setToken('')
-      setFeedback({ kind: 'success', text: 'Saved token removed.' })
+      setFeedback({ kind: 'success', action: 'removed' })
     } catch (error) {
       setFeedback({
         kind: 'error',
-        text: error instanceof Error ? error.message : 'Could not remove the saved token.'
+        action: 'remove',
+        detail: errorDetail(error)
       })
     } finally {
       setBusy(null)
@@ -194,26 +215,27 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
             </div>
           </div>
 
-          <div id="github-token-feedback" className="mt-2 min-h-5">
+          <div className="mt-2 min-h-5">
             {feedback ? (
-              <div
-                role={feedback.kind === 'error' ? 'alert' : 'status'}
-                className={`flex items-start gap-2 text-xs ${
-                  feedback.kind === 'error' ? 'text-danger-000' : 'text-primary'
-                }`}
-              >
-                {feedback.kind === 'error' ? (
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                ) : (
-                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                )}
-                <p>
-                  {t(feedback.text)}
-                  {feedback.suffix ? ` ${t(feedback.suffix)}` : null}
-                </p>
-              </div>
+              <>
+                <div
+                  id="github-token-feedback"
+                  role={feedback.kind === 'error' ? 'alert' : 'status'}
+                  className={`flex items-start gap-2 text-xs ${
+                    feedback.kind === 'error' ? 'text-danger-000' : 'text-primary'
+                  }`}
+                >
+                  {feedback.kind === 'error' ? (
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  )}
+                  <p>{feedbackCopy(feedback, t)}</p>
+                </div>
+                {feedback.kind === 'error' ? <DiagnosticDetails detail={feedback.detail} /> : null}
+              </>
             ) : status?.configured ? (
-              <p className="text-xs text-muted-foreground">
+              <p id="github-token-feedback" className="text-xs text-muted-foreground">
                 {t('Saved token:')} {status.mask}
               </p>
             ) : null}

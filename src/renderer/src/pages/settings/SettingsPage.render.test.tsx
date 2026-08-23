@@ -4096,7 +4096,7 @@ describe('SettingsPage Codex framework', () => {
     expect(errorAlert?.textContent).toBe('Codex sign-out timed out.')
   })
 
-  it('shows Codex login-check IPC failures instead of leaving an unhandled rejection', async () => {
+  it('summarizes Codex login-check IPC failures and keeps their diagnostics available', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const provider = {
       id: 'builtin-codex-subscription',
@@ -4138,7 +4138,12 @@ describe('SettingsPage Codex framework', () => {
     )
     await act(async () => testLogin?.click())
 
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not test the provider connection.'
+    )
+    const details = document.body.querySelector('details')
+    expect(details?.open).toBe(false)
+    expect(details?.textContent).toContain(
       'The Codex adapter does not support authentication status.'
     )
   })
@@ -4184,7 +4189,7 @@ describe('SettingsPage Codex framework', () => {
     expect(api.settings.cancelCodexLogin).toHaveBeenCalledOnce()
   })
 
-  it('surfaces isolated sign-in failures instead of leaving an unhandled rejection', async () => {
+  it('summarizes isolated sign-in failures and keeps their diagnostics available', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const provider = {
       id: 'builtin-codex-subscription',
@@ -4217,8 +4222,11 @@ describe('SettingsPage Codex framework', () => {
     const signIn = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign in"]')
     await act(async () => signIn?.click())
 
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-      'The Codex adapter failed to spawn.'
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not sign in to Codex.'
     )
+    const details = document.body.querySelector('details')
+    expect(details?.open).toBe(false)
+    expect(details?.textContent).toContain('The Codex adapter failed to spawn.')
   })
 })

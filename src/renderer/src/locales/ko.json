@@ -560,7 +560,7 @@
   "Could not update project pin.": "프로젝트 고정을 업데이트할 수 없습니다.",
   "Could not update the command-line tool.": "명령줄 도구를 업데이트할 수 없습니다.",
   "Couldn't fetch models: {{reason}}. Using the bundled list.": "모델을 가져올 수 없습니다: {{reason}}. 번들 목록을 사용합니다.",
-  "Couldn't load hosts: {{message}}": "호스트를 로드할 수 없습니다: {{message}}",
+  "Couldn't load hosts.": "호스트를 로드할 수 없습니다.",
   "Create a project to search sessions and artifacts.": "프로젝트를 만들어 세션 및 아티팩트를 검색하세요.",
   "Create a skill to teach Claude a workflow you use.": "스킬을 만들어 사용하는 작업 흐름을 Claude에 가르치세요.",
   "Create agent": "에이전트 만들기",

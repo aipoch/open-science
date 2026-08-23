@@ -541,7 +541,7 @@
   "Could not update project pin.": "プロジェクト ピンを更新できませんでした。",
   "Could not update the command-line tool.": "コマンドライン ツールを更新できませんでした。",
   "Couldn't fetch models: {{reason}}. Using the bundled list.": "モデルを取得できませんでした：{{reason}}。バンドルリストを使用します。",
-  "Couldn't load hosts: {{message}}": "ホストを読み込めませんでした：{{message}}",
+  "Couldn't load hosts.": "ホストを読み込めませんでした。",
   "Create a project to search sessions and artifacts.": "セッションとアーティファクトを検索するプロジェクトを作成します。",
   "Create a skill to teach Claude a workflow you use.": "スキルを作成して、使用するワークフローを Claude に教えます。",
   "Create agent": "エージェントを作成",
