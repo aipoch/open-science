@@ -148,12 +148,9 @@ export const createSessionMessageGraphOwner = <
     const trimmedContent = content.trim()
     const persistedUploads = (uploads ?? []).map(createPersistedUpload)
     const session = get().sessions.find((candidate) => candidate.id === sessionId)
-    if (
-      !session ||
-      (!trimmedContent && persistedUploads.length === 0 && !(parts && parts.length > 0))
-    ) {
-      return undefined
-    }
+    const hasFollowUpBody =
+      Boolean(trimmedContent) || persistedUploads.length > 0 || Boolean(parts?.length)
+    if (!session || !hasFollowUpBody) return undefined
     if (session.messages.some((message) => message.id === messageId)) {
       return { sessionId, messageId }
     }
