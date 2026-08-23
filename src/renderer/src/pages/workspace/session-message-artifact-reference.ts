@@ -8,8 +8,11 @@ type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
 }
 
 const ARTIFACT_REFERENCE_PATTERN = /^\{\{artifact:([^}\s]+)\}\}$/u
+const INTERNAL_ARTIFACT_REFERENCE_PREFIX = '/.open-science/artifact/'
 const MARKDOWN_IMAGE_PATTERN =
   /!\[([^\]]*)\]\(\s*(<[^>\n]+>|\{\{artifact:[^}\s]+\}\}|[^\s)]+)\s*(?:["'][^"']*["'])?\s*\)/gu
+const MARKDOWN_LINK_PATTERN =
+  /(^|[^!])(\[[^\]]*\]\(\s*)(<[^>\n]+>|\{\{artifact:[^}\s]+\}\}|[^\s)]+)(\s*(?:["'][^"']*["'])?\s*\))/gmu
 const EXTERNAL_SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/iu
 
 const decodeReference = (reference: string): string => {
@@ -33,7 +36,12 @@ const resolveMessageArtifactReference = (
 
   const normalizedReference = normalizeFileReference(reference)
   const artifactReference = normalizedReference.match(ARTIFACT_REFERENCE_PATTERN)?.[1]
-  const identity = artifactReference ?? normalizedReference
+  const internalArtifactReference = normalizedReference.startsWith(
+    INTERNAL_ARTIFACT_REFERENCE_PREFIX
+  )
+    ? normalizedReference.slice(INTERNAL_ARTIFACT_REFERENCE_PREFIX.length)
+    : undefined
+  const identity = artifactReference ?? internalArtifactReference ?? normalizedReference
   const identityMatch = artifacts.find(
     (artifact) =>
       artifact.id === identity ||
@@ -89,5 +97,38 @@ const normalizeSessionArtifactImages = (
     return `<session-artifact-image artifact_ref="${escapeHtmlAttribute(artifactRef)}" alt_text="${escapeHtmlAttribute(alt)}"></session-artifact-image>`
   })
 
-export { normalizeSessionArtifactImages, resolveMessageArtifactReference }
+// Rewrites only links already proven to reference a same-message managed artifact. Streamdown's
+// security sanitizer intentionally drops bare filenames, artifact tokens, and file URLs; an
+// internal root-relative target preserves the Markdown label while keeping the destination inert.
+const normalizeSessionArtifactLinks = (
+  content: string,
+  artifacts: readonly MessageArtifact[]
+): string =>
+  content.replace(
+    MARKDOWN_LINK_PATTERN,
+    (match, leading: string, opening: string, destination: string, closing: string) => {
+      const reference =
+        destination.startsWith('<') && destination.endsWith('>')
+          ? destination.slice(1, -1)
+          : destination
+      const artifact = resolveMessageArtifactReference(reference, artifacts)
+      if (!artifact || artifact.kind !== 'managed-file') return match
+
+      const artifactRef = artifact.versionId ?? artifact.id
+      return `${leading}${opening}${INTERNAL_ARTIFACT_REFERENCE_PREFIX}${encodeURIComponent(artifactRef)}${closing}`
+    }
+  )
+
+const normalizeSessionArtifactReferences = (
+  content: string,
+  artifacts: readonly MessageArtifact[]
+): string =>
+  normalizeSessionArtifactLinks(normalizeSessionArtifactImages(content, artifacts), artifacts)
+
+export {
+  normalizeSessionArtifactImages,
+  normalizeSessionArtifactLinks,
+  normalizeSessionArtifactReferences,
+  resolveMessageArtifactReference
+}
 export type { MessageArtifact }

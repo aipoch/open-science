@@ -85,7 +85,7 @@ describe('SessionMessageMarkdown', () => {
     await act(async () => {
       root.render(
         <SessionMessageMarkdown
-          content="![Sine curve](sin_curve.png)"
+          content={'![Sine curve](sin_curve.png)\n\n[sin_curve.png](sin_curve.png)'}
           artifacts={[artifact]}
           onPreviewArtifact={onPreviewArtifact}
           onPreviewArtifactModal={onPreviewArtifactModal}
@@ -95,6 +95,9 @@ describe('SessionMessageMarkdown', () => {
 
     expect(markdownHarness.renderedContent).toContain(
       '<session-artifact-image artifact_ref="version-1"'
+    )
+    expect(markdownHarness.renderedContent).toContain(
+      '[sin_curve.png](/.open-science/artifact/version-1)'
     )
     const artifactLink = container.querySelector<HTMLButtonElement>('[data-session-artifact-link]')
     const artifactImage = container.querySelector<HTMLButtonElement>(

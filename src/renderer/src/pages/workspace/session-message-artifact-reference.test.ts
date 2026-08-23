@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   normalizeSessionArtifactImages,
+  normalizeSessionArtifactLinks,
+  normalizeSessionArtifactReferences,
   resolveMessageArtifactReference,
   type MessageArtifact
 } from './session-message-artifact-reference'
@@ -69,5 +71,37 @@ describe('session message artifact references', () => {
         '<session-artifact-image artifact_ref="version-1" alt_text="Curve"></session-artifact-image>'
       )
     }
+  })
+
+  it('rewrites supported artifact links to an inert internal target', () => {
+    const artifact = createArtifact()
+
+    for (const reference of [
+      'sin_curve.png',
+      './sin_curve.png',
+      '/managed/session/sin_curve.png',
+      'file:///managed/session/sin_curve.png',
+      '{{artifact:version-1}}'
+    ]) {
+      expect(normalizeSessionArtifactLinks(`[Curve](${reference})`, [artifact])).toBe(
+        '[Curve](/.open-science/artifact/version-1)'
+      )
+    }
+  })
+
+  it('normalizes artifact images and links without rewriting remote content', () => {
+    const content = [
+      '![Curve](sin_curve.png)',
+      '[Download](sin_curve.png)',
+      '[Remote](https://example.com/sin_curve.png)'
+    ].join('\n\n')
+
+    expect(normalizeSessionArtifactReferences(content, [createArtifact()])).toBe(
+      [
+        '<session-artifact-image artifact_ref="version-1" alt_text="Curve"></session-artifact-image>',
+        '[Download](/.open-science/artifact/version-1)',
+        '[Remote](https://example.com/sin_curve.png)'
+      ].join('\n\n')
+    )
   })
 })

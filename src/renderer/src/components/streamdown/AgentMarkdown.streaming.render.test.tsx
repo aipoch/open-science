@@ -102,4 +102,24 @@ describe('AgentMarkdown streaming presentation', () => {
 
     expect(container.querySelector('[data-testid="artifact-image"]')?.textContent).toBe('version-1')
   })
+
+  it('passes a normalized artifact target to a supplied link component', async () => {
+    vi.useRealTimers()
+    const Link = ({ href }: React.ComponentProps<'a'>): React.JSX.Element => (
+      <button data-testid="managed-file-link">{href}</button>
+    )
+
+    await act(async () => {
+      root.render(
+        <PresentedAgentMarkdown
+          content="[report](/.open-science/artifact/version-1)"
+          components={{ a: Link }}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="managed-file-link"]')?.textContent).toBe(
+      '/.open-science/artifact/version-1'
+    )
+  })
 })

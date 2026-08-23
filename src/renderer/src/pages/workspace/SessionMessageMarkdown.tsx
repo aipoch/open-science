@@ -8,7 +8,7 @@ import { getArtifactName, getArtifactPreviewFormat } from './artifact-preview-ut
 import { createPreviewResourceKey } from './previews/preview-resource-key'
 import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 import {
-  normalizeSessionArtifactImages,
+  normalizeSessionArtifactReferences,
   resolveMessageArtifactReference,
   type MessageArtifact
 } from './session-message-artifact-reference'
@@ -95,7 +95,7 @@ const SessionMessageMarkdown = memo(
     onPreviewArtifactModal
   }: SessionMessageMarkdownProps): React.JSX.Element => {
     const normalizedContent = useMemo(
-      () => normalizeSessionArtifactImages(content, artifacts),
+      () => normalizeSessionArtifactReferences(content, artifacts),
       [artifacts, content]
     )
     const components = useMemo<Components>(
