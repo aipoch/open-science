@@ -541,7 +541,7 @@ describe('native Responses compatibility', () => {
 
       expect(outcome).toBeInstanceOf(Response)
       const response = outcome as Response
-      expect(response.status).toBe(400)
+      expect(response.status).toBe(502)
       expect(upstreamSignal?.aborted).toBe(true)
       expect(logSpies.warn.mock.calls).toContainEqual([
         'native Responses compatibility request failed',
@@ -592,10 +592,10 @@ describe('native Responses compatibility', () => {
 
       expect(outcome).toBeInstanceOf(Response)
       const response = outcome as Response
-      expect(response.status).toBe(400)
+      expect(response.status).toBe(502)
       expect(await response.json()).toEqual({
         error: {
-          type: 'invalid_request_error',
+          type: 'api_error',
           message: 'Native Responses compatibility request failed'
         }
       })
@@ -1153,11 +1153,11 @@ describe('native Responses compatibility', () => {
         },
         body: JSON.stringify({ model: 'private-model', input: 'private prompt' })
       })
-      expect(response.status).toBe(400)
+      expect(response.status).toBe(502)
       const errorResponse = await response.json()
       expect(errorResponse).toEqual({
         error: {
-          type: 'invalid_request_error',
+          type: 'api_error',
           message: 'Native Responses compatibility request failed'
         }
       })

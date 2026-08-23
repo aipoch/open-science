@@ -56,12 +56,12 @@ const createDeps = (
 describe('codex-detect', () => {
   it('finds a runnable codex-acp on PATH and reports its adapter version', async () => {
     const result = await detectCodex(
-      createDeps({ '/usr/local/bin/codex-acp': '@agentclientprotocol/codex-acp 1.1.4' })
+      createDeps({ '/usr/local/bin/codex-acp': '@agentclientprotocol/codex-acp 1.6.2' })
     )
 
     expect(result).toEqual({
       adapterPath: '/usr/local/bin/codex-acp',
-      adapterVersion: '1.1.4'
+      adapterVersion: '1.6.2'
     })
   })
 
@@ -70,7 +70,7 @@ describe('codex-detect', () => {
     const codexPath = '/data/codex-managed/codex/vendor/aarch64-unknown-linux-musl/bin/codex'
     const result = await detectCodex(
       createDeps(
-        { [adapterPath]: '@agentclientprotocol/codex-acp 1.1.4' },
+        { [adapterPath]: '@agentclientprotocol/codex-acp 1.6.2' },
         {
           extraDirs: ['/data/codex-managed/adapter/dist'],
           managedAdapterPath: adapterPath,
@@ -83,7 +83,7 @@ describe('codex-detect', () => {
 
     expect(result).toEqual({
       adapterPath,
-      adapterVersion: '1.1.4',
+      adapterVersion: '1.6.2',
       nativeCodexPath: codexPath,
       nativeCodexVersion: '0.144.6'
     })
@@ -97,7 +97,7 @@ describe('codex-detect', () => {
 
     const result = await detectCodex(
       createDeps(
-        { [adapterPath]: '@agentclientprotocol/codex-acp 1.1.4' },
+        { [adapterPath]: '@agentclientprotocol/codex-acp 1.6.2' },
         {
           managedAdapterPath: adapterPath,
           managedCodexPath,
@@ -110,7 +110,7 @@ describe('codex-detect', () => {
 
     expect(result).toEqual({
       adapterPath,
-      adapterVersion: '1.1.4',
+      adapterVersion: '1.6.2',
       nativeCodexPath: globalCodexPath,
       nativeCodexVersion: '0.144.6'
     })
@@ -123,7 +123,7 @@ describe('codex-detect', () => {
 
     const result = await detectCodex(
       createDeps(
-        { [adapterPath]: '@agentclientprotocol/codex-acp 1.1.4' },
+        { [adapterPath]: '@agentclientprotocol/codex-acp 1.6.2' },
         {
           managedAdapterPath: adapterPath,
           managedCodexPath: codexPath,
@@ -160,12 +160,12 @@ describe('codex-detect', () => {
     const adapterPath = '/home/user/.npm/bin/codex-acp'
     const result = await detectCodex(
       createDeps(
-        { [adapterPath]: '@agentclientprotocol/codex-acp 1.1.4' },
+        { [adapterPath]: '@agentclientprotocol/codex-acp 1.6.2' },
         { resolveNpmBinDirs: () => Promise.resolve(['/home/user/.npm/bin']) }
       )
     )
 
-    expect(result).toEqual({ adapterPath, adapterVersion: '1.1.4' })
+    expect(result).toEqual({ adapterPath, adapterVersion: '1.6.2' })
   })
 
   it('finds a Windows npm codex-acp.cmd using win32 path semantics', async () => {
@@ -173,7 +173,7 @@ describe('codex-detect', () => {
     const adapterPath = win32.join(npmDir, 'codex-acp.cmd')
     const result = await detectCodex(
       createDeps(
-        { [adapterPath]: '@agentclientprotocol/codex-acp 1.1.4' },
+        { [adapterPath]: '@agentclientprotocol/codex-acp 1.6.2' },
         {
           platform: 'win32',
           env: {
@@ -185,7 +185,7 @@ describe('codex-detect', () => {
       )
     )
 
-    expect(result).toEqual({ adapterPath, adapterVersion: '1.1.4' })
+    expect(result).toEqual({ adapterPath, adapterVersion: '1.6.2' })
   })
 
   it('does not report an adapter that cannot complete its version probe', async () => {
@@ -205,7 +205,7 @@ describe('codex-detect', () => {
   it('rejects a versioned adapter that fails the live ACP initialize smoke check', async () => {
     const result = await detectCodex(
       createDeps(
-        { '/usr/local/bin/codex-acp': '@agentclientprotocol/codex-acp 1.1.4' },
+        { '/usr/local/bin/codex-acp': '@agentclientprotocol/codex-acp 1.6.2' },
         { smokeInitialize: () => Promise.resolve(false) }
       )
     )
@@ -220,8 +220,8 @@ describe('codex-detect', () => {
     const result = await detectCodex(
       createDeps(
         {
-          [first]: '@agentclientprotocol/codex-acp 1.1.4',
-          [second]: '@agentclientprotocol/codex-acp 1.1.4'
+          [first]: '@agentclientprotocol/codex-acp 1.6.2',
+          [second]: '@agentclientprotocol/codex-acp 1.6.2'
         },
         {
           smokeInitialize: (candidate) => {
@@ -232,7 +232,7 @@ describe('codex-detect', () => {
       )
     )
 
-    expect(result).toEqual({ adapterPath: second, adapterVersion: '1.1.4' })
+    expect(result).toEqual({ adapterPath: second, adapterVersion: '1.6.2' })
     expect(smoked).toEqual([first, second])
   })
 
@@ -242,7 +242,7 @@ describe('codex-detect', () => {
     let smokeOpts: { codexPath?: string } | undefined
     await detectCodex(
       createDeps(
-        { [adapterPath]: '@agentclientprotocol/codex-acp 1.1.4' },
+        { [adapterPath]: '@agentclientprotocol/codex-acp 1.6.2' },
         {
           extraDirs: ['/data/codex-managed/adapter/dist'],
           managedAdapterPath: adapterPath,
@@ -307,7 +307,7 @@ describe('codex-detect: real ACP initialize smoke', () => {
       platform: process.platform,
       isRunnable: (candidate) => Promise.resolve(candidate === adapterPath),
       getAdapterVersion: (candidate) =>
-        Promise.resolve(candidate === adapterPath ? 'codex-acp 1.1.4' : undefined),
+        Promise.resolve(candidate === adapterPath ? 'codex-acp 1.6.2' : undefined),
       getCodexVersion: (candidate) =>
         Promise.resolve(candidate === codexPath ? 'codex-cli 0.144.6' : undefined),
       // The production default dep — not a stub.
@@ -336,7 +336,7 @@ describe('codex-detect: real ACP initialize smoke', () => {
 
     expect(result).toEqual({
       adapterPath,
-      adapterVersion: '1.1.4',
+      adapterVersion: '1.6.2',
       nativeCodexPath: join(tempRoot, 'codex'),
       nativeCodexVersion: '0.144.6'
     })
@@ -356,7 +356,7 @@ describe('codex-detect: real ACP initialize smoke', () => {
     // (a) Warn-and-succeed: the adapter is still ready despite the degraded reap.
     expect(result).toEqual({
       adapterPath,
-      adapterVersion: '1.1.4',
+      adapterVersion: '1.6.2',
       nativeCodexPath: join(tempRoot, 'codex'),
       nativeCodexVersion: '0.144.6'
     })
@@ -516,7 +516,7 @@ describe('detectCodexComponents', () => {
       managedAdapterPath,
       isRunnable: (path) => Promise.resolve(path === globalAdapterPath),
       getAdapterVersion: (path) =>
-        Promise.resolve(path === globalAdapterPath ? 'codex-acp 1.0.0' : undefined),
+        Promise.resolve(path === globalAdapterPath ? 'codex-acp 1.6.2' : undefined),
       getCodexVersion: (path) =>
         Promise.resolve(path === globalCodexPath ? 'codex-cli 0.144.2' : undefined),
       smokeInitialize: () => Promise.resolve(true),
@@ -543,7 +543,7 @@ describe('detectCodexComponents', () => {
       managedAdapterPath,
       isRunnable: (path) => Promise.resolve(path === managedAdapterPath),
       getAdapterVersion: (path) =>
-        Promise.resolve(path === managedAdapterPath ? 'codex-acp 1.0.0' : undefined),
+        Promise.resolve(path === managedAdapterPath ? 'codex-acp 1.6.2' : undefined),
       getCodexVersion: (path) =>
         Promise.resolve(path === globalCodexPath ? 'codex-cli 0.144.2' : undefined),
       smokeInitialize,
@@ -555,7 +555,7 @@ describe('detectCodexComponents', () => {
       nativeCliPath: globalCodexPath,
       adapterFound: true,
       adapterPath: managedAdapterPath,
-      adapterVersion: '1.0.0'
+      adapterVersion: '1.6.2'
     })
     expect(smokeInitialize).toHaveBeenCalledWith(managedAdapterPath, {
       codexPath: globalCodexPath
@@ -575,7 +575,7 @@ describe('detectCodexComponents', () => {
         ),
       getAdapterVersion: (path) =>
         path === '/usr/local/bin/codex-acp'
-          ? Promise.resolve('codex-acp 1.0.0')
+          ? Promise.resolve('codex-acp 1.6.2')
           : Promise.resolve(undefined),
       getCodexVersion: (path) =>
         path === '/Applications/ChatGPT.app/Contents/Resources/codex'
@@ -591,7 +591,7 @@ describe('detectCodexComponents', () => {
       nativeCliVersion: '0.144.2',
       adapterFound: true,
       adapterPath: '/usr/local/bin/codex-acp',
-      adapterVersion: '1.0.0',
+      adapterVersion: '1.6.2',
       adapterFailureReason: undefined
     })
   })
@@ -632,7 +632,7 @@ describe('detectCodexComponents', () => {
       isRunnable: (path) => Promise.resolve(path === '/usr/local/bin/codex-acp'),
       getAdapterVersion: (path) =>
         path === '/usr/local/bin/codex-acp'
-          ? Promise.resolve('codex-acp 1.0.0')
+          ? Promise.resolve('codex-acp 1.6.2')
           : Promise.resolve(undefined),
       getCodexVersion: () => Promise.resolve(undefined),
       smokeInitialize: () => Promise.resolve(false),
@@ -643,9 +643,35 @@ describe('detectCodexComponents', () => {
       nativeCliFound: false,
       adapterFound: true,
       adapterPath: '/usr/local/bin/codex-acp',
-      adapterVersion: '1.0.0',
+      adapterVersion: '1.6.2',
       adapterFailureReason: 'smoke-test-failed'
     })
+  })
+
+  it('reports an installed adapter below the supported version without smoke-starting it', async () => {
+    const { detectCodexComponents } = await import('./codex-detect')
+    const smokeInitialize = vi.fn().mockResolvedValue(true)
+    const result = await detectCodexComponents({
+      platform: 'darwin',
+      env: { PATH: '/usr/bin' },
+      homePath: '/Users/test',
+      isRunnable: (path) => Promise.resolve(path === '/usr/local/bin/codex-acp'),
+      getAdapterVersion: (path) =>
+        path === '/usr/local/bin/codex-acp'
+          ? Promise.resolve('codex-acp 1.1.4')
+          : Promise.resolve(undefined),
+      getCodexVersion: () => Promise.resolve(undefined),
+      smokeInitialize,
+      resolveNpmBinDirs: () => Promise.resolve([])
+    })
+
+    expect(result).toMatchObject({
+      adapterFound: true,
+      adapterPath: '/usr/local/bin/codex-acp',
+      adapterVersion: '1.1.4',
+      adapterFailureReason: 'unsupported-version'
+    })
+    expect(smokeInitialize).not.toHaveBeenCalled()
   })
 
   it('reports version-probe failure when adapter exists but version check fails', async () => {

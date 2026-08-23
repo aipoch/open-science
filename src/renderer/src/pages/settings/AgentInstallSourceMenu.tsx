@@ -1,4 +1,4 @@
-import { ChevronDown, Download, Loader2, Wrench } from 'lucide-react'
+import { ChevronDown, Download, Loader2, RefreshCw, Wrench } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -15,7 +15,7 @@ type AgentInstallSourceMenuProps = {
   name: string
   // Semantic, not display copy: it selects both the icon and the translated label, so neither
   // depends on what locale the button happens to render in.
-  intent: 'install' | 'repair'
+  intent: 'install' | 'repair' | 'update'
   sources: ClaudeInstallSourceInfo[]
   installing: boolean
   disabled: boolean
@@ -39,8 +39,85 @@ const AgentInstallSourceMenu = ({
   onInstall
 }: AgentInstallSourceMenuProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const Icon = intent === 'repair' ? Wrench : Download
-  const label = intent === 'repair' ? t('Repair') : t('Install')
+  const Icon = intent === 'repair' ? Wrench : intent === 'update' ? RefreshCw : Download
+  const label =
+    intent === 'repair'
+      ? t('Repair')
+      : intent === 'update'
+        ? t('Update', { context: 'verb' })
+        : t('Install')
+  const busyLabel = intent === 'update' ? t('Updating…') : t('Installing…')
+  const managedSource = sources.find((source) => source.id === 'managed')
+  const managedUnavailableReason = managedSource
+    ? (blockedInstallSources.managed ??
+      (managedSource.requiresNpm && !npmAvailable ? t('npm not found') : undefined))
+    : t('App-managed download unavailable')
+
+  const sourceItems = (items: ClaudeInstallSourceInfo[]): React.JSX.Element[] =>
+    items.map((item) => {
+      // Keep unavailable sources visible with a reason so users can understand what prerequisite
+      // is missing without losing the complete set of supported repair paths.
+      const npmMissing = item.requiresNpm && !npmAvailable
+      const unavailableReason =
+        blockedInstallSources[item.id] ?? (npmMissing ? t('npm not found') : undefined)
+      return (
+        <DropdownMenuItem
+          key={item.id}
+          disabled={Boolean(unavailableReason)}
+          onSelect={() => onInstall(item.id)}
+          className="flex flex-col items-start gap-0.5"
+        >
+          <span>
+            {t(item.labelKey)}
+            {unavailableReason ? ` (${unavailableReason})` : ''}
+          </span>
+          {item.descriptionKey ? (
+            <span className="text-xs text-muted-foreground">{t(item.descriptionKey)}</span>
+          ) : item.displayCommand ? (
+            <span className="font-mono text-xs text-muted-foreground">{item.displayCommand}</span>
+          ) : null}
+        </DropdownMenuItem>
+      )
+    })
+
+  if (intent === 'update') {
+    return (
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          type="button"
+          size={buttonSize}
+          disabled={installing || disabled || Boolean(managedUnavailableReason)}
+          title={managedUnavailableReason}
+          aria-label={t('{{action}} {{name}}', { action: label, name })}
+          onClick={() => onInstall('managed')}
+        >
+          {installing ? (
+            <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          ) : (
+            <Icon aria-hidden="true" />
+          )}
+          {installing ? busyLabel : label}
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size={buttonSize === 'default' ? 'icon' : 'icon-sm'}
+              disabled={installing || disabled}
+              aria-label={t('Choose another update source for {{name}}', { name })}
+            >
+              <ChevronDown aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="z-[70] w-80">
+            <DropdownMenuLabel>{t('Other update options')}</DropdownMenuLabel>
+            {sourceItems(sources.filter((source) => source.id !== 'managed'))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    )
+  }
 
   return (
     <DropdownMenu>
@@ -56,40 +133,14 @@ const AgentInstallSourceMenu = ({
           ) : (
             <Icon aria-hidden />
           )}
-          {installing ? t('Installing…') : label}
+          {installing ? busyLabel : label}
           {!installing ? <ChevronDown aria-hidden="true" /> : null}
         </Button>
       </DropdownMenuTrigger>
       {/* The same menu is portaled from the z-60 repair dialog, so its layer must clear that modal. */}
       <DropdownMenuContent align="end" className="z-[70] w-80">
         <DropdownMenuLabel>{t('Install source')}</DropdownMenuLabel>
-        {sources.map((item) => {
-          // Keep unavailable sources visible with a reason so users can understand what prerequisite
-          // is missing without losing the complete set of supported repair paths.
-          const npmMissing = item.requiresNpm && !npmAvailable
-          const unavailableReason =
-            blockedInstallSources[item.id] ?? (npmMissing ? t('npm not found') : undefined)
-          return (
-            <DropdownMenuItem
-              key={item.id}
-              disabled={Boolean(unavailableReason)}
-              onSelect={() => onInstall(item.id)}
-              className="flex flex-col items-start gap-0.5"
-            >
-              <span>
-                {t(item.labelKey)}
-                {unavailableReason ? ` (${unavailableReason})` : ''}
-              </span>
-              {item.descriptionKey ? (
-                <span className="text-xs text-muted-foreground">{t(item.descriptionKey)}</span>
-              ) : item.displayCommand ? (
-                <span className="font-mono text-xs text-muted-foreground">
-                  {item.displayCommand}
-                </span>
-              ) : null}
-            </DropdownMenuItem>
-          )
-        })}
+        {sourceItems(sources)}
       </DropdownMenuContent>
     </DropdownMenu>
   )

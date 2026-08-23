@@ -406,7 +406,7 @@ describe('runEnvironmentCheck', () => {
               nativeCliVersion: undefined,
               adapterFound: true,
               adapterPath: '/opt/tools/codex-acp',
-              adapterVersion: '1.1.4'
+              adapterVersion: '1.6.2'
             }
           }
         }
@@ -431,14 +431,14 @@ describe('runEnvironmentCheck', () => {
           runtime: {
             found: true,
             path: '/usr/local/bin/codex-acp',
-            version: '1.0.0',
+            version: '1.6.2',
             codexComponents: {
               nativeCliFound: true,
               nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
               nativeCliVersion: '0.144.2',
               adapterFound: true,
               adapterPath: '/usr/local/bin/codex-acp',
-              adapterVersion: '1.0.0'
+              adapterVersion: '1.6.2'
             }
           }
         }
@@ -457,8 +457,40 @@ describe('runEnvironmentCheck', () => {
 
     expect(adapterCheck).toMatchObject({
       status: 'passed',
-      summary: 'Codex ACP adapter 1.0.0 is ready.'
+      summary: 'Codex ACP adapter 1.6.2 is ready.'
     })
+  })
+
+  it('marks an outdated selected Codex adapter as failed with the required version', async () => {
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'codex',
+      frameworks: [
+        {
+          id: 'codex',
+          label: 'Codex',
+          runtime: {
+            found: false,
+            codexComponents: {
+              nativeCliFound: true,
+              nativeCliVersion: '0.144.6',
+              adapterFound: true,
+              adapterPath: '/data/codex-acp',
+              adapterVersion: '1.1.4',
+              adapterFailureReason: 'unsupported-version'
+            }
+          }
+        }
+      ],
+      encryptionAvailable: true,
+      deps: baseDeps()
+    })
+
+    expect(result.checks.find((check) => check.label === 'Codex ACP adapter')).toMatchObject({
+      status: 'failed',
+      summary: 'Codex ACP adapter 1.1.4 must be updated to 1.6.2 or later.'
+    })
+    expect(result.ready).toBe(false)
   })
 
   it('marks non-selected Codex components as warnings when missing', async () => {

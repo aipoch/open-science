@@ -5,6 +5,7 @@ import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
+import { isSupportedCodexAcpVersion } from '../../shared/codex-runtime'
 import { createLogger } from '../logger'
 import { augmentedPathEnv } from './shell-path'
 import { stripCodexCredentialEnv } from './process-tree'
@@ -94,6 +95,7 @@ const detectCodex = async (
     const versionOutput = await deps.getAdapterVersion(adapterPath)
     const adapterVersion = versionOutput ? parseVersion(versionOutput) : undefined
     if (!adapterVersion) continue
+    if (!isSupportedCodexAcpVersion(adapterVersion)) continue
 
     const result: CodexDetectResult = { adapterPath, adapterVersion }
     if (adapterPath === deps.managedAdapterPath) {
@@ -138,7 +140,7 @@ const detectCodexComponents = async (
   adapterFound: boolean
   adapterPath?: string
   adapterVersion?: string
-  adapterFailureReason?: 'version-probe-failed' | 'smoke-test-failed'
+  adapterFailureReason?: 'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed'
 }> => {
   const p = pathFor(deps.platform)
 
@@ -166,7 +168,8 @@ const detectCodexComponents = async (
   let adapterFound = false
   let adapterPath: string | undefined
   let adapterVersion: string | undefined
-  let adapterFailureReason: 'version-probe-failed' | 'smoke-test-failed' | undefined
+  let adapterFailureReason:
+    'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed' | undefined
 
   for (const candidate of Array.from(new Set(adapterCandidates))) {
     if (!(await deps.isRunnable(candidate))) continue
@@ -183,6 +186,14 @@ const detectCodexComponents = async (
         adapterFailureReason = 'version-probe-failed'
       }
       continue
+    }
+
+    if (!isSupportedCodexAcpVersion(version)) {
+      adapterFound = true
+      adapterPath = candidate
+      adapterVersion = version
+      adapterFailureReason = 'unsupported-version'
+      break
     }
 
     // Version probe succeeded - now check if smoke test passes

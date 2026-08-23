@@ -246,6 +246,72 @@ describe('AgentFrameworkCard', () => {
     ).toBe(false)
   })
 
+  it('shows an installed outdated runtime with a one-click managed Update action', () => {
+    const onInstall = vi.fn()
+    renderCard({
+      name: 'Codex',
+      ready: false,
+      updateRequired: true,
+      minimumVersion: '1.6.2',
+      path: '/data/codex-acp',
+      version: '1.1.4',
+      onInstall
+    })
+
+    const card = container.querySelector('[data-slot="card"]')
+    expect(card?.className).not.toContain('border-dashed')
+    expect(card?.className).toContain('border-status-warning-foreground/30')
+    expect(container.textContent).toContain('Update required')
+    expect(container.textContent).toContain('Requires Codex ACP v1.6.2 or later')
+
+    const update = container.querySelector<HTMLButtonElement>('[aria-label="Update Codex"]')
+    act(() => update?.click())
+    expect(onInstall).toHaveBeenCalledWith('managed')
+  })
+
+  it('keeps npm as a secondary update source and labels update progress distinctly', () => {
+    const onInstall = vi.fn()
+    renderCard({
+      name: 'Codex',
+      ready: false,
+      updateRequired: true,
+      minimumVersion: '1.6.2',
+      path: '/data/codex-acp',
+      version: '1.1.4',
+      onInstall,
+      install: {
+        isInstalling: true,
+        installLogs: [],
+        installProgress: null
+      }
+    })
+
+    expect(container.querySelector('[aria-label="Update progress"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Update Codex"]')?.textContent).toContain(
+      'Updating…'
+    )
+
+    renderCard({
+      name: 'Codex',
+      ready: false,
+      updateRequired: true,
+      minimumVersion: '1.6.2',
+      path: '/data/codex-acp',
+      version: '1.1.4',
+      onInstall
+    })
+    openRadixMenu(
+      container.querySelector<HTMLButtonElement>(
+        '[aria-label="Choose another update source for Codex"]'
+      )
+    )
+    const npmItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('npm (global install)'))
+    clickRadixMenuItem(npmItem)
+    expect(onInstall).toHaveBeenCalledWith('npm')
+  })
+
   it('requests repair instead of selecting when a broken card is clicked', () => {
     const onRepairRequired = vi.fn()
     const onSelect = vi.fn()

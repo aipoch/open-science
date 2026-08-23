@@ -17,6 +17,7 @@ import {
 } from './skill-selector-routing'
 import {
   ProviderLoopbackHttpHost,
+  ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
@@ -379,14 +380,15 @@ export class NativeResponsesCompatibilityProxy {
         json(response, 401, {
           error: { message: 'Invalid native Responses compatibility token' }
         }),
-      onError: (_error, response) => {
+      onError: (error, response) => {
         if (response.headersSent) {
           response.destroy()
           return
         }
-        json(response, 400, {
+        const requestError = error instanceof ProviderLoopbackRequestError
+        json(response, requestError ? 400 : 502, {
           error: {
-            type: 'invalid_request_error',
+            type: requestError ? 'invalid_request_error' : 'api_error',
             message: 'Native Responses compatibility request failed'
           }
         })

@@ -506,7 +506,7 @@ describe('installManagedCodex', () => {
       platform,
       fetchJson,
       fetchTarball,
-      verifyAdapter: () => Promise.resolve('1.1.4'),
+      verifyAdapter: () => Promise.resolve('1.6.2'),
       verifyCodex: () => Promise.resolve('0.144.6'),
       verifyPair,
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
@@ -515,7 +515,7 @@ describe('installManagedCodex', () => {
     expect(outcome).toEqual({
       result: { installId: 'codex-1', ok: true },
       adapterPath: managedCodexAdapterEntry(root),
-      adapterVersion: '1.1.4',
+      adapterVersion: '1.6.2',
       codexPath: managedCodexBinary(root, platform),
       codexVersion: '0.144.6'
     })
@@ -577,7 +577,7 @@ describe('installManagedCodex', () => {
       platform,
       fetchJson,
       fetchTarball,
-      verifyAdapter: () => Promise.resolve('1.1.4'),
+      verifyAdapter: () => Promise.resolve('1.6.2'),
       verifyCodex: () => Promise.resolve('0.144.6'),
       verifyPair,
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
@@ -632,7 +632,7 @@ describe('installManagedCodex', () => {
       fetchTarball,
       verifyAdapter: async () => {
         smokeChecks += 1
-        return '1.1.4'
+        return '1.6.2'
       },
       verifyCodex: async () => {
         smokeChecks += 1
@@ -689,7 +689,7 @@ describe('installManagedCodex', () => {
       platform,
       fetchJson,
       fetchTarball,
-      verifyAdapter: () => Promise.resolve('1.1.4'),
+      verifyAdapter: () => Promise.resolve('1.6.2'),
       verifyCodex: () => Promise.resolve(undefined),
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
     })
@@ -732,7 +732,7 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyAdapter: () => Promise.resolve('1.6.2'),
         verifyCodex: () => Promise.resolve('0.144.6'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
@@ -783,7 +783,7 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyAdapter: () => Promise.resolve('1.6.2'),
         verifyCodex: () => Promise.resolve('0.144.6'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
@@ -839,7 +839,7 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyAdapter: () => Promise.resolve('1.6.2'),
         verifyCodex: () => Promise.resolve('0.144.6'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
@@ -900,7 +900,7 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyAdapter: () => Promise.resolve('1.6.2'),
         verifyCodex: () => Promise.resolve('0.144.6'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
@@ -964,7 +964,7 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyAdapter: () => Promise.resolve('1.6.2'),
         verifyCodex: () => Promise.resolve('0.144.6'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
@@ -1025,7 +1025,7 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyAdapter: () => Promise.resolve('1.6.2'),
         verifyCodex: () => Promise.resolve('0.144.6'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
@@ -1082,7 +1082,7 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson: fetchJsonSpy,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyAdapter: () => Promise.resolve('1.6.2'),
         verifyCodex: () => Promise.resolve('0.144.6'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
@@ -1142,7 +1142,7 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.1.4'),
+        verifyAdapter: () => Promise.resolve('1.6.2'),
         verifyCodex: () => Promise.resolve('0.144.6'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }

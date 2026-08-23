@@ -17,6 +17,7 @@ import type {
   ValidateProviderResult
 } from '../../shared/settings'
 import { isProviderUsableByFramework } from '../../shared/settings'
+import { isSupportedCodexAcpVersion, MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
 import { isModelBridgeSupported } from '../../shared/provider-registry'
 import { CLAUDE_EXECUTABLE_MISSING_MESSAGE } from '../../shared/run-error-classification'
 import { buildAgentSpawnEnv } from '../acp/agent-process'
@@ -252,7 +253,9 @@ const codexVersionsFromProbe = (
 ): Pick<StoredCodexInfo, 'version' | 'nativeVersion'> | undefined => {
   const version = probe.adapter?.output ? parseCodexVersion(probe.adapter.output) : undefined
   const nativeVersion = probe.native?.output ? parseCodexVersion(probe.native.output) : undefined
-  return version && nativeVersion ? { version, nativeVersion } : undefined
+  return version && nativeVersion && isSupportedCodexAcpVersion(version)
+    ? { version, nativeVersion }
+    : undefined
 }
 
 export type AgentRuntimeManagerOptions = {
@@ -749,6 +752,19 @@ export class AgentRuntimeManager {
       throw new Error('Open Science Codex ACP adapter not found. Install Codex in settings.')
     }
 
+    const adapterOutput = await this.codexDetectDeps
+      .getAdapterVersion(adapterPath)
+      .catch(() => undefined)
+    const adapterVersion = adapterOutput ? parseCodexVersion(adapterOutput) : undefined
+    if (!adapterVersion) {
+      throw new Error('Open Science could not determine the Codex ACP adapter version.')
+    }
+    if (!isSupportedCodexAcpVersion(adapterVersion)) {
+      throw new Error(
+        `Codex ACP adapter ${adapterVersion} is no longer supported. Update to ${MINIMUM_CODEX_ACP_VERSION} or later in settings.`
+      )
+    }
+
     await ensureManagedCodexContextUsage(adapterPath)
     return adapterPath
   }
@@ -965,10 +981,14 @@ export class AgentRuntimeManager {
       diagnostic =
         components.adapterFailureReason === 'smoke-test-failed'
           ? `Codex ACP adapter ${components.adapterVersion} is installed at ${components.adapterPath}, but it failed to initialize (native Codex CLI may be missing or incompatible).`
-          : `Codex ACP adapter is installed at ${components.adapterPath}, but version detection failed.`
+          : components.adapterFailureReason === 'unsupported-version'
+            ? `Codex ACP adapter ${components.adapterVersion} is installed at ${components.adapterPath}, but Open Science requires ${MINIMUM_CODEX_ACP_VERSION} or later.`
+            : `Codex ACP adapter is installed at ${components.adapterPath}, but version detection failed.`
     } else if (components.nativeCliFound && components.adapterFound) {
       if (components.adapterFailureReason === 'smoke-test-failed') {
         diagnostic = `Both native Codex ${components.nativeCliVersion} and ACP adapter ${components.adapterVersion} are installed, but the adapter failed to initialize with the native CLI.`
+      } else if (components.adapterFailureReason === 'unsupported-version') {
+        diagnostic = `Native Codex ${components.nativeCliVersion} and ACP adapter ${components.adapterVersion} are installed, but Open Science requires ACP adapter ${MINIMUM_CODEX_ACP_VERSION} or later.`
       } else if (components.adapterFailureReason === 'version-probe-failed') {
         diagnostic = `Native Codex ${components.nativeCliVersion} is installed, and an ACP adapter exists at ${components.adapterPath}, but the adapter's version could not be determined.`
       }

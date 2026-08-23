@@ -23,6 +23,7 @@ import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
 import { ACP_MODEL_TURN_COUNT_META_KEY, ACP_TURN_TOKEN_USAGE_META_KEY } from '../../shared/acp'
+import { MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
 import {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
@@ -36,7 +37,7 @@ import { createLogger } from '../logger'
 import { stripCodexCredentialEnv } from './process-tree'
 import { terminateProcessTree } from '../process-tree'
 
-export const CODEX_ACP_VERSION = '1.6.2'
+export const CODEX_ACP_VERSION = MINIMUM_CODEX_ACP_VERSION
 export const CODEX_VERSION = '0.144.6'
 
 const log = createLogger('managed-codex')
