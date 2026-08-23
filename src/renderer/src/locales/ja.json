@@ -1063,6 +1063,7 @@
   "Model provider: {{name}}": "モデルプロバイダー：{{name}}",
   "Model provider: {{name}}; model: {{model}}": "モデルプロバイダー：{{name}}、モデル：{{model}}",
   "Model settings": "モデル設定",
+  "Agent settings": "エージェント設定",
   "Model used by subagents when Delegation is on.": "委任がオンの場合にサブエージェントによって使用されるモデル。",
   "Model used for manual, automatic, and re-run Reviews. Follow Active model keeps the current behavior; a fixed selection runs in an isolated Reviewer runtime.": "手動、自動、および再実行レビューに使用されるモデル。 [アクティブ モデルに従う] では、現在の動作が維持されます。固定された選択は、分離された Reviewer ランタイムで実行されます。",
   "Model · not triggered": "モデル・トリガーされません",

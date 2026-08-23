@@ -47,6 +47,7 @@ import {
 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
+import { isUnsupportedCodexAcpVersionError } from '../../../../shared/codex-runtime'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { RemoteJobBadge } from '@/components/RemoteJobBadge'
@@ -582,12 +583,16 @@ const ConversationPanel = ({
   const showVisionModelSettings =
     visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
     visionRunFailureMessage(activeSession?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
+  const showCodexAcpSettings =
+    isUnsupportedCodexAcpVersionError(actionError) ||
+    isUnsupportedCodexAcpVersionError(activeSession?.error)
   // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
   // reportability is resolved at failure time and persisted on the session: a model-provider error is
   // tagged non-reportable at the ACP layer, and an app-crafted reminder is recognized by its own text.
   // Fall back to classifying the raw error for sessions persisted before the flag existed (undefined).
   const isRunErrorReportable =
-    activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error)
+    !showCodexAcpSettings &&
+    (activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error))
 
   const activeSpecialist = specialistId
     ? specialistItems.find((item) => item.kind === 'custom' && item.id === specialistId)
@@ -926,14 +931,16 @@ const ConversationPanel = ({
                         ) : null}
                       </div>
                     ) : null}
-                    {showVisionModelSettings ? (
+                    {showVisionModelSettings || showCodexAcpSettings ? (
                       <div>
                         <button
                           type="button"
-                          onClick={() => openSettingsToPanel('model')}
+                          onClick={() =>
+                            openSettingsToPanel(showVisionModelSettings ? 'model' : 'agent')
+                          }
                           className="inline-flex h-6 items-center rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
                         >
-                          {t('Model settings')}
+                          {showVisionModelSettings ? t('Model settings') : t('Agent settings')}
                         </button>
                       </div>
                     ) : null}

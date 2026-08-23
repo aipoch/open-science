@@ -1,4 +1,5 @@
 import { isMediaOverflowError } from './media-overflow'
+import { isUnsupportedCodexAcpVersionError } from './codex-runtime'
 
 // Classifies a failed run into "expected" (keep the message, no report button) vs "unknown/reportable"
 // (an opaque or internal failure worth a GitHub issue). The primary signal is STRUCTURAL, not textual:
@@ -139,6 +140,8 @@ export const isExpectedRunFailure = (error: string | null | undefined): boolean 
 
   if (EXPECTED_RUN_FAILURE_MESSAGES.has(message)) return true
   if (visionRunFailureMessage(message)) return true
+  // An outdated app-managed adapter is an actionable Settings problem, not a reportable app bug.
+  if (isUnsupportedCodexAcpVersionError(message)) return true
   // The reworded provider not-found (a model-config problem the user fixes in Settings, not a bug).
   if (message.startsWith(PROVIDER_RESOURCE_NOT_FOUND_PREFIX)) return true
   // Model↔framework incompatibility raised at spawn/createSession. The main-side message names the

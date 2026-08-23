@@ -1134,6 +1134,7 @@
   "Model provider: {{name}}": "模型供应商：{{name}}",
   "Model provider: {{name}}; model: {{model}}": "模型供应商：{{name}}；模型：{{model}}",
   "Model settings": "模型设置",
+  "Agent settings": "智能体设置",
   "Model used by subagents when Delegation is on.": "启用委派时子智能体使用的模型。",
   "Model used for manual, automatic, and re-run Reviews. Follow Active model keeps the current behavior; a fixed selection runs in an isolated Reviewer runtime.": "用于手动、自动和重新运行审查的模型。选择「跟随当前模型」会保持现有行为；固定选择会在隔离的审查运行环境中执行。",
   "Model · not triggered": "模型 · 未触发",

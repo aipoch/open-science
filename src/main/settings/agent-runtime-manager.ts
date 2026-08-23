@@ -17,7 +17,11 @@ import type {
   ValidateProviderResult
 } from '../../shared/settings'
 import { isProviderUsableByFramework } from '../../shared/settings'
-import { isSupportedCodexAcpVersion, MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
+import {
+  buildUnsupportedCodexAcpVersionMessage,
+  isSupportedCodexAcpVersion,
+  MINIMUM_CODEX_ACP_VERSION
+} from '../../shared/codex-runtime'
 import { isModelBridgeSupported } from '../../shared/provider-registry'
 import { CLAUDE_EXECUTABLE_MISSING_MESSAGE } from '../../shared/run-error-classification'
 import { buildAgentSpawnEnv } from '../acp/agent-process'
@@ -553,10 +557,19 @@ export class AgentRuntimeManager {
     const installId = `install-codex-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
     if (request.source === 'managed') {
+      const settings = await this.repository.getSettings()
+      const configuredCodexPath = settings.codex?.nativePath
+      const managedCodexPath =
+        this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.storageRoot)
+      const existingCodexPath =
+        configuredCodexPath && configuredCodexPath !== managedCodexPath
+          ? configuredCodexPath
+          : undefined
       const outcome = await this.installManagedCodexImpl({
         installId,
         onEvent,
-        dataRoot: this.storageRoot
+        dataRoot: this.storageRoot,
+        ...(existingCodexPath ? { existingCodexPath } : {})
       })
       if (
         outcome.result.ok &&
@@ -760,9 +773,7 @@ export class AgentRuntimeManager {
       throw new Error('Open Science could not determine the Codex ACP adapter version.')
     }
     if (!isSupportedCodexAcpVersion(adapterVersion)) {
-      throw new Error(
-        `Codex ACP adapter ${adapterVersion} is no longer supported. Update to ${MINIMUM_CODEX_ACP_VERSION} or later in settings.`
-      )
+      throw new Error(buildUnsupportedCodexAcpVersionMessage(adapterVersion))
     }
 
     await ensureManagedCodexContextUsage(adapterPath)

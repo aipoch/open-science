@@ -539,6 +539,77 @@ describe('installManagedCodex', () => {
     await expect(readFile(join(managedCodexRoot(root), 'old-install'))).rejects.toThrow()
   })
 
+  it('updates only the adapter when paired with a user-owned Codex CLI', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-adapter-'))
+    const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
+    const adapterTgz = buildTgz([
+      {
+        name: 'package/dist/index.js',
+        content: adapterFixture('adapter-only'),
+        mode: 0o755
+      }
+    ])
+    const nativeTgz = buildTgz([
+      {
+        name: `package/vendor/${platform.target}/bin/codex`,
+        content: Buffer.from('managed-codex-should-not-be-installed'),
+        mode: 0o755
+      }
+    ])
+    const externalCodexPath = join(root, 'user-bin', 'codex')
+    await mkdir(dirname(externalCodexPath), { recursive: true })
+    await writeFile(externalCodexPath, 'user-owned-codex')
+    await mkdir(dirname(managedCodexAdapterEntry(root)), { recursive: true })
+    await writeFile(managedCodexAdapterEntry(root), 'old-adapter')
+
+    const metadataUrls: string[] = []
+    const fetchJson = async (url: string): Promise<unknown> => {
+      metadataUrls.push(url)
+      return url.includes('agentclientprotocol%2fcodex-acp')
+        ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
+        : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
+    }
+    const fetchTarball = async (
+      url: string
+    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => {
+      const body = url.includes('adapter') ? adapterTgz : nativeTgz
+      return { stream: Readable.from(body), totalBytes: body.length }
+    }
+    const verifyPair = vi.fn().mockResolvedValue(undefined)
+
+    const outcome = await installManagedCodex({
+      installId: 'adapter-only',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform,
+      fetchJson,
+      fetchTarball,
+      verifyAdapter: () => Promise.resolve('1.6.2'),
+      verifyCodex: () => Promise.resolve('0.144.6'),
+      verifyPair,
+      integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) },
+      existingCodexPath: externalCodexPath
+    })
+
+    expect(outcome).toEqual({
+      result: { installId: 'adapter-only', ok: true },
+      adapterPath: managedCodexAdapterEntry(root),
+      adapterVersion: '1.6.2',
+      codexPath: externalCodexPath,
+      codexVersion: '0.144.6'
+    })
+    expect(metadataUrls).toEqual(['https://reg/@agentclientprotocol%2fcodex-acp/1.6.2'])
+    expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('adapter-only')
+    expect(await readFile(externalCodexPath, 'utf8')).toBe('user-owned-codex')
+    await expect(readFile(managedCodexBinary(root, platform))).rejects.toThrow()
+    expect(verifyPair).toHaveBeenCalledWith(
+      expect.stringContaining(join('adapter', 'dist', 'index.js')),
+      externalCodexPath,
+      expect.stringContaining('smoke-home')
+    )
+  })
+
   it('runs the smoke handshake from a home outside the staged runtime tree', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })

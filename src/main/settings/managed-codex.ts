@@ -924,6 +924,9 @@ export type InstallManagedCodexOptions = {
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
   dataRoot: string
+  // When Codex CLI is user-owned, update only the app-controlled adapter and verify it against this
+  // existing binary. The caller keeps the user's persisted CLI path/version instead of replacing it.
+  existingCodexPath?: string
   registries?: string[]
   platform?: ManagedCodexPlatform
   fetchJson?: FetchJson
@@ -1224,12 +1227,13 @@ export const installManagedCodex = async ({
   verifyAdapter = defaultVerifyAdapter,
   verifyCodex = defaultVerifyCodex,
   verifyPair = verifyManagedCodexPair,
+  existingCodexPath,
   integrities = {
     adapter: CODEX_ACP_INTEGRITY,
     codex: CODEX_INTEGRITIES[platform.key] ?? ''
   }
 }: InstallManagedCodexOptions): Promise<ManagedCodexInstallOutcome> => {
-  if (!integrities.codex) {
+  if (!existingCodexPath && !integrities.codex) {
     return {
       result: { installId, ok: false, error: `No pinned Codex integrity for ${platform.key}` }
     }
@@ -1258,13 +1262,15 @@ export const installManagedCodex = async ({
         integrities.adapter,
         fetchJson
       )
-      const codex = await resolvePinnedPackage(
-        registry,
-        '@openai%2fcodex',
-        `${CODEX_VERSION}-${platform.key}`,
-        integrities.codex,
-        fetchJson
-      )
+      const codex = existingCodexPath
+        ? undefined
+        : await resolvePinnedPackage(
+            registry,
+            '@openai%2fcodex',
+            `${CODEX_VERSION}-${platform.key}`,
+            integrities.codex,
+            fetchJson
+          )
 
       await downloadAndVerify({
         url: adapter.tarball,
@@ -1274,14 +1280,16 @@ export const installManagedCodex = async ({
         onEvent,
         fetchTarball
       })
-      await downloadAndVerify({
-        url: codex.tarball,
-        integrity: codex.integrity,
-        destPath: codexTgz,
-        installId,
-        onEvent,
-        fetchTarball
-      })
+      if (codex) {
+        await downloadAndVerify({
+          url: codex.tarball,
+          integrity: codex.integrity,
+          destPath: codexTgz,
+          installId,
+          onEvent,
+          fetchTarball
+        })
+      }
 
       onEvent({ kind: 'progress', installId, phase: 'extracting' })
       const stagedAdapter = adapterEntryInRoot(stagedRoot)
@@ -1293,34 +1301,44 @@ export const installManagedCodex = async ({
       if (!foundAdapter) throw new Error('Codex ACP package did not contain dist/index.js')
       await ensureManagedCodexContextUsage(stagedAdapter)
 
-      await extractCodexVendor({
-        tgzPath: codexTgz,
-        target: platform.target,
-        destination: join(stagedRoot, 'codex')
-      })
-      const stagedCodex = codexBinaryInRoot(stagedRoot, platform)
+      if (codex) {
+        await extractCodexVendor({
+          tgzPath: codexTgz,
+          target: platform.target,
+          destination: join(stagedRoot, 'codex')
+        })
+      }
+      const codexPath = existingCodexPath ?? codexBinaryInRoot(stagedRoot, platform)
       if (process.platform !== 'win32') {
         await chmod(stagedAdapter, 0o755)
-        await chmod(stagedCodex, 0o755)
+        if (!existingCodexPath) await chmod(codexPath, 0o755)
       }
 
       onEvent({ kind: 'progress', installId, phase: 'installing' })
       const adapterVersion = await verifyAdapter(stagedAdapter)
       if (!adapterVersion) throw new Error('Installed Codex ACP adapter failed its --version check')
-      const codexVersion = await verifyCodex(stagedCodex)
+      const codexVersion = await verifyCodex(codexPath)
       if (!codexVersion) throw new Error('Installed Codex binary failed its --version check')
       // Smoke home lives in scratch (auto-removed), NEVER inside stagedRoot: stagedRoot is moved to
       // the final runtime, so anything Codex might write here must not ride along into the install.
-      await verifyPair(stagedAdapter, stagedCodex, join(scratch, 'smoke-home'))
+      await verifyPair(stagedAdapter, codexPath, join(scratch, 'smoke-home'))
 
       reachedLocalInstall = true
-      await replaceDirectory(stagedRoot, managedCodexRoot(dataRoot))
+      if (existingCodexPath) {
+        await mkdir(managedCodexRoot(dataRoot), { recursive: true })
+        await replaceDirectory(
+          join(stagedRoot, 'adapter'),
+          join(managedCodexRoot(dataRoot), 'adapter')
+        )
+      } else {
+        await replaceDirectory(stagedRoot, managedCodexRoot(dataRoot))
+      }
 
       return {
         result: { installId, ok: true },
         adapterPath: managedCodexAdapterEntry(dataRoot),
         adapterVersion,
-        codexPath: managedCodexBinary(dataRoot, platform),
+        codexPath: existingCodexPath ?? managedCodexBinary(dataRoot, platform),
         codexVersion
       }
     } catch (error) {

@@ -1120,6 +1120,7 @@
   "Model provider: {{name}}": "Fournisseur du modèle : {{name}}",
   "Model provider: {{name}}; model: {{model}}": "Fournisseur de modèles : {{name}} ; modèle : {{model}}",
   "Model settings": "Paramètres du modèle",
+  "Agent settings": "Paramètres de l’agent",
   "Model used by subagents when Delegation is on.": "Modèle utilisé par les sous-agents lorsque la délégation est activée.",
   "Model used for manual, automatic, and re-run Reviews. Follow Active model keeps the current behavior; a fixed selection runs in an isolated Reviewer runtime.": "Modèle utilisé pour les révisions manuelles, automatiques et réexécutées. Le modèle Follow Active conserve le comportement actuel ; une sélection fixe s’exécute dans un environnement d’exécution Reviewer isolé.",
   "Model · not triggered": "Modèle · non déclenché",

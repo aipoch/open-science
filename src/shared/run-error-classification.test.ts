@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { describePromptError } from '../main/acp/prompt-error'
+import { buildUnsupportedCodexAcpVersionMessage } from './codex-runtime'
 import {
   buildActiveModelIncompatibleMessage,
   CLAUDE_EXECUTABLE_MISSING_MESSAGE,
@@ -143,6 +144,14 @@ describe('isReportableRunFailure (text tier)', () => {
     expect(isReportableRunFailure(NO_ACTIVE_PROVIDER_MESSAGE)).toBe(false)
     expect(isReportableRunFailure(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)).toBe(false)
     expect(isReportableRunFailure(CLAUDE_EXECUTABLE_MISSING_MESSAGE)).toBe(false)
+  })
+
+  it('does not report an unsupported Codex ACP version', () => {
+    const message = buildUnsupportedCodexAcpVersionMessage('1.1.4')
+    const wrapped = `Error invoking remote method 'acp:create-session': Error: ${message}`
+
+    expect(isReportableRunFailure(message)).toBe(false)
+    expect(isReportableRunFailure(wrapped)).toBe(false)
   })
 
   it('recognizes the framework-specific model-incompat message built by service.ts (prefix)', () => {

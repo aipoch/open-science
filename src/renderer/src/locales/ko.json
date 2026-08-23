@@ -1078,6 +1078,7 @@
   "Model provider: {{name}}": "모델 제공업체: {{name}}",
   "Model provider: {{name}}; model: {{model}}": "모델 제공업체: {{name}}; 모델: {{model}}",
   "Model settings": "모델 설정",
+  "Agent settings": "에이전트 설정",
   "Model used by subagents when Delegation is on.": "위임을 켰을 때 서브에이전트가 사용할 모델입니다.",
   "Model used for manual, automatic, and re-run Reviews. Follow Active model keeps the current behavior; a fixed selection runs in an isolated Reviewer runtime.": "수동 검토, 자동 검토, 검토 재실행에 사용할 모델입니다. “활성 모델 따르기”를 선택하면 현재 동작을 유지하고, 모델을 고정하면 격리된 리뷰어 런타임에서 실행합니다.",
   "Model · not triggered": "모델 · 실행되지 않음",

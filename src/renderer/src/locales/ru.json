@@ -1114,6 +1114,7 @@
   "Model provider: {{name}}": "Поставщик моделей: {{name}}",
   "Model provider: {{name}}; model: {{model}}": "Поставщик моделей: {{name}}; модель: {{model}}",
   "Model settings": "Настройки модели",
+  "Agent settings": "Настройки агента",
   "Model used by subagents when Delegation is on.": "Модель, используемая субагентами при включении делегирования.",
   "Model used for manual, automatic, and re-run Reviews. Follow Active model keeps the current behavior; a fixed selection runs in an isolated Reviewer runtime.": "Модель для ручных, автоматических и повторных проверок. В режиме «Как у активной модели» сохраняется текущее поведение; выбранная модель запускается в изолированной среде проверяющего.",
   "Model · not triggered": "Модель · не активирована",

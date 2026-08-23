@@ -538,6 +538,38 @@ describe('AgentRuntimeManager', () => {
     ])
   })
 
+  it('updates only the managed adapter when Codex CLI is user-owned', async () => {
+    const externalCodexPath = join(storageRoot, 'user-bin', 'codex')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.1.4',
+      nativePath: externalCodexPath,
+      nativeVersion: '0.144.6'
+    })
+    const installManagedCodexImpl: NonNullable<ManagerOptions['installManagedCodexImpl']> = vi.fn(
+      async ({ installId }) => ({
+        result: { installId, ok: true },
+        adapterPath: managedAdapterPath,
+        adapterVersion: '1.6.2',
+        codexPath: externalCodexPath,
+        codexVersion: '0.144.6'
+      })
+    )
+    manager = createManager({ installManagedCodexImpl })
+
+    await manager.installCodex({ source: 'managed' }, vi.fn())
+
+    expect(installManagedCodexImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ existingCodexPath: externalCodexPath })
+    )
+    expect((await repository.getSettings()).codex).toMatchObject({
+      resolvedPath: managedAdapterPath,
+      version: '1.6.2',
+      nativePath: externalCodexPath,
+      nativeVersion: '0.144.6'
+    })
+  })
+
   it('fails a managed Claude install whose installed executable cannot report a version', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(321)
     const installedPath = join(storageRoot, 'installed', 'claude')
