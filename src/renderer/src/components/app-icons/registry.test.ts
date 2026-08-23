@@ -40,8 +40,8 @@ describe('app icon registry', () => {
     }
   })
 
-  it('keeps the fixed Reviewer identity outside the appearance picker', () => {
-    expect(APP_ICONS['owl-scholar']).toBeDefined()
+  it('keeps the fixed Reviewer identity outside the generic appearance registry', () => {
+    expect(APP_ICONS['owl-scholar']).toBeUndefined()
     expect(
       APP_ICON_GROUPS.flatMap((group) => group.icons).some((icon) => icon.key === 'owl-scholar')
     ).toBe(false)

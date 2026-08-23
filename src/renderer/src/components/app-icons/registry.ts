@@ -31,7 +31,7 @@ import {
   Telescope,
   type LucideIcon
 } from 'lucide-react'
-import { MoleculeIcon, OwlScholarIcon, PetriDishIcon } from './custom-glyphs'
+import { MoleculeIcon, PetriDishIcon } from './custom-glyphs'
 
 // Shared app icon registry: the single source of truth for the small stroke-style icon
 // set ("logos") used by Specialist avatars and reusable by any future surface. Prefer a
@@ -104,12 +104,8 @@ export const APP_ICON_GROUPS: readonly AppIconGroup[] = [
   }
 ]
 
-export const APP_ICONS: Record<string, LucideIcon> = {
-  ...Object.fromEntries(
-    APP_ICON_GROUPS.flatMap((group) => group.icons.map((icon) => [icon.key, icon.Icon]))
-  ),
-  // Fixed system identity; intentionally excluded from the user-facing appearance picker.
-  'owl-scholar': OwlScholarIcon
-}
+export const APP_ICONS: Record<string, LucideIcon> = Object.fromEntries(
+  APP_ICON_GROUPS.flatMap((group) => group.icons.map((icon) => [icon.key, icon.Icon]))
+)
 
 export const DEFAULT_APP_ICON = Brain

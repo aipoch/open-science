@@ -18,6 +18,7 @@ import {
   X
 } from 'lucide-react'
 import { AlertDialog, Collapsible } from 'radix-ui'
+import { OwlScholarIcon } from '@/components/app-icons/custom-glyphs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -66,6 +67,7 @@ import {
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SpecialistAppearancePicker } from './SpecialistAppearancePicker'
 import { SpecialistAvatar } from './specialist-avatar'
+import { getAvatarStyle } from './specialist-icons'
 import { SpecialistSkillConflictChoices } from './SpecialistSkillConflictChoices'
 import {
   skillConflictResolutionList,
@@ -2072,7 +2074,13 @@ const InstalledSpecialistsPanel = ({
                     className="flex min-h-14 items-center gap-2 py-2.5"
                   >
                     <span className="flex size-11 shrink-0 items-center justify-center">
-                      <SpecialistAvatar iconKey="owl-scholar" colorKey="teal" />
+                      <span
+                        className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[13px]"
+                        style={getAvatarStyle('teal')}
+                        aria-hidden="true"
+                      >
+                        <OwlScholarIcon className="size-3.5" data-specialist-icon="owl-scholar" />
+                      </span>
                     </span>
                     <div className="min-w-0 flex-1">
                       <span className="block truncate text-sm text-foreground">
