@@ -22,14 +22,11 @@ export const MoleculeIcon = createLucideIcon('Molecule', [
 
 // Owl wearing a mortarboard, reserved for the built-in Reviewer identity.
 export const OwlScholarIcon = createLucideIcon('OwlScholar', [
-  ['path', { d: 'M5 9v7c0 3 3 5 7 5s7-2 7-5V9' }],
-  ['path', { d: 'm5 10-1-3 4 3m11 0 1-3-4 3' }],
-  ['path', { d: 'm6 6 6-3 6 3-6 3z' }],
-  ['path', { d: 'M18 6v4' }],
-  ['circle', { cx: '8.5', cy: '13.5', r: '2.5' }],
-  ['circle', { cx: '15.5', cy: '13.5', r: '2.5' }],
-  ['circle', { cx: '8.5', cy: '13.5', r: '.7', fill: 'currentColor', stroke: 'none' }],
-  ['circle', { cx: '15.5', cy: '13.5', r: '.7', fill: 'currentColor', stroke: 'none' }],
-  ['path', { d: 'm11 15.5 1 1 1-1' }],
-  ['path', { d: 'M8 21v1m8-1v1M7 22h3m4 0h3' }]
+  ['path', { d: 'm6 6 6-3 6 3-6 3zM18 6v3' }],
+  ['path', { d: 'M5 10v7a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-7' }],
+  ['path', { d: 'm5 10-1-2 4 2m11 0 1-2-4 2' }],
+  ['circle', { cx: '9', cy: '13.5', r: '2' }],
+  ['circle', { cx: '15', cy: '13.5', r: '2' }],
+  ['path', { d: 'M9 13.5h.01M15 13.5h.01' }],
+  ['path', { d: 'm11.2 16 .8 1 .8-1' }]
 ])
