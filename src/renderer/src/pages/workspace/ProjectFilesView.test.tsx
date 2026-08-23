@@ -2052,10 +2052,11 @@ describe('ProjectFilesView', () => {
     ).toBe('true')
   })
 
-  it('refreshes the count for a collapsed selected session outside the catalog group page', async () => {
+  it('refreshes a collapsed selected session outside the catalog group page', async () => {
     const sessions = createArtifactSessions(12)
     await renderView(sessions)
     let selectedSessionCount = 1
+    let selectedOriginState: 'active' | 'deleting' = 'active'
     const catalogListener = vi.mocked(window.api.projectFiles.onChanged).mock.calls[0]?.[0]
 
     vi.mocked(window.api.projectFiles.listArtifactGroups).mockImplementation(async (request) => ({
@@ -2084,7 +2085,8 @@ describe('ProjectFilesView', () => {
           name: `file-12-${index}.txt`,
           path: `/workspace/file-12-${index}.txt`,
           size: 1,
-          sortAtMs: 12 - index
+          sortAtMs: 12 - index,
+          originSession: { state: selectedOriginState, title: 'Session 12' }
         })),
         totalCount: selectedSessionCount
       }
@@ -2136,6 +2138,7 @@ describe('ProjectFilesView', () => {
     })
 
     selectedSessionCount = 2
+    selectedOriginState = 'deleting'
     await act(async () => {
       catalogListener?.({
         projectId: 'default',
@@ -2150,6 +2153,7 @@ describe('ProjectFilesView', () => {
       '[aria-label="Search project files"]'
     )?.parentElement?.nextElementSibling
     expect(countLabel?.textContent).toBe('2 files')
+    expect(filterButton?.textContent).toContain('Session 12 · Source session is being deleted')
   })
 
   it.each([

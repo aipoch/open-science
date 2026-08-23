@@ -305,10 +305,16 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
       !options.some((option) => option.id === selectedSessionFallback.id)
     ) {
       const sessionId = selectedSessionFallback.id.slice('session:'.length)
+      const sessionPage = catalogIndex.artifactsBySession[sessionId]
+      const originSession = sessionPage?.items.find((item) => item.originSession)?.originSession
+      const count = sessionPage?.totalCount ?? selectedSessionFallback.count
       options.push({
         ...selectedSessionFallback,
-        count:
-          catalogIndex.artifactsBySession[sessionId]?.totalCount ?? selectedSessionFallback.count
+        label: originSession
+          ? getArtifactGroupTitle({ sessionId, artifactCount: count, originSession })
+          : selectedSessionFallback.label,
+        count,
+        ...(originSession ? { originSession } : {})
       })
     }
 
