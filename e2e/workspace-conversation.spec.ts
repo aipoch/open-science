@@ -143,8 +143,14 @@ test('shows context compaction loading and completion inside the Session transcr
   const conversation = page.getByRole('region', { name: 'Conversation' })
   const compaction = conversation.getByTestId('context-compaction-activity')
   await expect(compaction).toContainText('Compacting context')
+  await expect(compaction).toContainText('Summarizing earlier context')
+  await expect(compaction).toHaveAttribute('role', 'status')
   await expect(compaction).toContainText('Context compacted')
-  await expect(compaction.getByTestId('tool-chip')).not.toHaveAttribute('role', 'status')
+  await expect(compaction).toContainText(
+    'Earlier context was summarized so the session can continue.'
+  )
+  await expect(compaction).not.toHaveAttribute('role', 'status')
+  await expect(compaction.getByTestId('tool-chip')).toHaveCount(0)
 
   for (const width of [320, 375, 414, 768]) {
     await page.setViewportSize({ width, height: 900 })
