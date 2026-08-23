@@ -5724,8 +5724,109 @@ describe('resuming an interrupted session on demand', () => {
     })
     await flushRuntimeTasks()
 
-    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.resumeSession).not.toHaveBeenCalled()
     expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'sends a %s follow-up on an attached Session without resuming when the explicit target is unchanged',
+    async (frameworkId) => {
+      const agentConfiguration = {
+        providerId: 'provider-1',
+        model: `${frameworkId}-model`,
+        reasoningEffort: 'default'
+      } as const
+      const backendId = `${frameworkId}:provider-1`
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'First turn',
+        cwd: '/workspace/project',
+        projectId: 'default-project',
+        agentFrameworkId: frameworkId,
+        agentBackendId: backendId,
+        agentModel: agentConfiguration.model,
+        agentConfiguration
+      })
+      useSessionStore.getState().finishRun('session-1')
+      const runtime = {
+        state: createSnapshot(['session-1']),
+        createSession: vi.fn(),
+        resumeSession: vi
+          .fn()
+          .mockRejectedValue(
+            new Error("Error invoking remote method 'acp:resume-session': reply was never sent")
+          ),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+      }
+
+      await sendWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        text: 'Send now follow-up',
+        cwd: '/workspace/project',
+        projectId: 'default-project',
+        agentFrameworkId: frameworkId,
+        agentBackendId: backendId,
+        agentModel: agentConfiguration.model,
+        agentConfiguration
+      })
+      await flushRuntimeTasks()
+
+      expect(runtime.resumeSession).not.toHaveBeenCalled()
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+      expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+      expect(useSessionStore.getState().sessions[0].status).toBe('running')
+    }
+  )
+
+  it('adopts an attached Session when only reasoning effort changed', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'First turn',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'codex-model',
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'codex-model',
+        reasoningEffort: 'default'
+      }
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'session-1',
+      cwd: '/workspace/project',
+      frameworkId: 'codex',
+      backendId: 'codex:provider-1'
+    })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession,
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'retry at higher effort',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: 'codex-model',
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'codex-model',
+        reasoningEffort: 'high'
+      }
+    })
+    await flushRuntimeTasks()
+
+    expect(resumeSession).toHaveBeenCalledOnce()
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
   })
 
