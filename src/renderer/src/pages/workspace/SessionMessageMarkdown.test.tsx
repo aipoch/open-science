@@ -11,7 +11,8 @@ const markdownHarness = vi.hoisted(() => ({
   renderedContent: ''
 }))
 const previewResourceHarness = vi.hoisted(() => ({
-  status: 'ready' as 'ready' | 'error'
+  status: 'ready' as 'ready' | 'error',
+  enabled: undefined as boolean | undefined
 }))
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
@@ -43,13 +44,17 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
 }))
 
 vi.mock('./previews/useManagedPreviewResource', () => ({
-  useManagedPreviewResource: () =>
-    previewResourceHarness.status === 'ready'
-      ? {
-          status: 'ready',
-          resource: { id: 'resource-1', url: 'preview-resource://sin-curve' }
-        }
-      : { status: 'error', error: new Error('Preview unavailable') }
+  useManagedPreviewResource: (_request: unknown, enabled = true) => {
+    previewResourceHarness.enabled = enabled
+    return !enabled
+      ? { status: 'idle' }
+      : previewResourceHarness.status === 'ready'
+        ? {
+            status: 'ready',
+            resource: { id: 'resource-1', url: 'preview-resource://sin-curve' }
+          }
+        : { status: 'error', error: new Error('Preview unavailable') }
+  }
 }))
 
 const { SessionMessageMarkdown } = await import('./SessionMessageMarkdown')
@@ -75,6 +80,7 @@ describe('SessionMessageMarkdown', () => {
     markdownHarness.artifactRef = 'version-1'
     markdownHarness.renderedContent = ''
     previewResourceHarness.status = 'ready'
+    previewResourceHarness.enabled = undefined
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -83,6 +89,7 @@ describe('SessionMessageMarkdown', () => {
   afterEach(() => {
     act(() => root.unmount())
     container.remove()
+    vi.unstubAllGlobals()
   })
 
   it('routes artifact links to the side preview and artifact images to the modal preview', async () => {
@@ -160,5 +167,52 @@ describe('SessionMessageMarkdown', () => {
     expect(
       container.querySelector('[data-session-artifact-image-status]')?.getAttribute('data-state')
     ).toBe('error')
+  })
+
+  it('acquires and releases image resources near the viewport', async () => {
+    let intersectionCallback: IntersectionObserverCallback | undefined
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          intersectionCallback = callback
+        }
+
+        observe = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+
+    await act(async () => {
+      root.render(
+        <SessionMessageMarkdown
+          content="![Sine curve](sin_curve.png)"
+          artifacts={[artifact]}
+          onPreviewArtifact={vi.fn()}
+          onPreviewArtifactModal={vi.fn()}
+        />
+      )
+    })
+
+    expect(previewResourceHarness.enabled).toBe(false)
+    expect(container.querySelector('[data-session-artifact-image]')).toBeNull()
+
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+    })
+    expect(previewResourceHarness.enabled).toBe(true)
+    expect(container.querySelector('[data-session-artifact-image]')).not.toBeNull()
+
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: false } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+    })
+    expect(previewResourceHarness.enabled).toBe(false)
+    expect(container.querySelector('[data-session-artifact-image]')).toBeNull()
   })
 })

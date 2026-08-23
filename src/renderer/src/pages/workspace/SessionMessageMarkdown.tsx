@@ -7,6 +7,7 @@ import type { Components } from 'streamdown'
 import { getArtifactName, getArtifactPreviewFormat } from './artifact-preview-utils'
 import { createPreviewResourceKey } from './previews/preview-resource-key'
 import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
+import { useNearViewport } from './previews/useNearViewport'
 import {
   normalizeSessionArtifactReferences,
   resolveMessageArtifactReference,
@@ -55,14 +56,19 @@ const SessionArtifactImage = ({
   }
   const requestKey = createPreviewResourceKey(request)
   const [failedRequestKey, setFailedRequestKey] = useState<string>()
+  const [setElement, isNearViewport] = useNearViewport<HTMLButtonElement | HTMLSpanElement>()
   const hasFailed = failedRequestKey === requestKey
-  const resourceState = useManagedPreviewResource(request, !hasFailed)
+  const resourceState = useManagedPreviewResource(request, isNearViewport && !hasFailed)
   const accessibleAlt = alt || t('Preview of {{name}}', { name })
   const hasError = hasFailed || resourceState.status === 'error'
 
   if (resourceState.status !== 'ready') {
     return (
-      <span data-session-artifact-image-status="" data-state={hasError ? 'error' : 'loading'}>
+      <span
+        ref={setElement}
+        data-session-artifact-image-status=""
+        data-state={hasError ? 'error' : 'loading'}
+      >
         {accessibleAlt}
       </span>
     )
@@ -70,6 +76,7 @@ const SessionArtifactImage = ({
 
   return (
     <button
+      ref={setElement}
       type="button"
       data-session-artifact-image=""
       aria-label={t('Preview {{name}}', { name })}

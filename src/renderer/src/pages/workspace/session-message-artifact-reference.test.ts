@@ -105,6 +105,27 @@ describe('session message artifact references', () => {
     )
   })
 
+  it('supports balanced parentheses and collapses linked images to one preview control', () => {
+    const artifact = createArtifact({
+      path: '/managed/session/plot_(1).png',
+      fileUrl: 'file:///managed/session/plot_(1).png',
+      name: 'plot_(1).png'
+    })
+    const imageMarkup =
+      '<session-artifact-image artifact_ref="version-1" alt_text="Plot"></session-artifact-image>'
+
+    expect(normalizeSessionArtifactImages('![Plot](plot_(1).png)', [artifact])).toBe(imageMarkup)
+    expect(normalizeSessionArtifactLinks('[Plot](plot_(1).png "Latest")', [artifact])).toBe(
+      '[Plot](/.open-science/artifact/version-1 "Latest")'
+    )
+    expect(
+      normalizeSessionArtifactReferences('[![Plot](plot_(1).png)](plot_(1).png)', [artifact])
+    ).toBe(imageMarkup)
+    expect(
+      normalizeSessionArtifactReferences('[Label ![Plot](plot_(1).png)](plot_(1).png)', [artifact])
+    ).toBe('[Label ![Plot](plot_(1).png)](plot_(1).png)')
+  })
+
   it('leaves artifact-like Markdown inside code unchanged', () => {
     const content = [
       '![Rendered](sin_curve.png)',

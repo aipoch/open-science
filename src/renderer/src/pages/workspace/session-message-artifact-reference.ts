@@ -1,5 +1,6 @@
 import type { ChatSession } from '@/stores/session-store'
 import { createCodeFenceTracker } from '@/components/streamdown/code-fence'
+import { Lexer, type Token, type Tokens } from 'marked'
 
 import { getArtifactName, getArtifactPreviewFormat } from './artifact-preview-utils'
 
@@ -10,10 +11,6 @@ type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
 
 const ARTIFACT_REFERENCE_PATTERN = /^\{\{artifact:([^}\s]+)\}\}$/u
 const INTERNAL_ARTIFACT_REFERENCE_PREFIX = '/.open-science/artifact/'
-const MARKDOWN_IMAGE_PATTERN =
-  /!\[([^\]]*)\]\(\s*(<[^>\n]+>|\{\{artifact:[^}\s]+\}\}|[^\s)]+)\s*(?:["'][^"']*["'])?\s*\)/gu
-const MARKDOWN_LINK_PATTERN =
-  /(^|[^!])(\[[^\]]*\]\(\s*)(<[^>\n]+>|\{\{artifact:[^}\s]+\}\}|[^\s)]+)(\s*(?:["'][^"']*["'])?\s*\))/gmu
 const EXTERNAL_SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/iu
 
 const decodeReference = (reference: string): string => {
@@ -74,47 +71,9 @@ const escapeHtmlAttribute = (value: string): string =>
     .replace(/</gu, '&lt;')
     .replace(/>/gu, '&gt;')
 
-const transformOutsideInlineCode = (
-  line: string,
-  transform: (markdown: string) => string
-): string => {
-  let output = ''
-  let cursor = 0
-  let searchFrom = 0
-
-  for (;;) {
-    const openerStart = line.indexOf('`', searchFrom)
-    if (openerStart === -1) break
-
-    let openerEnd = openerStart + 1
-    while (line[openerEnd] === '`') openerEnd += 1
-    const markerLength = openerEnd - openerStart
-    let closerStart = openerEnd
-
-    for (;;) {
-      closerStart = line.indexOf('`', closerStart)
-      if (closerStart === -1) break
-
-      let closerEnd = closerStart + 1
-      while (line[closerEnd] === '`') closerEnd += 1
-      if (closerEnd - closerStart === markerLength) {
-        output += transform(line.slice(cursor, openerStart))
-        output += line.slice(openerStart, closerEnd)
-        cursor = closerEnd
-        searchFrom = closerEnd
-        break
-      }
-      closerStart = closerEnd
-    }
-
-    if (closerStart === -1) break
-  }
-
-  return output + transform(line.slice(cursor))
-}
-
 // Artifact reference rewriting operates on raw streaming Markdown before Streamdown parses it.
-// Keep code examples byte-for-byte intact while transforming ordinary prose line by line.
+// Fenced and indented code stay byte-for-byte intact; Marked's inline lexer protects code spans
+// and gives link/image structure without reserializing unrelated Markdown.
 const transformMarkdownOutsideCode = (
   content: string,
   transform: (markdown: string) => string
@@ -129,11 +88,98 @@ const transformMarkdownOutsideCode = (
       const fenceWasOpen = fenceTracker.isOpen()
       const fenceIsOpen = fenceTracker.feed(line)
       const isCodeLine = fenceWasOpen || fenceIsOpen || /^(?: {4}|\t)/u.test(line)
-      const normalizedLine = isCodeLine ? line : transformOutsideInlineCode(line, transform)
+      const normalizedLine = isCodeLine ? line : transform(line)
       return hasNewline ? `${normalizedLine}\n` : normalizedLine
     })
     .join('')
 }
+
+const createArtifactImageMarkup = (
+  image: Tokens.Image,
+  artifacts: readonly MessageArtifact[]
+): string | undefined => {
+  const artifact = resolveMessageArtifactReference(image.href, artifacts)
+  if (
+    !artifact ||
+    artifact.kind !== 'managed-file' ||
+    getArtifactPreviewFormat(artifact) !== 'image'
+  ) {
+    return undefined
+  }
+
+  const artifactRef = artifact.versionId ?? artifact.id
+  return `<session-artifact-image artifact_ref="${escapeHtmlAttribute(artifactRef)}" alt_text="${escapeHtmlAttribute(image.text)}"></session-artifact-image>`
+}
+
+type ArtifactTransformMode = 'all' | 'images' | 'links'
+
+const getTokenChildren = (token: Token): Token[] =>
+  'tokens' in token && Array.isArray(token.tokens) ? token.tokens : []
+
+const hasImageToken = (token: Token): boolean =>
+  token.type === 'image' || getTokenChildren(token).some(hasImageToken)
+
+const transformTokenChildren = (
+  token: Token,
+  artifacts: readonly MessageArtifact[],
+  mode: ArtifactTransformMode
+): string => {
+  const children = getTokenChildren(token)
+  if (children.length === 0) return token.raw
+
+  let output = ''
+  let cursor = 0
+  for (const child of children) {
+    const childStart = token.raw.indexOf(child.raw, cursor)
+    if (childStart === -1) return token.raw
+    output += token.raw.slice(cursor, childStart)
+    output += transformInlineToken(child, artifacts, mode)
+    cursor = childStart + child.raw.length
+  }
+  return output + token.raw.slice(cursor)
+}
+
+const transformInlineToken = (
+  token: Token,
+  artifacts: readonly MessageArtifact[],
+  mode: ArtifactTransformMode
+): string => {
+  if (token.type === 'image') {
+    return mode !== 'links'
+      ? (createArtifactImageMarkup(token as Tokens.Image, artifacts) ?? token.raw)
+      : token.raw
+  }
+
+  if (token.type === 'link') {
+    const link = token as Tokens.Link
+    const linkedImage = link.tokens.length === 1 && link.tokens[0].type === 'image'
+    if (linkedImage && mode !== 'links') {
+      return createArtifactImageMarkup(link.tokens[0] as Tokens.Image, artifacts) ?? token.raw
+    }
+    if (mode === 'images') return token.raw
+
+    // Keep any other linked image atomic so custom link and image buttons can never nest.
+    if (hasImageToken(link)) return token.raw
+
+    const artifact = resolveMessageArtifactReference(link.href, artifacts)
+    if (artifact?.kind !== 'managed-file') return token.raw
+    const artifactRef = artifact.versionId ?? artifact.id
+    const label = link.tokens.map((child) => child.raw).join('')
+    const title = link.title ? ` ${JSON.stringify(link.title)}` : ''
+    return `[${label}](${INTERNAL_ARTIFACT_REFERENCE_PREFIX}${encodeURIComponent(artifactRef)}${title})`
+  }
+
+  return transformTokenChildren(token, artifacts, mode)
+}
+
+const transformInlineMarkdown = (
+  markdown: string,
+  artifacts: readonly MessageArtifact[],
+  mode: ArtifactTransformMode
+): string =>
+  Lexer.lexInline(markdown)
+    .map((token) => transformInlineToken(token, artifacts, mode))
+    .join('')
 
 // Converts only images that resolve to a managed artifact attached to this message. Remote and
 // unresolved Markdown images stay owned by Streamdown with their existing controls.
@@ -142,23 +188,7 @@ const normalizeSessionArtifactImages = (
   artifacts: readonly MessageArtifact[]
 ): string =>
   transformMarkdownOutsideCode(content, (markdown) =>
-    markdown.replace(MARKDOWN_IMAGE_PATTERN, (match, alt: string, destination: string) => {
-      const reference =
-        destination.startsWith('<') && destination.endsWith('>')
-          ? destination.slice(1, -1)
-          : destination
-      const artifact = resolveMessageArtifactReference(reference, artifacts)
-      if (
-        !artifact ||
-        artifact.kind !== 'managed-file' ||
-        getArtifactPreviewFormat(artifact) !== 'image'
-      ) {
-        return match
-      }
-
-      const artifactRef = artifact.versionId ?? artifact.id
-      return `<session-artifact-image artifact_ref="${escapeHtmlAttribute(artifactRef)}" alt_text="${escapeHtmlAttribute(alt)}"></session-artifact-image>`
-    })
+    transformInlineMarkdown(markdown, artifacts, 'images')
   )
 
 // Rewrites only links already proven to reference a same-message managed artifact. Streamdown's
@@ -169,27 +199,16 @@ const normalizeSessionArtifactLinks = (
   artifacts: readonly MessageArtifact[]
 ): string =>
   transformMarkdownOutsideCode(content, (markdown) =>
-    markdown.replace(
-      MARKDOWN_LINK_PATTERN,
-      (match, leading: string, opening: string, destination: string, closing: string) => {
-        const reference =
-          destination.startsWith('<') && destination.endsWith('>')
-            ? destination.slice(1, -1)
-            : destination
-        const artifact = resolveMessageArtifactReference(reference, artifacts)
-        if (!artifact || artifact.kind !== 'managed-file') return match
-
-        const artifactRef = artifact.versionId ?? artifact.id
-        return `${leading}${opening}${INTERNAL_ARTIFACT_REFERENCE_PREFIX}${encodeURIComponent(artifactRef)}${closing}`
-      }
-    )
+    transformInlineMarkdown(markdown, artifacts, 'links')
   )
 
 const normalizeSessionArtifactReferences = (
   content: string,
   artifacts: readonly MessageArtifact[]
 ): string =>
-  normalizeSessionArtifactLinks(normalizeSessionArtifactImages(content, artifacts), artifacts)
+  transformMarkdownOutsideCode(content, (markdown) =>
+    transformInlineMarkdown(markdown, artifacts, 'all')
+  )
 
 export {
   normalizeSessionArtifactImages,
