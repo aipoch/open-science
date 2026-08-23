@@ -159,7 +159,7 @@ export const flattenNativeResponsesRequest = (
   body: JsonObject
 ): { request: JsonObject; aliases: NativeResponsesToolAliases } => {
   if (body.tools !== undefined && !Array.isArray(body.tools)) {
-    throw new Error('native Responses tools must be an array')
+    throw new ProviderLoopbackRequestError('native Responses tools must be an array')
   }
 
   const tools = (body.tools ?? []) as unknown[]
@@ -174,16 +174,20 @@ export const flattenNativeResponsesRequest = (
   const flattenedTools = tools.flatMap((tool) => {
     if (!isObject(tool) || tool.type !== 'namespace') return [tool]
     if (typeof tool.name !== 'string' || !Array.isArray(tool.tools)) {
-      throw new Error('native Responses namespace tools require a name and child tools')
+      throw new ProviderLoopbackRequestError(
+        'native Responses namespace tools require a name and child tools'
+      )
     }
 
     return tool.tools.map((child) => {
       if (!isObject(child) || child.type !== 'function' || typeof child.name !== 'string') {
-        throw new Error('native Responses namespace children must be function tools')
+        throw new ProviderLoopbackRequestError(
+          'native Responses namespace children must be function tools'
+        )
       }
       const alias = namespaceAlias(tool.name, child.name)
       if (occupiedNames.has(alias) || aliases.has(alias)) {
-        throw new Error(`duplicate native Responses tool alias: ${alias}`)
+        throw new ProviderLoopbackRequestError(`duplicate native Responses tool alias: ${alias}`)
       }
       occupiedNames.add(alias)
       aliases.set(alias, { namespace: tool.name, name: child.name })

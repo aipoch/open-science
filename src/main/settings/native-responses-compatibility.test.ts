@@ -87,6 +87,34 @@ describe('native Responses compatibility', () => {
     })
   })
 
+  it('returns 400 when a valid JSON request has malformed tool declarations', async () => {
+    const fetchImpl = vi.fn()
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://provider.example.test/v1', key: 'key-a', model: 'model-a' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ input: 'hello', tools: { type: 'function' } })
+      })
+
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toMatchObject({
+        error: { type: 'invalid_request_error' }
+      })
+      expect(fetchImpl).not.toHaveBeenCalled()
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('replays an identical deterministic provider error without a second upstream request', async () => {
     const fetchImpl = vi.fn(async () =>
       Response.json(

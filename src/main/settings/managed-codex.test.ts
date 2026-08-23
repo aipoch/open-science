@@ -610,6 +610,74 @@ describe('installManagedCodex', () => {
     )
   })
 
+  it('falls back to the managed Codex CLI when the user-owned CLI is incompatible', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-fallback-'))
+    const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
+    const adapterTgz = buildTgz([
+      {
+        name: 'package/dist/index.js',
+        content: adapterFixture('fallback-adapter'),
+        mode: 0o755
+      }
+    ])
+    const nativeTgz = buildTgz([
+      {
+        name: `package/vendor/${platform.target}/bin/codex`,
+        content: Buffer.from('managed-compatible-codex'),
+        mode: 0o755
+      }
+    ])
+    const externalCodexPath = join(root, 'user-bin', 'codex')
+    await mkdir(dirname(externalCodexPath), { recursive: true })
+    await writeFile(externalCodexPath, 'user-owned-incompatible-codex')
+
+    const metadataUrls: string[] = []
+    const fetchJson = async (url: string): Promise<unknown> => {
+      metadataUrls.push(url)
+      return url.includes('agentclientprotocol%2fcodex-acp')
+        ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
+        : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
+    }
+    const fetchTarball = async (
+      url: string
+    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => {
+      const body = url.includes('adapter') ? adapterTgz : nativeTgz
+      return { stream: Readable.from(body), totalBytes: body.length }
+    }
+    const verifyPair = vi.fn(async (_adapterPath: string, codexPath: string) => {
+      if (codexPath === externalCodexPath) throw new Error('incompatible Codex CLI')
+    })
+
+    const outcome = await installManagedCodex({
+      installId: 'codex-fallback',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform,
+      fetchJson,
+      fetchTarball,
+      verifyAdapter: () => Promise.resolve('1.6.2'),
+      verifyCodex: () => Promise.resolve('0.144.6'),
+      verifyPair,
+      integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) },
+      existingCodexPath: externalCodexPath
+    })
+
+    expect(outcome).toEqual({
+      result: { installId: 'codex-fallback', ok: true },
+      adapterPath: managedCodexAdapterEntry(root),
+      adapterVersion: '1.6.2',
+      codexPath: managedCodexBinary(root, platform),
+      codexVersion: '0.144.6'
+    })
+    expect(metadataUrls).toContain('https://reg/@openai%2fcodex/0.144.6-darwin-arm64')
+    expect(await readFile(externalCodexPath, 'utf8')).toBe('user-owned-incompatible-codex')
+    expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe(
+      'managed-compatible-codex'
+    )
+    expect(verifyPair).toHaveBeenCalledTimes(2)
+  })
+
   it('runs the smoke handshake from a home outside the staged runtime tree', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
     const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })

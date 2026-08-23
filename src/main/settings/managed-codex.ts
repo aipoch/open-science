@@ -1216,23 +1216,26 @@ const replaceDirectory = async (staged: string, destination: string): Promise<vo
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-export const installManagedCodex = async ({
-  installId,
-  onEvent,
-  dataRoot,
-  registries = DEFAULT_REGISTRIES,
-  platform = resolveManagedCodexPlatform(),
-  fetchJson = defaultFetchJson,
-  fetchTarball = defaultFetchTarball,
-  verifyAdapter = defaultVerifyAdapter,
-  verifyCodex = defaultVerifyCodex,
-  verifyPair = verifyManagedCodexPair,
-  existingCodexPath,
-  integrities = {
-    adapter: CODEX_ACP_INTEGRITY,
-    codex: CODEX_INTEGRITIES[platform.key] ?? ''
-  }
-}: InstallManagedCodexOptions): Promise<ManagedCodexInstallOutcome> => {
+export const installManagedCodex = async (
+  options: InstallManagedCodexOptions
+): Promise<ManagedCodexInstallOutcome> => {
+  const {
+    installId,
+    onEvent,
+    dataRoot,
+    registries = DEFAULT_REGISTRIES,
+    platform = resolveManagedCodexPlatform(),
+    fetchJson = defaultFetchJson,
+    fetchTarball = defaultFetchTarball,
+    verifyAdapter = defaultVerifyAdapter,
+    verifyCodex = defaultVerifyCodex,
+    verifyPair = verifyManagedCodexPair,
+    existingCodexPath,
+    integrities = {
+      adapter: CODEX_ACP_INTEGRITY,
+      codex: CODEX_INTEGRITIES[platform.key] ?? ''
+    }
+  } = options
   if (!existingCodexPath && !integrities.codex) {
     return {
       result: { installId, ok: false, error: `No pinned Codex integrity for ${platform.key}` }
@@ -1317,11 +1320,24 @@ export const installManagedCodex = async ({
       onEvent({ kind: 'progress', installId, phase: 'installing' })
       const adapterVersion = await verifyAdapter(stagedAdapter)
       if (!adapterVersion) throw new Error('Installed Codex ACP adapter failed its --version check')
-      const codexVersion = await verifyCodex(codexPath)
-      if (!codexVersion) throw new Error('Installed Codex binary failed its --version check')
-      // Smoke home lives in scratch (auto-removed), NEVER inside stagedRoot: stagedRoot is moved to
-      // the final runtime, so anything Codex might write here must not ride along into the install.
-      await verifyPair(stagedAdapter, codexPath, join(scratch, 'smoke-home'))
+      let codexVersion: string
+      try {
+        const verifiedVersion = await verifyCodex(codexPath)
+        if (!verifiedVersion) throw new Error('Installed Codex binary failed its --version check')
+        // Smoke home lives in scratch (auto-removed), NEVER inside stagedRoot: stagedRoot is moved to
+        // the final runtime, so anything Codex might write here must not ride along into the install.
+        await verifyPair(stagedAdapter, codexPath, join(scratch, 'smoke-home'))
+        codexVersion = verifiedVersion
+      } catch (error) {
+        if (!existingCodexPath) throw error
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `Existing Codex CLI is incompatible with the managed adapter; falling back to the managed Codex CLI.\n`
+        })
+        return installManagedCodex({ ...options, existingCodexPath: undefined })
+      }
 
       reachedLocalInstall = true
       if (existingCodexPath) {
