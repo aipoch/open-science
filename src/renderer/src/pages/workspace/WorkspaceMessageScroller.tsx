@@ -90,6 +90,7 @@ type WorkspaceMessageScrollerProps = {
   isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
+  optimisticMessage?: ChatMessage
   canBranchInNewSession?: boolean
   onBranchInNewSession?: (messageId: string) => void
   trailingContent?: ReactNode
@@ -359,6 +360,7 @@ const WorkspaceMessageScrollerImpl = ({
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
+  optimisticMessage,
   canBranchInNewSession = false,
   onBranchInNewSession,
   trailingContent,
@@ -556,7 +558,8 @@ const WorkspaceMessageScrollerImpl = ({
       : conversationItems
   // Brand-new conversation (nothing presented, no resume in flight): invite the first prompt with
   // a centered placeholder banner over the empty transcript area.
-  const showEmptyConversationBanner = presentedConversationItems.length === 0 && !isResumingSession
+  const showEmptyConversationBanner =
+    presentedConversationItems.length === 0 && !optimisticMessage && !isResumingSession
   const visibleMessageIds = presentedConversationItems.flatMap((item) =>
     item.type === 'message' ? [item.message.id] : []
   )
@@ -1418,6 +1421,19 @@ const WorkspaceMessageScrollerImpl = ({
                 </MessageScrollerItem>
               ))}
 
+              {optimisticMessage ? (
+                <WorkspaceMessageItem
+                  message={optimisticMessage}
+                  onPreviewArtifact={onPreviewArtifact}
+                  onPreviewArtifactModal={onPreviewArtifactModal}
+                  onPreviewUploadAttachment={onPreviewUploadAttachment}
+                  onOpenSkillMention={onOpenSkillMention}
+                  onPreviewMentionArtifact={onPreviewMentionArtifact}
+                  showUserActions={false}
+                  sending
+                />
+              ) : null}
+
               {presentationBarrierIndex < 0 ? trailingContent : null}
 
               {isResumingSession && activeSession ? (
@@ -1533,6 +1549,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   next: WorkspaceMessageScrollerProps
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  previous.optimisticMessage === next.optimisticMessage &&
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   (previous.reportPresentationRevealing ?? false) === (next.reportPresentationRevealing ?? false) &&
   previous.onBranchInNewSession === next.onBranchInNewSession &&

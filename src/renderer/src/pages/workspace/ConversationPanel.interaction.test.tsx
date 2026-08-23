@@ -389,6 +389,7 @@ const createPanelDefaults = (): PanelProps => ({
     }
   },
   conversation: {
+    optimisticMessage: undefined,
     availability: {
       submit: false,
       submitMode: undefined,

@@ -22,6 +22,7 @@ import {
   GitBranch,
   Image as ImageIcon,
   MessageCircleMore,
+  Loader2,
   Pencil
 } from 'lucide-react'
 import {
@@ -98,6 +99,8 @@ type WorkspaceMessageItemProps = {
   canEditMessage?: boolean
   // Immutable transcript surfaces can reuse the normal message renderer without live actions.
   showUserActions?: boolean
+  // Renderer-only optimistic Composer submission; never persisted in the Session graph.
+  sending?: boolean
   // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
   contentPaddingClassName?: string
   onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
@@ -1120,6 +1123,7 @@ const WorkspaceMessageItemImpl = ({
   onPreviewMentionArtifact,
   canEditMessage = false,
   showUserActions = true,
+  sending = false,
   contentPaddingClassName,
   onSendEditedMessage,
   canBranchInNewSession = false,
@@ -1162,7 +1166,7 @@ const WorkspaceMessageItemImpl = ({
   }, [isAssistantPresenting, message.id, onPresentationChange, presentsAssistantMessage])
 
   const uploads = message.uploads ?? []
-  const sentDate = toMessageDate(message.createdAt)
+  const sentDate = sending ? undefined : toMessageDate(message.createdAt)
   const showRevisionNavigation =
     showUserActions && isHumanUser && revisionNavigation && revisionNavigation.total > 1
   const [copied, setCopied] = useState(false)
@@ -1402,11 +1406,20 @@ const WorkspaceMessageItemImpl = ({
                   )}
                 </div>
               </div>
-              {sentDate || message.interrupted || showRevisionNavigation ? (
+              {sending || sentDate || message.interrupted || showRevisionNavigation ? (
                 <div
                   data-slot="user-message-footer"
                   className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
                 >
+                  {sending ? (
+                    <span className="flex items-center gap-1" role="status" aria-live="polite">
+                      <Loader2
+                        className="size-3 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                      {t('Sending…')}
+                    </span>
+                  ) : null}
                   {message.interrupted ? (
                     <span
                       data-slot="user-message-interrupted"
@@ -1562,6 +1575,7 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.onBranchInNewSession === next.onBranchInNewSession &&
   (previous.canEditMessage ?? false) === (next.canEditMessage ?? false) &&
   (previous.showUserActions ?? true) === (next.showUserActions ?? true) &&
+  (previous.sending ?? false) === (next.sending ?? false) &&
   previous.contentPaddingClassName === next.contentPaddingClassName &&
   previous.turnStartedAt === next.turnStartedAt &&
   (previous.showAssistantFooter ?? true) === (next.showAssistantFooter ?? true) &&

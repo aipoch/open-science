@@ -3,7 +3,11 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
-import type { ChatSession, SessionActionabilityProjection } from '@/stores/session-store'
+import type {
+  ChatMessage,
+  ChatSession,
+  SessionActionabilityProjection
+} from '@/stores/session-store'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
 import {
@@ -98,6 +102,7 @@ type WorkspaceConversationControllerOptions = {
 }
 
 type WorkspaceConversationController = {
+  optimisticMessage: ChatMessage | undefined
   availability: {
     submit: boolean
     submitMode: 'send' | 'queue' | undefined
@@ -224,6 +229,7 @@ const useWorkspaceConversationController = (
     optionsRef.current = options
   }, [options])
   const inFlightDraftKeysRef = useRef(new Set<string>())
+  const [optimisticMessages, setOptimisticMessages] = useState<Record<string, ChatMessage>>({})
   const messageQueue = useWorkspaceMessageQueueController({
     activeSession: options.activeSession,
     promptInFlightSessionIds: options.promptInFlightSessionIds,
@@ -306,6 +312,22 @@ const useWorkspaceConversationController = (
         session.lifecycle.captureSendIntent(branchInNewSession)
 
       const dispatch = (sessionId: string | undefined): void => {
+        const optimisticMessage = sessionId
+          ? {
+              id: `optimistic-${snapshot.draftKey}-${snapshot.version}`,
+              role: 'user' as const,
+              content: docToText(snapshot.doc),
+              status: 'complete' as const,
+              eventIds: [],
+              uploads: snapshot.attachments,
+              parts: snapshot.doc.nodes,
+              createdAt: 0,
+              updatedAt: 0
+            }
+          : undefined
+        if (sessionId && optimisticMessage) {
+          setOptimisticMessages((current) => ({ ...current, [sessionId]: optimisticMessage }))
+        }
         void runtime
           .sendMessage({
             sessionId,
@@ -345,7 +367,16 @@ const useWorkspaceConversationController = (
             current.resetNewConversationSettings()
             session.actions.resetNewConversationSpecialist()
           })
-          .finally(() => inFlightDraftKeysRef.current.delete(snapshot.draftKey))
+          .finally(() => {
+            inFlightDraftKeysRef.current.delete(snapshot.draftKey)
+            if (!sessionId || !optimisticMessage) return
+            setOptimisticMessages((current) => {
+              if (current[sessionId]?.id !== optimisticMessage.id) return current
+              const next = { ...current }
+              delete next[sessionId]
+              return next
+            })
+          })
       }
 
       if (hasPendingSwitch && activeSession) {
@@ -463,6 +494,9 @@ const useWorkspaceConversationController = (
   const queueDraft = canQueueDraft(options)
 
   return {
+    optimisticMessage: options.activeSession
+      ? optimisticMessages[options.activeSession.id]
+      : undefined,
     availability: {
       submit: submitImmediately || queueDraft,
       submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,

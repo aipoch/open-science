@@ -190,6 +190,29 @@ afterEach(() => {
 })
 
 describe('workspace conversation controller', () => {
+  it('exposes the submitted draft immediately while runtime admission is pending', async () => {
+    let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void
+    const admission = new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+      resolveAdmission = resolve
+    })
+    const input = options()
+    input.runtime.sendMessage = vi.fn(() => admission)
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+
+    expect(hook.result.current.optimisticMessage).toMatchObject({
+      role: 'user',
+      content: 'hello',
+      parts: textDoc('hello').nodes,
+      uploads: []
+    })
+
+    await act(async () => resolveAdmission({ sessionId: 'session-a', messageId: 'message-a' }))
+    expect(hook.result.current.optimisticMessage).toBeUndefined()
+  })
+
   it('branches from a completed Agent Message without consuming the composer draft', async () => {
     const input = options()
     const hook = renderController(input)
@@ -735,6 +758,7 @@ describe('workspace conversation controller', () => {
     expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledWith(
       expect.objectContaining({ draftKey: 'session-a', version: 1 })
     )
+    expect(hook.result.current.optimisticMessage).toBeUndefined()
   })
 
   it('includes new-Session Compute intent in creation and stamps Review after submit succeeds', async () => {

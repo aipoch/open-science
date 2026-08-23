@@ -194,7 +194,7 @@ const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAtta
 
 const renderScroller = async (
   session: ChatSession,
-  props: { isResumingSession?: boolean } = {}
+  props: { isResumingSession?: boolean; optimisticMessage?: ChatMessage } = {}
 ): Promise<string> => {
   const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
 
@@ -202,10 +202,29 @@ const renderScroller = async (
     <WorkspaceMessageScroller
       activeSession={session}
       isResumingSession={props.isResumingSession}
+      optimisticMessage={props.optimisticMessage}
       onSendEditedMessage={vi.fn()}
     />
   )
 }
+
+describe('WorkspaceMessageScroller optimistic send render', () => {
+  it('renders a sending user bubble before the authoritative Message is admitted', async () => {
+    const html = await renderScroller(createSession({ status: 'idle' }), {
+      optimisticMessage: createMessage({
+        id: 'optimistic-session-1-1',
+        content: 'Follow-up request',
+        createdAt: 0,
+        updatedAt: 0
+      })
+    })
+
+    expect(html).toContain('data-message-id="optimistic-session-1-1"')
+    expect(html).toContain('data-slot="user-message-bubble"')
+    expect(html).toContain('Follow-up request')
+    expect(html).toContain('Sending…')
+  })
+})
 
 describe('WorkspaceMessageScroller Run Marks render', () => {
   it('passes the presented conversation to Run Marks', async () => {

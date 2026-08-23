@@ -391,7 +391,8 @@ const ConversationPanel = ({
       resume: onResumeSession,
       cancel: onCancelRun
     },
-    queue: messageQueue
+    queue: messageQueue,
+    optimisticMessage
   } = conversation
   const {
     view: sideChat,
@@ -857,6 +858,7 @@ const ConversationPanel = ({
         <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage && !sideChat}>
           <WorkspaceMessageScroller
             activeSession={activeSession}
+            optimisticMessage={optimisticMessage}
             isResumingSession={isResuming}
             notebookReference={notebookReference}
             onSendEditedMessage={onSendEditedMessage}
