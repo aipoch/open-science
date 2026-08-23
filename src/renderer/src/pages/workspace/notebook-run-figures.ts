@@ -45,6 +45,12 @@ const getWorkingFigureFilename = (relativePath: string): string | undefined => {
   return filename && extension && FIGURE_FILE_EXTENSIONS.has(extension) ? filename : undefined
 }
 
+const normalizeFigureExtension = (extension: string): string => {
+  if (extension === 'jpeg') return 'jpg'
+  if (extension === 'tif') return 'tiff'
+  return extension
+}
+
 // Notebook figures remain the immutable kernel-captured payload. A single captured figure and a
 // single saved visual file form the only unambiguous association available in persisted run data.
 // Multiple candidates keep fallbacks rather than guessing from unrelated array order.
@@ -74,9 +80,14 @@ const resolveNotebookRunFigures = (run: NotebookRunRecord): NotebookRunFigure[] 
     return filename ? [filename] : []
   })
 
-  return captured.length === 1 && filenames.length === 1
-    ? [{ ...captured[0], filename: filenames[0] }]
-    : captured
+  const savedExtension = filenames[0]?.split('.').at(-1)?.toLowerCase()
+  const hasCompatibleFilename =
+    captured.length === 1 &&
+    filenames.length === 1 &&
+    savedExtension !== undefined &&
+    normalizeFigureExtension(savedExtension) === normalizeFigureExtension(captured[0].extension)
+
+  return hasCompatibleFilename ? [{ ...captured[0], filename: filenames[0] }] : captured
 }
 
 const countTextLines = (text: string): number => {
@@ -85,40 +96,34 @@ const countTextLines = (text: string): number => {
 }
 
 const countNotebookRunOutputLines = (run: NotebookRunRecord): number => {
-  if (run.outputs.length === 0) {
-    // LegacyTextOutput renders these canonical fields only. `plain` is a display projection that
-    // commonly mirrors stdout/stderr, so including it would count the same visible lines twice.
-    return [run.text.stdout, run.text.stderr, run.text.traceback].reduce(
-      (count, text) => count + countTextLines(text),
-      0
-    )
-  }
-
-  return run.outputs.reduce((count, output) => {
-    switch (output.type) {
-      case 'stream':
-      case 'text':
-        return count + countTextLines(output.text)
-      case 'error':
-        return count + countTextLines(output.traceback || [output.name, output.message].join(': '))
-      case 'json': {
-        try {
-          return count + countTextLines(JSON.stringify(output.data, null, 2))
-        } catch {
-          return count + countTextLines(String(output.data))
-        }
+  const stdout = run.text.stdout.trimEnd()
+  const stderr = run.text.stderr.trimEnd()
+  const traceback = run.text.traceback.trimEnd()
+  const streamParts = [stdout, stderr, stderr.includes(traceback) ? '' : traceback].filter(Boolean)
+  const streamText = streamParts.join('\n')
+  const displayParts = run.outputs.flatMap((output) => {
+    if (output.type === 'text') return [output.text.trimEnd()]
+    if (output.type === 'json') {
+      try {
+        const serialized = JSON.stringify(output.data, null, 2)
+        return serialized ? [serialized] : []
+      } catch {
+        return []
       }
-      case 'display':
-        return (
-          count +
-          Object.entries(output.data).reduce(
-            (displayCount, [mimeType, payload]) =>
-              mimeType.startsWith('image/') ? displayCount : displayCount + countTextLines(payload),
-            0
-          )
-        )
     }
-  }, 0)
+    if (output.type === 'display') {
+      return Object.entries(output.data).flatMap(([mimeType, payload]) =>
+        mimeType.startsWith('image/') ? [] : [payload.trimEnd()]
+      )
+    }
+    return []
+  })
+  const visibleParts = [
+    ...streamParts,
+    ...displayParts.filter((part) => part.trim().length > 0 && !streamText.includes(part))
+  ]
+
+  return countTextLines(visibleParts.join('\n'))
 }
 
 const formatNotebookFigureFilename = (figure: NotebookRunFigure, t: TFunction): string =>

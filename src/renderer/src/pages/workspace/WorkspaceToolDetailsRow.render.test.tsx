@@ -82,6 +82,29 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(formatNotebookRunOutputLineMeta(run, i18next.t)).toBe('3 lines of output')
   })
 
+  it('counts the normalized notebook output shown by tool details', () => {
+    const echoedRun = createNotebookRun({
+      text: { stdout: '42\n', stderr: '', traceback: '', plain: ['42\n'] },
+      outputs: [
+        { type: 'stream', name: 'stdout', text: '42\n' },
+        { type: 'display', data: { 'text/plain': '42', 'image/png': 'QUJD' } }
+      ]
+    })
+    const traceback = 'Traceback...\nValueError: boom'
+    const failedRun = createNotebookRun({
+      status: 'failed',
+      text: { stdout: '', stderr: traceback, traceback, plain: [traceback] },
+      outputs: [
+        { type: 'stream', name: 'stderr', text: traceback },
+        { type: 'error', name: 'ValueError', message: 'boom', traceback },
+        { type: 'display', data: { 'image/png': 'QUJD' } }
+      ]
+    })
+
+    expect(formatNotebookRunOutputLineMeta(echoedRun, i18next.t)).toBe('1 line of output')
+    expect(formatNotebookRunOutputLineMeta(failedRun, i18next.t)).toBe('2 lines of output')
+  })
+
   it('renders an image artifact-write result as an inline image preview', async () => {
     window.api = {
       artifacts: {

@@ -233,6 +233,24 @@ describe('NotebookRunOutputs', () => {
     expect(figures).toEqual([expect.not.objectContaining({ filename: expect.any(String) })])
   })
 
+  it('keeps a synthetic filename for a single saved file with an incompatible type', () => {
+    const figures = resolveNotebookRunFigures(
+      makeRun({
+        outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }],
+        workingFiles: [
+          {
+            path: '/workspace/report.pdf',
+            relativePath: 'report.pdf',
+            kind: 'other',
+            createdByRunId: 'r1'
+          }
+        ]
+      })
+    )
+
+    expect(figures).toEqual([expect.not.objectContaining({ filename: expect.any(String) })])
+  })
+
   it('renders stream stdout text', () => {
     render([{ type: 'stream', name: 'stdout', text: 'hello\n' }])
 
