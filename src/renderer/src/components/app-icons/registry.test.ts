@@ -40,6 +40,13 @@ describe('app icon registry', () => {
     }
   })
 
+  it('keeps the fixed Reviewer identity outside the appearance picker', () => {
+    expect(APP_ICONS['owl-scholar']).toBeDefined()
+    expect(
+      APP_ICON_GROUPS.flatMap((group) => group.icons).some((icon) => icon.key === 'owl-scholar')
+    ).toBe(false)
+  })
+
   it('exposes the Brain icon as the documented unknown-key fallback', () => {
     // Consumers render `APP_ICONS[key] ?? DEFAULT_APP_ICON` (direct map access, not a
     // resolver call) so React lint rules never see a component created during render.
