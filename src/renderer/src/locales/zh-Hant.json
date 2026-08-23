@@ -833,6 +833,7 @@
   "Failed to save details.": "儲存詳細資訊失敗。",
   "Failed to set concurrency limit.": "設定並行上限失敗。",
   "Failed to set scratch root.": "設定暫存目錄失敗。",
+  "Feedback": "回饋",
   "Featured": "精選",
   "Fetching packages from {{hosts}}": "正在從 {{hosts}} 取得套件",
   "File": "檔案",

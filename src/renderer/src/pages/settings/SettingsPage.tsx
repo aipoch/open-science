@@ -11,6 +11,7 @@ import {
   LockKeyhole,
   Maximize2,
   Menu,
+  MessageSquare,
   Minimize2,
   MonitorSmartphone,
   ScrollText,
@@ -39,6 +40,7 @@ import {
   type ProviderView,
   type UpsertProviderRequest
 } from '../../../../shared/settings'
+import { APP } from '../../../../shared/app-config'
 import type { SpecialistListItem } from '../../../../shared/specialist'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -946,6 +948,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </div>
                     ) : null}
                     <ul className="flex flex-col gap-0.5">
+                      {group.bottom ? (
+                        <li>
+                          <a
+                            href={APP.links.githubFeedback}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground"
+                          >
+                            <MessageSquare
+                              className="size-4 shrink-0 text-muted-foreground"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 flex-1 truncate">{t('Feedback')}</span>
+                          </a>
+                        </li>
+                      ) : null}
                       {group.panels.map(({ id, labelKey, Icon }) => {
                         const isActive = activePanel === id
                         return (

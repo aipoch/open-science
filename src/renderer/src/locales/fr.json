@@ -802,6 +802,7 @@
   "Failed to save details.": "Échec de l'enregistrement des détails.",
   "Failed to set concurrency limit.": "Échec de la définition de la limite de simultanéité.",
   "Failed to set scratch root.": "Échec de la définition de la racine de travail.",
+  "Feedback": "Avis",
   "Featured": "En vedette",
   "Fetching packages from {{hosts}}": "Récupération des paquets depuis {{hosts}}",
   "File": "Fichier",

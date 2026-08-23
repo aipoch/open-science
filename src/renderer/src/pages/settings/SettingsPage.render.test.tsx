@@ -6,6 +6,7 @@ import { Dialog } from 'radix-ui'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
+import { APP } from '../../../../shared/app-config'
 import type { ProviderView } from '../../../../shared/settings'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
@@ -638,21 +639,24 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to archived"]')).toBeNull()
   })
 
-  it('anchors Archived at the bottom of Settings navigation', async () => {
+  it('anchors Feedback above Archived at the bottom of Settings navigation', async () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
 
     const archived = navButton('Archived')
+    const feedback = document.body.querySelector<HTMLAnchorElement>(
+      `nav[aria-label="Settings"] a[href="${APP.links.githubFeedback}"]`
+    )
     const remoteControl = navButton('Remote control')
+    const navItems = Array.from(document.body.querySelectorAll('nav[aria-label="Settings"] li'))
 
     expect(archived?.parentElement?.parentElement?.parentElement?.className).toContain('mt-auto')
-    expect(
-      Array.from(document.body.querySelectorAll('nav[aria-label="Settings"] button')).indexOf(
-        archived as HTMLButtonElement
-      )
-    ).toBeGreaterThan(
-      Array.from(document.body.querySelectorAll('nav[aria-label="Settings"] button')).indexOf(
-        remoteControl as HTMLButtonElement
-      )
+    expect(feedback?.textContent?.trim()).toBe('Feedback')
+    expect(feedback?.target).toBe('_blank')
+    expect(navItems.indexOf(feedback?.parentElement as HTMLLIElement)).toBeGreaterThan(
+      navItems.indexOf(remoteControl?.parentElement as HTMLLIElement)
+    )
+    expect(navItems.indexOf(feedback?.parentElement as HTMLLIElement)).toBeLessThan(
+      navItems.indexOf(archived?.parentElement as HTMLLIElement)
     )
   })
 
@@ -719,7 +723,7 @@ describe('SettingsPage layout', () => {
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
     // and Workspace (Model, Agent, Tags, Permissions, Runtimes, Storage, Usage, General).
-    // Remote access stays isolated and Archived is anchored at the navigation bottom.
+    // Remote access stays isolated; Feedback and Archived are anchored at the navigation bottom.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -730,7 +734,7 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Workspace')
     expect(nav?.textContent).toContain('Remote access')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(15)
+    expect(navItems).toHaveLength(16)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')
@@ -745,7 +749,8 @@ describe('SettingsPage layout', () => {
     expect(navItems[11]?.textContent).toContain('Usage')
     expect(navItems[12]?.textContent).toContain('General')
     expect(navItems[13]?.textContent).toContain('Remote control')
-    expect(navItems[14]?.textContent).toContain('Archived')
+    expect(navItems[14]?.textContent).toContain('Feedback')
+    expect(navItems[15]?.textContent).toContain('Archived')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
     expect(modelNavButton?.querySelector('.lucide-brain')).not.toBeNull()

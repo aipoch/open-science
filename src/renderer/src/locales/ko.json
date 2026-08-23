@@ -782,6 +782,7 @@
   "Failed to save details.": "세부정보를 저장하지 못했습니다.",
   "Failed to set concurrency limit.": "동시성 한도를 설정하지 못했습니다.",
   "Failed to set scratch root.": "스크래치 루트를 설정하지 못했습니다.",
+  "Feedback": "피드백",
   "Featured": "추천",
   "Fetching packages from {{hosts}}": "{{hosts}}에서 패키지를 가져오는 중",
   "File": "파일",

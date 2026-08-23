@@ -792,6 +792,7 @@
   "Failed to save details.": "Не удалось сохранить детали.",
   "Failed to set concurrency limit.": "Не удалось установить лимит одновременных выполнений.",
   "Failed to set scratch root.": "Не удалось установить корень временной папки.",
+  "Feedback": "Отзыв",
   "Featured": "Рекомендуемый",
   "Fetching packages from {{hosts}}": "Скачивание пакетов с {{hosts}}",
   "File": "Файл",

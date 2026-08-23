@@ -763,6 +763,7 @@
   "Failed to save details.": "詳細の保存に失敗しました。",
   "Failed to set concurrency limit.": "同時実行制限の設定に失敗しました。",
   "Failed to set scratch root.": "スクラッチルートの設定に失敗しました。",
+  "Feedback": "フィードバック",
   "Featured": "注目の",
   "Fetching packages from {{hosts}}": "{{hosts}} からパッケージを取得しています",
   "File": "ファイル",

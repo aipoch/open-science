@@ -834,6 +834,7 @@
   "Failed to save details.": "保存详细信息失败。",
   "Failed to set concurrency limit.": "设置并发上限失败。",
   "Failed to set scratch root.": "设置临时目录失败。",
+  "Feedback": "反馈",
   "Featured": "精选",
   "Fetching packages from {{hosts}}": "正在从 {{hosts}} 获取软件包",
   "File": "文件",
