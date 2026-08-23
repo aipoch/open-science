@@ -1441,14 +1441,17 @@ const WorkspaceMessageScrollerImpl = ({
               data-revealed="false"
               tabIndex={-1}
               size="default"
-              className="z-20 min-h-11 gap-1 rounded-full border-transparent bg-bg-000 px-4 text-sm shadow-card transition-[translate,scale,opacity] hover:bg-bg-200 data-[direction=start]:top-3 data-[revealed=false]:pointer-events-none data-[revealed=false]:-translate-y-2 data-[revealed=false]:opacity-0 motion-reduce:transition-none"
+              className="z-20 gap-1 rounded-full border-transparent bg-bg-000 px-3 text-sm shadow-card transition-[translate,scale,opacity] hover:bg-bg-200 data-[direction=start]:top-3 data-[revealed=false]:pointer-events-none data-[revealed=false]:-translate-y-2 data-[revealed=false]:opacity-0 motion-reduce:transition-none [&_svg]:size-3.5"
             >
               <ArrowDownIcon aria-hidden="true" />
               <span>{t('First message')}</span>
             </MessageScrollerButton>
           ) : null}
 
-          <MessageScrollerButton className="z-10 border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
+          <MessageScrollerButton
+            size="icon-lg"
+            className="z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
+          />
           <div
             data-testid="message-completion-live-region"
             aria-live="polite"

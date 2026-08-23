@@ -159,11 +159,14 @@ vi.mock('@/components/ui/message-scroller', () => {
   const Button = forwardRef<
     HTMLButtonElement,
     PropsWithChildren<
-      React.ButtonHTMLAttributes<HTMLButtonElement> & { direction?: 'start' | 'end' }
+      React.ButtonHTMLAttributes<HTMLButtonElement> & {
+        direction?: 'start' | 'end'
+        size?: string
+      }
     >
-  >(function MockMessageScrollerButton({ children, direction = 'end', ...props }, ref) {
+  >(function MockMessageScrollerButton({ children, direction = 'end', size, ...props }, ref) {
     return (
-      <button ref={ref} type="button" data-direction={direction} {...props}>
+      <button ref={ref} type="button" data-direction={direction} data-size={size} {...props}>
         {children ?? `Scroll to ${direction}`}
       </button>
     )
@@ -2985,7 +2988,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(firstMessageButton?.getAttribute('aria-hidden')).toBe('true')
     expect(firstMessageButton?.getAttribute('tabindex')).toBe('-1')
     expect(firstMessageButton?.classList.contains('gap-1')).toBe(true)
+    expect(firstMessageButton?.classList.contains('px-3')).toBe(true)
+    expect(firstMessageButton?.classList.contains('min-h-11')).toBe(false)
     expect(lastMessageButton).not.toBeNull()
+    expect(lastMessageButton?.getAttribute('data-size')).toBe('icon-lg')
+    expect(lastMessageButton?.classList.contains('rounded-full')).toBe(true)
     for (const button of [firstMessageButton, lastMessageButton]) {
       expect(button?.classList.contains('border-transparent')).toBe(true)
       expect(button?.classList.contains('shadow-card')).toBe(true)
