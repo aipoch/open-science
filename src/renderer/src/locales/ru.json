@@ -1482,6 +1482,7 @@
   "Python": "Python",
   "Python kernel · shared with the agent": "Python ядро · передано агенту",
   "Python · view only; this kernel's namespace no longer exists": "Python · только просмотр — пространство имён этого ядра больше не существует",
+  "{{kernel}} · view only; the agent must activate this kernel first": "{{kernel}} · только просмотр — Агент должен сначала активировать это ядро",
   "R kernel · shared with the agent": "Ядро R · совместно используется с агентом",
   "R · view only; this kernel's namespace no longer exists": "R · только просмотр — пространство имён этого ядра больше не существует",
   "{{environment}} · history only; new code runs in {{activeEnvironment}}": "{{environment}} · только история; новый код выполняется в {{activeEnvironment}}",

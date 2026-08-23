@@ -1445,6 +1445,7 @@
   "Python": "Python",
   "Python kernel · shared with the agent": "Python 커널 · 에이전트와 공유됨",
   "Python · view only; this kernel's namespace no longer exists": "Python · 보기 전용 — 이 커널의 네임스페이스가 더 이상 존재하지 않습니다",
+  "{{kernel}} · view only; the agent must activate this kernel first": "{{kernel}} · 보기 전용 — 에이전트가 먼저 이 커널을 활성화해야 합니다",
   "R kernel · shared with the agent": "R 커널 · 에이전트와 공유됨",
   "R · view only; this kernel's namespace no longer exists": "R · 보기 전용 — 이 커널의 네임스페이스가 더 이상 존재하지 않습니다",
   "{{environment}} · history only; new code runs in {{activeEnvironment}}": "{{environment}} · 기록 전용; 새 코드는 {{activeEnvironment}}에서 실행됩니다",

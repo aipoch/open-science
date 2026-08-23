@@ -1487,6 +1487,7 @@
   "Python": "Python",
   "Python kernel · shared with the agent": "Noyau Python · partagé avec l'agent",
   "Python · view only; this kernel's namespace no longer exists": "Python · lecture seule; l’espace de noms de ce noyau n’existe plus",
+  "{{kernel}} · view only; the agent must activate this kernel first": "{{kernel}} · lecture seule; l’Agent doit d’abord activer ce noyau",
   "R kernel · shared with the agent": "Noyau R · partagé avec l'agent",
   "R · view only; this kernel's namespace no longer exists": "R · lecture seule; l’espace de noms de ce noyau n’existe plus",
   "{{environment}} · history only; new code runs in {{activeEnvironment}}": "{{environment}} · historique uniquement; le nouveau code s’exécute dans {{activeEnvironment}}",

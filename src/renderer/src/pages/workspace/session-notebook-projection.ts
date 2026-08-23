@@ -46,6 +46,22 @@ const projectNotebookRunsForFrame = (
 const notebookFrameFilterForExport = (filter: NotebookFrameFilterValue): string =>
   filter.slice('frame:'.length)
 
+// Pending Sessions keep their provisional Conversation Graph IDs when the provider later binds the
+// final Session ID. Renderer-originated terminal runs use the final Session's canonical root ID, so
+// fold that alias back into the graph root before building or applying the Agent filter.
+const normalizeNotebookRootFrameRuns = (
+  runs: readonly NotebookRunRecord[],
+  session: ChatSession
+): NotebookRunRecord[] => {
+  const rootFrameId = session.conversationGraph?.rootFrameId
+  const canonicalRootFrameId = `root-frame-${session.id}`
+  if (!rootFrameId || rootFrameId === canonicalRootFrameId) return [...runs]
+
+  return runs.map((run) =>
+    run.agentFrameId === canonicalRootFrameId ? { ...run, agentFrameId: rootFrameId } : run
+  )
+}
+
 // Takes `t` because the root frame's label is catalog copy while every delegate label is the user's
 // own name for its Subagent, which interpolates unchanged.
 const notebookFrameLabels = (session: ChatSession, t: TFunction): Record<string, string> => {
@@ -64,6 +80,7 @@ export {
   createNotebookFrameFilterOptions,
   notebookFrameFilterForExport,
   notebookFrameLabels,
+  normalizeNotebookRootFrameRuns,
   projectNotebookRunsForFrame
 }
 export type { NotebookFrameFilterOption, NotebookFrameFilterValue }

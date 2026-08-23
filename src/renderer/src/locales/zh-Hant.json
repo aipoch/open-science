@@ -1502,6 +1502,7 @@
   "Python": "Python",
   "Python kernel · shared with the agent": "Python 核心 · 與智能體共用",
   "Python · view only; this kernel's namespace no longer exists": "Python · 僅供檢視；此核心的命名空間已不存在",
+  "{{kernel}} · view only; the agent must activate this kernel first": "{{kernel}} · 僅供檢視；智能體必須先啟用此核心",
   "R kernel · shared with the agent": "R 核心 · 與智能體共用",
   "R · view only; this kernel's namespace no longer exists": "R · 僅供檢視；此核心的命名空間已不存在",
   "{{environment}} · history only; new code runs in {{activeEnvironment}}": "{{environment}} · 僅供檢視歷史記錄；新程式碼將在 {{activeEnvironment}} 中執行",

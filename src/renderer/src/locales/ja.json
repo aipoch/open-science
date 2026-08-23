@@ -1434,6 +1434,7 @@
   "Python": "Python",
   "Python kernel · shared with the agent": "Python カーネル · エージェントと共有",
   "Python · view only; this kernel's namespace no longer exists": "Python · 表示専用 — このカーネルの名前空間はもう存在しません",
+  "{{kernel}} · view only; the agent must activate this kernel first": "{{kernel}} · 表示専用 — エージェントが先にこのカーネルを有効化する必要があります",
   "R kernel · shared with the agent": "R カーネル · エージェントと共有",
   "R · view only; this kernel's namespace no longer exists": "R · 表示専用 — このカーネルの名前空間はもう存在しません",
   "{{environment}} · history only; new code runs in {{activeEnvironment}}": "{{environment}} · 履歴のみ。新しいコードは {{activeEnvironment}} で実行されます",
