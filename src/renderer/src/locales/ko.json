@@ -1442,6 +1442,7 @@
   "Publish skill": "스킬 게시",
   "Python": "Python",
   "Python kernel · shared with the agent": "Python 커널 · 에이전트와 공유됨",
+  "Python · view only; this kernel's namespace no longer exists": "Python · 보기 전용 — 이 커널의 네임스페이스가 더 이상 존재하지 않습니다",
   "Python package index (pip)": "Python 패키지 인덱스(pip)",
   "Python/R environments are rebuilt at the new location on first use (not moved).": "Python/R 환경은 처음 사용 시 새 위치에 다시 작성됩니다(이동되지 않음).",
   "Question from {{name}}": "{{name}}의 질문",

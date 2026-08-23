@@ -285,7 +285,8 @@ describe('NotebookPreview per-kernel tabs', () => {
   const mountWithRuns = async (
     runs: NotebookRunRecord[],
     environments: NotebookEnvironmentStatus[] = [],
-    runStaleness: NotebookSessionState['runStaleness'] = {}
+    runStaleness: NotebookSessionState['runStaleness'] = {},
+    kernelStatus: NotebookSessionState['kernelStatus'] = 'idle'
   ): Promise<void> => {
     const readyStatus: ProvisionStatus = {
       pythonReady: true,
@@ -308,9 +309,10 @@ describe('NotebookPreview per-kernel tabs', () => {
             notebookSessionRoot: '/tmp/proj/.notebook',
             dataRoot: '/tmp/proj/.notebook/data',
             runtimeRoot: '/tmp/proj/.notebook/runtime',
-            kernelStatus: 'idle',
+            kernelStatus,
             runJsonPath: '/tmp/proj/.notebook/run.json',
             cells: [],
+            runCount: runs.length,
             runs,
             recentRuns: runs,
             runStaleness,
@@ -357,11 +359,32 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(divider?.getAttribute('role')).toBe('separator')
     expect(divider?.getAttribute('aria-label')).toBe('Resize notebook and terminal')
     expect(divider?.getAttribute('aria-orientation')).toBe('horizontal')
-    expect(
-      container.querySelector('[data-testid="notebook-terminal-header"]')?.textContent
-    ).toContain('Python kernel')
+    const terminalHeader = container.querySelector('[data-testid="notebook-terminal-header"]')
+    expect(terminalHeader?.textContent).toContain('Python kernel')
+    expect(divider?.contains(terminalHeader)).toBe(true)
+    expect(divider?.className).toContain('before:opacity-60')
     expect(container.querySelector('[data-slot="message-scroller-button"]')).toBeNull()
     expect(container.querySelector('[aria-label="Scroll to end"]')).toBeNull()
+  })
+
+  it('renders terminated notebook history as view-only without terminal controls', async () => {
+    await mountWithRuns(
+      [
+        makeRun({ runId: 'p1', kernelKind: 'python', script: 'print(1)' }),
+        makeRun({ runId: 'p2', kernelKind: 'python', script: 'print(2)' })
+      ],
+      [],
+      {},
+      'terminated'
+    )
+
+    expect(container.querySelectorAll('[data-testid="notebook-cell"]')).toHaveLength(2)
+    expect(container.querySelector('[data-testid="kernel-terminal"]')).toBeNull()
+    expect(container.querySelector('[data-testid="kernel-terminal-input"]')).toBeNull()
+    expect(container.querySelector('[data-separator]')).toBeNull()
+    expect(container.querySelector('[data-testid="notebook-read-only-status"]')?.textContent).toBe(
+      "Python · view only; this kernel's namespace no longer exists2 cells"
+    )
   })
 
   it('describes later variable changes without implying an execution error', async () => {

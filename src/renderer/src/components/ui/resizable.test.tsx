@@ -42,4 +42,14 @@ describe('ResizableHandle', () => {
       ])
     )
   })
+
+  it('renders optional separator content', () => {
+    const markup = renderToStaticMarkup(
+      <ResizableHandle aria-label="Resize stacked panels">
+        <span>Notebook terminal</span>
+      </ResizableHandle>
+    )
+
+    expect(markup).toContain('<span>Notebook terminal</span>')
+  })
 })

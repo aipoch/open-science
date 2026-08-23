@@ -1479,6 +1479,7 @@
   "Publish skill": "Опубликовать навык",
   "Python": "Python",
   "Python kernel · shared with the agent": "Python ядро · передано агенту",
+  "Python · view only; this kernel's namespace no longer exists": "Python · только просмотр — пространство имён этого ядра больше не существует",
   "Python package index (pip)": "Python индекс пакета (pip)",
   "Python/R environments are rebuilt at the new location on first use (not moved).": "Python/R среды пересоздаются на новом месте при первом использовании (не перемещаются).",
   "Question from {{name}}": "Вопрос от {{name}}",

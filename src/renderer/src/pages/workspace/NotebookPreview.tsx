@@ -530,6 +530,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       return (entry.environment ?? 'default-r') === activeEnvName
     })?.restartRecommended ??
       false)
+  const isNamespaceLost = notebookState?.kernelStatus === 'terminated'
+  const cellCount = notebookState?.runCount ?? runs.length
 
   // Restarts the shared interpreter, replacing state with the fresh snapshot so the banner clears.
   const handleRestart = async (): Promise<void> => {
@@ -544,6 +546,32 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       setIsRestarting(false)
     }
   }
+  const notebookCells = (
+    <div
+      ref={cellsViewportRef}
+      className="h-full min-h-0 overflow-y-auto overscroll-contain"
+      data-testid="notebook-cells"
+    >
+      <div className="divide-y divide-border-100">
+        {visibleRuns.map((run, index) => {
+          const staleness = visibleStalenessForRun(run)
+          return (
+            <NotebookRunCell
+              key={run.runId}
+              run={run}
+              index={index}
+              staleness={staleness}
+              causedByRunIndex={
+                staleness?.state === 'stale'
+                  ? visibleRunIndexById.get(staleness.causedByRunId)
+                  : undefined
+              }
+            />
+          )
+        })}
+      </div>
+    </div>
+  )
 
   return (
     <section
@@ -685,75 +713,74 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </div>
       ) : null}
 
-      <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 flex-col">
-        <ResizablePanel
-          id="notebook-cells-panel"
-          defaultSize="80%"
-          minSize="35%"
-          className="min-h-0 overflow-hidden"
-        >
-          <div
-            ref={cellsViewportRef}
-            className="h-full min-h-0 overflow-y-auto overscroll-contain"
-            data-testid="notebook-cells"
+      {isNamespaceLost ? (
+        <div className="min-h-0 flex-1 overflow-hidden">{notebookCells}</div>
+      ) : (
+        <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 flex-col">
+          <ResizablePanel
+            id="notebook-cells-panel"
+            defaultSize="80%"
+            minSize="35%"
+            className="min-h-0 overflow-hidden"
           >
-            <div className="divide-y divide-border-100">
-              {visibleRuns.map((run, index) => {
-                const staleness = visibleStalenessForRun(run)
-                return (
-                  <NotebookRunCell
-                    key={run.runId}
-                    run={run}
-                    index={index}
-                    staleness={staleness}
-                    causedByRunIndex={
-                      staleness?.state === 'stale'
-                        ? visibleRunIndexById.get(staleness.causedByRunId)
-                        : undefined
-                    }
-                  />
-                )
-              })}
-            </div>
-          </div>
-        </ResizablePanel>
+            {notebookCells}
+          </ResizablePanel>
 
-        <ResizableHandle
-          aria-label={t('Resize notebook and terminal')}
-          className="shrink-0 bg-border-200"
-        />
-
-        <ResizablePanel
-          id="notebook-terminal-panel"
-          defaultSize="20%"
-          minSize="15%"
-          className="min-h-0 overflow-hidden"
-        >
-          <div className="flex h-full min-h-0 flex-col bg-bg-200" data-testid="kernel-terminal">
+          <ResizableHandle
+            aria-label={t('Resize notebook and terminal')}
+            className="z-10 shrink-0 border-y border-border-200 bg-bg-200/70 aria-[orientation=horizontal]:h-7 aria-[orientation=horizontal]:before:h-1 aria-[orientation=horizontal]:before:w-10 before:opacity-60 hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100"
+          >
             <div
-              className="flex shrink-0 items-center justify-between gap-2 border-b border-border-200 bg-bg-200/70 px-3 py-1 text-[11px] text-text-300"
+              className="pointer-events-none absolute inset-0 flex items-center justify-between gap-2 px-3 text-[11px] text-text-300"
               data-testid="notebook-terminal-header"
             >
               <span>{t('Python kernel · shared with the agent')}</span>
               <span>{isNotebookBusy ? t('running') : t('idle')}</span>
             </div>
-            {actionError ? (
-              <div className="border-b border-border-100/60 px-3 py-2 font-mono text-xs text-danger-000">
-                {actionError}
-              </div>
-            ) : null}
-            <TerminalScrollback runs={projectedRuns} viewportRef={terminalViewportRef} />
-            <TerminalInput
-              code={terminalCode}
-              disabled={isTerminalLocked}
-              onChange={setTerminalCode}
-              onSubmit={() => {
-                void submitTerminalCode()
-              }}
-            />
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+          </ResizableHandle>
+
+          <ResizablePanel
+            id="notebook-terminal-panel"
+            defaultSize="20%"
+            minSize="15%"
+            className="min-h-0 overflow-hidden"
+          >
+            <div className="flex h-full min-h-0 flex-col bg-bg-000" data-testid="kernel-terminal">
+              {actionError ? (
+                <div className="border-b border-border-100/60 px-3 py-2 font-mono text-xs text-danger-000">
+                  {actionError}
+                </div>
+              ) : null}
+              <TerminalScrollback runs={projectedRuns} viewportRef={terminalViewportRef} />
+              <TerminalInput
+                code={terminalCode}
+                disabled={isTerminalLocked}
+                onChange={setTerminalCode}
+                onSubmit={() => {
+                  void submitTerminalCode()
+                }}
+              />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      )}
+
+      {isNamespaceLost ? (
+        <footer
+          className="flex h-7 shrink-0 items-center justify-between gap-3 border-t border-border-200 bg-bg-000 px-2 text-[11px] text-text-300"
+          data-testid="notebook-read-only-status"
+        >
+          <span className="min-w-0 truncate">
+            {t("Python · view only; this kernel's namespace no longer exists")}
+          </span>
+          <span className="shrink-0 tabular-nums">
+            {t('{{count}} cells', {
+              defaultValue_one: '{{count}} cell',
+              count: cellCount
+            })}
+          </span>
+        </footer>
+      ) : null}
     </section>
   )
 }

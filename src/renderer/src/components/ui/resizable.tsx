@@ -27,6 +27,7 @@ function ResizablePanel({
 function ResizableHandle({
   withHandle,
   className,
+  children,
   ...props
 }: React.ComponentProps<typeof Separator> & {
   withHandle?: boolean
@@ -44,6 +45,7 @@ function ResizableHandle({
       )}
       {...props}
     >
+      {children}
       {withHandle ? (
         <div className="z-10 flex h-6 w-4 items-center justify-center rounded-sm border border-border bg-card">
           <GripVertical className="size-3 text-muted-foreground" aria-hidden="true" />
