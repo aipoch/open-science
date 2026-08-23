@@ -246,10 +246,14 @@ const restorePreviewConflict = (projectId: string, snapshot: PreviewStateSnapsho
     .getState()
     .sessions.filter((session) => session.projectId === projectId)
   suppressedConflictRestoreSaves.add(projectId)
-  store.activateProject(
-    projectId,
-    snapshot ? toRestoredSlice(snapshot.state, projectSessions) : { items: [] }
-  )
+  try {
+    store.activateProject(
+      projectId,
+      snapshot ? toRestoredSlice(snapshot.state, projectSessions) : { items: [] }
+    )
+  } finally {
+    suppressedConflictRestoreSaves.delete(projectId)
+  }
 }
 
 // WorkspacePage can unmount while an IPC save is still in flight. Keep one renderer-lifetime scheduler
@@ -327,7 +331,7 @@ export const usePreviewPersistence = (
   useEffect(() => {
     const unsubscribe = usePreviewWorkbenchStore.subscribe((state) => {
       if (!state.activeProjectId) return
-      if (suppressedConflictRestoreSaves.delete(state.activeProjectId)) return
+      if (suppressedConflictRestoreSaves.has(state.activeProjectId)) return
       schedulePreviewSave({
         projectId: state.activeProjectId,
         state: toPersistedPreviewState(state)
