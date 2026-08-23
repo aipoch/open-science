@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   PREVIEW_STATE_VERSION,
   type PersistedPreviewState,
-  type PreviewStateSnapshot
+  type PreviewStateSnapshot,
+  type SavePreviewStateResult
 } from '../../../../shared/preview-state'
 import {
   createInitialPreviewWorkbenchState,
@@ -594,6 +595,66 @@ describe('usePreviewPersistence per-project save/restore', () => {
     await flushPreviewPersistence()
 
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ expectedRevision: 10 }))
+  })
+
+  it('does not reuse an inactive project cache after its save conflicts', async () => {
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+      await flushPreviewPersistence()
+    })
+    save.mockClear()
+
+    const staleItem = createStoredFileItem()
+    const serverItem = createStoredFileItem({
+      id: 'file:session-2:/workspace/project/results.csv',
+      sessionId: 'session-2',
+      title: 'results.csv',
+      path: '/workspace/project/results.csv',
+      format: 'csv',
+      name: 'results.csv'
+    })
+    const serverState = toPersistedPreviewState({
+      ...usePreviewWorkbenchStore.getState(),
+      panelState: 'open',
+      activeItemId: serverItem.id,
+      items: [serverItem]
+    })
+    const pendingSave = createDeferred<SavePreviewStateResult>()
+    save.mockReturnValueOnce(pendingSave.promise)
+
+    act(() => {
+      usePreviewWorkbenchStore.setState({
+        panelState: 'open',
+        activeItemId: staleItem.id,
+        items: [staleItem]
+      })
+    })
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-b" />)
+    })
+    expect(usePreviewWorkbenchStore.getState().byProject['project-a']?.items).toEqual([
+      expect.objectContaining({ id: staleItem.id })
+    ])
+
+    await act(async () => {
+      pendingSave.resolve({
+        status: 'conflict',
+        snapshot: { state: serverState, revision: 10 }
+      })
+      await pendingSave.promise
+      await flushPreviewPersistence()
+    })
+
+    load.mockResolvedValueOnce({ state: serverState, revision: 10 })
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeProjectId: 'project-a',
+      activeItemId: serverItem.id,
+      items: [expect.objectContaining({ id: serverItem.id })]
+    })
   })
 
   it('keeps the latest state durable when an earlier save completes last', async () => {
