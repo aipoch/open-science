@@ -13,9 +13,57 @@ import {
   resolveNotebookRunFigures,
   type NotebookRunFigure
 } from './notebook-run-figures'
+import { useNearViewport } from './previews/useNearViewport'
 
 type NotebookToolFigureOutputsProps = {
   run: NotebookRunRecord
+}
+
+type NotebookToolFigureCardProps = {
+  figure: NotebookRunFigure
+  filename: string
+  onOpen: (figure: NotebookRunFigure) => void
+}
+
+const NotebookToolFigureCard = ({
+  figure,
+  filename,
+  onOpen
+}: NotebookToolFigureCardProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  // Notebook runs already retain bounded capture payloads. Keep those large base64 strings out of
+  // the DOM and image decoder until the individual card enters the transcript's viewport overscan.
+  const [setCardElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
+
+  return (
+    <button
+      ref={setCardElement}
+      type="button"
+      data-testid="notebook-tool-figure-button"
+      className="group relative block w-full cursor-zoom-in overflow-hidden rounded-xl border border-border-200 bg-bg-000 text-left shadow-sm transition-[border-color,transform] duration-150 ease-out hover:border-border-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none motion-reduce:active:translate-y-0"
+      aria-label={t('Preview {{name}}', { name: filename })}
+      onClick={() => onOpen(figure)}
+    >
+      <span className="flex min-h-36 w-full items-center justify-center p-3 sm:p-4">
+        {isNearViewport ? (
+          <img
+            data-testid="notebook-tool-figure-image"
+            src={`data:${figure.mimeType};base64,${figure.payload}`}
+            alt={filename}
+            className="block max-h-[32rem] max-w-full object-contain"
+            decoding="async"
+            draggable={false}
+          />
+        ) : (
+          <span className="h-32 w-full rounded-lg bg-bg-100" aria-hidden="true" />
+        )}
+      </span>
+      <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-3 bg-gradient-to-t from-black/75 via-black/35 to-transparent px-4 pb-3 pt-16 text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">
+        <span className="min-w-0 flex-1 truncate font-mono text-[12px] leading-5">{filename}</span>
+        <ZoomIn className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+      </span>
+    </button>
+  )
 }
 
 // Transcript-only figure treatment. It deliberately sits beside the tool row rather than inside
@@ -43,32 +91,12 @@ const NotebookToolFigureOutputs = ({
           const filename = formatNotebookFigureFilename(figure, t)
 
           return (
-            <button
+            <NotebookToolFigureCard
               key={figure.key}
-              type="button"
-              data-testid="notebook-tool-figure-button"
-              className="group relative block w-full cursor-zoom-in overflow-hidden rounded-xl border border-border-200 bg-bg-000 text-left shadow-sm transition-[border-color,transform] duration-150 ease-out hover:border-border-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none motion-reduce:active:translate-y-0"
-              aria-label={t('Preview {{name}}', { name: filename })}
-              onClick={() => setSelectedFigure(figure)}
-            >
-              <span className="flex min-h-36 w-full items-center justify-center p-3 sm:p-4">
-                <img
-                  data-testid="notebook-tool-figure-image"
-                  src={`data:${figure.mimeType};base64,${figure.payload}`}
-                  alt={filename}
-                  className="block max-h-[32rem] max-w-full object-contain"
-                  loading="lazy"
-                  decoding="async"
-                  draggable={false}
-                />
-              </span>
-              <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-3 bg-gradient-to-t from-black/75 via-black/35 to-transparent px-4 pb-3 pt-16 text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">
-                <span className="min-w-0 flex-1 truncate font-mono text-[12px] leading-5">
-                  {filename}
-                </span>
-                <ZoomIn className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-              </span>
-            </button>
+              figure={figure}
+              filename={filename}
+              onOpen={setSelectedFigure}
+            />
           )
         })}
       </div>

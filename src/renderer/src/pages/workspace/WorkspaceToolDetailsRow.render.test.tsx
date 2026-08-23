@@ -61,6 +61,7 @@ describe('WorkspaceToolDetailsRow', () => {
       root.unmount()
     })
     container.remove()
+    vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
 
@@ -301,6 +302,71 @@ describe('WorkspaceToolDetailsRow', () => {
     })
 
     expect(document.body.querySelector('[data-testid="notebook-figure-preview-dialog"]')).toBeNull()
+  })
+
+  it('mounts a figure data URL only while its card is near the viewport', async () => {
+    const observed = new Map<Element, IntersectionObserverCallback>()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        private readonly callback: IntersectionObserverCallback
+
+        constructor(callback: IntersectionObserverCallback) {
+          this.callback = callback
+        }
+
+        observe = (element: Element): void => {
+          observed.set(element, this.callback)
+        }
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { code: 'plot(1:3)', kernelKind: 'r' },
+      rawOutput: { runId: 'notebook-run-1', status: 'completed' }
+    })
+    const details = buildToolActivityDetails(activity)
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          notebookRun={createNotebookRun()}
+          isExpanded={false}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    const figureButton = container.querySelector(
+      '[data-testid="notebook-tool-figure-button"]'
+    ) as HTMLButtonElement
+    const intersectionCallback = observed.get(figureButton)
+    expect(intersectionCallback).toBeDefined()
+    expect(figureButton.querySelector('img')).toBeNull()
+    expect(figureButton.innerHTML).not.toContain('QUJD')
+
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+    })
+    expect(figureButton.querySelector('img')?.getAttribute('src')).toBe(
+      'data:image/png;base64,QUJD'
+    )
+
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: false } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+    })
+    expect(figureButton.querySelector('img')).toBeNull()
   })
 
   it('shows done beside the figure count when a completed run has no text output', async () => {
