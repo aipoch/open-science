@@ -1270,9 +1270,65 @@ describe('SpecialistPackageService', () => {
     expect(changedWithoutBump.diagnostics.map((item) => item.code)).toContain(
       'specialist.overwrite-content-without-version-bump'
     )
+    expect(changedWithoutBump.installable).toBe(false)
+    await expect(
+      initial.install({ candidateToken: changedWithoutBump.candidateToken, confirmOverwrite: true })
+    ).resolves.toMatchObject({ status: 'failed', code: 'candidate-not-installable' })
     const downgrade = await initial.preview(validZip({ version: '1.2.0' }))
     expect(downgrade.diagnostics.map((item) => item.code)).toContain(
       'specialist.overwrite-downgrade'
+    )
+  })
+
+  it('protects Marketplace packages while preserving local presentation across updates', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog
+    })
+    const initial = await service.preview(validZip(), undefined, { origin: 'marketplace' })
+    await expect(
+      service.install({ candidateToken: initial.candidateToken }, undefined, {
+        activateAfterInstall: true,
+        origin: 'marketplace'
+      })
+    ).resolves.toMatchObject({
+      status: 'installed',
+      specialist: { origin: 'marketplace', enabled: true }
+    })
+    await new ProfileService(repository).update({
+      id: 'research-synth',
+      revision: 1,
+      iconKey: 'dna',
+      colorKey: 'blue'
+    })
+
+    const update = await service.preview(
+      validZip({ version: '1.4.0', description: 'Publisher update.' }),
+      undefined,
+      { origin: 'marketplace' }
+    )
+    expect(update.installable).toBe(true)
+    await service.install(
+      { candidateToken: update.candidateToken, confirmOverwrite: true },
+      undefined,
+      { activateAfterInstall: true, origin: 'marketplace' }
+    )
+    await expect(new ProfileService(repository).getById('research-synth')).resolves.toMatchObject({
+      origin: 'marketplace',
+      packageVersion: '1.4.0',
+      description: 'Publisher update.',
+      iconKey: 'dna',
+      colorKey: 'blue'
+    })
+
+    const manualOverwrite = await service.preview(
+      validZip({ version: '1.5.0', description: 'Manual replacement.' })
+    )
+    expect(manualOverwrite.installable).toBe(false)
+    expect(manualOverwrite.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-marketplace-managed' })
     )
   })
 

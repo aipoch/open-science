@@ -356,6 +356,16 @@ export class MarketplaceRepository {
     }))
   }
 
+  async removeInstallationsForSpecialist(specialistId: string): Promise<void> {
+    await this.mutate((document) => ({
+      ...document,
+      installations: document.installations.filter((item) => item.specialistId !== specialistId),
+      pendingInstallations: document.pendingInstallations.filter(
+        (item) => item.provenance.specialistId !== specialistId
+      )
+    }))
+  }
+
   async beginInstallation(pending: MarketplacePendingInstallation): Promise<void> {
     await this.mutate((document) => ({
       ...document,

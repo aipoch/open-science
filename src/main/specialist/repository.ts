@@ -137,7 +137,12 @@ const storedSpecialistWouldLoseData = (value: Record<string, unknown>): boolean 
   }
   if (value.setupPending !== undefined && typeof value.setupPending !== 'boolean') return true
   if (value.revision !== undefined && !isStoredSpecialistRevision(value.revision)) return true
-  if (value.origin !== undefined && value.origin !== 'local' && value.origin !== 'imported') {
+  if (
+    value.origin !== undefined &&
+    value.origin !== 'local' &&
+    value.origin !== 'imported' &&
+    value.origin !== 'marketplace'
+  ) {
     return true
   }
   if (value.ownedSkillIds !== undefined && !isExactStringArray(value.ownedSkillIds)) return true
@@ -276,11 +281,13 @@ export const sanitizeStoredSpecialist = (v: unknown): StoredSpecialist | undefin
     selectedCapabilities: sanitizeSelectedConfig(v.selectedCapabilities),
     revision,
     packageVersion: asString(v.packageVersion) ?? '0.1.0',
-    origin: (v.origin === 'imported' ? 'imported' : 'local') satisfies SpecialistOrigin,
+    origin: (v.origin === 'imported' || v.origin === 'marketplace'
+      ? v.origin
+      : 'local') satisfies SpecialistOrigin,
     ownedSkillIds: asStringArray(v.ownedSkillIds)
   }
   const importBaseline = sanitizeImportBaseline(v.importBaseline)
-  if (specialist.origin === 'imported' && importBaseline) specialist.importBaseline = importBaseline
+  if (specialist.origin !== 'local' && importBaseline) specialist.importBaseline = importBaseline
   const iconKey = asString(v.iconKey)
   const colorKey = asString(v.colorKey)
   if (iconKey) specialist.iconKey = iconKey

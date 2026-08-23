@@ -90,6 +90,37 @@ describe('MarketplaceRepository', () => {
     )
   })
 
+  it('removes completed and pending provenance when a Specialist is uninstalled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'marketplace-uninstall-'))
+    const repository = new MarketplaceRepository(root)
+    const installation = {
+      sourceId: 'official',
+      specialistId: 'managed-specialist',
+      publisher: 'Open Science',
+      version: '1.0.0',
+      releasePath: 'releases/managed-specialist/1.0.0.json',
+      releaseDigest: 'a'.repeat(64),
+      artifactDigest: 'b'.repeat(64),
+      installedArchiveDigest: 'c'.repeat(64),
+      upstreamCommit: 'd'.repeat(40),
+      selectedSkillIds: [],
+      selectedConnectorIds: [],
+      installedAt: '2026-08-23T00:00:00.000Z'
+    }
+    await repository.recordInstallation(installation)
+    await repository.beginInstallation({
+      provenance: { ...installation, sourceId: 'secondary' },
+      newlyDisabledSkillIds: []
+    })
+
+    await repository.removeInstallationsForSpecialist('managed-specialist')
+
+    await expect(repository.getAll()).resolves.toMatchObject({
+      installations: [],
+      pendingInstallations: []
+    })
+  })
+
   it('persists replaceable verified metadata caches and removes them with a user source', async () => {
     const root = await mkdtemp(join(tmpdir(), 'marketplace-cache-'))
     const repository = new MarketplaceRepository(root)

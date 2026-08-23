@@ -71,7 +71,11 @@ describe('specialist session IPC', () => {
       list: vi.fn(),
       installedSpecialistProvenance: vi
         .fn()
-        .mockResolvedValue(new Map([[profile.id, { publisher: 'Open Science' }]])),
+        .mockResolvedValue(
+          new Map([
+            [profile.id, { sourceId: 'official', publisher: 'Open Science', version: '1.0.0' }]
+          ])
+        ),
       inspectGitHubSource: vi.fn(),
       addSource: vi.fn(),
       removeSource: vi.fn(),
@@ -96,7 +100,11 @@ describe('specialist session IPC', () => {
         {
           kind: 'custom',
           ...importedProfile,
-          marketplaceProvenance: { publisher: 'Open Science' }
+          marketplaceProvenance: {
+            sourceId: 'official',
+            publisher: 'Open Science',
+            version: '1.0.0'
+          }
         },
         { kind: 'reviewer', id: 'reviewer' }
       ],
@@ -105,6 +113,7 @@ describe('specialist session IPC', () => {
     expect(marketplace.installedSpecialistProvenance).toHaveBeenCalledWith([
       {
         id: importedProfile.id,
+        revision: importedProfile.revision,
         origin: 'imported',
         archiveDigest: importedProfile.importBaseline?.archiveDigest
       }

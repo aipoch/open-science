@@ -7,7 +7,12 @@ import type { SpecialistProfileView } from '../../../shared/specialist'
 import { emptyFullAccessConfig } from '../../../shared/specialist'
 import { createLogger } from '../../logger'
 import { SpecialistRepository } from '../repository'
-import { SPECIALISTS_FILE_VERSION, type StoredSpecialist, type StoredSpecialists } from '../types'
+import {
+  SPECIALISTS_FILE_VERSION,
+  type SpecialistOrigin,
+  type StoredSpecialist,
+  type StoredSpecialists
+} from '../types'
 import { specialistContentModifiedSinceImport, specialistPayloadContentHash } from './validator'
 import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT, type SpecialistPackageSkillPort } from './skill-port'
 
@@ -129,7 +134,7 @@ export class SpecialistPackageTransaction {
     archiveDigest: string,
     overwrite?: { expectedRevision: number },
     assertApprovedImpact?: (document: Readonly<StoredSpecialists>) => Promise<void>,
-    options?: { activateAfterInstall?: boolean }
+    options?: { activateAfterInstall?: boolean; origin?: SpecialistOrigin }
   ): Promise<SpecialistProfileView> {
     const run = this.queue.then(async () => {
       await this.recover()
@@ -160,7 +165,7 @@ export class SpecialistPackageTransaction {
         },
         revision: existing ? existing.revision + 1 : 1,
         packageVersion: plan.packageVersion,
-        origin: 'imported',
+        origin: options?.origin ?? 'imported',
         ownedSkillIds: [
           ...new Set([
             ...(existing?.ownedSkillIds ?? []),
@@ -182,6 +187,9 @@ export class SpecialistPackageTransaction {
           packageVersion: plan.packageVersion
         }
       }
+      if (options?.origin === 'marketplace' && existing?.iconKey) stored.iconKey = existing.iconKey
+      if (options?.origin === 'marketplace' && existing?.colorKey)
+        stored.colorKey = existing.colorKey
       stored.importBaseline!.contentDigest = specialistPayloadContentHash(stored)
       const after: StoredSpecialists = {
         version: SPECIALISTS_FILE_VERSION,

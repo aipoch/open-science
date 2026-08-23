@@ -1017,6 +1017,7 @@ const createApplicationModules = async (
     protectedSpecialistNames: ['Reviewer']
   })
   const profileService = new ProfileService(specialistRepository, builtinRegistry)
+  const marketplaceRepository = new MarketplaceRepository(resolveStorageRoot())
   await profileService.ensureBuiltinCatalogReady()
   const tagService = new TagService(
     new TagRepository(() => getProjectDbClient(configRoot)),
@@ -1096,6 +1097,8 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
+    onSpecialistDeleted: (specialistId) =>
+      marketplaceRepository.removeInstallationsForSpecialist(specialistId),
     onSkillsDeleted: async (skillIds) => {
       if (skillIds.length > 0) {
         // User Skills are default-on. Remove disabled-ID tombstones so reinstalling the same
@@ -1117,7 +1120,7 @@ const createApplicationModules = async (
     }
   })
   const marketplaceService = new MarketplaceService({
-    repository: new MarketplaceRepository(resolveStorageRoot()),
+    repository: marketplaceRepository,
     packages: specialistPackageService,
     fetch: netFetchStandard,
     officialSource: OFFICIAL_MARKETPLACE_SOURCE,
@@ -1126,11 +1129,15 @@ const createApplicationModules = async (
     getInstalledSpecialists: async () =>
       (await profileService.list()).map((profile) => ({
         id: profile.id,
+        revision: profile.revision,
         ...(profile.origin ? { origin: profile.origin } : {}),
         ...(profile.importBaseline?.archiveDigest
           ? { archiveDigest: profile.importBaseline.archiveDigest }
           : {})
       })),
+    markMarketplaceManaged: async (id, expectedRevision) => {
+      await profileService.markMarketplaceManaged(id, expectedRevision)
+    },
     setSkillsMainEnabled: async (ids, enabled) => {
       await settingsRepository.setSkillsEnabled([...new Set(ids)], enabled)
       // Startup recovery runs before the ACP runtime exists, so its initial catalog reads the

@@ -349,6 +349,47 @@ describe('ProfileService.setEnabled', () => {
 })
 
 describe('ProfileService.update', () => {
+  it('allows only appearance edits for Marketplace-managed Specialists', async () => {
+    const repo = new SpecialistRepository(tmpDir)
+    await repo.insert({
+      id: 'managed-specialist',
+      name: 'MANAGED_SPECIALIST',
+      displayName: 'Managed Specialist',
+      description: 'Publisher description',
+      systemPrompt: 'Publisher instructions',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: emptyFullAccessConfig(),
+      selectedCapabilities: emptySelectedConfig(),
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'marketplace',
+      ownedSkillIds: []
+    })
+
+    await expect(
+      service.update({
+        id: 'managed-specialist',
+        revision: 1,
+        iconKey: 'microscope',
+        colorKey: 'teal'
+      })
+    ).resolves.toMatchObject({ iconKey: 'microscope', colorKey: 'teal', revision: 2 })
+    await expect(
+      service.update({
+        id: 'managed-specialist',
+        revision: 2,
+        description: 'Local rewrite'
+      })
+    ).rejects.toMatchObject({ code: 'SPECIALIST_READ_ONLY', targetKind: 'marketplace' })
+    await expect(service.setEnabled('managed-specialist', false)).resolves.toMatchObject({
+      enabled: false
+    })
+    await expect(service.duplicate('managed-specialist')).resolves.toMatchObject({
+      name: 'Managed Specialist Copy'
+    })
+  })
+
   it('atomically completes imported setup with submitted configuration and enablement', async () => {
     const repo = new SpecialistRepository(tmpDir)
     await repo.insert({

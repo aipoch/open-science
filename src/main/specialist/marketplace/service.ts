@@ -82,10 +82,12 @@ type MarketplaceServiceOptions = {
   getInstalledSpecialists: () => Promise<
     readonly {
       id: string
-      origin?: 'local' | 'imported'
+      revision?: number
+      origin?: 'local' | 'imported' | 'marketplace'
       archiveDigest?: string
     }[]
   >
+  markMarketplaceManaged?: (id: string, expectedRevision: number) => Promise<void>
   setSkillsMainEnabled: (ids: readonly string[], enabled: boolean) => Promise<void>
 }
 
@@ -219,7 +221,7 @@ const matchesInstalledProvenance = (
   specialist: InstalledSpecialistIdentity
 ): boolean =>
   specialist.id === provenance.specialistId &&
-  specialist.origin === 'imported' &&
+  (specialist.origin === 'imported' || specialist.origin === 'marketplace') &&
   provenance.installedArchiveDigest !== undefined &&
   specialist.archiveDigest === provenance.installedArchiveDigest
 
@@ -306,7 +308,7 @@ export class MarketplaceService {
       const installed = installedSpecialists.some(
         (specialist) =>
           specialist.id === provenance.specialistId &&
-          specialist.origin === 'imported' &&
+          (specialist.origin === 'imported' || specialist.origin === 'marketplace') &&
           provenance.installedArchiveDigest !== undefined &&
           specialist.archiveDigest === provenance.installedArchiveDigest
       )
@@ -321,6 +323,18 @@ export class MarketplaceService {
         provenance.sourceId,
         provenance.specialistId
       )
+    }
+    for (const specialist of installedSpecialists) {
+      if (
+        specialist.origin === 'imported' &&
+        specialist.revision !== undefined &&
+        this.options.markMarketplaceManaged &&
+        document.installations.some((provenance) =>
+          matchesInstalledProvenance(provenance, specialist)
+        )
+      ) {
+        await this.options.markMarketplaceManaged(specialist.id, specialist.revision)
+      }
     }
   }
 
@@ -402,7 +416,9 @@ export class MarketplaceService {
         continue
       }
       provenanceBySpecialistId.set(provenance.specialistId, {
-        publisher: provenance.publisher
+        sourceId: provenance.sourceId,
+        publisher: provenance.publisher,
+        version: provenance.version
       })
     }
     return provenanceBySpecialistId
@@ -544,7 +560,9 @@ export class MarketplaceService {
       requestedSkillNames,
       requestedConnectors
     )
-    const preview = await this.options.packages.preview(filteredArchive, ownerId)
+    const preview = await this.options.packages.preview(filteredArchive, ownerId, {
+      origin: 'marketplace'
+    })
     try {
       if (
         (preview.summary &&
@@ -647,7 +665,8 @@ export class MarketplaceService {
         await this.options.setSkillsMainEnabled(candidate.newSkillIds, false)
       }
       result = await this.options.packages.install(request, ownerId, {
-        activateAfterInstall: true
+        activateAfterInstall: true,
+        origin: 'marketplace'
       })
     } catch (error) {
       await this.rollbackPendingInstallation(candidate.provenance, newlyDisabled)
@@ -841,7 +860,8 @@ export class MarketplaceService {
     installations: readonly MarketplaceInstallProvenance[],
     installedSpecialists: readonly {
       id: string
-      origin?: 'local' | 'imported'
+      revision?: number
+      origin?: 'local' | 'imported' | 'marketplace'
       archiveDigest?: string
     }[]
   ): MarketplaceSpecialistListing[] {
