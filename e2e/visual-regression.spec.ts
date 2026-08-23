@@ -78,6 +78,9 @@ const expectStableScreenshot = async (
   name: string,
   maxDiffPixelRatio = 0.002
 ): Promise<void> => {
+  // Keep the capture independent of the pointer location left by the previous interaction. In
+  // particular, the conversation edge markers expose hover-only navigation labels.
+  await page.mouse.move(0, 0)
   await page.locator('a[aria-label*="GitHub"]').evaluateAll((elements) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
