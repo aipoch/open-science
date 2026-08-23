@@ -19,6 +19,7 @@ import type { AcpOpenCodeUsageApi } from './backend-generation-owner'
 import type { AcpConnectionCapabilities } from './connection-resource-owner'
 import {
   ACP_STEERING_METHOD,
+  ACP_STEERING_TIMEOUT_MS,
   OPENCODE_HTTP_STEER_TIMEOUT_MS,
   buildAcpSteeringParams,
   buildOpenCodeHttpFollowUpBody,
@@ -59,6 +60,7 @@ type NativeFollowUpWorkflowOptions = Readonly<{
   prepareFollowUp?: (request: AcpSteerFollowUpRequest) => Promise<NativeFollowUpPreparedContent>
   createMessageId?: () => string
   fetchImpl?: typeof fetch
+  followUpTimeoutMs?: number
 }>
 
 const persistableUploads = (
@@ -153,10 +155,23 @@ class AcpNativeFollowUpWorkflow {
     if (route.transport === 'acp-steering') {
       let result: unknown
       try {
-        result = await connection.agent.request(
-          ACP_STEERING_METHOD,
-          buildAcpSteeringParams(providerSessionId, prompt)
+        const timeout = AbortSignal.timeout(
+          this.options.followUpTimeoutMs ?? ACP_STEERING_TIMEOUT_MS
         )
+        result = await Promise.race([
+          connection.agent.request(
+            ACP_STEERING_METHOD,
+            buildAcpSteeringParams(providerSessionId, prompt),
+            { cancellationSignal: timeout }
+          ),
+          new Promise<never>((_, reject) => {
+            timeout.addEventListener(
+              'abort',
+              () => reject(Object.assign(new Error('TimeoutError'), { name: 'TimeoutError' })),
+              { once: true }
+            )
+          })
+        ])
       } catch {
         log.info('native follow-up refused', {
           sessionId: request.sessionId,
@@ -245,7 +260,9 @@ class AcpNativeFollowUpWorkflow {
           'content-type': 'application/json'
         },
         body: JSON.stringify(buildOpenCodeHttpFollowUpBody(parts)),
-        signal: AbortSignal.timeout(OPENCODE_HTTP_STEER_TIMEOUT_MS)
+        signal: AbortSignal.timeout(
+          this.options.followUpTimeoutMs ?? OPENCODE_HTTP_STEER_TIMEOUT_MS
+        )
       })
       if (!response.ok) return false
       let result: unknown

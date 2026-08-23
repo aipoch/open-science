@@ -95,9 +95,11 @@ class WorkspaceMessageQueueOwner {
     WorkspaceMessageQueueControllerOptions['composer']['discardSnapshot'] | undefined
   private runtimeOptions: WorkspaceMessageQueueRuntimeOptions | undefined
 
-  subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
+  subscribe = (onStoreChange: () => void): (() => void) => {
+    this.listeners.add(onStoreChange)
+    return (): void => {
+      this.listeners.delete(onStoreChange)
+    }
   }
 
   getSnapshot = (): MessageQueueSnapshot => this.snapshot

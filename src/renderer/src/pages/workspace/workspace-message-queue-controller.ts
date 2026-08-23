@@ -31,6 +31,7 @@ import { useOpenSideChatParentSessionIds } from './use-side-chat-controller'
 import type { ComposerSendSnapshot } from './workspace-composer-controller'
 import {
   WorkspaceMessageQueueOwner,
+  type MessageQueueDispatch,
   type MessageQueueError,
   type MessageQueueItem,
   type MessageQueuePhase,

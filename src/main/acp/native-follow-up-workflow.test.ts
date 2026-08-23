@@ -18,6 +18,7 @@ const createWorkflow = (
     openCodeHttp?: boolean
     providerSessionId?: string | null
     request?: (method: string, params: unknown) => Promise<unknown>
+    followUpTimeoutMs?: number
     fetchImpl?: typeof fetch
     prepareFollowUp?: ConstructorParameters<typeof AcpNativeFollowUpWorkflow>[0]['prepareFollowUp']
   } = {}
@@ -63,7 +64,10 @@ const createWorkflow = (
       },
       createMessageId: () => 'message-steer-1',
       fetchImpl: overrides.fetchImpl,
-      ...(overrides.prepareFollowUp ? { prepareFollowUp: overrides.prepareFollowUp } : {})
+      ...(overrides.prepareFollowUp ? { prepareFollowUp: overrides.prepareFollowUp } : {}),
+      ...(overrides.followUpTimeoutMs !== undefined
+        ? { followUpTimeoutMs: overrides.followUpTimeoutMs }
+        : {})
     })
   }
 }
@@ -84,7 +88,8 @@ describe('AcpNativeFollowUpWorkflow', () => {
         sessionId: 'provider-1',
         prompt: [{ type: 'text', text: 'focus on tests' }],
         _meta: { steering: { idleBehavior: 'promptRequired' } }
-      })
+      }),
+      expect.objectContaining({ cancellationSignal: expect.any(AbortSignal) })
     )
     expect(published).toEqual([
       { sessionId: 'app-1', messageId: 'message-steer-1', text: 'focus on tests' }
@@ -176,7 +181,8 @@ describe('AcpNativeFollowUpWorkflow', () => {
             mimeType: 'text/markdown'
           }
         ]
-      })
+      }),
+      expect.objectContaining({ cancellationSignal: expect.any(AbortSignal) })
     )
     expect(published[0]).toMatchObject({
       sessionId: 'app-1',
@@ -333,6 +339,15 @@ describe('AcpNativeFollowUpWorkflow', () => {
     await expect(
       workflow.steerFollowUp({ sessionId: 'app-1', text: 'focus on tests' })
     ).resolves.toEqual({ injected: false, reason: 'unrecognized-success' })
+    expect(published).toEqual([])
+  })
+
+  it('refuses ACP steering that never replies and does not persist a user message', async () => {
+    const request = vi.fn(() => new Promise(() => undefined))
+    const { workflow } = createWorkflow({ request, followUpTimeoutMs: 20 })
+    await expect(
+      workflow.steerFollowUp({ sessionId: 'app-1', text: 'focus on tests' })
+    ).resolves.toEqual({ injected: false, reason: 'dispatch-failed' })
     expect(published).toEqual([])
   })
 

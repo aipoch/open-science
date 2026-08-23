@@ -24,6 +24,7 @@ export const ACP_STEERING_METHOD = '_session/steering'
 export const STEERING_IDLE_BEHAVIOR = 'promptRequired' as const
 export const OPENCODE_HTTP_FOLLOW_UP_NO_REPLY = true as const
 export const OPENCODE_HTTP_STEER_TIMEOUT_MS = 8_000
+export const ACP_STEERING_TIMEOUT_MS = 8_000
 
 export type NativeFollowUpTransport = 'acp-steering' | 'opencode-http'
 
