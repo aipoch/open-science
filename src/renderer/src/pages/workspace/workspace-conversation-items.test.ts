@@ -453,6 +453,13 @@ describe('workspace conversation items', () => {
     const session: ChatSession = { ...baseSession, activities: [activity] }
 
     expect(formatActivityTitle(activity, undefined, t)).toBe('Compacting context')
+    expect(
+      formatActivityTitle(
+        { ...activity, status: 'completed', title: 'Context compaction cancelled' },
+        undefined,
+        t
+      )
+    ).toBe('Context compaction cancelled')
     expect(createConversationItems(session)).toEqual([
       expect.objectContaining({
         id: 'compaction-activity-context-compaction:1',

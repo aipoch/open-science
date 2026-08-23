@@ -282,6 +282,8 @@ describe('ContextWindowDialog', () => {
 
     const marker = document.body.querySelector('[data-slot="context-window-compaction-marker"]')
     expect(marker?.getAttribute('aria-label')).toBe('Context compacted after run 2')
+    expect(marker?.querySelector('.lucide-minimize-2')).not.toBeNull()
+    expect(marker?.querySelector('.lucide-scissors')).toBeNull()
   })
 
   it('shows the recoverable Codex cache split in the selected details', () => {

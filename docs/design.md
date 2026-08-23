@@ -543,10 +543,13 @@ colors communicate a successful or failed probe/migration result.
 - User Message copy and edit actions sit immediately left of the bubble and use the standard inline-action opacity transition on row hover or keyboard focus. When editing creates multiple Branches, keep the Branch navigation persistently visible at the right end of the metadata footer below the bubble, after the sent time, with previous/next controls around a Branch icon and the current/total count. Let the footer wrap on narrow surfaces so the navigation remains the final bottom row without colliding with the sent time.
 - Tool row: `h-8 rounded-lg px-2 text-[13px] hover:bg-foreground/[0.04]`.
 - Context compaction is a standalone, non-interactive activity row rather than a generic Tool group.
-  Keep the existing Tool-row geometry inside a quiet `bg-bg-200/70` surface. Show a spinner with
-  `Compacting context` while active, a check with `Context compacted` when complete, the standard
-  failure icon on error, and a neutral cancelled state. Persist the row on its originating Message
-  Branch and do not let duplicate, replayed, or late lifecycle events reopen a terminal row.
+  Render it as a conversation-boundary milestone with subtle horizontal rules rather than a Tool
+  surface. Pair its lifecycle title with one short explanation: earlier context is being summarized,
+  was summarized so the Session can continue, or remains unchanged after failure/cancellation. Use a
+  spinner while active, the compression glyph when complete, the standard failure icon on error, and
+  a neutral cancelled state. The Context-window chart uses the same compression glyph instead of
+  scissors. Persist the row on its originating Message Branch and do not let duplicate, replayed, or
+  late lifecycle events reopen a terminal row.
 - Tool row metadata: `text-[12.5px] text-muted-foreground tabular-nums`.
 - Link: `text-primary underline-offset-4 hover:underline`.
 - Inline code / resource reference: `rounded-md bg-accent/50 px-1.5 py-0.5 font-mono text-sm text-primary`.
