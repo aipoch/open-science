@@ -8,6 +8,7 @@ import i18next from 'i18next'
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
+import { formatNotebookRunOutputLineMeta } from './notebook-run-figures'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 
@@ -64,6 +65,21 @@ describe('WorkspaceToolDetailsRow', () => {
     container.remove()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
+  })
+
+  it('does not double-count the legacy plain projection of stdout and stderr', () => {
+    root = createRoot(container)
+    const run = createNotebookRun({
+      outputs: [],
+      text: {
+        stdout: 'first\nsecond\n',
+        stderr: 'warning\n',
+        traceback: '',
+        plain: ['first\nsecond\n', 'warning\n']
+      }
+    })
+
+    expect(formatNotebookRunOutputLineMeta(run, i18next.t)).toBe('3 lines of output')
   })
 
   it('renders an image artifact-write result as an inline image preview', async () => {

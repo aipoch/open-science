@@ -86,7 +86,9 @@ const countTextLines = (text: string): number => {
 
 const countNotebookRunOutputLines = (run: NotebookRunRecord): number => {
   if (run.outputs.length === 0) {
-    return [run.text.stdout, run.text.stderr, run.text.traceback, ...run.text.plain].reduce(
+    // LegacyTextOutput renders these canonical fields only. `plain` is a display projection that
+    // commonly mirrors stdout/stderr, so including it would count the same visible lines twice.
+    return [run.text.stdout, run.text.stderr, run.text.traceback].reduce(
       (count, text) => count + countTextLines(text),
       0
     )
