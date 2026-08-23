@@ -749,10 +749,15 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(userCell?.textContent).toContain('r')
   })
 
-  it('keeps idle terminal input enabled while notebook state refreshes in the background', async () => {
+  it('queues idle terminal input until a background refresh confirms it is safe', async () => {
     await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
 
-    vi.mocked(window.api.notebook.state).mockImplementation(() => new Promise(() => {}))
+    const state = vi.mocked(window.api.notebook.state)
+    const idleState = await state.mock.results[0]?.value
+    let resolveRefresh!: (value: typeof idleState) => void
+    state.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveRefresh = resolve as typeof resolveRefresh))
+    )
     const onChanged = vi.mocked(window.api.notebook.onChanged).mock.calls[0]?.[0]
 
     await act(async () => {
@@ -767,6 +772,63 @@ describe('NotebookPreview per-kernel tabs', () => {
       (container.querySelector('[data-testid="kernel-terminal-input"]') as HTMLTextAreaElement)
         .disabled
     ).toBe(false)
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'print(42)' } })
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+
+    expect(state).toHaveBeenCalledTimes(2)
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveRefresh(idleState)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(window.api.notebook.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'print(42)', source: 'user' })
+    )
+  })
+
+  it('does not submit from a stale idle snapshot when the fresh state is busy', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    const state = vi.mocked(window.api.notebook.state)
+    const idleState = await state.mock.results[0]?.value
+    let resolveRefresh!: (value: typeof idleState) => void
+    state.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveRefresh = resolve as typeof resolveRefresh))
+    )
+    const onChanged = vi.mocked(window.api.notebook.onChanged).mock.calls[0]?.[0]
+
+    await act(async () => {
+      onChanged?.(item.notebook)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'print(42)' } })
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+
+    expect(state).toHaveBeenCalledTimes(2)
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+    expect(input.value).toBe('print(42)')
+
+    await act(async () => {
+      resolveRefresh({ ...idleState, activeRunId: 'agent-run' })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+    expect(input.value).toBe('print(42)')
   })
 
   it('shows selected-kernel status while retaining the notebook-wide input lock', async () => {

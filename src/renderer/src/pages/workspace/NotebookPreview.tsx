@@ -342,7 +342,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // Selected environment within the active python/r pane; undefined lets the effective-env
   // computation below default to the first (canonical-default-first) environment.
   const [activeEnv, setActiveEnv] = useState<string | undefined>(undefined)
-  const stateLoadInFlight = useRef(false)
+  const latestNotebookState = useRef<NotebookSessionState | undefined>(undefined)
+  const stateLoadInFlight = useRef<Promise<boolean> | undefined>(undefined)
   const stateReloadQueued = useRef(false)
   const notebookRequest = createNotebookRequest(item.notebook)
   const notebookRequestKey = JSON.stringify(notebookRequest)
@@ -371,40 +372,55 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
 
   // Keeps state assignment isolated so load paths and event paths share the same update hook.
   const applyNotebookState = useCallback((nextState: NotebookSessionState): void => {
+    latestNotebookState.current = nextState
     setNotebookState(nextState)
   }, [])
 
   // Reads the latest notebook state from main, including its bounded recent run window.
-  const loadNotebookState = useCallback(async (): Promise<void> => {
+  const loadNotebookState = useCallback(async (): Promise<boolean> => {
     if (stateLoadInFlight.current) {
       stateReloadQueued.current = true
-      return
+      return stateLoadInFlight.current
     }
-    stateLoadInFlight.current = true
-    setIsLoading(true)
-
-    do {
-      stateReloadQueued.current = false
-      const requested = latestNotebookRequest.current
+    const load = (async (): Promise<boolean> => {
+      let succeeded = false
+      setIsLoading(true)
       try {
-        const nextState = await window.api.notebook.state(requested.request)
+        do {
+          stateReloadQueued.current = false
+          const requested = latestNotebookRequest.current
+          try {
+            const nextState = await window.api.notebook.state(requested.request)
 
-        if (latestNotebookRequest.current.key === requested.key) {
-          applyNotebookState(nextState)
-          setActionError(null)
-        } else {
-          stateReloadQueued.current = true
-        }
-      } catch (error) {
-        if (latestNotebookRequest.current.key === requested.key) {
-          setActionError(getErrorMessage(error))
-        } else {
-          stateReloadQueued.current = true
-        }
+            if (latestNotebookRequest.current.key === requested.key) {
+              applyNotebookState(nextState)
+              setActionError(null)
+              succeeded = true
+            } else {
+              stateReloadQueued.current = true
+            }
+          } catch (error) {
+            if (latestNotebookRequest.current.key === requested.key) {
+              setActionError(getErrorMessage(error))
+              succeeded = false
+            } else {
+              stateReloadQueued.current = true
+            }
+          }
+        } while (stateReloadQueued.current)
+        return succeeded
+      } finally {
+        setIsLoading(false)
       }
-    } while (stateReloadQueued.current)
-    stateLoadInFlight.current = false
-    setIsLoading(false)
+    })()
+    stateLoadInFlight.current = load
+    try {
+      return await load
+    } finally {
+      if (stateLoadInFlight.current === load) {
+        stateLoadInFlight.current = undefined
+      }
+    }
   }, [applyNotebookState])
 
   // Defer the initial state load until after the component has mounted.
@@ -560,23 +576,20 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const submitTerminalCode = async (): Promise<void> => {
     const code = terminalCode.trim()
 
-    if (
-      !code ||
-      !activeDataLanguage ||
-      !activeEnvName ||
-      isHistoricalEnvironmentView ||
-      notebookState?.activeWrite ||
-      notebookState?.activeRunId
-    ) {
+    if (!code || !activeDataLanguage || !activeEnvName || isHistoricalEnvironmentView) {
       return
     }
 
     const target = `${activeDataLanguage}:${activeEnvName}`
-    setTerminalCode('')
     setSubmittingTarget(target)
     setActionError(null)
 
     try {
+      if (stateLoadInFlight.current && !(await stateLoadInFlight.current)) return
+      const executionState = latestNotebookState.current
+      if (executionState?.activeWrite || executionState?.activeRunId) return
+
+      setTerminalCode('')
       await window.api.notebook.execute({
         ...createNotebookRequest(item.notebook),
         code,
