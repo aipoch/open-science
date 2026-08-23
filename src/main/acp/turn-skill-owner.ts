@@ -32,7 +32,7 @@ type ProviderPreparationInput = Readonly<{
 }>
 type ProviderPreparation = Readonly<{
   text: string
-  specialistSkillGuidance?: string
+  skillScopeGuidance?: string
   codexSkillInputs: readonly ResponsesBridgeSkillInput[]
 }>
 type TurnSkillHandle = Readonly<{
@@ -75,6 +75,12 @@ class AcpTurnSkillOwner {
         }
       }
       const create = (disabled: string[]): TurnSkillHandle => {
+        if (scope?.kind === 'main') {
+          const rejected = selected.find((id) => disabled.includes(id))
+          if (rejected) {
+            throw new Error(`Skill "${rejected}" is not available to Main Agent.`)
+          }
+        }
         const needsReload = disabled.length > 0 && !input.signal?.aborted
         const state: Authorization = {
           selectedSkillIds: selected,
@@ -91,7 +97,8 @@ class AcpTurnSkillOwner {
         ? this.options.skills.needForceLoad([...selected]).then(create)
         : create([])
     }
-    if (!input.specialistId || !this.options.resolveSpecialistSkills) return finish()
+    if (!input.specialistId) return finish({ kind: 'main' })
+    if (!this.options.resolveSpecialistSkills) return finish()
     return this.options
       .resolveSpecialistSkills(input.specialistId)
       .catch(
@@ -104,7 +111,8 @@ class AcpTurnSkillOwner {
       forcedSkillIds: Object.freeze([...(this.forced?.selectedSkillIds ?? [])])
     })
   }
-  // Mid-turn inject must not force-load disabled Skills: that reconnects the session.
+  // Mid-turn inject must not force-load disabled Skills: that reconnects the session. Main still
+  // checks enablement here so a stale or forged chip cannot bypass its current Skill scope.
   // Prefix names / attach Codex skill-inputs on the steered prompt instead.
   async presentFollowUp(input: {
     frameworkId: AgentFrameworkId
@@ -114,7 +122,9 @@ class AcpTurnSkillOwner {
     codexHome?: string
   }): Promise<ProviderPreparation> {
     const selected = Object.freeze([...input.selectedSkillIds])
-    let scope: EffectiveSpecialistSkills | undefined
+    let scope: EffectiveSpecialistSkills | undefined = input.specialistId
+      ? undefined
+      : { kind: 'main' }
     if (input.specialistId && this.options.resolveSpecialistSkills) {
       try {
         scope = await this.options.resolveSpecialistSkills(input.specialistId)
@@ -132,6 +142,11 @@ class AcpTurnSkillOwner {
           throw new Error(`Skill "${rejected}" is not available to the active specialist.`)
         }
       }
+    }
+    if (scope?.kind === 'main' && selected.length > 0 && this.options.skills) {
+      const disabled = await this.options.skills.needForceLoad([...selected])
+      const rejected = selected.find((id) => disabled.includes(id))
+      if (rejected) throw new Error(`Skill "${rejected}" is not available to Main Agent.`)
     }
     return this.prepareProvider(
       { selectedSkillIds: selected, ...(scope ? { scope } : {}) },
@@ -174,17 +189,25 @@ class AcpTurnSkillOwner {
       codexSkillInputs
     })
     const guidance =
-      input.frameworkId !== 'claude-code' && state.scope?.kind === 'specialist'
-        ? [
-            '<open_science_specialist_skill_scope>',
-            'Skill discovery for this Specialist is limited to the following Skills. This list does not grant tool or Connector permissions.',
-            ...state.scope.frameworkNames.map((name) => `- ${name}`),
-            '</open_science_specialist_skill_scope>'
-          ].join('\n')
-        : undefined
+      input.frameworkId === 'claude-code'
+        ? undefined
+        : state.scope?.kind === 'specialist'
+          ? [
+              '<open_science_specialist_skill_scope>',
+              'Skill discovery for this Specialist is limited to the following Skills. This list does not grant tool or Connector permissions.',
+              ...state.scope.frameworkNames.map((name) => `- ${name}`),
+              '</open_science_specialist_skill_scope>'
+            ].join('\n')
+          : state.scope?.kind === 'main'
+            ? [
+                '<open_science_main_agent_scope>',
+                'Current agent: Main Agent. Any earlier Specialist identity and Specialist-specific Skill or Connector scope in this conversation is no longer active. Use only capabilities available in the current Main Agent runtime.',
+                '</open_science_main_agent_scope>'
+              ].join('\n')
+            : undefined
     return Object.freeze({
       ...presented,
-      ...(guidance ? { specialistSkillGuidance: guidance } : {}),
+      ...(guidance ? { skillScopeGuidance: guidance } : {}),
       codexSkillInputs: Object.freeze(codexSkillInputs)
     })
   }
@@ -227,12 +250,9 @@ class AcpTurnSkillOwner {
   }
 }
 
-const followUpPromptText = (presented: {
-  text: string
-  specialistSkillGuidance?: string
-}): string =>
-  presented.specialistSkillGuidance
-    ? `${presented.specialistSkillGuidance}\n\n${presented.text}`
+const followUpPromptText = (presented: { text: string; skillScopeGuidance?: string }): string =>
+  presented.skillScopeGuidance
+    ? `${presented.skillScopeGuidance}\n\n${presented.text}`
     : presented.text
 
 export { AcpTurnSkillOwner, followUpPromptText }

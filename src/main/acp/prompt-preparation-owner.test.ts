@@ -86,7 +86,7 @@ const setup = (
     reloadDecision: { kind: 'continue' as const },
     prepareProvider: vi.fn(async () => ({
       text: 'prepared task',
-      specialistSkillGuidance:
+      skillScopeGuidance:
         '<open_science_specialist_skill_scope>\n- Research\n</open_science_specialist_skill_scope>',
       codexSkillInputs: [{ name: 'Research', path: '/missing/Research/SKILL.md' }]
     })),

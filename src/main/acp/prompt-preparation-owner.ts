@@ -175,9 +175,7 @@ class AcpPromptPreparationOwner {
         specialistPrefix: input.specialistPrefix,
         sessionSetupPromptPrefix: input.sessionSetupPromptPrefix,
         turnPromptReminders: [
-          ...(skillPreparation.specialistSkillGuidance
-            ? [skillPreparation.specialistSkillGuidance]
-            : []),
+          ...(skillPreparation.skillScopeGuidance ? [skillPreparation.skillScopeGuidance] : []),
           ...(computeExecutionTargetReminder ? [computeExecutionTargetReminder] : []),
           ...(input.turnPromptReminders ?? [])
         ]

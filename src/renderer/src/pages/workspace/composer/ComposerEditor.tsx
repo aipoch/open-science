@@ -43,7 +43,7 @@ type ComposerEditorProps = {
   placeholder: string
   className?: string
   ariaLabel: string
-  // Undefined preserves Main Agent behavior; an empty array intentionally hides every Skill.
+  // Undefined shows Main-enabled Skills; an empty array intentionally hides every Skill.
   allowedSkillIds?: readonly string[]
   isHistoryBrowsing?: boolean
   historyStatus?: string

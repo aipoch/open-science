@@ -9609,7 +9609,7 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('keeps backend-persistent Codex guidance out of the user prompt', async () => {
+  it('keeps backend-persistent Codex guidance out while adding current turn scope', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['codex-session'], {
       modes: {
@@ -9641,8 +9641,8 @@ describe('ACP runtime session management', () => {
       expect.arrayContaining([expect.stringContaining('open_science_large_file_instructions')])
     )
     expect(fakeAgent.prompts.map(({ text }) => text)).toEqual([
-      'search PubMed',
-      'summarize the results'
+      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+search PubMed$/),
+      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+summarize the results$/)
     ])
     expect(fakeAgent.prompts.every(({ text }) => !text.includes(persistentInstructions))).toBe(true)
   })
@@ -9676,7 +9676,7 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('keeps backend-persistent OpenCode guidance out of the user prompt', async () => {
+  it('keeps backend-persistent OpenCode guidance out while adding current turn scope', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['oc-session'])
     let resolvedContext: { forcedSkillIds: string[]; systemPromptAppends?: string[] } | undefined
@@ -9702,7 +9702,13 @@ describe('ACP runtime session management', () => {
     expect(resolvedContext?.systemPromptAppends).toEqual(
       expect.arrayContaining([expect.stringContaining('open_science_large_file_instructions')])
     )
-    expect(fakeAgent.prompts.map(({ text }) => text)).toEqual(['hello opencode', 'continue'])
+    expect(fakeAgent.prompts.map(({ text }) => text)).toEqual([
+      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+hello opencode$/),
+      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+continue$/)
+    ])
+    expect(
+      fakeAgent.prompts.every(({ text }) => !text.includes('Stable OpenCode instructions.'))
+    ).toBe(true)
   })
 
   it('waits for session-scoped MCP capability readiness before creating the agent session', async () => {
@@ -21419,6 +21425,22 @@ describe('ACP runtime session management', () => {
 })
 
 describe('ACP runtime skill force-load + nudge', () => {
+  const resolveForceLoadSpecialistIdentity = async (): Promise<{
+    append: string
+    prefix: string
+  }> => ({ append: '', prefix: '' })
+  const resolveForceLoadSpecialistSkills = async (): Promise<{
+    kind: 'specialist'
+    skillIds: string[]
+    frameworkNames: string[]
+    missingSkillIds: string[]
+  }> => ({
+    kind: 'specialist',
+    skillIds: ['research', 'skill-a', 'skill-b'],
+    frameworkNames: ['research', 'skill-a', 'skill-b'],
+    missingSkillIds: []
+  })
+
   // Builds a spawner that returns a fresh fake agent per connect, so a force-load reconnect can spawn a
   // second working agent. All agent handles are collected so tests can assert prompts across reconnects.
   const createFreshAgentSpawner = (): {
@@ -21497,6 +21519,8 @@ describe('ACP runtime skill force-load + nudge', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       callbacks: { onPromptStarted, onPromptEnded },
+      resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+      resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
       skills: {
         needForceLoad: async () => {
           skillCheckEntered.resolve()
@@ -21506,7 +21530,10 @@ describe('ACP runtime skill force-load + nudge', () => {
         namesForIds: async (ids) => ids
       }
     })
-    const session = await runtime.createSession({ cwd: '/workspace' })
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      specialistId: 'force-load-specialist'
+    })
 
     const delayedPrompt = runtime.sendPrompt({
       sessionId: session.sessionId,
@@ -21560,6 +21587,8 @@ describe('ACP runtime skill force-load + nudge', () => {
             env: {}
           }
         },
+        resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
         skills: {
           needForceLoad: async (ids) => ids,
           namesForIds: async (ids) => ids
@@ -21569,8 +21598,8 @@ describe('ACP runtime skill force-load + nudge', () => {
     const first = createRuntime(firstSpawner, firstContexts)
     const second = createRuntime(secondSpawner, secondContexts)
     await Promise.all([
-      first.createSession({ cwd: '/workspace' }),
-      second.createSession({ cwd: '/workspace' })
+      first.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' }),
+      second.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' })
     ])
     await Promise.all([
       first.sendPrompt({
@@ -21606,10 +21635,12 @@ describe('ACP runtime skill force-load + nudge', () => {
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: spawner.spawn,
+      resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+      resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
       skills: hooks
     })
 
-    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' })
     expect(spawner.spawnCount()).toBe(1)
 
     await runtime.sendPrompt({
@@ -21667,13 +21698,15 @@ describe('ACP runtime skill force-load + nudge', () => {
           env: {}
         }
       },
+      resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+      resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
       skills: {
         needForceLoad: async (ids) => ids,
         namesForIds: async (ids) => ids
       }
     })
 
-    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' })
     await expect(
       runtime.sendPrompt({
         sessionId: 'remote-session-1',
@@ -21683,7 +21716,11 @@ describe('ACP runtime skill force-load + nudge', () => {
     ).rejects.toThrow()
     await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('idle'))
 
-    await runtime.resumeSession({ sessionId: 'remote-session-1', cwd: '/workspace' })
+    await runtime.resumeSession({
+      sessionId: 'remote-session-1',
+      cwd: '/workspace',
+      specialistId: 'force-load-specialist'
+    })
     expect(backendContexts.slice(0, 3)).toEqual([[], ['research'], []])
   })
 
@@ -24750,6 +24787,40 @@ describe('Specialist Skill scoping', () => {
       expect(agent.prompts[0]?.text).toContain('<open_science_specialist_skill_scope>')
       expect(agent.prompts[0]?.text).toContain('Allowed Skill')
       expect(agent.prompts[1]?.text).toContain('<open_science_specialist_skill_scope>')
+    }
+  )
+
+  it.each([codexFramework, opencodeFramework])(
+    'revokes the previous Specialist identity and scope after switching %s to Main without reset',
+    async (framework) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['specialist-to-main-session'], {
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework,
+        resolveSpecialistIdentity: async () => ({
+          append: '',
+          prefix: 'Previous Specialist identity'
+        }),
+        resolveSpecialistSkills: specialistSkillResolver
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace', specialistId: 'sp-1' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'specialist task' })
+      await expect(runtime.switchSpecialist(session.sessionId, undefined)).resolves.toEqual({
+        contextReset: false
+      })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'main task' })
+
+      expect(agent.prompts[0]?.text).toContain('Previous Specialist identity')
+      expect(agent.prompts[1]?.text).toContain('Current agent: Main Agent.')
+      expect(agent.prompts[1]?.text).toContain('earlier Specialist identity')
+      expect(agent.prompts[1]?.text).not.toContain('Previous Specialist identity')
+      expect(agent.prompts[1]?.text).not.toContain('<open_science_specialist_skill_scope>')
     }
   )
 
