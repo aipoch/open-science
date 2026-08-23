@@ -89,6 +89,27 @@ type SettingsPreferencesSliceOptions = {
   writeCoordinator: SettingsWriteCoordinator
 }
 
+const OPTIMISTIC_PREFERENCE_WRITES = [
+  ['reasoningEffort', 'reasoningEffort'],
+  ['notificationsEnabled', 'notifications'],
+  ['conversationSkillImportEnabled', 'conversationSkillImport'],
+  ['closePreference', 'closePreference'],
+  ['appIconVariant', 'appIcon'],
+  ['projectFilesFilter', 'projectFilesFilter'],
+  ['defaultPermissionProfile', 'defaultPermissionProfile']
+] as const satisfies ReadonlyArray<readonly [OptimisticPreferenceField, OptimisticSettingsWriteKey]>
+
+export const omitInFlightOptimisticPreferences = <Patch extends Partial<SettingsPreferencesState>>(
+  patch: Patch,
+  hasPending: (key: OptimisticSettingsWriteKey) => boolean
+): Patch => {
+  const next = { ...patch }
+  for (const [field, key] of OPTIMISTIC_PREFERENCE_WRITES) {
+    if (hasPending(key)) delete next[field]
+  }
+  return next
+}
+
 const SETTINGS_WRITE_ERRORS: Record<OptimisticSettingsWriteKey, string> = {
   reasoningEffort: 'Could not save reasoning effort. Try again.',
   notifications: 'Could not save notification preference. Try again.',

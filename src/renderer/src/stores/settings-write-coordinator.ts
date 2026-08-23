@@ -54,6 +54,7 @@ export type SettingsWriteCoordinator = {
     key: OptimisticSettingsWriteKey,
     confirmedValue: T
   ) => OptimisticSettingsWrite<T>
+  hasPending: (key: OptimisticSettingsWriteKey) => boolean
   clearFailures: () => void
 }
 
@@ -166,6 +167,7 @@ export const createSettingsWriteCoordinator = (
         complete: (value) => completeOptimistic(key, state, value)
       }
     },
+    hasPending: (key) => (optimisticStates.get(key)?.pendingCount ?? 0) > 0,
     clearFailures: () => {
       failures.clear()
       onVisibleError(undefined)
