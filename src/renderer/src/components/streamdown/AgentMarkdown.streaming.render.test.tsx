@@ -80,4 +80,26 @@ describe('AgentMarkdown streaming presentation', () => {
     expect(createdParagraphs).toBe(0)
     expect(container.querySelector('p')).toBe(firstParagraph)
   })
+
+  it('renders the allowed session artifact image element through a supplied component', async () => {
+    vi.useRealTimers()
+    const ArtifactImage = ({
+      artifact_ref: artifactRef
+    }: Record<string, unknown>): React.JSX.Element => (
+      <button data-testid="artifact-image">
+        {typeof artifactRef === 'string' ? artifactRef : null}
+      </button>
+    )
+
+    await act(async () => {
+      root.render(
+        <PresentedAgentMarkdown
+          content={'<session-artifact-image artifact_ref="version-1"></session-artifact-image>'}
+          components={{ 'session-artifact-image': ArtifactImage }}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="artifact-image"]')?.textContent).toBe('version-1')
+  })
 })

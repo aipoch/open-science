@@ -230,6 +230,21 @@ const previewArtifact = (
   if (previewItem) usePreviewWorkbenchStore.getState().upsertAndActivateItem(previewItem)
 }
 
+// Opens an artifact-backed Markdown image in the existing transient file-preview dialog.
+const previewArtifactModal = (
+  artifact: MessageArtifact,
+  sessionId: string,
+  projectId?: string
+): void => {
+  const previewItem = createPreviewFileItemFromArtifact(
+    artifact,
+    artifact.resolvedSessionId ?? sessionId,
+    artifact.resolvedProjectId ?? projectId
+  )
+
+  if (previewItem) usePreviewWorkbenchStore.getState().openFileDialog(previewItem)
+}
+
 // Sends an app-managed uploaded file to the preview workbench.
 const previewUploadAttachment = (
   attachment: MessageUploadAttachment,
@@ -849,6 +864,13 @@ const WorkspaceMessageScrollerImpl = ({
     [currentProjectId, currentSessionId]
   )
 
+  const onPreviewArtifactModal = useCallback(
+    (artifact: MessageArtifact): void => {
+      if (currentSessionId) previewArtifactModal(artifact, currentSessionId, currentProjectId)
+    },
+    [currentProjectId, currentSessionId]
+  )
+
   // Routes a sent-message upload click to the preview workbench for the active session.
   const onPreviewUploadAttachment = useCallback(
     (attachment: MessageUploadAttachment): void => {
@@ -1119,6 +1141,7 @@ const WorkspaceMessageScrollerImpl = ({
                   const messageItemProps: EditableWorkspaceMessageItemProps = {
                     message: item.message,
                     onPreviewArtifact,
+                    onPreviewArtifactModal,
                     onPreviewUploadAttachment,
                     onOpenSkillMention,
                     onPreviewMentionArtifact,

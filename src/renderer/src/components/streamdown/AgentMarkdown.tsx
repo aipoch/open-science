@@ -29,6 +29,7 @@ type AgentMarkdownProps = {
   isAnimating?: boolean
   allowMedia?: boolean
   sessionLinks?: boolean
+  components?: Components
 }
 
 type RichAgentMarkdownProps = AgentMarkdownProps & {
@@ -249,11 +250,16 @@ const RichAgentMarkdown = memo(
     isAnimating = false,
     allowMedia = true,
     sessionLinks = false,
+    components,
     incrementalBlocks = false
   }: RichAgentMarkdownProps): React.JSX.Element => {
     // Append-only streaming re-normalizes just the trailing block instead of the full message.
     const [normalizer] = useState(() => createAgentMarkdownNormalizer())
     const renderedContent = useMemo(() => normalizer(content), [normalizer, content])
+    const renderedComponents = useMemo(
+      () => (sessionLinks ? { ...sessionLinkComponents, ...components } : components),
+      [components, sessionLinks]
+    )
 
     return (
       <div
@@ -267,7 +273,7 @@ const RichAgentMarkdown = memo(
           plugins={plugins}
           controls={AGENT_CONTROLS}
           linkSafety={agentLinkSafety}
-          components={sessionLinks ? sessionLinkComponents : undefined}
+          components={renderedComponents}
           dir="auto"
           mode={isAnimating || incrementalBlocks ? 'streaming' : 'static'}
           isAnimating={isAnimating}
@@ -297,6 +303,7 @@ const PresentedAgentMarkdown = memo(
     isAnimating = false,
     allowMedia = true,
     sessionLinks = false,
+    components,
     incrementalBlocks = true
   }: RichAgentMarkdownProps): React.JSX.Element => (
     <AgentMarkdownErrorBoundary content={content}>
@@ -305,6 +312,7 @@ const PresentedAgentMarkdown = memo(
         isAnimating={isAnimating}
         allowMedia={allowMedia}
         sessionLinks={sessionLinks}
+        components={components}
         incrementalBlocks={incrementalBlocks}
       />
     </AgentMarkdownErrorBoundary>
@@ -319,7 +327,8 @@ const AgentMarkdown = memo(
     content,
     isAnimating = false,
     allowMedia = true,
-    sessionLinks = false
+    sessionLinks = false,
+    components
   }: AgentMarkdownProps): React.JSX.Element => {
     const presentation = useSmoothStreamingContent(content, isAnimating)
 
@@ -329,6 +338,7 @@ const AgentMarkdown = memo(
         isAnimating={presentation.isPresenting}
         allowMedia={allowMedia}
         sessionLinks={sessionLinks}
+        components={components}
         incrementalBlocks={false}
       />
     )

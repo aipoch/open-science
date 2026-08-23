@@ -1,4 +1,3 @@
-import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -69,6 +68,7 @@ import { FILE_MISSING_TAG_KEY, isUnavailableFileError } from './previews/preview
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 import { resolveSessionProviderId } from './error-report'
+import { SessionMessageMarkdown } from './SessionMessageMarkdown'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
@@ -87,6 +87,7 @@ type WorkspaceAssistantTurnCompletionProps = {
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   onPreviewArtifact: (artifact: MessageArtifact) => void
+  onPreviewArtifactModal?: (artifact: MessageArtifact) => void
   onPreviewUploadAttachment: (attachment: MessageUploadAttachment) => void
   onOpenSkillMention: (skillId: string, name: string) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
@@ -1105,6 +1106,7 @@ const MessagePartsContent = ({
 const WorkspaceMessageItemImpl = ({
   message,
   onPreviewArtifact,
+  onPreviewArtifactModal = onPreviewArtifact,
   onPreviewUploadAttachment,
   onOpenSkillMention,
   onPreviewMentionArtifact,
@@ -1460,10 +1462,12 @@ const WorkspaceMessageItemImpl = ({
             )}
           >
             {message.content ? (
-              <PresentedAgentMarkdown
+              <SessionMessageMarkdown
                 content={assistantPresentation.content}
                 isAnimating={isAssistantPresenting}
-                sessionLinks
+                artifacts={artifacts}
+                onPreviewArtifact={onPreviewArtifact}
+                onPreviewArtifactModal={onPreviewArtifactModal}
               />
             ) : null}
             <MessageImageList images={message.images ?? []} />
@@ -1541,6 +1545,7 @@ const areWorkspaceMessageItemPropsEqual = (
 ): boolean =>
   previous.message === next.message &&
   previous.onPreviewArtifact === next.onPreviewArtifact &&
+  previous.onPreviewArtifactModal === next.onPreviewArtifactModal &&
   previous.onPreviewUploadAttachment === next.onPreviewUploadAttachment &&
   previous.onOpenSkillMention === next.onOpenSkillMention &&
   previous.onPreviewMentionArtifact === next.onPreviewMentionArtifact &&

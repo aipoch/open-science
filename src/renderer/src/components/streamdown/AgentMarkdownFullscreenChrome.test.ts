@@ -98,4 +98,18 @@ describe('AgentMarkdown fullscreen chrome', () => {
 
     expect(reducedMotionBlock).toContain("[data-streamdown='table-fullscreen']")
   })
+
+  it('uses the native zoom-in cursor and a visible keyboard focus ring for artifact images', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
+    const artifactImageBlock = css.slice(
+      css.indexOf('[data-session-artifact-image]'),
+      css.indexOf('[data-session-artifact-image-status]')
+    )
+
+    expect(artifactImageBlock).toContain('cursor-zoom-in')
+    expect(artifactImageBlock).toContain('&:focus-visible')
+    expect(artifactImageBlock).toContain('outline-ring')
+    expect(artifactImageBlock).toContain('&:active')
+    expect(artifactImageBlock).toContain('&:disabled')
+  })
 })

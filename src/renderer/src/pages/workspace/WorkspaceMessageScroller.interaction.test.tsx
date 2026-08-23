@@ -83,6 +83,44 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   )
 }))
 
+vi.mock('./SessionMessageMarkdown', () => ({
+  SessionMessageMarkdown: ({
+    content,
+    isAnimating,
+    artifacts,
+    onPreviewArtifact,
+    onPreviewArtifactModal
+  }: {
+    content: string
+    isAnimating?: boolean
+    artifacts: NonNullable<ChatSession['artifacts']>
+    onPreviewArtifact: (artifact: NonNullable<ChatSession['artifacts']>[number]) => void
+    onPreviewArtifactModal: (artifact: NonNullable<ChatSession['artifacts']>[number]) => void
+  }) => (
+    <div data-testid="presented-agent-markdown" data-animating={isAnimating || undefined}>
+      {content}
+      {content === 'Markdown artifact controls' && artifacts[0] ? (
+        <>
+          <button
+            type="button"
+            data-testid="markdown-artifact-link"
+            onClick={() => onPreviewArtifact(artifacts[0]!)}
+          >
+            Open in panel
+          </button>
+          <button
+            type="button"
+            data-testid="markdown-artifact-image"
+            onClick={() => onPreviewArtifactModal(artifacts[0]!)}
+          >
+            Open in modal
+          </button>
+        </>
+      ) : null}
+    </div>
+  )
+}))
+
 vi.mock('@/components/ui/message-scroller', () => {
   const Wrapper = ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>
   const Viewport = forwardRef<
@@ -148,6 +186,7 @@ vi.mock('@/lib/utils', () => ({
 }))
 
 const upsertAndActivateItem = vi.fn()
+const openFileDialog = vi.fn()
 const listGrantedRoots = vi.fn()
 const createSessionPlanPreviewItem = vi.fn((sessionId: string, projectId: string) => ({
   id: `tool:${sessionId}:plan`,
@@ -172,7 +211,7 @@ const announceWindowFindReady = vi.fn(() => () => undefined)
 
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
-    getState: () => ({ upsertAndActivateItem })
+    getState: () => ({ openFileDialog, upsertAndActivateItem })
   },
   createSessionPlanPreviewItem,
   createSessionSubagentsPreviewItem
@@ -280,6 +319,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
   beforeEach(() => {
     upsertAndActivateItem.mockClear()
+    openFileDialog.mockClear()
     listGrantedRoots.mockReset().mockResolvedValue([])
     useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
     createSessionSubagentsPreviewItem.mockClear()
@@ -1933,6 +1973,56 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       size: 2048,
       mtimeMs: 1710000000100
     })
+  })
+
+  it('routes Markdown artifact links to the panel and Markdown artifact images to the dialog', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'prompt-1' }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Markdown artifact controls',
+          artifactIds: ['artifact-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'artifact-1',
+          kind: 'managed-file',
+          path: '/workspace/report.png',
+          name: 'report.png',
+          mimeType: 'image/png',
+          size: 2048,
+          mtimeMs: 1710000000100
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="markdown-artifact-link"]')?.click()
+    })
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'artifact-1', sessionId: 'session-42' })
+    )
+    expect(openFileDialog).not.toHaveBeenCalled()
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="markdown-artifact-image"]')?.click()
+    })
+    expect(openFileDialog).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'artifact-1', sessionId: 'session-42' })
+    )
   })
 
   it('resolves copied generated Version metadata and previews the source Version owner', async () => {
