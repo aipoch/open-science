@@ -214,10 +214,11 @@ const aggregateEvidence = async ({ argv }) => {
   const outputArgument = argumentValue(argv, '--output')
   const expectedSha = argumentValue(argv, '--expected-sha')
   const requireWindowsUpdate = argv.includes('--require-windows-update')
+  const requireSignedWindows = argv.includes('--require-signed-windows')
   if (!directoryArgument || !outputArgument || !expectedSha) {
     throw new Error(
       'Usage: --directory <path> --output <path> --expected-sha <sha> ' +
-        '[--require-windows-update]'
+        '[--require-windows-update] [--require-signed-windows]'
     )
   }
   const directory = resolve(directoryArgument)
@@ -264,6 +265,13 @@ const aggregateEvidence = async ({ argv }) => {
     }
     if (record.checks.packageSmoke !== 'passed') {
       throw new Error(`Package smoke did not pass for ${platform}.`)
+    }
+    if (
+      requireSignedWindows &&
+      platform === 'windows-x64' &&
+      record.checks.authenticode !== 'passed'
+    ) {
+      throw new Error('Windows Authenticode did not pass for the release artifact.')
     }
   }
   let windowsUpdate

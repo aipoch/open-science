@@ -37,6 +37,12 @@ on:
           Used by the Nightly macos-x64 packaging dry-run; release/nightly leave it empty.
         type: string
         default: ''
+      windows_publisher_name:
+        description: >-
+          Exact Authenticode certificate subject baked into the Windows updater configuration.
+          Stable releases pass the SignPath production certificate subject; other builds omit it.
+        type: string
+        default: ''
 jobs:
   # Run the quality suite once on Apple Silicon beside the native package matrix. The reusable
   # workflow still fails when this job fails, so every caller's publish boundary remains fail closed
@@ -281,9 +287,10 @@ jobs:
         id: package
         shell: bash
         env:
-          # Windows remains unsigned until a code-signing certificate is provisioned. Stable macOS
-          # jobs consume the explicitly prepared keychain without exposing CSC_LINK to electron-builder.
+          # SignPath signs the final Windows installer after this build. The publisher subject is
+          # still baked into app-update.yml here so electron-updater verifies downloaded updates.
           CSC_KEYCHAIN: ${{ steps.mac_signing.outputs.keychain }}
+          WINDOWS_PUBLISHER_NAME: ${{ inputs.windows_publisher_name }}
           # macos-26-intel Node 22 x64 defaults to a ~2 GB old-space. The renderer production graph
           # (~6400 modules) OOMs during emit at that limit. This is a ceiling, not a reservation.
           NODE_OPTIONS: --max-old-space-size=8192
@@ -298,6 +305,10 @@ jobs:
             base=$(node -p "require('./package.json').version")
             eb_ver=(-c.extraMetadata.version="${base}-nightly.${GITHUB_SHA::7}")
           fi
+          windows_signing=()
+          if [ "${{ matrix.platform }}" = "win" ] && [ -n "$WINDOWS_PUBLISHER_NAME" ]; then
+            windows_signing=(-c.win.signtoolOptions.publisherName="$WINDOWS_PUBLISHER_NAME")
+          fi
           if [ "${{ steps.mac_signing.outputs.enabled }}" = "true" ]; then
             # Stable build with a Developer ID cert -> SIGN ONLY (notarize:false). Notarization +
             # stapling happens later in notarize-mac.yml, so this job never waits on Apple.
@@ -309,7 +320,7 @@ jobs:
             # (electron-updater's MacUpdater picks the right one by arch at download time). This avoids
             # the per-arch `${arch}-mac.yml` scheme, which shipped an app-update.yml the mac updater
             # never matched against the published feed names.
-            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never \
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" "${windows_signing[@]}" --publish never \
               -c.mac.notarize=false
           else
             # No prepared cert, or a nightly build (ad-hoc on purpose): skip electron-builder's own
@@ -323,7 +334,7 @@ jobs:
               # primary-signature assessment. Certificate-free and nightly builds must stay ad-hoc.
               unsigned_args=(-c.dmg.sign=false)
             fi
-            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" "${unsigned_args[@]}" --publish never
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" "${windows_signing[@]}" "${unsigned_args[@]}" --publish never
           fi
 
       - name: Clean up macOS signing keychain

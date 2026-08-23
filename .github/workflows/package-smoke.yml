@@ -4,6 +4,12 @@ name: Package Smoke
 # build.yml, so a failed smoke can be retried without rebuilding or re-signing any package.
 on:
   workflow_call:
+    inputs:
+      require_windows_authenticode:
+        description: Require a trusted signature from the configured SignPath production subject.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -48,6 +54,32 @@ jobs:
           name: ${{ matrix.name }}
           path: dist
 
+      - name: Verify Windows Authenticode signature
+        if: matrix.platform == 'win' && inputs.require_windows_authenticode
+        shell: pwsh
+        env:
+          EXPECTED_PUBLISHER: ${{ vars.SIGNPATH_WINDOWS_PUBLISHER_NAME }}
+        run: |
+          $installers = @(Get-ChildItem -Path dist -Filter '*-win-x64-setup.exe' -File -Recurse)
+          if ($installers.Count -ne 1) {
+            Write-Error "Expected exactly one Windows setup EXE, found $($installers.Count)."
+            exit 1
+          }
+          if ([string]::IsNullOrWhiteSpace($env:EXPECTED_PUBLISHER)) {
+            Write-Error 'SIGNPATH_WINDOWS_PUBLISHER_NAME is required for production verification.'
+            exit 1
+          }
+          $signature = Get-AuthenticodeSignature -FilePath $installers[0].FullName
+          if ($signature.Status -ne 'Valid') {
+            Write-Error "Windows installer signature is not trusted: $($signature.Status) — $($signature.StatusMessage)"
+            exit 1
+          }
+          if ($signature.SignerCertificate.Subject -ne $env:EXPECTED_PUBLISHER) {
+            Write-Error "Unexpected Windows publisher: $($signature.SignerCertificate.Subject)"
+            exit 1
+          }
+          Write-Host "Verified Windows publisher: $($signature.SignerCertificate.Subject)"
+
       - name: Smoke test macOS packages
         if: matrix.platform == 'mac'
         timeout-minutes: 10
@@ -76,7 +108,11 @@ jobs:
           mv dist/database-migration-certification.json "$database_certification"
           authenticode=not-applicable
           if [ "${{ matrix.platform }}" = "win" ]; then
-            authenticode=not-required
+            if [ "${{ inputs.require_windows_authenticode }}" = "true" ]; then
+              authenticode=passed
+            else
+              authenticode=not-required
+            fi
           fi
           node scripts/ci/release-certification-evidence.mjs write \
             --platform "${{ matrix.name }}" \

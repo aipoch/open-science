@@ -2,10 +2,9 @@ name: SignPath Windows (dry-run)
 
 # Manual, no-publish Windows Authenticode integration check.
 #
-# Reuses the release build workflow for Windows x64 only, extracts exactly one NSIS setup EXE from
-# its immutable build artifact, and submits that raw PE file to SignPath's test-signing policy. The
-# signed installer is retained as a run artifact for inspection. This workflow never creates or
-# modifies a GitHub Release and does not change the release/nightly publishing path.
+# Reuses the release build workflow for Windows x64 only, then calls the same finalization boundary
+# as a stable release with SignPath's self-signed test certificate. This workflow never creates or
+# modifies a GitHub Release.
 on:
   workflow_dispatch:
 
@@ -23,98 +22,17 @@ jobs:
     with:
       platform_name: windows-x64
       skip_verify: true
+      windows_publisher_name: "CN=Test certificate for 'Open Science [OSS]'"
 
   sign-installer:
     name: Sign Windows installer with SignPath test certificate
     needs: build
-    runs-on: windows-latest
-    timeout-minutes: 20
-    steps:
-      - name: Download Windows build artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: windows-x64
-          path: unsigned
-
-      - name: Select unsigned NSIS installer
-        id: installer
-        shell: pwsh
-        run: |
-          $installers = @(Get-ChildItem -Path unsigned -Filter '*-win-x64-setup.exe' -File -Recurse)
-          if ($installers.Count -ne 1) {
-            Write-Error "Expected exactly one Windows setup EXE, found $($installers.Count)."
-            exit 1
-          }
-          "path=$($installers[0].FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-      # SignPath's artifact configuration is a raw <pe-file>. upload-artifact@v7's archive:false
-      # keeps the GitHub artifact as the EXE instead of wrapping it in the default ZIP container.
-      - name: Upload raw installer for SignPath
-        id: upload-unsigned-installer
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          path: ${{ steps.installer.outputs.path }}
-          archive: false
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Submit SignPath test signing request
-        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: open-science
-          signing-policy-slug: test-signing
-          artifact-configuration-slug: windows-installer
-          github-artifact-id: ${{ steps.upload-unsigned-installer.outputs.artifact-id }}
-          skip-decompress: true
-          wait-for-completion: true
-          wait-for-completion-timeout-in-seconds: 900
-          output-artifact-directory: ${{ runner.temp }}/signpath-signed
-
-      - name: Verify Authenticode signature was added
-        id: signed-installer
-        shell: pwsh
-        run: |
-          $installers = @(Get-ChildItem -Path '${{ runner.temp }}/signpath-signed' -Filter '*.exe' -File -Recurse)
-          if ($installers.Count -ne 1) {
-            Write-Error "Expected exactly one signed EXE, found $($installers.Count)."
-            exit 1
-          }
-          $signature = Get-AuthenticodeSignature -FilePath $installers[0].FullName
-          if ($null -eq $signature.SignerCertificate) {
-            Write-Error "SignPath returned an artifact without a signer certificate. Status: $($signature.Status)."
-            exit 1
-          }
-
-          Write-Host "Initial signature status: $($signature.Status)"
-          Write-Host "Initial status message: $($signature.StatusMessage)"
-          Write-Host "Signer: $($signature.SignerCertificate.Subject)"
-
-          $expectedTestCertificateSubject = "CN=Test certificate for 'Open Science [OSS]'"
-          $expectedUntrustedRootMessage = 'A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider.'
-          $isExpectedSelfSignedTestCertificate = (
-            $signature.SignerCertificate.Subject -eq $signature.SignerCertificate.Issuer -and
-            $signature.SignerCertificate.Subject -eq $expectedTestCertificateSubject
-          )
-          $isExpectedUntrustedStatus = (
-            $signature.Status -eq 'NotTrusted' -or
-            ($signature.Status -eq 'UnknownError' -and $signature.StatusMessage -eq $expectedUntrustedRootMessage)
-          )
-
-          if ($signature.Status -ne 'Valid' -and -not (
-            $isExpectedSelfSignedTestCertificate -and $isExpectedUntrustedStatus
-          )) {
-            Write-Error "SignPath returned an unacceptable Authenticode signature: $($signature.Status) — $($signature.StatusMessage)"
-            exit 1
-          }
-
-          "path=$($installers[0].FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-      - name: Upload signed installer
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: signpath-test-windows-x64
-          path: ${{ steps.signed-installer.outputs.path }}
-          retention-days: 7
-          if-no-files-found: error
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/signpath-windows.yml
+    with:
+      signing_policy_slug: test-signing
+      test_certificate: true
+      output_artifact_name: signpath-test-windows-x64
+    secrets: inherit

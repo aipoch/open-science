@@ -43,19 +43,51 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
+      - name: Require Windows signing configuration
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          WINDOWS_PUBLISHER_NAME: ${{ vars.SIGNPATH_WINDOWS_PUBLISHER_NAME }}
+        run: |
+          if [ -z "$WINDOWS_PUBLISHER_NAME" ]; then
+            echo "SIGNPATH_WINDOWS_PUBLISHER_NAME must equal the production certificate subject." >&2
+            exit 1
+          fi
+
   # Build the platform matrix (macOS arm64/x64 + Linux + Windows x64) via the reusable workflow.
   # secrets: inherit forwards the optional signing/notarization secrets. macOS is signed but NOT
   # notarized here — notarization is decoupled into the notarize-mac job below.
   build:
     needs: release-preflight
     uses: ./.github/workflows/build.yml
+    with:
+      windows_publisher_name: ${{ vars.SIGNPATH_WINDOWS_PUBLISHER_NAME }}
+    secrets: inherit
+
+  # Sign the final NSIS setup EXE, then regenerate latest.yml and its blockmap from the signed bytes.
+  # Re-emitting windows-x64 makes every downstream consumer use the finalized artifact.
+  sign-windows:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/signpath-windows.yml
+    with:
+      signing_policy_slug: release-signing
+      test_certificate: false
+      output_artifact_name: windows-x64
     secrets: inherit
 
   # Exercise the exact uploaded packages in separate native jobs. A failed matrix leg can be retried
   # against the immutable build artifact without repeating installation, packaging, or signing.
   package-smoke:
-    needs: build
+    needs: [build, sign-windows]
+    if: >-
+      always() && needs.build.result == 'success' &&
+      (needs.sign-windows.result == 'success' || needs.sign-windows.result == 'skipped')
     uses: ./.github/workflows/package-smoke.yml
+    with:
+      require_windows_authenticode: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
 
   # Exercise advisory regression in this low-privilege build run and retain its diagnostics without
   # allowing known flakes to override the blocking build + package-smoke result.
@@ -109,6 +141,7 @@ jobs:
           --directory artifacts
           --output artifacts/RELEASE-CERTIFICATION.json
           --expected-sha "$GITHUB_SHA"
+          --require-signed-windows
 
       # Merge the two per-arch mac feeds (from notarize-mac) into the single latest-mac.yml the
       # installed app polls (default `latest` channel). No-ops if the mac feeds are absent.
