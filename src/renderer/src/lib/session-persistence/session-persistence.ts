@@ -14,6 +14,7 @@ import {
   sessionRevision,
   type DeleteSessionRequest,
   type LoadAllSessionsResult,
+  type ListSessionSummariesResult,
   type LoadSessionRequest,
   type PersistedChatSession,
   type SaveSessionOptions,
@@ -33,6 +34,7 @@ import type { ChatSession, SessionHydrationSelection } from '../../stores/sessio
 import { projectRendererFailure } from '../../renderer-diagnostics'
 
 type SessionPersistenceApi = {
+  list?: () => Promise<ListSessionSummariesResult>
   loadAll: () => Promise<LoadAllSessionsResult>
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
@@ -896,7 +898,30 @@ const loadPersistedSessions = async (
   api: SessionPersistenceApi,
   shouldHydrate: () => boolean = () => true,
   preferredSelection?: SessionHydrationSelection
-): Promise<LoadAllSessionsResult | undefined> => {
+): Promise<LoadAllSessionsResult | ListSessionSummariesResult | undefined> => {
+  if (api.list) {
+    const result = await api.list()
+    if (!shouldHydrate()) return undefined
+    const requestedSelection =
+      preferredSelection !== undefined
+        ? preferredSelection.sessionId
+        : (result.manifest.lastSessionId ?? result.sessions[0]?.id)
+    const selectedSummary = result.sessions.find((session) => session.id === requestedSelection)
+    const selected = selectedSummary
+      ? await api.loadOne({
+          projectId: selectedSummary.projectId,
+          sessionId: selectedSummary.id
+        })
+      : undefined
+    if (selectedSummary && !selected) {
+      throw new Error('Selected Session JSON is missing from the SQLite projection.')
+    }
+    useSessionStore
+      .getState()
+      .hydrateSessionSummaries(result.sessions, selected, result.manifest, preferredSelection)
+    return result
+  }
+
   const result = await api.loadAll()
   if (!shouldHydrate()) return undefined
 
@@ -933,10 +958,14 @@ const createStoreSaver = (
   let previousSessions = initial.sessions
   let previousSelection = initial.selectedSessionId
   const acknowledgedRevisions = new Map(
-    initial.sessions.map((session) => [session.id, sessionRevision(session)])
+    initial.sessions
+      .filter((session) => session.contentLoaded !== false)
+      .map((session) => [session.id, sessionRevision(session)])
   )
   const acknowledgedSessions = new Map(
-    initial.sessions.map((session) => [session.id, toPersistedSession(session)])
+    initial.sessions
+      .filter((session) => session.contentLoaded !== false)
+      .map((session) => [session.id, toPersistedSession(session)])
   )
   persistence.seedAcknowledgedSessions([...acknowledgedSessions.values()])
 
@@ -982,6 +1011,54 @@ const createStoreSaver = (
 
       const target = `session:${session.id}`
       const isForced = options?.forceTargets?.has(target) === true
+      const previousSession = previousById.get(session.id)
+      if (session.contentLoaded === false) {
+        if (previousSession === session && !isForced) continue
+        const conflictRebaseFields = [
+          ...new Set([
+            ...(previousSession
+              ? (['title', 'pinned'] as const).filter((field) =>
+                  conflictRebaseFieldChanged(previousSession, session, field)
+                )
+              : []),
+            ...(options?.conflictRebaseFieldsByTarget?.get(target) ?? [])
+          ])
+        ].filter((field): field is 'title' | 'pinned' => field === 'title' || field === 'pinned')
+        const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        tasks.push({
+          target,
+          failureContext: { conflictRebaseFields },
+          run: () =>
+            persistence.saveLatestSession(
+              target,
+              async (coalescedOptions) => {
+                const authority = await api.loadOne({
+                  projectId: session.projectId,
+                  sessionId: session.id
+                })
+                if (!authority) throw new Error('Session JSON is missing for metadata persistence.')
+                const fields = new Set(coalescedOptions?.conflictRebaseFields ?? [])
+                const candidate: PersistedChatSession = {
+                  ...authority,
+                  ...(fields.has('title') ? { title: session.title } : {}),
+                  ...(fields.has('pinned') ? { pinned: session.pinned } : {}),
+                  ...(fields.size > 0
+                    ? { updatedAt: Math.max(authority.updatedAt, session.updatedAt) }
+                    : {})
+                }
+                const durable = coalescedOptions
+                  ? await api.saveSession(candidate, coalescedOptions)
+                  : await api.saveSession(candidate)
+                acknowledgedRevisions.set(session.id, sessionRevision(durable))
+                acknowledgedSessions.set(session.id, durable)
+                useSessionStore.getState().upsertPersistedSession(durable)
+                return durable
+              },
+              saveOptions
+            )
+        })
+        continue
+      }
       const authority = isExternallyHydratedSession(session)
         ? getExternallyHydratedSessionAuthority(session)
         : undefined
@@ -1009,7 +1086,6 @@ const createStoreSaver = (
         // is no longer proven to match the immutable Branch graph. Preserve the last durable copy.
         !session.conversationGraphSyncBlocked
       ) {
-        const previousSession = previousById.get(session.id)
         const changedConflictRebaseFields = previousSession
           ? SESSION_CONFLICT_REBASE_FIELDS.filter((field) =>
               conflictRebaseFieldChanged(previousSession, session, field)
@@ -1400,6 +1476,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       )
       activeSaver = save
       saverRef.current = save
+      const loadingSessionContent = new Set<string>()
 
       unsubscribe = useSessionStore.subscribe((state) => {
         pruneRemovedSessionWriteTargets(
@@ -1410,6 +1487,23 @@ const useSessionPersistence = (): SessionPersistenceState => {
           unresolvedSessionRevisionConflictTargets
         )
         if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+        const selected = state.sessions.find(
+          (session) => session.id === state.selectedSessionId && session.contentLoaded === false
+        )
+        if (selected && !loadingSessionContent.has(selected.id)) {
+          loadingSessionContent.add(selected.id)
+          void window.api.sessions
+            .loadOne({ projectId: selected.projectId, sessionId: selected.id })
+            .then((session) => {
+              if (!session) throw new Error('Selected Session JSON is missing.')
+              if (isMounted) useSessionStore.getState().upsertPersistedSession(session)
+            })
+            .catch((error) => {
+              reportPersistenceError(error, 'session-load')
+              if (isMounted) setLoadError(SAFE_SESSION_LOAD_ERROR)
+            })
+            .finally(() => loadingSessionContent.delete(selected.id))
+        }
         void save(state).catch(reportPersistenceError)
       })
 

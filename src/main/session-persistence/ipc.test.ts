@@ -476,6 +476,8 @@ describe('session persistence IPC handlers', () => {
 
     expect([...ipcHandlers.keys()]).toEqual([
       'sessions:load-all',
+      'sessions:list',
+      'sessions:load-usage',
       'sessions:load-one',
       'sessions:save-session',
       'sessions:update-archive',

@@ -7,7 +7,10 @@ import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
 } from '../../../../shared/specialist'
-import type { SessionDeletionResult } from '../../../../shared/session-persistence'
+import type {
+  PersistedChatSession,
+  SessionDeletionResult
+} from '../../../../shared/session-persistence'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import {
@@ -167,6 +170,48 @@ afterEach(() => {
 })
 
 describe('workspace session controller', () => {
+  it('loads an unopened Session before opening conversation export', async () => {
+    const summary = session({ contentLoaded: false, activeMessageCount: 1 })
+    const persisted: PersistedChatSession = {
+      id: summary.id,
+      projectId: summary.projectId,
+      title: summary.title,
+      cwd: summary.cwd,
+      status: summary.status,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Export me',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: summary.createdAt,
+      updatedAt: summary.updatedAt
+    }
+    const loadOne = vi.fn().mockResolvedValue(persisted)
+    window.api = { sessions: { loadOne } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
+    const hook = renderController({ activeSession: summary })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.openExportConversation(summary)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(loadOne).toHaveBeenCalledWith({
+      projectId: summary.projectId,
+      sessionId: summary.id
+    })
+    expect(hook.result.current.view.dialogs.exportConversation?.messages).toHaveLength(1)
+    expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
+  })
+
   it('keeps rename whitespace while using trim only as the empty-title gate', () => {
     const active = session()
     useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })

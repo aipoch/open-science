@@ -7,6 +7,7 @@ import {
   type PersistedAgentFrame
 } from '../../../../shared/conversation-graph'
 import {
+  hasAnswerableDelegatedQuestion,
   projectActiveRootDelegatedFrames,
   resolveActiveRootMessageIds
 } from '../../../../shared/delegated-work-projection'
@@ -155,9 +156,6 @@ const projectAnswerableDelegatedQuestions = (
     )
   })
 }
-
-const hasAnswerableDelegatedQuestion = (session: PersistedChatSession | undefined): boolean =>
-  projectAnswerableDelegatedQuestions(session).length > 0
 
 const projectDelegatedQuestionQueue = (
   session: PersistedChatSession | undefined

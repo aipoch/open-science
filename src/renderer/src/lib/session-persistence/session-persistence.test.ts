@@ -145,6 +145,109 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
   })
 
+  it('loads only the selected Session JSON from the SQLite summary list', async () => {
+    const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
+    const list = vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          number: 1,
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Selected',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 1,
+          updatedAt: 2,
+          needsStartupRecovery: false
+        },
+        {
+          number: 2,
+          id: 'session-2',
+          projectId: 'project-1',
+          title: 'Unopened',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 12,
+          artifactCount: 3,
+          filesRevision: 2,
+          createdAt: 2,
+          updatedAt: 1,
+          needsStartupRecovery: false
+        }
+      ],
+      manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: 'session-1' }
+    })
+    const loadOne = vi.fn().mockResolvedValue(selected)
+    const api = createApi({ list, loadOne })
+
+    await loadPersistedSessions(api)
+
+    expect(api.loadAll).not.toHaveBeenCalled()
+    expect(loadOne).toHaveBeenCalledOnce()
+    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project-1', sessionId: 'session-1' })
+    expect(useSessionStore.getState().sessions).toMatchObject([
+      { id: 'session-1' },
+      { id: 'session-2', contentLoaded: false, activeMessageCount: 12, messages: [] }
+    ])
+    expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
+  })
+
+  it('loads authority before persisting metadata edits to an unopened Session', async () => {
+    const authority = createPersistedSession({
+      id: 'session-2',
+      projectId: 'project-1',
+      pinned: true,
+      updatedAt: 2_000_000_000_000
+    })
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 2,
+          id: authority.id,
+          projectId: authority.projectId,
+          title: authority.title,
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 0,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: authority.createdAt,
+          updatedAt: authority.updatedAt,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined
+    )
+    const loadOne = vi.fn().mockResolvedValue(authority)
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const api = createApi({ loadOne, saveSession })
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().renameSession(authority.id, 'Renamed while unopened')
+    await save(useSessionStore.getState())
+
+    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project-1', sessionId: 'session-2' })
+    expect(saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'session-2',
+        title: 'Renamed while unopened',
+        pinned: true,
+        updatedAt: authority.updatedAt
+      }),
+      { conflictRebaseFields: ['title'] }
+    )
+    expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
+  })
+
   it('does not hydrate a session snapshot after its startup effect is cancelled', async () => {
     const deferred = createDeferred<LoadAllSessionsResult>()
     const api = createApi({ loadAll: vi.fn().mockReturnValue(deferred.promise) })

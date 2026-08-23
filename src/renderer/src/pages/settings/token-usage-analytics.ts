@@ -2,7 +2,8 @@ import {
   isHiddenControlMessage,
   isHumanUserMessage,
   type PersistedChatMessage,
-  type PersistedChatSession
+  type PersistedChatSession,
+  type SessionUsageProjection
 } from '../../../../shared/session-persistence'
 import type { Project } from '../../../../shared/projects'
 
@@ -239,6 +240,51 @@ export const buildTokenUsageAnalytics = (
     usageEvents,
     totalArtifacts: artifactIds.size
   }
+}
+
+export const buildTokenUsageAnalyticsFromProjection = (
+  projection: SessionUsageProjection,
+  now: number = Date.now(),
+  projects: readonly Project[] = []
+): TokenUsageAnalytics => {
+  const analytics: TokenUsageAnalytics = {
+    now,
+    last30Days: Array.from({ length: 30 }, (_, index) =>
+      createEmptyDailyPoint(addLocalDays(startOfLocalDay(now), index - 29))
+    ),
+    sessionCreatedAt: projection.sessionCreatedAt,
+    projectCreatedAt: projects.map((project) => project.createdAt),
+    artifactCreatedAt: projection.artifactCreatedAt,
+    runsAt: projection.runsAt,
+    usageEvents: projection.usageEvents,
+    totalArtifacts: projection.totalArtifacts
+  }
+  const dailyByKey = new Map(analytics.last30Days.map((point) => [point.dateKey, point]))
+  for (const timestamp of analytics.sessionCreatedAt) {
+    const point = dailyByKey.get(localDateKey(timestamp))
+    if (point && timestamp <= now) point.newConversations += 1
+  }
+  for (const timestamp of analytics.projectCreatedAt) {
+    const point = dailyByKey.get(localDateKey(timestamp))
+    if (point && timestamp <= now) point.newProjects += 1
+  }
+  for (const timestamp of analytics.artifactCreatedAt) {
+    const point = dailyByKey.get(localDateKey(timestamp))
+    if (point && timestamp <= now) point.newArtifacts += 1
+  }
+  for (const timestamp of analytics.runsAt) {
+    const point = dailyByKey.get(localDateKey(timestamp))
+    if (point && timestamp <= now) point.runs += 1
+  }
+  for (const event of analytics.usageEvents) {
+    const point = dailyByKey.get(localDateKey(event.timestamp))
+    if (!point || event.timestamp > now) continue
+    point.inputTokens += event.inputTokens
+    point.cacheTokens += event.cacheTokens
+    point.outputTokens += event.outputTokens
+    point.totalTokens += event.inputTokens + event.cacheTokens + event.outputTokens
+  }
+  return analytics
 }
 
 export const selectTokenUsageSummary = (

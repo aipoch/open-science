@@ -26,6 +26,7 @@ import { visionEvidenceMigration } from './migrations/0009-vision-evidence'
 import { computePasswordAuthMigration } from './migrations/0010-compute-password-auth'
 import { crossResourceTagsMigration } from './migrations/0011-cross-resource-tags'
 import { tagOrderingMigration } from './migrations/0012-tag-ordering'
+import { sessionProjectionMigration } from './migrations/0013-session-projection'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -216,6 +217,12 @@ const TAG_ORDERING_CHECKSUM = checksumMigrationPayload(
   tagOrderingMigration.verifiers,
   tagOrderingMigration.operations
 )
+const SESSION_PROJECTION_CHECKSUM = checksumMigrationPayload(
+  sessionProjectionMigration.id,
+  sessionProjectionMigration.statements,
+  sessionProjectionMigration.verifiers,
+  sessionProjectionMigration.operations
+)
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
     table,
@@ -350,6 +357,12 @@ const MIGRATION_MANIFEST = [
   {
     ...tagOrderingMigration,
     checksum: TAG_ORDERING_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionProjectionMigration,
+    checksum: SESSION_PROJECTION_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }

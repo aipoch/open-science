@@ -27,7 +27,8 @@ import {
   type PersistedMessageStatus,
   type PersistedSessionManifest,
   type PersistedSessionStatus,
-  type PersistedToolActivity
+  type PersistedToolActivity,
+  type SessionSummary
 } from '../../../shared/session-persistence'
 import {
   inferSessionInteractionState,
@@ -103,6 +104,11 @@ export type ChatSession = Omit<
   // Transient independent facts for the blocking lane. Plan remains owned by its durable
   // projection, while Side chat remains an overlay that never settles these facts.
   interactionState?: SessionInteractionState
+  // False only for a SQLite-backed startup row whose transcript JSON has not been opened yet.
+  contentLoaded?: false
+  activeMessageCount?: number
+  artifactCount?: number
+  presentedActivityAt?: number
 }
 
 export type SessionStoreData = {
@@ -129,6 +135,12 @@ export type ApplyDurableSessionProjectionInput = {
 export type SessionPersistenceActions = {
   hydrateSessions: (
     sessions: PersistedChatSession[],
+    manifest?: PersistedSessionManifest,
+    selection?: SessionHydrationSelection
+  ) => void
+  hydrateSessionSummaries: (
+    summaries: SessionSummary[],
+    selected: PersistedChatSession | undefined,
     manifest?: PersistedSessionManifest,
     selection?: SessionHydrationSelection
   ) => void
@@ -161,6 +173,9 @@ export const stripTransientMessageState = (message: ChatMessage): PersistedChatM
 
 // Serializes one in-memory session into the durable per-file projection saved by the main process.
 export const toPersistedSession = (session: ChatSession): PersistedChatSession => {
+  if (session.contentLoaded === false) {
+    throw new Error('Session content must be loaded before persistence.')
+  }
   if (session.conversationGraphSyncBlocked) {
     throw new Error(
       'Session persistence is blocked after conversation graph synchronization failed.'
@@ -187,6 +202,10 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     pendingContextReplayMessageId,
     interactionState,
     activePlanProjection,
+    contentLoaded,
+    activeMessageCount,
+    artifactCount,
+    presentedActivityAt,
     planHistoryProjections,
     runtimeContext,
     messages,
@@ -210,6 +229,10 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
   void pendingContextReplayMessageId
   void interactionState
   void activePlanProjection
+  void contentLoaded
+  void activeMessageCount
+  void artifactCount
+  void presentedActivityAt
   void runtimeContext
 
   const persistedPlanHistory = sanitizePlanHistoryProjections(planHistoryProjections)
@@ -255,6 +278,33 @@ export const hydrateSession = (session: PersistedChatSession): ChatSession => {
   }
   return { ...hydrated, interactionState: inferSessionInteractionState(hydrated) }
 }
+
+const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
+  number: summary.number,
+  id: summary.id,
+  projectId: summary.projectId,
+  title: summary.title,
+  cwd: '',
+  status: summary.presentedStatus,
+  pinned: summary.pinned,
+  ...(summary.archivedAt !== undefined ? { archivedAt: summary.archivedAt } : {}),
+  revision: summary.revision,
+  messages: [],
+  filesRevision: summary.filesRevision,
+  createdAt: summary.createdAt,
+  updatedAt: summary.updatedAt,
+  contentLoaded: false,
+  activeMessageCount: summary.activeMessageCount,
+  artifactCount: summary.artifactCount,
+  ...(summary.presentedActivityAt !== undefined
+    ? { presentedActivityAt: summary.presentedActivityAt }
+    : {}),
+  interactionState: {
+    permission: summary.presentedStatus === 'waiting-permission',
+    elicitation: summary.presentedStatus === 'waiting-for-user',
+    plan: summary.presentedStatus === 'waiting-plan-approval'
+  }
+})
 
 const matchesPersistedPlanProjection = (
   projection: ActivePlanProjection | undefined,
@@ -369,9 +419,36 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set({ sessions: hydrated, selectedSessionId } as Partial<State>)
   },
 
+  hydrateSessionSummaries: (summaries, selected, manifest, selection) => {
+    const selectedById = selected ? new Map([[selected.id, selected]]) : new Map()
+    const hydrated = [...summaries]
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map((summary) => {
+        const authority = selectedById.get(summary.id)
+        return authority ? hydrateSession(authority) : hydrateSessionSummary(summary)
+      })
+    const hasExplicitSelection = selection !== undefined
+    const requestedSelection = hasExplicitSelection ? selection.sessionId : manifest?.lastSessionId
+    const selectedSessionId = hydrated.some((session) => session.id === requestedSelection)
+      ? requestedSelection
+      : hasExplicitSelection
+        ? undefined
+        : hydrated[0]?.id
+    set({ sessions: hydrated, selectedSessionId } as Partial<State>)
+  },
+
   upsertPersistedSession: (session) => {
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
+      if (existing?.contentLoaded === false) {
+        const hydrated = hydrateSession(session)
+        markExternallyHydratedSession(hydrated, session)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? hydrated : candidate
+          )
+        } as Partial<State>
+      }
       const incomingSessionRevision = sessionRevision(session)
       const existingSessionRevision = existing ? sessionRevision(existing) : -1
       if (

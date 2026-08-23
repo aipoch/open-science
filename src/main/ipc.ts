@@ -285,7 +285,11 @@ import {
   type SessionAgentConfiguration
 } from '../shared/settings'
 import type { AcpSessionAgentTarget } from '../shared/acp'
-import type { PersistedChatSession } from '../shared/session-persistence'
+import type {
+  LoadAllSessionsResult,
+  PersistedChatSession,
+  SessionSummary
+} from '../shared/session-persistence'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import { withDataRootWrite } from './storage/migration-state'
@@ -875,22 +879,46 @@ const createApplicationModules = async (
   // flushed to disk on the session's first save so an approved switch survives an app restart before
   // the next message. Shared by persistSessionSpecialist (stash) and saveSession (flush).
   const pendingSpecialistBindings = new PendingSessionSpecialistBindings()
-  const sessionPersistenceBackend: SessionPersistenceBackend = {
-    loadAll: async () => {
-      const result = await loadSessionsAfterProjectRecovery(
-        projectDeletionCoordinator,
-        sessionPersistenceCoordinator
+  const loadAllSessions = async (): Promise<LoadAllSessionsResult> => {
+    const result = await loadSessionsAfterProjectRecovery(
+      projectDeletionCoordinator,
+      sessionPersistenceCoordinator
+    )
+    if (!sessionEnabledComputeHostsOwnerRef.current) {
+      throw new Error('Session enabled Compute Host ownership is not initialized.')
+    }
+    return {
+      ...result,
+      sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
+        result.sessions,
+        canReconcileSessionAbsences(result)
       )
-      if (!sessionEnabledComputeHostsOwnerRef.current) {
-        throw new Error('Session enabled Compute Host ownership is not initialized.')
-      }
+    }
+  }
+  const ensureSessionProjection = async (): Promise<{
+    result?: LoadAllSessionsResult
+    sessions: SessionSummary[]
+  }> => {
+    await projectDeletionCoordinator.recoverPendingDeletions()
+    return sessionRepository.ensureSessionProjection(loadAllSessions)
+  }
+  const sessionPersistenceBackend: SessionPersistenceBackend = {
+    loadAll: loadAllSessions,
+    list: async () => {
+      const projection = await ensureSessionProjection()
       return {
-        ...result,
-        sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
-          result.sessions,
-          canReconcileSessionAbsences(result)
-        )
+        sessions: projection.sessions,
+        manifest: projection.result?.manifest ?? (await sessionRepository.loadManifest()),
+        diagnostics: projection.result?.diagnostics ?? {
+          isComplete: true,
+          warnings: [],
+          isProjectDeletionRecoveryComplete: true
+        }
       }
+    },
+    loadUsage: async () => {
+      await ensureSessionProjection()
+      return sessionRepository.loadSessionUsageProjection()
     },
     loadOne: async ({ projectId, sessionId }) => {
       await projectDeletionCoordinator.recoverPendingDeletions()

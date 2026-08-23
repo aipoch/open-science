@@ -23,6 +23,38 @@ const earliestCurrentDelegatedAttemptStartedAt = (
   return startedAt.length > 0 ? Math.min(...startedAt) : undefined
 }
 
+const hasAnswerableDelegatedQuestion = (
+  session: Pick<PersistedChatSession, 'conversationGraph' | 'runtimeContext'> | undefined
+): boolean => {
+  const graph = session?.conversationGraph
+  const owner = session?.runtimeContext?.delegatedWork
+  if (!graph || !owner?.questionRequests || owner.questionRequestsQuarantine !== undefined) {
+    return false
+  }
+  const root = graph.frames.find((frame) => frame.id === graph.rootFrameId && frame.kind === 'root')
+  const activeRootMessageIds = resolveActiveRootMessageIds(graph)
+  if (!root || !activeRootMessageIds) return false
+  return owner.questionRequests.some((request) => {
+    if (
+      request.status !== 'pending' ||
+      request.rootBranchId !== root.activeBranchId ||
+      !activeRootMessageIds.has(request.rootOriginMessageId)
+    ) {
+      return false
+    }
+    const source = graph.frames.find((frame) => frame.id === request.sourceFrameId)
+    return Boolean(
+      source &&
+      source.kind === 'delegate' &&
+      source.parentFrameId === root.id &&
+      source.originBindingState === 'validated' &&
+      source.originMessageId === request.rootOriginMessageId &&
+      source.activeBranchId === request.sourceMessageBranchId &&
+      (source.delegateName?.trim() || source.agentName?.trim()) === request.sourceName
+    )
+  })
+}
+
 const resolveActiveRootMessageIds = (
   graph: NonNullable<PersistedChatSession['conversationGraph']>
 ): ReadonlySet<string> | undefined => {
@@ -55,6 +87,7 @@ const projectActiveRootDelegatedFrames = (
 
 export {
   earliestCurrentDelegatedAttemptStartedAt,
+  hasAnswerableDelegatedQuestion,
   hasCurrentRunningDelegatedAttempt,
   projectActiveRootDelegatedFrames,
   resolveActiveRootMessageIds

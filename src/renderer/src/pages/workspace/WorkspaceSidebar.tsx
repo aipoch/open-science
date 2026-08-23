@@ -435,7 +435,7 @@ const WorkspaceSidebarView = ({
                   const shortcutNumber = shortcutNumberBySessionId.get(session.id)
                   const presentedStatus = getPresentedSessionStatus(session)
                   const isExportDisabled =
-                    session.messages.length === 0 ||
+                    (session.activeMessageCount ?? session.messages.length) === 0 ||
                     presentedStatus === 'running' ||
                     presentedStatus === 'waiting-for-user' ||
                     presentedStatus === 'waiting-permission' ||

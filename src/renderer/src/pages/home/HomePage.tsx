@@ -125,7 +125,9 @@ const getRunningActivityTimestamp = (session: ChatSession): number => {
     session.status === 'running' ? session.activeRun?.startedAt : undefined,
     earliestCurrentDelegatedAttemptStartedAt(session)
   ].filter((value): value is number => value !== undefined)
-  return candidates.length > 0 ? Math.min(...candidates) : session.updatedAt
+  return candidates.length > 0
+    ? Math.min(...candidates)
+    : (session.presentedActivityAt ?? session.updatedAt)
 }
 
 const sectionHeadingClassName =

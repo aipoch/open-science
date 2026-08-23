@@ -9,9 +9,11 @@ import {
 import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
+  ListSessionSummariesResult,
   LoadSessionRequest,
   DelegationPolicy,
   PersistedChatSession,
+  SessionUsageProjection,
   SaveSessionOptions,
   SaveSessionManifestRequest,
   UpdateSessionArchiveRequest
@@ -20,6 +22,7 @@ import { broadcastLifecycleEvent, getLifecycleClientId } from '../lifecycle-broa
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { resolveStorageRoot } from '../storage-root'
 import { SessionRepository } from './repository'
+import { SessionProjectionRepository } from './projection'
 import { ReviewRepository } from '../reviewer/repository'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -30,6 +33,8 @@ import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
 
 type SessionPersistenceBackend = {
   loadAll: () => Promise<LoadAllSessionsResult>
+  list?: () => Promise<ListSessionSummariesResult>
+  loadUsage?: () => Promise<SessionUsageProjection>
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
     session: PersistedChatSession,
@@ -47,6 +52,8 @@ type SessionPersistenceBackend = {
 
 type SessionPersistenceHandlers = {
   loadAll: () => Promise<LoadAllSessionsResult>
+  list?: () => Promise<ListSessionSummariesResult>
+  loadUsage?: () => Promise<SessionUsageProjection>
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
     session: PersistedChatSession,
@@ -140,6 +147,14 @@ const createSessionPersistenceHandlersWithAttributionAuthority = (
   void reviewRepository
   return {
     loadAll: () => repository.loadAll(),
+    list: () => {
+      if (!repository.list) throw new Error('Session summary projection is unavailable.')
+      return repository.list()
+    },
+    loadUsage: () => {
+      if (!repository.loadUsage) throw new Error('Session usage projection is unavailable.')
+      return repository.loadUsage()
+    },
     loadOne: (request) => repository.loadOne(request),
     saveSession: async (session, options) => {
       const durable = await repository.loadOne({
@@ -181,7 +196,12 @@ const createSessionPersistenceHandlers = (
 // Creates the production repository rooted at the (dev-aware) storage root.
 const createDefaultSessionRepository = (
   hasActiveRuntimePrompt: (projectId: string, sessionId: string) => boolean = () => false
-): SessionRepository => new SessionRepository(resolveStorageRoot(), { hasActiveRuntimePrompt })
+): SessionRepository =>
+  new SessionRepository(
+    resolveStorageRoot(),
+    { hasActiveRuntimePrompt },
+    new SessionProjectionRepository(() => getProjectDbClient(resolveStorageRoot()))
+  )
 
 const createDefaultReviewRepository = (): ReviewRepository =>
   new ReviewRepository(() => getProjectDbClient(resolveStorageRoot()))
@@ -200,6 +220,18 @@ const registerSessionPersistenceIpcHandlers = (
   // loadAll can replay pending deletions and every mutation can materialize provenance/upload bytes.
   // Hold the shared data-root lease at the IPC boundary so migration drains the complete operation.
   ipcMainHandle('sessions:load-all', () => withDataRootWrite(() => handlers.loadAll()))
+  ipcMainHandle('sessions:list', () =>
+    withDataRootWrite(() => {
+      if (!handlers.list) throw new Error('Session summary projection is unavailable.')
+      return handlers.list()
+    })
+  )
+  ipcMainHandle('sessions:load-usage', () =>
+    withDataRootWrite(() => {
+      if (!handlers.loadUsage) throw new Error('Session usage projection is unavailable.')
+      return handlers.loadUsage()
+    })
+  )
   ipcMainHandle('sessions:load-one', (_event, request: LoadSessionRequest) =>
     withDataRootWrite(() => handlers.loadOne(request))
   )

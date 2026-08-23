@@ -159,7 +159,7 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
       ? {
           id: persisted.optionId,
           label: session.title,
-          count: session.artifacts?.length ?? 0,
+          count: session.artifactCount ?? session.artifacts?.length ?? 0,
           kind: 'session'
         }
       : undefined

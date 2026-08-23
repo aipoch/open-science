@@ -1,9 +1,9 @@
 // Prisma schema for the project data layer.
 //
-// Sessions and messages stay on disk (see src/shared/session-persistence.ts). SQLite stores projects,
-// preview state, the message center, reviewer results, and a query projection of app-managed
-// files; file bytes remain on disk. At runtime the datasource url is supplied programmatically (see
-// prisma-client.ts), so DATABASE_URL is CLI-only.
+// Session content stays on disk (see src/shared/session-persistence.ts). SQLite stores projects,
+// lightweight Session metadata and usage projections, preview state, the message center, reviewer
+// results, and a query projection of app-managed files; file bytes remain on disk. At runtime the
+// datasource url is supplied programmatically (see prisma-client.ts), so DATABASE_URL is CLI-only.
 
 generator client {
   provider      = "prisma-client-js"
@@ -32,6 +32,93 @@ model Project {
   permissionGrants PermissionGrant[]
   previewState     ProjectPreviewState?
   visionEvidence   VisionEvidence[]
+  sessions         Session[]
+}
+
+// Rebuildable query projection of the metadata duplicated in one authoritative Session JSON file.
+// `number` is the app-wide human-facing sequence; the existing string `id` remains domain identity.
+model Session {
+  number                Int       @id @default(autoincrement())
+  id                    String    @unique
+  projectId             String
+  title                 String
+  status                String
+  presentedStatus       String
+  pinned                 Boolean   @default(false)
+  archivedAtMs          BigInt?
+  revision               BigInt    @default(0)
+  activeMessageCount     Int       @default(0)
+  artifactCount          Int       @default(0)
+  filesRevision          Int       @default(0)
+  createdAtMs            BigInt
+  updatedAtMs            BigInt
+  presentedActivityAtMs  BigInt?
+  needsStartupRecovery   Boolean   @default(false)
+  sourceByteLength       BigInt?
+  sourceMtimeMs          BigInt?
+  project                Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  turnUsage              SessionTurnUsage[]
+  runs                   SessionRun[]
+  artifactRefs           SessionArtifactRef[]
+
+  @@index([projectId, archivedAtMs, updatedAtMs, id])
+  @@index([archivedAtMs, updatedAtMs, id])
+  @@index([createdAtMs])
+}
+
+// Singleton completion marker. Its absence/version mismatch means the projection must be rebuilt
+// from Session JSON before a genuinely empty catalog can be distinguished from an uninitialized one.
+model SessionProjectionState {
+  id                String   @id
+  projectionVersion Int
+  completedAt       DateTime
+}
+
+// Durable cross-store write intent. Deliberately has no foreign key: it must survive a missing or
+// deleted projection row long enough to reconcile that Session from its authoritative JSON file.
+model PendingSessionReconciliation {
+  sessionId String   @id
+  projectId String
+  markedAt  DateTime @default(now())
+
+  @@index([projectId])
+}
+
+// One completed Agent turn usage report. Inactive branches and delegated frames are retained.
+model SessionTurnUsage {
+  sessionId     String
+  messageId     String
+  completedAtMs BigInt
+  inputTokens   BigInt
+  cacheTokens   BigInt
+  outputTokens  BigInt
+  isRootFrame   Boolean
+  session       Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, messageId])
+  @@index([completedAtMs])
+}
+
+// One user-authored root-frame run, excluding hidden control and delegated caller messages.
+model SessionRun {
+  sessionId   String
+  messageId   String
+  createdAtMs BigInt
+  session     Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, messageId])
+  @@index([createdAtMs])
+}
+
+// Distinct artifact identity referenced by a Session, with the best known creation timestamp.
+model SessionArtifactRef {
+  sessionId           String
+  artifactId          String
+  artifactCreatedAtMs BigInt?
+  session             Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, artifactId])
+  @@index([artifactId, artifactCreatedAtMs])
 }
 
 model PermissionGrant {

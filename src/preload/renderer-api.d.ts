@@ -212,10 +212,12 @@ import type {
   DeleteSessionRequest,
   SessionDeletionResult,
   LoadAllSessionsResult,
+  ListSessionSummariesResult,
   LoadSessionRequest,
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
+  SessionUsageProjection,
   UpdateSessionArchiveRequest
 } from '../shared/session-persistence'
 import type {
@@ -477,8 +479,10 @@ export interface OpenScienceAPI {
     onChanged(listener: AcpListener<PermissionGrantsChangedEvent>): RemoveListener
   }
   sessions: {
+    list(): Promise<ListSessionSummariesResult>
     loadAll(): Promise<LoadAllSessionsResult>
     loadOne(request: LoadSessionRequest): Promise<PersistedChatSession | undefined>
+    loadUsage(): Promise<SessionUsageProjection>
     saveSession(
       session: PersistedChatSession,
       options?: SaveSessionOptions

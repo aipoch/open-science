@@ -2,7 +2,10 @@ import { ChartNoAxesCombined, Info } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import type {
+  PersistedChatSession,
+  SessionUsageProjection
+} from '../../../../shared/session-persistence'
 import type { Project } from '../../../../shared/projects'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
@@ -10,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import {
   buildTokenUsageAnalytics,
+  buildTokenUsageAnalyticsFromProjection,
   selectTokenUsageSummary,
   tokenUsageMetricValue,
   type TokenUsageDailyPoint,
@@ -80,6 +84,21 @@ function TokenUsagePanel({
   const now = providedNow ?? currentTime
   const [period, setPeriod] = useState<TokenUsagePeriod>('30-days')
   const [heatmapMetric, setHeatmapMetric] = useState<TokenUsageHeatmapMetric>('totalTokens')
+  const [usageProjection, setUsageProjection] = useState<SessionUsageProjection>()
+
+  useEffect(() => {
+    if (typeof window.api.sessions.loadUsage !== 'function') return
+    let active = true
+    void window.api.sessions
+      .loadUsage()
+      .then((projection) => {
+        if (active) setUsageProjection(projection)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
 
   useEffect(() => {
     if (providedNow !== undefined) return
@@ -103,8 +122,11 @@ function TokenUsagePanel({
   }, [providedNow])
 
   const analytics = useMemo(
-    () => buildTokenUsageAnalytics(sessions, now, projects),
-    [sessions, now, projects]
+    () =>
+      usageProjection
+        ? buildTokenUsageAnalyticsFromProjection(usageProjection, now, projects)
+        : buildTokenUsageAnalytics(sessions, now, projects),
+    [sessions, usageProjection, now, projects]
   )
   const summary = useMemo(() => selectTokenUsageSummary(analytics, period), [analytics, period])
   const numberFormatter = useMemo(

@@ -235,7 +235,7 @@ export const GlobalSearchDialog = ({
               projectId: session.projectId,
               title: session.title,
               updatedAt: session.updatedAt,
-              artifactCount: session.artifacts?.length ?? 0,
+              artifactCount: session.artifacts?.length ?? session.artifactCount ?? 0,
               isPending: session.isPending
             })),
             projectNames,
@@ -263,7 +263,7 @@ export const GlobalSearchDialog = ({
               projectId: session.projectId,
               title: session.title,
               updatedAt: session.updatedAt,
-              artifactCount: session.artifacts?.length ?? 0,
+              artifactCount: session.artifacts?.length ?? session.artifactCount ?? 0,
               isPending: session.isPending
             })),
             isProjectScope ? primaryProject.id : undefined

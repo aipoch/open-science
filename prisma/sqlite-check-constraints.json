@@ -1,6 +1,46 @@
 {
   "constraints": [
     {
+      "tableName": "Session",
+      "name": "Session_identity_check",
+      "expression": "\"number\" >= 1 AND length(trim(\"id\")) > 0 AND length(trim(\"projectId\")) > 0"
+    },
+    {
+      "tableName": "Session",
+      "name": "Session_status_check",
+      "expression": "\"status\" IN ('idle', 'running', 'waiting-for-user', 'waiting-permission', 'waiting-plan-approval', 'error') AND \"presentedStatus\" IN ('idle', 'running', 'waiting-for-user', 'waiting-permission', 'waiting-plan-approval', 'error')"
+    },
+    {
+      "tableName": "Session",
+      "name": "Session_nonnegative_check",
+      "expression": "\"revision\" >= 0 AND \"activeMessageCount\" >= 0 AND \"artifactCount\" >= 0 AND \"filesRevision\" >= 0 AND \"createdAtMs\" >= 0 AND \"updatedAtMs\" >= 0 AND (\"archivedAtMs\" IS NULL OR \"archivedAtMs\" >= 0) AND (\"presentedActivityAtMs\" IS NULL OR \"presentedActivityAtMs\" >= 0) AND (\"sourceByteLength\" IS NULL OR \"sourceByteLength\" >= 0) AND (\"sourceMtimeMs\" IS NULL OR \"sourceMtimeMs\" >= 0)"
+    },
+    {
+      "tableName": "SessionProjectionState",
+      "name": "SessionProjectionState_identity_check",
+      "expression": "\"id\" = 'session-projection' AND \"projectionVersion\" >= 1"
+    },
+    {
+      "tableName": "PendingSessionReconciliation",
+      "name": "PendingSessionReconciliation_identity_check",
+      "expression": "length(trim(\"sessionId\")) > 0 AND length(trim(\"projectId\")) > 0"
+    },
+    {
+      "tableName": "SessionTurnUsage",
+      "name": "SessionTurnUsage_nonnegative_check",
+      "expression": "length(trim(\"messageId\")) > 0 AND \"completedAtMs\" >= 0 AND \"inputTokens\" >= 0 AND \"cacheTokens\" >= 0 AND \"outputTokens\" >= 0"
+    },
+    {
+      "tableName": "SessionRun",
+      "name": "SessionRun_nonnegative_check",
+      "expression": "length(trim(\"messageId\")) > 0 AND \"createdAtMs\" >= 0"
+    },
+    {
+      "tableName": "SessionArtifactRef",
+      "name": "SessionArtifactRef_identity_check",
+      "expression": "length(trim(\"artifactId\")) > 0 AND (\"artifactCreatedAtMs\" IS NULL OR \"artifactCreatedAtMs\" >= 0)"
+    },
+    {
       "tableName": "Tag",
       "name": "Tag_shape_check",
       "expression": "((\"systemKey\" IS NOT NULL AND \"name\" IS NULL AND \"nameKey\" IS NULL AND \"iconKey\" IS NULL AND \"colorKey\" IS NULL) OR (\"systemKey\" IS NULL AND \"name\" IS NOT NULL AND \"nameKey\" IS NOT NULL AND \"iconKey\" IS NOT NULL AND \"colorKey\" IS NOT NULL))"

@@ -193,10 +193,13 @@ const api: OpenScienceAPI = {
     onChanged: (listener) => electronRendererContracts.subscribe('permissions.onChanged', listener)
   },
   sessions: {
+    // Lists lightweight SQLite-backed Session metadata without reading transcript JSON files.
+    list: () => electronRendererContracts.invoke('sessions.list'),
     // Loads every per-session file plus the last-open manifest from the main process.
     loadAll: () => electronRendererContracts.invoke('sessions.loadAll'),
     // Loads one durable Session without scanning unrelated Project/Session files.
     loadOne: (request) => electronRendererContracts.invoke('sessions.loadOne', request),
+    loadUsage: () => electronRendererContracts.invoke('sessions.loadUsage'),
     // Persists a single sanitized session file.
     saveSession: async (session, options) =>
       unwrapApplicationCommandOutcome(

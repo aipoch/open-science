@@ -660,6 +660,21 @@ const useWorkspaceSessionController = ({
       archive,
       openExportConversation: (session: ChatSession) => {
         setExportError(null)
+        if (session.contentLoaded === false) {
+          void window.api.sessions
+            .loadOne({ projectId: session.projectId, sessionId: session.id })
+            .then((persisted) => {
+              if (!persisted) throw new Error('Selected Session JSON is missing.')
+              useSessionStore.getState().upsertPersistedSession(persisted)
+              const hydrated = useSessionStore
+                .getState()
+                .sessions.find((candidate) => candidate.id === session.id)
+              if (!hydrated) throw new Error('Selected Session could not be hydrated.')
+              setExportConversationDialog(hydrated)
+            })
+            .catch((error) => setExportError(errorMessage(error)))
+          return
+        }
         setExportConversationDialog(session)
       },
       closeExportConversation: () => setExportConversationDialog(null),
