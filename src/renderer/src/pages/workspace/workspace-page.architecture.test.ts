@@ -32,10 +32,6 @@ const ownerPaths = {
   conversation: resolve(workspaceDirectory, 'workspace-conversation-controller.ts'),
   messageQueue: resolve(workspaceDirectory, 'workspace-message-queue-controller.ts'),
   messageQueueOwner: resolve(workspaceDirectory, 'workspace-message-queue-owner.ts'),
-  messageQueueAdmission: resolve(workspaceDirectory, 'workspace-message-queue-admission.ts'),
-  messageQueueDrain: resolve(workspaceDirectory, 'workspace-message-queue-drain.ts'),
-  messageQueueProjection: resolve(workspaceDirectory, 'workspace-message-queue-projection.ts'),
-  messageQueueAnnouncement: resolve(workspaceDirectory, 'workspace-message-queue-announcement.ts'),
   branchSwitchGuard: resolve(workspaceDirectory, 'use-workspace-branch-switch-guard.ts'),
   sideChat: resolve(workspaceDirectory, 'use-side-chat-controller.ts'),
   session: resolve(workspaceDirectory, 'workspace-session-controller.ts'),
@@ -43,6 +39,15 @@ const ownerPaths = {
     workspaceDirectory,
     'workspace-session-agent-configuration-controller.ts'
   )
+} as const
+
+// Private to the queue facade. Keep these out of module-impact ownerPaths so a split
+// does not trip the global full-suite gate; controller and owner remain the registered boundary.
+const queueInternalPaths = {
+  admission: resolve(workspaceDirectory, 'workspace-message-queue-admission.ts'),
+  drain: resolve(workspaceDirectory, 'workspace-message-queue-drain.ts'),
+  projection: resolve(workspaceDirectory, 'workspace-message-queue-projection.ts'),
+  announcement: resolve(workspaceDirectory, 'workspace-message-queue-announcement.ts')
 } as const
 
 const readSource = (path: string): string => readFileSync(path, 'utf8')
@@ -157,10 +162,10 @@ describe('workspace page architecture', () => {
       ownerPaths.conversation,
       ownerPaths.messageQueue,
       ownerPaths.messageQueueOwner,
-      ownerPaths.messageQueueAdmission,
-      ownerPaths.messageQueueDrain,
-      ownerPaths.messageQueueProjection,
-      ownerPaths.messageQueueAnnouncement,
+      queueInternalPaths.admission,
+      queueInternalPaths.drain,
+      queueInternalPaths.projection,
+      queueInternalPaths.announcement,
       ownerPaths.branchSwitchGuard,
       ownerPaths.sideChat,
       ownerPaths.session,
@@ -188,18 +193,18 @@ describe('workspace page architecture', () => {
       'pages/workspace/workspace-message-queue-drain.ts',
       'pages/workspace/workspace-message-queue-projection.ts'
     ])
-    expect(importersOf(ownerPaths.messageQueueAdmission)).toEqual([
+    expect(importersOf(queueInternalPaths.admission)).toEqual([
       'pages/workspace/workspace-message-queue-controller.ts',
       'pages/workspace/workspace-message-queue-drain.ts',
       'pages/workspace/workspace-message-queue-projection.ts'
     ])
-    expect(importersOf(ownerPaths.messageQueueDrain)).toEqual([
+    expect(importersOf(queueInternalPaths.drain)).toEqual([
       'pages/workspace/workspace-message-queue-controller.ts'
     ])
-    expect(importersOf(ownerPaths.messageQueueProjection)).toEqual([
+    expect(importersOf(queueInternalPaths.projection)).toEqual([
       'pages/workspace/workspace-message-queue-controller.ts'
     ])
-    expect(importersOf(ownerPaths.messageQueueAnnouncement)).toEqual([
+    expect(importersOf(queueInternalPaths.announcement)).toEqual([
       'pages/workspace/ComposerMessageQueue.tsx',
       'pages/workspace/workspace-message-queue-admission.ts',
       'pages/workspace/workspace-message-queue-drain.ts',
