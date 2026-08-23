@@ -276,30 +276,37 @@ class SessionRepository {
   }
 
   async reconcilePendingSessionProjection(): Promise<void> {
-    if (!this.projection || !(await this.projection.isInitialized())) return
-    for (const pending of await this.projection.pending()) {
-      const loaded = await this.loadSessionWithDiagnostics(pending.projectId, pending.sessionId, {
-        mode: 'read-only'
-      })
-      if (loaded.status === 'unreadable') break
-      if (loaded.status === 'found') {
-        const numbered = await this.projection.prepareSave(loaded.session)
-        await this.saveSession(numbered)
-        continue
-      }
-
-      const deletionState = await this.getProjectSessionDeletionState(pending.projectId)
-      if (deletionState === 'prepared' || deletionState === 'legacy-committed') {
-        const committed = await this.loadCommittedProjectWithDiagnostics(pending.projectId)
-        if (!committed.isComplete) break
-        const session = committed.sessions.find(({ id }) => id === pending.sessionId)
-        if (session) {
-          await this.projection.commitReconciliation(session)
+    await this.operationScheduler.runGlobal(async () => {
+      if (!this.projection || !(await this.projection.isInitialized())) return
+      for (const pending of await this.projection.pending()) {
+        if (pending.operation === 'delete') {
+          await this.deleteSessionNow(pending.projectId, pending.sessionId)
           continue
         }
+        const loaded = await this.loadSessionWithDiagnostics(pending.projectId, pending.sessionId, {
+          mode: 'read-only'
+        })
+        if (loaded.status === 'unreadable') break
+        if (loaded.status === 'found') {
+          // The global barrier keeps the authority read and replay ahead of every later save. Call
+          // the unscheduled implementation to avoid nesting the same repository scheduler.
+          await this.saveSessionNow(loaded.session)
+          continue
+        }
+
+        const deletionState = await this.getProjectSessionDeletionState(pending.projectId)
+        if (deletionState === 'prepared' || deletionState === 'legacy-committed') {
+          const committed = await this.loadCommittedProjectWithDiagnostics(pending.projectId)
+          if (!committed.isComplete) break
+          const session = committed.sessions.find(({ id }) => id === pending.sessionId)
+          if (session) {
+            await this.projection.commitReconciliation(session)
+            continue
+          }
+        }
+        await this.projection.commitDelete(pending.sessionId)
       }
-      await this.projection.commitDelete(pending.sessionId)
-    }
+    })
   }
 
   private async ensureSessionProjectionNow(
@@ -688,51 +695,55 @@ class SessionRepository {
 
   // Removes a single session file.
   async deleteSession(projectId: string, sessionId: string): Promise<void> {
-    return this.operationScheduler.runSession(projectId, sessionId, async () => {
-      const safeProjectId = assertSafeSegment(projectId)
-      const safeSessionId = assertSafeSegment(sessionId)
-      const diagnostic = await this.loadSessionWithDiagnostics(safeProjectId, safeSessionId)
-      if (diagnostic.status === 'unreadable') {
-        throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
-      }
-      const revisionKey = `${safeProjectId}:${safeSessionId}`
-      if (diagnostic.status === 'missing') {
-        this.sessionRevisions.delete(revisionKey)
-        if (!this.projectionWritesSuspended) await this.projection?.commitDelete(safeSessionId)
-        return
-      }
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.deleteSessionNow(projectId, sessionId)
+    )
+  }
 
-      if (!this.projectionWritesSuspended) {
-        await this.projection?.markPending(safeProjectId, safeSessionId)
-      }
+  private async deleteSessionNow(projectId: string, sessionId: string): Promise<void> {
+    const safeProjectId = assertSafeSegment(projectId)
+    const safeSessionId = assertSafeSegment(sessionId)
+    const diagnostic = await this.loadSessionWithDiagnostics(safeProjectId, safeSessionId)
+    if (diagnostic.status === 'unreadable') {
+      throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
+    }
+    const revisionKey = `${safeProjectId}:${safeSessionId}`
+    if (diagnostic.status === 'missing') {
+      this.sessionRevisions.delete(revisionKey)
+      if (!this.projectionWritesSuspended) await this.projection?.commitDelete(safeSessionId)
+      return
+    }
 
-      // The valid primary proves matching quarantines are superseded authority covered by this
-      // explicit Session deletion. Remove every backup first so any failure leaves that proof in
-      // place and the operation safely retryable; only then remove the current primary.
-      const primaryPath = this.sessionFilePath(safeProjectId, safeSessionId)
-      for (const suffix of [PRE_S2_BACKUP_SUFFIX, PRE_SUBAGENT_MODEL_BACKUP_SUFFIX]) {
-        await this.dependencies.remove(`${primaryPath}${suffix}`, {
-          force: true,
-          recursive: false
-        })
-      }
-      const quarantines = await this.listQuarantinedSessionFiles(safeProjectId, safeSessionId)
-      if (!quarantines.isComplete) {
-        throw new Error('Cannot delete a Session whose quarantine directory is unreadable.')
-      }
-      for (const fileName of quarantines.names) {
-        await this.dependencies.remove(join(this.projectDir(safeProjectId), fileName), {
-          force: true,
-          recursive: false
-        })
-      }
-      await this.dependencies.remove(primaryPath, {
+    if (!this.projectionWritesSuspended) {
+      await this.projection?.markPending(safeProjectId, safeSessionId, 'delete')
+    }
+
+    // The valid primary proves matching quarantines are superseded authority covered by this
+    // explicit Session deletion. Remove every backup first so any failure leaves that proof in
+    // place and the operation safely retryable; only then remove the current primary.
+    const primaryPath = this.sessionFilePath(safeProjectId, safeSessionId)
+    for (const suffix of [PRE_S2_BACKUP_SUFFIX, PRE_SUBAGENT_MODEL_BACKUP_SUFFIX]) {
+      await this.dependencies.remove(`${primaryPath}${suffix}`, {
         force: true,
         recursive: false
       })
-      if (!this.projectionWritesSuspended) await this.projection?.commitDelete(safeSessionId)
-      this.sessionRevisions.delete(revisionKey)
+    }
+    const quarantines = await this.listQuarantinedSessionFiles(safeProjectId, safeSessionId)
+    if (!quarantines.isComplete) {
+      throw new Error('Cannot delete a Session whose quarantine directory is unreadable.')
+    }
+    for (const fileName of quarantines.names) {
+      await this.dependencies.remove(join(this.projectDir(safeProjectId), fileName), {
+        force: true,
+        recursive: false
+      })
+    }
+    await this.dependencies.remove(primaryPath, {
+      force: true,
+      recursive: false
     })
+    if (!this.projectionWritesSuspended) await this.projection?.commitDelete(safeSessionId)
+    this.sessionRevisions.delete(revisionKey)
   }
 
   // Atomically moves a marked live directory into the durable deletion area. The marker/tombstone is

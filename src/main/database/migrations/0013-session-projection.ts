@@ -41,8 +41,9 @@ const sessionProjectionMigration = {
     `CREATE TABLE "PendingSessionReconciliation" (
       "sessionId" TEXT NOT NULL PRIMARY KEY,
       "projectId" TEXT NOT NULL,
+      "operation" TEXT NOT NULL DEFAULT 'save',
       "markedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "PendingSessionReconciliation_identity_check" CHECK (length(trim("sessionId")) > 0 AND length(trim("projectId")) > 0)
+      CONSTRAINT "PendingSessionReconciliation_identity_check" CHECK (length(trim("sessionId")) > 0 AND length(trim("projectId")) > 0 AND "operation" IN ('save', 'delete'))
     )`,
     `CREATE TABLE "SessionTurnUsage" (
       "sessionId" TEXT NOT NULL,

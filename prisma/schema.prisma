@@ -89,6 +89,7 @@ model SessionProjectionState {
 model PendingSessionReconciliation {
   sessionId String   @id
   projectId String
+  operation String   @default("save")
   markedAt  DateTime @default(now())
 
   @@index([projectId])

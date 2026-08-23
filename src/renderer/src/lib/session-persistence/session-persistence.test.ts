@@ -199,6 +199,44 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
   })
 
+  it('does not hydrate a selected Session after its lazy JSON load is cancelled', async () => {
+    const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
+    const lazyLoad = createDeferred<PersistedChatSession | undefined>()
+    const api = createApi({
+      list: vi.fn().mockResolvedValue({
+        sessions: [
+          {
+            number: 1,
+            id: selected.id,
+            projectId: selected.projectId,
+            title: selected.title,
+            status: 'idle',
+            presentedStatus: 'idle',
+            pinned: false,
+            revision: 1,
+            activeMessageCount: 0,
+            artifactCount: 0,
+            filesRevision: 0,
+            createdAt: 1,
+            updatedAt: 2,
+            needsStartupRecovery: false
+          }
+        ],
+        manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: selected.id }
+      }),
+      loadOne: vi.fn(() => lazyLoad.promise)
+    })
+    let active = true
+
+    const loading = loadPersistedSessions(api, () => active)
+    await vi.waitFor(() => expect(api.loadOne).toHaveBeenCalledOnce())
+    active = false
+    lazyLoad.resolve(selected)
+    await loading
+
+    expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
   it('loads authority before persisting metadata edits to an unopened Session', async () => {
     const authority = createPersistedSession({
       id: 'session-2',

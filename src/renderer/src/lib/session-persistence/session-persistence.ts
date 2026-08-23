@@ -913,6 +913,7 @@ const loadPersistedSessions = async (
           sessionId: selectedSummary.id
         })
       : undefined
+    if (!shouldHydrate()) return undefined
     if (selectedSummary && !selected) {
       throw new Error('Selected Session JSON is missing from the SQLite projection.')
     }

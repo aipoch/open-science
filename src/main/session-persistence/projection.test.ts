@@ -14,6 +14,18 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 import { ProjectRepository } from '../projects/repository'
 import { buildSessionProjection, SessionProjectionRepository } from './projection'
 import { SessionRepository } from './repository'
+import type { SessionLoadDiagnostic } from './repository'
+
+const createDeferred = <Value>(): {
+  promise: Promise<Value>
+  resolve: (value: Value) => void
+} => {
+  let resolve!: (value: Value) => void
+  const promise = new Promise<Value>((innerResolve) => {
+    resolve = innerResolve
+  })
+  return { promise, resolve }
+}
 
 const session = (id: string, createdAt = 100): PersistedChatSession => ({
   id,
@@ -248,6 +260,69 @@ describe('Session projection', () => {
     await files.completeProjectSessionDeletion('project-1')
     await expect(projection.usage()).resolves.toMatchObject({
       usageEvents: [expect.objectContaining({ inputTokens: 99 })]
+    })
+  })
+
+  it('serializes pending replay ahead of a concurrent newer Session save', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-pending-race-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    await repository.saveSession(session('session-1'))
+    await repository.ensureSessionProjection(() => repository.loadAll())
+    const stale = (await repository.loadSession('project-1', 'session-1'))!
+    await projection.markPending('project-1', 'session-1')
+    const authorityRead = createDeferred<SessionLoadDiagnostic>()
+    const read = vi
+      .spyOn(repository, 'loadSessionWithDiagnostics')
+      .mockReturnValueOnce(authorityRead.promise)
+
+    const reconciling = repository.reconcilePendingSessionProjection()
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+    let newerSaveCompleted = false
+    const savingNewer = repository
+      .saveSession({ ...stale, title: 'Newer concurrent title' })
+      .then((saved) => {
+        newerSaveCompleted = true
+        return saved
+      })
+    await Promise.resolve()
+    expect(newerSaveCompleted).toBe(false)
+
+    authorityRead.resolve({ status: 'found', session: stale })
+    await reconciling
+    await savingNewer
+
+    await expect(repository.loadSession('project-1', 'session-1')).resolves.toMatchObject({
+      title: 'Newer concurrent title'
+    })
+  })
+
+  it('resumes an individually deleted Session after a crash before JSON removal', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-delete-intent-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    await repository.saveSession(session('session-1'))
+    await repository.ensureSessionProjection(() => repository.loadAll())
+
+    // The durable delete intent is committed before deleteSession removes JSON. Simulate a crash in
+    // that cross-store window, then verify startup resumes the delete instead of replaying a save.
+    await projection.markPending('project-1', 'session-1', 'delete')
+    await repository.reconcilePendingSessionProjection()
+
+    await expect(repository.loadSession('project-1', 'session-1')).resolves.toBeUndefined()
+    await expect(client.session.findUnique({ where: { id: 'session-1' } })).resolves.toMatchObject({
+      id: 'session-1',
+      deletedAtMs: expect.anything()
+    })
+    await expect(projection.usage()).resolves.toMatchObject({
+      sessionCreatedAt: [],
+      usageEvents: []
     })
   })
 

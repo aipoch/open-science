@@ -28,7 +28,7 @@
     {
       "tableName": "PendingSessionReconciliation",
       "name": "PendingSessionReconciliation_identity_check",
-      "expression": "length(trim(\"sessionId\")) > 0 AND length(trim(\"projectId\")) > 0"
+      "expression": "length(trim(\"sessionId\")) > 0 AND length(trim(\"projectId\")) > 0 AND \"operation\" IN ('save', 'delete')"
     },
     {
       "tableName": "SessionTurnUsage",

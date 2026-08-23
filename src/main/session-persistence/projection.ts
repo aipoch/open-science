@@ -288,11 +288,19 @@ export class SessionProjectionRepository {
     return state?.projectionVersion === PROJECTION_VERSION
   }
 
-  async pending(): Promise<Array<{ sessionId: string; projectId: string }>> {
+  async pending(): Promise<
+    Array<{ sessionId: string; projectId: string; operation: 'save' | 'delete' }>
+  > {
     const client = await this.client()
-    return client.pendingSessionReconciliation.findMany({
-      select: { sessionId: true, projectId: true },
+    const pending = await client.pendingSessionReconciliation.findMany({
+      select: { sessionId: true, projectId: true, operation: true },
       orderBy: { markedAt: 'asc' }
+    })
+    return pending.map((entry) => {
+      if (entry.operation !== 'save' && entry.operation !== 'delete') {
+        throw new Error('Pending Session reconciliation operation is invalid.')
+      }
+      return { ...entry, operation: entry.operation }
     })
   }
 
@@ -318,8 +326,8 @@ export class SessionProjectionRepository {
       if (!project) throw new Error('Cannot save a Session for a deleted Project.')
       await tx.pendingSessionReconciliation.upsert({
         where: { sessionId: session.id },
-        create: { sessionId: session.id, projectId: session.projectId },
-        update: { projectId: session.projectId, markedAt: new Date() }
+        create: { sessionId: session.id, projectId: session.projectId, operation: 'save' },
+        update: { projectId: session.projectId, operation: 'save', markedAt: new Date() }
       })
       const existing = await tx.session.findUnique({ where: { id: session.id } })
       if (existing) return existing.number
@@ -393,12 +401,16 @@ export class SessionProjectionRepository {
     })
   }
 
-  async markPending(projectId: string, sessionId: string): Promise<void> {
+  async markPending(
+    projectId: string,
+    sessionId: string,
+    operation: 'save' | 'delete' = 'save'
+  ): Promise<void> {
     const client = await this.client()
     await client.pendingSessionReconciliation.upsert({
       where: { sessionId },
-      create: { sessionId, projectId },
-      update: { projectId, markedAt: new Date() }
+      create: { sessionId, projectId, operation },
+      update: { projectId, operation, markedAt: new Date() }
     })
   }
 
