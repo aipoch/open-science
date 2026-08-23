@@ -397,6 +397,69 @@ describe('session store', () => {
     })
   })
 
+  it('does not repeat history-sized scans for every delta in one Agent text batch', () => {
+    const measureHistoricalReads = (chunkCount: number): number => {
+      let historicalReads = 0
+      const messages = Array.from(
+        { length: 200 },
+        (_, index) =>
+          new Proxy<ChatMessage>(
+            {
+              id: `history-${index}`,
+              role: index % 2 === 0 ? 'user' : 'agent',
+              content: `Historical message ${index}`,
+              status: 'complete',
+              eventIds: [],
+              createdAt: index,
+              updatedAt: index
+            },
+            {
+              get(target, property, receiver) {
+                historicalReads += 1
+                return Reflect.get(target, property, receiver)
+              }
+            }
+          )
+      )
+      useSessionStore.setState({
+        sessions: [
+          {
+            id: 'transport-session-1',
+            projectId: 'project-1',
+            title: 'Long conversation',
+            cwd: '/workspace',
+            status: 'running',
+            messages,
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        selectedSessionId: 'transport-session-1'
+      })
+      historicalReads = 0
+
+      useSessionStore.getState().appendAgentMessageChunks(
+        Array.from({ length: chunkCount }, (_, index) => ({
+          sessionId: 'transport-session-1',
+          streamId: 'assistant-message-1',
+          eventId: `event-${index}`,
+          content: 'x'
+        }))
+      )
+
+      return historicalReads
+    }
+
+    const singleChunkReads = measureHistoricalReads(1)
+    const batchedChunkReads = measureHistoricalReads(8)
+
+    expect(batchedChunkReads).toBeLessThanOrEqual(singleChunkReads * 2)
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
+      content: 'xxxxxxxx',
+      eventIds: Array.from({ length: 8 }, (_, index) => `event-${index}`)
+    })
+  })
+
   it('keeps artifact finalization idempotent across independent renderer projections', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
