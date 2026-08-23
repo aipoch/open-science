@@ -105,11 +105,18 @@ describe('AgentMarkdown fullscreen chrome', () => {
       css.indexOf('[data-session-artifact-image]'),
       css.indexOf('[data-session-artifact-image-status]')
     )
+    const artifactImageStatusBlock = css.slice(
+      css.indexOf('[data-session-artifact-image-status]'),
+      css.indexOf('[data-session-link-favicon]')
+    )
 
     expect(artifactImageBlock).toContain('cursor-zoom-in')
     expect(artifactImageBlock).toContain('&:focus-visible')
     expect(artifactImageBlock).toContain('outline-ring')
     expect(artifactImageBlock).toContain('&:active')
     expect(artifactImageBlock).toContain('&:disabled')
+    expect(artifactImageStatusBlock).toContain('bg-sd-surface-subtle')
+    expect(artifactImageStatusBlock).toContain('text-sd-muted')
+    expect(artifactImageStatusBlock).not.toContain('bg-bg-100')
   })
 })
