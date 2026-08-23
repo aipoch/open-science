@@ -796,6 +796,67 @@ describe('workspace message queue controller', () => {
     })
   })
 
+  it('claims Send now before waiting so a second click cannot inject twice', async () => {
+    const completions: Array<() => void> = []
+    const sendMessage = vi.fn(
+      () =>
+        new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+          completions.push(() => resolve({ sessionId: 'session-a', messageId: 'message-sent' }))
+        })
+    )
+    const steerFollowUp = vi.fn(async () => ({
+      injected: true as const,
+      transport: 'acp-steering' as const,
+      messageId: 'message-steer'
+    }))
+    let currentSession = session('idle')
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      getSession: () => currentSession,
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage,
+        steerFollowUp
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({ ...admission('first'), session: currentSession })
+    )
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    act(() =>
+      hook.result.current.lifecycle.enqueue({ ...admission('second'), session: currentSession })
+    )
+
+    const secondId = hook.result.current.items[1].id
+    let firstSendNow!: Promise<void>
+    let secondSendNow!: Promise<void>
+    act(() => {
+      firstSendNow = hook.result.current.actions.sendNow(secondId)
+    })
+    expect(hook.result.current.items[0]).toMatchObject({ text: 'second', phase: 'sending' })
+    act(() => {
+      secondSendNow = hook.result.current.actions.sendNow(secondId)
+    })
+
+    currentSession = session()
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        getSession: () => currentSession
+      })
+    )
+    await act(async () => {
+      completions[0]()
+      await firstSendNow
+      await secondSendNow
+    })
+    expect(steerFollowUp).toHaveBeenCalledOnce()
+    expect(hook.result.current.items).toEqual([])
+  })
+
   it('injects Send now through native follow-up without interrupting', async () => {
     const steerFollowUp = vi.fn(async () => ({
       injected: true as const,

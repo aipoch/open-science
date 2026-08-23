@@ -471,16 +471,17 @@ const useWorkspaceMessageQueueController = (
       const queue = currentSessionQueue()
       if (!queue) return
       const item = queue.items.find((candidate) => candidate.id === itemId)
-      if (!item) return
+      if (!item || item.phase === 'sending' || item.phase === 'interrupting') return
       const hasPayload =
         Boolean(item.text.trim()) ||
         item.attachmentCount > 0 ||
         item.forcedSkillIds.length > 0 ||
         docToArtifactRefs(item.snapshot.doc).length > 0
       owner.queues.set(queue.sessionId, [
-        { ...item, phase: 'queued', error: undefined },
+        { ...item, phase: 'sending', error: undefined, deferredUntilIdle: false },
         ...queue.items.filter((candidate) => candidate.id !== itemId)
       ])
+      emit()
       try {
         const displacedDispatch = owner.dispatches.get(queue.sessionId)
         if (displacedDispatch && displacedDispatch.itemId !== itemId) {
@@ -582,6 +583,11 @@ const useWorkspaceMessageQueueController = (
         if (owner.dispatches.get(queue.sessionId) === displacedDispatch) {
           owner.dispatches.delete(queue.sessionId)
         }
+        replaceItem(queue.sessionId, itemId, {
+          phase: 'queued',
+          error: undefined,
+          deferredUntilIdle: false
+        })
         drainQueues()
       } catch (error) {
         replaceItem(queue.sessionId, itemId, {
