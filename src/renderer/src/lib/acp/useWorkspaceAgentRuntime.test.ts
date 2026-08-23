@@ -5780,6 +5780,55 @@ describe('resuming an interrupted session on demand', () => {
     }
   )
 
+  it('resumes an unchanged target when its visible Session belongs to a retiring runtime', async () => {
+    const agentConfiguration = {
+      providerId: 'provider-1',
+      model: 'codex-model',
+      reasoningEffort: 'default'
+    } as const
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'First turn',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: agentConfiguration.model,
+      agentConfiguration
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const runtime = {
+      state: {
+        ...createSnapshot(['session-1']),
+        sessionResumeRequiredIds: ['session-1']
+      },
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        frameworkId: 'codex',
+        backendId: 'codex:provider-1'
+      }),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'Continue after the generation switch',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:provider-1',
+      agentModel: agentConfiguration.model,
+      agentConfiguration
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('adopts an attached Session when only reasoning effort changed', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',

@@ -2588,6 +2588,7 @@ describe('AcpRuntimeCoordinator', () => {
     const reloadRequest = coordinator.requestSkillsReload()
 
     expect(coordinator.getSnapshot().sessionIds).toEqual([activeSession.sessionId])
+    expect(coordinator.getSnapshot().sessionResumeRequiredIds).toEqual([activeSession.sessionId])
     expect(coordinator.getOwnedSessionIds()).toEqual([
       activeSession.sessionId,
       idleSession.sessionId

@@ -226,6 +226,17 @@ class AcpRuntimeCoordinator {
         snapshots.flatMap(({ runtime, snapshot }) => this.visibleSessionIds(runtime, snapshot))
       )
     )
+    const sessionResumeRequiredIds = Array.from(
+      new Set(
+        snapshots.flatMap(({ runtime, snapshot }) =>
+          this.retiredRuntimes.has(runtime)
+            ? this.visibleSessionIds(runtime, snapshot).filter(
+                (sessionId) => this.sessionRuntimes.get(sessionId) === runtime
+              )
+            : []
+        )
+      )
+    )
     // A retired generation may keep draining after the same logical session was resumed by a fresh
     // runtime. Only its current owner may publish interaction state to the renderer.
     const ownedSessionIds = (select: (snapshot: AcpStateSnapshot) => readonly string[]): string[] =>
@@ -275,6 +286,7 @@ class AcpRuntimeCoordinator {
         ? { sessionId: primary.sessionId }
         : {}),
       sessionIds,
+      sessionResumeRequiredIds,
       ...(primary?.error ? { error: primary.error } : {}),
       events,
       pendingPermissions: [

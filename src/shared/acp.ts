@@ -656,6 +656,9 @@ export type AcpStateSnapshot = {
   cwd: string
   sessionId?: string
   sessionIds: string[]
+  // Visible sessions still owned by a retiring runtime generation. The renderer must resume these
+  // before dispatch even though their final turn remains visible while it drains.
+  sessionResumeRequiredIds?: string[]
   error?: string
   events: AcpRuntimeEvent[]
   pendingPermissions: AcpPermissionRequest[]

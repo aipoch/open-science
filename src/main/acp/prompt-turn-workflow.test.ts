@@ -38,6 +38,7 @@ type Harness = {
     >
     autoCompact: Mock<AcpPromptTurnWorkflowOptions['finalization']['autoCompact']>
     compactIfIdle: Mock<AcpPromptTurnWorkflowOptions['finalization']['compactIfIdle']>
+    preemptCompaction: Mock<AcpPromptTurnWorkflowOptions['finalization']['preemptCompaction']>
   }
   finalizer: Mock<AcpPromptOutcomeFinalizer['finalize']>
   interactions: {
@@ -130,6 +131,7 @@ const createHarness = (
     finalize?: AcpPromptOutcomeFinalizer['finalize']
     onPromptStarted?: () => void
     preflightPlan?: AcpPromptTurnWorkflowOptions['plan']['preflight']
+    preemptCompaction?: AcpPromptTurnWorkflowOptions['finalization']['preemptCompaction']
     prepare?: AcpPromptTurnWorkflowOptions['preparation']['prepare']
     providerReconnectPending?: () => boolean
     resolveComputeExecutionTargetIds?: (sessionId: string) => readonly string[]
@@ -273,7 +275,11 @@ const createHarness = (
     onPromptEnded: vi.fn(),
     generationActivityChanged: vi.fn(),
     autoCompact: vi.fn(async () => undefined),
-    compactIfIdle: vi.fn(async () => undefined)
+    compactIfIdle: vi.fn(async () => undefined),
+    preemptCompaction: vi.fn((sessionId) => {
+      journal.push('compaction:preempt')
+      return input.preemptCompaction?.(sessionId)
+    })
   }
   const pushUserMessage: Harness['pushUserMessage'] = vi.fn(() => {
     journal.push('event:message')
@@ -376,9 +382,11 @@ describe('AcpPromptTurnWorkflow', () => {
       promptAttemptId: 'attempt-1'
     })
 
-    expect(harness.journal.slice(0, 9)).toEqual([
-      'preflight',
+    await vi.waitFor(() => expect(harness.interactions.activatePrompt).toHaveBeenCalledOnce())
+    expect(harness.journal.slice(0, 10)).toEqual([
       'reserve',
+      'compaction:preempt',
+      'preflight',
       'authorize',
       'activate',
       'admit',
@@ -389,8 +397,9 @@ describe('AcpPromptTurnWorkflow', () => {
     ])
     await expect(turn).resolves.toEqual({ stopReason: 'end_turn' })
     expect(harness.journal).toEqual([
-      'preflight',
       'reserve',
+      'compaction:preempt',
+      'preflight',
       'authorize',
       'activate',
       'admit',
@@ -585,12 +594,12 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(harness.executor.mock.calls[0][0].session).toBe(reloaded)
   })
 
-  it('finishes Plan preflight before reserving and admits only an activated interaction', async () => {
+  it('reserves before Plan preflight and admits only an activated interaction', async () => {
     const harness = createHarness()
 
     await harness.workflow.run(request(), { kind: 'user' })
 
-    expect(harness.journal.indexOf('preflight')).toBeLessThan(harness.journal.indexOf('reserve'))
+    expect(harness.journal.indexOf('reserve')).toBeLessThan(harness.journal.indexOf('preflight'))
     expect(harness.journal.indexOf('activate')).toBeLessThan(harness.journal.indexOf('admit'))
     expect(harness.admitPlan.mock.calls[0][1]).toBe(
       harness.interactions.activatePrompt.mock.results[0].value
@@ -602,7 +611,25 @@ describe('AcpPromptTurnWorkflow', () => {
       }
     })
     await expect(rejected.workflow.run(request(), { kind: 'user' })).rejects.toThrow('stale Plan')
-    expect(rejected.interactions.reservePrompt).not.toHaveBeenCalled()
+    expect(rejected.interactions.reservePrompt).toHaveBeenCalledOnce()
+    expect(rejected.interactions.release).toHaveBeenCalledWith(
+      rejected.interactions.reservePrompt.mock.results[0].value
+    )
+  })
+
+  it('waits for provider compaction to drain before Plan preflight', async () => {
+    const drained = deferred<void>()
+    const harness = createHarness({ preemptCompaction: () => drained.promise })
+
+    const turn = harness.workflow.run(request(), { kind: 'user' })
+    await vi.waitFor(() => expect(harness.finalization.preemptCompaction).toHaveBeenCalledOnce())
+
+    expect(harness.interactions.reservePrompt).toHaveBeenCalledOnce()
+    expect(harness.preflightPlan).not.toHaveBeenCalled()
+
+    drained.resolve(undefined)
+    await expect(turn).resolves.toEqual({ stopReason: 'end_turn' })
+    expect(harness.preflightPlan).toHaveBeenCalledOnce()
   })
 
   it('keeps an admitted turn running when the prompt-start callback throws', async () => {
@@ -616,7 +643,7 @@ describe('AcpPromptTurnWorkflow', () => {
       stopReason: 'end_turn'
     })
     expect(harness.finalizer).toHaveBeenCalledOnce()
-    expect(harness.journal.slice(6, 10)).toEqual(['handoff', 'start', 'state', 'artifact:open'])
+    expect(harness.journal.slice(7, 11)).toEqual(['handoff', 'start', 'state', 'artifact:open'])
   })
 
   it('finalizes a cancellation after Artifact activation without preparing or dispatching', async () => {

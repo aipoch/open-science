@@ -7819,11 +7819,17 @@ describe('ACP runtime session management', () => {
       expect(agent.prompts).toContainEqual({ sessionId: 'remote-session-2', text: '/compact' })
     )
     await expect(
-      runtime.sendPrompt({ sessionId: second.sessionId, text: 'blocked prompt' })
-    ).rejects.toThrow(/already running/)
-    await expect(
       runtime.setPermissionProfile({ sessionId: second.sessionId, profile: 'full' })
     ).rejects.toThrow(/compacting/)
+    const promptAfterCompaction = runtime.sendPrompt({
+      sessionId: second.sessionId,
+      text: 'prompt after compaction'
+    })
+    await vi.waitFor(() => expect(agent.cancelledSessions).toContain('remote-session-2'))
+    expect(agent.prompts).not.toContainEqual({
+      sessionId: 'remote-session-2',
+      text: 'prompt after compaction'
+    })
 
     const prompting = runtime.sendPrompt({ sessionId: first.sessionId, text: 'first prompt' })
     await vi.waitFor(() =>
@@ -7843,7 +7849,9 @@ describe('ACP runtime session management', () => {
 
     firstPromptGate.resolve({ stopReason: 'end_turn' })
     secondCompactionGate.resolve({ stopReason: 'end_turn' })
-    await expect(Promise.all([prompting, compacting])).resolves.toHaveLength(2)
+    await expect(Promise.all([prompting, compacting, promptAfterCompaction])).resolves.toHaveLength(
+      3
+    )
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
     expect(runtime.getSnapshot().agentPromptInFlightSessionIds).toEqual([])
   })
@@ -8068,6 +8076,7 @@ describe('ACP runtime session management', () => {
     const session = await runtime.createSession({ cwd: '/workspace' })
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'analyze the results' })
 
+    await vi.waitFor(() => expect(agent.prompts).toHaveLength(2))
     expect(agent.prompts).toEqual([
       { sessionId: 'remote-session-1', text: 'analyze the results' },
       { sessionId: 'remote-session-1', text: '/compact' }

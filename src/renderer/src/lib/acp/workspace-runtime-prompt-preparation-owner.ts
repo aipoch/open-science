@@ -234,9 +234,11 @@ const prepareExistingWorkspacePrompt = async (
     request.selectedRuntime.agentConfiguration &&
     request.selectedRuntime.agentModel !== currentSession?.agentModel
   )
-  const runtimeDetached = !runtime.state.sessionIds.includes(sessionId)
-  // Resume only when the explicit target differs from the live Session. Same-target Send now
-  // interrupt fallback must not block on session/resume while the cancelled turn is aborting.
+  const runtimeDetached =
+    !runtime.state.sessionIds.includes(sessionId) ||
+    Boolean(runtime.state.sessionResumeRequiredIds?.includes(sessionId))
+  // Resume when the explicit target differs or the visible Session belongs to a retiring runtime.
+  // Same-target Send now must not resume while the selected runtime still owns the Session.
   const runtimeMustAdoptSession =
     Boolean(
       request.selectedRuntime.frameworkId &&

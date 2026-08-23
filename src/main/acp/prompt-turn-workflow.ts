@@ -134,6 +134,7 @@ type AcpPromptTurnFinalization = Readonly<{
     interaction: AcpPromptSessionInteractionScope
   ) => Promise<unknown>
   compactIfIdle: (sessionId: string) => Promise<unknown>
+  preemptCompaction: (sessionId: string) => Promise<void> | undefined
 }>
 
 type AcpPromptTurnWorkflowOptions = Readonly<{
@@ -147,7 +148,6 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     | 'release'
     | 'reservePrompt'
     | 'settle'
-    | 'supersede'
   >
   skills: Pick<AcpTurnSkillOwner, 'authorize'>
   preparation: Pick<AcpPromptPreparationOwner, 'prepare'>
@@ -182,11 +182,14 @@ class AcpPromptTurnWorkflow {
     if (!activeSession) throw new Error(`ACP session not found: ${request.sessionId}`)
     this.assertSessionIdle(request.sessionId)
 
-    const planPreflight = this.options.plan.preflight(request)
-    let plan = planPreflight instanceof Promise ? await planPreflight : planPreflight
     let reservation = this.reserve(request)
+    let plan: AcpPromptTurnPlanContext
     let skill: TurnSkillHandle
     try {
+      const preemption = this.options.finalization.preemptCompaction(request.sessionId)
+      if (preemption) await preemption
+      const planPreflight = this.options.plan.preflight(request)
+      plan = planPreflight instanceof Promise ? await planPreflight : planPreflight
       const authorization = this.options.skills.authorize({
         specialistId: this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
           .specialistId,
@@ -498,11 +501,9 @@ class AcpPromptTurnWorkflow {
   private assertSessionIdle(sessionId: string): void {
     const current = this.options.interactions.current(sessionId)
     if (!current) return
-    if (current.kind === 'compaction') {
-      this.options.interactions.supersede(current)
-      return
+    if (current.kind === 'prompt') {
+      throw new Error('An ACP prompt is already running for this session')
     }
-    throw new Error('An ACP prompt is already running for this session')
   }
 
   private reserve(request: AcpPromptRequest): AcpPromptSessionInteractionScope {

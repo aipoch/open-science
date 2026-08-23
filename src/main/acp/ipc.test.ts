@@ -1126,19 +1126,41 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     expect(resetSessionContext).not.toHaveBeenCalled()
   })
 
-  it('rejects follow-up before runtime mutation when Session admission is closed', async () => {
-    const failure = new Error('Project is being deleted.')
-    const withSessionAvailableById = vi.fn().mockRejectedValue(failure)
-    const steerFollowUp = vi.fn()
-    installAcpIpcHandlers({ steerFollowUp } as never, {} as never, undefined, {
-      withSessionAvailableById
-    })
+  it('does not nest Session admission around the coordinator follow-up guard', async () => {
+    let archiveQueue: Promise<void> = Promise.resolve()
+    const enqueueArchive = <Result>(operation: () => Promise<Result>): Promise<Result> => {
+      const result = archiveQueue.then(operation, operation)
+      archiveQueue = result.then(
+        () => undefined,
+        () => undefined
+      )
+      return result
+    }
+    const archiveAvailability = {
+      withSessionAvailableById: <Result>(
+        _sessionId: string,
+        operation: () => Promise<Result>
+      ): Promise<Result> => enqueueArchive(operation)
+    }
+    const withSessionAvailableById = vi.spyOn(archiveAvailability, 'withSessionAvailableById')
+    const steerFollowUp = vi.fn(() =>
+      archiveAvailability.withSessionAvailableById('s-1', async () => ({
+        injected: false as const,
+        reason: 'prompt-required' as const
+      }))
+    )
+    installAcpIpcHandlers({ steerFollowUp } as never, {} as never, undefined, archiveAvailability)
     const request: AcpSteerFollowUpRequest = { sessionId: 's-1', text: 'focus on tests' }
 
-    await expect(handlers.get('acp:steer-follow-up')?.({}, request)).rejects.toBe(failure)
+    const outcome = await Promise.race([
+      Promise.resolve(handlers.get('acp:steer-follow-up')?.({}, request)),
+      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 50))
+    ])
 
+    expect(outcome).toEqual({ injected: false, reason: 'prompt-required' })
     expect(withSessionAvailableById).toHaveBeenCalledWith('s-1', expect.any(Function))
-    expect(steerFollowUp).not.toHaveBeenCalled()
+    expect(withSessionAvailableById).toHaveBeenCalledOnce()
+    expect(steerFollowUp).toHaveBeenCalledWith(request)
   })
 })
 
