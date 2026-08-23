@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18next from 'i18next'
 
@@ -286,6 +287,7 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(container.textContent).toContain('1 figure · 1 line of output')
     expect(container.textContent).not.toContain('Saved:')
 
+    figure?.focus()
     await act(async () => {
       figure?.click()
     })
@@ -302,6 +304,21 @@ describe('WorkspaceToolDetailsRow', () => {
     })
 
     expect(document.body.querySelector('[data-testid="notebook-figure-preview-dialog"]')).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(figure))
+
+    await act(async () => {
+      figure?.click()
+    })
+    const closeButton = document.body.querySelector(
+      '[aria-label="Close preview"]'
+    ) as HTMLButtonElement | null
+    expect(closeButton).not.toBeNull()
+
+    await act(async () => {
+      closeButton?.click()
+    })
+    expect(document.body.querySelector('[data-testid="notebook-figure-preview-dialog"]')).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(figure))
   })
 
   it('mounts a figure data URL only while its card is near the viewport', async () => {

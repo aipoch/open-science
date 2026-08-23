@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { ZoomIn, X } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Dialog } from 'radix-ui'
 
@@ -22,7 +22,7 @@ type NotebookToolFigureOutputsProps = {
 type NotebookToolFigureCardProps = {
   figure: NotebookRunFigure
   filename: string
-  onOpen: (figure: NotebookRunFigure) => void
+  onOpen: (figure: NotebookRunFigure, trigger: HTMLButtonElement) => void
 }
 
 const NotebookToolFigureCard = ({
@@ -42,7 +42,7 @@ const NotebookToolFigureCard = ({
       data-testid="notebook-tool-figure-button"
       className="group relative block w-full cursor-zoom-in overflow-hidden rounded-xl border border-border-200 bg-bg-000 text-left shadow-sm transition-[border-color,transform] duration-150 ease-out hover:border-border-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none motion-reduce:active:translate-y-0"
       aria-label={t('Preview {{name}}', { name: filename })}
-      onClick={() => onOpen(figure)}
+      onClick={(event) => onOpen(figure, event.currentTarget)}
     >
       <span className="flex min-h-36 w-full items-center justify-center p-3 sm:p-4">
         {isNearViewport ? (
@@ -75,6 +75,7 @@ const NotebookToolFigureOutputs = ({
   const { t } = useTranslation()
   const figures = resolveNotebookRunFigures(run)
   const [selectedFigure, setSelectedFigure] = useState<NotebookRunFigure>()
+  const previewTriggerRef = useRef<HTMLButtonElement | null>(null)
   const dialogFigure = useRetainedDialogValue(selectedFigure)
 
   if (figures.length === 0) return null
@@ -95,7 +96,10 @@ const NotebookToolFigureOutputs = ({
               key={figure.key}
               figure={figure}
               filename={filename}
-              onOpen={setSelectedFigure}
+              onOpen={(nextFigure, trigger) => {
+                previewTriggerRef.current = trigger
+                setSelectedFigure(nextFigure)
+              }}
             />
           )
         })}
@@ -114,6 +118,12 @@ const NotebookToolFigureOutputs = ({
           <Dialog.Content
             aria-describedby={undefined}
             data-testid="notebook-figure-preview-dialog"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault()
+              const trigger = previewTriggerRef.current
+              previewTriggerRef.current = null
+              if (trigger?.isConnected) trigger.focus()
+            }}
             className={dialogPanelClassName(
               'z-[70] flex max-h-[94vh] w-[min(94vw,96rem)] max-w-none flex-col overflow-visible border-0 bg-transparent p-0 text-white shadow-none'
             )}
