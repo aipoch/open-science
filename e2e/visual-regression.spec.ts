@@ -10,6 +10,11 @@ const prepareVisualPage = async (page: Page): Promise<void> => {
     content:
       '* { scrollbar-width: none !important; } *::-webkit-scrollbar { display: none !important; }'
   })
+  // The first-message jump chip reveals on upward scroll and auto-hides after idle.
+  await page.addStyleTag({
+    content:
+      '[data-slot="message-scroller-button"][data-direction="start"] { visibility: hidden !important; }'
+  })
 }
 
 const setTheme = async (page: Page, theme: 'Dark' | 'Light'): Promise<void> => {
