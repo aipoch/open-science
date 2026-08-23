@@ -556,7 +556,12 @@ describe('workspace message queue controller', () => {
     let notifySessionChanged: (() => void) | undefined
     let finishSteer!: (result: { injected: false; reason: 'not-advertised' }) => void
     const sendMessage = vi.fn(async () => {
-      currentSession = { ...session('error'), error: resumeError, errorReportable: true }
+      currentSession = {
+        ...session('error'),
+        error: resumeError,
+        errorReportable: true,
+        updatedAt: currentSession.updatedAt + 1
+      }
       return undefined
     })
     const steerFollowUp = vi.fn(
@@ -663,14 +668,21 @@ describe('workspace message queue controller', () => {
       size: 12
     }
     let currentSession = session()
-    const sendMessage = vi.fn(async () => undefined)
+    const sendMessage = vi.fn(async () => {
+      currentSession = {
+        ...session('error'),
+        error: resumeError,
+        errorReportable: true,
+        updatedAt: currentSession.updatedAt + 1
+      }
+      return undefined
+    })
     const input = options(currentSession, {
       getSession: () => currentSession,
       runtime: {
         cancelRun: vi.fn(async () => undefined),
         sendMessage,
         steerFollowUp: vi.fn(async () => {
-          currentSession = { ...session('error'), error: resumeError, errorReportable: true }
           throw new Error("Error invoking remote method 'acp:steerFollowUp': reply was never sent")
         })
       }
@@ -690,6 +702,7 @@ describe('workspace message queue controller', () => {
     )
 
     await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+    currentSession = session('idle')
     act(() => {
       hook.rerender(
         options(currentSession, {
@@ -709,6 +722,91 @@ describe('workspace message queue controller', () => {
         attachmentCount: 1,
         phase: 'error',
         error: { kind: 'send', detail: resumeError }
+      })
+    )
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+  })
+
+  it('keeps a generic admission miss when Send now fails without a new session error', async () => {
+    const staleError = 'Agent session resume failed: reply was never sent'
+    const attachment = {
+      id: 'upload-1',
+      sessionId: 'session-a',
+      name: 'data.csv',
+      originalName: 'data.csv',
+      path: '/tmp/data.csv',
+      mimeType: 'text/csv',
+      size: 12
+    }
+    let currentSession = session()
+    let notifySessionChanged: (() => void) | undefined
+    let finishSteer!: (result: { injected: false; reason: 'not-advertised' }) => void
+    const sendMessage = vi.fn(async () => undefined)
+    const steerFollowUp = vi.fn(
+      () =>
+        new Promise<{ injected: false; reason: 'not-advertised' }>((resolve) => {
+          finishSteer = resolve
+        })
+    )
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      subscribeSessionChanges: (listener) => {
+        notifySessionChanged = listener
+        return () => {
+          notifySessionChanged = undefined
+        }
+      },
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage,
+        steerFollowUp
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('Draw a pie chart'),
+        snapshot: {
+          draftKey: 'session-a',
+          version: 1,
+          doc: textDoc('Draw a pie chart'),
+          attachments: [attachment]
+        }
+      })
+    )
+
+    let sendNow!: Promise<void>
+    act(() => {
+      sendNow = hook.result.current.actions.sendNow(hook.result.current.items[0].id)
+    })
+    await vi.waitFor(() => expect(steerFollowUp).toHaveBeenCalledOnce())
+
+    currentSession = { ...session('error'), error: staleError, errorReportable: true, updatedAt: 1 }
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession,
+        subscribeSessionChanges: input.subscribeSessionChanges,
+        runtime: input.runtime
+      })
+    )
+    act(() => notifySessionChanged?.())
+
+    await act(async () => {
+      finishSteer({ injected: false, reason: 'not-advertised' })
+      await sendNow
+    })
+
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(hook.result.current.items[0]).toMatchObject({
+        text: 'Draw a pie chart',
+        attachmentCount: 1,
+        phase: 'error',
+        error: { kind: 'send', detail: 'The queued message was not admitted.' }
       })
     )
     expect(input.runtime.cancelRun).not.toHaveBeenCalled()

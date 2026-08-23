@@ -180,6 +180,21 @@ const queueItemContextError = (
   return undefined
 }
 
+const queuedAdmissionFailure = (
+  sessionBefore: Pick<ChatSession, 'status' | 'error' | 'updatedAt'> | undefined,
+  sessionAfter: Pick<ChatSession, 'status' | 'error' | 'updatedAt'> | undefined
+): string => {
+  const causedError =
+    sessionAfter?.status === 'error' &&
+    Boolean(sessionAfter.error) &&
+    (sessionBefore?.status !== 'error' ||
+      sessionBefore.error !== sessionAfter.error ||
+      sessionBefore.updatedAt !== sessionAfter.updatedAt)
+  return causedError && sessionAfter.error
+    ? sessionAfter.error
+    : 'The queued message was not admitted.'
+}
+
 const queueSessionIsSendable = (
   options: WorkspaceMessageQueueControllerOptions,
   session: ChatSession
@@ -301,6 +316,14 @@ const useWorkspaceMessageQueueController = (
       owner.dispatches.set(sessionId, activeDispatch)
       void (async (): Promise<void> => {
         try {
+          const sessionBeforeSend = current.getSession(sessionId)
+          const sessionBeforeAdmission = sessionBeforeSend
+            ? {
+                status: sessionBeforeSend.status,
+                error: sessionBeforeSend.error,
+                updatedAt: sessionBeforeSend.updatedAt
+              }
+            : undefined
           const result = await current.runtime.sendMessage({
             sessionId,
             text: item.text,
@@ -329,11 +352,7 @@ const useWorkspaceMessageQueueController = (
               emit('Queued message will send after the current run finishes.')
               return
             }
-            throw new Error(
-              latestSession?.status === 'error' && latestSession.error
-                ? latestSession.error
-                : 'The queued message was not admitted.'
-            )
+            throw new Error(queuedAdmissionFailure(sessionBeforeAdmission, latestSession))
           }
           const latest = itemsFor(sessionId)
           const remaining = latest.filter((candidate) => candidate.id !== item.id)
