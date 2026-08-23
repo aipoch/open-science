@@ -11,7 +11,7 @@ import { decodeDataPath, encodeDataPath } from '../storage/data-path'
 
 // Only the preview-state delegate is needed; typing to this subset keeps the repository unit-testable
 // with a lightweight mock instead of a real (engine-backed) PrismaClient.
-type PreviewStateClient = Pick<PrismaClient, 'projectPreviewState'>
+type PreviewStateClient = Pick<PrismaClient, '$transaction' | 'project' | 'projectPreviewState'>
 
 // Parses the JSON items column defensively; a corrupt value degrades to an empty preview state.
 const parseItems = (items: string): unknown => {
@@ -57,7 +57,9 @@ class PreviewStateRepository {
   // Returns a project's persisted preview state and compare-and-set revision, or null when absent.
   async get(projectId: string): Promise<PreviewStateSnapshot | null> {
     const client = await this.getClient()
-    const row = await client.projectPreviewState.findUnique({ where: { projectId } })
+    const row = await client.projectPreviewState.findFirst({
+      where: { projectId, project: { deletedAt: null } }
+    })
 
     return row ? toSnapshot(row) : null
   }
@@ -88,29 +90,36 @@ class PreviewStateRepository {
     const client = await this.getClient()
     const revision = Math.max(Date.now(), expectedRevision + 1)
 
-    if (expectedRevision === 0) {
-      // Revision zero means the caller observed no row. A concurrent create becomes a conflict,
-      // never an unconditional upsert that replaces the winning snapshot.
-      try {
-        await client.projectPreviewState.create({
-          data: { projectId, ...data, updatedAt: new Date(revision) }
-        })
-        return { status: 'saved', revision }
-      } catch (error) {
-        // The owner FK remains the Project-deletion fence for late autosaves.
-        if (isMissingPreviewOwnerError(error)) return { status: 'saved', revision: 0 }
-        if (!isExistingPreviewStateError(error)) throw error
-      }
-    } else {
-      const result = await client.projectPreviewState.updateMany({
-        where: { projectId, updatedAt: new Date(expectedRevision) },
-        data: { ...data, updatedAt: new Date(revision) }
+    return client.$transaction(async (transaction) => {
+      const owner = await transaction.project.findFirst({
+        where: { id: projectId, deletedAt: null },
+        select: { id: true }
       })
-      if (result.count === 1) return { status: 'saved', revision }
-    }
+      if (!owner) return { status: 'saved', revision: 0 }
 
-    const current = await client.projectPreviewState.findUnique({ where: { projectId } })
-    return { status: 'conflict', snapshot: current ? toSnapshot(current) : null }
+      if (expectedRevision === 0) {
+        // Revision zero means the caller observed no row. A concurrent create becomes a conflict,
+        // never an unconditional upsert that replaces the winning snapshot.
+        try {
+          await transaction.projectPreviewState.create({
+            data: { projectId, ...data, updatedAt: new Date(revision) }
+          })
+          return { status: 'saved', revision }
+        } catch (error) {
+          if (isMissingPreviewOwnerError(error)) return { status: 'saved', revision: 0 }
+          if (!isExistingPreviewStateError(error)) throw error
+        }
+      } else {
+        const result = await transaction.projectPreviewState.updateMany({
+          where: { projectId, updatedAt: new Date(expectedRevision) },
+          data: { ...data, updatedAt: new Date(revision) }
+        })
+        if (result.count === 1) return { status: 'saved', revision }
+      }
+
+      const current = await transaction.projectPreviewState.findUnique({ where: { projectId } })
+      return { status: 'conflict', snapshot: current ? toSnapshot(current) : null }
+    })
   }
 
   // Removes a project's preview state (used when the project is deleted). Missing rows are ignored.

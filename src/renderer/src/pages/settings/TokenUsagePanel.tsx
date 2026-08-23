@@ -85,12 +85,15 @@ function TokenUsagePanel({
   const [period, setPeriod] = useState<TokenUsagePeriod>('30-days')
   const [heatmapMetric, setHeatmapMetric] = useState<TokenUsageHeatmapMetric>('totalTokens')
   const [usageProjection, setUsageProjection] = useState<SessionUsageProjection>()
+  const usageRevision = sessions
+    .map((session) => `${session.id}:${session.revision ?? 0}`)
+    .join('\u0000')
 
   useEffect(() => {
-    if (typeof window.api.sessions.loadUsage !== 'function') return
+    const loadUsage = window.api?.sessions?.loadUsage
+    if (typeof loadUsage !== 'function') return
     let active = true
-    void window.api.sessions
-      .loadUsage()
+    void loadUsage()
       .then((projection) => {
         if (active) setUsageProjection(projection)
       })
@@ -98,7 +101,7 @@ function TokenUsagePanel({
     return () => {
       active = false
     }
-  }, [])
+  }, [usageRevision])
 
   useEffect(() => {
     if (providedNow !== undefined) return

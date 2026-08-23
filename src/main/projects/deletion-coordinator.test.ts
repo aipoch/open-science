@@ -32,7 +32,7 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.listDeletionIntents).not.toHaveBeenCalled()
   })
 
-  it('deletes the project row, sessions, index, reviews, and provenance', async () => {
+  it('soft-deletes the project metadata and removes active-only project data', async () => {
     const projects = createProjects()
     const sessions = createSessions()
     const reviews = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
@@ -238,7 +238,7 @@ describe('ProjectDeletionCoordinator', () => {
     expect(intentExists).toBe(false)
   })
 
-  it('does not report a false deletion failure after the Project hard delete commits', async () => {
+  it('does not report a false deletion failure after the Project soft delete commits', async () => {
     const projects = createProjects()
     const sessions = createSessions()
     const permissionGrants = {
@@ -260,7 +260,7 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
   })
 
-  it('retains the deletion intent when Review cleanup fails after the Project hard delete', async () => {
+  it('retains the deletion intent when Review cleanup fails after the Project soft delete', async () => {
     const reviewFailures = [new Error('review unavailable'), undefined]
     let projectExists = true
     let intentExists = false

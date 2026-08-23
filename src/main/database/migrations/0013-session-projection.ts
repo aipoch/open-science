@@ -1,9 +1,15 @@
 const sessionProjectionMigration = {
   id: '0013_session_projection',
   statements: [
+    `ALTER TABLE "Project" ADD COLUMN "deletedAt" DATETIME`,
+    `CREATE TABLE "SessionNumberSequence" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "nextNumber" INTEGER NOT NULL,
+      CONSTRAINT "SessionNumberSequence_identity_check" CHECK ("id" = 'global' AND "nextNumber" >= 1)
+    )`,
     `CREATE TABLE "Session" (
-      "number" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-      "id" TEXT NOT NULL,
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "number" INTEGER NOT NULL,
       "projectId" TEXT NOT NULL,
       "title" TEXT NOT NULL,
       "status" TEXT NOT NULL,
@@ -20,10 +26,11 @@ const sessionProjectionMigration = {
       "needsStartupRecovery" BOOLEAN NOT NULL DEFAULT false,
       "sourceByteLength" BIGINT,
       "sourceMtimeMs" BIGINT,
-      CONSTRAINT "Session_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+      "deletedAtMs" BIGINT,
+      CONSTRAINT "Session_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
       CONSTRAINT "Session_identity_check" CHECK ("number" >= 1 AND length(trim("id")) > 0 AND length(trim("projectId")) > 0),
       CONSTRAINT "Session_status_check" CHECK ("status" IN ('idle', 'running', 'waiting-for-user', 'waiting-permission', 'waiting-plan-approval', 'error') AND "presentedStatus" IN ('idle', 'running', 'waiting-for-user', 'waiting-permission', 'waiting-plan-approval', 'error')),
-      CONSTRAINT "Session_nonnegative_check" CHECK ("revision" >= 0 AND "activeMessageCount" >= 0 AND "artifactCount" >= 0 AND "filesRevision" >= 0 AND "createdAtMs" >= 0 AND "updatedAtMs" >= 0 AND ("archivedAtMs" IS NULL OR "archivedAtMs" >= 0) AND ("presentedActivityAtMs" IS NULL OR "presentedActivityAtMs" >= 0) AND ("sourceByteLength" IS NULL OR "sourceByteLength" >= 0) AND ("sourceMtimeMs" IS NULL OR "sourceMtimeMs" >= 0))
+      CONSTRAINT "Session_nonnegative_check" CHECK ("revision" >= 0 AND "activeMessageCount" >= 0 AND "artifactCount" >= 0 AND "filesRevision" >= 0 AND "createdAtMs" >= 0 AND "updatedAtMs" >= 0 AND ("archivedAtMs" IS NULL OR "archivedAtMs" >= 0) AND ("presentedActivityAtMs" IS NULL OR "presentedActivityAtMs" >= 0) AND ("sourceByteLength" IS NULL OR "sourceByteLength" >= 0) AND ("sourceMtimeMs" IS NULL OR "sourceMtimeMs" >= 0) AND ("deletedAtMs" IS NULL OR "deletedAtMs" >= 0))
     )`,
     `CREATE TABLE "SessionProjectionState" (
       "id" TEXT NOT NULL PRIMARY KEY,
@@ -65,9 +72,9 @@ const sessionProjectionMigration = {
       CONSTRAINT "SessionArtifactRef_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "Session" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
       CONSTRAINT "SessionArtifactRef_identity_check" CHECK (length(trim("artifactId")) > 0 AND ("artifactCreatedAtMs" IS NULL OR "artifactCreatedAtMs" >= 0))
     )`,
-    `CREATE UNIQUE INDEX "Session_id_key" ON "Session"("id")`,
-    `CREATE INDEX "Session_projectId_archivedAtMs_updatedAtMs_id_idx" ON "Session"("projectId", "archivedAtMs", "updatedAtMs", "id")`,
-    `CREATE INDEX "Session_archivedAtMs_updatedAtMs_id_idx" ON "Session"("archivedAtMs", "updatedAtMs", "id")`,
+    `CREATE UNIQUE INDEX "Session_number_key" ON "Session"("number")`,
+    `CREATE INDEX "Session_projectId_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("projectId", "deletedAtMs", "archivedAtMs", "updatedAtMs", "id")`,
+    `CREATE INDEX "Session_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("deletedAtMs", "archivedAtMs", "updatedAtMs", "id")`,
     `CREATE INDEX "Session_createdAtMs_idx" ON "Session"("createdAtMs")`,
     `CREATE INDEX "PendingSessionReconciliation_projectId_idx" ON "PendingSessionReconciliation"("projectId")`,
     `CREATE INDEX "SessionTurnUsage_completedAtMs_idx" ON "SessionTurnUsage"("completedAtMs")`,
@@ -76,6 +83,8 @@ const sessionProjectionMigration = {
   ] as const,
   operations: [] as const,
   verifiers: [
+    { kind: 'column-exists', version: 1, table: 'Project', column: 'deletedAt' },
+    { kind: 'table-exists', version: 1, table: 'SessionNumberSequence' },
     { kind: 'table-exists', version: 1, table: 'Session' },
     { kind: 'table-exists', version: 1, table: 'SessionProjectionState' },
     { kind: 'table-exists', version: 1, table: 'PendingSessionReconciliation' },

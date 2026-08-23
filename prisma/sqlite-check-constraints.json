@@ -1,6 +1,11 @@
 {
   "constraints": [
     {
+      "tableName": "SessionNumberSequence",
+      "name": "SessionNumberSequence_identity_check",
+      "expression": "\"id\" = 'global' AND \"nextNumber\" >= 1"
+    },
+    {
       "tableName": "Session",
       "name": "Session_identity_check",
       "expression": "\"number\" >= 1 AND length(trim(\"id\")) > 0 AND length(trim(\"projectId\")) > 0"
@@ -13,7 +18,7 @@
     {
       "tableName": "Session",
       "name": "Session_nonnegative_check",
-      "expression": "\"revision\" >= 0 AND \"activeMessageCount\" >= 0 AND \"artifactCount\" >= 0 AND \"filesRevision\" >= 0 AND \"createdAtMs\" >= 0 AND \"updatedAtMs\" >= 0 AND (\"archivedAtMs\" IS NULL OR \"archivedAtMs\" >= 0) AND (\"presentedActivityAtMs\" IS NULL OR \"presentedActivityAtMs\" >= 0) AND (\"sourceByteLength\" IS NULL OR \"sourceByteLength\" >= 0) AND (\"sourceMtimeMs\" IS NULL OR \"sourceMtimeMs\" >= 0)"
+      "expression": "\"revision\" >= 0 AND \"activeMessageCount\" >= 0 AND \"artifactCount\" >= 0 AND \"filesRevision\" >= 0 AND \"createdAtMs\" >= 0 AND \"updatedAtMs\" >= 0 AND (\"archivedAtMs\" IS NULL OR \"archivedAtMs\" >= 0) AND (\"presentedActivityAtMs\" IS NULL OR \"presentedActivityAtMs\" >= 0) AND (\"sourceByteLength\" IS NULL OR \"sourceByteLength\" >= 0) AND (\"sourceMtimeMs\" IS NULL OR \"sourceMtimeMs\" >= 0) AND (\"deletedAtMs\" IS NULL OR \"deletedAtMs\" >= 0)"
     },
     {
       "tableName": "SessionProjectionState",

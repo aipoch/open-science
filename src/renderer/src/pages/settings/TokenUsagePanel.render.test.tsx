@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   PersistedChatMessage,
-  PersistedChatSession
+  PersistedChatSession,
+  SessionUsageProjection
 } from '../../../../shared/session-persistence'
 import type { Project } from '../../../../shared/projects'
 import { TokenUsagePanel } from './TokenUsagePanel'
@@ -67,6 +68,7 @@ const createProject = (now: number): Project => ({
 
 let container: HTMLDivElement
 let root: Root
+const originalApi = window.api
 
 beforeEach(() => {
   container = document.createElement('div')
@@ -77,11 +79,59 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   vi.useRealTimers()
+  window.api = originalApi
   container.remove()
   document.body.innerHTML = ''
 })
 
 describe('TokenUsagePanel', () => {
+  it('refreshes the SQLite usage projection after a durable Session revision changes', async () => {
+    const now = localTime(2026, 8, 15, 18)
+    const projection = (inputTokens: number): SessionUsageProjection => ({
+      sessionCreatedAt: [now],
+      artifactCreatedAt: [],
+      runsAt: [now],
+      usageEvents: [
+        {
+          timestamp: now,
+          inputTokens,
+          cacheTokens: 0,
+          outputTokens: 0,
+          rootRunUsage: true
+        }
+      ],
+      totalArtifacts: 0
+    })
+    const loadUsage = vi
+      .fn()
+      .mockResolvedValueOnce(projection(10))
+      .mockResolvedValueOnce(projection(20))
+    window.api = { sessions: { loadUsage } } as unknown as Window['api']
+    const persisted = { ...createSession(now), revision: 1 }
+
+    await act(async () => {
+      root.render(
+        <TokenUsagePanel sessions={[persisted]} projects={[createProject(now)]} now={now} />
+      )
+    })
+    expect(loadUsage).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      root.render(
+        <TokenUsagePanel
+          sessions={[{ ...persisted, revision: 2 }]}
+          projects={[createProject(now)]}
+          now={now}
+        />
+      )
+    })
+
+    expect(loadUsage).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
+      'Total tokens20'
+    )
+  })
+
   it('renders the stat strip, 30-day charts, coverage, and period controls', () => {
     const now = localTime(2026, 8, 15, 18)
 

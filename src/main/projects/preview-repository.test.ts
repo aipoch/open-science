@@ -107,6 +107,8 @@ describe('preview state repository (integration)', () => {
   it('swallows a raw SQLite owner FK failure but propagates unrelated write errors', async () => {
     const create = vi.fn()
     const client = {
+      $transaction: (operation: (transaction: unknown) => unknown) => operation(client),
+      project: { findFirst: vi.fn().mockResolvedValue({ id: 'project-a' }) },
       projectPreviewState: { create }
     } as unknown as PreviewStateClient
     const repository = new PreviewStateRepository(() => Promise.resolve(client))
@@ -184,6 +186,25 @@ describe('preview state repository (integration)', () => {
     await repository.delete('project-a')
     await expect(repository.get('project-a')).resolves.toBeNull()
     await expect(repository.delete('project-a')).resolves.toBeUndefined()
+  })
+
+  it('does not recreate preview state for a soft-deleted Project', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-deleted-owner-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+    await client.project.update({
+      where: { id: 'project-a' },
+      data: { deletedAt: new Date() }
+    })
+    const repository = new PreviewStateRepository(() => Promise.resolve(client))
+
+    await expect(repository.save('project-a', createState(), 0)).resolves.toEqual({
+      status: 'saved',
+      revision: 0
+    })
+    await expect(client.projectPreviewState.count()).resolves.toBe(0)
   })
 
   it("does not let a stale client snapshot erase another client's newly opened preview", async () => {

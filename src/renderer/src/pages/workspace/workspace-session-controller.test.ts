@@ -270,6 +270,17 @@ describe('workspace session controller', () => {
     expect(hook.result.current.lifecycle.canStartSend(inactive.id)).toBe(true)
   })
 
+  it('blocks sends until active and background Session content is loaded', () => {
+    const active = session({ contentLoaded: false })
+    const inactive = session({ id: 'session-b', contentLoaded: false })
+    useSessionStore.setState({ sessions: [active, inactive], selectedSessionId: active.id })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+
+    expect(hook.result.current.lifecycle.canStartSend()).toBe(false)
+    expect(hook.result.current.lifecycle.canStartSend(inactive.id)).toBe(false)
+  })
+
   it('archives durably before enqueueing undo and clearing the active selection', async () => {
     const active = session()
     const order: string[] = []

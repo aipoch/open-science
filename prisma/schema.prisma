@@ -27,6 +27,7 @@ model Project {
   isExample   Boolean  @default(false)
   pinned      Boolean  @default(false)
   archivedAt  DateTime?
+  deletedAt   DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   permissionGrants PermissionGrant[]
@@ -35,11 +36,19 @@ model Project {
   sessions         Session[]
 }
 
-// Rebuildable query projection of the metadata duplicated in one authoritative Session JSON file.
-// `number` is the app-wide human-facing sequence; the existing string `id` remains domain identity.
+// Monotonic allocator for the app-wide human-facing Session number. The row is never deleted when
+// Session projections are rebuilt, so deleted Session numbers are not reused.
+model SessionNumberSequence {
+  id         String @id
+  nextNumber Int
+}
+
+// Query projection of metadata duplicated in one authoritative live Session JSON file. A deleted
+// Session keeps this row as a tombstone after its JSON is removed.
+// The existing string `id` remains domain identity; `number` is an unreferenced alternate key.
 model Session {
-  number                Int       @id @default(autoincrement())
-  id                    String    @unique
+  id                    String    @id
+  number                Int       @unique
   projectId             String
   title                 String
   status                String
@@ -56,13 +65,14 @@ model Session {
   needsStartupRecovery   Boolean   @default(false)
   sourceByteLength       BigInt?
   sourceMtimeMs          BigInt?
-  project                Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  deletedAtMs            BigInt?
+  project                Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
   turnUsage              SessionTurnUsage[]
   runs                   SessionRun[]
   artifactRefs           SessionArtifactRef[]
 
-  @@index([projectId, archivedAtMs, updatedAtMs, id])
-  @@index([archivedAtMs, updatedAtMs, id])
+  @@index([projectId, deletedAtMs, archivedAtMs, updatedAtMs, id])
+  @@index([deletedAtMs, archivedAtMs, updatedAtMs, id])
   @@index([createdAtMs])
 }
 

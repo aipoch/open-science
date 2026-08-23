@@ -229,7 +229,7 @@ class SessionPersistenceStateOwner {
   beginHydration(): void {
     this.validatedBindingTopologies.clear()
   }
-  replaceMetadata(sessions: readonly PersistedChatSession[], isComplete: boolean): void {
+  replaceMetadata(sessions: readonly SessionMetadata[], isComplete: boolean): void {
     this.sessionMetadata = new Map(
       sessions.map((session) => [
         session.id,

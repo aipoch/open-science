@@ -11,6 +11,7 @@ vi.mock('electron', () => ({
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { ProjectRepository } from '../projects/repository'
 import { buildSessionProjection, SessionProjectionRepository } from './projection'
 import { SessionRepository } from './repository'
 
@@ -125,6 +126,86 @@ describe('Session projection', () => {
     await repository.replaceAll(bulk)
     await expect(client.session.count()).resolves.toBe(75)
     await expect(client.sessionTurnUsage.count()).resolves.toBe(75)
+  })
+
+  it('keeps a deleted metadata tombstone, excludes its facts, and never reuses its number', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-number-sequence-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const repository = new SessionProjectionRepository(async () => client!)
+
+    const first = await repository.prepareSave(session('session-1'))
+    await repository.commitSave(first)
+    await repository.commitDelete(first.id)
+
+    await expect(repository.list()).resolves.toEqual([])
+    await expect(repository.usage()).resolves.toMatchObject({
+      sessionCreatedAt: [],
+      runsAt: [],
+      usageEvents: [],
+      totalArtifacts: 0
+    })
+    await expect(client.session.findUnique({ where: { id: first.id } })).resolves.toMatchObject({
+      id: first.id,
+      number: 1,
+      title: first.title,
+      deletedAtMs: expect.any(BigInt)
+    })
+    await expect(client.sessionTurnUsage.count({ where: { sessionId: first.id } })).resolves.toBe(0)
+    await expect(client.sessionRun.count({ where: { sessionId: first.id } })).resolves.toBe(0)
+    await expect(client.sessionArtifactRef.count({ where: { sessionId: first.id } })).resolves.toBe(
+      0
+    )
+    const second = await repository.prepareSave(session('session-2'))
+    expect(second.number).toBe(2)
+    const primaryKey = await client.$queryRaw<Array<{ name: string; pk: bigint }>>`
+      PRAGMA table_info("Session")
+    `
+    expect(primaryKey.find(({ pk }) => Number(pk) === 1)?.name).toBe('id')
+    await expect(
+      client.sessionNumberSequence.findUnique({ where: { id: 'global' } })
+    ).resolves.toMatchObject({ nextNumber: 3 })
+
+    await repository.replaceAll([{ ...second, number: 2 }])
+    await expect(client.session.findUnique({ where: { id: first.id } })).resolves.toMatchObject({
+      id: first.id,
+      deletedAtMs: expect.any(BigInt)
+    })
+  })
+
+  it('retains Project metadata and Session Usage when the whole Project is deleted', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-usage-history-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const sessions = new SessionProjectionRepository(async () => client!)
+    const saved = await sessions.prepareSave(session('session-1'))
+    await sessions.commitSave(saved)
+
+    await new ProjectRepository(async () => client!).delete('project-1')
+
+    await expect(client.project.findUnique({ where: { id: 'project-1' } })).resolves.toMatchObject({
+      id: 'project-1',
+      name: 'Project',
+      deletedAt: expect.any(Date)
+    })
+    await expect(sessions.list()).resolves.toEqual([])
+    await expect(sessions.usage()).resolves.toMatchObject({
+      sessionCreatedAt: [100],
+      runsAt: [101],
+      totalArtifacts: 1,
+      usageEvents: [expect.objectContaining({ inputTokens: 10 })]
+    })
+
+    await sessions.clearForRebuild()
+    await expect(client.session.findUnique({ where: { id: saved.id } })).resolves.toMatchObject({
+      id: saved.id,
+      deletedAtMs: null
+    })
+    await expect(sessions.usage()).resolves.toMatchObject({ totalArtifacts: 1 })
+    await expect(sessions.prepareSave(session('late-session'))).rejects.toThrow('deleted Project')
+    await expect(client.project.delete({ where: { id: 'project-1' } })).rejects.toThrow()
   })
 
   it('backfills historical JSON numbers by creation time before normal autoincrement', async () => {

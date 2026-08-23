@@ -900,7 +900,12 @@ const createApplicationModules = async (
     sessions: SessionSummary[]
   }> => {
     await projectDeletionCoordinator.recoverPendingDeletions()
-    return sessionRepository.ensureSessionProjection(loadAllSessions)
+    const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
+    await sessionPersistenceCoordinator.replaceSessionMetadata(
+      projection.sessions,
+      projection.result ? canReconcileSessionAbsences(projection.result) : true
+    )
+    return projection
   }
   const sessionPersistenceBackend: SessionPersistenceBackend = {
     loadAll: loadAllSessions,
@@ -922,7 +927,9 @@ const createApplicationModules = async (
     },
     loadOne: async ({ projectId, sessionId }) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
-      return sessionRepository.loadSession(projectId, sessionId)
+      const session = await sessionRepository.loadSession(projectId, sessionId)
+      if (session) sessionEnabledComputeHostsOwnerRef.current?.project(session)
+      return session
     },
     saveSession: async (session, options) => {
       await projectDeletionCoordinator.recoverPendingDeletions()

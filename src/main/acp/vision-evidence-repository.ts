@@ -27,7 +27,7 @@ type VisionEvidencePersistence = Readonly<{
   save(input: SaveVisionEvidenceInput): Promise<void>
 }>
 
-type VisionEvidenceClient = Pick<PrismaClient, 'visionEvidence'>
+type VisionEvidenceClient = Pick<PrismaClient, '$transaction' | 'project' | 'visionEvidence'>
 type VisionEvidenceClientProvider = () => Promise<VisionEvidenceClient>
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -77,10 +77,17 @@ class VisionEvidenceRepository implements VisionEvidencePersistence {
       evidenceJson: input.evidenceJson,
       evidenceChecksum: sha256(input.evidenceJson)
     }
-    await client.visionEvidence.upsert({
-      where: { id: input.identityKey },
-      create: { id: input.identityKey, ...data },
-      update: data
+    await client.$transaction(async (transaction) => {
+      const owner = await transaction.project.findFirst({
+        where: { id: input.projectId, deletedAt: null },
+        select: { id: true }
+      })
+      if (!owner) return
+      await transaction.visionEvidence.upsert({
+        where: { id: input.identityKey },
+        create: { id: input.identityKey, ...data },
+        update: data
+      })
     })
   }
 

@@ -642,10 +642,10 @@ export const GlobalSearchDialog = ({
     const createdAt = artifact.sourceVersionId
       ? artifact.sortAtMs
       : artifact.messageId
-        ? sessionMessageCreatedTimes.get(
+        ? (sessionMessageCreatedTimes.get(
             `${artifact.projectId}:${artifact.sessionId}:${artifact.messageId}`
-          )
-        : undefined
+          ) ?? artifact.sortAtMs)
+        : artifact.sortAtMs
     const isCurrentSessionArtifact = isArtifactMentionTarget(artifact)
     const canMention = canMentionArtifact(artifact)
     return (

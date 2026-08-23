@@ -1236,7 +1236,9 @@ describe('application database migrations', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-retired-columns-'))
     client = createProjectDbClient(storageRoot)
     await createDatabaseAtMigration0005(client)
-    await client.project.create({ data: { id: 'legacy-project', name: 'Preserved' } })
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Project" ("id", "name", "updatedAt") VALUES ('legacy-project', 'Preserved', CURRENT_TIMESTAMP)`
+    )
     await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "summary" TEXT')
     await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "checks" TEXT')
     await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "reasoning" TEXT')

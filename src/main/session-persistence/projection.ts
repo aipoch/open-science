@@ -17,6 +17,7 @@ import {
 
 const PROJECTION_STATE_ID = 'session-projection'
 const PROJECTION_VERSION = 1
+const SESSION_NUMBER_SEQUENCE_ID = 'global'
 
 type ProjectionClient = () => Promise<PrismaClient>
 
@@ -179,9 +180,9 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
 
 const sessionData = (
   projection: SessionProjection,
-  number?: number
+  number: number
 ): Prisma.SessionUncheckedCreateInput => ({
-  ...(number !== undefined ? { number } : {}),
+  number,
   id: projection.summary.id,
   projectId: projection.summary.projectId,
   title: projection.summary.title,
@@ -202,7 +203,8 @@ const sessionData = (
       : BigInt(projection.summary.presentedActivityAt),
   needsStartupRecovery: projection.summary.needsStartupRecovery,
   sourceByteLength: null,
-  sourceMtimeMs: null
+  sourceMtimeMs: null,
+  deletedAtMs: null
 })
 
 const replaceChildren = async (
@@ -298,7 +300,9 @@ export class SessionProjectionRepository {
     const client = await this.client()
     await client.$transaction([
       client.sessionProjectionState.deleteMany(),
-      client.session.deleteMany(),
+      client.session.deleteMany({
+        where: { deletedAtMs: null, project: { deletedAt: null } }
+      }),
       client.pendingSessionReconciliation.deleteMany()
     ])
   }
@@ -307,6 +311,11 @@ export class SessionProjectionRepository {
     const client = await this.client()
     const projection = buildSessionProjection(session)
     const number = await client.$transaction(async (tx) => {
+      const project = await tx.project.findFirst({
+        where: { id: session.projectId, deletedAt: null },
+        select: { id: true }
+      })
+      if (!project) throw new Error('Cannot save a Session for a deleted Project.')
       await tx.pendingSessionReconciliation.upsert({
         where: { sessionId: session.id },
         create: { sessionId: session.id, projectId: session.projectId },
@@ -314,20 +323,52 @@ export class SessionProjectionRepository {
       })
       const existing = await tx.session.findUnique({ where: { id: session.id } })
       if (existing) return existing.number
-      const created = await tx.session.create({ data: sessionData(projection, session.number) })
+      const preferredNumber = session.number
+      let number: number
+      if (preferredNumber !== undefined) {
+        const sequence = await tx.sessionNumberSequence.findUnique({
+          where: { id: SESSION_NUMBER_SEQUENCE_ID }
+        })
+        const nextNumber = preferredNumber + 1
+        if (!sequence) {
+          await tx.sessionNumberSequence.create({
+            data: { id: SESSION_NUMBER_SEQUENCE_ID, nextNumber }
+          })
+        } else if (sequence.nextNumber < nextNumber) {
+          await tx.sessionNumberSequence.update({
+            where: { id: SESSION_NUMBER_SEQUENCE_ID },
+            data: { nextNumber }
+          })
+        }
+        number = preferredNumber
+      } else {
+        const sequence = await tx.sessionNumberSequence.upsert({
+          where: { id: SESSION_NUMBER_SEQUENCE_ID },
+          create: { id: SESSION_NUMBER_SEQUENCE_ID, nextNumber: 2 },
+          update: { nextNumber: { increment: 1 } }
+        })
+        number = sequence.nextNumber - 1
+      }
+      const created = await tx.session.create({ data: sessionData(projection, number) })
       return created.number
     })
     return session.number === number ? session : { ...session, number }
   }
 
   async commitSave(session: PersistedChatSession): Promise<void> {
-    if (session.number === undefined) throw new Error('Session projection requires a number.')
+    const number = session.number
+    if (number === undefined) throw new Error('Session projection requires a number.')
     const client = await this.client()
     const projection = buildSessionProjection(session)
     await client.$transaction(async (tx) => {
+      const project = await tx.project.findFirst({
+        where: { id: session.projectId, deletedAt: null },
+        select: { id: true }
+      })
+      if (!project) throw new Error('Cannot save a Session for a deleted Project.')
       await tx.session.update({
         where: { id: session.id },
-        data: sessionData(projection)
+        data: sessionData(projection, number)
       })
       await replaceChildren(tx, session.id, projection)
       await tx.pendingSessionReconciliation.deleteMany({ where: { sessionId: session.id } })
@@ -345,17 +386,24 @@ export class SessionProjectionRepository {
 
   async commitDelete(sessionId: string): Promise<void> {
     const client = await this.client()
-    await client.$transaction([
-      client.session.deleteMany({ where: { id: sessionId } }),
-      client.pendingSessionReconciliation.deleteMany({ where: { sessionId } })
-    ])
+    await client.$transaction(async (tx) => {
+      await tx.sessionTurnUsage.deleteMany({ where: { sessionId } })
+      await tx.sessionRun.deleteMany({ where: { sessionId } })
+      await tx.sessionArtifactRef.deleteMany({ where: { sessionId } })
+      await tx.session.updateMany({
+        where: { id: sessionId, deletedAtMs: null },
+        data: { deletedAtMs: BigInt(Date.now()) }
+      })
+      await tx.pendingSessionReconciliation.deleteMany({ where: { sessionId } })
+    })
   }
 
   async replaceAll(sessions: readonly PersistedChatSession[]): Promise<void> {
     const client = await this.client()
     const projected = sessions.map((session) => {
-      if (session.number === undefined) throw new Error('Backfilled Session is missing its number.')
-      return { session, projection: buildSessionProjection(session) }
+      const number = session.number
+      if (number === undefined) throw new Error('Backfilled Session is missing its number.')
+      return { session: { ...session, number }, projection: buildSessionProjection(session) }
     })
     const turnUsage = projected.flatMap(({ session, projection }) =>
       projection.turnUsage.map((usage) => ({ sessionId: session.id, ...usage }))
@@ -366,7 +414,22 @@ export class SessionProjectionRepository {
     const artifactRefs = projected.flatMap(({ session, projection }) =>
       projection.artifactRefs.map((artifact) => ({ sessionId: session.id, ...artifact }))
     )
-    const writes: Prisma.PrismaPromise<unknown>[] = [client.session.deleteMany()]
+    const nextNumber =
+      projected.reduce((maximum, { session }) => Math.max(maximum, session.number), 0) + 1
+    const currentSequence = await client.sessionNumberSequence.findUnique({
+      where: { id: SESSION_NUMBER_SEQUENCE_ID }
+    })
+    const liveSessionIds = projected.map(({ session }) => session.id)
+    const writes: Prisma.PrismaPromise<unknown>[] = [
+      client.session.deleteMany({
+        where: {
+          OR: [
+            { deletedAtMs: null, project: { deletedAt: null } },
+            ...(liveSessionIds.length > 0 ? [{ id: { in: liveSessionIds } }] : [])
+          ]
+        }
+      })
+    ]
     for (const chunk of chunksOf(projected, 40)) {
       writes.push(
         client.session.createMany({
@@ -384,6 +447,11 @@ export class SessionProjectionRepository {
       writes.push(client.sessionArtifactRef.createMany({ data: chunk }))
     }
     writes.push(
+      client.sessionNumberSequence.upsert({
+        where: { id: SESSION_NUMBER_SEQUENCE_ID },
+        create: { id: SESSION_NUMBER_SEQUENCE_ID, nextNumber },
+        update: { nextNumber: Math.max(currentSequence?.nextNumber ?? 1, nextNumber) }
+      }),
       client.pendingSessionReconciliation.deleteMany(),
       client.sessionProjectionState.upsert({
         where: { id: PROJECTION_STATE_ID },
@@ -401,17 +469,27 @@ export class SessionProjectionRepository {
   async list(): Promise<SessionSummary[]> {
     const client = await this.client()
     return (
-      await client.session.findMany({ orderBy: [{ updatedAtMs: 'desc' }, { id: 'asc' }] })
+      await client.session.findMany({
+        where: { deletedAtMs: null, project: { deletedAt: null } },
+        orderBy: [{ updatedAtMs: 'desc' }, { id: 'asc' }]
+      })
     ).map(toSummary)
   }
 
   async usage(): Promise<SessionUsageProjection> {
     const client = await this.client()
     const [sessions, usage, runs, artifacts] = await client.$transaction([
-      client.session.findMany({ select: { createdAtMs: true } }),
-      client.sessionTurnUsage.findMany(),
-      client.sessionRun.findMany({ select: { createdAtMs: true } }),
+      client.session.findMany({
+        where: { deletedAtMs: null },
+        select: { createdAtMs: true }
+      }),
+      client.sessionTurnUsage.findMany({ where: { session: { deletedAtMs: null } } }),
+      client.sessionRun.findMany({
+        where: { session: { deletedAtMs: null } },
+        select: { createdAtMs: true }
+      }),
       client.sessionArtifactRef.findMany({
+        where: { session: { deletedAtMs: null } },
         select: { artifactId: true, artifactCreatedAtMs: true }
       })
     ])

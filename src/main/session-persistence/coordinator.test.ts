@@ -1928,6 +1928,23 @@ describe('SessionPersistenceCoordinator', () => {
     expect(loadAllWithDiagnostics).toHaveBeenCalledOnce()
   })
 
+  it('hydrates complete Session metadata from the SQLite projection', async () => {
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository(),
+      createFileIndex()
+    )
+
+    await coordinator.replaceSessionMetadata(
+      [{ id: 'session-1', projectId: 'project-1', title: 'Projected session' }],
+      true
+    )
+
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Projected session' }],
+      isComplete: true
+    })
+  })
+
   it('updates cached Session metadata after a durable save', async () => {
     const session = createSession({ title: 'Original title' })
     const coordinator = new SessionPersistenceCoordinator(

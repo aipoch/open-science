@@ -9,12 +9,18 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "isExample" BOOLEAN NOT NULL DEFAULT false,
     "pinned" BOOLEAN NOT NULL DEFAULT false,
     "archivedAt" DATETIME,
+    "deletedAt" DATETIME,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );`,
+  `CREATE TABLE IF NOT EXISTS "SessionNumberSequence" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "nextNumber" INTEGER NOT NULL,
+    CONSTRAINT "SessionNumberSequence_identity_check" CHECK ("id" = 'global' AND "nextNumber" >= 1)
+);`,
   `CREATE TABLE IF NOT EXISTS "Session" (
-    "number" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    "id" TEXT NOT NULL,
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "number" INTEGER NOT NULL,
     "projectId" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "status" TEXT NOT NULL,
@@ -31,10 +37,11 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "needsStartupRecovery" BOOLEAN NOT NULL DEFAULT false,
     "sourceByteLength" BIGINT,
     "sourceMtimeMs" BIGINT,
-    CONSTRAINT "Session_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    "deletedAtMs" BIGINT,
+    CONSTRAINT "Session_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "Session_identity_check" CHECK ("number" >= 1 AND length(trim("id")) > 0 AND length(trim("projectId")) > 0),
     CONSTRAINT "Session_status_check" CHECK ("status" IN ('idle', 'running', 'waiting-for-user', 'waiting-permission', 'waiting-plan-approval', 'error') AND "presentedStatus" IN ('idle', 'running', 'waiting-for-user', 'waiting-permission', 'waiting-plan-approval', 'error')),
-    CONSTRAINT "Session_nonnegative_check" CHECK ("revision" >= 0 AND "activeMessageCount" >= 0 AND "artifactCount" >= 0 AND "filesRevision" >= 0 AND "createdAtMs" >= 0 AND "updatedAtMs" >= 0 AND ("archivedAtMs" IS NULL OR "archivedAtMs" >= 0) AND ("presentedActivityAtMs" IS NULL OR "presentedActivityAtMs" >= 0) AND ("sourceByteLength" IS NULL OR "sourceByteLength" >= 0) AND ("sourceMtimeMs" IS NULL OR "sourceMtimeMs" >= 0))
+    CONSTRAINT "Session_nonnegative_check" CHECK ("revision" >= 0 AND "activeMessageCount" >= 0 AND "artifactCount" >= 0 AND "filesRevision" >= 0 AND "createdAtMs" >= 0 AND "updatedAtMs" >= 0 AND ("archivedAtMs" IS NULL OR "archivedAtMs" >= 0) AND ("presentedActivityAtMs" IS NULL OR "presentedActivityAtMs" >= 0) AND ("sourceByteLength" IS NULL OR "sourceByteLength" >= 0) AND ("sourceMtimeMs" IS NULL OR "sourceMtimeMs" >= 0) AND ("deletedAtMs" IS NULL OR "deletedAtMs" >= 0))
 );`,
   `CREATE TABLE IF NOT EXISTS "SessionProjectionState" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -553,9 +560,9 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 ] as const
 
 const RUNTIME_SCHEMA_INDEX_DDLS = [
-  `CREATE UNIQUE INDEX IF NOT EXISTS "Session_id_key" ON "Session"("id");`,
-  `CREATE INDEX IF NOT EXISTS "Session_projectId_archivedAtMs_updatedAtMs_id_idx" ON "Session"("projectId", "archivedAtMs", "updatedAtMs", "id");`,
-  `CREATE INDEX IF NOT EXISTS "Session_archivedAtMs_updatedAtMs_id_idx" ON "Session"("archivedAtMs", "updatedAtMs", "id");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "Session_number_key" ON "Session"("number");`,
+  `CREATE INDEX IF NOT EXISTS "Session_projectId_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("projectId", "deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
+  `CREATE INDEX IF NOT EXISTS "Session_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
   `CREATE INDEX IF NOT EXISTS "Session_createdAtMs_idx" ON "Session"("createdAtMs");`,
   `CREATE INDEX IF NOT EXISTS "PendingSessionReconciliation_projectId_idx" ON "PendingSessionReconciliation"("projectId");`,
   `CREATE INDEX IF NOT EXISTS "SessionTurnUsage_completedAtMs_idx" ON "SessionTurnUsage"("completedAtMs");`,
@@ -625,6 +632,7 @@ const RUNTIME_SCHEMA_TARGET_SQL = [
 
 const RUNTIME_SCHEMA_TABLES = [
   'Project',
+  'SessionNumberSequence',
   'Session',
   'SessionProjectionState',
   'PendingSessionReconciliation',
