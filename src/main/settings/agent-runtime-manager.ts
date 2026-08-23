@@ -1189,7 +1189,14 @@ export class AgentRuntimeManager {
           : candidate === 'opencode'
             ? await this.opencodeDetectDeps.getVersion(path)
             : await this.codexDetectDeps.getAdapterVersion(path)
-      if (version) {
+      const ready =
+        candidate === 'codex'
+          ? !!version &&
+            isSupportedCodexAcpVersion(parseCodexVersion(version) ?? '') &&
+            !!settings.codex?.nativePath &&
+            !!(await this.codexDetectDeps.getCodexVersion(settings.codex.nativePath))
+          : !!version
+      if (ready) {
         await this.repository.setAgentFramework(candidate)
         return
       }

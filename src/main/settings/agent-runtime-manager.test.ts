@@ -651,6 +651,7 @@ describe('AgentRuntimeManager', () => {
     })
     await repository.setAgentFramework('opencode')
     inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
+    inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
     // The stored Claude path exists as a candidate but cannot report a version, so it is not ready.
     inventory.claude.set(unmanagedClaude, undefined)
 
@@ -662,6 +663,47 @@ describe('AgentRuntimeManager', () => {
       codex: { resolvedPath: managedAdapterPath }
     })
     expect((await repository.getSettings()).opencodePath).toBeUndefined()
+  })
+
+  it('does not select an unsupported Codex adapter after uninstalling the active runtime', async () => {
+    const opencodePath = join(managedOpencodeDir(storageRoot), 'opencode')
+    await mkdir(dirname(opencodePath), { recursive: true })
+    await writeFile(opencodePath, '#!/bin/sh\n')
+    await chmod(opencodePath, 0o755)
+    await repository.setOpencodeInfo(opencodePath, '1.19.0')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.1.4',
+      nativePath: managedCodexPath,
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('opencode')
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
+    inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
+
+    await manager.uninstallOpencode()
+
+    expect((await repository.getSettings()).agentFrameworkId).toBe('opencode')
+  })
+
+  it('does not select Codex after uninstalling the active runtime when its native CLI is unusable', async () => {
+    const opencodePath = join(managedOpencodeDir(storageRoot), 'opencode')
+    await mkdir(dirname(opencodePath), { recursive: true })
+    await writeFile(opencodePath, '#!/bin/sh\n')
+    await chmod(opencodePath, 0o755)
+    await repository.setOpencodeInfo(opencodePath, '1.19.0')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.6.2',
+      nativePath: managedCodexPath,
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('opencode')
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
+
+    await manager.uninstallOpencode()
+
+    expect((await repository.getSettings()).agentFrameworkId).toBe('opencode')
   })
 
   it('mounts the Skill projection for shared, isolated, and custom Claude probes', async () => {
