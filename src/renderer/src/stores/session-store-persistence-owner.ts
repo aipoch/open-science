@@ -545,10 +545,22 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           return state
         }
 
+        const activePlanProjection = matchesPersistedPlanProjection(
+          current.activePlanProjection,
+          session
+        )
+          ? current.activePlanProjection
+          : retainRuntimePlanProjection(current, session)
+        const projectionIsNewer =
+          activePlanProjection !== undefined &&
+          incomingRevision !== undefined &&
+          activePlanProjection.revision > incomingRevision
         const interactionState = {
           ...inferSessionInteractionState(current),
           permission: session.runtimeContext?.permission?.state === 'pending',
-          plan: session.runtimeContext?.plan?.approval === 'pending'
+          plan: projectionIsNewer
+            ? activePlanProjection.approval === 'pending'
+            : session.runtimeContext?.plan?.approval === 'pending'
         }
         const status = current.compacting
           ? current.status
@@ -556,12 +568,6 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
               { ...current, runtimeContext: session.runtimeContext },
               interactionState
             )
-        const activePlanProjection = matchesPersistedPlanProjection(
-          current.activePlanProjection,
-          session
-        )
-          ? current.activePlanProjection
-          : retainRuntimePlanProjection(current, session)
         const projected: ChatSession = {
           ...current,
           ...mergeRuntimeConversationAuthority(current, session),

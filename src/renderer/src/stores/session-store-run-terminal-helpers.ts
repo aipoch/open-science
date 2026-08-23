@@ -44,9 +44,10 @@ const CLEARED_AGENT_RUN_STATE = {
 >
 
 const hasPendingPlanReview = (session: ChatSession): boolean =>
-  (session.activePlanProjection?.lifecycle === 'awaiting_approval' &&
-    session.activePlanProjection.approval === 'pending') ||
-  session.runtimeContext?.plan?.approval === 'pending'
+  session.activePlanProjection
+    ? session.activePlanProjection.lifecycle === 'awaiting_approval' &&
+      session.activePlanProjection.approval === 'pending'
+    : session.runtimeContext?.plan?.approval === 'pending'
 
 const settleConversationGraphSyncFailure = (
   session: ChatSession,

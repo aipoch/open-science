@@ -965,7 +965,13 @@ describe('session store', () => {
         updatedAt: 2
       }
     ])
-    const newerProjection = { ...createPlanProjection('version-2'), revision: 2 }
+    const newerProjection = {
+      ...createPlanProjection('version-1'),
+      revision: 2,
+      approval: 'approved' as const,
+      lifecycle: 'approved' as const,
+      requiresExplicitContinuation: true
+    }
     useSessionStore.getState().setActivePlanProjection('session-1', newerProjection)
     const source = useSessionStore.getState().sessions[0]
 
@@ -984,7 +990,14 @@ describe('session store', () => {
       mode: 'runtime-context-authority'
     })
 
-    expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(newerProjection)
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      interactionState: { plan: false },
+      activePlanProjection: newerProjection
+    })
+
+    useSessionStore.getState().finishRun('session-1')
+    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
   })
 
   it('does not replace newer local conversation state when a durable Plan authority arrives', () => {
