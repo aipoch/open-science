@@ -2623,6 +2623,40 @@ describe('session store', () => {
     expect(toPersistedSession(session).agentConfiguration).toEqual(preferred)
   })
 
+  it('preserves Session activity time when reconciling a legacy agent configuration', () => {
+    const updatedAt = Date.now() - 60_000
+    const configuration = {
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'default' as const
+    }
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'legacy-session',
+          projectId: 'default-project',
+          title: 'Legacy Session',
+          cwd: '/workspace/project',
+          status: 'idle',
+          messages: [],
+          filesRevision: 0,
+          createdAt: updatedAt - 60_000,
+          updatedAt
+        } as ChatSession
+      ],
+      selectedSessionId: 'legacy-session'
+    })
+
+    useSessionStore
+      .getState()
+      .setAgentConfiguration('legacy-session', configuration, { preserveUpdatedAt: true })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      agentConfiguration: configuration,
+      updatedAt
+    })
+  })
+
   it('materializes a missing Session agentConfiguration on a later send', () => {
     const configuration = {
       providerId: 'provider-a',

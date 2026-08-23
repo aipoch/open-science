@@ -82,12 +82,17 @@ const useWorkspaceSessionAgentConfiguration = (
   useEffect(() => {
     if (
       !activeSession ||
+      activeSession.contentLoaded === false ||
       sessionAgentConfiguration?.status !== 'ready' ||
       !sessionAgentConfiguration.changed
     ) {
       return
     }
-    setAgentConfiguration(activeSession.id, sessionAgentConfiguration.configuration)
+    // Materializing the canonical form of a legacy configuration is storage maintenance, not
+    // conversation activity. Keep the Session in its existing date section while persisting it.
+    setAgentConfiguration(activeSession.id, sessionAgentConfiguration.configuration, {
+      preserveUpdatedAt: true
+    })
   }, [activeSession, sessionAgentConfiguration, setAgentConfiguration])
   const activeAgentConfiguration = activeSession
     ? sessionAgentConfiguration?.configuration

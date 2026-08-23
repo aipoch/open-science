@@ -65,7 +65,11 @@ type SessionStore = SessionStoreData &
     clearSpecialistSwitchResetRequired: (sessionId: string) => void
     setContextUsage: (sessionId: string, contextUsage: AcpContextUsage | undefined) => void
     setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
-    setAgentConfiguration: (sessionId: string, configuration: SessionAgentConfiguration) => void
+    setAgentConfiguration: (
+      sessionId: string,
+      configuration: SessionAgentConfiguration,
+      options?: { preserveUpdatedAt?: boolean }
+    ) => void
     // Persists the per-session auto-review toggle. true = on; false = off (default).
     setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
     // Mirrors Main's desired Specialist binding and its durable pending marker. Passing undefined
@@ -179,11 +183,15 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
     }))
   },
 
-  setAgentConfiguration: (sessionId, configuration) => {
+  setAgentConfiguration: (sessionId, configuration, options) => {
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
-          ? { ...session, agentConfiguration: configuration, updatedAt: Date.now() }
+          ? {
+              ...session,
+              agentConfiguration: configuration,
+              ...(options?.preserveUpdatedAt ? {} : { updatedAt: Date.now() })
+            }
           : session
       )
     }))
