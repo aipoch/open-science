@@ -729,6 +729,8 @@ describe('SettingsPage layout', () => {
     expect(nav?.className).toContain('bg-background')
     expect(nav?.className).toContain('md:w-48')
     expect(nav?.className).toContain('w-[min(86vw,320px)]')
+    expect(nav?.className).toContain('overflow-y-auto')
+    expect(nav?.className).toContain('md:overflow-y-visible')
     expect(nav?.parentElement?.nextElementSibling?.className).toContain('bg-card')
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
