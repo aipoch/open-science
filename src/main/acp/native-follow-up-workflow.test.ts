@@ -15,10 +15,15 @@ const createWorkflow = (
   overrides: {
     advertised?: boolean
     livePrompt?: boolean | (() => boolean)
+    livePromptTurn?: () => { turnToken: string; signal: AbortSignal } | undefined
     frameworkId?: 'claude-code' | 'opencode' | 'codex'
     openCodeHttp?: boolean
     providerSessionId?: string | null
-    request?: (method: string, params: unknown) => Promise<unknown>
+    request?: (
+      method: string,
+      params: unknown,
+      options?: { cancellationSignal?: AbortSignal }
+    ) => Promise<unknown>
     followUpTimeoutMs?: number
     fetchImpl?: typeof fetch
     prepareFollowUp?: ConstructorParameters<typeof AcpNativeFollowUpWorkflow>[0]['prepareFollowUp']
@@ -62,6 +67,14 @@ const createWorkflow = (
         typeof overrides.livePrompt === 'function'
           ? overrides.livePrompt()
           : (overrides.livePrompt ?? true),
+      livePrompt: () => {
+        if (overrides.livePromptTurn) return overrides.livePromptTurn()
+        const isLive =
+          typeof overrides.livePrompt === 'function'
+            ? overrides.livePrompt()
+            : (overrides.livePrompt ?? true)
+        return isLive ? { turnToken: 'turn-1', signal: new AbortController().signal } : undefined
+      },
       sessionCwd: () => '/workspace',
       publishUserMessage: (input) => {
         published.push(input)
@@ -422,6 +435,62 @@ describe('AcpNativeFollowUpWorkflow', () => {
       uploads: [],
       references: []
     })
+  })
+
+  it('refuses after steering if the live prompt ended or was replaced', async () => {
+    const registerTurnInputs = vi.fn(async () => undefined)
+    let liveTurnToken = 'turn-1'
+    const { workflow } = createWorkflow({
+      registerTurnInputs,
+      livePromptTurn: () =>
+        liveTurnToken
+          ? { turnToken: liveTurnToken, signal: new AbortController().signal }
+          : undefined,
+      request: vi.fn(async () => {
+        liveTurnToken = ''
+        return { outcome: 'injected' }
+      }),
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text' as const, text: 'late' }],
+        notebookTurnInputs: {
+          projectId: 'project-1',
+          sessionId: 'app-1',
+          livePromptMessageId: 'prompt-live',
+          uploads: [],
+          references: []
+        }
+      })
+    })
+    await expect(workflow.steerFollowUp({ sessionId: 'app-1', text: 'late' })).resolves.toEqual({
+      injected: false,
+      reason: 'no-live-turn'
+    })
+    expect(registerTurnInputs).not.toHaveBeenCalled()
+    expect(published).toEqual([])
+  })
+
+  it('aborts in-flight steering when the live prompt is cancelled', async () => {
+    const controller = new AbortController()
+    const request = vi.fn(
+      (_method: string, _params: unknown, options?: { cancellationSignal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          options?.cancellationSignal?.addEventListener(
+            'abort',
+            () => reject(Object.assign(new Error('AbortError'), { name: 'AbortError' })),
+            { once: true }
+          )
+          queueMicrotask(() => controller.abort())
+        })
+    )
+    const { workflow } = createWorkflow({
+      request,
+      livePromptTurn: () =>
+        controller.signal.aborted ? undefined : { turnToken: 'turn-1', signal: controller.signal }
+    })
+    await expect(
+      workflow.steerFollowUp({ sessionId: 'app-1', text: 'focus on tests' })
+    ).resolves.toEqual({ injected: false, reason: 'dispatch-failed' })
+    expect(published).toEqual([])
   })
 
   it('does not register notebook inputs when steering is refused', async () => {

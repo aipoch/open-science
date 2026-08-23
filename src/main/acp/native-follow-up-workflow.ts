@@ -66,6 +66,11 @@ type NativeFollowUpRegisterTurnInputs = (request: {
   references: FileReference[]
 }) => Promise<void>
 
+type NativeFollowUpLivePrompt = Readonly<{
+  turnToken: string
+  signal: AbortSignal
+}>
+
 type NativeFollowUpWorkflowOptions = Readonly<{
   connection: () => ClientConnection | undefined
   capabilities: () => AcpConnectionCapabilities
@@ -73,6 +78,7 @@ type NativeFollowUpWorkflowOptions = Readonly<{
   openCodeUsageApi: () => AcpOpenCodeUsageApi | undefined
   activeProviderSessionId: (appSessionId: string) => string | undefined
   hasLivePrompt: (appSessionId: string) => boolean
+  livePrompt?: (appSessionId: string) => NativeFollowUpLivePrompt | undefined
   sessionCwd: (appSessionId: string) => string | undefined
   publishUserMessage: (input: NativeFollowUpUserMessage) => void
   prepareFollowUp?: (request: AcpSteerFollowUpRequest) => Promise<NativeFollowUpPreparedContent>
@@ -228,7 +234,8 @@ class AcpNativeFollowUpWorkflow {
       return refused('empty-text')
     }
 
-    if (!this.options.hasLivePrompt(request.sessionId)) {
+    const live = this.options.livePrompt?.(request.sessionId)
+    if (!this.options.hasLivePrompt(request.sessionId) || (this.options.livePrompt && !live)) {
       log.info('native follow-up refused', {
         sessionId: request.sessionId,
         reason: 'no-live-turn',
@@ -237,25 +244,17 @@ class AcpNativeFollowUpWorkflow {
       return refused('no-live-turn')
     }
 
+    const transportSignal = this.transportSignal(live?.signal, route.transport)
     if (route.transport === 'acp-steering') {
       let result: unknown
       try {
-        const timeout = AbortSignal.timeout(
-          this.options.followUpTimeoutMs ?? ACP_STEERING_TIMEOUT_MS
-        )
         result = await Promise.race([
           connection.agent.request(
             ACP_STEERING_METHOD,
             buildAcpSteeringParams(providerSessionId, prompt),
-            { cancellationSignal: timeout }
+            { cancellationSignal: transportSignal }
           ),
-          new Promise<never>((_, reject) => {
-            timeout.addEventListener(
-              'abort',
-              () => reject(Object.assign(new Error('TimeoutError'), { name: 'TimeoutError' })),
-              { once: true }
-            )
-          })
+          this.rejectWhenAborted(transportSignal)
         ])
       } catch {
         log.info('native follow-up refused', {
@@ -296,7 +295,8 @@ class AcpNativeFollowUpWorkflow {
         openCodeUsageApi,
         providerSessionId,
         parts,
-        this.options.sessionCwd(request.sessionId)
+        this.options.sessionCwd(request.sessionId),
+        transportSignal
       )
       if (!accepted) {
         log.info('native follow-up refused', {
@@ -307,6 +307,15 @@ class AcpNativeFollowUpWorkflow {
         })
         return refused('dispatch-failed')
       }
+    }
+
+    if (!this.sameLivePrompt(request.sessionId, live)) {
+      log.info('native follow-up refused', {
+        sessionId: request.sessionId,
+        reason: 'no-live-turn',
+        transport: route.transport
+      })
+      return refused('no-live-turn')
     }
 
     await this.commitNotebookTurnInputs(notebookTurnInputs)
@@ -326,6 +335,37 @@ class AcpNativeFollowUpWorkflow {
       messageId
     })
     return injected(route.transport, messageId)
+  }
+
+  private sameLivePrompt(sessionId: string, live: NativeFollowUpLivePrompt | undefined): boolean {
+    if (!this.options.hasLivePrompt(sessionId)) return false
+    if (!this.options.livePrompt) return true
+    const current = this.options.livePrompt(sessionId)
+    return Boolean(current && live && current.turnToken === live.turnToken)
+  }
+
+  private transportSignal(
+    liveSignal: AbortSignal | undefined,
+    transport: NativeFollowUpTransport
+  ): AbortSignal {
+    const timeout = AbortSignal.timeout(
+      this.options.followUpTimeoutMs ??
+        (transport === 'opencode-http' ? OPENCODE_HTTP_STEER_TIMEOUT_MS : ACP_STEERING_TIMEOUT_MS)
+    )
+    return liveSignal ? AbortSignal.any([timeout, liveSignal]) : timeout
+  }
+
+  private rejectWhenAborted(signal: AbortSignal): Promise<never> {
+    return new Promise((_, reject) => {
+      const fail = (): void => {
+        reject(Object.assign(new Error('TimeoutError'), { name: 'TimeoutError' }))
+      }
+      if (signal.aborted) {
+        fail()
+        return
+      }
+      signal.addEventListener('abort', fail, { once: true })
+    })
   }
 
   private async commitNotebookTurnInputs(
@@ -353,7 +393,8 @@ class AcpNativeFollowUpWorkflow {
     api: AcpOpenCodeUsageApi,
     providerSessionId: string,
     parts: readonly OpenCodeHttpFollowUpPart[],
-    cwd: string | undefined
+    cwd: string | undefined,
+    signal: AbortSignal
   ): Promise<boolean> {
     const fetchImpl = this.options.fetchImpl ?? fetch
     try {
@@ -367,9 +408,7 @@ class AcpNativeFollowUpWorkflow {
           'content-type': 'application/json'
         },
         body: JSON.stringify(buildOpenCodeHttpFollowUpBody(parts)),
-        signal: AbortSignal.timeout(
-          this.options.followUpTimeoutMs ?? OPENCODE_HTTP_STEER_TIMEOUT_MS
-        )
+        signal
       })
       if (!response.ok) return false
       let result: unknown

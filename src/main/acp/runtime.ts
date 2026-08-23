@@ -520,6 +520,12 @@ class AcpRuntime {
       openCodeUsageApi: () => this.backendGeneration.openCodeUsageApi(),
       activeProviderSessionId: (sessionId) => this.activeSessionFor(sessionId)?.sessionId,
       hasLivePrompt: (sessionId) => this.sessionInteractions.current(sessionId)?.kind === 'prompt',
+      livePrompt: (sessionId) => {
+        const current = this.sessionInteractions.current(sessionId)
+        return current?.kind === 'prompt'
+          ? { turnToken: current.turnToken, signal: current.signal }
+          : undefined
+      },
       sessionCwd: (sessionId) => this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd,
       prepareFollowUp: (request) => this.prepareNativeFollowUpContent(request),
       ...(this.options.notebook?.registerTurnInputs
