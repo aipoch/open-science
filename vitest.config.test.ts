@@ -1,9 +1,14 @@
+import { availableParallelism, cpus } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import vitestConfig, {
   coverageThresholdsEnabled,
+  resolveVitestMaxWorkers,
+  VITEST_ARCHITECTURE_TEST_GLOBS,
   VITEST_COVERAGE_EXCLUDE_PATTERNS,
-  VITEST_EXCLUDE_PATTERNS
+  VITEST_EXCLUDE_PATTERNS,
+  VITEST_PROCESS_TEST_GLOBS
 } from './vitest.config'
 
 describe('Vitest discovery boundaries', () => {
@@ -27,4 +32,77 @@ it('defers coverage thresholds only for explicit shard collection', () => {
 
 it('keeps a safe default timeout for schema-backed hooks', () => {
   expect(vitestConfig.test?.hookTimeout).toBe(30_000)
+})
+
+it('pins the full-suite worker cap to the machine rather than leaving it unbounded', () => {
+  const available =
+    typeof availableParallelism === 'function' ? availableParallelism() : cpus().length
+  expect(resolveVitestMaxWorkers(8)).toBe(7)
+  expect(resolveVitestMaxWorkers(1)).toBe(1)
+  expect(resolveVitestMaxWorkers(0)).toBe(1)
+  expect(vitestConfig.test?.maxWorkers).toBe(resolveVitestMaxWorkers())
+  expect(vitestConfig.test?.maxWorkers).toBe(Math.max(available - 1, 1))
+})
+
+type VitestProjectTest = {
+  name: string
+  include?: string[]
+  exclude?: string[]
+  isolate?: boolean
+  fileParallelism?: boolean
+  maxWorkers?: number
+  sequence?: { groupOrder?: number }
+}
+
+const projectByName = (name: string): VitestProjectTest => {
+  const projects = vitestConfig.test?.projects
+  expect(Array.isArray(projects)).toBe(true)
+  const project = (projects as Array<{ test?: { name?: string } }>).find(
+    (candidate) => candidate.test?.name === name
+  )
+  expect(project, name).toBeDefined()
+  return project!.test as VitestProjectTest
+}
+
+it('runs whole-tree architecture scans in one reused worker after the parallel unit pool', () => {
+  expect(VITEST_ARCHITECTURE_TEST_GLOBS).toEqual(['**/*.architecture.test.ts'])
+  const architecture = projectByName('architecture')
+  expect(architecture.include).toEqual([...VITEST_ARCHITECTURE_TEST_GLOBS])
+  expect(architecture.isolate).toBe(false)
+  expect(architecture.fileParallelism).toBe(false)
+  expect(architecture.maxWorkers).toBe(1)
+  expect(architecture.sequence?.groupOrder).toBe(1)
+  expect(projectByName('default').exclude).toEqual(
+    expect.arrayContaining([...VITEST_ARCHITECTURE_TEST_GLOBS, ...VITEST_PROCESS_TEST_GLOBS])
+  )
+})
+
+it('serializes real kernels, TCP servers, and integration files so they cannot starve the unit pool', () => {
+  expect(VITEST_PROCESS_TEST_GLOBS).toEqual(
+    expect.arrayContaining([
+      '**/*.integration.test.ts',
+      '**/*.certification.test.ts',
+      'src/main/notebook/kernel-executor.test.ts',
+      'src/main/local-rpc-transport.test.ts',
+      'src/main/session-plan/plan-mcp-server.test.ts',
+      'src/main/acp/mcp-http-host.test.ts'
+    ])
+  )
+  const processProject = projectByName('process')
+  expect(processProject.include).toEqual([...VITEST_PROCESS_TEST_GLOBS])
+  expect(processProject.isolate).toBe(true)
+  expect(processProject.fileParallelism).toBe(false)
+  expect(processProject.maxWorkers).toBe(1)
+})
+
+it('does not treat a 50ms scheduler delay as ACP deadlock', () => {
+  const sources = [
+    'src/main/acp/handler-workflows.test.ts',
+    'src/main/acp/ipc.test.ts',
+    'src/main/acp/application-commands.test.ts',
+    'src/main/acp/prompt-outcome-finalizer.test.ts'
+  ].map((path) => readFileSync(path, 'utf8'))
+  for (const source of sources) {
+    expect(source).not.toMatch(/setTimeout\(\(\) => resolve\('(?:timed-out|blocked)'\), 50\)/)
+  }
 })

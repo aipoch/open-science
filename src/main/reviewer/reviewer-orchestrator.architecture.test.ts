@@ -1,4 +1,3 @@
-import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, relative, resolve, sep } from 'node:path'
 
 import {
@@ -33,6 +32,10 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import {
+  listProductionSources,
+  readProductionSource
+} from '../../../test/architecture-source-index'
 import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
 import { REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from './bridge-tools'
@@ -57,7 +60,7 @@ const privateOwnerPaths = [
   reviewerPaths.sessionDriver
 ] as const
 
-const readSource = (path: string): string => readFileSync(path, 'utf8')
+const readSource = (path: string): string => readProductionSource(path, projectRoot)
 const rawLineCount = (source: string): number =>
   source.split(/\r?\n/).length - Number(source.endsWith('\n'))
 const modulePath = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, '')
@@ -72,24 +75,7 @@ const sourceFileFor = (path: string): SourceFile =>
     extname(path) === '.tsx' ? ScriptKind.TSX : ScriptKind.TS
   )
 
-const productionSources = (): string[] => {
-  const sources: string[] = []
-  const visit = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = resolve(directory, entry.name)
-      if (entry.isDirectory()) visit(path)
-      else if (
-        ['.ts', '.tsx'].includes(extname(path)) &&
-        !/\.(?:test|spec)\.[cm]?tsx?$/.test(entry.name)
-      ) {
-        sources.push(path)
-      }
-    }
-  }
-  visit(resolve(projectRoot, 'src'))
-  visit(resolve(projectRoot, 'packages'))
-  return sources.sort()
-}
+const productionSources = (): readonly string[] => listProductionSources(projectRoot)
 
 const importSpecifiersFrom = (sourcePath: string): string[] => {
   const specifiers: string[] = []

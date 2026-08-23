@@ -538,13 +538,10 @@ describe('ACP application commands', () => {
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
 
-    const outcome = await Promise.race([
-      router.dispatcher.invoke(
-        acpCommands.steerFollowUp,
-        invocation([{ sessionId: 'session-1', text: 'focus on tests' }])
-      ),
-      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 50))
-    ])
+    const outcome = await router.dispatcher.invoke(
+      acpCommands.steerFollowUp,
+      invocation([{ sessionId: 'session-1', text: 'focus on tests' }])
+    )
 
     expect(outcome).toEqual({ injected: false, reason: 'prompt-required' })
     expect(dependencies.runtime.steerFollowUp).toHaveBeenCalledOnce()

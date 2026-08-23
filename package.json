@@ -14,6 +14,7 @@
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
+    "pretest": "node scripts/check-prisma-client.mjs",
     "test": "vitest run",
     "test:module": "node scripts/ci/module-test-impact.mjs module",
     "test:affected": "node scripts/ci/module-test-impact.mjs affected",

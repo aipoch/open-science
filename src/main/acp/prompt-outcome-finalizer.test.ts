@@ -424,12 +424,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
         harness.handles,
         stopped({ stopReason })
       )
-      const completed = Promise.race([
-        finalization.then(() => 'settled' as const),
-        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
-      ])
-
-      await expect(completed).resolves.toBe('settled')
+      await finalization
       expect(harness.handles.autoCompactIfNeeded).not.toHaveBeenCalled()
       expect(harness.interactions.current('s1')).toBeUndefined()
       compact.resolve()

@@ -1152,10 +1152,7 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     installAcpIpcHandlers({ steerFollowUp } as never, {} as never, undefined, archiveAvailability)
     const request: AcpSteerFollowUpRequest = { sessionId: 's-1', text: 'focus on tests' }
 
-    const outcome = await Promise.race([
-      Promise.resolve(handlers.get('acp:steer-follow-up')?.({}, request)),
-      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 50))
-    ])
+    const outcome = await handlers.get('acp:steer-follow-up')?.({}, request)
 
     expect(outcome).toEqual({ injected: false, reason: 'prompt-required' })
     expect(withSessionAvailableById).toHaveBeenCalledWith('s-1', expect.any(Function))

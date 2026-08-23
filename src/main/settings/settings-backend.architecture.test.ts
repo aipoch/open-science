@@ -1,4 +1,3 @@
-import { readFileSync, readdirSync } from 'node:fs'
 import { basename, dirname, extname, relative, resolve } from 'node:path'
 
 import {
@@ -34,6 +33,11 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import {
+  listProductionSources,
+  readProductionSource
+} from '../../../test/architecture-source-index'
+
 const projectRoot = resolve(__dirname, '../../..')
 const settingsRoot = resolve(projectRoot, 'src/main/settings')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
@@ -62,14 +66,7 @@ const settingsPaths = {
   types: resolve(settingsRoot, 'types.ts'),
   notebookLocalRpcServer: resolve(projectRoot, 'src/main/notebook/local-rpc-server.ts')
 } as const
-const sourceCache = new Map<string, string>()
-const readSource = (path: string): string => {
-  const cached = sourceCache.get(path)
-  if (cached) return cached
-  const source = readFileSync(path, 'utf8')
-  sourceCache.set(path, source)
-  return source
-}
+const readSource = (path: string): string => readProductionSource(path, projectRoot)
 const rawLineCount = (source: string): number =>
   source.split(/\r?\n/).length - Number(source.endsWith('\n'))
 const modulePath = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, '')
@@ -89,24 +86,7 @@ const sourceFileFor = (path: string): SourceFile => {
   sourceFileCache.set(path, sourceFile)
   return sourceFile
 }
-const productionSources = (): string[] => {
-  const sources: string[] = []
-  const visit = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = resolve(directory, entry.name)
-      if (entry.isDirectory()) visit(path)
-      else if (
-        ['.ts', '.tsx'].includes(extname(path)) &&
-        !/\.(?:test|spec)\.[cm]?tsx?$/.test(entry.name)
-      ) {
-        sources.push(path)
-      }
-    }
-  }
-  visit(resolve(projectRoot, 'src'))
-  visit(resolve(projectRoot, 'packages'))
-  return sources.sort()
-}
+const productionSources = (): readonly string[] => listProductionSources(projectRoot)
 const importSpecifiersCache = new Map<string, string[]>()
 const importSpecifiersFrom = (sourcePath: string): string[] => {
   const cached = importSpecifiersCache.get(sourcePath)

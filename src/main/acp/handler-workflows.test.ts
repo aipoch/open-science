@@ -192,18 +192,12 @@ describe('ACP interrupted turn workflow', () => {
       }
     )
 
-    const outcome = await Promise.race([
-      harness.workflows
-        .continueInterruptedTurn({
-          projectId: 'project-1',
-          sessionId: 'session-1',
-          promptMessageId: 'prompt-1'
-        })
-        .then(() => 'completed' as const),
-      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 50))
-    ])
+    await harness.workflows.continueInterruptedTurn({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      promptMessageId: 'prompt-1'
+    })
 
-    expect(outcome).toBe('completed')
     expect(harness.startContinuationWhenDispatchAdmitted).toHaveBeenCalledOnce()
   })
 })
