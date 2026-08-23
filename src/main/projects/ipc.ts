@@ -3,7 +3,7 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 import type {
   DeletePreviewStateRequest,
   LoadPreviewStateRequest,
-  PersistedPreviewState,
+  PreviewStateSnapshot,
   SavePreviewStateRequest
 } from '../../shared/preview-state'
 import type {
@@ -85,11 +85,11 @@ const createProjectHandlers = (
 const registerPreviewStateIpcHandlers = (previewRepository: PreviewStateRepository): void => {
   ipcMainHandle(
     'preview:load',
-    (_event, request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null> =>
+    (_event, request: LoadPreviewStateRequest): Promise<PreviewStateSnapshot | null> =>
       previewRepository.get(request.projectId)
   )
   ipcMainHandle('preview:save', (_event, request: SavePreviewStateRequest) =>
-    previewRepository.save(request.projectId, request.state)
+    previewRepository.save(request.projectId, request.state, request.expectedRevision)
   )
   ipcMainHandle('preview:delete', (_event, request: DeletePreviewStateRequest) =>
     previewRepository.delete(request.projectId)

@@ -3037,7 +3037,8 @@ const createApplicationModules = async (
       managedPreview: managedPreviewOwners,
       preview: {
         load: (request) => previewStateRepository.get(request.projectId),
-        save: (request) => previewStateRepository.save(request.projectId, request.state),
+        save: (request) =>
+          previewStateRepository.save(request.projectId, request.state, request.expectedRevision),
         delete: (request) => previewStateRepository.delete(request.projectId)
       },
       projectFiles: projectFilesHandlers,

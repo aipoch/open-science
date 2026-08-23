@@ -3,7 +3,11 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { PREVIEW_STATE_VERSION, type PersistedPreviewState } from '../../../../shared/preview-state'
+import {
+  PREVIEW_STATE_VERSION,
+  type PersistedPreviewState,
+  type PreviewStateSnapshot
+} from '../../../../shared/preview-state'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
@@ -294,8 +298,10 @@ describe('usePreviewPersistence per-project save/restore', () => {
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useSessionStore.setState(createInitialSessionState())
-    load = vi.fn(() => Promise.resolve(undefined))
-    save = vi.fn(() => Promise.resolve())
+    load = vi.fn(() => Promise.resolve(null))
+    save = vi.fn(({ expectedRevision }: { expectedRevision: number }) =>
+      Promise.resolve({ status: 'saved' as const, revision: expectedRevision + 1 })
+    )
     window.api = { preview: { load, save } } as never
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -327,7 +333,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
         }
       ]
     }
-    load.mockResolvedValueOnce(persisted)
+    load.mockResolvedValueOnce({ state: persisted, revision: 7 })
 
     await act(async () => {
       root.render(<PersistenceHarness projectId="project-a" />)
@@ -354,20 +360,23 @@ describe('usePreviewPersistence per-project save/restore', () => {
       sessions: [createSession(finalizedUpload), createSession(unopenedUpload)]
     })
     load.mockResolvedValueOnce({
-      version: PREVIEW_STATE_VERSION,
-      panelState: 'open',
-      activeItemId: 'upload:upload-1',
-      items: [
-        {
-          id: 'upload:upload-1',
-          sessionId: '.pending',
-          title: 'data.csv',
-          source: 'upload',
-          path: '/workspace/uploads/.pending/data.csv',
-          format: 'csv',
-          name: 'data.csv'
-        }
-      ]
+      revision: 7,
+      state: {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        activeItemId: 'upload:upload-1',
+        items: [
+          {
+            id: 'upload:upload-1',
+            sessionId: '.pending',
+            title: 'data.csv',
+            source: 'upload',
+            path: '/workspace/uploads/.pending/data.csv',
+            format: 'csv',
+            name: 'data.csv'
+          }
+        ]
+      }
     })
 
     await act(async () => {
@@ -387,20 +396,23 @@ describe('usePreviewPersistence per-project save/restore', () => {
   it('waits for session hydration before restoring uploaded preview paths', async () => {
     const finalizedUpload = createUpload()
     load.mockResolvedValueOnce({
-      version: PREVIEW_STATE_VERSION,
-      panelState: 'open',
-      activeItemId: 'upload:upload-1',
-      items: [
-        {
-          id: 'upload:upload-1',
-          sessionId: '.pending',
-          title: 'data.csv',
-          source: 'upload',
-          path: '/workspace/uploads/.pending/data.csv',
-          format: 'csv',
-          name: 'data.csv'
-        }
-      ]
+      revision: 7,
+      state: {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        activeItemId: 'upload:upload-1',
+        items: [
+          {
+            id: 'upload:upload-1',
+            sessionId: '.pending',
+            title: 'data.csv',
+            source: 'upload',
+            path: '/workspace/uploads/.pending/data.csv',
+            format: 'csv',
+            name: 'data.csv'
+          }
+        ]
+      }
     })
 
     await act(async () => {
@@ -447,6 +459,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
 
     expect(save).toHaveBeenCalledWith({
       projectId: 'project-a',
+      expectedRevision: expect.any(Number),
       state: {
         version: PREVIEW_STATE_VERSION,
         panelState: 'open',
@@ -471,7 +484,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
   it('skips the outgoing save when a pending load left the live slice on another project', async () => {
     // project-a's load never resolves, so activateProject never runs: the top-level slice does not
     // belong to project-a when the rapid switch to project-b happens.
-    const pendingLoad = createDeferred<PersistedPreviewState | undefined>()
+    const pendingLoad = createDeferred<PreviewStateSnapshot | null>()
     load.mockReturnValueOnce(pendingLoad.promise)
 
     await act(async () => {
@@ -517,6 +530,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
 
     expect(save).toHaveBeenCalledWith({
       projectId: 'project-a',
+      expectedRevision: expect.any(Number),
       state: {
         version: PREVIEW_STATE_VERSION,
         panelState: 'open',
@@ -532,6 +546,54 @@ describe('usePreviewPersistence per-project save/restore', () => {
         }
       }
     })
+  })
+
+  it('restores the authoritative snapshot and advances after a save conflict', async () => {
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+      await flushPreviewPersistence()
+    })
+    save.mockClear()
+
+    const serverItem = createStoredFileItem({
+      id: 'file:session-2:/workspace/project/results.csv',
+      sessionId: 'session-2',
+      title: 'results.csv',
+      path: '/workspace/project/results.csv',
+      format: 'csv',
+      name: 'results.csv'
+    })
+    const serverState = toPersistedPreviewState({
+      ...usePreviewWorkbenchStore.getState(),
+      panelState: 'open',
+      activeItemId: serverItem.id,
+      items: [serverItem]
+    })
+    save.mockResolvedValueOnce({
+      status: 'conflict',
+      snapshot: { state: serverState, revision: 10 }
+    })
+
+    act(() => {
+      usePreviewWorkbenchStore.setState({
+        panelState: 'open',
+        activeItemId: 'file:session-1:/workspace/project/report.md',
+        items: [createStoredFileItem()]
+      })
+    })
+    await flushPreviewPersistence()
+
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: serverItem.id,
+      items: [expect.objectContaining({ id: serverItem.id })]
+    })
+
+    save.mockResolvedValueOnce({ status: 'saved', revision: 11 })
+    act(() => usePreviewWorkbenchStore.getState().collapsePanel())
+    await flushPreviewPersistence()
+
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ expectedRevision: 10 }))
   })
 
   it('keeps the latest state durable when an earlier save completes last', async () => {
@@ -560,14 +622,15 @@ describe('usePreviewPersistence per-project save/restore', () => {
     let durableState: PersistedPreviewState | undefined
     save.mockClear()
     save
-      .mockImplementationOnce(({ state }: { state: PersistedPreviewState }) =>
+      .mockImplementationOnce(({ expectedRevision, state }) =>
         delayedFirstSave.promise.then(() => {
           durableState = state
+          return { status: 'saved' as const, revision: expectedRevision + 1 }
         })
       )
-      .mockImplementationOnce(({ state }: { state: PersistedPreviewState }) => {
+      .mockImplementationOnce(({ expectedRevision, state }) => {
         durableState = state
-        return Promise.resolve()
+        return Promise.resolve({ status: 'saved' as const, revision: expectedRevision + 1 })
       })
 
     act(() => {
@@ -582,6 +645,9 @@ describe('usePreviewPersistence per-project save/restore', () => {
     })
 
     expect(save).toHaveBeenCalledTimes(2)
+    expect(save.mock.calls[1]?.[0].expectedRevision).toBe(
+      save.mock.calls[0]?.[0].expectedRevision + 1
+    )
     expect(durableState?.activeItemId).toBe(secondItem.id)
   })
 
@@ -608,19 +674,20 @@ describe('usePreviewPersistence per-project save/restore', () => {
     await act(async () => Promise.resolve())
 
     const delayedFirstSave = createDeferred<void>()
-    const pendingRemountLoad = createDeferred<PersistedPreviewState | undefined>()
+    const pendingRemountLoad = createDeferred<PreviewStateSnapshot | null>()
     let durableState: PersistedPreviewState | undefined
     load.mockReturnValueOnce(pendingRemountLoad.promise)
     save.mockClear()
     save
-      .mockImplementationOnce(({ state }: { state: PersistedPreviewState }) =>
+      .mockImplementationOnce(({ expectedRevision, state }) =>
         delayedFirstSave.promise.then(() => {
           durableState = state
+          return { status: 'saved' as const, revision: expectedRevision + 1 }
         })
       )
-      .mockImplementationOnce(({ state }: { state: PersistedPreviewState }) => {
+      .mockImplementationOnce(({ expectedRevision, state }) => {
         durableState = state
-        return Promise.resolve()
+        return Promise.resolve({ status: 'saved' as const, revision: expectedRevision + 1 })
       })
 
     act(() => {
@@ -666,9 +733,9 @@ describe('usePreviewPersistence per-project save/restore', () => {
     save.mockClear()
     save
       .mockImplementationOnce(() => failedSave.promise)
-      .mockImplementationOnce(({ state }: { state: PersistedPreviewState }) => {
+      .mockImplementationOnce(({ expectedRevision, state }) => {
         durableState = state
-        return Promise.resolve()
+        return Promise.resolve({ status: 'saved' as const, revision: expectedRevision + 1 })
       })
 
     act(() => {
@@ -712,6 +779,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
     expect(save).toHaveBeenCalledTimes(1)
     expect(save).toHaveBeenCalledWith({
       projectId: 'project-a',
+      expectedRevision: expect.any(Number),
       state: {
         version: PREVIEW_STATE_VERSION,
         panelState: 'open',

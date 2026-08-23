@@ -72,8 +72,8 @@ const invocationCommandFor =
 type PreviewApplicationCommandOwner = Readonly<{
   load(
     request: PreviewState.LoadPreviewStateRequest
-  ): Promise<PreviewState.PersistedPreviewState | null>
-  save(request: PreviewState.SavePreviewStateRequest): Promise<void>
+  ): Promise<PreviewState.PreviewStateSnapshot | null>
+  save(request: PreviewState.SavePreviewStateRequest): Promise<PreviewState.SavePreviewStateResult>
   delete(request: PreviewState.DeletePreviewStateRequest): Promise<void>
 }>
 

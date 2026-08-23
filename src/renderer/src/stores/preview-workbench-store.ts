@@ -295,11 +295,19 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   ...createInitialPreviewWorkbenchState(),
 
   // Switches the visible preview slice to a project's own tabs, stashing the outgoing project's slice
-  // so returning to it restores its tabs. `restored` seeds a project's slice from persistence on first
-  // activation in this session.
+  // so returning to it restores its tabs. `restored` replaces the target slice with authoritative
+  // persistence, including when conflict recovery refreshes the currently active Project.
   activateProject: (projectId, restored) => {
     set((state) => {
-      if (state.activeProjectId === projectId) return state
+      if (state.activeProjectId === projectId) {
+        return restored
+          ? {
+              ...restoredToSlice(restored, projectId),
+              expandedToolItemId: null,
+              fileDialogItem: state.fileDialogItem
+            }
+          : state
+      }
 
       const byProject = { ...state.byProject }
 

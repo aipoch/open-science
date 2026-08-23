@@ -162,7 +162,8 @@ import type {
 import type {
   DeletePreviewStateRequest,
   LoadPreviewStateRequest,
-  PersistedPreviewState,
+  PreviewStateSnapshot,
+  SavePreviewStateResult,
   SavePreviewStateRequest
 } from '../shared/preview-state'
 import type {
@@ -813,8 +814,8 @@ export interface OpenScienceAPI {
     ): Promise<PersistedChatSession>
   }
   preview: {
-    load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>
-    save(request: SavePreviewStateRequest): Promise<void>
+    load(request: LoadPreviewStateRequest): Promise<PreviewStateSnapshot | null>
+    save(request: SavePreviewStateRequest): Promise<SavePreviewStateResult>
     delete(request: DeletePreviewStateRequest): Promise<void>
   }
   previewResources: {

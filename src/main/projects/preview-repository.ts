@@ -1,9 +1,11 @@
-import { Prisma, type PrismaClient } from '@prisma/client'
+import { Prisma, type PrismaClient, type ProjectPreviewState } from '@prisma/client'
 
 import {
   PREVIEW_STATE_VERSION,
   normalizePersistedPreviewState,
-  type PersistedPreviewState
+  type PersistedPreviewState,
+  type PreviewStateSnapshot,
+  type SavePreviewStateResult
 } from '../../shared/preview-state'
 import { decodeDataPath, encodeDataPath } from '../storage/data-path'
 
@@ -27,33 +29,49 @@ const isMissingPreviewOwnerError = (error: unknown): boolean =>
   (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') ||
   (error instanceof Error && /FOREIGN KEY constraint failed/i.test(error.message))
 
-// Owns per-project preview panel state reads/writes. The client is resolved lazily per call.
-class PreviewStateRepository {
-  constructor(private readonly getClient: PreviewStateClientProvider) {}
+const isExistingPreviewStateError = (error: unknown): boolean =>
+  (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') ||
+  (error instanceof Error && /UNIQUE constraint failed/i.test(error.message))
 
-  // Returns a project's persisted preview state, or null when none has been saved yet.
-  async get(projectId: string): Promise<PersistedPreviewState | null> {
-    const client = await this.getClient()
-    const row = await client.projectPreviewState.findUnique({ where: { projectId } })
+const toSnapshot = (row: ProjectPreviewState): PreviewStateSnapshot => {
+  const state = normalizePersistedPreviewState({
+    version: PREVIEW_STATE_VERSION,
+    panelState: row.panelState,
+    activeItemId: row.activeItemId ?? undefined,
+    items: parseItems(row.items)
+  })
 
-    if (!row) return null
-
-    const state = normalizePersistedPreviewState({
-      version: PREVIEW_STATE_VERSION,
-      panelState: row.panelState,
-      activeItemId: row.activeItemId ?? undefined,
-      items: parseItems(row.items)
-    })
-
-    // Resolve item paths against the current data root so a relocated root needs no rewrite.
-    return {
+  return {
+    revision: row.updatedAt.getTime(),
+    state: {
       ...state,
       items: state.items.map((item) => ({ ...item, path: decodeDataPath(item.path) ?? item.path }))
     }
   }
+}
 
-  // Upserts a project's preview state, sanitizing before writing so only durable fields are stored.
-  async save(projectId: string, state: PersistedPreviewState): Promise<void> {
+// Owns per-project preview panel state reads/writes. The client is resolved lazily per call.
+class PreviewStateRepository {
+  constructor(private readonly getClient: PreviewStateClientProvider) {}
+
+  // Returns a project's persisted preview state and compare-and-set revision, or null when absent.
+  async get(projectId: string): Promise<PreviewStateSnapshot | null> {
+    const client = await this.getClient()
+    const row = await client.projectPreviewState.findUnique({ where: { projectId } })
+
+    return row ? toSnapshot(row) : null
+  }
+
+  // Saves only when the row still has the revision observed by the caller.
+  async save(
+    projectId: string,
+    state: PersistedPreviewState,
+    expectedRevision: number
+  ): Promise<SavePreviewStateResult> {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw new Error('Preview state revision must be a non-negative integer.')
+    }
+
     const normalized = normalizePersistedPreviewState(state)
     const data = {
       panelState: normalized.panelState,
@@ -68,19 +86,31 @@ class PreviewStateRepository {
       ])
     }
     const client = await this.getClient()
+    const revision = Math.max(Date.now(), expectedRevision + 1)
 
-    // The owner FK is the deletion fence: if this write wins first, a later Project delete cascades
-    // it; if deletion wins first, the rejected autosave is an expected no-op for renderer and Web.
-    try {
-      await client.projectPreviewState.upsert({
-        where: { projectId },
-        create: { projectId, ...data },
-        update: data
+    if (expectedRevision === 0) {
+      // Revision zero means the caller observed no row. A concurrent create becomes a conflict,
+      // never an unconditional upsert that replaces the winning snapshot.
+      try {
+        await client.projectPreviewState.create({
+          data: { projectId, ...data, updatedAt: new Date(revision) }
+        })
+        return { status: 'saved', revision }
+      } catch (error) {
+        // The owner FK remains the Project-deletion fence for late autosaves.
+        if (isMissingPreviewOwnerError(error)) return { status: 'saved', revision: 0 }
+        if (!isExistingPreviewStateError(error)) throw error
+      }
+    } else {
+      const result = await client.projectPreviewState.updateMany({
+        where: { projectId, updatedAt: new Date(expectedRevision) },
+        data: { ...data, updatedAt: new Date(revision) }
       })
-    } catch (error) {
-      if (isMissingPreviewOwnerError(error)) return
-      throw error
+      if (result.count === 1) return { status: 'saved', revision }
     }
+
+    const current = await client.projectPreviewState.findUnique({ where: { projectId } })
+    return { status: 'conflict', snapshot: current ? toSnapshot(current) : null }
   }
 
   // Removes a project's preview state (used when the project is deleted). Missing rows are ignored.

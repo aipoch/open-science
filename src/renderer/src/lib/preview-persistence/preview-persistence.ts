@@ -3,6 +3,8 @@ import { useEffect, useRef } from 'react'
 import {
   PREVIEW_STATE_VERSION,
   type PersistedPreviewState,
+  type PreviewStateSnapshot,
+  type SavePreviewStateResult,
   type SavePreviewStateRequest
 } from '../../../../shared/preview-state'
 import { getUploadedAttachmentPath } from '../../../../shared/uploads'
@@ -16,9 +18,11 @@ import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 
 type PreviewStoreState = ReturnType<typeof usePreviewWorkbenchStore.getState>
-type PreviewSave = (request: SavePreviewStateRequest) => Promise<void>
+type PreviewSave = (request: SavePreviewStateRequest) => Promise<SavePreviewStateResult>
+type PreviewSaveInput = Omit<SavePreviewStateRequest, 'expectedRevision'>
 type PreviewSaveScheduler = {
-  schedule: (request: SavePreviewStateRequest) => void
+  schedule: (request: PreviewSaveInput) => void
+  setRevision: (projectId: string, revision: number) => void
   flush: () => Promise<void>
 }
 
@@ -30,7 +34,8 @@ const reportPersistenceError = (error: unknown): void => {
 // Projects drain independently, and a failed write does not prevent a newer snapshot from being saved.
 const createPreviewSaveScheduler = (
   save: PreviewSave,
-  reportError: (error: unknown) => void
+  reportError: (error: unknown) => void,
+  restoreConflict: (projectId: string, snapshot: PreviewStateSnapshot | null) => void
 ): PreviewSaveScheduler => {
   const queues = new Map<
     string,
@@ -46,8 +51,9 @@ const createPreviewSaveScheduler = (
       error: unknown
     }
   >()
+  const revisions = new Map<string, number>()
 
-  const schedule = ({ projectId, state }: SavePreviewStateRequest): void => {
+  const schedule = ({ projectId, state }: PreviewSaveInput): void => {
     const queue = queues.get(projectId) ?? { pendingState: undefined, drain: undefined }
     queue.pendingState = state
     queues.set(projectId, queue)
@@ -61,7 +67,19 @@ const createPreviewSaveScheduler = (
           queue.pendingState = undefined
 
           try {
-            await save({ projectId, state: nextState })
+            const result = await save({
+              projectId,
+              state: nextState,
+              expectedRevision: revisions.get(projectId) ?? 0
+            })
+            if (result.status === 'conflict') {
+              queue.pendingState = undefined
+              revisions.set(projectId, result.snapshot?.revision ?? 0)
+              failures.delete(projectId)
+              restoreConflict(projectId, result.snapshot)
+              break
+            }
+            revisions.set(projectId, Math.max(revisions.get(projectId) ?? 0, result.revision))
             failures.delete(projectId)
           } catch (error) {
             failures.set(projectId, { state: nextState, error })
@@ -94,17 +112,12 @@ const createPreviewSaveScheduler = (
     }
   }
 
-  return { schedule, flush }
-}
+  const setRevision = (projectId: string, revision: number): void => {
+    revisions.set(projectId, revision)
+  }
 
-// WorkspacePage can unmount while an IPC save is still in flight. Keep one renderer-lifetime scheduler
-// so a later Workspace mount cannot start a competing queue for the same Project.
-const previewSaveScheduler = createPreviewSaveScheduler(
-  (request) => window.api.preview.save(request),
-  reportPersistenceError
-)
-const schedulePreviewSave = previewSaveScheduler.schedule
-const flushPreviewPersistence = previewSaveScheduler.flush
+  return { schedule, setRevision, flush }
+}
 
 // Projects the live store slice down to its durable subset: file previews plus the one Session-scoped
 // Subagents selection. Other tool tabs remain runtime-only and re-appear from their existing owners.
@@ -214,6 +227,32 @@ const toRestoredSlice = (
   }
 }
 
+const suppressedConflictRestoreSaves = new Set<string>()
+
+const restorePreviewConflict = (projectId: string, snapshot: PreviewStateSnapshot | null): void => {
+  const store = usePreviewWorkbenchStore.getState()
+  if (store.activeProjectId !== projectId) return
+
+  const projectSessions = useSessionStore
+    .getState()
+    .sessions.filter((session) => session.projectId === projectId)
+  suppressedConflictRestoreSaves.add(projectId)
+  store.activateProject(
+    projectId,
+    snapshot ? toRestoredSlice(snapshot.state, projectSessions) : { items: [] }
+  )
+}
+
+// WorkspacePage can unmount while an IPC save is still in flight. Keep one renderer-lifetime scheduler
+// so a later Workspace mount cannot start a competing queue for the same Project.
+const previewSaveScheduler = createPreviewSaveScheduler(
+  (request) => window.api.preview.save(request),
+  reportPersistenceError,
+  restorePreviewConflict
+)
+const schedulePreviewSave = previewSaveScheduler.schedule
+const flushPreviewPersistence = previewSaveScheduler.flush
+
 // Persists and restores the preview panel per project: saves the outgoing project before switching,
 // loads the incoming project's saved slice, and flushes the current project on unmount (e.g. Home).
 export const usePreviewPersistence = (
@@ -251,8 +290,10 @@ export const usePreviewPersistence = (
 
     void window.api.preview
       .load({ projectId: activeProjectId })
-      .then((restored) => {
+      .then((snapshot) => {
         if (cancelled) return
+
+        previewSaveScheduler.setRevision(activeProjectId, snapshot?.revision ?? 0)
 
         const projectSessions = useSessionStore
           .getState()
@@ -262,7 +303,7 @@ export const usePreviewPersistence = (
           .getState()
           .activateProject(
             activeProjectId,
-            restored ? toRestoredSlice(restored, projectSessions) : undefined
+            snapshot ? toRestoredSlice(snapshot.state, projectSessions) : undefined
           )
       })
       .catch(reportPersistenceError)
@@ -277,6 +318,7 @@ export const usePreviewPersistence = (
   useEffect(() => {
     const unsubscribe = usePreviewWorkbenchStore.subscribe((state) => {
       if (!state.activeProjectId) return
+      if (suppressedConflictRestoreSaves.delete(state.activeProjectId)) return
       schedulePreviewSave({
         projectId: state.activeProjectId,
         state: toPersistedPreviewState(state)
