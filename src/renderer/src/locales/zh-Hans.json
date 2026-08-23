@@ -959,6 +959,7 @@
   "Import selected ({{selected}})": "导入所选（{{selected}}）",
   "Import {{count}} Skills_other": "导入 {{count}} 个技能",
   "Imported": "已导入",
+  "Imported history may be incomplete": "导入的历史记录可能不完整",
   "Imported ZIP": "导入的 ZIP",
   "Imported configuration is prefilled below. Enter required credentials locally, review every field, then confirm that you trust the Connector.": "导入的配置已预填在下方。在本地输入所需凭据，检查每个字段，然后确认你信任该连接器。",
   "Imported skills": "已导入的技能",

@@ -904,6 +904,7 @@
   "Import selected ({{selected}})": "선택 항목 가져오기({{selected}})",
   "Import {{count}} Skills_other": "스킬 {{count}}개 가져오기",
   "Imported": "가져옴",
+  "Imported history may be incomplete": "가져온 기록이 불완전할 수 있습니다",
   "Imported ZIP": "가져온 ZIP",
   "Imported configuration is prefilled below. Enter required credentials locally, review every field, then confirm that you trust the Connector.": "가져온 구성은 아래에 미리 입력되어 있습니다. 필수 자격 증명을 로컬에서 입력하고 모든 필드를 검토한 다음 커넥터를 신뢰할 수 있는지 확인하세요.",
   "Imported skills": "가져온 스킬",

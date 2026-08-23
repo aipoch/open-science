@@ -26,6 +26,7 @@ type SessionSubagentChild = Readonly<{
   title: string
   agentLabel: string
   status: SubagentRawStatus
+  originUnavailable: boolean
   awaitingPermission?: boolean
 }>
 
@@ -39,6 +40,7 @@ type SubagentFrameProjection = Readonly<{
   title: string
   agentLabel: string
   status: SubagentRawStatus
+  originUnavailable: boolean
   attempt?: DelegatedWorkAttemptRecord
   messages: readonly PersistedChatMessage[]
 }>
@@ -102,6 +104,7 @@ const projectSessionSubagents = (
       title: titleForFrame(frame),
       agentLabel: agentLabelForFrame(session, frame),
       status: awaitingUser ? 'awaiting_user' : frame.status,
+      originUnavailable: frame.originBindingState === 'legacy-unavailable',
       ...(awaitingPermission ? { awaitingPermission: true } : {})
     }
   })
@@ -242,6 +245,7 @@ const selectSubagentFrame = (
     )
       ? 'awaiting_user'
       : frame.status,
+    originUnavailable: frame.originBindingState === 'legacy-unavailable',
     attempt: latestAttempt(session, frameId),
     messages
   }

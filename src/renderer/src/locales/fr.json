@@ -934,6 +934,7 @@
   "Import {{count}} Skills_other": "Importer {{count}} compétences",
   "Import {{count}} Skills_many": "Importer {{count}} compétences",
   "Imported": "Importé",
+  "Imported history may be incomplete": "L’historique importé peut être incomplet",
   "Imported ZIP": "ZIP importé",
   "Imported configuration is prefilled below. Enter required credentials locally, review every field, then confirm that you trust the Connector.": "La configuration importée est préremplie ci-dessous. Saisissez les informations d'identification requises localement, examinez chaque champ, puis confirmez que vous faites confiance au connecteur.",
   "Imported skills": "Compétences importées",

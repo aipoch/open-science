@@ -888,6 +888,7 @@
   "Import selected ({{selected}})": "選択したインポート ({{selected}})",
   "Import {{count}} Skills_other": "{{count}} スキルをインポートします",
   "Imported": "インポート済み",
+  "Imported history may be incomplete": "インポートされた履歴は不完全な可能性があります",
   "Imported ZIP": "インポートした ZIP",
   "Imported configuration is prefilled below. Enter required credentials locally, review every field, then confirm that you trust the Connector.": "インポートされた構成は以下に事前入力されています。必要な資格情報をローカルで入力し、すべてのフィールドを確認して、コネクタを信頼していることを確認します。",
   "Imported skills": "インポート済みスキル",

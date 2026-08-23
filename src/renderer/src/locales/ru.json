@@ -930,6 +930,7 @@
   "Import {{count}} Skills_many": "Импортировать {{count}} навыков",
   "Import {{count}} Skills_other": "Импортировать {{count}} навыка",
   "Imported": "Импортировано",
+  "Imported history may be incomplete": "Импортированная история может быть неполной",
   "Imported ZIP": "ZIP импортирован",
   "Imported configuration is prefilled below. Enter required credentials locally, review every field, then confirm that you trust the Connector.": "Поля ниже заполнены из импортированной конфигурации. Введите необходимые учётные данные на этом устройстве, проверьте каждое поле и подтвердите доверие к коннектору.",
   "Imported skills": "Импортированные навыки",
