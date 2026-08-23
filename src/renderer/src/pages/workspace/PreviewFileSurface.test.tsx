@@ -653,6 +653,27 @@ describe('PreviewFileSurface View in context entry', () => {
     expect(menu?.textContent).not.toContain('View in context')
   })
 
+  it('hides View in context while the origin session is deleting', async () => {
+    seedWorkspaceStores()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, originSession: { state: 'deleting' } }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+
+    const menu = document.body.querySelector('[role="menu"]')
+    expect(menu?.textContent).toContain('Provenance')
+    expect(menu?.textContent).not.toContain('View in context')
+  })
+
   it('lets the lineage report of a deleted origin session override the stale item snapshot', async () => {
     seedWorkspaceStores()
     // The preview tab still carries its creation-time snapshot; the refetched lineage is the
@@ -661,6 +682,33 @@ describe('PreviewFileSurface View in context entry', () => {
       artifactId: 'artifact-1',
       filename: 'sin.png',
       originSession: { sessionId: 'session-1', state: 'deleted', title: 'Sine' },
+      versions: [descriptor, secondDescriptor]
+    })
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, originSession: { state: 'active' } }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+
+    const menu = document.body.querySelector('[role="menu"]')
+    expect(menu?.textContent).toContain('Provenance')
+    expect(menu?.textContent).not.toContain('View in context')
+  })
+
+  it('lets the lineage report of a deleting origin session override the stale item snapshot', async () => {
+    seedWorkspaceStores()
+    window.api.artifacts.getLineage = vi.fn().mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'deleting', title: 'Sine' },
       versions: [descriptor, secondDescriptor]
     })
 

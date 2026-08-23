@@ -2704,6 +2704,7 @@
   "{{size}} on disk · default location": "{{size}} на диске · по умолчанию",
   "{{step}} status: {{status}}": "{{step}} статус: {{status}}",
   "{{title}} · Source session deleted": "{{title}} · источник сессии удалён",
+  "{{title}} · Source session is being deleted": "{{title}} · Исходная сессия удаляется",
   "{{used}} / {{limit}} chars": "{{used}} / {{limit}} символов",
   "{{value}} (default)": "{{value}} (по умолчанию)",
   "{{visible}} of {{total}}": "{{visible}} из {{total}}",

@@ -2409,6 +2409,7 @@
   "{{size}} on disk · default location": "ディスク上の {{size}} · デフォルトの場所",
   "{{step}} status: {{status}}": "{{step}} ステータス：{{status}}",
   "{{title}} · Source session deleted": "{{title}} · ソースセッションが削除されました",
+  "{{title}} · Source session is being deleted": "{{title}} · ソースセッションを削除しています",
   "{{used}} / {{limit}} chars": "{{used}} / {{limit}} 文字",
   "{{value}} (default)": "{{value}} (デフォルト)",
   "{{visible}} of {{total}}": "{{visible}} / {{total}}",

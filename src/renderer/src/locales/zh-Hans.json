@@ -2480,6 +2480,7 @@
   "{{size}} on disk · default location": "占用磁盘 {{size}} · 默认位置",
   "{{step}} status: {{status}}": "{{step}} 状态：{{status}}",
   "{{title}} · Source session deleted": "{{title}} · 源会话已删除",
+  "{{title}} · Source session is being deleted": "{{title}} · 正在删除源会话",
   "{{used}} / {{limit}} chars": "{{used}} / {{limit}} 字符",
   "{{value}} (default)": "{{value}}（默认）",
   "{{visible}} of {{total}}": "已显示 {{visible}} / {{total}}",

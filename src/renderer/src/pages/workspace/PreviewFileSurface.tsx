@@ -476,15 +476,19 @@ const PreviewFileSurface = ({
   }
 
   // View in context needs the same managed-artifact identity as Provenance, plus a live origin
-  // session. Deletion is terminal, so either signal hides the entry: the refetched lineage or the
-  // item's creation-time originSession snapshot (the lineage may not have refetched yet).
-  const originSessionDeleted =
-    lineage?.originSession.state === 'deleted' || previewItem.originSession?.state === 'deleted'
+  // session. Once deletion starts, the runtime has already detached, so either signal hides the
+  // entry: the refetched lineage or the item's creation-time snapshot. A compensated deletion will
+  // become active again on a later projection refresh.
+  const originSessionUnavailable =
+    lineage?.originSession.state === 'deleting' ||
+    lineage?.originSession.state === 'deleted' ||
+    previewItem.originSession?.state === 'deleting' ||
+    previewItem.originSession?.state === 'deleted'
   const canViewInContext =
     previewItem.source !== 'upload' &&
     previewItem.artifactId !== undefined &&
     projectId !== undefined &&
-    !originSessionDeleted
+    !originSessionUnavailable
   // Archive is reversible, so the entry stays visible but inert rather than disappearing.
   const originSessionArchived = useSessionStore(
     (state) =>

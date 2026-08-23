@@ -2627,6 +2627,7 @@
   "{{size}} on disk · default location": "{{size}} sur le disque · emplacement par défaut",
   "{{step}} status: {{status}}": "Statut {{step}} : {{status}}",
   "{{title}} · Source session deleted": "{{title}} · Session source supprimée",
+  "{{title}} · Source session is being deleted": "{{title}} · Suppression de la session source en cours",
   "{{used}} / {{limit}} chars": "Caractères {{used}} / {{limit}}",
   "{{value}} (default)": "{{value}} (par défaut)",
   "{{visible}} of {{total}}": "{{visible}} sur {{total}}",

@@ -2420,6 +2420,7 @@
   "{{size}} on disk · default location": "디스크의 {{size}} · 기본 위치",
   "{{step}} status: {{status}}": "{{step}} 상태: {{status}}",
   "{{title}} · Source session deleted": "{{title}} · 소스 세션 삭제됨",
+  "{{title}} · Source session is being deleted": "{{title}} · 소스 세션 삭제 중",
   "{{used}} / {{limit}} chars": "{{used}} / {{limit}} 문자",
   "{{value}} (default)": "{{value}} (기본값)",
   "{{visible}} of {{total}}": "{{visible}} 중 {{total}}",

@@ -2477,6 +2477,7 @@
   "{{size}} on disk · default location": "佔用磁碟 {{size}} · 預設位置",
   "{{step}} status: {{status}}": "{{step}} 狀態：{{status}}",
   "{{title}} · Source session deleted": "{{title}} · 來源會話已刪除",
+  "{{title}} · Source session is being deleted": "{{title}} · 正在刪除來源會話",
   "{{used}} / {{limit}} chars": "{{used}} / {{limit}} 字元",
   "{{value}} (default)": "{{value}}（預設）",
   "{{visible}} of {{total}}": "已顯示 {{visible}} / {{total}}",

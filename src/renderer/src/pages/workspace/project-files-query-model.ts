@@ -265,6 +265,9 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
   const getArtifactGroupTitle = useCallback(
     (group: ArtifactGroupItem): string => {
       const title = group.originSession?.title ?? getSessionTitle(group.sessionId)
+      if (group.originSession?.state === 'deleting') {
+        return t('{{title}} · Source session is being deleted', { title })
+      }
       return group.originSession?.state === 'deleted'
         ? t('{{title}} · Source session deleted', { title })
         : title
