@@ -1432,6 +1432,8 @@
   "Python": "Python",
   "Python kernel · shared with the agent": "Python カーネル · エージェントと共有",
   "Python · view only; this kernel's namespace no longer exists": "Python · 表示専用 — このカーネルの名前空間はもう存在しません",
+  "R kernel · shared with the agent": "R カーネル · エージェントと共有",
+  "R · view only; this kernel's namespace no longer exists": "R · 表示専用 — このカーネルの名前空間はもう存在しません",
   "Python package index (pip)": "Python パッケージ インデックス (pip)",
   "Python/R environments are rebuilt at the new location on first use (not moved).": "Python/R 環境は、最初の使用時に新しい場所に再構築されます (移動されません)。",
   "Question from {{name}}": "{{name}} からの質問",

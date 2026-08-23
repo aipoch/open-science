@@ -286,11 +286,12 @@ describe('NotebookPreview per-kernel tabs', () => {
     runs: NotebookRunRecord[],
     environments: NotebookEnvironmentStatus[] = [],
     runStaleness: NotebookSessionState['runStaleness'] = {},
-    kernelStatus: NotebookSessionState['kernelStatus'] = 'idle'
+    kernelStatus: NotebookSessionState['kernelStatus'] = 'idle',
+    stateOverrides: Partial<NotebookSessionState> = {}
   ): Promise<void> => {
     const readyStatus: ProvisionStatus = {
       pythonReady: true,
-      rReady: false,
+      rReady: true,
       version: 1,
       provisioning: false
     }
@@ -316,9 +317,11 @@ describe('NotebookPreview per-kernel tabs', () => {
             runs,
             recentRuns: runs,
             runStaleness,
-            environments
+            environments,
+            ...stateOverrides
           })
         ),
+        execute: vi.fn(() => Promise.resolve({})),
         onChanged: vi.fn(() => vi.fn())
       },
       notebookEnv: {
@@ -563,10 +566,15 @@ describe('NotebookPreview per-kernel tabs', () => {
       container.querySelector<HTMLElement>('[data-separator]')?.getAttribute('aria-label')
     ).toBe('调整 Notebook 与终端大小')
 
+    fireEvent.click(
+      container.querySelector('[data-testid="kernel-switcher-r"]') as HTMLButtonElement
+    )
+    expect(header?.textContent).toContain('R 内核 · 与智能体共享')
+
     await act(async () => i18next.changeLanguage('en'))
   })
 
-  it('shows a tab only for kernel kinds present in the runs (no default python/r tab)', async () => {
+  it('always shows Python and R while keeping non-data tabs history-driven', async () => {
     await mountWithRuns([
       makeRun({ runId: 'p1', kernelKind: 'python' }),
       makeRun({ runId: 'x1', kernelKind: 'repl', script: 'await host.notebook.run(...)' }),
@@ -579,8 +587,7 @@ describe('NotebookPreview per-kernel tabs', () => {
       'Agent SDK'
     )
     expect(switcher.querySelector('[data-testid="kernel-switcher-bash"]')?.textContent).toBe('Bash')
-    // R produced no run here, so its tab does not appear (it shows up only once R is used).
-    expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).toBeNull()
+    expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).not.toBeNull()
   })
 
   it('projects named Main Agent and Subagent Runs without All, legacy, or Frame IDs', async () => {
@@ -626,13 +633,11 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(container.textContent).not.toContain('print("legacy")')
   })
 
-  it('shows the R tab only once R has produced a run', async () => {
-    await mountWithRuns([
-      makeRun({ runId: 'p1', kernelKind: 'python' }),
-      makeRun({ runId: 'r1', kernelKind: 'r', script: 'print(1)' })
-    ])
+  it('shows Python and R before either kernel has produced a run', async () => {
+    await mountWithRuns([])
 
     const switcher = container.querySelector('[data-testid="kernel-switcher"]') as HTMLElement
+    expect(switcher.querySelector('[data-testid="kernel-switcher-python"]')).not.toBeNull()
     expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).not.toBeNull()
   })
 
@@ -667,23 +672,144 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(container.textContent).not.toContain('print("py")')
   })
 
-  it('defaults to the Agent SDK tab and shows no R tab when only repl runs exist', async () => {
+  it('defaults to the executable Python tab when only Agent SDK history exists', async () => {
     await mountWithRuns([
       makeRun({ runId: 'x1', kernelKind: 'repl', script: 'host.notebook.run(...)' })
     ])
 
-    // No tab click: this is the pre-click default state. repl is the only kind with runs, so it is
-    // the active tab; python and R have no runs, so neither tab is shown.
     const switcher = container.querySelector('[data-testid="kernel-switcher"]') as HTMLElement
+    const pythonTab = switcher.querySelector(
+      '[data-testid="kernel-switcher-python"]'
+    ) as HTMLButtonElement
     const replTab = switcher.querySelector(
       '[data-testid="kernel-switcher-repl"]'
     ) as HTMLButtonElement
-    expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).toBeNull()
-    expect(switcher.querySelector('[data-testid="kernel-switcher-python"]')).toBeNull()
-    expect(replTab.className).toContain('bg-bg-300')
+    expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).not.toBeNull()
+    expect(pythonTab.className).toContain('bg-bg-300')
+    expect(replTab.className).not.toContain('bg-bg-300')
 
-    expect(container.querySelectorAll('[data-testid="notebook-cell"]').length).toBe(1)
-    expect(container.textContent).toContain('host.notebook.run')
+    expect(container.querySelectorAll('[data-testid="notebook-cell"]').length).toBe(0)
+    expect(container.textContent).not.toContain('host.notebook.run')
+  })
+
+  it('routes R input to the selected kernel and renders the result as a you call block', async () => {
+    const runs = [
+      makeRun({
+        runId: 'p1',
+        kernelKind: 'python',
+        inputKind: 'terminal',
+        script: 'print("python")'
+      }),
+      makeRun({ runId: 'r1', kernelKind: 'r', inputKind: 'terminal', script: 'print("r")' })
+    ]
+    await mountWithRuns(runs)
+
+    fireEvent.click(
+      container.querySelector('[data-testid="kernel-switcher-r"]') as HTMLButtonElement
+    )
+    const scrollback = container.querySelector('[data-testid="kernel-terminal-scrollback"]')
+    expect(scrollback?.textContent).toContain('> print("r")')
+    expect(scrollback?.textContent).not.toContain('print("python")')
+    const execute = vi.mocked(window.api.notebook.execute)
+    execute.mockImplementation(async (request) => {
+      runs.push(
+        makeRun({
+          runId: 'user-r',
+          cellId: 'user-r-cell',
+          source: 'user',
+          inputKind: 'terminal',
+          kernelKind: request.language ?? 'python',
+          environment: request.environment,
+          script: request.code
+        })
+      )
+      return {} as never
+    })
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'x <- 1' } })
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'x <- 1',
+        source: 'user',
+        inputKind: 'terminal',
+        language: 'r',
+        environment: 'default-r'
+      })
+    )
+    const userCell = [...container.querySelectorAll('[data-testid="notebook-cell"]')].find((cell) =>
+      cell.textContent?.includes('x <- 1')
+    )
+    expect(userCell?.textContent).toContain('you')
+    expect(userCell?.textContent).toContain('r')
+  })
+
+  it('shows selected-kernel status while retaining the notebook-wide input lock', async () => {
+    await mountWithRuns(
+      [
+        makeRun({ runId: 'python-running', kernelKind: 'python', status: 'running' }),
+        makeRun({ runId: 'r1', kernelKind: 'r' })
+      ],
+      [
+        {
+          processKey: 'r:default-r',
+          kind: 'r',
+          environment: 'default-r',
+          status: 'idle'
+        }
+      ],
+      {},
+      'running',
+      { activeRunId: 'python-running' }
+    )
+
+    expect(
+      container.querySelector('[data-testid="notebook-terminal-header"]')?.textContent
+    ).toContain('running')
+    fireEvent.click(
+      container.querySelector('[data-testid="kernel-switcher-r"]') as HTMLButtonElement
+    )
+    const header = container.querySelector('[data-testid="notebook-terminal-header"]')
+    expect(header?.textContent).toContain('R kernel')
+    expect(header?.textContent).toContain('idle')
+    expect(
+      (container.querySelector('[data-testid="kernel-terminal-input"]') as HTMLTextAreaElement)
+        .disabled
+    ).toBe(true)
+  })
+
+  it('hides data-kernel input on Agent SDK history and for a terminated selected R kernel', async () => {
+    await mountWithRuns(
+      [makeRun({ runId: 'r1', kernelKind: 'r' }), makeRun({ runId: 'x1', kernelKind: 'repl' })],
+      [
+        {
+          processKey: 'r:default-r',
+          kind: 'r',
+          environment: 'default-r',
+          status: 'terminated'
+        }
+      ]
+    )
+
+    fireEvent.click(
+      container.querySelector('[data-testid="kernel-switcher-r"]') as HTMLButtonElement
+    )
+    expect(container.querySelector('[data-testid="kernel-terminal-input"]')).toBeNull()
+    expect(
+      container.querySelector('[data-testid="notebook-read-only-status"]')?.textContent
+    ).toContain("R · view only; this kernel's namespace no longer exists")
+
+    fireEvent.click(
+      container.querySelector('[data-testid="kernel-switcher-repl"]') as HTMLButtonElement
+    )
+    expect(container.querySelector('[data-testid="kernel-terminal-input"]')).toBeNull()
+    expect(container.querySelector('[data-testid="notebook-read-only-status"]')).toBeNull()
   })
 
   it("renders a repl cell's origin label and uses the stored kernelKind for the language chip", async () => {
@@ -786,6 +912,7 @@ describe('NotebookPreview per-environment selector', () => {
             environments
           })
         ),
+        execute: vi.fn(() => Promise.resolve({})),
         onChanged: vi.fn(() => vi.fn())
       },
       notebookEnv: {
@@ -823,6 +950,31 @@ describe('NotebookPreview per-environment selector', () => {
 
     expect(container.querySelector('[data-testid="env-selector"]')).toBeNull()
     expect(container.querySelectorAll('[data-testid="notebook-cell"]').length).toBe(2)
+  })
+
+  it('submits to the only custom environment even when its selector is hidden', async () => {
+    await mountWithRuns([
+      makeRun({
+        runId: 'p1',
+        kernelKind: 'python',
+        environment: 'my-analysis'
+      })
+    ])
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'print(1)' } })
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+
+    expect(window.api.notebook.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        language: 'python',
+        environment: 'my-analysis'
+      })
+    )
   })
 
   it('shows the selector across two python envs, defaults labeled "default", and filters on selection', async () => {

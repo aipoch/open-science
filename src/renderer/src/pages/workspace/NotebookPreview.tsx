@@ -224,45 +224,55 @@ const NotebookRunCell = ({
 // Mirrors terminal-originated runs in the bottom terminal scrollback.
 const TerminalScrollback = ({
   runs,
+  language,
   viewportRef
 }: {
   runs: NotebookRunRecord[]
+  language: NotebookLanguage
   viewportRef: RefObject<HTMLDivElement | null>
-}): React.JSX.Element => (
-  <div
-    ref={viewportRef}
-    className="min-h-0 flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-5"
-    data-testid="kernel-terminal-scrollback"
-  >
-    <div>
-      {runs
-        .filter((run) => run.inputKind === 'terminal')
-        .map((run) => (
-          <div key={run.runId} className="whitespace-pre-wrap">
-            <div>
-              <span className="text-text-300">&gt;&gt;&gt; </span>
-              <span className="text-text-100">{run.script}</span>
-            </div>
-            {getRunOutputText(run) ? (
-              <div className={isProblemRunStatus(run.status) ? 'text-danger-000' : 'text-text-200'}>
-                {getRunOutputText(run)}
+}): React.JSX.Element => {
+  const prompt = language === 'r' ? '>' : '>>>'
+
+  return (
+    <div
+      ref={viewportRef}
+      className="min-h-0 flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-5"
+      data-testid="kernel-terminal-scrollback"
+    >
+      <div>
+        {runs
+          .filter((run) => run.inputKind === 'terminal')
+          .map((run) => (
+            <div key={run.runId} className="whitespace-pre-wrap">
+              <div>
+                <span className="text-text-300">{prompt} </span>
+                <span className="text-text-100">{run.script}</span>
               </div>
-            ) : null}
-          </div>
-        ))}
+              {getRunOutputText(run) ? (
+                <div
+                  className={isProblemRunStatus(run.status) ? 'text-danger-000' : 'text-text-200'}
+                >
+                  {getRunOutputText(run)}
+                </div>
+              ) : null}
+            </div>
+          ))}
+      </div>
     </div>
-  </div>
-)
+  )
+}
 
 // Captures one-line terminal code and submits on Enter while Shift+Enter keeps editing.
 const TerminalInput = ({
   code,
   disabled,
+  language,
   onChange,
   onSubmit
 }: {
   code: string
   disabled: boolean
+  language: NotebookLanguage
   onChange: (value: string) => void
   onSubmit: () => void
 }): React.JSX.Element => {
@@ -277,7 +287,9 @@ const TerminalInput = ({
 
   return (
     <div className="flex items-start gap-2 border-t border-border-100/60 px-3 py-2">
-      <span className="pt-0.5 font-mono text-xs text-primary">&gt;&gt;&gt;</span>
+      <span className="pt-0.5 font-mono text-xs text-primary">
+        {language === 'r' ? '>' : '>>>'}
+      </span>
       <textarea
         rows={1}
         value={code}
@@ -303,7 +315,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const [notebookState, setNotebookState] = useState<NotebookSessionState | undefined>()
   const [terminalCode, setTerminalCode] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submittingTarget, setSubmittingTarget] = useState<string | undefined>()
   const [actionError, setActionError] = useState<string | null>(null)
   const [isRestarting, setIsRestarting] = useState(false)
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
@@ -415,41 +427,6 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     })
   }, [item.notebook.sessionId, loadNotebookState])
 
-  // Sends terminal code through the same notebook interpreter and history path as agent code.
-  const submitTerminalCode = async (): Promise<void> => {
-    const code = terminalCode.trim()
-
-    if (!code || notebookState?.activeWrite?.source === 'agent' || notebookState?.activeRunId) {
-      return
-    }
-
-    // Clear optimistically so a running terminal command feels like a REPL submission.
-    setTerminalCode('')
-    setIsSubmitting(true)
-    setActionError(null)
-
-    try {
-      await window.api.notebook.execute({
-        ...createNotebookRequest(item.notebook),
-        code,
-        source: 'user',
-        inputKind: 'terminal'
-      })
-
-      await loadNotebookState()
-    } catch (error) {
-      setTerminalCode(code)
-      setActionError(getErrorMessage(error))
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  // Agent writes and active executions lock terminal input to avoid interleaving code streams.
-  const isAgentWriting = notebookState?.activeWrite?.source === 'agent'
-  const isNotebookBusy = isSubmitting || Boolean(notebookState?.activeRunId)
-  const isTerminalLocked =
-    isLoading || isSubmitting || isAgentWriting || Boolean(notebookState?.activeRunId) || gated
   const runs = notebookState?.runs ?? notebookState?.recentRuns ?? []
   const frameOptions = createNotebookFrameFilterOptions(
     runs,
@@ -462,24 +439,31 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     ? projectNotebookRunsForFrame(runs, effectiveFrameFilter)
     : []
 
-  // Surface a tab only for kernel kinds that actually produced a run — no default python/r tabs on a
-  // fresh notebook; a kernel's tab appears once it has been used.
+  // Python and R are executable user targets even before their first run. Agent SDK and Bash remain
+  // historical views and appear only after producing a run.
   const kindsWithRuns = new Set(projectedRuns.map(resolveRunKernelKind))
-  const visibleKinds = KERNEL_KIND_ORDER.filter((kind) => kindsWithRuns.has(kind))
-  // Default to the first kind (in fixed order) that actually has runs; fall back to python only when
-  // there are no runs at all (so an empty notebook doesn't render a blank non-python pane).
-  const effectiveActiveKind = visibleKinds.includes(activeKind)
-    ? activeKind
-    : (KERNEL_KIND_ORDER.find((kind) => kindsWithRuns.has(kind)) ?? visibleKinds[0] ?? 'python')
+  const visibleKinds = KERNEL_KIND_ORDER.filter(
+    (kind) => kind === 'python' || kind === 'r' || kindsWithRuns.has(kind)
+  )
+  const effectiveActiveKind = visibleKinds.includes(activeKind) ? activeKind : 'python'
   const kindRuns = projectedRuns.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
 
   // Per-environment selector (design D6): only python/r are env-scoped. Distinct env names among
   // this kind's runs, canonical default first, so the selector (when shown) reads default-first.
-  const isEnvScopedKind = effectiveActiveKind === 'python' || effectiveActiveKind === 'r'
-  const envNames = isEnvScopedKind
+  const activeDataLanguage: NotebookLanguage | undefined =
+    effectiveActiveKind === 'python' || effectiveActiveKind === 'r'
+      ? effectiveActiveKind
+      : undefined
+  const envNames = activeDataLanguage
     ? Array.from(
         new Set(
-          kindRuns.map(resolveRunEnvironment).filter((env): env is string => env !== undefined)
+          [
+            ...kindRuns.map(resolveRunEnvironment),
+            ...(notebookState?.environments.flatMap((entry) =>
+              entry.kind === activeDataLanguage && entry.environment ? [entry.environment] : []
+            ) ?? []),
+            notebookState?.latestRunEnvironments?.[activeDataLanguage]
+          ].filter((env): env is string => env !== undefined)
         )
       ).sort((a, b) => {
         const aIsDefault = a === 'default-python' || a === 'default-r'
@@ -491,12 +475,12 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // Hide the selector entirely when there's at most one environment — zero visual change for the
   // common single-default-env case.
   const showEnvSelector = envNames.length > 1
-  const effectiveActiveEnv = showEnvSelector
+  const effectiveActiveEnv = activeDataLanguage
     ? envNames.includes(activeEnv ?? '')
       ? (activeEnv as string)
-      : envNames[0]
+      : (envNames[0] ?? (activeDataLanguage === 'r' ? 'default-r' : 'default-python'))
     : undefined
-  const visibleRuns = showEnvSelector
+  const visibleRuns = activeDataLanguage
     ? kindRuns.filter((run) => resolveRunEnvironment(run) === effectiveActiveEnv)
     : kindRuns
   const visibleRunIndexById = new Map(visibleRuns.map((run, index) => [run.runId, index]))
@@ -521,17 +505,84 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     })?.status
 
   // R-only restart prompt: an R install/uninstall flags the active R env until its kernel restarts.
-  const activeEnvName =
-    effectiveActiveEnv ?? (effectiveActiveKind === 'r' ? 'default-r' : 'default-python')
+  const activeEnvName = effectiveActiveEnv
   const restartRecommended =
-    effectiveActiveKind === 'r' &&
+    activeDataLanguage === 'r' &&
     (notebookState?.environments.find((entry) => {
       if (entry.kind !== 'r') return false
-      return (entry.environment ?? 'default-r') === activeEnvName
+      return (entry.environment ?? 'default-r') === (activeEnvName ?? 'default-r')
     })?.restartRecommended ??
       false)
-  const isNamespaceLost = notebookState?.kernelStatus === 'terminated'
+  const activeKernelStatus = activeEnvName ? envOptionStatus(activeEnvName) : undefined
+  const isNamespaceLost =
+    activeDataLanguage !== undefined &&
+    (activeKernelStatus === 'terminated' ||
+      (activeDataLanguage === 'python' &&
+        activeEnvName === 'default-python' &&
+        notebookState?.kernelStatus === 'terminated'))
+  const selectedTarget =
+    activeDataLanguage && activeEnvName ? `${activeDataLanguage}:${activeEnvName}` : undefined
+  const activeRun = runs.find((run) => run.runId === notebookState?.activeRunId)
+  const activeRunTarget =
+    activeRun?.kernelKind === 'python' || activeRun?.kernelKind === 'r'
+      ? `${activeRun.kernelKind}:${resolveRunEnvironment(activeRun)}`
+      : undefined
+  const isSubmitting = submittingTarget !== undefined
+  const isSelectedKernelRunning =
+    (submittingTarget !== undefined && submittingTarget === selectedTarget) ||
+    (activeRunTarget !== undefined && activeRunTarget === selectedTarget) ||
+    activeKernelStatus === 'starting' ||
+    activeKernelStatus === 'running' ||
+    activeKernelStatus === 'restarting'
+  // The Session Aggregate owns one active write and run, so input stays globally locked even when a
+  // different persistent data kernel is selected.
+  const isTerminalLocked =
+    isLoading ||
+    isSubmitting ||
+    Boolean(notebookState?.activeWrite) ||
+    Boolean(notebookState?.activeRunId) ||
+    gated ||
+    isSelectedKernelRunning ||
+    (activeDataLanguage === 'r' && (!envStatus.rReady || isPreparingR))
   const cellCount = notebookState?.runCount ?? runs.length
+
+  // Sends terminal code through the same notebook interpreter and history path as agent code.
+  const submitTerminalCode = async (): Promise<void> => {
+    const code = terminalCode.trim()
+
+    if (
+      !code ||
+      !activeDataLanguage ||
+      !activeEnvName ||
+      notebookState?.activeWrite ||
+      notebookState?.activeRunId
+    ) {
+      return
+    }
+
+    const target = `${activeDataLanguage}:${activeEnvName}`
+    setTerminalCode('')
+    setSubmittingTarget(target)
+    setActionError(null)
+
+    try {
+      await window.api.notebook.execute({
+        ...createNotebookRequest(item.notebook),
+        code,
+        source: 'user',
+        inputKind: 'terminal',
+        language: activeDataLanguage,
+        environment: activeEnvName
+      })
+
+      await loadNotebookState()
+    } catch (error) {
+      setTerminalCode(code)
+      setActionError(getErrorMessage(error))
+    } finally {
+      setSubmittingTarget(undefined)
+    }
+  }
 
   // Restarts the shared interpreter, replacing state with the fresh snapshot so the banner clears.
   const handleRestart = async (): Promise<void> => {
@@ -713,7 +764,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </div>
       ) : null}
 
-      {isNamespaceLost ? (
+      {!activeDataLanguage || isNamespaceLost ? (
         <div className="min-h-0 flex-1 overflow-hidden">{notebookCells}</div>
       ) : (
         <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 flex-col">
@@ -734,8 +785,12 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
               className="pointer-events-none absolute inset-0 flex items-center justify-between gap-2 px-3 text-[11px] text-text-300"
               data-testid="notebook-terminal-header"
             >
-              <span>{t('Python kernel · shared with the agent')}</span>
-              <span>{isNotebookBusy ? t('running') : t('idle')}</span>
+              <span>
+                {activeDataLanguage === 'r'
+                  ? t('R kernel · shared with the agent')
+                  : t('Python kernel · shared with the agent')}
+              </span>
+              <span>{isSelectedKernelRunning ? t('running') : t('idle')}</span>
             </div>
           </ResizableHandle>
 
@@ -751,10 +806,15 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                   {actionError}
                 </div>
               ) : null}
-              <TerminalScrollback runs={projectedRuns} viewportRef={terminalViewportRef} />
+              <TerminalScrollback
+                runs={visibleRuns}
+                language={activeDataLanguage}
+                viewportRef={terminalViewportRef}
+              />
               <TerminalInput
                 code={terminalCode}
                 disabled={isTerminalLocked}
+                language={activeDataLanguage}
                 onChange={setTerminalCode}
                 onSubmit={() => {
                   void submitTerminalCode()
@@ -771,7 +831,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           data-testid="notebook-read-only-status"
         >
           <span className="min-w-0 truncate">
-            {t("Python · view only; this kernel's namespace no longer exists")}
+            {activeDataLanguage === 'r'
+              ? t("R · view only; this kernel's namespace no longer exists")
+              : t("Python · view only; this kernel's namespace no longer exists")}
           </span>
           <span className="shrink-0 tabular-nums">
             {t('{{count}} cells', {

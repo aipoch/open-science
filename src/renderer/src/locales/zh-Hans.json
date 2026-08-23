@@ -1503,6 +1503,8 @@
   "Python": "Python",
   "Python kernel · shared with the agent": "Python 内核 · 与智能体共享",
   "Python · view only; this kernel's namespace no longer exists": "Python · 仅供查看；此内核的命名空间已不存在",
+  "R kernel · shared with the agent": "R 内核 · 与智能体共享",
+  "R · view only; this kernel's namespace no longer exists": "R · 仅供查看；此内核的命名空间已不存在",
   "Python package index (pip)": "Python 软件包索引（pip）",
   "Python/R environments are rebuilt at the new location on first use (not moved).": "Python/R 环境会在首次使用时于新位置重建（不迁移）。",
   "Question from {{name}}": "来自 {{name}} 的提问",
