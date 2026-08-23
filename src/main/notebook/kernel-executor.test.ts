@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { NotebookKernelExecutor } from './kernel-executor'
+import { NotebookKernelExecutor, type KernelProcessKind } from './kernel-executor'
+import { framePythonRequest } from './kernel-protocol'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -16,6 +17,7 @@ import {
 } from './runtime-paths'
 import { TimeoutController } from './timeout-controller'
 import { NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES, NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
+import type { NotebookExecutionRequest } from './runtime-service'
 import {
   startWorkingFileObservation,
   toPortableNotebookRelativePath
@@ -175,7 +177,13 @@ const makeDefaultEnvCwd = async (prefix: string): Promise<string> => {
   return dir
 }
 
-type ExecutorInternals = { procs: Map<string, ProcStateLike> }
+type EnsureProc = (
+  key: string,
+  kind: KernelProcessKind,
+  env: string,
+  request: NotebookExecutionRequest
+) => Promise<ProcStateLike>
+type ExecutorInternals = { procs: Map<string, ProcStateLike>; ensureProc: EnsureProc }
 type ProcStateLike = {
   child: ChildProcessWithoutNullStreams
   env: string
@@ -369,6 +377,45 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       await expect(
         executor.execute({ ...baseRequest(cwdDir), code: 'after-oversized-line' })
       ).resolves.toMatchObject({ status: 'completed', stdout: 'after-oversized-line' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('settles execution when protocol overflow drops the kernel before request dispatch', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-pre-dispatch-protocol-overflow-')
+    const executor = makeExecutor()
+    const internals = executor as unknown as ExecutorInternals
+    const ensureProc = internals.ensureProc.bind(executor)
+    let injectOverflow = true
+    internals.ensureProc = async (...args) => {
+      const proc = await ensureProc(...args)
+      if (!injectOverflow) return proc
+
+      injectOverflow = false
+      proc.child.stdin.write(
+        framePythonRequest(
+          'pre-dispatch-overflow',
+          `__OVERSIZED_LINE__:${NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES + 1}`
+        )
+      )
+      await vi.waitFor(() => expect(procFor(executor, 'python')).toBeUndefined())
+      return proc
+    }
+
+    try {
+      await expect(
+        executor.execute({ ...baseRequest(cwdDir), code: 'must-not-dispatch' })
+      ).resolves.toMatchObject({
+        status: 'failed',
+        kernelDispatched: false,
+        stderr: expect.stringContaining(
+          `exceeded the ${NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES}-byte transport limit`
+        )
+      })
+      await expect(
+        executor.execute({ ...baseRequest(cwdDir), code: 'after-pre-dispatch-overflow' })
+      ).resolves.toMatchObject({ status: 'completed', stdout: 'after-pre-dispatch-overflow' })
     } finally {
       await executor.shutdown()
     }

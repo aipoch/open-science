@@ -193,6 +193,9 @@ type ProcState = {
   child: ChildProcessWithoutNullStreams
   readline: Interface
   pending?: PendingRequest
+  // Captures why an involuntarily dropped proc became unusable before a request was registered, so
+  // execute() can fail that pre-dispatch run instead of writing to a stale child and waiting forever.
+  terminationError?: Error
   // True until the exit handler observes the process leaving. child.killed is unreliable here: Node
   // sets it once *any* signal is sent, including the soft-timeout SIGINT a loop catches and survives,
   // so it cannot distinguish a still-running loop from a dead one.
@@ -355,11 +358,15 @@ class NotebookKernelExecutor implements NotebookExecutor {
       this.checkEnvironmentReady(kind, env, request)
 
       const proc = await this.ensureProc(key, kind, env, request)
-      if (proc.pending) {
-        throw new Error('Notebook execution is already running.')
+      if (proc.pending) throw new Error('Notebook execution is already running.')
+      workingFileObservation = await startWorkingFileObservation(request)
+      // sendRequest installs proc.pending synchronously. Revalidate immediately before that handoff:
+      // an involuntary drop while ensureProc was finishing must settle this execute() locally rather
+      // than dispatching to a stale child whose guarded exit handler can no longer reject the run.
+      if (!proc.alive || this.procs.get(key) !== proc) {
+        throw proc.terminationError ?? new Error('Notebook kernel process exited before execution.')
       }
 
-      workingFileObservation = await startWorkingFileObservation(request)
       const reqId = randomUUID()
       const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request, () => {
         kernelDispatched = true
@@ -532,6 +539,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     const child = await this.spawnLoop(kind, env, request)
     const boundedOutput = createBoundedKernelOutput((error) => {
       if (this.procs.get(key) !== proc) return
+      proc.terminationError = error
       this.dropProc(proc)
       this.killChildTracked(proc)
       this.onTerminated?.(kind, env)
@@ -549,7 +557,6 @@ class NotebookKernelExecutor implements NotebookExecutor {
     }
 
     readline.on('line', (line) => this.handleLine(proc, line))
-    child.stdout.pipe(boundedOutput)
     // Drain stderr unconditionally so a chatty/crashing loop can never block on a full OS pipe.
     child.stderr.on('data', () => {})
     // A late async pipe error (e.g. EPIPE if the loop died mid-write) must not surface as an
@@ -568,21 +575,24 @@ class NotebookKernelExecutor implements NotebookExecutor {
       this.procs.delete(key)
       proc.readline.close()
       const pending = proc.pending
-      this.rejectPending(
-        proc,
+      const terminationError =
         pending?.timeout?.timedOut && pending.timeoutMs !== undefined
           ? new NotebookExecutionTimeoutError(
               `Notebook execution timed out after ${pending.timeoutMs}ms.`
             )
           : new Error('Notebook kernel process exited.')
-      )
+      proc.terminationError = terminationError
+      this.rejectPending(proc, terminationError)
       // Unexpected exit of a still-live proc is a crash; surface it as a 'terminated' kernel status.
       // Intentional teardown (shutdown/restart) and hard-timeout/idle drops clear the map first, so
       // this only fires for a genuine crash (the stale-proc guard above returns early otherwise).
       this.onTerminated?.(kind, env)
     })
 
+    // Register before piping buffered stdout: pipe() can synchronously flush data that already arrived
+    // after spawn, and the overflow callback must be able to identify and drop this proc.
     this.procs.set(key, proc)
+    child.stdout.pipe(boundedOutput)
     return proc
   }
 
