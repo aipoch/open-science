@@ -61,7 +61,7 @@ const continueButton = (): HTMLButtonElement | undefined =>
 const installFromManagedSource = async (frameworkName: string): Promise<void> => {
   openRadixMenu(
     document.body.querySelector<HTMLButtonElement>(
-      `[aria-label="Install ${frameworkName}"], [aria-label="Repair ${frameworkName}"]`
+      `[aria-label="Install ${frameworkName}"], [aria-label="Repair ${frameworkName}"], [aria-label="Update ${frameworkName}"]`
     )
   )
   const managed = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
@@ -224,6 +224,33 @@ describe('AgentStep', () => {
 
     expect(installOpencode).toHaveBeenCalledWith('managed')
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+  })
+
+  it('activates Codex after updating the only installed but unusable runtime', async () => {
+    const installCodex = vi.fn().mockResolvedValue({ installId: 'i', ok: true })
+    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: threeFrameworks,
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.1.4' },
+      installCodex,
+      setAgentFramework,
+      preflight: {
+        claudeReady: false,
+        opencodeReady: false,
+        codexReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: false,
+        activeProviderReady: false
+      },
+      environmentCheck: environment(false)
+    })
+
+    await renderStep()
+    await installFromManagedSource('Codex')
+
+    expect(installCodex).toHaveBeenCalledWith('managed')
+    expect(setAgentFramework).toHaveBeenCalledWith('codex')
   })
 
   it('switches to an installed Codex card and refreshes the onboarding environment gate', async () => {

@@ -460,7 +460,7 @@ const AgentPanel = ({
   ): Promise<void> => {
     setInstallActionError(undefined)
     setFrameworkDetectionError(undefined)
-    const shouldActivateAfterInstall = isOnboarding && installedFrameworks.length === 0
+    const shouldActivateAfterInstall = isOnboarding && !frameworkCards.some((card) => card.ready)
     const intentVersion = isOnboarding
       ? (onboardingUserIntentVersion.current += 1)
       : onboardingUserIntentVersion.current
