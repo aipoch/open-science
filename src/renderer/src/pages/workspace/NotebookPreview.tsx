@@ -457,11 +457,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     ? projectNotebookRunsForFrame(frameRuns, effectiveFrameFilter)
     : []
 
-  // Python and R are executable user targets even before their first run. Agent SDK and Bash remain
-  // historical views and appear only after producing a run.
+  // Python is the default executable target. Other kernels appear only after producing a run.
   const kindsWithRuns = new Set(projectedRuns.map(resolveRunKernelKind))
   const visibleKinds = KERNEL_KIND_ORDER.filter(
-    (kind) => kind === 'python' || kind === 'r' || kindsWithRuns.has(kind)
+    (kind) => kind === 'python' || kindsWithRuns.has(kind)
   )
   const effectiveActiveKind = visibleKinds.includes(activeKind) ? activeKind : 'python'
   const kindRuns = projectedRuns.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)

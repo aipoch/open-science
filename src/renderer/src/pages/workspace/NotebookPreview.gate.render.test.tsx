@@ -638,7 +638,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     await act(async () => i18next.changeLanguage('en'))
   })
 
-  it('always shows Python and R while keeping non-data tabs history-driven', async () => {
+  it('always shows Python while keeping other tabs history-driven', async () => {
     await mountWithRuns([
       makeRun({ runId: 'p1', kernelKind: 'python' }),
       makeRun({ runId: 'x1', kernelKind: 'repl', script: 'await host.notebook.run(...)' }),
@@ -651,7 +651,7 @@ describe('NotebookPreview per-kernel tabs', () => {
       'Agent SDK'
     )
     expect(switcher.querySelector('[data-testid="kernel-switcher-bash"]')?.textContent).toBe('Bash')
-    expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).not.toBeNull()
+    expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).toBeNull()
   })
 
   it('projects named Main Agent and Subagent Runs without All, legacy, or Frame IDs', async () => {
@@ -745,25 +745,27 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(userBadge?.className).toContain('dark:text-blue-300')
   })
 
-  it('shows Python and R before either kernel has produced a run', async () => {
+  it('shows only Python before another kernel has produced a run', async () => {
     await mountWithRuns([])
 
     const switcher = container.querySelector('[data-testid="kernel-switcher"]') as HTMLElement
     expect(switcher.querySelector('[data-testid="kernel-switcher-python"]')).not.toBeNull()
-    expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).not.toBeNull()
+    expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).toBeNull()
+    expect(switcher.querySelector('[data-testid="kernel-switcher-repl"]')).toBeNull()
     expect(container.querySelector('[data-testid="kernel-terminal-input"]')).toBeNull()
     expect(
       container.querySelector('[data-testid="notebook-read-only-status"]')?.textContent
     ).toContain('Python · view only; the agent must activate this kernel first')
   })
 
-  it('shows no Agent SDK/Bash tab for a python-only run set', async () => {
+  it('hides unused R, Agent SDK, and Bash tabs for a python-only run set', async () => {
     await mountWithRuns([
       makeRun({ runId: 'p1', kernelKind: 'python' }),
       makeRun({ runId: 'p2', kernelKind: 'python' })
     ])
 
     const switcher = container.querySelector('[data-testid="kernel-switcher"]') as HTMLElement
+    expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).toBeNull()
     expect(switcher.querySelector('[data-testid="kernel-switcher-repl"]')).toBeNull()
     expect(switcher.querySelector('[data-testid="kernel-switcher-bash"]')).toBeNull()
   })
@@ -800,7 +802,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     const replTab = switcher.querySelector(
       '[data-testid="kernel-switcher-repl"]'
     ) as HTMLButtonElement
-    expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).not.toBeNull()
+    expect(switcher.querySelector('[data-testid="kernel-switcher-r"]')).toBeNull()
     expect(pythonTab.className).toContain('bg-bg-300')
     expect(replTab.className).not.toContain('bg-bg-300')
 
