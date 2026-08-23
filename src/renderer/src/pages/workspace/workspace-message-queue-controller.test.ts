@@ -475,6 +475,50 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
   })
 
+  it('holds a queued prompt when overlapping idle admission loses the live turn', async () => {
+    let currentSession = session('idle')
+    let finishAdmission!: (result: undefined) => void
+    const sendMessage = vi.fn(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finishAdmission = resolve
+        })
+    )
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      getSession: () => currentSession,
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.lifecycle.enqueue({ ...admission('keep me'), session: currentSession })
+    )
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+
+    currentSession = session()
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        getSession: () => currentSession
+      })
+    )
+    await act(async () => {
+      finishAdmission(undefined)
+    })
+
+    expect(hook.result.current.items[0]).toMatchObject({
+      text: 'keep me',
+      phase: 'queued',
+      deferredUntilIdle: true
+    })
+  })
+
   it('retains a queued prompt when runtime admission fails', async () => {
     const idle = session('idle')
     const input = options(idle, {

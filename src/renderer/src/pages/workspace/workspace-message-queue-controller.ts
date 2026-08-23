@@ -315,6 +315,20 @@ const useWorkspaceMessageQueueController = (
             specialistId: item.specialistId
           })
           if (!result) {
+            const latest = owner.resolveOptions(optionsRef.current)
+            const latestSession = latest.getSession(sessionId)
+            if (latestSession && !queueSessionIsSendable(latest, latestSession)) {
+              if (owner.dispatches.get(sessionId) === activeDispatch) {
+                owner.dispatches.delete(sessionId)
+              }
+              replaceItem(sessionId, item.id, {
+                phase: 'queued',
+                error: undefined,
+                deferredUntilIdle: true
+              })
+              emit('Queued message will send after the current run finishes.')
+              return
+            }
             throw new Error('The queued message was not admitted.')
           }
           const latest = itemsFor(sessionId)
