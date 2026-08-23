@@ -4815,6 +4815,23 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(reportButton()).not.toBeNull()
   })
 
+  it('keeps a reportable run action beside unsupported Codex action guidance', () => {
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, errorReportable: true },
+        actionError:
+          'Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
+      }
+    })
+
+    expect(reportButton()).not.toBeNull()
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (candidate) => candidate.textContent === 'Agent settings'
+      )
+    ).toBe(true)
+  })
+
   it('opens the report dialog when the Report button is clicked', () => {
     renderPanel({
       view: {

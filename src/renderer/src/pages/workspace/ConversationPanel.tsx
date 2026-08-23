@@ -583,15 +583,15 @@ const ConversationPanel = ({
   const showVisionModelSettings =
     visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
     visionRunFailureMessage(activeSession?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
+  const hasUnsupportedCodexAcpRunError = isUnsupportedCodexAcpVersionError(activeSession?.error)
   const showCodexAcpSettings =
-    isUnsupportedCodexAcpVersionError(actionError) ||
-    isUnsupportedCodexAcpVersionError(activeSession?.error)
+    isUnsupportedCodexAcpVersionError(actionError) || hasUnsupportedCodexAcpRunError
   // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
   // reportability is resolved at failure time and persisted on the session: a model-provider error is
   // tagged non-reportable at the ACP layer, and an app-crafted reminder is recognized by its own text.
   // Fall back to classifying the raw error for sessions persisted before the flag existed (undefined).
   const isRunErrorReportable =
-    !showCodexAcpSettings &&
+    !hasUnsupportedCodexAcpRunError &&
     (activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error))
 
   const activeSpecialist = specialistId
