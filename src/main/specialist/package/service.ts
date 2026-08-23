@@ -38,6 +38,7 @@ import {
   SpecialistPackageTransaction
 } from './transaction'
 import type { SpecialistPackageSkillPort, SpecialistPackageSkillSnapshot } from './skill-port'
+import type { MarketplaceOperationCoordinator } from '../marketplace/operation-coordinator'
 
 const CANDIDATE_TTL_MS = 10 * 60 * 1000
 const log = createLogger('specialist.package.service')
@@ -72,6 +73,7 @@ type SpecialistPackageServiceOptions = {
   onSpecialistDeleted?: (specialistId: string) => Promise<void>
   onSkillsDeleted?: (skillIds: readonly string[]) => Promise<void>
   onResourcesDeleted?: (specialistId: string, skillIds: readonly string[]) => Promise<void>
+  marketplaceOperationCoordinator?: MarketplaceOperationCoordinator
   skillPort?: SpecialistPackageSkillPort
 }
 
@@ -324,6 +326,15 @@ export class SpecialistPackageService {
   }
 
   async deleteSpecialist(request: SpecialistDeleteRequest): Promise<SpecialistDeleteResult> {
+    const operation = (): Promise<SpecialistDeleteResult> => this.deleteSpecialistExclusive(request)
+    return this.options.marketplaceOperationCoordinator
+      ? this.options.marketplaceOperationCoordinator.runExclusive(operation)
+      : operation()
+  }
+
+  private async deleteSpecialistExclusive(
+    request: SpecialistDeleteRequest
+  ): Promise<SpecialistDeleteResult> {
     if (
       !request ||
       typeof request.id !== 'string' ||

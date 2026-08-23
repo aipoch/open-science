@@ -232,6 +232,7 @@ import { SpecialistPackageService } from './specialist/package/service'
 import { OFFICIAL_MARKETPLACE_SOURCE } from './specialist/marketplace/official-source'
 import { MarketplaceRepository } from './specialist/marketplace/repository'
 import { MarketplaceService } from './specialist/marketplace/service'
+import { MarketplaceOperationCoordinator } from './specialist/marketplace/operation-coordinator'
 import {
   saveSpecialistExport,
   saveSpecialistPackageReport,
@@ -1018,6 +1019,7 @@ const createApplicationModules = async (
   })
   const profileService = new ProfileService(specialistRepository, builtinRegistry)
   const marketplaceRepository = new MarketplaceRepository(resolveStorageRoot())
+  const marketplaceOperationCoordinator = new MarketplaceOperationCoordinator()
   await profileService.ensureBuiltinCatalogReady()
   const tagService = new TagService(
     new TagRepository(() => getProjectDbClient(configRoot)),
@@ -1097,6 +1099,7 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
+    marketplaceOperationCoordinator,
     onSpecialistDeleted: (specialistId) =>
       marketplaceRepository.removeInstallationsForSpecialist(specialistId),
     onSkillsDeleted: async (skillIds) => {
@@ -1121,6 +1124,7 @@ const createApplicationModules = async (
   })
   const marketplaceService = new MarketplaceService({
     repository: marketplaceRepository,
+    operationCoordinator: marketplaceOperationCoordinator,
     packages: specialistPackageService,
     fetch: netFetchStandard,
     officialSource: OFFICIAL_MARKETPLACE_SOURCE,

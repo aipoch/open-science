@@ -388,6 +388,18 @@ describe('ProfileService.update', () => {
     await expect(service.duplicate('managed-specialist')).resolves.toMatchObject({
       name: 'Managed Specialist Copy'
     })
+    await expect(
+      service.attachSkill('managed-specialist', 'publisher-skill', 3)
+    ).rejects.toMatchObject({ code: 'SPECIALIST_READ_ONLY', targetKind: 'marketplace' })
+    await expect(
+      service.detachSkill('managed-specialist', 'publisher-skill', 3)
+    ).rejects.toMatchObject({ code: 'SPECIALIST_READ_ONLY', targetKind: 'marketplace' })
+    await expect(
+      service.attachConnector('managed-specialist', 'publisher-connector', 3)
+    ).rejects.toMatchObject({ code: 'SPECIALIST_READ_ONLY', targetKind: 'marketplace' })
+    await expect(
+      service.detachConnector('managed-specialist', 'publisher-connector', 3)
+    ).rejects.toMatchObject({ code: 'SPECIALIST_READ_ONLY', targetKind: 'marketplace' })
   })
 
   it('atomically completes imported setup with submitted configuration and enablement', async () => {

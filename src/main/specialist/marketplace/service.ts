@@ -36,6 +36,7 @@ import {
   type MarketplaceInstallProvenance,
   type StoredMarketplaceSource
 } from './repository'
+import { MarketplaceOperationCoordinator } from './operation-coordinator'
 
 const CANDIDATE_TTL_MS = 10 * 60 * 1_000
 // How long a verified cached root stays the primary answer for automatic refreshes. Kept short so
@@ -69,6 +70,7 @@ export type OfficialMarketplaceSourceConfig = {
 
 type MarketplaceServiceOptions = {
   repository: MarketplaceRepository
+  operationCoordinator?: MarketplaceOperationCoordinator
   packages: Pick<
     SpecialistPackageService,
     'preview' | 'install' | 'candidateNewSkillIds' | 'cancel' | 'dispose'
@@ -286,11 +288,13 @@ export class MarketplaceService {
   private readonly sourceCandidates = new Map<string, SourceCandidateState>()
   private readonly installCandidates = new Map<string, InstallCandidateState>()
   private packageRecovery?: Promise<void>
-  private operationQueue: Promise<void> = Promise.resolve()
+  private readonly operationCoordinator: MarketplaceOperationCoordinator
 
   constructor(private readonly options: MarketplaceServiceOptions) {
     this.now = options.now ?? (() => new Date())
     this.token = options.token ?? randomUUID
+    this.operationCoordinator =
+      options.operationCoordinator ?? new MarketplaceOperationCoordinator()
   }
 
   async recover(): Promise<void> {
@@ -706,12 +710,7 @@ export class MarketplaceService {
   }
 
   private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.operationQueue.then(operation)
-    this.operationQueue = run.then(
-      () => undefined,
-      () => undefined
-    )
-    return run
+    return this.operationCoordinator.runExclusive(operation)
   }
 
   cancel(candidateToken: unknown, ownerId?: number): void {

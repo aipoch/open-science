@@ -256,6 +256,16 @@ export class ProfileService {
     }
   }
 
+  private async assertContentMutableId(id: string): Promise<void> {
+    await this.assertMutableId(id)
+    const specialist = (await this.repo.getAll()).specialists.find(
+      (candidate) => candidate.id === id
+    )
+    if (specialist?.origin === 'marketplace') {
+      throw new SpecialistReadonlyError('marketplace', id)
+    }
+  }
+
   private async assertCreatableName(name: string): Promise<void> {
     if (name.trim().toLowerCase() === 'reviewer') {
       throw new SpecialistReadonlyError('reviewer', 'reviewer')
@@ -564,7 +574,7 @@ export class ProfileService {
     value: string,
     attach: boolean
   ): Promise<SpecialistProfileView> {
-    await this.assertMutableId(id)
+    await this.assertContentMutableId(id)
     const current = await this.getById(id)
     if (mode === 'full') {
       const config = structuredClone(current.fullAccess)

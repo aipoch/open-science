@@ -9,10 +9,29 @@ import { describe, expect, it, vi } from 'vitest'
 import { sha256 } from './protocol'
 import { MarketplaceRepository, type MarketplaceInstallProvenance } from './repository'
 import { MarketplaceService } from './service'
+import { MarketplaceOperationCoordinator } from './operation-coordinator'
 
 const encoder = new TextEncoder()
 
 describe('MarketplaceService', () => {
+  it('uses the supplied coordinator for Marketplace operations', async () => {
+    const coordinator = new MarketplaceOperationCoordinator()
+    const runExclusive = vi.spyOn(coordinator, 'runExclusive')
+    const service = new MarketplaceService({
+      repository: new MarketplaceRepository(await mkdtemp(join(tmpdir(), 'marketplace-queue-'))),
+      operationCoordinator: coordinator,
+      packages: { recover: vi.fn().mockResolvedValue(undefined) } as never,
+      fetch: vi.fn() as never,
+      getDisabledSkillIds: async () => [],
+      getInstalledSpecialists: async () => [],
+      setSkillsMainEnabled: async () => undefined
+    })
+
+    await service.recover()
+
+    expect(runExclusive).toHaveBeenCalledOnce()
+  })
+
   it('trusts a reviewed GitHub source and disables installed Skills for Main before commit', async () => {
     const storage = await mkdtemp(join(tmpdir(), 'marketplace-service-'))
     const { publicKey, privateKey } = generateKeyPairSync('ed25519')

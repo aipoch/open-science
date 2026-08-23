@@ -16,6 +16,7 @@ import type { FetchLike } from '../../skills/github-import'
 import { SettingsRepository } from '../../settings/repository'
 import { SpecialistRepository } from '../repository'
 import { ProfileService } from '../service'
+import { MarketplaceOperationCoordinator } from '../marketplace/operation-coordinator'
 import { SpecialistPackageService, specialistExportFileName } from './service'
 import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT, type SpecialistPackageSkillPort } from './skill-port'
 import { validateSpecialistZip } from './zip-adapter'
@@ -2011,6 +2012,65 @@ describe('SpecialistPackageService', () => {
     await expect(skillPort.snapshot()).resolves.toEqual([
       expect.objectContaining({ id: 'retained', standalone: true, ownerIds: [] })
     ])
+  })
+
+  it('waits for an in-flight Marketplace operation before deleting a Specialist', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    await repository.insert({
+      id: 'managed-specialist',
+      name: 'MANAGED_SPECIALIST',
+      description: 'Publisher description.',
+      systemPrompt: 'Publisher instructions.',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'marketplace',
+      ownedSkillIds: []
+    })
+    const coordinator = new MarketplaceOperationCoordinator()
+    let releaseOperation: (() => void) | undefined
+    let operationStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      operationStarted = resolve
+    })
+    const inFlight = coordinator.runExclusive(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseOperation = resolve
+          operationStarted?.()
+        })
+    )
+    await started
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog,
+      marketplaceOperationCoordinator: coordinator
+    })
+
+    let deletionSettled = false
+    const deletion = service
+      .deleteSpecialist({
+        id: 'managed-specialist',
+        expectedRevision: 1,
+        deleteSkillIds: []
+      })
+      .finally(() => {
+        deletionSettled = true
+      })
+    await Promise.resolve()
+
+    expect(deletionSettled).toBe(false)
+    await expect(
+      new ProfileService(repository).getById('managed-specialist')
+    ).resolves.toBeDefined()
+
+    releaseOperation?.()
+    await inFlight
+    await expect(deletion).resolves.toEqual({ status: 'deleted' })
   })
 
   it('atomically deletes a standalone Skill used only by the deleted Specialist', async () => {
