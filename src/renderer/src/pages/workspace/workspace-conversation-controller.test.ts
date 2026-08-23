@@ -347,6 +347,52 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
+  it('refuses a restored Plan response when the Session model is unavailable', async () => {
+    const pendingPlan = {
+      artifactId: 'artifact-plan-a',
+      artifactVersionId: 'version-plan-a',
+      artifactChecksum: 'a'.repeat(64),
+      originatingPromptMessageId: 'message-user-a',
+      revision: 3,
+      approval: 'pending',
+      lifecycle: 'awaiting_approval',
+      requiresExplicitContinuation: false,
+      document: {
+        schema_version: 1,
+        task_summary: 'Analyze the dataset',
+        phases: [],
+        desired_outputs: [],
+        feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+      },
+      stepStatuses: {},
+      stepStates: {},
+      counts: { phases: 0, delegations: 0, steps: 0, completed: 0, inProgress: 0 }
+    } as const
+    const pendingSession = session({
+      status: 'waiting-plan-approval',
+      activePlanProjection: pendingPlan as never
+    })
+    const respondPlan = vi.fn(async () => ({ changed: true }))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { acp: { respondPlan } }
+    })
+    useSessionStore.setState({ sessions: [pendingSession] })
+    const input = options({
+      activeSession: pendingSession,
+      agentConfigurationReady: false,
+      getSession: (sessionId) => (sessionId === pendingSession.id ? pendingSession : undefined)
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    await expect(
+      hook.result.current.actions.submit.restoredPlan({ decision: 'approved' })
+    ).rejects.toThrow('The Session model is unavailable.')
+    expect(input.runtime.ensureSessionReady).not.toHaveBeenCalled()
+    expect(respondPlan).not.toHaveBeenCalled()
+  })
+
   it('blocks submit and revision while waiting for a user answer', () => {
     const input = options({ activeSession: session({ status: 'waiting-for-user' }) })
     const hook = renderController(input)

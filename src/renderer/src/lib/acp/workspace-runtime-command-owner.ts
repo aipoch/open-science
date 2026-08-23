@@ -73,6 +73,7 @@ type RuntimeEventDrain = (sessionId?: string) => Promise<void>
 type WorkspaceCommandLifecycle = {
   onSendPreparationStateChange?: SendPreparationStateChange
   drainRuntimeEvents?: RuntimeEventDrain
+  onSessionBound?: (pendingSessionId: string, sessionId: string) => void
 }
 type ResendEditedMessageInput = {
   text: string
@@ -230,7 +231,8 @@ type PendingPromptRequest = SendWorkspaceMessageCommand & {
 
 const startPendingPrompt = (
   runtime: WorkspaceCommandRuntime,
-  request: PendingPromptRequest
+  request: PendingPromptRequest,
+  onSessionBound?: (pendingSessionId: string, sessionId: string) => void
 ): void => {
   void (async () => {
     const pending = request.pending
@@ -282,6 +284,7 @@ const startPendingPrompt = (
       providerSessionId: created.providerSessionId,
       providerContinuityToken: created.providerContinuityToken
     })
+    onSessionBound?.(pending.sessionId, created.sessionId)
     const boundMessageId = bound?.messageId
     if (!boundMessageId || !ownsPrompt(created.sessionId, boundMessageId)) return
 
@@ -421,18 +424,22 @@ const sendWorkspaceMessage = async (
       useSessionStore.getState().failRun(pending.sessionId, errorMessage(error))
       return pendingPrompt
     }
-    startPendingPrompt(runtime, {
-      ...input,
-      pending: pendingPrompt,
-      content,
-      attachments,
-      cwd: session.cwd || input.cwd,
-      projectId: session.projectId,
-      permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-      specialistId: session.specialistId,
-      replay,
-      contextReset: true
-    })
+    startPendingPrompt(
+      runtime,
+      {
+        ...input,
+        pending: pendingPrompt,
+        content,
+        attachments,
+        cwd: session.cwd || input.cwd,
+        projectId: session.projectId,
+        permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+        specialistId: session.specialistId,
+        replay,
+        contextReset: true
+      },
+      lifecycle.onSessionBound
+    )
     return pendingPrompt
   }
 
@@ -481,18 +488,22 @@ const sendWorkspaceMessage = async (
         agentConfiguration: input.agentConfiguration
       })
       if (!appended) return undefined
-      startPendingPrompt(runtime, {
-        ...input,
-        pending: appended,
-        content,
-        attachments: effectiveAttachments,
-        cwd,
-        projectId,
-        permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-        specialistId: session.pendingContextReplayMessageId ? session.specialistId : undefined,
-        replay,
-        contextReset: Boolean(session.pendingContextReplayMessageId)
-      })
+      startPendingPrompt(
+        runtime,
+        {
+          ...input,
+          pending: appended,
+          content,
+          attachments: effectiveAttachments,
+          cwd,
+          projectId,
+          permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+          specialistId: session.pendingContextReplayMessageId ? session.specialistId : undefined,
+          replay,
+          contextReset: Boolean(session.pendingContextReplayMessageId)
+        },
+        lifecycle.onSessionBound
+      )
       return appended
     }
 
@@ -610,17 +621,21 @@ const sendWorkspaceMessage = async (
     selectedComputeHosts: input.selectedComputeHosts
   })
   if (!pending) return undefined
-  startPendingPrompt(runtime, {
-    ...input,
-    pending,
-    content,
-    attachments,
-    cwd: input.cwd,
-    projectId: input.projectId,
-    permissionProfile: input.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-    specialistId: input.specialistId ?? undefined,
-    turnIntent: input.turnIntent
-  })
+  startPendingPrompt(
+    runtime,
+    {
+      ...input,
+      pending,
+      content,
+      attachments,
+      cwd: input.cwd,
+      projectId: input.projectId,
+      permissionProfile: input.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+      specialistId: input.specialistId ?? undefined,
+      turnIntent: input.turnIntent
+    },
+    lifecycle.onSessionBound
+  )
   return pending
 }
 

@@ -367,11 +367,14 @@ const useWorkspaceConversationController = (
     }
 
     const submitRestoredPlan = async (response: RestoredPlanResponse): Promise<void> => {
-      const { activeSession, runtime, sideChatOpen } = optionsRef.current
+      const { activeSession, agentConfigurationReady, runtime, sideChatOpen } = optionsRef.current
       const session = activeSession ? optionsRef.current.getSession(activeSession.id) : undefined
       const plan = selectActiveBranchPlan(session)
       if (sideChatOpen || !session || session.activeRun || plan?.approval !== 'pending') {
         throw new Error('The pending Plan is no longer available for a response.')
+      }
+      if (!agentConfigurationReady) {
+        throw new Error('The Session model is unavailable.')
       }
       await runtime.ensureSessionReady(session.id)
       await respondToSessionPlan(

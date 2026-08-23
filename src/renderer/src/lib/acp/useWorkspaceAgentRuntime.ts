@@ -307,10 +307,15 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       if (!agentConfiguration) return Promise.resolve(undefined)
       const resolvedInput = { ...input, agentConfiguration }
       const selected = resolveRuntimeSelection(agentConfiguration)
-      lifecycleOwner.recordPromptPlanAuthority({
-        ...resolvedInput,
-        agentTarget: selected.agentTarget
-      })
+      const rememberAdmittedTarget = (sessionId: string | undefined): void => {
+        if (!sessionId) return
+        lifecycleOwner.recordPromptPlanAuthority({
+          sessionId,
+          planContinuation: resolvedInput.planContinuation,
+          agentTarget: selected.agentTarget
+        })
+      }
+      rememberAdmittedTarget(resolvedInput.sessionId)
       return sendWorkspaceMessage(
         runtime,
         {
@@ -324,7 +329,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         },
         {
           onSendPreparationStateChange: handleSendPreparationStateChange,
-          drainRuntimeEvents
+          drainRuntimeEvents,
+          onSessionBound: (_pendingSessionId, sessionId) => rememberAdmittedTarget(sessionId)
         }
       )
     },

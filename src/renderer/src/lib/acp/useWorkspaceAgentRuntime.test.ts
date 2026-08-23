@@ -2735,6 +2735,34 @@ describe('workspace agent message sending', () => {
     )
   })
 
+  it('notifies Session bind so first-turn overflow can keep the admitted target', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-1',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+    const onSessionBound = vi.fn()
+
+    const sent = await sendWorkspaceMessage(
+      runtime,
+      {
+        text: 'Help me inspect this notebook',
+        cwd: '/workspace/project'
+      },
+      { onSessionBound }
+    )
+    await vi.waitFor(() => expect(onSessionBound).toHaveBeenCalledTimes(1))
+
+    expect(sent?.sessionId).toBeDefined()
+    expect(sent?.sessionId).not.toBe('transport-session-1')
+    expect(onSessionBound).toHaveBeenCalledWith(sent?.sessionId, 'transport-session-1')
+  })
+
   it('persists enabled Compute Hosts before dispatching a new Session prompt', async () => {
     const persisted = createDeferred<PersistedChatSession>()
     const saveSession = vi.fn((session: PersistedChatSession) => {
@@ -6026,6 +6054,93 @@ describe('recovering from a request-size overflow', () => {
       [
         createEvent({
           id: 'owner-overflow-admitted-target',
+          kind: 'error',
+          level: 'error',
+          recoverable: 'context-overflow',
+          sessionId: 'session-1'
+        })
+      ],
+      {
+        getAgentTarget: () => ({
+          frameworkId: 'codex',
+          providerId: 'later-provider',
+          model: 'later-model',
+          reasoningEffort: 'low'
+        }),
+        getSupportsImageInput: () => undefined,
+        getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
+      }
+    )
+
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledTimes(1))
+    expect(runtime.resumeSession).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project',
+      'default-project',
+      'ask',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      admittedTarget
+    )
+  })
+
+  it('recovers first-turn overflow with the admitted target after pending Session bind', async () => {
+    useSessionStore.getState().appendPendingUserMessage({
+      content: 'Analyze this notebook',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    const pendingSessionId = useSessionStore.getState().sessions[0]?.id
+    expect(pendingSessionId).toBeDefined()
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+    const owner = createWorkspaceRuntimeSessionLifecycleOwner()
+    const admittedTarget = {
+      frameworkId: 'codex' as const,
+      providerId: 'admitted-provider',
+      model: 'admitted-model',
+      reasoningEffort: 'high' as const
+    }
+    owner.recordPromptPlanAuthority({
+      sessionId: pendingSessionId,
+      agentTarget: admittedTarget
+    })
+    useSessionStore.getState().bindPendingSession({
+      pendingSessionId: pendingSessionId!,
+      sessionId: 'session-1',
+      cwd: '/workspace/project'
+    })
+    owner.recordPromptPlanAuthority({
+      sessionId: 'session-1',
+      agentTarget: admittedTarget
+    })
+    owner.processRuntimeEvents(
+      runtime,
+      [
+        createEvent({
+          id: 'owner-overflow-pending-bind',
           kind: 'error',
           level: 'error',
           recoverable: 'context-overflow',
