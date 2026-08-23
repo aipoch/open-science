@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { open, readFile, unlink, writeFile } from 'node:fs/promises'
+import { open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 
@@ -68,8 +68,13 @@ export const probeStartupStorage = async (
   let created = false
   try {
     const sequentialStarted = now()
-    await writeFile(probePath, sequential, { flag: 'wx' })
+    const createdHandle = await open(probePath, 'wx')
     created = true
+    try {
+      await createdHandle.write(sequential)
+    } finally {
+      await createdHandle.close()
+    }
     await readFile(probePath)
     const sequentialMs = Math.max(0, now() - sequentialStarted)
 
@@ -97,7 +102,7 @@ export const probeStartupStorage = async (
 // used as worker_threads entry points.
 const isolatedProbeWorkerSource = `'use strict'
 const { parentPort, workerData } = require('node:worker_threads')
-const { open, readFile, unlink, writeFile } = require('node:fs/promises')
+const { open, readFile, unlink } = require('node:fs/promises')
 const sequentialBytes = ${SEQUENTIAL_BYTES}
 const syncWriteBytes = ${SYNC_WRITE_BYTES}
 const syncWriteCount = ${SYNC_WRITE_COUNT}
@@ -113,13 +118,19 @@ const classify = (syncWriteMs) =>
 const probePath = typeof workerData?.probePath === 'string' ? workerData.probePath : ''
 void (async () => {
   let created = false
+  let outcome = unknown
   try {
     if (!probePath) throw new Error('missing probe path')
     const sequential = Buffer.alloc(sequentialBytes, 7)
     const chunk = Buffer.alloc(syncWriteBytes, 9)
     const sequentialStarted = Date.now()
-    await writeFile(probePath, sequential, { flag: 'wx' })
+    const createdHandle = await open(probePath, 'wx')
     created = true
+    try {
+      await createdHandle.write(sequential)
+    } finally {
+      await createdHandle.close()
+    }
     await readFile(probePath)
     const sequentialMs = Math.max(0, Date.now() - sequentialStarted)
     const syncStarted = Date.now()
@@ -133,17 +144,19 @@ void (async () => {
       }
     }
     const syncWriteMs = Math.max(0, Date.now() - syncStarted)
-    parentPort.postMessage({ sequentialMs, syncWriteMs, kind: classify(syncWriteMs) })
+    outcome = { sequentialMs, syncWriteMs, kind: classify(syncWriteMs) }
   } catch {
-    parentPort.postMessage(unknown)
+    outcome = unknown
   } finally {
     if (created) await unlink(probePath).catch(() => undefined)
+    parentPort.postMessage(outcome)
   }
 })()
 `
 
 const startIsolatedProbe = (deps: StartupStorageProbeDeps): IsolatedStartupStorageProbe => {
   const probePath = deps.probePath ?? exclusiveProbePath(deps.probeDir)
+  const removeOnTerminate = deps.probePath === undefined
   let worker: Worker
   try {
     worker = new Worker(isolatedProbeWorkerSource, {
@@ -189,7 +202,7 @@ const startIsolatedProbe = (deps: StartupStorageProbeDeps): IsolatedStartupStora
     result,
     terminate: async () => {
       await worker.terminate().catch(() => undefined)
-      await removeProbeFile(probePath)
+      if (removeOnTerminate) await removeProbeFile(probePath)
     }
   }
 }
@@ -206,7 +219,7 @@ export const timedStartupStorageProbe = async (
   })
   try {
     const result = await Promise.race([isolated.result, timeout])
-    if (result.timedOut) await isolated.terminate()
+    await isolated.terminate()
     return result
   } finally {
     if (timer) clearTimeout(timer)

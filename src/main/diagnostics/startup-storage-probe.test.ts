@@ -69,6 +69,25 @@ describe('probeStartupStorage', () => {
     expect(JSON.stringify(result)).not.toContain(probeDir)
   })
 
+  it('terminates an isolated probe after a result so cleanup cannot outlive the timeout', async () => {
+    probeDir = await mkdtemp(join(tmpdir(), 'os-startup-probe-join-'))
+    let terminated = 0
+    const result = await timedStartupStorageProbe(
+      {
+        probeDir,
+        isolate: () => ({
+          result: Promise.resolve({ sequentialMs: 1, syncWriteMs: 1, kind: 'typical' }),
+          terminate: async () => {
+            terminated += 1
+          }
+        })
+      },
+      1_500
+    )
+    expect(result).toEqual({ sequentialMs: 1, syncWriteMs: 1, kind: 'typical' })
+    expect(terminated).toBe(1)
+  })
+
   it('terminates an isolated probe when the timeout fires', async () => {
     probeDir = await mkdtemp(join(tmpdir(), 'os-startup-probe-timeout-'))
     let terminated = 0
