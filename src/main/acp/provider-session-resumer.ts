@@ -303,9 +303,9 @@ export class AcpProviderSessionResumer {
         sessionCwd: cwd,
         projectId
       })
-      const specialistId =
-        request.specialistId ??
-        this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot().specialistId
+      const existingAggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
+      const specialistBindingRevision = existingAggregate?.specialistBindingRevision() ?? 0
+      const specialistId = request.specialistId ?? existingAggregate?.snapshot().specialistId
       const [specialistIdentity, specialistSkills] = await Promise.all([
         this.resolveSpecialistIdentity(specialistId, backend),
         this.resolveSpecialistSkills(specialistId)
@@ -320,7 +320,7 @@ export class AcpProviderSessionResumer {
         },
         role: capability.descriptor.role,
         backendSystemPromptAppends: backend.prompt.systemPromptAppends,
-        extraSystemPromptAppends: [specialistIdentity?.append, projectContextAppend].filter(
+        extraSystemPromptAppends: [projectContextAppend, specialistIdentity?.append].filter(
           (append): append is string => Boolean(append)
         ),
         persistentSystemPrompt: backend.prompt.persistentSystemPrompt,
@@ -393,6 +393,11 @@ export class AcpProviderSessionResumer {
           continue
         }
         identity.assertCurrent()
+        const currentSpecialistBindingRevision =
+          this.deps.registry.lookup(request.sessionId)?.aggregate.specialistBindingRevision() ?? 0
+        if (currentSpecialistBindingRevision !== specialistBindingRevision) {
+          throw new Error('ACP session startup was superseded.')
+        }
         const { aggregate } = this.deps.registry.publish(identity, request.sessionId, {
           session: provisionalSession,
           cwd,

@@ -96,7 +96,7 @@ export class AcpProviderSessionCreator {
         },
         role: capability.descriptor.role,
         backendSystemPromptAppends: startupBackend.prompt.systemPromptAppends,
-        extraSystemPromptAppends: [specialist.append, projectContextAppend].filter(
+        extraSystemPromptAppends: [projectContextAppend, specialist.append].filter(
           (append): append is string => Boolean(append)
         ),
         persistentSystemPrompt: startupBackend.prompt.persistentSystemPrompt,

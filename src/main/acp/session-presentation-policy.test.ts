@@ -334,7 +334,7 @@ describe('ACP Session presentation policy', () => {
     ['Codex Responses', codexFramework],
     ['Codex Bridge', codexFramework]
   ] as const)(
-    'keeps the %s Session setup prefix after Specialist identity on every turn',
+    'keeps the %s Specialist identity after Project context on every turn',
     (_route, framework) => {
       expect(
         policy.buildTurnPromptPrefix({
@@ -343,7 +343,7 @@ describe('ACP Session presentation policy', () => {
           specialistPrefix: 'Specialist identity.',
           sessionSetupPromptPrefix: 'Project Agent Context.'
         })
-      ).toBe('Specialist identity.\n\nProject Agent Context.')
+      ).toBe('Project Agent Context.\n\nSpecialist identity.')
     }
   )
 

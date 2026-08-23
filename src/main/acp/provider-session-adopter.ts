@@ -107,9 +107,9 @@ export class AcpProviderSessionAdopter {
         role: capability.descriptor.role,
         backendSystemPromptAppends: startupBackend.prompt.systemPromptAppends,
         extraSystemPromptAppends: [
-          specialistIdentity?.append,
           handoffAppend,
-          projectContextAppend
+          projectContextAppend,
+          specialistIdentity?.append
         ].filter((append): append is string => Boolean(append)),
         persistentSystemPrompt: startupBackend.prompt.persistentSystemPrompt,
         sessionOptions: startupBackend.session.options,

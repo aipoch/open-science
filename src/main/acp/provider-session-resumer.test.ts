@@ -905,6 +905,33 @@ describe('AcpProviderSessionResumer', () => {
     })
   })
 
+  it('does not overwrite a newer Specialist binding while compatible resume is in flight', async () => {
+    const harness = createHarness({
+      initialBackend: opencodeBackend,
+      specialistIdentity: { append: '', prefix: 'Old Specialist prefix' }
+    })
+    const aggregate = harness.registry.ensureAffinity('stable-app-session').aggregate
+    aggregate.setSpecialistId('old-specialist')
+    aggregate.setSpecialistPrefix('Old Specialist prefix')
+    const providerResume = Promise.withResolvers<{ sessionId: string }>()
+    harness.request.mockImplementationOnce(() => providerResume.promise)
+
+    const resumed = harness.resume({
+      previousFrameworkId: 'opencode',
+      previousBackendId: opencodeBackend.backendId
+    })
+    await vi.waitFor(() => expect(harness.request).toHaveBeenCalledOnce())
+    aggregate.setSpecialistId('new-specialist')
+    aggregate.setSpecialistPrefix('New Specialist prefix')
+    providerResume.resolve({ sessionId: 'provider-session' })
+
+    await expect(resumed).rejects.toThrow('ACP session startup was superseded.')
+    expect(aggregate.snapshot()).toMatchObject({
+      specialistId: 'new-specialist',
+      specialistPrefix: 'New Specialist prefix'
+    })
+  })
+
   it('fails closed before provider resume when a bound Specialist is unavailable', async () => {
     const harness = createHarness({
       initialBackend: opencodeBackend,

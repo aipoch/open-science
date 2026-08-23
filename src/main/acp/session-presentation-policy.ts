@@ -198,7 +198,7 @@ class AcpSessionPresentationPolicy {
     const turnPromptPrefix =
       setup.promptPrefix === input.sessionSetupPromptPrefix ? undefined : setup.promptPrefix
     return (
-      [input.specialistPrefix, input.sessionSetupPromptPrefix, turnPromptPrefix]
+      [input.sessionSetupPromptPrefix, input.specialistPrefix, turnPromptPrefix]
         .filter((segment): segment is string => Boolean(segment))
         .join('\n\n') || undefined
     )

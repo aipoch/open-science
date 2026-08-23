@@ -152,6 +152,22 @@ describe('ACP session aggregate', () => {
     })
   })
 
+  it('revises Specialist binding only when its projected values change', () => {
+    const aggregate = new AcpSessionAggregate('app-session')
+
+    expect(aggregate.specialistBindingRevision()).toBe(0)
+    aggregate.setSpecialistId('specialist-1')
+    aggregate.setSpecialistPrefix('Follow the selected specialist.')
+    expect(aggregate.specialistBindingRevision()).toBe(2)
+
+    aggregate.setSpecialistId('specialist-1')
+    aggregate.setSpecialistPrefix('Follow the selected specialist.')
+    expect(aggregate.specialistBindingRevision()).toBe(2)
+
+    aggregate.setSpecialistId(undefined)
+    expect(aggregate.specialistBindingRevision()).toBe(3)
+  })
+
   it('detaches provider and connection state while retaining resume affinity', () => {
     const aggregate = new AcpSessionAggregate('app-session')
     const profile: SessionPermissionProfileState = {

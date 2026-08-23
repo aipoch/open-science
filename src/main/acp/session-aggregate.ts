@@ -56,6 +56,7 @@ class AcpSessionAggregate {
   private permissionProfile: SessionPermissionProfileState | undefined
   private specialistId: string | undefined
   private specialistPrefix: string | undefined
+  private specialistBindingRevisionValue = 0
   private sessionSetupPromptPrefix: string | undefined
   private appliedModel: string | undefined
   private configOptions: SessionConfigOption[] | undefined
@@ -120,13 +121,21 @@ class AcpSessionAggregate {
   }
 
   setSpecialistId(id: string | undefined): void {
+    if (this.specialistId === id) return
     this.specialistId = id
+    this.specialistBindingRevisionValue += 1
     this.refreshSnapshot()
   }
 
   setSpecialistPrefix(prefix: string | undefined): void {
+    if (this.specialistPrefix === prefix) return
     this.specialistPrefix = prefix
+    this.specialistBindingRevisionValue += 1
     this.refreshSnapshot()
+  }
+
+  specialistBindingRevision(): number {
+    return this.specialistBindingRevisionValue
   }
 
   // Frameworks without dynamic Session system-prompt metadata return a prompt prefix from setup.
