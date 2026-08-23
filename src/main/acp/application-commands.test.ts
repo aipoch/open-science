@@ -494,8 +494,14 @@ describe('ACP application commands', () => {
         invocation([{ sessionId: 'session-1', reason: 'manual' }])
       )
     ).rejects.toThrow('Restore this archived Session before continuing.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.steerFollowUp,
+        invocation([{ sessionId: 'session-1', text: 'focus on tests' }])
+      )
+    ).rejects.toThrow('Restore this archived Session before continuing.')
 
-    expect(admittedById).toHaveBeenCalledTimes(2)
+    expect(admittedById).toHaveBeenCalledTimes(3)
     expect(admittedById).toHaveBeenCalledWith(request.sessionId)
     expect(dependencies.runtime.resetSessionContext).not.toHaveBeenCalled()
     expect(dependencies.runtime.compactSession).not.toHaveBeenCalled()

@@ -7,7 +7,11 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { AcpCompactSessionRequest, AcpResumeSessionRequest } from '../../shared/acp'
+import type {
+  AcpCompactSessionRequest,
+  AcpResumeSessionRequest,
+  AcpSteerFollowUpRequest
+} from '../../shared/acp'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import {
@@ -1120,6 +1124,21 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
 
     expect(withSessionAvailableById).toHaveBeenCalledWith('s-1', expect.any(Function))
     expect(resetSessionContext).not.toHaveBeenCalled()
+  })
+
+  it('rejects follow-up before runtime mutation when Session admission is closed', async () => {
+    const failure = new Error('Project is being deleted.')
+    const withSessionAvailableById = vi.fn().mockRejectedValue(failure)
+    const steerFollowUp = vi.fn()
+    installAcpIpcHandlers({ steerFollowUp } as never, {} as never, undefined, {
+      withSessionAvailableById
+    })
+    const request: AcpSteerFollowUpRequest = { sessionId: 's-1', text: 'focus on tests' }
+
+    await expect(handlers.get('acp:steer-follow-up')?.({}, request)).rejects.toBe(failure)
+
+    expect(withSessionAvailableById).toHaveBeenCalledWith('s-1', expect.any(Function))
+    expect(steerFollowUp).not.toHaveBeenCalled()
   })
 })
 

@@ -94,16 +94,20 @@ const registerAcpIpcHandlerSet = (
     return workflows.sendPrompt(rendererRequest)
   })
   ipcMainHandle('acp:steer-follow-up', (_event, request: AcpSteerFollowUpRequest) =>
-    runtime.steerFollowUp({
-      sessionId: request.sessionId,
-      text: typeof request.text === 'string' ? request.text : '',
-      ...(Array.isArray(request.attachments) ? { attachments: request.attachments } : {}),
-      ...(Array.isArray(request.referencedArtifacts)
-        ? { referencedArtifacts: request.referencedArtifacts }
-        : {}),
-      ...(Array.isArray(request.forcedSkillIds) ? { forcedSkillIds: request.forcedSkillIds } : {}),
-      ...(Array.isArray(request.parts) ? { parts: request.parts } : {})
-    })
+    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+      runtime.steerFollowUp({
+        sessionId: request.sessionId,
+        text: typeof request.text === 'string' ? request.text : '',
+        ...(Array.isArray(request.attachments) ? { attachments: request.attachments } : {}),
+        ...(Array.isArray(request.referencedArtifacts)
+          ? { referencedArtifacts: request.referencedArtifacts }
+          : {}),
+        ...(Array.isArray(request.forcedSkillIds)
+          ? { forcedSkillIds: request.forcedSkillIds }
+          : {}),
+        ...(Array.isArray(request.parts) ? { parts: request.parts } : {})
+      })
+    )
   )
   ipcMainHandle('acp:save-as-skill', (_event, request: AcpSaveAsSkillRequest) =>
     workflows.saveAsSkill(request)

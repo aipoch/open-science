@@ -242,7 +242,13 @@ const registerAcpCommands = (
           suppressUserMessage: undefined
         })
       },
-      'acp:steer-follow-up': (invocation) => dependencies.runtime.steerFollowUp(invocation.args[0]),
+      'acp:steer-follow-up': (invocation) =>
+        dependencies.archiveAvailability
+          ? dependencies.archiveAvailability.withSessionAvailableById(
+              invocation.args[0].sessionId,
+              () => dependencies.runtime.steerFollowUp(invocation.args[0])
+            )
+          : dependencies.runtime.steerFollowUp(invocation.args[0]),
       'acp:save-as-skill': (invocation) => {
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can save a Session as a Skill.')
