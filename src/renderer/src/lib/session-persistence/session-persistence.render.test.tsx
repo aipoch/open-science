@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   SESSION_MANIFEST_VERSION,
   type LoadAllSessionsResult,
-  type PersistedChatSession
+  type PersistedChatSession,
+  type SessionSummary
 } from '../../../../shared/session-persistence'
 import { i18next } from '@/i18n'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
@@ -134,6 +135,70 @@ describe('session persistence startup', () => {
     await act(async () => i18next.changeLanguage('ja'))
 
     expect(loadAll).toHaveBeenCalledOnce()
+  })
+
+  it('does not resurrect a deleted Session when lazy hydration finishes', async () => {
+    const selected = createPersistedSession({ id: 'session-1' })
+    const lazy = createPersistedSession({ id: 'session-2', updatedAt: 2 })
+    let resolveLazyLoad: ((session: PersistedChatSession) => void) | undefined
+    const loadOne = vi.fn(({ sessionId }: { sessionId: string }): Promise<PersistedChatSession> => {
+      if (sessionId === selected.id) return Promise.resolve(selected)
+      return new Promise<PersistedChatSession>((resolve) => {
+        resolveLazyLoad = resolve
+      })
+    })
+    const summary = (persisted: PersistedChatSession, number: number): SessionSummary => ({
+      number,
+      id: persisted.id,
+      projectId: persisted.projectId,
+      title: persisted.title,
+      status: persisted.status,
+      presentedStatus: persisted.status,
+      pinned: false,
+      revision: 0,
+      activeMessageCount: persisted.messages.length,
+      artifactCount: 0,
+      filesRevision: 0,
+      createdAt: persisted.createdAt,
+      updatedAt: persisted.updatedAt,
+      needsStartupRecovery: false
+    })
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    window.api = {
+      ...window.api,
+      sessions: {
+        list: vi.fn().mockResolvedValue({
+          sessions: [summary(selected, 1), summary(lazy, 2)],
+          manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: selected.id },
+          diagnostics: {
+            isComplete: true,
+            warnings: [],
+            isProjectDeletionRecoveryComplete: true
+          }
+        }),
+        loadAll,
+        loadOne,
+        saveSession,
+        deleteSession: vi.fn().mockResolvedValue(undefined),
+        saveManifest
+      }
+    } as unknown as Window['api']
+
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().selectSession(lazy.id)
+      await Promise.resolve()
+    })
+    expect(loadOne).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      useSessionStore.getState().deleteSession(lazy.id)
+      resolveLazyLoad?.(lazy)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(useSessionStore.getState().sessions.map((session) => session.id)).toEqual([selected.id])
   })
 
   it('keeps session actions blocked after a load failure and recovers on retry', async () => {

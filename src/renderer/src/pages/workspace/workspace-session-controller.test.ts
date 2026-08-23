@@ -212,6 +212,39 @@ describe('workspace session controller', () => {
     expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
   })
 
+  it('does not resurrect a deleted Session when export hydration finishes', async () => {
+    const summary = session({ contentLoaded: false, activeMessageCount: 1 })
+    const persisted: PersistedChatSession = {
+      id: summary.id,
+      projectId: summary.projectId,
+      title: summary.title,
+      cwd: summary.cwd,
+      status: summary.status,
+      messages: [],
+      createdAt: summary.createdAt,
+      updatedAt: summary.updatedAt
+    }
+    const load = deferred<PersistedChatSession | undefined>()
+    const loadOne = vi.fn(() => load.promise)
+    window.api = { sessions: { loadOne } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
+    const hook = renderController({ activeSession: summary })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.openExportConversation(summary))
+    expect(loadOne).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      useSessionStore.getState().deleteSession(summary.id)
+      load.resolve(persisted)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(hook.result.current.view.dialogs.exportConversation).toBeNull()
+  })
+
   it('localizes an unopened Session export load failure', async () => {
     const summary = session({ contentLoaded: false })
     window.api = {

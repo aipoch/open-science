@@ -21,7 +21,10 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { projectSessionActionability, type ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
-import { loadPersistedSession } from '@/lib/session-persistence/session-persistence'
+import {
+  hydratePersistedSessionIfPresent,
+  loadPersistedSession
+} from '@/lib/session-persistence/session-persistence'
 
 import {
   getWorkspaceSpecialistBarrierSnapshot,
@@ -652,11 +655,8 @@ const useWorkspaceSessionController = ({
           void loadPersistedSession({ projectId: session.projectId, sessionId: session.id })
             .then((persisted) => {
               if (!persisted) throw new Error('Selected Session JSON is missing.')
-              useSessionStore.getState().upsertPersistedSession(persisted)
-              const hydrated = useSessionStore
-                .getState()
-                .sessions.find((candidate) => candidate.id === session.id)
-              if (!hydrated) throw new Error('Selected Session could not be hydrated.')
+              const hydrated = hydratePersistedSessionIfPresent(persisted)
+              if (!hydrated) return
               setExportConversationDialog(hydrated)
             })
             .catch(() => setExportError(t('Could not load this session for export.')))

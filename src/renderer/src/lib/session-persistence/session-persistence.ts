@@ -59,6 +59,22 @@ const loadPersistedSession = async (
   )
 }
 
+const hydratePersistedSessionIfPresent = (
+  persisted: PersistedChatSession
+): ChatSession | undefined => {
+  const store = useSessionStore.getState()
+  const current = store.sessions.find(
+    (session) => session.id === persisted.id && session.projectId === persisted.projectId
+  )
+  if (!current || current.contentLoaded !== false) return current
+  store.upsertPersistedSession(persisted)
+  return useSessionStore
+    .getState()
+    .sessions.find(
+      (session) => session.id === persisted.id && session.projectId === persisted.projectId
+    )
+}
+
 const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionResult> =>
   window.api.sessions.deleteSession(request)
 
@@ -1537,7 +1553,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
           void loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
             .then((session) => {
               if (!session) throw new Error('Selected Session JSON is missing.')
-              if (isMounted) useSessionStore.getState().upsertPersistedSession(session)
+              if (isMounted) hydratePersistedSessionIfPresent(session)
             })
             .catch((error) => {
               reportPersistenceError(error, 'session-load')
@@ -1599,6 +1615,7 @@ export {
   createOrderedSessionPersistence,
   createStoreSaver,
   flushSessionPersistence,
+  hydratePersistedSessionIfPresent,
   loadPersistedSession,
   loadPersistedSessions,
   reconcilePendingArtifacts,
