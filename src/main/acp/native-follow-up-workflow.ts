@@ -18,6 +18,8 @@ import {
 } from '../../shared/uploads'
 import type { AcpOpenCodeUsageApi } from './backend-generation-owner'
 import type { AcpConnectionCapabilities } from './connection-resource-owner'
+import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
+import type { VisionEvidenceSource } from './vision-evidence-repository'
 import {
   ACP_STEERING_METHOD,
   ACP_STEERING_TIMEOUT_MS,
@@ -100,20 +102,10 @@ type NativeFollowUpMediaInput = Readonly<{
   sessionId: string
   livePromptMessageId?: string
   supportsImageInput: boolean
-  imageSources?: readonly unknown[]
+  imageSources?: ReadonlyArray<VisionEvidenceSource | undefined>
   historyImageCount: number
   signal?: AbortSignal
-  imageCompatibility?: {
-    prepare: (input: {
-      content: string | ContentBlock[]
-      supportsImageInput: boolean
-      projectId?: string
-      sessionId?: string
-      imageSources?: readonly unknown[]
-      historyImageCount?: number
-      signal?: AbortSignal
-    }) => Promise<string | ContentBlock[]>
-  }
+  imageCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>
 }>
 
 const nativeFollowUpPromptBlocks = (content: string | ContentBlock[]): ContentBlock[] => {

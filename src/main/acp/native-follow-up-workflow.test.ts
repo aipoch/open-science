@@ -554,6 +554,7 @@ describe('finalizeNativeFollowUpPreparedContent', () => {
       sessionId: 'app-1',
       name: 'notes.md',
       originalName: 'notes.md',
+      path: '/managed/notes.md',
       mimeType: 'text/markdown',
       size: 4,
       versionId: 'version-1'

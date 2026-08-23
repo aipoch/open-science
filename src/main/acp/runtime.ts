@@ -2,7 +2,6 @@ import * as acp from '@agentclientprotocol/sdk'
 import type {
   ActiveSession,
   ClientConnection,
-  ContentBlock,
   CreateElicitationResponse,
   PromptResponse
 } from '@agentclientprotocol/sdk'
@@ -94,7 +93,8 @@ import type { ArtifactTurnOwner } from './artifact-turn-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import {
   AcpNativeFollowUpWorkflow,
-  finalizeNativeFollowUpPreparedContent
+  finalizeNativeFollowUpPreparedContent,
+  type NativeFollowUpPreparedContent
 } from './native-follow-up-workflow'
 import type { AcpSessionRegistry } from './session-registry'
 import type {
@@ -1127,7 +1127,7 @@ class AcpRuntime {
 
   private async prepareNativeFollowUpContent(
     request: AcpSteerFollowUpRequest
-  ): Promise<{ prompt: ContentBlock[]; uploads: UploadedAttachment[] }> {
+  ): Promise<NativeFollowUpPreparedContent> {
     const presented = await this.turnSkills.presentFollowUp({
       frameworkId: this.framework.id,
       text: request.text,
