@@ -3493,5 +3493,11 @@
   "Variable changed after this run": "Variable modifiée après cette exécution",
   "Variable tracking is limited": "Suivi des variables limité",
   "Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.": "L’exécution [{{index}}] a modifié {{names}} ultérieurement. Cette sortie est l’instantané enregistré avant cette modification ; cette exécution s’est terminée normalement.",
-  "This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.": "Cette exécution s’est terminée normalement. Certaines relations entre variables dans ce code n’ont pas pu être déterminées automatiquement ; les modifications ultérieures peuvent donc ne pas être reliées à cette exécution."
+  "This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.": "Cette exécution s’est terminée normalement. Certaines relations entre variables dans ce code n’ont pas pu être déterminées automatiquement ; les modifications ultérieures peuvent donc ne pas être reliées à cette exécution.",
+  "Figure {{index}}": "Figure {{index}}",
+  "{{count}} lines of output_one": "{{count}} ligne de sortie",
+  "{{count}} lines of output_many": "{{count}} lignes de sortie",
+  "{{count}} lines of output_other": "{{count}} lignes de sortie",
+  "done": "terminé",
+  "Esc to close": "Échap pour fermer"
 }

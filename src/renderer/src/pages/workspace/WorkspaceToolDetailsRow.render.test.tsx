@@ -31,7 +31,10 @@ const createNotebookRun = (overrides: Partial<NotebookRunRecord> = {}): Notebook
   status: 'completed',
   startedAt: 1710000000000,
   text: { stdout: 'saved: plot.png\n', stderr: '', traceback: '', plain: [] },
-  outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }],
+  outputs: [
+    { type: 'stream', name: 'stdout', text: 'saved: plot.png\n' },
+    { type: 'display', data: { 'image/png': 'QUJD' } }
+  ],
   artifacts: [],
   workingFiles: [
     {
@@ -245,7 +248,7 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(container.querySelector('.lucide-circle-minus')).not.toBeNull()
   })
 
-  it('renders local notebook figures outside the independently collapsible text output', async () => {
+  it('keeps local notebook figures visible when the tool details are collapsed and opens a dedicated preview', async () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-notebook__notebook_execute',
       rawInput: { code: 'plot(1:3)', kernelKind: 'r' },
@@ -265,25 +268,67 @@ describe('WorkspaceToolDetailsRow', () => {
           activity={activity}
           details={details!}
           notebookRun={notebookRun}
-          isExpanded={true}
+          isExpanded={false}
           onToggle={vi.fn()}
         />
       )
     })
 
-    const figures = container.querySelectorAll('[data-testid="notebook-figure-output"]')
-    const figure = figures[0]
-    const textOutput = Array.from(container.querySelectorAll('details')).find((detailsElement) =>
-      detailsElement.textContent?.includes('Output')
-    )
+    const figures = container.querySelectorAll('[data-testid="notebook-tool-figure-button"]')
+    const figure = figures[0] as HTMLButtonElement | undefined
 
     expect(figure).not.toBeNull()
     expect(figures).toHaveLength(1)
     expect(figure?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,QUJD')
-    expect(figure?.firstElementChild?.className).toContain('justify-start')
-    expect(textOutput?.contains(figure)).toBe(false)
-    expect(container.textContent).toMatch(/1 figure/)
+    expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
+    expect(container.textContent).toContain('Figure 1.png')
+    expect(container.textContent).toContain('1 figure · 1 line of output')
     expect(container.textContent).not.toContain('Saved:')
+
+    await act(async () => {
+      figure?.click()
+    })
+
+    const dialog = document.body.querySelector('[data-testid="notebook-figure-preview-dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog?.querySelector('[data-testid="notebook-figure-preview-image"]')).not.toBeNull()
+    expect(dialog?.textContent).toContain('Figure 1.png')
+    expect(dialog?.textContent).toContain('Esc to close')
+    expect(dialog?.querySelector('[aria-label="Close preview"]')).not.toBeNull()
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+
+    expect(document.body.querySelector('[data-testid="notebook-figure-preview-dialog"]')).toBeNull()
+  })
+
+  it('shows done beside the figure count when a completed run has no text output', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { code: 'plot(1:3)', kernelKind: 'r' },
+      rawOutput: { runId: 'notebook-run-1', status: 'completed' }
+    })
+    const details = buildToolActivityDetails(activity)
+    const notebookRun = createNotebookRun({
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          notebookRun={notebookRun}
+          isExpanded={false}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('1 figure · done')
   })
 
   it('translates figure count meta', async () => {

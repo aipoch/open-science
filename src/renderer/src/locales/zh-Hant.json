@@ -3221,5 +3221,9 @@
   "Variable changed after this run": "此執行後變數發生了變化",
   "Variable tracking is limited": "變數追蹤範圍有限",
   "Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.": "執行 [{{index}}] 後續修改了變數 {{names}}。這裡顯示的是修改前記錄的輸出；本次執行已正常完成。",
-  "This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.": "本次執行已正常完成。系統無法自動判定這段程式碼中的部分變數關聯，因此後續的變數變化可能不會關聯到本次執行。"
+  "This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.": "本次執行已正常完成。系統無法自動判定這段程式碼中的部分變數關聯，因此後續的變數變化可能不會關聯到本次執行。",
+  "Figure {{index}}": "圖表 {{index}}",
+  "{{count}} lines of output_other": "{{count}} 行輸出",
+  "done": "完成",
+  "Esc to close": "按 Esc 關閉"
 }

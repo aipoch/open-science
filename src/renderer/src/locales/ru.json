@@ -3604,5 +3604,12 @@
   "Variable changed after this run": "Переменная изменена после этого запуска",
   "Variable tracking is limited": "Отслеживание переменных ограничено",
   "Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.": "Запуск [{{index}}] позднее изменил {{names}}. Этот вывод — снимок, записанный до изменения; сам запуск завершился нормально.",
-  "This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.": "Этот запуск завершился нормально. Некоторые связи между переменными в этом коде не удалось определить автоматически, поэтому последующие изменения переменных могут не быть связаны с этим запуском."
+  "This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.": "Этот запуск завершился нормально. Некоторые связи между переменными в этом коде не удалось определить автоматически, поэтому последующие изменения переменных могут не быть связаны с этим запуском.",
+  "Figure {{index}}": "Рисунок {{index}}",
+  "{{count}} lines of output_one": "{{count}} строка вывода",
+  "{{count}} lines of output_few": "{{count}} строки вывода",
+  "{{count}} lines of output_many": "{{count}} строк вывода",
+  "{{count}} lines of output_other": "{{count}} строки вывода",
+  "done": "готово",
+  "Esc to close": "Esc — закрыть"
 }
