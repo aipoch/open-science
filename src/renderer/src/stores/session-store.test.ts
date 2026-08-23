@@ -865,7 +865,7 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
   })
 
-  it('keeps the active Plan projection when Permission advances the runtime revision', () => {
+  it('rebases the active Plan projection when Permission advances the runtime revision', () => {
     useSessionStore.getState().hydrateSessions([
       {
         id: 'session-1',
@@ -921,8 +921,23 @@ describe('session store', () => {
     })
 
     const updated = useSessionStore.getState().sessions[0]
-    expect(updated.activePlanProjection).toBe(projection)
+    expect(updated.activePlanProjection).toEqual({ ...projection, revision: 2 })
     expect(updated.runtimeContext).toMatchObject({ revision: 2, permission: { state: 'pending' } })
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source: updated,
+      session: {
+        ...toPersistedSession(updated),
+        runtimeContext: { ...updated.runtimeContext!, revision: 3 },
+        updatedAt: 4
+      },
+      mode: 'permission-authority'
+    })
+
+    expect(useSessionStore.getState().sessions[0].activePlanProjection).toEqual({
+      ...projection,
+      revision: 3
+    })
   })
 
   it('does not replace newer local conversation state when a durable Plan authority arrives', () => {

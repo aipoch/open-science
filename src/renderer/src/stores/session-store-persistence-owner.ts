@@ -523,6 +523,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           status,
           interactionState,
           runtimeContext: session.runtimeContext,
+          activePlanProjection: retainRuntimePlanProjection(current, session),
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
         markExternallyHydratedSession(projected, session)

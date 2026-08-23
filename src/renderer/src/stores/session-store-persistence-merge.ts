@@ -364,9 +364,13 @@ export const retainRuntimePlanProjection = (
   const projection = current.activePlanProjection
   const currentPlan = current.runtimeContext?.plan
   const incomingPlan = incoming.runtimeContext?.plan
+  const incomingRevision = incoming.runtimeContext?.revision
   return planProjectionMatchesRuntimePlan(projection, currentPlan) &&
+    incomingRevision !== undefined &&
     JSON.stringify(currentPlan) === JSON.stringify(incomingPlan)
-    ? projection
+    ? projection.revision === incomingRevision
+      ? projection
+      : { ...projection, revision: incomingRevision }
     : undefined
 }
 
