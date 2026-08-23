@@ -749,6 +749,26 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(userCell?.textContent).toContain('r')
   })
 
+  it('keeps idle terminal input enabled while notebook state refreshes in the background', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    vi.mocked(window.api.notebook.state).mockImplementation(() => new Promise(() => {}))
+    const onChanged = vi.mocked(window.api.notebook.onChanged).mock.calls[0]?.[0]
+
+    await act(async () => {
+      onChanged?.(item.notebook)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(container.querySelector('[data-testid="notebook-terminal-header"]')?.textContent).toContain(
+      'idle'
+    )
+    expect(
+      (container.querySelector('[data-testid="kernel-terminal-input"]') as HTMLTextAreaElement)
+        .disabled
+    ).toBe(false)
+  })
+
   it('shows selected-kernel status while retaining the notebook-wide input lock', async () => {
     await mountWithRuns(
       [

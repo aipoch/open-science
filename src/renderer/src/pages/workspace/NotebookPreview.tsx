@@ -547,7 +547,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // The Session Aggregate owns one active write and run, so input stays globally locked even when a
   // different persistent data kernel is selected.
   const isTerminalLocked =
-    isLoading ||
+    (isLoading && !notebookState) ||
     isSubmitting ||
     Boolean(notebookState?.activeWrite) ||
     Boolean(notebookState?.activeRunId) ||
