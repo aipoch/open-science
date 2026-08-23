@@ -175,6 +175,15 @@ describe('Session projection', () => {
     await expect(client.sessionArtifactRef.count({ where: { sessionId: first.id } })).resolves.toBe(
       0
     )
+    await expect(repository.prepareSave({ ...first, title: 'Resurrected' })).rejects.toThrow(
+      'deleted Session'
+    )
+    await expect(repository.commitSave({ ...first, title: 'Resurrected' })).rejects.toThrow(
+      'deleted Session'
+    )
+    await repository.markPending(first.projectId, first.id)
+    await expect(repository.commitReconciliation(first)).resolves.toBeUndefined()
+    await expect(repository.pending()).resolves.toEqual([])
     const second = await repository.prepareSave(session('session-2'))
     expect(second.number).toBe(2)
     const primaryKey = await client.$queryRaw<Array<{ name: string; pk: bigint }>>`
@@ -185,7 +194,7 @@ describe('Session projection', () => {
       client.sessionNumberSequence.findUnique({ where: { id: 'global' } })
     ).resolves.toMatchObject({ nextNumber: 3 })
 
-    await repository.replaceAll([{ ...second, number: 2 }])
+    await repository.replaceAll([first, { ...second, number: 2 }])
     await expect(client.session.findUnique({ where: { id: first.id } })).resolves.toMatchObject({
       id: first.id,
       deletedAtMs: expect.any(BigInt)

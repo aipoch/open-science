@@ -23,6 +23,7 @@ import {
   createOrderedSessionPersistence,
   createStoreSaver,
   flushSessionPersistence,
+  loadPersistedSession,
   loadPersistedSessions,
   reconcilePendingArtifacts,
   saveSessionInOrder,
@@ -134,6 +135,16 @@ describe('reconcilePendingArtifacts', () => {
 })
 
 describe('renderer session persistence bridge', () => {
+  it('falls back to the existing Web load-all path when load-one is unavailable', async () => {
+    const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
+    const loadAll = vi.fn().mockResolvedValue(createLoadResult([selected]))
+
+    await expect(
+      loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id }, { loadAll })
+    ).resolves.toEqual(selected)
+    expect(loadAll).toHaveBeenCalledOnce()
+  })
+
   it('hydrates the store from the per-session load result', async () => {
     const api = createApi()
 

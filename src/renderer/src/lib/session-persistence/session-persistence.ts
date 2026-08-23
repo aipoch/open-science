@@ -45,6 +45,20 @@ type SessionPersistenceApi = {
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
 
+type SessionReadApi = Pick<SessionPersistenceApi, 'loadAll'> &
+  Partial<Pick<SessionPersistenceApi, 'loadOne'>>
+
+const loadPersistedSession = async (
+  request: LoadSessionRequest,
+  api: SessionReadApi = window.api.sessions
+): Promise<PersistedChatSession | undefined> => {
+  if (typeof api.loadOne === 'function') return api.loadOne(request)
+  const result = await api.loadAll()
+  return result.sessions.find(
+    (session) => session.id === request.sessionId && session.projectId === request.projectId
+  )
+}
+
 const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionResult> =>
   window.api.sessions.deleteSession(request)
 
@@ -607,9 +621,7 @@ const unresolvedSessionRevisionConflictTargets = new Set<string>()
 const saveSessionInOrder = async (
   session: PersistedChatSession,
   persistence: OrderedSessionPersistence = liveSessionPersistence,
-  api: Pick<SessionPersistenceApi, 'loadOne'> = {
-    loadOne: (request) => window.api.sessions.loadOne(request)
-  }
+  api: SessionReadApi = window.api.sessions
 ): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
   try {
@@ -623,10 +635,13 @@ const saveSessionInOrder = async (
 
         let latest: PersistedChatSession | undefined
         try {
-          latest = await api.loadOne({
-            projectId: submitted.projectId,
-            sessionId: submitted.id
-          })
+          latest = await loadPersistedSession(
+            {
+              projectId: submitted.projectId,
+              sessionId: submitted.id
+            },
+            api
+          )
         } catch {
           throw error
         }
@@ -908,10 +923,13 @@ const loadPersistedSessions = async (
         : (result.manifest.lastSessionId ?? result.sessions[0]?.id)
     const selectedSummary = result.sessions.find((session) => session.id === requestedSelection)
     const selected = selectedSummary
-      ? await api.loadOne({
-          projectId: selectedSummary.projectId,
-          sessionId: selectedSummary.id
-        })
+      ? await loadPersistedSession(
+          {
+            projectId: selectedSummary.projectId,
+            sessionId: selectedSummary.id
+          },
+          api
+        )
       : undefined
     if (!shouldHydrate()) return undefined
     if (selectedSummary && !selected) {
@@ -981,10 +999,13 @@ const createStoreSaver = (
     if (!base) throw error
     let latest: PersistedChatSession | undefined
     try {
-      latest = await api.loadOne({
-        projectId: submitted.projectId,
-        sessionId: submitted.id
-      })
+      latest = await loadPersistedSession(
+        {
+          projectId: submitted.projectId,
+          sessionId: submitted.id
+        },
+        api
+      )
     } catch {
       throw error
     }
@@ -1033,10 +1054,13 @@ const createStoreSaver = (
             persistence.saveLatestSession(
               target,
               async (coalescedOptions) => {
-                const authority = await api.loadOne({
-                  projectId: session.projectId,
-                  sessionId: session.id
-                })
+                const authority = await loadPersistedSession(
+                  {
+                    projectId: session.projectId,
+                    sessionId: session.id
+                  },
+                  api
+                )
                 if (!authority) throw new Error('Session JSON is missing for metadata persistence.')
                 const fields = new Set(coalescedOptions?.conflictRebaseFields ?? [])
                 const candidate: PersistedChatSession = {
@@ -1493,8 +1517,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
         )
         if (selected && !loadingSessionContent.has(selected.id)) {
           loadingSessionContent.add(selected.id)
-          void window.api.sessions
-            .loadOne({ projectId: selected.projectId, sessionId: selected.id })
+          void loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
             .then((session) => {
               if (!session) throw new Error('Selected Session JSON is missing.')
               if (isMounted) useSessionStore.getState().upsertPersistedSession(session)
@@ -1559,6 +1582,7 @@ export {
   createOrderedSessionPersistence,
   createStoreSaver,
   flushSessionPersistence,
+  loadPersistedSession,
   loadPersistedSessions,
   reconcilePendingArtifacts,
   deriveSessionCatalogRecovery,

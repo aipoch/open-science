@@ -324,12 +324,17 @@ export class SessionProjectionRepository {
         select: { id: true }
       })
       if (!project) throw new Error('Cannot save a Session for a deleted Project.')
+      const existing = await tx.session.findUnique({ where: { id: session.id } })
+      if (existing && existing.deletedAtMs !== null)
+        throw new Error('Cannot save a deleted Session.')
+      if (existing && existing.projectId !== session.projectId) {
+        throw new Error('Cannot move a Session to another Project.')
+      }
       await tx.pendingSessionReconciliation.upsert({
         where: { sessionId: session.id },
         create: { sessionId: session.id, projectId: session.projectId, operation: 'save' },
         update: { projectId: session.projectId, operation: 'save', markedAt: new Date() }
       })
-      const existing = await tx.session.findUnique({ where: { id: session.id } })
       if (existing) return existing.number
       const preferredNumber = session.number
       let number: number
@@ -374,6 +379,13 @@ export class SessionProjectionRepository {
         select: { id: true }
       })
       if (!project) throw new Error('Cannot save a Session for a deleted Project.')
+      const existing = await tx.session.findUnique({ where: { id: session.id } })
+      if (!existing || existing.deletedAtMs !== null) {
+        throw new Error('Cannot save a deleted Session.')
+      }
+      if (existing.projectId !== session.projectId) {
+        throw new Error('Cannot move a Session to another Project.')
+      }
       await tx.session.update({
         where: { id: session.id },
         data: sessionData(projection, number)
@@ -392,6 +404,10 @@ export class SessionProjectionRepository {
     await client.$transaction(async (tx) => {
       const existing = await tx.session.findUnique({ where: { id: session.id } })
       if (!existing) throw new Error('Pending Session projection identity is missing.')
+      if (existing.deletedAtMs !== null) {
+        await tx.pendingSessionReconciliation.deleteMany({ where: { sessionId: session.id } })
+        return
+      }
       await tx.session.update({
         where: { id: session.id },
         data: sessionData(projection, session.number ?? existing.number)
@@ -430,11 +446,21 @@ export class SessionProjectionRepository {
 
   async replaceAll(sessions: readonly PersistedChatSession[]): Promise<void> {
     const client = await this.client()
-    const projected = sessions.map((session) => {
-      const number = session.number
-      if (number === undefined) throw new Error('Backfilled Session is missing its number.')
-      return { session: { ...session, number }, projection: buildSessionProjection(session) }
-    })
+    const deletedIds = new Set(
+      (
+        await client.session.findMany({
+          where: { deletedAtMs: { not: null } },
+          select: { id: true }
+        })
+      ).map(({ id }) => id)
+    )
+    const projected = sessions
+      .filter(({ id }) => !deletedIds.has(id))
+      .map((session) => {
+        const number = session.number
+        if (number === undefined) throw new Error('Backfilled Session is missing its number.')
+        return { session: { ...session, number }, projection: buildSessionProjection(session) }
+      })
     const turnUsage = projected.flatMap(({ session, projection }) =>
       projection.turnUsage.map((usage) => ({ sessionId: session.id, ...usage }))
     )
@@ -453,8 +479,9 @@ export class SessionProjectionRepository {
     const writes: Prisma.PrismaPromise<unknown>[] = [
       client.session.deleteMany({
         where: {
+          deletedAtMs: null,
           OR: [
-            { deletedAtMs: null, project: { deletedAt: null } },
+            { project: { deletedAt: null } },
             ...(liveSessionIds.length > 0 ? [{ id: { in: liveSessionIds } }] : [])
           ]
         }

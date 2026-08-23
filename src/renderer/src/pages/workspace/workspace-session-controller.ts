@@ -20,6 +20,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { projectSessionActionability, type ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
+import { loadPersistedSession } from '@/lib/session-persistence/session-persistence'
 
 import {
   getWorkspaceSpecialistBarrierSnapshot,
@@ -646,8 +647,7 @@ const useWorkspaceSessionController = ({
       openExportConversation: (session: ChatSession) => {
         setExportError(null)
         if (session.contentLoaded === false) {
-          void window.api.sessions
-            .loadOne({ projectId: session.projectId, sessionId: session.id })
+          void loadPersistedSession({ projectId: session.projectId, sessionId: session.id })
             .then((persisted) => {
               if (!persisted) throw new Error('Selected Session JSON is missing.')
               useSessionStore.getState().upsertPersistedSession(persisted)

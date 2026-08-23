@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useRef } from 'react'
 import type { HistoryReplayDescriptor } from '../../../../shared/history-preamble'
 import { useSessionStore } from '../../stores/session-store'
+import { loadPersistedSession } from '../session-persistence/session-persistence'
 import {
   acceptAcpRuntimeSnapshotRevision,
   resetAcpRuntimeSnapshotRevisionForTests
@@ -627,9 +628,7 @@ const refreshDelegatedWorkSessions = async (
     .getState()
     .sessions.filter((session) => liveSessionIds.has(session.id))
     .map(({ id: sessionId, projectId }) => ({ projectId, sessionId }))
-  const sessions = await Promise.all(
-    requests.map((request) => window.api.sessions.loadOne(request))
-  )
+  const sessions = await Promise.all(requests.map((request) => loadPersistedSession(request)))
   if (isCancelled()) return
   for (const session of sessions) {
     if (session?.runtimeContext?.delegatedWork) {
