@@ -3315,6 +3315,8 @@
   "No Specialists match “{{query}}”.": "Специалисты не совпадают с «{{query}}».",
   "No Marketplace Specialists available.": "Нет доступных специалистов в маркетплейсе.",
   "Create editable copy": "Создать редактируемую копию",
+  "Excluded Skills": "Исключённые навыки",
+  "Excluded Connectors": "Исключённые коннекторы",
   "Installed from Marketplace and managed by its publisher.": "Установлено из маркетплейса и управляется издателем.",
   "No Marketplace Specialists installed.": "Нет установленных специалистов из маркетплейса.",
   "This Specialist is managed by Marketplace. Create an editable copy to change its instructions or capabilities.": "Этот специалист управляется маркетплейсом. Создайте редактируемую копию, чтобы изменить инструкции или возможности.",

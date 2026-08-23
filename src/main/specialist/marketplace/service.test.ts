@@ -622,7 +622,7 @@ describe('MarketplaceService', () => {
     )
   })
 
-  it('backfills Marketplace origin only for exact historical provenance', async () => {
+  it('backfills Marketplace origin only for exact unmodified historical provenance', async () => {
     const repository = new MarketplaceRepository(
       await mkdtemp(join(tmpdir(), 'marketplace-origin-backfill-'))
     )
@@ -640,6 +640,20 @@ describe('MarketplaceService', () => {
       selectedConnectorIds: [],
       installedAt: '2026-08-23T00:00:00.000Z'
     })
+    await repository.recordInstallation({
+      sourceId: 'official',
+      specialistId: 'edited-specialist',
+      publisher: 'Open Science',
+      version: '1.0.0',
+      releasePath: 'releases/edited-specialist/1.0.0.json',
+      releaseDigest: 'e'.repeat(64),
+      artifactDigest: 'f'.repeat(64),
+      installedArchiveDigest: '9'.repeat(64),
+      upstreamCommit: '8'.repeat(40),
+      selectedSkillIds: [],
+      selectedConnectorIds: [],
+      installedAt: '2026-08-23T00:00:00.000Z'
+    })
     const markMarketplaceManaged = vi.fn().mockResolvedValue(undefined)
     const service = new MarketplaceService({
       repository,
@@ -651,13 +665,15 @@ describe('MarketplaceService', () => {
           id: 'installed-specialist',
           revision: 7,
           origin: 'imported' as const,
-          archiveDigest: 'c'.repeat(64)
+          archiveDigest: 'c'.repeat(64),
+          modifiedSinceImport: false
         },
         {
-          id: 'stale-specialist',
+          id: 'edited-specialist',
           revision: 2,
           origin: 'imported' as const,
-          archiveDigest: 'e'.repeat(64)
+          archiveDigest: '9'.repeat(64),
+          modifiedSinceImport: true
         }
       ],
       markMarketplaceManaged,

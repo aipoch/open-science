@@ -1130,6 +1130,9 @@ const createApplicationModules = async (
       (await profileService.list()).map((profile) => ({
         id: profile.id,
         revision: profile.revision,
+        ...(profile.modifiedSinceImport === undefined
+          ? {}
+          : { modifiedSinceImport: profile.modifiedSinceImport }),
         ...(profile.origin ? { origin: profile.origin } : {}),
         ...(profile.importBaseline?.archiveDigest
           ? { archiveDigest: profile.importBaseline.archiveDigest }

@@ -3215,6 +3215,8 @@
   "No Specialists match “{{query}}”.": "Aucun spécialiste ne correspond à « {{query}} ».",
   "No Marketplace Specialists available.": "Aucun spécialiste n'est disponible sur la place de marché.",
   "Create editable copy": "Créer une copie modifiable",
+  "Excluded Skills": "Compétences exclues",
+  "Excluded Connectors": "Connecteurs exclus",
   "Installed from Marketplace and managed by its publisher.": "Installé depuis la place de marché et géré par son éditeur.",
   "No Marketplace Specialists installed.": "Aucun spécialiste de la place de marché n’est installé.",
   "This Specialist is managed by Marketplace. Create an editable copy to change its instructions or capabilities.": "Ce spécialiste est géré par la place de marché. Créez une copie modifiable pour changer ses instructions ou ses capacités.",

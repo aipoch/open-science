@@ -85,6 +85,7 @@ type MarketplaceServiceOptions = {
       revision?: number
       origin?: 'local' | 'imported' | 'marketplace'
       archiveDigest?: string
+      modifiedSinceImport?: boolean
     }[]
   >
   markMarketplaceManaged?: (id: string, expectedRevision: number) => Promise<void>
@@ -327,6 +328,7 @@ export class MarketplaceService {
     for (const specialist of installedSpecialists) {
       if (
         specialist.origin === 'imported' &&
+        specialist.modifiedSinceImport === false &&
         specialist.revision !== undefined &&
         this.options.markMarketplaceManaged &&
         document.installations.some((provenance) =>
@@ -863,6 +865,7 @@ export class MarketplaceService {
       revision?: number
       origin?: 'local' | 'imported' | 'marketplace'
       archiveDigest?: string
+      modifiedSinceImport?: boolean
     }[]
   ): MarketplaceSpecialistListing[] {
     return root.specialists.map((item) => {

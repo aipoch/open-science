@@ -45,6 +45,9 @@ const MarketplaceManagedSpecialistDetail = ({
     specialist.capabilityMode === 'selected'
       ? specialist.selectedCapabilities.connectorIds
       : specialist.fullAccess.excludedConnectorIds
+  const skillLabel = specialist.capabilityMode === 'full' ? t('Excluded Skills') : t('Skills')
+  const connectorLabel =
+    specialist.capabilityMode === 'full' ? t('Excluded Connectors') : t('Connectors')
 
   return (
     <div className="p-5">
@@ -149,15 +152,15 @@ const MarketplaceManagedSpecialistDetail = ({
           </div>
           <div className="mt-2 grid gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-border p-3">
-              <p className="text-xs font-medium text-muted-foreground">{t('Skills')}</p>
+              <p className="text-xs font-medium text-muted-foreground">{skillLabel}</p>
               <p className="mt-1 break-words text-sm text-foreground">
-                {skillIds.length > 0 ? skillIds.join(', ') : '—'}
+                {skillIds.length > 0 ? skillIds.join(', ') : t('None')}
               </p>
             </div>
             <div className="rounded-lg border border-border p-3">
-              <p className="text-xs font-medium text-muted-foreground">{t('Connectors')}</p>
+              <p className="text-xs font-medium text-muted-foreground">{connectorLabel}</p>
               <p className="mt-1 break-words text-sm text-foreground">
-                {connectorIds.length > 0 ? connectorIds.join(', ') : '—'}
+                {connectorIds.length > 0 ? connectorIds.join(', ') : t('None')}
               </p>
             </div>
           </div>

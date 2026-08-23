@@ -39,15 +39,15 @@ describe('MarketplaceManagedSpecialistDetail', () => {
             description: 'Publisher-owned description',
             systemPrompt: 'Publisher-owned instructions',
             enabled: true,
-            capabilityMode: 'selected',
+            capabilityMode: 'full',
             fullAccess: {
-              excludedSkillIds: [],
-              excludedConnectorIds: [],
+              excludedSkillIds: ['literature-review'],
+              excludedConnectorIds: ['pubmed'],
               connectorTools: []
             },
             selectedCapabilities: {
-              skillIds: ['literature-review'],
-              connectorIds: ['pubmed'],
+              skillIds: [],
+              connectorIds: [],
               connectorTools: []
             },
             revision: 3,
@@ -82,6 +82,8 @@ describe('MarketplaceManagedSpecialistDetail', () => {
     })
 
     expect(getByText(container, 'Publisher-owned instructions')).toBeTruthy()
+    expect(getByText(container, 'Excluded Skills')).toBeTruthy()
+    expect(getByText(container, 'Excluded Connectors')).toBeTruthy()
     expect(getByText(container, 'literature-review')).toBeTruthy()
     expect(getByText(container, 'pubmed')).toBeTruthy()
     expect(container.querySelector('input, textarea')).toBeNull()

@@ -3023,6 +3023,8 @@
   "No Specialists match “{{query}}”.": "没有与“{{query}}”匹配的专家。",
   "No Marketplace Specialists available.": "没有可用的市场专家。",
   "Create editable copy": "创建可编辑副本",
+  "Excluded Skills": "排除的技能",
+  "Excluded Connectors": "排除的连接器",
   "Installed from Marketplace and managed by its publisher.": "从市场安装并由发布者管理。",
   "No Marketplace Specialists installed.": "尚未安装任何市场专家。",
   "This Specialist is managed by Marketplace. Create an editable copy to change its instructions or capabilities.": "此专家由市场管理。如需更改其指令或能力，请创建可编辑副本。",

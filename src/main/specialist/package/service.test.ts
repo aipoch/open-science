@@ -1332,7 +1332,7 @@ describe('SpecialistPackageService', () => {
     )
   })
 
-  it('reports local presentation and capability setup as modified before overwrite', async () => {
+  it('ignores local presentation but reports capability setup as modified before overwrite', async () => {
     const repository = new SpecialistRepository(storageDir)
     const service = new SpecialistPackageService({
       storageDir,
@@ -1346,7 +1346,17 @@ describe('SpecialistPackageService', () => {
       id: 'research-synth',
       revision: 1,
       iconKey: 'dna',
-      colorKey: 'blue',
+      colorKey: 'blue'
+    })
+    const appearanceOnly = await service.preview(validZip())
+    expect(appearanceOnly.overwrite).toMatchObject({ modifiedSinceImport: false })
+    expect(appearanceOnly.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-local-modifications' })
+    )
+
+    await new ProfileService(repository).update({
+      id: 'research-synth',
+      revision: 2,
       capabilityMode: 'full',
       fullAccess: {
         excludedSkillIds: ['excluded-locally'],

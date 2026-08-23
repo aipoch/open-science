@@ -2952,6 +2952,8 @@
   "No Specialists match “{{query}}”.": "「{{query}}」に一致するスペシャリストはありません。",
   "No Marketplace Specialists available.": "利用できるマーケットプレイスのスペシャリストがありません。",
   "Create editable copy": "編集可能なコピーを作成",
+  "Excluded Skills": "除外されたスキル",
+  "Excluded Connectors": "除外されたコネクタ",
   "Installed from Marketplace and managed by its publisher.": "マーケットプレイスからインストールされ、発行元によって管理されています。",
   "No Marketplace Specialists installed.": "マーケットプレイスのスペシャリストはインストールされていません。",
   "This Specialist is managed by Marketplace. Create an editable copy to change its instructions or capabilities.": "このスペシャリストはマーケットプレイスによって管理されています。指示や機能を変更するには、編集可能なコピーを作成してください。",

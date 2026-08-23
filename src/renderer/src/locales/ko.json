@@ -2962,6 +2962,8 @@
   "No Specialists match “{{query}}”.": "검색어 “{{query}}”에 일치하는 스페셜리스트가 없습니다.",
   "No Marketplace Specialists available.": "마켓플레이스 스페셜리스트를 사용할 수 없습니다.",
   "Create editable copy": "편집 가능한 복사본 만들기",
+  "Excluded Skills": "제외된 스킬",
+  "Excluded Connectors": "제외된 커넥터",
   "Installed from Marketplace and managed by its publisher.": "마켓플레이스에서 설치되며 게시자가 관리합니다.",
   "No Marketplace Specialists installed.": "설치된 마켓플레이스 스페셜리스트가 없습니다.",
   "This Specialist is managed by Marketplace. Create an editable copy to change its instructions or capabilities.": "이 스페셜리스트는 마켓플레이스에서 관리합니다. 지침이나 기능을 변경하려면 편집 가능한 복사본을 만드세요.",
