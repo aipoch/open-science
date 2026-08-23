@@ -61,6 +61,7 @@ export type AdmittedAgentBackendTarget = ExplicitAgentBackendTarget &
 export type AgentBackendResolutionContext = {
   forcedSkillIds?: string[]
   systemPromptAppends?: string[]
+  includeBaselineSystemPromptGuidance?: boolean
   forceCodexNativeResponsesCompatibility?: boolean
 }
 
@@ -308,9 +309,13 @@ export class AgentBackendResolver {
       )
     }
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
-    const userSkillDirectoryGuidance = userSkillDirectorySystemPromptAppend(this.storageRoot)
+    const includeBaselineSystemPromptGuidance =
+      context.includeBaselineSystemPromptGuidance !== false
+    const userSkillDirectoryGuidance = includeBaselineSystemPromptGuidance
+      ? userSkillDirectorySystemPromptAppend(this.storageRoot)
+      : undefined
     let connectorInstructions =
-      framework.id === 'claude-code'
+      includeBaselineSystemPromptGuidance && framework.id === 'claude-code'
         ? renderConnectorInstructions(this.connectors.connectorSkillNames(settings.connectors))
         : ''
     const executablePath =
@@ -371,10 +376,9 @@ export class AgentBackendResolver {
         contextWindow,
         ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
         contextUsageModel: target.effectiveModel,
-        systemPromptAppends: [
-          userSkillDirectoryGuidance,
-          ...(connectorInstructions ? [connectorInstructions] : [])
-        ],
+        systemPromptAppends: [userSkillDirectoryGuidance, connectorInstructions].filter(
+          (append): append is string => Boolean(append)
+        ),
         ...(transport.anthropicBridgeLease
           ? { anthropicBridgeLease: transport.anthropicBridgeLease }
           : {})
@@ -396,15 +400,17 @@ export class AgentBackendResolver {
       skillsRoot,
       forcedSkillIds
     )
-    connectorInstructions = renderConnectorInstructions(materializedConnectorSkillNames)
+    connectorInstructions = includeBaselineSystemPromptGuidance
+      ? renderConnectorInstructions(materializedConnectorSkillNames)
+      : ''
 
     const transport = await this.transports.acquire({ activeTarget: target, plan })
     const provider = transport.provider ?? target.provider
     const providerModelCatalog = transport.providerModelCatalog ?? plan.providerModelCatalog
     const responsesBridge = transport.responsesBridge
     const persistentSystemPromptAppends = [
-      userSkillDirectoryGuidance,
       ...(context.systemPromptAppends ?? []),
+      ...(userSkillDirectoryGuidance ? [userSkillDirectoryGuidance] : []),
       ...(framework.id === 'codex' && connectorInstructions ? [connectorInstructions] : [])
     ]
 

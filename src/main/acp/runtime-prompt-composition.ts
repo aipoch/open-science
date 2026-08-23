@@ -201,6 +201,7 @@ const composeAcpRuntimePromptOwners = (
       connectionGeneration: () => base.connectionResources.epoch,
       backend: () => base.backendGeneration.current,
       tooling: () => session.sessionEnvironment.toolingAvailability(),
+      role: () => session.sessionEnvironment.role(),
       bridgeSkillsAvailable: () => base.connectionResources.bridgeSkillsAvailable,
       skillImportEnabled: () => base.sessionCapabilities.isSkillImportEnabled(),
       contextEstimateInput: (sessionId) =>

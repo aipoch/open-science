@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
@@ -71,6 +72,8 @@ type HarnessOptions = {
   observerError?: Error
   projectAgentContext?: string
   resumeError?: unknown
+  specialistIdentity?: { append: string; prefix: string } | null
+  specialistSkills?: EffectiveSpecialistSkills
   supportsResume?: boolean
 }
 
@@ -273,6 +276,14 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     configurator: { configure, configurePermissionProfile },
     adopter: { adopt },
     clearLivePermissionProfile,
+    ...('specialistIdentity' in options
+      ? {
+          resolveSpecialistIdentity: vi.fn(async () => options.specialistIdentity ?? undefined)
+        }
+      : {}),
+    ...(options.specialistSkills
+      ? { resolveSpecialistSkills: vi.fn(async () => options.specialistSkills!) }
+      : {}),
     resolveProjectAgentContext: options.projectAgentContext
       ? vi.fn(async () => options.projectAgentContext)
       : undefined,
@@ -813,10 +824,103 @@ describe('AcpProviderSessionResumer', () => {
       previousBackendId: opencodeBackend.backendId
     })
 
-    expect(harness.sessionSetupAppends.at(-1)).toContain('Always cite DOIs.')
+    expect(harness.sessionSetupAppends.at(-1)?.join('\n')).toContain('Always cite DOIs.')
+    expect(harness.sessionSetupAppends.at(-1)?.join('\n')).toContain(
+      '<open_science_project_agent_context>'
+    )
+    expect(harness.sessionSetupAppends.at(-1)?.join('\n')).toContain(
+      '</open_science_project_agent_context>'
+    )
     expect(
       harness.registry.lookup('stable-app-session')?.aggregate.snapshot().sessionSetupPromptPrefix
     ).toContain('Always cite DOIs.')
+  })
+
+  it.each([
+    ['opencode', opencodeBackend],
+    ['codex-response', codexResponsesBackend],
+    ['codex-bridge', codexBridgeBackend]
+  ] as const)(
+    'restores the %s Specialist identity without repeating persistent application guidance',
+    async (route, initialBackend) => {
+      const specialistIdentity = {
+        append: '',
+        prefix: '<open_science_specialist_identity>Specialist</open_science_specialist_identity>'
+      }
+      const continuityToken = route === 'codex-bridge' ? 'bridge-continuity' : undefined
+      const harness = createHarness({
+        initialBackend: {
+          ...initialBackend,
+          ...(continuityToken ? { providerContinuityToken: continuityToken } : {}),
+          prompt: {
+            systemPromptAppends: ['Application guidance already installed.'],
+            persistentSystemPrompt: 'Baked persistent instructions.'
+          }
+        },
+        specialistIdentity,
+        specialistSkills: {
+          kind: 'specialist',
+          skillIds: ['research'],
+          frameworkNames: ['Research'],
+          missingSkillIds: []
+        }
+      })
+
+      await harness.resume({
+        previousFrameworkId: initialBackend.framework.id,
+        previousBackendId: initialBackend.backendId,
+        specialistId: 'specialist-1',
+        ...(route === 'opencode'
+          ? {}
+          : { providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb' }),
+        ...(continuityToken ? { providerContinuityToken: continuityToken } : {})
+      })
+
+      expect(harness.sessionSetupAppends.at(-1)).toEqual([])
+      expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
+        specialistId: 'specialist-1',
+        specialistPrefix: specialistIdentity.prefix,
+        sessionSetupPromptPrefix: undefined
+      })
+    }
+  )
+
+  it('restores the Claude Specialist append during compatible provider resume', async () => {
+    const specialistIdentity = {
+      append: '<open_science_specialist_identity>Specialist</open_science_specialist_identity>',
+      prefix: ''
+    }
+    const harness = createHarness({ specialistIdentity })
+
+    await harness.resume({
+      previousFrameworkId: 'claude-code',
+      previousBackendId: backend.backendId,
+      specialistId: 'specialist-1'
+    })
+
+    expect(harness.sessionSetupAppends.at(-1)).toContain(specialistIdentity.append)
+    expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
+      specialistId: 'specialist-1',
+      specialistPrefix: undefined
+    })
+  })
+
+  it('fails closed before provider resume when a bound Specialist is unavailable', async () => {
+    const harness = createHarness({
+      initialBackend: opencodeBackend,
+      specialistIdentity: null
+    })
+
+    await expect(
+      harness.resume({
+        previousFrameworkId: 'opencode',
+        previousBackendId: opencodeBackend.backendId,
+        specialistId: 'missing-specialist'
+      })
+    ).rejects.toThrow('The bound specialist is unavailable.')
+
+    expect(harness.request).not.toHaveBeenCalled()
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
   })
 
   it('replays configuration against a live effort change before publication', async () => {

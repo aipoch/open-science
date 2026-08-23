@@ -62,6 +62,10 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   configurator: Pick<AcpSessionConfigurator, 'configure' | 'configurePermissionProfile'>
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
   clearLivePermissionProfile: (sessionId: string) => void
+  resolveSpecialistIdentity?: (
+    specialistId: string,
+    frameworkId: string
+  ) => Promise<{ append: string; prefix: string } | undefined>
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
   // The ACP projectId carries the Project id (see workspace-conversation-controller). Returns
   // undefined when the project has no Agent Context or the lookup fails; failures never block
@@ -302,6 +306,10 @@ export class AcpProviderSessionResumer {
       const specialistId =
         request.specialistId ??
         this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot().specialistId
+      const [specialistIdentity, specialistSkills] = await Promise.all([
+        this.resolveSpecialistIdentity(specialistId, backend),
+        this.resolveSpecialistSkills(specialistId)
+      ])
       const projectContextAppend = await this.resolveProjectAgentContext(projectId)
       const setup = this.presentation.buildSessionSetup({
         framework: backend.framework,
@@ -310,10 +318,14 @@ export class AcpProviderSessionResumer {
           notebook: capability.descriptor.capabilities.includes('notebook'),
           skillImport: capability.descriptor.capabilities.includes('skill-import')
         },
+        role: capability.descriptor.role,
         backendSystemPromptAppends: backend.prompt.systemPromptAppends,
-        extraSystemPromptAppends: projectContextAppend ? [projectContextAppend] : [],
+        extraSystemPromptAppends: [specialistIdentity?.append, projectContextAppend].filter(
+          (append): append is string => Boolean(append)
+        ),
+        persistentSystemPrompt: backend.prompt.persistentSystemPrompt,
         sessionOptions: backend.session.options,
-        specialistSkills: await this.resolveSpecialistSkills(specialistId)
+        specialistSkills
       })
 
       let resumeResponse: unknown
@@ -392,7 +404,8 @@ export class AcpProviderSessionResumer {
           configOptions: structuredClone(configuration.configOptions)
         })
         aggregate.setSessionSetupPromptPrefix(setup.promptPrefix)
-        if (request.specialistId) aggregate.setSpecialistId(request.specialistId)
+        aggregate.setSpecialistPrefix(specialistIdentity?.prefix || undefined)
+        aggregate.setSpecialistId(specialistId)
         capability.commit(request.sessionId)
         capability = undefined
         provisionalSession = undefined
@@ -446,8 +459,7 @@ export class AcpProviderSessionResumer {
     if (!this.deps.resolveProjectAgentContext) return undefined
     try {
       const context = await this.deps.resolveProjectAgentContext(projectId)
-      const trimmed = context?.trim()
-      return trimmed ? trimmed : undefined
+      return this.presentation.projectAgentContext(context)
     } catch (error) {
       log.warn('project Agent Context resolution failed', errorLogFields(error))
       return undefined
@@ -462,6 +474,23 @@ export class AcpProviderSessionResumer {
       return await this.deps.resolveSpecialistSkills(specialistId)
     } catch {
       return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
+    }
+  }
+
+  private async resolveSpecialistIdentity(
+    specialistId: string | undefined,
+    backend: AcpBackendGenerationView
+  ): Promise<{ append: string; prefix: string } | undefined> {
+    if (!specialistId) return undefined
+    if (!this.deps.resolveSpecialistIdentity) {
+      throw new Error('The bound specialist is unavailable.')
+    }
+    try {
+      const identity = await this.deps.resolveSpecialistIdentity(specialistId, backend.framework.id)
+      if (!identity) throw new Error('The bound specialist is unavailable.')
+      return identity
+    } catch {
+      throw new Error('The bound specialist is unavailable.')
     }
   }
 

@@ -32,14 +32,18 @@ describe('buildSpecialistIdentityAppend', () => {
     expect(text).toContain('You are RNA-seq Reviewer. Focus on batch effects and QC.')
   })
 
-  it('states that it overrides the Main Agent identity', () => {
+  it('states that it specializes the common Open Science Agent identity', () => {
     const text = buildSpecialistIdentityAppend(makeProfile())
-    expect(text.toLowerCase()).toMatch(/override|replace|instead of main/i)
+    expect(text).toContain('specializes the Open Science Agent')
   })
 
-  it('states that app safety and tool rules remain in effect', () => {
+  it('closes the identity boundary and preserves app-owned constraints', () => {
     const text = buildSpecialistIdentityAppend(makeProfile())
-    expect(text.toLowerCase()).toMatch(/safety|tool rule|workflow rule|still apply/i)
+    expect(text).toContain('<open_science_specialist_identity>')
+    expect(text).toContain('</open_science_specialist_identity>')
+    expect(text).toContain('does not grant capabilities or permissions')
+    expect(text).toContain('provider/model safety')
+    expect(text).toContain('tool, workflow, provenance, and exact-output rules')
   })
 
   it('returns empty string when systemPrompt is empty', () => {
@@ -67,6 +71,11 @@ describe('buildSpecialistIdentityPrefix', () => {
   it('includes the systemPrompt content', () => {
     const text = buildSpecialistIdentityPrefix(makeProfile())
     expect(text).toContain('You are RNA-seq Reviewer. Focus on batch effects and QC.')
+  })
+
+  it('uses the same bounded content for append and per-turn prefix delivery', () => {
+    const profile = makeProfile()
+    expect(buildSpecialistIdentityPrefix(profile)).toBe(buildSpecialistIdentityAppend(profile))
   })
 
   it('returns empty string when systemPrompt is empty', () => {

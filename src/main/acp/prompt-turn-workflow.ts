@@ -28,6 +28,7 @@ import type { AcpProviderPromptExecutor, ProviderPromptOutcome } from './provide
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
 import type { AcpSessionToolingAvailability } from './session-presentation-policy'
+import type { SessionCapabilityPolicy } from './session-capability-owner'
 import type { AcpSessionRegistry } from './session-registry'
 import type { AcpTurnSkillOwner, TurnSkillHandle } from './turn-skill-owner'
 
@@ -62,6 +63,7 @@ type AcpPromptTurnEnvironment = Readonly<{
   connectionGeneration?: () => number
   backend: () => AcpBackendGenerationView
   tooling: () => AcpSessionToolingAvailability
+  role?: () => SessionCapabilityPolicy['role']
   bridgeSkillsAvailable: () => boolean
   skillImportEnabled: () => boolean
   contextEstimateInput: (sessionId: string) => SessionEstimateInput
@@ -349,6 +351,7 @@ class AcpPromptTurnWorkflow {
         connectionGeneration: turn.connectionGeneration,
         backend,
         tooling: env.tooling(),
+        role: env.role?.(),
         specialistPrefix: snapshot?.specialistPrefix,
         sessionSetupPromptPrefix: snapshot?.sessionSetupPromptPrefix,
         projectId: this.options.resolveProjectId(sessionId),

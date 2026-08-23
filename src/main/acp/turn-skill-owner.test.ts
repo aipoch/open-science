@@ -203,7 +203,10 @@ describe('AcpTurnSkillOwner', () => {
     })
 
     expect(prepared.text).toBe('Use the following skill(s) for this task: Research.\n\nfind papers')
-    expect(prepared.specialistSkillGuidance).toContain('Allowed Specialist Skills for this session')
+    expect(prepared.specialistSkillGuidance).toContain('<open_science_specialist_skill_scope>')
+    expect(prepared.specialistSkillGuidance).toContain(
+      'This list does not grant tool or Connector permissions.'
+    )
     expect(prepared.specialistSkillGuidance).toContain('mcp-pubmed')
     expect(prepared.codexSkillInputs).toEqual([])
   })
@@ -255,11 +258,9 @@ describe('AcpTurnSkillOwner', () => {
       specialistId: 'specialist-1'
     })
 
-    expect(presented.specialistSkillGuidance).toContain(
-      'Allowed Specialist Skills for this session'
-    )
+    expect(presented.specialistSkillGuidance).toContain('<open_science_specialist_skill_scope>')
     expect(presented.specialistSkillGuidance).toContain('mcp-pubmed')
-    expect(followUpPromptText(presented)).toContain('Allowed Specialist Skills for this session')
+    expect(followUpPromptText(presented)).toContain('<open_science_specialist_skill_scope>')
     expect(followUpPromptText(presented)).toContain(
       'Use the following skill(s) for this task: Research.\n\nfind papers'
     )

@@ -24747,9 +24747,9 @@ describe('Specialist Skill scoping', () => {
       const session = await runtime.createSession({ cwd: '/workspace', specialistId: 'sp-1' })
       await runtime.sendPrompt({ sessionId: session.sessionId, text: 'work' })
       await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
-      expect(agent.prompts[0]?.text).toContain('Allowed Specialist Skills for this session')
+      expect(agent.prompts[0]?.text).toContain('<open_science_specialist_skill_scope>')
       expect(agent.prompts[0]?.text).toContain('Allowed Skill')
-      expect(agent.prompts[1]?.text).toContain('Allowed Specialist Skills for this session')
+      expect(agent.prompts[1]?.text).toContain('<open_science_specialist_skill_scope>')
     }
   )
 
@@ -24895,6 +24895,7 @@ describe('Specialist Skill scoping', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       framework: claudeCodeFramework,
+      resolveSpecialistIdentity: async () => ({ append: '', prefix: '' }),
       resolveSpecialistSkills: specialistSkillResolver
     })
     await runtime.resumeSession({ sessionId: 'restored', cwd: '/workspace', specialistId: 'zero' })

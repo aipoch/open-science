@@ -86,7 +86,8 @@ const setup = (
     reloadDecision: { kind: 'continue' as const },
     prepareProvider: vi.fn(async () => ({
       text: 'prepared task',
-      specialistSkillGuidance: 'Allowed Specialist Skills for this session:\n- Research',
+      specialistSkillGuidance:
+        '<open_science_specialist_skill_scope>\n- Research\n</open_science_specialist_skill_scope>',
       codexSkillInputs: [{ name: 'Research', path: '/missing/Research/SKILL.md' }]
     })),
     close: vi.fn()
@@ -241,7 +242,7 @@ describe('AcpPromptPreparationOwner', () => {
     expect(preparedText).toEqual(expect.stringContaining('<open_science_notebook_continuity>'))
     expect(preparedText).toEqual(expect.stringContaining('"label":"dataset"'))
     expect(preparedText).toMatch(
-      /^replayed history[\s\S]+Specialist identity\.\n\nAllowed Specialist Skills for this session:\n- Research\n\nprepared task$/
+      /^replayed history[\s\S]+Specialist identity\.\n\n<open_science_specialist_skill_scope>\n- Research\n<\/open_science_specialist_skill_scope>\n\nprepared task$/
     )
     expect(fixture.authorizeReferencedUploads).toHaveBeenCalledWith('project-1', 'session-1', [
       '/uploads/Research.skill'
@@ -251,7 +252,7 @@ describe('AcpPromptPreparationOwner', () => {
     )
     expect(handle.content).toBe('provider-content')
     expect(handle.promptPrefix).toBe(
-      'Specialist identity.\n\nAllowed Specialist Skills for this session:\n- Research'
+      'Specialist identity.\n\n<open_science_specialist_skill_scope>\n- Research\n</open_science_specialist_skill_scope>'
     )
     expect(handle.skillActivityInputs).toEqual([
       { name: 'Research', path: '/missing/Research/SKILL.md' }

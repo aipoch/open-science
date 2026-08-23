@@ -10,11 +10,17 @@ import {
   isOfficialOpenAiResponsesBase,
   normalizeResponsesBaseUrl
 } from './codex'
+import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 import { CODEX_VERSION } from '../settings/managed-codex'
 
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
 describe('codexFramework', () => {
+  it('describes the base role as a general agent instead of narrowing every task to coding', () => {
+    expect(codexNativeModelInstructions).toContain('You are an agent')
+    expect(codexNativeModelInstructions).not.toContain('coding agent')
+  })
+
   it('disables every Codex native multi-agent implementation in every spawned profile', () => {
     const framework = createCodexFramework()
     const configurations = [

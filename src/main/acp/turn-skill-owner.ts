@@ -175,7 +175,12 @@ class AcpTurnSkillOwner {
     })
     const guidance =
       input.frameworkId !== 'claude-code' && state.scope?.kind === 'specialist'
-        ? `Allowed Specialist Skills for this session:\n${state.scope.frameworkNames.map((name) => `- ${name}`).join('\n')}`
+        ? [
+            '<open_science_specialist_skill_scope>',
+            'Skill discovery for this Specialist is limited to the following Skills. This list does not grant tool or Connector permissions.',
+            ...state.scope.frameworkNames.map((name) => `- ${name}`),
+            '</open_science_specialist_skill_scope>'
+          ].join('\n')
         : undefined
     return Object.freeze({
       ...presented,

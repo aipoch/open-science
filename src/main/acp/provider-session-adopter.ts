@@ -104,6 +104,7 @@ export class AcpProviderSessionAdopter {
           notebook: capability.descriptor.capabilities.includes('notebook'),
           skillImport: capability.descriptor.capabilities.includes('skill-import')
         },
+        role: capability.descriptor.role,
         backendSystemPromptAppends: startupBackend.prompt.systemPromptAppends,
         extraSystemPromptAppends: [
           specialistIdentity?.append,
@@ -222,8 +223,7 @@ export class AcpProviderSessionAdopter {
     if (!this.deps.resolveProjectAgentContext) return undefined
     try {
       const context = await this.deps.resolveProjectAgentContext(projectId)
-      const trimmed = context?.trim()
-      return trimmed ? trimmed : undefined
+      return this.presentation.projectAgentContext(context)
     } catch (error) {
       log.warn('project Agent Context resolution failed', diagnosticErrorFields(error))
       return undefined

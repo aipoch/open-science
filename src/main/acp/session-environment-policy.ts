@@ -26,6 +26,10 @@ type AcpSessionEnvironmentPolicyOptions = Readonly<{
 class AcpSessionEnvironmentPolicy {
   constructor(private readonly options: AcpSessionEnvironmentPolicyOptions) {}
 
+  role(): SessionCapabilityPolicy['role'] {
+    return (this.options.capabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY).role
+  }
+
   toolingAvailability(): ReturnType<AcpSessionCapabilityOwner['toolingAvailability']> {
     const backend = this.options.backendGeneration.current
     return this.options.capabilities.toolingAvailability({
@@ -37,9 +41,12 @@ class AcpSessionEnvironmentPolicy {
   }
 
   applicationSystemPromptAppends(): readonly string[] {
+    const role = this.role()
     return Object.freeze([
-      ...this.options.presentation.applicationSystemPromptAppends(this.toolingAvailability()),
-      ...(this.options.planSystemPromptAppend ? [this.options.planSystemPromptAppend] : [])
+      ...this.options.presentation.applicationSystemPromptAppends(this.toolingAvailability(), role),
+      ...(role === 'primary' && this.options.planSystemPromptAppend
+        ? [this.options.planSystemPromptAppend]
+        : [])
     ])
   }
 

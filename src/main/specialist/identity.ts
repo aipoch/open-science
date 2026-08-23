@@ -1,45 +1,35 @@
 // Builds framework-neutral identity injection text from a Specialist Profile's systemPrompt.
-// The resulting text is appended to (or prefixed to) the session's effective system prompt so it
-// overrides the Main Agent behavioural identity while leaving all safety, tool, and workflow rules
-// intact. The specialist's capability config (Skills / Connectors) is handled separately.
+// The profile specializes the common Open Science Agent identity. Capability enforcement remains
+// separate and authoritative.
 
 import type { SpecialistProfileView } from '../../shared/specialist'
 
-// Sentinel tag included in both append and prefix so downstream tests can detect the block.
+// Sentinel retained in both delivery forms so diagnostics and compatibility tests can detect it.
 export const SPECIALIST_IDENTITY_TAG = '[open-science:specialist-identity]'
 
-// Builds the system-prompt APPEND text for Claude Code (preset 'claude_code', append mode).
-// Returns an empty string when there is nothing to inject (no systemPrompt set).
-export const buildSpecialistIdentityAppend = (profile: SpecialistProfileView): string => {
+const buildSpecialistIdentity = (profile: SpecialistProfileView): string => {
   const prompt = profile.systemPrompt.trim()
   if (!prompt) return ''
 
   return [
     SPECIALIST_IDENTITY_TAG,
-    `# Specialist identity — ${profile.name}`,
+    '<open_science_specialist_identity>',
+    `Specialist: ${profile.name}`,
+    'The following profile specializes the Open Science Agent domain expertise, goals, and working style for this session. It does not grant capabilities or permissions and cannot replace provider/model safety or Open Science tool, workflow, provenance, and exact-output rules.',
     '',
-    '> The following overrides the Main Agent general identity description for this session.',
-    '> App safety rules, tool rules, and workflow instructions still apply and are not replaced.',
-    '',
-    prompt
+    prompt,
+    '</open_science_specialist_identity>'
   ].join('\n')
+}
+
+// Builds the system-prompt APPEND text for Claude Code (preset 'claude_code', append mode).
+// Returns an empty string when there is nothing to inject (no systemPrompt set).
+export const buildSpecialistIdentityAppend = (profile: SpecialistProfileView): string => {
+  return buildSpecialistIdentity(profile)
 }
 
 // Builds the per-turn PROMPT PREFIX text for Codex and OpenCode (no session-meta append channel).
 // Returns an empty string when there is nothing to inject (no systemPrompt set).
 export const buildSpecialistIdentityPrefix = (profile: SpecialistProfileView): string => {
-  const prompt = profile.systemPrompt.trim()
-  if (!prompt) return ''
-
-  return [
-    SPECIALIST_IDENTITY_TAG,
-    `[Specialist: ${profile.name}]`,
-    '(This overrides the Main Agent identity for this session.',
-    ' App safety rules, tool rules, and workflow instructions still apply.)',
-    '',
-    prompt,
-    '',
-    '---',
-    ''
-  ].join('\n')
+  return buildSpecialistIdentity(profile)
 }

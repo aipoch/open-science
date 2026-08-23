@@ -266,10 +266,11 @@ describe('AcpProviderSessionCreator', () => {
 
     await harness.creator.create({ projectId: 'project-1', specialistId: 'specialist-1' })
 
-    expect(harness.sessionSetupAppends.at(-1)?.slice(-2)).toEqual([
-      'specialist identity append',
-      'Always cite DOIs.'
-    ])
+    const appends = harness.sessionSetupAppends.at(-1) ?? []
+    expect(appends.at(-2)).toBe('specialist identity append')
+    expect(appends.at(-1)).toContain('<open_science_project_agent_context>')
+    expect(appends.at(-1)).toContain('Always cite DOIs.')
+    expect(appends.at(-1)).toContain('</open_science_project_agent_context>')
   })
 
   it.each([

@@ -374,6 +374,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       captureTarget: vi.fn(async () => target),
       resolveTarget: vi.fn(async (_target, context) => {
         expect(context.forceCodexNativeResponsesCompatibility).toBe(true)
+        expect(context.includeBaselineSystemPromptGuidance).toBe(false)
         return resolved
       }),
       relay,

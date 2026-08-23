@@ -695,6 +695,75 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     await backend.anthropicBridgeLease?.release()
   })
 
+  it('persists application guidance before user Skill directories for OpenCode', async () => {
+    const harness = makeHarness()
+    const applicationGuidance = 'Stable Open Science app guidance.'
+
+    const backend = await harness.resolver.resolveExplicitTarget(
+      {
+        frameworkId: 'opencode',
+        providerId: 'provider-a',
+        model: { kind: 'required', id: 'model-a' },
+        reasoningEffort: 'high'
+      },
+      { systemPromptAppends: [applicationGuidance] }
+    )
+    const instructions = backend.persistentSystemPrompt ?? ''
+
+    expect(instructions.indexOf(applicationGuidance)).toBeGreaterThanOrEqual(0)
+    expect(instructions.indexOf('<open_science_user_skill_directories>')).toBeGreaterThan(
+      instructions.indexOf(applicationGuidance)
+    )
+    await backend.providerTransportLease?.release()
+  })
+
+  it.each([
+    { name: 'Claude Code', frameworkId: 'claude-code' as const, target: {} },
+    { name: 'OpenCode', frameworkId: 'opencode' as const, target: {} },
+    {
+      name: 'Codex Responses',
+      frameworkId: 'codex' as const,
+      target: { provider: { apiEndpoints: ['responses'] as const } }
+    }
+  ])(
+    'omits baseline Skill and Connector guidance for a restricted $name backend',
+    async (testCase) => {
+      const harness = makeHarness({
+        connectorIds: ['pubmed'],
+        targetOverride: () => testCase.target
+      })
+      const restrictedPrompt = 'Restricted single-purpose prompt.'
+
+      const backend = await harness.resolver.resolveExplicitTarget(
+        {
+          frameworkId: testCase.frameworkId,
+          providerId: 'provider-a',
+          model: { kind: 'provider-default' },
+          reasoningEffort: 'high'
+        },
+        {
+          systemPromptAppends: [restrictedPrompt],
+          includeBaselineSystemPromptGuidance: false
+        }
+      )
+      const instructions =
+        testCase.frameworkId === 'claude-code'
+          ? backend.systemPromptAppends?.join('\n\n')
+          : backend.persistentSystemPrompt
+
+      if (testCase.frameworkId === 'claude-code') {
+        expect(instructions).toBe('')
+      } else {
+        expect(instructions).toBe(restrictedPrompt)
+      }
+      expect(instructions).not.toContain('<open_science_user_skill_directories>')
+      expect(instructions).not.toContain('# Open Science data connector conventions')
+      await backend.anthropicBridgeLease?.release()
+      await backend.responsesBridgeLease?.release()
+      await backend.providerTransportLease?.release()
+    }
+  )
+
   it('keeps a single Claude target behind loopback and projects its model target', async () => {
     const harness = makeHarness()
     const backend = await harness.resolver.resolveActiveBackend()
@@ -1441,7 +1510,7 @@ describe('AgentBackendResolver bridge predicates', () => {
       expect(instructions).toContain(
         'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
       )
-      expect(instructions).toContain('Allowed Specialist Skills for this session')
+      expect(instructions).toContain('`<open_science_specialist_skill_scope>` block')
       expect(instructions).not.toContain('host.mcp("custom-chemistry"')
       expect(instructions).not.toContain('`mcp-openalex`')
       expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledTimes(
@@ -1504,34 +1573,51 @@ describe('AgentBackendResolver bridge predicates', () => {
       native: true,
       apiEndpoints: ['responses'] as const
     }
-  ])('persists skill-first connector guidance for Codex $name', async (testCase) => {
-    const harness = makeHarness({
-      connectorIds: ['pubmed'],
-      targetOverride: () => ({
-        needsChatResponsesBridge: testCase.chat,
-        needsNativeResponsesCompatibility: testCase.native,
-        provider: { apiEndpoints: [...testCase.apiEndpoints] }
+  ])(
+    'persists ordered application, Skill, and Connector guidance for Codex $name',
+    async (testCase) => {
+      const harness = makeHarness({
+        connectorIds: ['pubmed'],
+        targetOverride: () => ({
+          needsChatResponsesBridge: testCase.chat,
+          needsNativeResponsesCompatibility: testCase.native,
+          provider: { apiEndpoints: [...testCase.apiEndpoints] }
+        })
       })
-    })
 
-    const backend = await harness.resolver.resolveExplicitTarget({
-      frameworkId: 'codex',
-      providerId: 'provider-a',
-      model: { kind: 'provider-default' },
-      reasoningEffort: 'high'
-    })
-    const developerInstructions = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
-      .developer_instructions as string | undefined
+      const applicationGuidance = 'Stable Open Science app guidance.'
+      const backend = await harness.resolver.resolveExplicitTarget(
+        {
+          frameworkId: 'codex',
+          providerId: 'provider-a',
+          model: { kind: 'provider-default' },
+          reasoningEffort: 'high'
+        },
+        { systemPromptAppends: [applicationGuidance] }
+      )
+      const developerInstructions = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
+        .developer_instructions as string | undefined
 
-    expect(developerInstructions).toContain(
-      'Load the matching `mcp-*` skill before the first `host.mcp` call'
-    )
-    expect(developerInstructions).toContain('Never guess a connector server or method name')
-    expect(developerInstructions).not.toContain('search_articles')
-    expect(backend.persistentSystemPrompt).toBe(developerInstructions)
-    expect(backend.systemPromptAppends).toBeUndefined()
-    await backend.responsesBridgeLease?.release()
-  })
+      expect(developerInstructions).toBeDefined()
+      const userSkillIndex = developerInstructions?.indexOf('<open_science_user_skill_directories>')
+      const connectorIndex = developerInstructions?.indexOf(
+        '# Open Science data connector conventions'
+      )
+      expect(developerInstructions?.indexOf(applicationGuidance)).toBeGreaterThanOrEqual(0)
+      expect(userSkillIndex).toBeGreaterThan(
+        developerInstructions?.indexOf(applicationGuidance) ?? -1
+      )
+      expect(connectorIndex).toBeGreaterThan(userSkillIndex ?? -1)
+      expect(developerInstructions).toContain(
+        'Load the matching `mcp-*` skill before the first `host.mcp` call'
+      )
+      expect(developerInstructions).toContain('Never guess a connector server or method name')
+      expect(developerInstructions).not.toContain('search_articles')
+      expect(backend.persistentSystemPrompt).toBe(developerInstructions)
+      expect(backend.systemPromptAppends).toBeUndefined()
+      await backend.responsesBridgeLease?.release()
+    }
+  )
 
   it.each([
     { name: 'direct', chat: false, native: false, responseCalls: 0, nativeCalls: 0 },
