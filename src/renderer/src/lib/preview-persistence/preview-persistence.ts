@@ -361,16 +361,8 @@ const suppressedConflictRestoreSaves = new Set<string>()
 
 const restorePreviewConflict = (projectId: string, snapshot: PreviewStateSnapshot | null): void => {
   const store = usePreviewWorkbenchStore.getState()
-  if (store.activeProjectId !== projectId) {
-    usePreviewWorkbenchStore.setState((state) => {
-      if (!Object.hasOwn(state.byProject, projectId)) return state
-
-      const byProject = { ...state.byProject }
-      delete byProject[projectId]
-      return { byProject }
-    })
-    return
-  }
+  // The next activation will merge a fresh durable snapshot into the cached runtime-owned tabs.
+  if (store.activeProjectId !== projectId) return
 
   const projectSessions = useSessionStore
     .getState()

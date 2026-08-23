@@ -576,10 +576,11 @@ describe('preview workbench store', () => {
     })
   })
 
-  it('replaces an active project slice when persistence resolves a conflict', () => {
+  it('replaces durable tabs without dropping active runtime-only tabs', () => {
     const store = usePreviewWorkbenchStore.getState()
     store.activateProject('project-a')
     store.upsertAndActivateItem(createProjectFilesPreviewItem())
+    store.setToolItemExpanded(PROJECT_FILES_PREVIEW_ID)
 
     store.activateProject('project-a', {
       panelState: 'open',
@@ -599,8 +600,9 @@ describe('preview workbench store', () => {
 
     expect(usePreviewWorkbenchStore.getState()).toMatchObject({
       activeProjectId: 'project-a',
-      activeItemId: 'file:session-2:/workspace/results.csv',
-      items: [{ id: 'file:session-2:/workspace/results.csv' }]
+      activeItemId: PROJECT_FILES_PREVIEW_ID,
+      expandedToolItemId: PROJECT_FILES_PREVIEW_ID,
+      items: [{ id: 'file:session-2:/workspace/results.csv' }, { id: PROJECT_FILES_PREVIEW_ID }]
     })
   })
 

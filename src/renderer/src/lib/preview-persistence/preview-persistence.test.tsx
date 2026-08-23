@@ -693,15 +693,16 @@ describe('usePreviewPersistence per-project save/restore', () => {
     act(() => {
       usePreviewWorkbenchStore.setState({
         panelState: 'open',
-        activeItemId: staleItem.id,
-        items: [staleItem]
+        activeItemId: createStoredToolItem().id,
+        items: [staleItem, createStoredToolItem()]
       })
     })
     await act(async () => {
       root.render(<PersistenceHarness projectId="project-b" />)
     })
     expect(usePreviewWorkbenchStore.getState().byProject['project-a']?.items).toEqual([
-      expect.objectContaining({ id: staleItem.id })
+      expect.objectContaining({ id: staleItem.id }),
+      expect.objectContaining({ id: createStoredToolItem().id })
     ])
 
     await act(async () => {
@@ -720,8 +721,11 @@ describe('usePreviewPersistence per-project save/restore', () => {
 
     expect(usePreviewWorkbenchStore.getState()).toMatchObject({
       activeProjectId: 'project-a',
-      activeItemId: serverItem.id,
-      items: [expect.objectContaining({ id: serverItem.id })]
+      activeItemId: createStoredToolItem().id,
+      items: [
+        expect.objectContaining({ id: serverItem.id }),
+        expect.objectContaining({ id: createStoredToolItem().id })
+      ]
     })
   })
 
