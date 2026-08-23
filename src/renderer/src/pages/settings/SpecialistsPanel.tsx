@@ -2079,7 +2079,10 @@ const InstalledSpecialistsPanel = ({
                         style={getAvatarStyle('teal')}
                         aria-hidden="true"
                       >
-                        <OwlScholarIcon className="size-3.5" data-specialist-icon="owl-scholar" />
+                        <OwlScholarIcon
+                          className="size-[18px]"
+                          data-specialist-icon="owl-scholar"
+                        />
                       </span>
                     </span>
                     <div className="min-w-0 flex-1">

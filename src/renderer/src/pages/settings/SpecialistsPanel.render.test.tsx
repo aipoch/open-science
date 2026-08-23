@@ -1188,7 +1188,9 @@ describe('SpecialistsPanel', () => {
     const reviewerRow = reviewerLabel?.closest('[data-slot="settings-list-row"]')
     expect(reviewerRow?.firstElementChild?.className).toContain('size-11')
     expect(reviewerRow?.children[1]?.className).toContain('flex-1')
-    expect(reviewerRow?.querySelector('[data-specialist-icon="owl-scholar"]')).not.toBeNull()
+    const reviewerIcon = reviewerRow?.querySelector('[data-specialist-icon="owl-scholar"]')
+    expect(reviewerIcon).not.toBeNull()
+    expect(reviewerIcon?.getAttribute('class')).toContain('size-[18px]')
 
     await act(async () => builtin!.click())
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'builtin', id: 'builtin-curator' })
