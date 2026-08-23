@@ -244,8 +244,7 @@ export const buildTokenUsageAnalytics = (
 
 export const buildTokenUsageAnalyticsFromProjection = (
   projection: SessionUsageProjection,
-  now: number = Date.now(),
-  projects: readonly Project[] = []
+  now: number = Date.now()
 ): TokenUsageAnalytics => {
   const analytics: TokenUsageAnalytics = {
     now,
@@ -253,7 +252,7 @@ export const buildTokenUsageAnalyticsFromProjection = (
       createEmptyDailyPoint(addLocalDays(startOfLocalDay(now), index - 29))
     ),
     sessionCreatedAt: projection.sessionCreatedAt,
-    projectCreatedAt: projects.map((project) => project.createdAt),
+    projectCreatedAt: projection.projectCreatedAt,
     artifactCreatedAt: projection.artifactCreatedAt,
     runsAt: projection.runsAt,
     usageEvents: projection.usageEvents,

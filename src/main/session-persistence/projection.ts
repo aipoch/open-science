@@ -375,6 +375,24 @@ export class SessionProjectionRepository {
     })
   }
 
+  // Replays a pending JSON write even after its Project has become an invisible tombstone. The
+  // Session row and number were allocated when the pending marker was created, so reconciliation
+  // updates only that existing identity and cannot create new authority for a deleted Project.
+  async commitReconciliation(session: PersistedChatSession): Promise<void> {
+    const client = await this.client()
+    const projection = buildSessionProjection(session)
+    await client.$transaction(async (tx) => {
+      const existing = await tx.session.findUnique({ where: { id: session.id } })
+      if (!existing) throw new Error('Pending Session projection identity is missing.')
+      await tx.session.update({
+        where: { id: session.id },
+        data: sessionData(projection, session.number ?? existing.number)
+      })
+      await replaceChildren(tx, session.id, projection)
+      await tx.pendingSessionReconciliation.deleteMany({ where: { sessionId: session.id } })
+    })
+  }
+
   async markPending(projectId: string, sessionId: string): Promise<void> {
     const client = await this.client()
     await client.pendingSessionReconciliation.upsert({
@@ -478,7 +496,8 @@ export class SessionProjectionRepository {
 
   async usage(): Promise<SessionUsageProjection> {
     const client = await this.client()
-    const [sessions, usage, runs, artifacts] = await client.$transaction([
+    const [projects, sessions, usage, runs, artifacts] = await client.$transaction([
+      client.project.findMany({ select: { createdAt: true } }),
       client.session.findMany({
         where: { deletedAtMs: null },
         select: { createdAtMs: true }
@@ -503,6 +522,7 @@ export class SessionProjectionRepository {
       }
     }
     return {
+      projectCreatedAt: projects.map(({ createdAt }) => createdAt.getTime()),
       sessionCreatedAt: sessions.map(({ createdAtMs }) => Number(createdAtMs)),
       artifactCreatedAt: [...artifactCreatedAt.values()].filter(
         (timestamp): timestamp is number => timestamp !== undefined

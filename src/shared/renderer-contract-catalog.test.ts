@@ -178,6 +178,22 @@ describe('renderer contract catalog', () => {
     ])
   })
 
+  it('keeps SQLite-only Session projection reads on Electron', () => {
+    const projectionReads = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
+      ['sessions.list', 'sessions.loadOne', 'sessions.loadUsage'].includes(publicPath)
+    )
+
+    expect(projectionReads).toHaveLength(3)
+    expect(
+      projectionReads.every(
+        ({ surfaceInstallation }) =>
+          surfaceInstallation.electron === 'preload' &&
+          surfaceInstallation.localWeb === 'unavailable' &&
+          surfaceInstallation.remoteWeb === 'unavailable'
+      )
+    ).toBe(true)
+  })
+
   it('records the paired window lifecycle channels and teardown ordering', () => {
     const lifecycleFor = (publicPath: string): unknown =>
       RENDERER_CONTRACT_CATALOG.find((contract) => contract.publicPath === publicPath)

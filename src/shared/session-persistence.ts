@@ -597,6 +597,7 @@ export type SessionSummary = Readonly<{
 
 export type SessionUsageProjection = Readonly<{
   sessionCreatedAt: number[]
+  projectCreatedAt: number[]
   artifactCreatedAt: number[]
   runsAt: number[]
   usageEvents: Array<

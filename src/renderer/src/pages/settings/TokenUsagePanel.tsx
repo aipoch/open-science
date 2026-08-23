@@ -127,7 +127,7 @@ function TokenUsagePanel({
   const analytics = useMemo(
     () =>
       usageProjection
-        ? buildTokenUsageAnalyticsFromProjection(usageProjection, now, projects)
+        ? buildTokenUsageAnalyticsFromProjection(usageProjection, now)
         : buildTokenUsageAnalytics(sessions, now, projects),
     [sessions, usageProjection, now, projects]
   )

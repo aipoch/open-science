@@ -899,6 +899,9 @@ const createApplicationModules = async (
     result?: LoadAllSessionsResult
     sessions: SessionSummary[]
   }> => {
+    // Reconcile a JSON write from a committed Project tombstone before deletion recovery removes
+    // that temporary authority. Its SQLite facts remain part of retained Project history.
+    await sessionRepository.reconcilePendingSessionProjection()
     await projectDeletionCoordinator.recoverPendingDeletions()
     const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
     await sessionPersistenceCoordinator.replaceSessionMetadata(

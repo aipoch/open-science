@@ -275,6 +275,33 @@ class SessionRepository {
     return initialization
   }
 
+  async reconcilePendingSessionProjection(): Promise<void> {
+    if (!this.projection || !(await this.projection.isInitialized())) return
+    for (const pending of await this.projection.pending()) {
+      const loaded = await this.loadSessionWithDiagnostics(pending.projectId, pending.sessionId, {
+        mode: 'read-only'
+      })
+      if (loaded.status === 'unreadable') break
+      if (loaded.status === 'found') {
+        const numbered = await this.projection.prepareSave(loaded.session)
+        await this.saveSession(numbered)
+        continue
+      }
+
+      const deletionState = await this.getProjectSessionDeletionState(pending.projectId)
+      if (deletionState === 'prepared' || deletionState === 'legacy-committed') {
+        const committed = await this.loadCommittedProjectWithDiagnostics(pending.projectId)
+        if (!committed.isComplete) break
+        const session = committed.sessions.find(({ id }) => id === pending.sessionId)
+        if (session) {
+          await this.projection.commitReconciliation(session)
+          continue
+        }
+      }
+      await this.projection.commitDelete(pending.sessionId)
+    }
+  }
+
   private async ensureSessionProjectionNow(
     loadAuthority: () => Promise<LoadAllSessionsResult>
   ): Promise<{ result?: LoadAllSessionsResult; sessions: SessionSummary[] }> {
@@ -349,18 +376,7 @@ class SessionRepository {
     }
 
     if (await this.projection.isInitialized()) {
-      for (const pending of await this.projection.pending()) {
-        const loaded = await this.loadSessionWithDiagnostics(pending.projectId, pending.sessionId, {
-          mode: 'read-only'
-        })
-        if (loaded.status === 'unreadable') break
-        if (loaded.status === 'missing') {
-          await this.projection.commitDelete(pending.sessionId)
-          continue
-        }
-        const numbered = await this.projection.prepareSave(loaded.session)
-        await this.saveSession(numbered)
-      }
+      await this.reconcilePendingSessionProjection()
       if (await this.projection.isReady()) return loadReadyProjection()
     }
 

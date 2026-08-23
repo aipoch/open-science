@@ -89,6 +89,7 @@ describe('TokenUsagePanel', () => {
     const now = localTime(2026, 8, 15, 18)
     const projection = (inputTokens: number): SessionUsageProjection => ({
       sessionCreatedAt: [now],
+      projectCreatedAt: [now],
       artifactCreatedAt: [],
       runsAt: [now],
       usageEvents: [

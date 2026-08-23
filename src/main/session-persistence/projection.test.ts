@@ -94,7 +94,9 @@ describe('Session projection', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-projection-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
-    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    await client.project.create({
+      data: { id: 'project-1', name: 'Project', createdAt: new Date(50) }
+    })
     const repository = new SessionProjectionRepository(async () => client!)
 
     const first = await repository.prepareSave(session('session-1', 100))
@@ -111,6 +113,7 @@ describe('Session projection', () => {
       { id: 'session-1', number: 1, activeMessageCount: 2 }
     ])
     await expect(repository.usage()).resolves.toMatchObject({
+      projectCreatedAt: [50],
       sessionCreatedAt: expect.arrayContaining([100, 200]),
       runsAt: expect.arrayContaining([101, 201]),
       totalArtifacts: 2,
@@ -132,7 +135,9 @@ describe('Session projection', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-number-sequence-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
-    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    await client.project.create({
+      data: { id: 'project-1', name: 'Project', createdAt: new Date(50) }
+    })
     const repository = new SessionProjectionRepository(async () => client!)
 
     const first = await repository.prepareSave(session('session-1'))
@@ -141,6 +146,7 @@ describe('Session projection', () => {
 
     await expect(repository.list()).resolves.toEqual([])
     await expect(repository.usage()).resolves.toMatchObject({
+      projectCreatedAt: [50],
       sessionCreatedAt: [],
       runsAt: [],
       usageEvents: [],
@@ -178,7 +184,9 @@ describe('Session projection', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-usage-history-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
-    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    await client.project.create({
+      data: { id: 'project-1', name: 'Project', createdAt: new Date(50) }
+    })
     const sessions = new SessionProjectionRepository(async () => client!)
     const saved = await sessions.prepareSave(session('session-1'))
     await sessions.commitSave(saved)
@@ -192,6 +200,7 @@ describe('Session projection', () => {
     })
     await expect(sessions.list()).resolves.toEqual([])
     await expect(sessions.usage()).resolves.toMatchObject({
+      projectCreatedAt: [50],
       sessionCreatedAt: [100],
       runsAt: [101],
       totalArtifacts: 1,
@@ -206,6 +215,40 @@ describe('Session projection', () => {
     await expect(sessions.usage()).resolves.toMatchObject({ totalArtifacts: 1 })
     await expect(sessions.prepareSave(session('late-session'))).rejects.toThrow('deleted Project')
     await expect(client.project.delete({ where: { id: 'project-1' } })).rejects.toThrow()
+  })
+
+  it('reconciles pending Usage from a committed Project tombstone before removing it', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-pending-history-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({
+      data: { id: 'project-1', name: 'Project', createdAt: new Date(50) }
+    })
+    const files = new SessionRepository(storageRoot)
+    await files.saveSession(session('session-1'))
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    await repository.ensureSessionProjection(() => files.loadAll())
+    const loaded = (await repository.loadSession('project-1', 'session-1'))!
+    const updated = { ...session('session-1'), number: loaded.number, revision: loaded.revision }
+    updated.messages[1].turnUsage = { inputTokens: 99, cacheTokens: 8, outputTokens: 7 }
+
+    await projection.markPending('project-1', 'session-1')
+    await files.saveSession(updated)
+    await files.deleteProjectSessions('project-1')
+    await new ProjectRepository(async () => client!).delete('project-1')
+    await repository.reconcilePendingSessionProjection()
+
+    await expect(projection.pending()).resolves.toEqual([])
+    await expect(projection.usage()).resolves.toMatchObject({
+      projectCreatedAt: [50],
+      sessionCreatedAt: [100],
+      usageEvents: [expect.objectContaining({ inputTokens: 99 })]
+    })
+    await files.completeProjectSessionDeletion('project-1')
+    await expect(projection.usage()).resolves.toMatchObject({
+      usageEvents: [expect.objectContaining({ inputTokens: 99 })]
+    })
   })
 
   it('backfills historical JSON numbers by creation time before normal autoincrement', async () => {
