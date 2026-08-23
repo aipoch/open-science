@@ -1564,6 +1564,53 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession.mock.calls[1][0].messages).toEqual(latest.messages)
   })
 
+  it('still saves an unsaved local title after a newer remote Session projection', async () => {
+    const persisted = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 1,
+        title: 'Original'
+      })
+    )
+    const remote = materializeSessionConversationGraph({
+      ...persisted,
+      revision: 2,
+      title: 'Remote title',
+      messages: [
+        {
+          id: 'remote-message',
+          role: 'agent',
+          content: 'Saved in another window',
+          status: 'complete',
+          eventIds: [],
+          createdAt: persisted.updatedAt + 1,
+          updatedAt: persisted.updatedAt + 1
+        }
+      ],
+      updatedAt: persisted.updatedAt + 10
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockImplementation(async (submitted) => ({
+        ...submitted,
+        revision: (submitted.revision ?? 0) + 1
+      }))
+    const api = createApi({ saveSession })
+    useSessionStore.getState().hydrateSessions([persisted])
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().renameSession('session-1', 'Local draft')
+    useSessionStore.getState().upsertPersistedSession(remote)
+    await save(useSessionStore.getState())
+
+    expect(useSessionStore.getState().sessions[0].title).toBe('Local draft')
+    expect(useSessionStore.getState().sessions[0].unsavedTitle).toBeUndefined()
+    expect(saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Local draft', revision: 2 }),
+      { conflictRebaseFields: ['title'] }
+    )
+  })
+
   it('reports an earlier failed write even when a later queued write succeeds', async () => {
     const api = createApi({
       saveSession: vi.fn().mockRejectedValue(new Error('disk full')),

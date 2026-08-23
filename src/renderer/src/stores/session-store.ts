@@ -299,6 +299,7 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
           ? {
               ...session,
               title: trimmedTitle,
+              unsavedTitle: true,
               updatedAt: Date.now()
             }
           : session

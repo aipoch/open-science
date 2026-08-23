@@ -27,8 +27,7 @@ import {
   type PersistedMessageStatus,
   type PersistedSessionManifest,
   type PersistedSessionStatus,
-  type PersistedToolActivity,
-  type PersistedUploadedAttachment
+  type PersistedToolActivity
 } from '../../../shared/session-persistence'
 import {
   inferSessionInteractionState,
@@ -37,6 +36,7 @@ import {
 } from './session-store-interaction-state'
 import {
   mergeDelegatedWorkAuthorityProjection,
+  mergeDurableUploadProjection,
   mergeNewerPersistedSessionByIdentity,
   mergePersistedRuntimeIdentityProjection,
   mergeRuntimeConversationAuthority,
@@ -82,6 +82,8 @@ export type ChatSession = Omit<
   activePlanProjection?: ActivePlanProjection
   planHistoryProjections?: ActivePlanProjection[]
   isPending?: boolean
+  // Transient: renameSession wrote a title that disk has not acknowledged.
+  unsavedTitle?: true
   interrupted?: boolean
   fixLoopActive?: boolean
   compacting?: boolean
@@ -169,6 +171,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     activities,
     activityGroups,
     isPending,
+    unsavedTitle,
     interrupted,
     fixLoopActive,
     compacting,
@@ -191,6 +194,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
   } = session
 
   void isPending
+  void unsavedTitle
   void interrupted
   void fixLoopActive
   void compacting
@@ -297,55 +301,6 @@ const withTransientSessionState = (
     pendingContextReplayMessageId: source.pendingContextReplayMessageId,
     interactionState: source.interactionState
   }
-}
-
-const isSameSubmittedUpload = (
-  current: PersistedUploadedAttachment,
-  submitted: PersistedUploadedAttachment
-): boolean =>
-  current.id === submitted.id &&
-  current.versionId === submitted.versionId &&
-  current.sessionId === submitted.sessionId &&
-  current.name === submitted.name &&
-  current.originalName === submitted.originalName &&
-  current.path === submitted.path &&
-  current.mimeType === submitted.mimeType &&
-  current.size === submitted.size
-
-const mergeDurableUploadProjection = <Message extends PersistedChatMessage>(
-  currentMessages: Message[],
-  submittedMessages: PersistedChatMessage[],
-  durableMessages: PersistedChatMessage[]
-): { messages: Message[]; changed: boolean } => {
-  const submittedById = new Map(submittedMessages.map((message) => [message.id, message]))
-  const durableById = new Map(durableMessages.map((message) => [message.id, message]))
-  let changed = false
-  const messages = currentMessages.map((message) => {
-    const submitted = submittedById.get(message.id)
-    const durable = durableById.get(message.id)
-    if (!message.uploads || !submitted?.uploads || !durable?.uploads) return message
-    const submittedUploads = new Map(submitted.uploads.map((upload) => [upload.id, upload]))
-    const durableUploads = new Map(durable.uploads.map((upload) => [upload.id, upload]))
-    let uploadsChanged = false
-    const uploads = message.uploads.map((upload) => {
-      const submittedUpload = submittedUploads.get(upload.id)
-      const durableUpload = durableUploads.get(upload.id)
-      if (
-        !submittedUpload ||
-        !durableUpload?.versionId ||
-        submittedUpload.versionId ||
-        !isSameSubmittedUpload(upload, submittedUpload)
-      ) {
-        return upload
-      }
-      uploadsChanged = true
-      return durableUpload
-    })
-    if (!uploadsChanged) return message
-    changed = true
-    return { ...message, uploads } as Message
-  })
-  return { messages, changed }
 }
 
 const projectDurablePlanAuthority = (
@@ -492,10 +447,15 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         !hydratedSession.planHistoryProjections && existing?.planHistoryProjections
           ? { planHistoryProjections: existing.planHistoryProjections }
           : {}
+      const unsavedLocalTitle =
+        existing?.unsavedTitle === true
+          ? { title: existing.title, unsavedTitle: true as const }
+          : {}
       const hydratedWithTransientState = {
         ...hydratedSession,
         ...retainedPlanHistory,
-        ...currentPlanProjection
+        ...currentPlanProjection,
+        ...unsavedLocalTitle
       }
       markExternallyHydratedSession(hydratedWithTransientState, session)
       const nextSessions = [

@@ -982,26 +982,28 @@ const createStoreSaver = (
 
       const target = `session:${session.id}`
       const isForced = options?.forceTargets?.has(target) === true
-      if (isExternallyHydratedSession(session)) {
-        const authority = getExternallyHydratedSessionAuthority(session)
-        if (authority) {
-          const previousAuthority = acknowledgedSessions.get(session.id)
-          const authorityIsNewer =
-            !previousAuthority ||
-            sessionRevision(authority) > sessionRevision(previousAuthority) ||
-            (sessionRevision(authority) === sessionRevision(previousAuthority) &&
-              authority.updatedAt >= previousAuthority.updatedAt)
-          acknowledgedRevisions.set(
-            session.id,
-            Math.max(acknowledgedRevisions.get(session.id) ?? 0, sessionRevision(authority))
-          )
-          if (authorityIsNewer) acknowledgedSessions.set(session.id, authority)
-        }
+      const authority = isExternallyHydratedSession(session)
+        ? getExternallyHydratedSessionAuthority(session)
+        : undefined
+      if (authority) {
+        const previousAuthority = acknowledgedSessions.get(session.id)
+        const authorityIsNewer =
+          !previousAuthority ||
+          sessionRevision(authority) > sessionRevision(previousAuthority) ||
+          (sessionRevision(authority) === sessionRevision(previousAuthority) &&
+            authority.updatedAt >= previousAuthority.updatedAt)
+        acknowledgedRevisions.set(
+          session.id,
+          Math.max(acknowledgedRevisions.get(session.id) ?? 0, sessionRevision(authority))
+        )
+        if (authorityIsNewer) acknowledgedSessions.set(session.id, authority)
       }
 
+      const hasUnsavedLocalTitle =
+        session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
       if (
         (previousById.get(session.id) !== session || isForced) &&
-        (isForced || !isExternallyHydratedSession(session)) &&
+        (isForced || !isExternallyHydratedSession(session) || hasUnsavedLocalTitle) &&
         !hasStagedUploads(session) &&
         // A terminal graph-integrity failure keeps the renderer responsive, but the flat projection
         // is no longer proven to match the immutable Branch graph. Preserve the last durable copy.
@@ -1016,6 +1018,7 @@ const createStoreSaver = (
         const conflictRebaseFields = [
           ...new Set([
             ...changedConflictRebaseFields,
+            ...(hasUnsavedLocalTitle ? (['title'] as const) : []),
             ...(options?.conflictRebaseFieldsByTarget?.get(target) ?? [])
           ])
         ]
