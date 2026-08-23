@@ -60,6 +60,15 @@ describe('DatabaseStartupGate', () => {
     expect(updatingLabel.className).toBe(checkingLabel.className)
     expect(screen.getByText('Keep Open Science open while this finishes.')).toBeTruthy()
     expect(screen.getByTestId('open-science-logo-loader')).toBe(startupLoader)
+
+    act(() => publish({ phase: 'starting' }))
+
+    const startingLabel = screen.getByText('Starting Open Science…')
+    expect(startingLabel.tagName).toBe('SPAN')
+    expect(startingLabel.className).toBe(checkingLabel.className)
+    expect(screen.getByText('Keep Open Science open while this finishes.')).toBeTruthy()
+    expect(screen.queryByText('Checking database…')).toBeNull()
+    expect(screen.getByTestId('open-science-logo-loader')).toBe(startupLoader)
   })
 
   it('keeps the application unmounted until the database and runtime are ready', async () => {

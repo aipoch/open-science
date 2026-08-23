@@ -1831,6 +1831,7 @@
   "Star {{app}} on GitHub, {{count}} stars_other": "GitHub で {{app}} に Star を付ける、{{count}} Star",
   "Start a normal conversation; the agent guides you step by step": "通常の会話を始めます。エージェントがステップごとにガイドします",
   "Starting Office preview": "Office プレビューの開始",
+  "Starting Open Science…": "Open Science を起動しています…",
   "Starting this move will interrupt the running sessions below and restart the app.": "この移動を開始すると、以下の実行中のセッションが中断され、アプリが再起動されます。",
   "Starting…": "開始中…",
   "State": "状態",

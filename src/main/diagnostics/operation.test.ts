@@ -105,6 +105,33 @@ describe('diagnostic operation', () => {
     })
   })
 
+  it('classifies a long off-CPU phase as io-or-wait', () => {
+    const { logger, records } = createRecordingLogger()
+    let timestamp = 0
+    const cpuSamples = [
+      { user: 1_000, system: 0 },
+      { user: 2_000, system: 0 }
+    ]
+    const operation = startDiagnosticOperation(logger, {
+      operation: 'application-composition',
+      operationId: 'compose-1',
+      now: () => timestamp,
+      cpuUsage: () => cpuSamples.shift() ?? { user: 2_000, system: 0 }
+    })
+    timestamp = 120_000
+    operation.phase('specialist-catalog')
+
+    expect(records[1]).toMatchObject({
+      data: {
+        phase: 'specialist-catalog',
+        phaseDurationMs: 120_000,
+        phaseCpuTotalMs: 1,
+        phaseWaitMs: 119_999,
+        delayKind: 'io-or-wait'
+      }
+    })
+  })
+
   it('records opt-in cumulative and phase CPU deltas without changing default diagnostics', () => {
     const { logger, records } = createRecordingLogger()
     const cpuSamples = [

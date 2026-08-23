@@ -154,11 +154,24 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     platform: process.platform,
     arch: process.arch,
     electronVersion: process.versions.electron,
-    nodeVersion: process.versions.node
+    nodeVersion: process.versions.node,
+    cpuUsage: process.cpuUsage
   })
   const { log } = diagnostics
   startupDiagnostics = diagnostics.operation
   startupFlush = diagnostics.flush
+  startupDiagnostics.phase('storage-probe')
+  const storageProbe = await import('./diagnostics/startup-storage-probe').then(
+    ({ timedStartupStorageProbe }) =>
+      timedStartupStorageProbe({ probeDir: app.getPath('logs') }, 1_500)
+  )
+  log.info('startup storage probe', storageProbe)
+  startupDiagnostics.phase('storage-probe-complete', {
+    sequentialMs: storageProbe.sequentialMs,
+    syncWriteMs: storageProbe.syncWriteMs,
+    kind: storageProbe.kind,
+    timedOut: storageProbe.timedOut === true
+  })
 
   // Register process-level failure capture before loading the application modules. Keep renderer
   // diagnostics on a separate, one-way channel while the central IPC registry is being refactored.
@@ -390,7 +403,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         },
         loadApplicationModules: async () => {
           await startupShellRendered
-          return Promise.all([
+          startupDiagnostics?.phase('load-application-modules')
+          const loaded = await Promise.all([
             import('./ipc'),
             import('./storage/migration-state'),
             import('./tray'),
@@ -407,6 +421,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             import('./notifications/notification-inbox-controller'),
             import('./notifications/unread-task-ipc')
           ])
+          startupDiagnostics?.phase('application-modules-loaded')
+          return loaded
         },
         composeRuntime: async (
           _,
@@ -435,6 +451,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           startupDiagnostics?.phase('compose-runtime')
 
           try {
+            startupDiagnostics?.phase('register-application-ipc')
             // Held in a box (not a bare let) so the settings IPC callback registered below can reach the icon
             // controller, which itself needs the persisted variant that only exists once settingsService is
             // constructed. The change callback only fires on a user action (well after startup), so the
@@ -495,6 +512,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               },
               listAppIconPreviews: () => buildAppIconPreviews(nativeImage, iconVariantPaths)
             })
+            startupDiagnostics?.phase('compose-desktop-surfaces')
 
             // The controller must exist before its IPC responder, while the responder calls back into the
             // controller. This box breaks that startup cycle without exposing unread ownership to renderer.
@@ -541,6 +559,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               variantPaths: iconVariantPaths,
               initialVariant
             })
+            startupDiagnostics?.phase('compose-remote-access')
             const remoteAccess = await RemoteAccessService.create()
             bindRemoteAccess(remoteAccess)
             const webController = createWebServiceController({

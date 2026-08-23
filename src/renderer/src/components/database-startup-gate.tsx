@@ -152,9 +152,13 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
             <OpenScienceLogoLoader />
             <div className="flex flex-col items-center gap-4">
               <span className="text-sm text-muted-foreground">
-                {state.phase === 'migrating' ? t('Updating database…') : t('Checking database…')}
+                {state.phase === 'migrating'
+                  ? t('Updating database…')
+                  : state.phase === 'starting'
+                    ? t('Starting Open Science…')
+                    : t('Checking database…')}
               </span>
-              {state.phase === 'migrating' ? (
+              {state.phase === 'migrating' || state.phase === 'starting' ? (
                 <p className="text-sm text-muted-foreground">
                   {t('Keep Open Science open while this finishes.')}
                 </p>
