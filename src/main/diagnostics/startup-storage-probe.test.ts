@@ -32,12 +32,26 @@ describe('probeStartupStorage', () => {
     expect(result).toEqual({ sequentialMs: 0, syncWriteMs: 0, kind: 'unknown' })
   })
 
-  it('caps a hung probe as slow-disk-or-scanner', async () => {
+  it('runs the default isolated probe to completion', async () => {
+    probeDir = await mkdtemp(join(tmpdir(), 'os-startup-probe-worker-'))
+    const result = await timedStartupStorageProbe({ probeDir }, 1_500)
+    expect(result.timedOut).toBeUndefined()
+    expect(['typical', 'likely-slow-disk', 'slow-disk-or-scanner', 'unknown']).toContain(result.kind)
+    expect(JSON.stringify(result)).not.toContain(probeDir)
+  })
+
+  it('terminates an isolated probe when the timeout fires', async () => {
     probeDir = await mkdtemp(join(tmpdir(), 'os-startup-probe-timeout-'))
+    let terminated = 0
     const result = await timedStartupStorageProbe(
       {
         probeDir,
-        probe: () => new Promise(() => undefined)
+        isolate: () => ({
+          result: new Promise(() => undefined),
+          terminate: async () => {
+            terminated += 1
+          }
+        })
       },
       20
     )
@@ -47,5 +61,6 @@ describe('probeStartupStorage', () => {
       kind: 'slow-disk-or-scanner',
       timedOut: true
     })
+    expect(terminated).toBe(1)
   })
 })

@@ -104,7 +104,10 @@ import {
   buildTaskNotificationShow
 } from './notifications/electron-wiring'
 import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
-import { startDiagnosticOperation } from './diagnostics/operation'
+import {
+  startDiagnosticOperation,
+  type DiagnosticOperation
+} from './diagnostics/operation'
 import { broadcastNotebookEnvProgress, registerNotebookEnvIpcHandlers } from './notebook/env-ipc'
 import {
   createNotebookApplicationModule,
@@ -386,12 +389,9 @@ const createApplicationModules = async (
     listAppIconPreviews,
     confirmUpdateRendererDurability = () => Promise.resolve(true)
   }: IpcRegistrationOptions,
-  modules: ApplicationModuleBuilder
+  modules: ApplicationModuleBuilder,
+  composition: DiagnosticOperation
 ): Promise<ApplicationModuleInterfaces> => {
-  const composition = startDiagnosticOperation(createLogger('startup'), {
-    operation: 'application-composition',
-    cpuUsage: process.cpuUsage
-  })
   const beforeComputeAdapters: NamedElectronSurfaceAdapter[] = []
   const beforeAcpAdapters: NamedElectronSurfaceAdapter[] = []
   const afterAcpAdapters: NamedElectronSurfaceAdapter[] = []
@@ -3112,7 +3112,6 @@ const createApplicationModules = async (
     registerApplicationCommandElectronAdapter(applicationCommandComposition.electron)
   )
   composition.phase('commands')
-  composition.complete()
 
   return {
     applicationCommands: {
@@ -3169,13 +3168,24 @@ const createApplicationModules = async (
 }
 
 const registerIpcHandlers = async (options: IpcRegistrationOptions): Promise<IpcRegistration> => {
-  const applicationRuntime = await composeApplicationRuntimeWithAdapters(
-    (modules) => createApplicationModules(options, modules),
-    installElectronRuntimeAdapters
-  )
-  return {
-    ...applicationRuntime.interfaces,
-    dispose: applicationRuntime.dispose
+  const composition = startDiagnosticOperation(createLogger('startup'), {
+    operation: 'application-composition',
+    cpuUsage: process.cpuUsage
+  })
+  try {
+    const applicationRuntime = await composeApplicationRuntimeWithAdapters(
+      (modules) => createApplicationModules(options, modules, composition),
+      installElectronRuntimeAdapters
+    )
+    composition.phase('ipc-adapters')
+    composition.complete()
+    return {
+      ...applicationRuntime.interfaces,
+      dispose: applicationRuntime.dispose
+    }
+  } catch (error) {
+    composition.fail(error)
+    throw error
   }
 }
 
