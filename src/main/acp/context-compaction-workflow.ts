@@ -84,6 +84,24 @@ class AcpContextCompactionWorkflow {
     return this.runNative(request.session, request.sessionId, 'automatic')
   }
 
+  async compactIfIdle(sessionId: string): Promise<PromptResponse | undefined> {
+    if (this.options.interactions.current(sessionId)) return undefined
+    if (!this.shouldCompactAutomatically(sessionId)) return undefined
+    const session = this.options.sessions.activeSession(sessionId)
+    if (!session) return undefined
+    const { interactions } = this.options
+    const interaction = interactions.claim({ sessionId, kind: 'compaction' })
+    try {
+      this.safeProjection('compaction state callback failed', this.options.emitState)
+      return await this.runNative(session, sessionId, 'automatic')
+    } catch {
+      return undefined
+    } finally {
+      interactions.release(interaction)
+      this.safeProjection('compaction state callback failed', this.options.emitState)
+    }
+  }
+
   private shouldCompactAutomatically(sessionId: string): boolean {
     const strategy = this.options.sessions.currentFramework().contextCompaction
     if (strategy.kind !== 'native-command' || strategy.triggerAtPercent === undefined) return false

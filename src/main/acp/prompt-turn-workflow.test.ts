@@ -37,6 +37,7 @@ type Harness = {
       AcpPromptTurnWorkflowOptions['finalization']['generationActivityChanged']
     >
     autoCompact: Mock<AcpPromptTurnWorkflowOptions['finalization']['autoCompact']>
+    compactIfIdle: Mock<AcpPromptTurnWorkflowOptions['finalization']['compactIfIdle']>
   }
   finalizer: Mock<AcpPromptOutcomeFinalizer['finalize']>
   interactions: {
@@ -47,6 +48,7 @@ type Harness = {
     captureTerminal: Mock<AcpSessionInteractionOwner['captureTerminal']>
     settle: Mock<AcpSessionInteractionOwner['settle']>
     release: Mock<AcpSessionInteractionOwner['release']>
+    supersede: Mock<AcpSessionInteractionOwner['supersede']>
   }
   journal: string[]
   onProviderPromptAccepted: Mock<
@@ -187,7 +189,8 @@ const createHarness = (
       owner.captureTerminal(...args)
     ),
     settle: vi.fn((...args: Parameters<typeof owner.settle>) => owner.settle(...args)),
-    release: vi.fn((scope: Parameters<typeof owner.release>[0]) => owner.release(scope))
+    release: vi.fn((scope: Parameters<typeof owner.release>[0]) => owner.release(scope)),
+    supersede: vi.fn((scope: Parameters<typeof owner.supersede>[0]) => owner.supersede(scope))
   }
   const skill = skillHandle()
   const authorize: Harness['authorize'] = vi.fn(() => {
@@ -269,7 +272,8 @@ const createHarness = (
     pushEvent: vi.fn(),
     onPromptEnded: vi.fn(),
     generationActivityChanged: vi.fn(),
-    autoCompact: vi.fn(async () => undefined)
+    autoCompact: vi.fn(async () => undefined),
+    compactIfIdle: vi.fn(async () => undefined)
   }
   const pushUserMessage: Harness['pushUserMessage'] = vi.fn(() => {
     journal.push('event:message')
@@ -740,6 +744,7 @@ describe('AcpPromptTurnWorkflow', () => {
     await handles.afterInteractionRelease()
     expect(harness.planLifecycle.beforeRelease).toHaveBeenCalledWith('s1', interaction)
     expect(harness.planLifecycle.afterRelease).toHaveBeenCalledWith('s1')
+    expect(harness.finalization.compactIfIdle).toHaveBeenCalledWith('s1')
   })
 
   it('reads the current Session Compute execution targets for every Turn preparation', async () => {

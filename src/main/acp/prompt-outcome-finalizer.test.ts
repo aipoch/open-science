@@ -148,14 +148,13 @@ describe('AcpPromptOutcomeFinalizer', () => {
       'state',
       'artifact:publish',
       'event:stop',
-      'compact',
       'prepared:close',
       'artifact:dispose',
       'interaction:before-release',
       'permission:clear',
       'context:supersede',
-      'interaction:after-release',
       'prompt:end',
+      'interaction:after-release',
       'state',
       'skill:completed',
       'activity'
@@ -410,26 +409,32 @@ describe('AcpPromptOutcomeFinalizer', () => {
     expect(harness.context.supersede).toHaveBeenCalledOnce()
   })
 
-  it('does not wait on automatic compaction after a cancelled provider stop', async () => {
-    const harness = createHarness()
-    const compact = deferred()
-    harness.handles.autoCompactIfNeeded = vi.fn(async () => compact.promise)
-    expect(harness.interactions.captureTerminal(harness.interaction, 'cancelled')).toBe(true)
+  it.each([
+    { stopReason: 'end_turn' as const, terminal: 'stop' as const },
+    { stopReason: 'cancelled' as const, terminal: 'cancelled' as const }
+  ])(
+    'does not wait on automatic compaction after a $stopReason provider stop',
+    async ({ stopReason, terminal }) => {
+      const harness = createHarness()
+      const compact = deferred()
+      harness.handles.autoCompactIfNeeded = vi.fn(async () => compact.promise)
+      expect(harness.interactions.captureTerminal(harness.interaction, terminal)).toBe(true)
 
-    const finalization = new AcpPromptOutcomeFinalizer().finalize(
-      harness.handles,
-      stopped({ stopReason: 'cancelled' })
-    )
-    const completed = Promise.race([
-      finalization.then(() => 'settled' as const),
-      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
-    ])
+      const finalization = new AcpPromptOutcomeFinalizer().finalize(
+        harness.handles,
+        stopped({ stopReason })
+      )
+      const completed = Promise.race([
+        finalization.then(() => 'settled' as const),
+        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+      ])
 
-    await expect(completed).resolves.toBe('settled')
-    expect(harness.handles.autoCompactIfNeeded).not.toHaveBeenCalled()
-    expect(harness.interactions.current('s1')).toBeUndefined()
-    compact.resolve()
-  })
+      await expect(completed).resolves.toBe('settled')
+      expect(harness.handles.autoCompactIfNeeded).not.toHaveBeenCalled()
+      expect(harness.interactions.current('s1')).toBeUndefined()
+      compact.resolve()
+    }
+  )
 
   it('publishes a cancelled stop for a current prompt that was not dispatched', async () => {
     const harness = createHarness({ now: () => 456 })

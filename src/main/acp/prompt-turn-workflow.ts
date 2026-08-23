@@ -133,6 +133,7 @@ type AcpPromptTurnFinalization = Readonly<{
     session: ActiveSession,
     interaction: AcpPromptSessionInteractionScope
   ) => Promise<unknown>
+  compactIfIdle: (sessionId: string) => Promise<unknown>
 }>
 
 type AcpPromptTurnWorkflowOptions = Readonly<{
@@ -146,6 +147,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     | 'release'
     | 'reservePrompt'
     | 'settle'
+    | 'supersede'
   >
   skills: Pick<AcpTurnSkillOwner, 'authorize'>
   preparation: Pick<AcpPromptPreparationOwner, 'prepare'>
@@ -480,7 +482,10 @@ class AcpPromptTurnWorkflow {
         generationActivityChanged: finalization.generationActivityChanged,
         autoCompactIfNeeded: () => finalization.autoCompact(sessionId, session, interaction),
         beforeInteractionRelease: () => plan.beforeRelease(sessionId, interaction),
-        afterInteractionRelease: () => plan.afterRelease(sessionId)
+        afterInteractionRelease: async () => {
+          await plan.afterRelease(sessionId)
+          void finalization.compactIfIdle(sessionId)
+        }
       },
       outcome
     )
@@ -491,9 +496,13 @@ class AcpPromptTurnWorkflow {
   }
 
   private assertSessionIdle(sessionId: string): void {
-    if (this.options.interactions.current(sessionId)) {
-      throw new Error('An ACP prompt is already running for this session')
+    const current = this.options.interactions.current(sessionId)
+    if (!current) return
+    if (current.kind === 'compaction') {
+      this.options.interactions.supersede(current)
+      return
     }
+    throw new Error('An ACP prompt is already running for this session')
   }
 
   private reserve(request: AcpPromptRequest): AcpPromptSessionInteractionScope {

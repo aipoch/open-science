@@ -238,7 +238,8 @@ const composeAcpRuntimePromptOwners = (
           sessionId,
           session: active,
           interaction
-        })
+        }),
+      compactIfIdle: (sessionId) => contextCompactionWorkflow.compactIfIdle(sessionId)
     },
     currentCwd: () => base.snapshotOwner.cwd,
     resolveProjectId: projectId,

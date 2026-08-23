@@ -224,6 +224,52 @@ describe('AcpContextCompactionWorkflow', () => {
     expect(harness.interactions.current('app-session')).toBeUndefined()
   })
 
+  it('starts automatic compaction after idle when the native threshold is reached', async () => {
+    const session = fakeSession([stop('end_turn')])
+    const harness = createHarness({ session })
+    harness.context.reconcileProviderUsage('app-session', { used: 180_000, size: 200_000 })
+
+    await expect(harness.workflow.compactIfIdle('app-session')).resolves.toEqual({
+      stopReason: 'end_turn'
+    })
+    expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: '/compact' }])
+    expect(
+      harness.events.map(({ compactionReason, status }) => ({ compactionReason, status }))
+    ).toEqual([
+      { compactionReason: 'automatic', status: 'in_progress' },
+      { compactionReason: 'automatic', status: 'completed' }
+    ])
+    expect(harness.interactions.current('app-session')).toBeUndefined()
+  })
+
+  it('does not compact while idle when no native threshold is declared', async () => {
+    const session = fakeSession([stop('end_turn')])
+    const harness = createHarness({
+      session,
+      framework: {
+        ...claudeCodeFramework,
+        id: 'codex',
+        displayName: 'Codex',
+        contextCompaction: { kind: 'native-command', command: '/compact' }
+      }
+    })
+    harness.context.reconcileProviderUsage('app-session', { used: 180_000, size: 200_000 })
+
+    await expect(harness.workflow.compactIfIdle('app-session')).resolves.toBeUndefined()
+    expect(session.prompt).not.toHaveBeenCalled()
+  })
+
+  it('does not compact while another interaction is current', async () => {
+    const session = fakeSession([stop('end_turn')])
+    const harness = createHarness({ session })
+    harness.context.reconcileProviderUsage('app-session', { used: 180_000, size: 200_000 })
+    const prompt = harness.interactions.claim({ sessionId: 'app-session', kind: 'prompt' })
+
+    await expect(harness.workflow.compactIfIdle('app-session')).resolves.toBeUndefined()
+    expect(session.prompt).not.toHaveBeenCalled()
+    harness.interactions.release(prompt)
+  })
+
   it('gates automatic compaction and preserves the current prompt interaction when eligible', async () => {
     const session = fakeSession([stop('end_turn')])
     const harness = createHarness({ session })

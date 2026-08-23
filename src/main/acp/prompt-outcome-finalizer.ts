@@ -251,15 +251,9 @@ export class AcpPromptOutcomeFinalizer {
       await emitArtifact()
       safeLog('info', 'prompt stopped', { stopReason: response.stopReason })
       publishObservedStop()
-      // Cancelled turns must not start native compact: that second provider prompt can block
-      // behind the aborting stream and leave the next `acp:send-prompt` without a reply.
-      if (response.stopReason !== 'cancelled') {
-        try {
-          await handles.autoCompactIfNeeded()
-        } catch (error) {
-          safeLog('warn', 'automatic context compaction failed', errorLogFields(error))
-        }
-      }
+      // Automatic compact is a follow-on provider prompt. Awaiting it here keeps the current
+      // sendPrompt admission lease and `promptInFlight` until compact finishes, so a queued
+      // follow-up `acp:send-prompt` never replies. Compact after the prompt interaction releases.
       return response
     } catch (error) {
       if (observedStop) {
@@ -333,12 +327,12 @@ export class AcpPromptOutcomeFinalizer {
       safeCleanup('context cleanup failed', () => context?.supersede())
       safeCleanup('interaction cleanup failed', () => interactions.release(interaction))
       if (ownsInteraction) {
+        safeCleanup('prompt-end callback failed', handles.onPromptEnded)
         try {
           await handles.afterInteractionRelease()
         } catch (error) {
           safeLog('error', 'interaction post-release failed', errorLogFields(error))
         }
-        safeCleanup('prompt-end callback failed', handles.onPromptEnded)
       }
       safeCleanup('emitState after prompt turn failed', handles.emitState)
       safeCleanup('prompt skill cleanup failed', () => handles.skill.close(skillOutcome))

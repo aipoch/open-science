@@ -58,6 +58,7 @@ const createFakeRuntime = (options: {
   activePromptSessions?: { projectId: string; sessionId: string }[]
   quitBlockingSessions?: { projectId: string; sessionId: string }[]
   prompt?: (sessionId: string) => Promise<unknown>
+  holdAfterPromptEnded?: () => Promise<void>
 }): {
   runtime: AcpRuntime
   connect: ReturnType<typeof vi.fn>
@@ -178,16 +179,10 @@ const createFakeRuntime = (options: {
     }
     options.callbacks.onStateChanged?.(snapshot)
 
-    try {
-      const prompt = options.prompt
-        ? options.prompt(sessionId)
-        : Promise.resolve({ stopReason: 'end_turn' })
-      await options.beforeProviderPromptAccepted?.()
-      if (!options.skipProviderPromptAccepted) {
-        options.callbacks.onProviderPromptAccepted?.(sessionId, promptAttemptId)
-      }
-      return await prompt
-    } finally {
+    let ended = false
+    const endPrompt = (): void => {
+      if (ended) return
+      ended = true
       options.callbacks.onPromptEnded?.(sessionId, turnToken)
       snapshot = {
         ...snapshot,
@@ -197,6 +192,21 @@ const createFakeRuntime = (options: {
         )
       }
       options.callbacks.onStateChanged?.(snapshot)
+    }
+    try {
+      const prompt = options.prompt
+        ? options.prompt(sessionId)
+        : Promise.resolve({ stopReason: 'end_turn' })
+      await options.beforeProviderPromptAccepted?.()
+      if (!options.skipProviderPromptAccepted) {
+        options.callbacks.onProviderPromptAccepted?.(sessionId, promptAttemptId)
+      }
+      const result = await prompt
+      endPrompt()
+      await options.holdAfterPromptEnded?.()
+      return result
+    } finally {
+      endPrompt()
     }
   }
   const sendPrompt = vi.fn(runPrompt)
@@ -1107,6 +1117,47 @@ describe('AcpRuntimeCoordinator', () => {
       await vi.waitFor(() =>
         expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
       )
+    }
+  )
+
+  it.each([
+    ['Claude Code', 'claude-code'],
+    ['OpenCode', 'opencode'],
+    ['Codex Responses', 'codex'],
+    ['Codex bridge', 'codex']
+  ] as const)(
+    'admits a %s follow-up startPrompt after end_turn without waiting for post-stop work',
+    async (_route, frameworkId) => {
+      const postStop = createDeferred<void>()
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          holdAfterPromptEnded: () => postStop.promise
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession()
+
+      await coordinator.startPrompt({
+        sessionId: session.sessionId,
+        text: 'live turn'
+      })
+      await vi.waitFor(() =>
+        expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+      )
+
+      await expect(
+        coordinator.startPrompt({
+          sessionId: session.sessionId,
+          text: 'queued follow-up'
+        })
+      ).resolves.toBeUndefined()
+      expect(created.sendPrompt).toHaveBeenCalledTimes(2)
+
+      postStop.resolve()
     }
   )
 

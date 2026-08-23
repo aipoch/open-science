@@ -1552,6 +1552,7 @@ class AcpRuntimeCoordinator {
           const remaining = (this.activePromptCounts.get(sessionId) ?? 1) - 1
           if (remaining > 0) this.activePromptCounts.set(sessionId, remaining)
           else this.activePromptCounts.delete(sessionId)
+          this.activeRootAdmissions.get(sessionId)?.release()
           this.notifyInteractionRelease(sessionId)
           this.teardownCallbacks.onSessionTurnEnded?.(sessionId, turnToken)
           this.callbacks.onPromptEnded?.(sessionId, turnToken)
