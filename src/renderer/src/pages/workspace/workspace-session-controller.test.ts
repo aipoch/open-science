@@ -212,6 +212,23 @@ describe('workspace session controller', () => {
     expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
   })
 
+  it('localizes an unopened Session export load failure', async () => {
+    const summary = session({ contentLoaded: false })
+    window.api = {
+      sessions: { loadOne: vi.fn().mockRejectedValue(new Error('private path leaked')) }
+    } as unknown as Window['api']
+    const hook = renderController({ activeSession: summary })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.openExportConversation(summary)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(hook.result.current.view.exportError).toBe('Could not load this session for export.')
+  })
+
   it('keeps rename whitespace while using trim only as the empty-title gate', () => {
     const active = session()
     useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })

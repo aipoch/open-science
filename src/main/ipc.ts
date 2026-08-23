@@ -924,10 +924,14 @@ const createApplicationModules = async (
       })()
       return readOnlyResult
     }
-    const projection = await sessionRepository.ensureSessionProjection(
-      recovery.isComplete ? loadAllSessions : loadReadOnlyResult
-    )
-    const result = recovery.isComplete ? projection.result : await loadReadOnlyResult()
+    if (!recovery.isComplete) {
+      const result = await loadReadOnlyResult()
+      const sessions = await sessionRepository.summarizeReadOnlyAuthority(result)
+      await sessionPersistenceCoordinator.replaceSessionMetadata(sessions, false)
+      return { result, sessions }
+    }
+    const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
+    const result = projection.result
     await sessionPersistenceCoordinator.replaceSessionMetadata(
       projection.sessions,
       result ? canReconcileSessionAbsences(result) : true
@@ -963,10 +967,9 @@ const createApplicationModules = async (
         )
       }
       const session = await sessionRepository.loadSession(projectId, sessionId)
-      if (session) {
-        await sessionEnabledComputeHostsOwnerRef.current?.reconcile([session], false)
-      }
-      return session
+      return session && sessionEnabledComputeHostsOwnerRef.current
+        ? sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)
+        : session
     },
     saveSession: async (session, options) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
@@ -2267,6 +2270,9 @@ const createApplicationModules = async (
     async () => {
       // A retained child Session plan must finish before its parent Project intent can prepare.
       await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)
+      // Replay a pending Session JSON write from the tombstone before Project recovery removes that
+      // temporary authority. The retained SQLite facts then remain available to historical Usage.
+      await sessionRepository.reconcilePendingSessionProjection()
       await projectDeletionCoordinator.recoverPendingDeletions()
     },
     {

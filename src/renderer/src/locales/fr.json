@@ -531,6 +531,7 @@
   "Could not load artifacts — retry": "Impossible de charger les artefacts : réessayez",
   "Could not load artifacts.": "Impossible de charger les artefacts.",
   "Could not load local network details.": "Impossible de charger les détails du réseau local.",
+  "Could not load this session for export.": "Impossible de charger cette session pour l’exportation.",
   "Could not load more — retry": "Impossible de charger davantage : réessayez",
   "Could not load project artifacts.": "Impossible de charger les artefacts du projet.",
   "Could not load project files": "Impossible de charger les fichiers du projet",

@@ -160,6 +160,57 @@ const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
   wait: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))
 }
 
+const projectIncompleteSummaries = (
+  result: LoadAllSessionsResult,
+  existingNumbers: ReadonlyMap<string, number> = new Map()
+): SessionSummary[] => {
+  const ordered = [...result.sessions].sort(
+    (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+  )
+  const existingIdByNumber = new Map(
+    [...existingNumbers].map(([id, number]) => [number, id] as const)
+  )
+  const candidateNumber = (session: PersistedChatSession): number | undefined =>
+    existingNumbers.get(session.id) ?? session.number
+  const candidateCounts = new Map<number, number>()
+  for (const session of ordered) {
+    const number = candidateNumber(session)
+    const owner = number === undefined ? undefined : existingIdByNumber.get(number)
+    if (
+      number === undefined ||
+      !Number.isSafeInteger(number) ||
+      number < 1 ||
+      (owner && owner !== session.id)
+    ) {
+      continue
+    }
+    candidateCounts.set(number, (candidateCounts.get(number) ?? 0) + 1)
+  }
+  const used = new Set(existingNumbers.values())
+  for (const [number, count] of candidateCounts) if (count === 1) used.add(number)
+  let nextNumber = 1
+  for (const number of used) nextNumber = Math.max(nextNumber, number + 1)
+  return ordered
+    .map((session) => {
+      let number = candidateNumber(session)
+      const owner = number === undefined ? undefined : existingIdByNumber.get(number)
+      if (
+        number === undefined ||
+        !Number.isSafeInteger(number) ||
+        number < 1 ||
+        (owner && owner !== session.id) ||
+        candidateCounts.get(number) !== 1
+      ) {
+        while (used.has(nextNumber)) nextNumber += 1
+        number = nextNumber
+        used.add(number)
+        nextNumber += 1
+      }
+      return { ...buildSessionProjection(session).summary, number }
+    })
+    .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+}
+
 // Production storage lives under ~/.open-science; dev builds use an isolated sibling directory.
 export const PROD_SESSION_DIR_NAME = '.open-science'
 export const DEV_SESSION_DIR_NAME = '.open-science-project'
@@ -309,38 +360,21 @@ class SessionRepository {
     })
   }
 
+  async summarizeReadOnlyAuthority(result: LoadAllSessionsResult): Promise<SessionSummary[]> {
+    if (!this.projection) throw new Error('Session projection is unavailable.')
+    const assignments = await this.operationScheduler.runGlobal(() =>
+      this.projection!.numberAssignments()
+    )
+    return projectIncompleteSummaries(
+      result,
+      new Map(assignments.map(({ id, number }) => [id, number]))
+    )
+  }
+
   private async ensureSessionProjectionNow(
     loadAuthority: () => Promise<LoadAllSessionsResult>
   ): Promise<{ result?: LoadAllSessionsResult; sessions: SessionSummary[] }> {
     if (!this.projection) throw new Error('Session projection is unavailable.')
-
-    const projectIncompleteSummaries = (
-      result: LoadAllSessionsResult,
-      existingNumbers: ReadonlyMap<string, number> = new Map()
-    ): SessionSummary[] => {
-      const ordered = [...result.sessions].sort(
-        (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
-      )
-      const used = new Set(
-        ordered.flatMap((session) => {
-          const number = session.number ?? existingNumbers.get(session.id)
-          return number !== undefined && Number.isSafeInteger(number) && number > 0 ? [number] : []
-        })
-      )
-      let nextNumber = 1
-      return ordered
-        .map((session) => {
-          let number = session.number ?? existingNumbers.get(session.id)
-          if (number === undefined || !Number.isSafeInteger(number) || number < 1) {
-            while (used.has(nextNumber)) nextNumber += 1
-            number = nextNumber
-            used.add(number)
-            nextNumber += 1
-          }
-          return { ...buildSessionProjection(session).summary, number }
-        })
-        .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
-    }
 
     const loadReadyProjection = async (): Promise<{
       result?: LoadAllSessionsResult
@@ -409,35 +443,43 @@ class SessionRepository {
       if (!freshScan.isComplete || result.diagnostics?.isComplete === false) {
         return { result: freshResult, sessions: projectIncompleteSummaries(freshResult) }
       }
+      const assignments = await this.projection!.numberAssignments()
+      const existingNumberById = new Map(assignments.map(({ id, number }) => [id, number]))
+      const existingIdByNumber = new Map(assignments.map(({ id, number }) => [number, id]))
       await this.projection!.clearForRebuild()
       const ordered = [...freshResult.sessions].sort(
         (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
       )
       const numberCounts = new Map<number, number>()
       for (const session of ordered) {
+        const number = existingNumberById.get(session.id) ?? session.number
+        const owner = number === undefined ? undefined : existingIdByNumber.get(number)
         if (
-          session.number === undefined ||
-          !Number.isSafeInteger(session.number) ||
-          session.number < 1
-        ) {
+          number === undefined ||
+          !Number.isSafeInteger(number) ||
+          number < 1 ||
+          (owner && owner !== session.id)
+        )
           continue
-        }
-        numberCounts.set(session.number, (numberCounts.get(session.number) ?? 0) + 1)
+        numberCounts.set(number, (numberCounts.get(number) ?? 0) + 1)
       }
-      const usedNumbers = new Set(
-        [...numberCounts].filter(([, count]) => count === 1).map(([number]) => number)
-      )
-      let nextNumber = 1
       const rebuiltById = new Map<string, PersistedChatSession>()
       for (const session of ordered) {
-        if (session.number !== undefined && usedNumbers.has(session.number)) {
-          rebuiltById.set(session.id, session)
+        const number = existingNumberById.get(session.id) ?? session.number
+        const owner = number === undefined ? undefined : existingIdByNumber.get(number)
+        if (
+          number !== undefined &&
+          Number.isSafeInteger(number) &&
+          number > 0 &&
+          (!owner || owner === session.id) &&
+          numberCounts.get(number) === 1
+        ) {
+          const numbered =
+            session.number === number ? session : await this.saveSessionNow({ ...session, number })
+          rebuiltById.set(session.id, numbered)
           continue
         }
-        while (usedNumbers.has(nextNumber)) nextNumber += 1
-        const persisted = await this.saveSessionNow({ ...session, number: nextNumber })
-        usedNumbers.add(nextNumber)
-        nextNumber += 1
+        const persisted = await this.saveSessionNow({ ...session, number: undefined })
         rebuiltById.set(session.id, persisted)
       }
       const rebuilt = freshResult.sessions.map((session) => rebuiltById.get(session.id) ?? session)

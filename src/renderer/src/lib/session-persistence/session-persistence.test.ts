@@ -10,7 +10,8 @@ import {
   SESSION_MANIFEST_VERSION,
   SessionRevisionConflictError,
   type LoadAllSessionsResult,
-  type PersistedChatSession
+  type PersistedChatSession,
+  type SessionSummary
 } from '../../../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import {
@@ -208,6 +209,46 @@ describe('renderer session persistence bridge', () => {
       { id: 'session-2', contentLoaded: false, activeMessageCount: 12, messages: [] }
     ])
     expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
+  })
+
+  it('also hydrates unopened Sessions that require startup recovery', async () => {
+    const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
+    const recovering = createPersistedSession({ id: 'session-2', projectId: 'project-1' })
+    const summary = (
+      session: PersistedChatSession,
+      needsStartupRecovery: boolean
+    ): SessionSummary => ({
+      number: session.id === selected.id ? 1 : 2,
+      id: session.id,
+      projectId: session.projectId,
+      title: session.title,
+      status: session.status,
+      presentedStatus: session.status,
+      pinned: false,
+      revision: 1,
+      activeMessageCount: session.messages.length,
+      artifactCount: session.artifacts?.length ?? 0,
+      filesRevision: 0,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      needsStartupRecovery
+    })
+    const list = vi.fn().mockResolvedValue({
+      sessions: [summary(selected, false), summary(recovering, true)],
+      manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: selected.id }
+    })
+    const loadOne = vi.fn(async ({ sessionId }: { sessionId: string }) =>
+      sessionId === selected.id ? selected : recovering
+    )
+
+    await loadPersistedSessions(createApi({ list, loadOne }))
+
+    expect(loadOne).toHaveBeenCalledTimes(2)
+    expect(useSessionStore.getState().sessions).toMatchObject([
+      { id: selected.id },
+      { id: recovering.id }
+    ])
+    expect(useSessionStore.getState().sessions[1]?.contentLoaded).not.toBe(false)
   })
 
   it('does not hydrate a selected Session after its lazy JSON load is cancelled', async () => {

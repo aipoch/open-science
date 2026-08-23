@@ -568,6 +568,7 @@
   "Could not load artifacts — retry": "無法載入產物 —— 重試",
   "Could not load artifacts.": "無法載入產物。",
   "Could not load local network details.": "無法載入本機網路資訊。",
+  "Could not load this session for export.": "無法載入此會話以供匯出。",
   "Could not load more — retry": "無法載入更多 —— 重試",
   "Could not load project artifacts.": "無法載入專案產物。",
   "Could not load project files": "無法載入專案檔案",

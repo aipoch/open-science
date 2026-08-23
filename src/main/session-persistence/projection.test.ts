@@ -102,6 +102,16 @@ describe('Session projection', () => {
     ])
   })
 
+  it('marks pending Artifact paths for one-time startup recovery', () => {
+    const pending = session('pending-artifact')
+    pending.artifacts![0].path = '/managed/.pending/run-1/report.md'
+
+    expect(buildSessionProjection(pending).summary.needsStartupRecovery).toBe(true)
+    expect(buildSessionProjection(session('finalized-artifact')).summary.needsStartupRecovery).toBe(
+      false
+    )
+  })
+
   it('allocates a global number and serves summaries and usage without Session JSON', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-projection-'))
     client = createProjectDbClient(storageRoot)
@@ -389,6 +399,55 @@ describe('Session projection', () => {
     await expect(repository.saveSession(session('latest', 300))).resolves.toMatchObject({
       number: 3
     })
+  })
+
+  it('does not reuse retained tombstone numbers during a projection-version rebuild', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-reversion-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const deleted = await repository.saveSession(session('deleted', 100))
+    await repository.deleteSession(deleted.projectId, deleted.id)
+    await client.sessionProjectionState.create({
+      data: { id: 'session-projection', projectionVersion: 2, completedAt: new Date() }
+    })
+    const files = new SessionRepository(storageRoot)
+    await files.saveSession(session('live', 200))
+
+    const rebuilt = await repository.ensureSessionProjection(() => files.loadAll())
+
+    expect(rebuilt.sessions).toEqual([expect.objectContaining({ id: 'live', number: 2 })])
+    await expect(client.session.findUnique({ where: { id: 'deleted' } })).resolves.toMatchObject({
+      number: 1,
+      deletedAtMs: expect.any(BigInt)
+    })
+    await expect(
+      client.sessionNumberSequence.findUnique({ where: { id: 'global' } })
+    ).resolves.toMatchObject({ nextNumber: 3 })
+  })
+
+  it('derives degraded summaries from read-only authority instead of stale SQLite rows', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-degraded-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const stale = await repository.saveSession(session('stale', 100))
+    await projection.replaceAll([stale])
+
+    const summaries = await repository.summarizeReadOnlyAuthority({
+      sessions: [session('authority', 200)],
+      manifest: { version: 1 },
+      diagnostics: { isComplete: false, warnings: [] }
+    })
+
+    expect(summaries).toEqual([expect.objectContaining({ id: 'authority', number: 2 })])
+    await expect(projection.list()).resolves.toEqual([
+      expect.objectContaining({ id: 'stale', number: 1 })
+    ])
   })
 
   it('publishes a fresh authority scan when a Session save overlaps initial backfill', async () => {

@@ -569,6 +569,7 @@
   "Could not load artifacts — retry": "无法加载产物 —— 重试",
   "Could not load artifacts.": "无法加载产物。",
   "Could not load local network details.": "无法加载本地网络信息。",
+  "Could not load this session for export.": "无法加载此会话以供导出。",
   "Could not load more — retry": "无法加载更多 —— 重试",
   "Could not load project artifacts.": "无法加载项目产物。",
   "Could not load project files": "无法加载项目文件",

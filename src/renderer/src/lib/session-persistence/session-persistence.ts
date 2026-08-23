@@ -922,22 +922,39 @@ const loadPersistedSessions = async (
         ? preferredSelection.sessionId
         : (result.manifest.lastSessionId ?? result.sessions[0]?.id)
     const selectedSummary = result.sessions.find((session) => session.id === requestedSelection)
-    const selected = selectedSummary
-      ? await loadPersistedSession(
-          {
-            projectId: selectedSummary.projectId,
-            sessionId: selectedSummary.id
-          },
-          api
+    const summariesToHydrate = result.sessions.filter(
+      (session) => session.id === selectedSummary?.id || session.needsStartupRecovery
+    )
+    const hydratedSessions = new Map(
+      await Promise.all(
+        summariesToHydrate.map(
+          async (summary) =>
+            [
+              summary.id,
+              await loadPersistedSession(
+                { projectId: summary.projectId, sessionId: summary.id },
+                api
+              )
+            ] as const
         )
-      : undefined
+      )
+    )
+    const selected = selectedSummary ? hydratedSessions.get(selectedSummary.id) : undefined
     if (!shouldHydrate()) return undefined
-    if (selectedSummary && !selected) {
-      throw new Error('Selected Session JSON is missing from the SQLite projection.')
+    const missing = summariesToHydrate.find((summary) => !hydratedSessions.get(summary.id))
+    if (missing) {
+      throw new Error(
+        'Session JSON requiring startup hydration is missing from the SQLite projection.'
+      )
     }
     useSessionStore
       .getState()
       .hydrateSessionSummaries(result.sessions, selected, result.manifest, preferredSelection)
+    for (const hydrated of hydratedSessions.values()) {
+      if (hydrated && hydrated.id !== selected?.id) {
+        useSessionStore.getState().upsertPersistedSession(hydrated)
+      }
+    }
     return result
   }
 

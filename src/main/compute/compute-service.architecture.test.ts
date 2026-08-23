@@ -321,9 +321,13 @@ describe('Compute service architecture', () => {
       'await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)',
       backgroundRecovery
     )
+    const backgroundSessionRecovery = source.indexOf(
+      'await sessionRepository.reconcilePendingSessionProjection()',
+      backgroundOrphanRecovery
+    )
     const backgroundProjectRecovery = source.indexOf(
       'await projectDeletionCoordinator.recoverPendingDeletions()',
-      backgroundOrphanRecovery
+      backgroundSessionRecovery
     )
 
     expect(projectBarriers).toBeGreaterThan(-1)
@@ -332,7 +336,8 @@ describe('Compute service architecture', () => {
     expect(backgroundRecovery).toBeGreaterThan(runtimeStart)
     expect(projectOrphanRecovery).toBeGreaterThan(-1)
     expect(backgroundOrphanRecovery).toBeGreaterThan(backgroundRecovery)
-    expect(backgroundProjectRecovery).toBeGreaterThan(backgroundOrphanRecovery)
+    expect(backgroundSessionRecovery).toBeGreaterThan(backgroundOrphanRecovery)
+    expect(backgroundProjectRecovery).toBeGreaterThan(backgroundSessionRecovery)
   })
 
   it('awaits Compute Job barrier rollback when a new Project deletion aborts', () => {
@@ -590,8 +595,8 @@ describe('Compute service architecture', () => {
 
   it('filters Compute Host access when a lazy Session is opened', () => {
     const mainIpc = readSource(computePaths.mainIpc)
-    expect(mainIpc).toMatch(
-      /if \(session\) \{\s*await sessionEnabledComputeHostsOwnerRef\.current\?\.reconcile\(\[session\], false\)\s*\}/u
+    expect(mainIpc).toContain(
+      'sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)'
     )
     expect(mainIpc).not.toContain('sessionEnabledComputeHostsOwnerRef.current?.project(session)')
   })

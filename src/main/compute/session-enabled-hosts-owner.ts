@@ -236,6 +236,38 @@ class SessionEnabledComputeHostsOwner {
     })
   }
 
+  reconcileSession(session: PersistedChatSession): Promise<PersistedChatSession> {
+    return this.enqueueWrite(async () => {
+      let validProviderIds: readonly string[]
+      try {
+        validProviderIds = await this.options.listHostIds()
+      } catch {
+        return session
+      }
+      const validProviderIdSet = new Set(validProviderIds)
+      const access = sessionComputeHostAccess(session)
+      const repairedAccess = {
+        enabledProviderIds: access.enabledProviderIds.filter((providerId) =>
+          validProviderIdSet.has(providerId)
+        ),
+        selectedProviderIds: access.selectedProviderIds.filter((providerId) =>
+          validProviderIdSet.has(providerId)
+        )
+      }
+      const changed =
+        repairedAccess.enabledProviderIds.length !== access.enabledProviderIds.length ||
+        repairedAccess.selectedProviderIds.length !== access.selectedProviderIds.length
+      const durable = changed
+        ? await this.mutateDurableAccess(session.projectId, session.id, {
+            kind: 'replace-access',
+            access: repairedAccess
+          })
+        : session
+      this.project(durable)
+      return durable
+    })
+  }
+
   createSession(
     session: PersistedChatSession,
     commit: (session: PersistedChatSession) => Promise<PersistedChatSession>

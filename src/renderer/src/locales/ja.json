@@ -498,6 +498,7 @@
   "Could not load artifacts — retry": "アーティファクトをロードできませんでした - 再試行してください",
   "Could not load artifacts.": "アーティファクトをロードできませんでした。",
   "Could not load local network details.": "ローカルネットワーク情報を読み込めませんでした。",
+  "Could not load this session for export.": "エクスポート用にこのセッションを読み込めませんでした。",
   "Could not load more — retry": "これ以上ロードできませんでした - 再試行してください",
   "Could not load project artifacts.": "プロジェクトのアーティファクトをロードできませんでした。",
   "Could not load project files": "プロジェクトファイルをロードできませんでした",

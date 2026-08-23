@@ -6,6 +6,7 @@ import {
   useSyncExternalStore,
   type FormEvent
 } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type {
   DeleteSessionRequest,
@@ -140,6 +141,7 @@ const useWorkspaceSessionController = ({
   settleSessionDeletion,
   deleteSession
 }: WorkspaceSessionControllerOptions): WorkspaceSessionController => {
+  const { t } = useTranslation()
   const renameSession = useSessionStore((state) => state.renameSession)
   const togglePinned = useSessionStore((state) => state.togglePinned)
   const updateSessionArchive = useSessionStore((state) => state.updateSessionArchive)
@@ -657,7 +659,7 @@ const useWorkspaceSessionController = ({
               if (!hydrated) throw new Error('Selected Session could not be hydrated.')
               setExportConversationDialog(hydrated)
             })
-            .catch((error) => setExportError(errorMessage(error)))
+            .catch(() => setExportError(t('Could not load this session for export.')))
           return
         }
         setExportConversationDialog(session)

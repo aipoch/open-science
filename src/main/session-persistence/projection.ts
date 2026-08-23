@@ -82,6 +82,20 @@ const projectionMessages = (
     : session.messages.map((message) => ({ message, isRootFrame: true }))
 }
 
+const hasPendingArtifact = (session: PersistedChatSession): boolean => {
+  const pendingArtifactIds = new Set(
+    (session.artifacts ?? [])
+      .filter(
+        (artifact) =>
+          typeof artifact.path === 'string' && artifact.path.split(/[\\/]+/).includes('.pending')
+      )
+      .map(({ id }) => id)
+  )
+  return session.messages.some((message) =>
+    message.artifactIds?.some((artifactId) => pendingArtifactIds.has(artifactId))
+  )
+}
+
 export const buildSessionProjection = (session: PersistedChatSession): SessionProjection => {
   const turnUsage: SessionProjection['turnUsage'][number][] = []
   const runs: SessionProjection['runs'][number][] = []
@@ -170,7 +184,8 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
       needsStartupRecovery:
         session.status === 'running' ||
         session.activeRun !== undefined ||
-        hasCurrentRunningDelegatedAttempt(session)
+        hasCurrentRunningDelegatedAttempt(session) ||
+        hasPendingArtifact(session)
     },
     turnUsage,
     runs,
@@ -313,6 +328,11 @@ export class SessionProjectionRepository {
       }),
       client.pendingSessionReconciliation.deleteMany()
     ])
+  }
+
+  async numberAssignments(): Promise<Array<{ id: string; number: number }>> {
+    const client = await this.client()
+    return client.session.findMany({ select: { id: true, number: true } })
   }
 
   async prepareSave(session: PersistedChatSession): Promise<PersistedChatSession> {

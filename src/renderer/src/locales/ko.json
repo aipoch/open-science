@@ -517,6 +517,7 @@
   "Could not load artifacts — retry": "아티팩트를 로드할 수 없습니다. 다시 시도하세요.",
   "Could not load artifacts.": "아티팩트를 로드할 수 없습니다.",
   "Could not load local network details.": "로컬 네트워크 정보를 불러올 수 없습니다.",
+  "Could not load this session for export.": "내보내기 위해 이 세션을 불러올 수 없습니다.",
   "Could not load more — retry": "더 이상 로드할 수 없습니다. 다시 시도하세요.",
   "Could not load project artifacts.": "프로젝트 아티팩트를 로드할 수 없습니다.",
   "Could not load project files": "프로젝트 파일을 로드할 수 없습니다.",
