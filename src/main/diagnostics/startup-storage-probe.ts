@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { open, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
@@ -18,6 +19,7 @@ export type IsolatedStartupStorageProbe = {
 
 type StartupStorageProbeDeps = {
   probeDir: string
+  probePath?: string
   now?: () => number
   isolate?: (input: StartupStorageProbeDeps) => IsolatedStartupStorageProbe
 }
@@ -40,8 +42,11 @@ const classify = (syncWriteMs: number): StartupStorageKind => {
   return 'typical'
 }
 
-const removeProbeFile = async (probeDir: string): Promise<void> => {
-  await unlink(join(probeDir, PROBE_FILE)).catch(() => undefined)
+const exclusiveProbePath = (probeDir: string): string =>
+  join(probeDir, `${PROBE_FILE}-${randomUUID()}`)
+
+const removeProbeFile = async (probePath: string): Promise<void> => {
+  await unlink(probePath).catch(() => undefined)
 }
 
 const timedOutResult = (timeoutMs: number): StartupStorageProbeResult => ({
@@ -57,12 +62,14 @@ export const probeStartupStorage = async (
   deps: StartupStorageProbeDeps
 ): Promise<StartupStorageProbeResult> => {
   const now = deps.now ?? Date.now
-  const probePath = join(deps.probeDir, PROBE_FILE)
+  const probePath = deps.probePath ?? exclusiveProbePath(deps.probeDir)
   const sequential = Buffer.alloc(SEQUENTIAL_BYTES, 7)
   const chunk = Buffer.alloc(SYNC_WRITE_BYTES, 9)
+  let created = false
   try {
     const sequentialStarted = now()
-    await writeFile(probePath, sequential)
+    await writeFile(probePath, sequential, { flag: 'wx' })
+    created = true
     await readFile(probePath)
     const sequentialMs = Math.max(0, now() - sequentialStarted)
 
@@ -81,7 +88,7 @@ export const probeStartupStorage = async (
   } catch {
     return UNKNOWN_RESULT
   } finally {
-    await removeProbeFile(deps.probeDir)
+    if (created) await removeProbeFile(probePath)
   }
 }
 
@@ -91,11 +98,9 @@ export const probeStartupStorage = async (
 const isolatedProbeWorkerSource = `'use strict'
 const { parentPort, workerData } = require('node:worker_threads')
 const { open, readFile, unlink, writeFile } = require('node:fs/promises')
-const { join } = require('node:path')
 const sequentialBytes = ${SEQUENTIAL_BYTES}
 const syncWriteBytes = ${SYNC_WRITE_BYTES}
 const syncWriteCount = ${SYNC_WRITE_COUNT}
-const probeFile = ${JSON.stringify(PROBE_FILE)}
 const likelySlowMs = ${LIKELY_SLOW_MS}
 const scannerMs = ${SCANNER_MS}
 const unknown = { sequentialMs: 0, syncWriteMs: 0, kind: 'unknown' }
@@ -105,14 +110,16 @@ const classify = (syncWriteMs) =>
     : syncWriteMs >= likelySlowMs
       ? 'likely-slow-disk'
       : 'typical'
-const probeDir = typeof workerData?.probeDir === 'string' ? workerData.probeDir : ''
-const probePath = join(probeDir, probeFile)
+const probePath = typeof workerData?.probePath === 'string' ? workerData.probePath : ''
 void (async () => {
+  let created = false
   try {
+    if (!probePath) throw new Error('missing probe path')
     const sequential = Buffer.alloc(sequentialBytes, 7)
     const chunk = Buffer.alloc(syncWriteBytes, 9)
     const sequentialStarted = Date.now()
-    await writeFile(probePath, sequential)
+    await writeFile(probePath, sequential, { flag: 'wx' })
+    created = true
     await readFile(probePath)
     const sequentialMs = Math.max(0, Date.now() - sequentialStarted)
     const syncStarted = Date.now()
@@ -130,17 +137,18 @@ void (async () => {
   } catch {
     parentPort.postMessage(unknown)
   } finally {
-    await unlink(probePath).catch(() => undefined)
+    if (created) await unlink(probePath).catch(() => undefined)
   }
 })()
 `
 
 const startIsolatedProbe = (deps: StartupStorageProbeDeps): IsolatedStartupStorageProbe => {
+  const probePath = deps.probePath ?? exclusiveProbePath(deps.probeDir)
   let worker: Worker
   try {
     worker = new Worker(isolatedProbeWorkerSource, {
       eval: true,
-      workerData: { probeDir: deps.probeDir }
+      workerData: { probePath }
     })
   } catch {
     return {
@@ -181,7 +189,7 @@ const startIsolatedProbe = (deps: StartupStorageProbeDeps): IsolatedStartupStora
     result,
     terminate: async () => {
       await worker.terminate().catch(() => undefined)
-      await removeProbeFile(deps.probeDir)
+      await removeProbeFile(probePath)
     }
   }
 }

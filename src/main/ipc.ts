@@ -104,10 +104,7 @@ import {
   buildTaskNotificationShow
 } from './notifications/electron-wiring'
 import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
-import {
-  startDiagnosticOperation,
-  type DiagnosticOperation
-} from './diagnostics/operation'
+import { startDiagnosticOperation, type DiagnosticOperation } from './diagnostics/operation'
 import { broadcastNotebookEnvProgress, registerNotebookEnvIpcHandlers } from './notebook/env-ipc'
 import {
   createNotebookApplicationModule,
