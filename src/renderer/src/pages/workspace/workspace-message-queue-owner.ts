@@ -30,6 +30,16 @@ type MessageQueueItem = {
   deferredUntilIdle?: boolean
 }
 
+type MessageQueueAdmission = {
+  session: ChatSession
+  snapshot: ComposerSendSnapshot
+  text: string
+  forcedSkillIds: string[]
+  permissionProfile: PermissionProfileId
+  agentConfiguration: SessionAgentConfiguration
+  specialistId: string | null | undefined
+}
+
 type MessageQueueDispatch = {
   itemId: string
   settled: boolean
@@ -111,6 +121,31 @@ class WorkspaceMessageQueueOwner {
     return `queued-message-${Date.now()}-${this.nextQueueId}`
   }
 
+  itemsFor = (sessionId: string): MessageQueueItem[] => this.queues.get(sessionId) ?? []
+
+  replaceItem = (
+    sessionId: string,
+    itemId: string,
+    update: Partial<Pick<MessageQueueItem, 'phase' | 'error' | 'deferredUntilIdle'>>
+  ): void => {
+    const items = this.itemsFor(sessionId)
+    const index = items.findIndex((item) => item.id === itemId)
+    if (index < 0) return
+    const next = [...items]
+    next[index] = { ...next[index], ...update }
+    this.queues.set(sessionId, next)
+    this.emit()
+  }
+
+  discardSession = (
+    sessionId: string,
+    discardSnapshot: WorkspaceMessageQueueControllerOptions['composer']['discardSnapshot']
+  ): void => {
+    for (const item of this.itemsFor(sessionId)) discardSnapshot(item.snapshot)
+    this.queues.delete(sessionId)
+    this.emit()
+  }
+
   emit = (announcement?: string): void => {
     this.snapshot = {
       queues: new Map(this.queues),
@@ -173,6 +208,7 @@ class WorkspaceMessageQueueOwner {
 
 export { WorkspaceMessageQueueOwner }
 export type {
+  MessageQueueAdmission,
   MessageQueueDispatch,
   MessageQueueError,
   MessageQueueItem,

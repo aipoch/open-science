@@ -32,6 +32,10 @@ const ownerPaths = {
   conversation: resolve(workspaceDirectory, 'workspace-conversation-controller.ts'),
   messageQueue: resolve(workspaceDirectory, 'workspace-message-queue-controller.ts'),
   messageQueueOwner: resolve(workspaceDirectory, 'workspace-message-queue-owner.ts'),
+  messageQueueAdmission: resolve(workspaceDirectory, 'workspace-message-queue-admission.ts'),
+  messageQueueDrain: resolve(workspaceDirectory, 'workspace-message-queue-drain.ts'),
+  messageQueueProjection: resolve(workspaceDirectory, 'workspace-message-queue-projection.ts'),
+  messageQueueAnnouncement: resolve(workspaceDirectory, 'workspace-message-queue-announcement.ts'),
   branchSwitchGuard: resolve(workspaceDirectory, 'use-workspace-branch-switch-guard.ts'),
   sideChat: resolve(workspaceDirectory, 'use-side-chat-controller.ts'),
   session: resolve(workspaceDirectory, 'workspace-session-controller.ts'),
@@ -153,6 +157,10 @@ describe('workspace page architecture', () => {
       ownerPaths.conversation,
       ownerPaths.messageQueue,
       ownerPaths.messageQueueOwner,
+      ownerPaths.messageQueueAdmission,
+      ownerPaths.messageQueueDrain,
+      ownerPaths.messageQueueProjection,
+      ownerPaths.messageQueueAnnouncement,
       ownerPaths.branchSwitchGuard,
       ownerPaths.sideChat,
       ownerPaths.session,
@@ -167,7 +175,6 @@ describe('workspace page architecture', () => {
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',
       'pages/workspace/workspace-conversation-controller.ts',
-      'pages/workspace/workspace-message-queue-controller.ts',
       'pages/workspace/workspace-message-queue-owner.ts'
     ])
     expect(importersOf(ownerPaths.messageQueue)).toEqual([
@@ -176,7 +183,27 @@ describe('workspace page architecture', () => {
       'pages/workspace/workspace-conversation-controller.ts'
     ])
     expect(importersOf(ownerPaths.messageQueueOwner)).toEqual([
+      'pages/workspace/workspace-message-queue-admission.ts',
+      'pages/workspace/workspace-message-queue-controller.ts',
+      'pages/workspace/workspace-message-queue-drain.ts',
+      'pages/workspace/workspace-message-queue-projection.ts'
+    ])
+    expect(importersOf(ownerPaths.messageQueueAdmission)).toEqual([
+      'pages/workspace/workspace-message-queue-controller.ts',
+      'pages/workspace/workspace-message-queue-drain.ts',
+      'pages/workspace/workspace-message-queue-projection.ts'
+    ])
+    expect(importersOf(ownerPaths.messageQueueDrain)).toEqual([
       'pages/workspace/workspace-message-queue-controller.ts'
+    ])
+    expect(importersOf(ownerPaths.messageQueueProjection)).toEqual([
+      'pages/workspace/workspace-message-queue-controller.ts'
+    ])
+    expect(importersOf(ownerPaths.messageQueueAnnouncement)).toEqual([
+      'pages/workspace/ComposerMessageQueue.tsx',
+      'pages/workspace/workspace-message-queue-admission.ts',
+      'pages/workspace/workspace-message-queue-drain.ts',
+      'pages/workspace/workspace-message-queue-projection.ts'
     ])
     expect(importersOf(ownerPaths.branchSwitchGuard)).toEqual(['pages/workspace/WorkspacePage.tsx'])
     expect(importersOf(ownerPaths.session)).toEqual([
