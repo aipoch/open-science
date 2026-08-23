@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ClientConnection } from '@agentclientprotocol/sdk'
+import {
+  RequestError,
+  type ClientConnection,
+  type SetProviderRequest
+} from '@agentclientprotocol/sdk'
 import type { AcpConnectRequest, AcpStateSnapshot } from '../../shared/acp'
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 
 const connection = {} as ClientConnection
 
 describe('AcpConnectionLifecycleWorkflow', () => {
-  it('initializes, authenticates, configures the provider, then publishes connected', async () => {
+  it('initializes, authenticates, configures the advertised provider, then publishes connected', async () => {
     const actions: string[] = []
     const ready = {
       epoch: 1,
@@ -29,7 +33,7 @@ describe('AcpConnectionLifecycleWorkflow', () => {
           consumeInitializeMaterial: () => ({
             authentication: { methodId: 'api-key' },
             providerConfiguration: {
-              providerId: 'gateway',
+              providerId: 'openai',
               apiType: 'openai',
               baseUrl: 'http://127.0.0.1:1234/v1',
               headers: {}
@@ -47,9 +51,29 @@ describe('AcpConnectionLifecycleWorkflow', () => {
         authenticate: async () => {
           actions.push('authenticate')
         },
-        setProvider: async () => {
+        listProviders: async () => {
+          actions.push('provider-list')
+          // Real Codex ACP 1.1.4 wire response captured from the reported failing setup.
+          return {
+            providers: [
+              {
+                providerId: 'custom-gateway',
+                supported: ['openai' as const],
+                required: false,
+                current: null
+              }
+            ]
+          }
+        },
+        setProvider: vi.fn(async (request: SetProviderRequest) => {
           actions.push('provider-set')
-        }
+          if (request.providerId !== 'custom-gateway') {
+            throw RequestError.invalidParams(
+              { providerId: request.providerId },
+              `Unknown providerId "${request.providerId}"; only "custom-gateway" is configurable`
+            )
+          }
+        })
       })),
       dispose: vi.fn(async () => undefined)
     }
@@ -87,6 +111,8 @@ describe('AcpConnectionLifecycleWorkflow', () => {
       'initialize',
       'authenticate',
       'provider-set',
+      'provider-list',
+      'provider-set',
       'Agent initialized',
       'connected'
     ])
@@ -96,6 +122,12 @@ describe('AcpConnectionLifecycleWorkflow', () => {
         clientCapabilities: expect.objectContaining({ elicitation: { form: {} } })
       })
     )
+    expect(candidate.transferTo.mock.results[0]?.value.setProvider).toHaveBeenCalledWith({
+      providerId: 'custom-gateway',
+      apiType: 'openai',
+      baseUrl: 'http://127.0.0.1:1234/v1',
+      headers: {}
+    })
     expect(attempt.publish).toHaveBeenCalledWith({
       close: true,
       delete: false,

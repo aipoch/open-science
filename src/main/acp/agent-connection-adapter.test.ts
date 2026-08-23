@@ -244,6 +244,7 @@ describe('AcpAgentConnectionAdapter', () => {
         'authenticate',
         'backendAttempt',
         'initialize',
+        'listProviders',
         'setProvider'
       ])
       expect(candidate).not.toHaveProperty('process')
