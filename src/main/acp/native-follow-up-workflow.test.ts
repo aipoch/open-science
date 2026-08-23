@@ -437,7 +437,7 @@ describe('AcpNativeFollowUpWorkflow', () => {
     })
   })
 
-  it('refuses after steering if the live prompt ended or was replaced', async () => {
+  it('keeps a confirmed inject if the live prompt ends before notebook commit', async () => {
     const registerTurnInputs = vi.fn(async () => undefined)
     let liveTurnToken = 'turn-1'
     const { workflow } = createWorkflow({
@@ -462,25 +462,23 @@ describe('AcpNativeFollowUpWorkflow', () => {
       })
     })
     await expect(workflow.steerFollowUp({ sessionId: 'app-1', text: 'late' })).resolves.toEqual({
-      injected: false,
-      reason: 'no-live-turn'
+      injected: true,
+      transport: 'acp-steering',
+      messageId: 'message-steer-1'
     })
     expect(registerTurnInputs).not.toHaveBeenCalled()
-    expect(published).toEqual([])
+    expect(published).toEqual([{ sessionId: 'app-1', messageId: 'message-steer-1', text: 'late' }])
   })
 
-  it('aborts in-flight steering when the live prompt is cancelled', async () => {
+  it('does not abort in-flight steering when the live prompt is cancelled', async () => {
     const controller = new AbortController()
+    let cancellationSignal: AbortSignal | undefined
     const request = vi.fn(
-      (_method: string, _params: unknown, options?: { cancellationSignal?: AbortSignal }) =>
-        new Promise((_resolve, reject) => {
-          options?.cancellationSignal?.addEventListener(
-            'abort',
-            () => reject(Object.assign(new Error('AbortError'), { name: 'AbortError' })),
-            { once: true }
-          )
-          queueMicrotask(() => controller.abort())
-        })
+      async (_method: string, _params: unknown, options?: { cancellationSignal?: AbortSignal }) => {
+        cancellationSignal = options?.cancellationSignal
+        controller.abort()
+        return { outcome: 'injected' }
+      }
     )
     const { workflow } = createWorkflow({
       request,
@@ -489,8 +487,15 @@ describe('AcpNativeFollowUpWorkflow', () => {
     })
     await expect(
       workflow.steerFollowUp({ sessionId: 'app-1', text: 'focus on tests' })
-    ).resolves.toEqual({ injected: false, reason: 'dispatch-failed' })
-    expect(published).toEqual([])
+    ).resolves.toEqual({
+      injected: true,
+      transport: 'acp-steering',
+      messageId: 'message-steer-1'
+    })
+    expect(cancellationSignal?.aborted).toBe(false)
+    expect(published).toEqual([
+      { sessionId: 'app-1', messageId: 'message-steer-1', text: 'focus on tests' }
+    ])
   })
 
   it('does not register notebook inputs when steering is refused', async () => {

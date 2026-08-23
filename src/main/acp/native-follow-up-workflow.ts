@@ -244,7 +244,7 @@ class AcpNativeFollowUpWorkflow {
       return refused('no-live-turn')
     }
 
-    const transportSignal = this.transportSignal(live?.signal, route.transport)
+    const transportSignal = this.transportTimeout(route.transport)
     if (route.transport === 'acp-steering') {
       let result: unknown
       try {
@@ -309,16 +309,16 @@ class AcpNativeFollowUpWorkflow {
       }
     }
 
-    if (!this.sameLivePrompt(request.sessionId, live)) {
-      log.info('native follow-up refused', {
+    if (this.sameLivePrompt(request.sessionId, live)) {
+      await this.commitNotebookTurnInputs(notebookTurnInputs)
+    } else {
+      log.info('native follow-up skipped notebook registration', {
         sessionId: request.sessionId,
         reason: 'no-live-turn',
         transport: route.transport
       })
-      return refused('no-live-turn')
     }
 
-    await this.commitNotebookTurnInputs(notebookTurnInputs)
     const messageId = this.options.createMessageId?.() ?? `message-${randomUUID()}`
     const uploads = persistableUploads(preparedUploads ?? attachments)
     const parts = request.parts ?? []
@@ -344,15 +344,11 @@ class AcpNativeFollowUpWorkflow {
     return Boolean(current && live && current.turnToken === live.turnToken)
   }
 
-  private transportSignal(
-    liveSignal: AbortSignal | undefined,
-    transport: NativeFollowUpTransport
-  ): AbortSignal {
-    const timeout = AbortSignal.timeout(
+  private transportTimeout(transport: NativeFollowUpTransport): AbortSignal {
+    return AbortSignal.timeout(
       this.options.followUpTimeoutMs ??
         (transport === 'opencode-http' ? OPENCODE_HTTP_STEER_TIMEOUT_MS : ACP_STEERING_TIMEOUT_MS)
     )
-    return liveSignal ? AbortSignal.any([timeout, liveSignal]) : timeout
   }
 
   private rejectWhenAborted(signal: AbortSignal): Promise<never> {
