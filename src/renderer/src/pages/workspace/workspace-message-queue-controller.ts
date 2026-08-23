@@ -329,7 +329,11 @@ const useWorkspaceMessageQueueController = (
               emit('Queued message will send after the current run finishes.')
               return
             }
-            throw new Error('The queued message was not admitted.')
+            throw new Error(
+              latestSession?.status === 'error' && latestSession.error
+                ? latestSession.error
+                : 'The queued message was not admitted.'
+            )
           }
           const latest = itemsFor(sessionId)
           const remaining = latest.filter((candidate) => candidate.id !== item.id)
