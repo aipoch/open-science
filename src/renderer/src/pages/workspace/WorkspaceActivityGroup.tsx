@@ -37,6 +37,7 @@ type WorkspaceActivityGroupProps = {
   onToggleRow: (activityId: string, nextExpanded: boolean) => void
   // Full runs are an ephemeral local projection keyed by the compact transcript runId.
   notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>
+  onNotebookRunNearViewport?: (runId: string, isNearViewport: boolean) => void
   // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
   contentPaddingClassName?: string
   // Map of job_id → JobSummary for jobs bound to activities in this group.
@@ -80,6 +81,7 @@ const WorkspaceActivityGroup = ({
   expansionOverrides,
   onToggleRow,
   notebookRunsById,
+  onNotebookRunNearViewport,
   contentPaddingClassName,
   jobsByActivityId,
   onOpenJobDetail,
@@ -166,6 +168,7 @@ const WorkspaceActivityGroup = ({
                               : undefined)
                           }
                           isExpanded={isRowExpanded}
+                          onNotebookRunNearViewport={onNotebookRunNearViewport}
                           onToggle={onToggleRow}
                         />
                       ) : (

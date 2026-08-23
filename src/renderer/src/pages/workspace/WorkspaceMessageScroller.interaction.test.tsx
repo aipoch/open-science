@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, forwardRef, useCallback, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { waitFor } from '@testing-library/react'
 import type { PropsWithChildren } from 'react'
 import {
   useSessionStore,
@@ -22,6 +23,11 @@ import type {
   HandoffLifecycleEventSource
 } from '../../../../shared/handoff-lifecycle'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
+import type {
+  NotebookRunRecord,
+  NotebookSessionReference,
+  NotebookSessionState
+} from '../../../../shared/notebook'
 import {
   createLinearConversationGraph,
   projectConversationMessage,
@@ -418,6 +424,93 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(userRow?.getAttribute('data-scroll-anchor')).toBe('true')
     const agentRow = content?.querySelector('[data-message-id="reply-structure"]')
     expect(agentRow?.getAttribute('data-scroll-anchor')).toBeNull()
+  })
+
+  it('hydrates a near-viewport historical notebook figure while its tool row stays collapsed', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const notebookReference: NotebookSessionReference = {
+      sessionId: 'session-1',
+      projectId: 'default',
+      workspaceCwd: '/workspace',
+      notebookSessionRoot: '/workspace/.notebook',
+      dataRoot: '/workspace/data',
+      runtimeRoot: '/workspace/runtime',
+      runJsonPath: '/workspace/run.json'
+    }
+    const historicalRun: NotebookRunRecord = {
+      runId: 'historical-run-1',
+      executionInvocationId: 'invocation-1',
+      cellId: 'cell-1',
+      source: 'agent',
+      kernelKind: 'r',
+      script: 'plot(1:3)',
+      status: 'completed',
+      startedAt: 1,
+      endedAt: 2,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }],
+      artifacts: [],
+      workingFiles: []
+    }
+    const makeNotebookState = (runs: NotebookRunRecord[]): NotebookSessionState => ({
+      id: 'notebook-1',
+      sessionId: notebookReference.sessionId,
+      cwd: notebookReference.workspaceCwd,
+      notebookSessionRoot: notebookReference.notebookSessionRoot,
+      dataRoot: notebookReference.dataRoot,
+      runtimeRoot: notebookReference.runtimeRoot,
+      kernelStatus: 'idle',
+      runJsonPath: notebookReference.runJsonPath,
+      cells: [],
+      runCount: 101,
+      latestRunEnvironments: {},
+      runs,
+      recentRuns: runs,
+      environments: []
+    })
+    const loadNotebookState = vi.fn(
+      async (request: { runIds?: string[] }): Promise<NotebookSessionState> =>
+        makeNotebookState(request.runIds?.includes(historicalRun.runId) ? [historicalRun] : [])
+    )
+    window.api = {
+      ...window.api,
+      notebook: {
+        state: loadNotebookState,
+        onChanged: vi.fn(() => vi.fn())
+      }
+    } as unknown as Window['api']
+    const activity = createActivity({
+      id: 'notebook-tool-1',
+      status: 'completed',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      executionInvocationId: historicalRun.executionInvocationId,
+      rawInput: { code: historicalRun.script, kernelKind: historicalRun.kernelKind },
+      rawOutput: { runId: historicalRun.runId, status: historicalRun.status }
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', activities: [activity] })}
+          notebookReference={notebookReference}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    await waitFor(() =>
+      expect(loadNotebookState).toHaveBeenCalledWith({
+        sessionId: 'session-1',
+        projectId: 'default',
+        workspaceCwd: '/workspace',
+        runIds: ['historical-run-1']
+      })
+    )
+    await waitFor(() =>
+      expect(container.querySelector('[data-testid="notebook-tool-figure-button"]')).not.toBeNull()
+    )
+    expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
   })
 
   it('renders later tools in real time while the assistant reply is still pacing', async () => {

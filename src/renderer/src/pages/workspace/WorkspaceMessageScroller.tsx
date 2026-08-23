@@ -78,7 +78,10 @@ import type { PendingElicitationRequest } from '../../../../shared/acp'
 import { isHumanUserMessage } from '../../../../shared/session-persistence'
 import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
 import { useHandoffLifecycleEvents } from './useHandoffLifecycleEvents'
-import type { NotebookSessionReference } from '../../../../shared/notebook'
+import {
+  NOTEBOOK_STATE_TARGET_RUN_LIMIT,
+  type NotebookSessionReference
+} from '../../../../shared/notebook'
 import { useNotebookRunsById } from './use-notebook-runs-by-id'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
@@ -122,7 +125,13 @@ type SessionScopedActivityExpansionState = {
   overrides: ActivityExpansionOverrides
 }
 
+type SessionScopedNearViewportNotebookRunState = {
+  sessionId: string | undefined
+  runIds: Set<string>
+}
+
 const EMPTY_ACTIVITY_EXPANSION_OVERRIDES: ActivityExpansionOverrides = {}
+const EMPTY_NOTEBOOK_RUN_IDS: ReadonlySet<string> = new Set()
 
 // Extra hold after the paced reveal drains, so a queued message dispatches into a settled
 // transcript instead of the same moment as the final reveal frame.
@@ -483,6 +492,15 @@ const WorkspaceMessageScrollerImpl = ({
     activityExpansionOverrideState.sessionId === currentSessionId
       ? activityExpansionOverrideState.overrides
       : EMPTY_ACTIVITY_EXPANSION_OVERRIDES
+  const [nearViewportNotebookRunState, setNearViewportNotebookRunState] =
+    useState<SessionScopedNearViewportNotebookRunState>(() => ({
+      sessionId: undefined,
+      runIds: new Set()
+    }))
+  const nearViewportNotebookRunIds =
+    nearViewportNotebookRunState.sessionId === currentSessionId
+      ? nearViewportNotebookRunState.runIds
+      : EMPTY_NOTEBOOK_RUN_IDS
   const rawConversationItems = useMemo(
     () => createConversationItems(activeSession, handoffEvents),
     [activeSession, handoffEvents]
@@ -509,15 +527,42 @@ const WorkspaceMessageScrollerImpl = ({
       ),
     [conversationItems]
   )
-  const requestedNotebookRunIds = useMemo(
-    () =>
-      Object.entries(activityExpansionOverrides).flatMap(([activityId, expanded]) => {
+  const requestedNotebookRunIds = useMemo(() => {
+    const expandedRunIds = Object.entries(activityExpansionOverrides).flatMap(
+      ([activityId, expanded]) => {
         const runId = expanded ? notebookRunIdByActivityId.get(activityId) : undefined
         return runId ? [runId] : []
-      }),
-    [activityExpansionOverrides, notebookRunIdByActivityId]
-  )
+      }
+    )
+    return [...new Set([...expandedRunIds, ...nearViewportNotebookRunIds])]
+  }, [activityExpansionOverrides, nearViewportNotebookRunIds, notebookRunIdByActivityId])
   const notebookRunsById = useNotebookRunsById(notebookReference, requestedNotebookRunIds)
+  const handleNotebookRunNearViewport = useCallback(
+    (runId: string, isNearViewport: boolean): void => {
+      if (!currentSessionId) return
+      setNearViewportNotebookRunState((current) => {
+        const runIds =
+          current.sessionId === currentSessionId ? new Set(current.runIds) : new Set<string>()
+        const hadRunId = runIds.has(runId)
+
+        if (isNearViewport) {
+          runIds.delete(runId)
+          runIds.add(runId)
+          while (runIds.size > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
+            const oldestRunId = runIds.values().next().value
+            if (oldestRunId === undefined) break
+            runIds.delete(oldestRunId)
+          }
+        } else {
+          runIds.delete(runId)
+        }
+
+        if (current.sessionId === currentSessionId && hadRunId === runIds.has(runId)) return current
+        return { sessionId: currentSessionId, runIds }
+      })
+    },
+    [currentSessionId]
+  )
   const [visibleMessageSnapshot, setVisibleMessageSnapshot] = useState<VisibleMessageSnapshot>(
     () => ({ scopeId: undefined, messageIds: new Set() })
   )
@@ -1396,6 +1441,7 @@ const WorkspaceMessageScrollerImpl = ({
                     expansionOverrides={activityExpansionOverrides}
                     onToggleRow={toggleActivityRow}
                     notebookRunsById={notebookRunsById}
+                    onNotebookRunNearViewport={handleNotebookRunNearViewport}
                     permission={activeSession?.runtimeContext?.permission}
                     jobsByActivityId={jobsByActivityId}
                     onOpenJobDetail={handleOpenJobDetail}

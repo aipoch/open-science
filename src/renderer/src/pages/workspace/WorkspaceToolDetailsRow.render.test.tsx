@@ -331,6 +331,57 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(container.textContent).toContain('1 figure · done')
   })
 
+  it('keeps a terminal failure status ahead of output-line metadata', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { code: 'stop("boom")', kernelKind: 'r' },
+      rawOutput: { runId: 'notebook-run-1', status: 'failed' }
+    })
+    const details = buildToolActivityDetails(activity)
+    const notebookRun = createNotebookRun({ status: 'failed' })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          notebookRun={notebookRun}
+          isExpanded={false}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('1 figure · error')
+    expect(container.textContent).not.toContain('line of output')
+  })
+
+  it('requests near-viewport hydration for a missing historical notebook run', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { code: 'plot(1:3)', kernelKind: 'r' },
+      rawOutput: { runId: 'historical-run-1', status: 'completed' }
+    })
+    const details = buildToolActivityDetails(activity)
+    const onNotebookRunNearViewport = vi.fn()
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          isExpanded={false}
+          onNotebookRunNearViewport={onNotebookRunNearViewport}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(onNotebookRunNearViewport).toHaveBeenCalledWith('historical-run-1', true)
+  })
+
   it('translates figure count meta', async () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-notebook__notebook_execute',

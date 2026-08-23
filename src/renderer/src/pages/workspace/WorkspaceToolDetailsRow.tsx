@@ -1,5 +1,6 @@
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
@@ -10,6 +11,7 @@ import {
 import { NotebookToolFigureOutputs } from './NotebookToolFigureOutputs'
 import { notebookRunStatusLabel } from './notebook-cell-utils'
 import { usePreviewFileContent } from './previews/usePreviewFileContent'
+import { useNearViewport } from './previews/useNearViewport'
 
 // Byte cap for inline tool-output image previews. Co-located here (rather than in preview-support,
 // which #147 refactored into format detection) since it's specific to this panel's base64 read.
@@ -31,6 +33,7 @@ type WorkspaceToolDetailsRowProps = {
   details: ToolActivityDetails
   notebookRun?: NotebookRunRecord
   isExpanded: boolean
+  onNotebookRunNearViewport?: (runId: string, isNearViewport: boolean) => void
   onToggle: (activityId: string, nextExpanded: boolean) => void
 }
 
@@ -130,9 +133,12 @@ const WorkspaceToolDetailsRow = ({
   details,
   notebookRun,
   isExpanded,
+  onNotebookRunNearViewport,
   onToggle
 }: WorkspaceToolDetailsRowProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const [setRowElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
+  const notebookRunId = details.notebookRunId
   const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun, t) : undefined
   const notebookOutputLineMeta = notebookRun
     ? formatNotebookRunOutputLineMeta(notebookRun, t)
@@ -144,7 +150,10 @@ const WorkspaceToolDetailsRow = ({
       ? t('done')
       : details.metaLabel
   const notebookRunMeta = notebookFigureMeta
-    ? [notebookFigureMeta, notebookOutputLineMeta ?? notebookTerminalMeta]
+    ? [
+        notebookFigureMeta,
+        notebookRunStatus ? t(notebookRunStatus) : (notebookOutputLineMeta ?? notebookTerminalMeta)
+      ]
         .filter(Boolean)
         .join(' · ')
     : notebookRunStatus
@@ -152,6 +161,18 @@ const WorkspaceToolDetailsRow = ({
       : undefined
   const translateKnownCopy = (value: string): string =>
     TRANSLATABLE_TOOL_DETAIL_COPY.has(value) ? t(value) : value
+
+  // Full Notebook records are intentionally bounded. Ask the transcript owner to hydrate a missing
+  // historical run only while its collapsed row is near the viewport; the owner's LRU keeps this
+  // independent of row expansion without retaining an unbounded image history in renderer memory.
+  useEffect(() => {
+    if (!notebookRunId || notebookRun || !onNotebookRunNearViewport) return undefined
+
+    onNotebookRunNearViewport(notebookRunId, isNearViewport)
+    return () => {
+      if (isNearViewport) onNotebookRunNearViewport(notebookRunId, false)
+    }
+  }, [isNearViewport, notebookRun, notebookRunId, onNotebookRunNearViewport])
 
   const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
     if (section.kind === 'diff') {
@@ -219,6 +240,7 @@ const WorkspaceToolDetailsRow = ({
         isExpanded={isExpanded}
         panelClassName="mx-1 mb-1.5 space-y-2.5 md:ml-[30px]"
         panelTestId="tool-details"
+        buttonRef={setRowElement}
         onToggle={onToggle}
       >
         {details.sections.map(renderSection)}
