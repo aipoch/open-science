@@ -5,6 +5,7 @@ import { readFile, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { createInterface, type Interface } from 'node:readline'
+import { Transform, type TransformCallback } from 'node:stream'
 
 import { terminateProcessTree, type ProcessTreeKillResult } from '../process-tree'
 import {
@@ -41,6 +42,7 @@ import {
   NOTEBOOK_FIGURE_LIMIT_ENV,
   NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES,
   NOTEBOOK_FIGURE_TOTAL_LIMIT_ENV,
+  NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES,
   NOTEBOOK_TEXT_LIMIT_BYTES,
   NOTEBOOK_TEXT_LIMIT_ENV
 } from './content-limits'
@@ -81,6 +83,40 @@ const defaultScheduleIdleTimer: ScheduleIdleTimer = (fn, ms) => {
 }
 
 const defaultCancelIdleTimer: CancelIdleTimer = (handle) => clearTimeout(handle as NodeJS.Timeout)
+
+// Stops an unframed native/subprocess write from making readline retain an unbounded protocol line.
+const createBoundedKernelOutput = (onLimit: (error: Error) => void): Transform => {
+  let lineBytes = 0
+  let limited = false
+  return new Transform({
+    transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
+      if (limited) {
+        callback()
+        return
+      }
+      let start = 0
+      while (start < chunk.byteLength) {
+        const newline = chunk.indexOf(0x0a, start)
+        const end = newline === -1 ? chunk.byteLength : newline
+        lineBytes += end - start
+        if (lineBytes > NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES) {
+          limited = true
+          onLimit(
+            new Error(
+              `Notebook kernel response exceeded the ${NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES}-byte transport limit.`
+            )
+          )
+          callback()
+          return
+        }
+        if (newline === -1) break
+        lineBytes = 0
+        start = newline + 1
+      }
+      callback(null, chunk)
+    }
+  })
+}
 
 // Resolves the idle window: an explicit option wins, then OPEN_SCIENCE_KERNEL_IDLE_MS (a positive ms
 // value opts INTO idle reclaim), else DEFAULT_IDLE_MS (0 = disabled). A value <= 0 disables idle
@@ -494,7 +530,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
     if (pending) await pending
 
     const child = await this.spawnLoop(kind, env, request)
-    const readline = createInterface({ input: child.stdout })
+    const boundedOutput = createBoundedKernelOutput((error) => {
+      if (this.procs.get(key) !== proc) return
+      this.dropProc(proc)
+      this.killChildTracked(proc)
+      this.onTerminated?.(kind, env)
+      this.rejectPending(proc, error)
+    })
+    const readline = createInterface({ input: boundedOutput })
     const proc: ProcState = {
       kind,
       env,
@@ -506,6 +549,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     }
 
     readline.on('line', (line) => this.handleLine(proc, line))
+    child.stdout.pipe(boundedOutput)
     // Drain stderr unconditionally so a chatty/crashing loop can never block on a full OS pipe.
     child.stderr.on('data', () => {})
     // A late async pipe error (e.g. EPIPE if the loop died mid-write) must not surface as an

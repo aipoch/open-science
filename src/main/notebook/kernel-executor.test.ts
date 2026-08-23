@@ -15,7 +15,7 @@ import {
   rScriptBin
 } from './runtime-paths'
 import { TimeoutController } from './timeout-controller'
-import { NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
+import { NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES, NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
 import {
   startWorkingFileObservation,
   toPortableNotebookRelativePath
@@ -340,6 +340,35 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       // The loop reports its resolved cwd (macOS maps /var -> /private/var).
       expect(result.cwdAfter).toBe(realpathSync(cwdDir))
       expect(result.outputs).toContainEqual({ type: 'stream', name: 'stdout', text: 'hello' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('drops a kernel whose stdout exceeds the bounded protocol line', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-protocol-line-limit-')
+    const terminated: string[] = []
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: FIXTURE,
+      platform: 'linux',
+      onTerminated: (kind) => terminated.push(kind)
+    })
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        code: `__OVERSIZED_LINE__:${NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES + 1}`
+      })
+
+      expect(result.status).toBe('failed')
+      expect(result.stderr).toContain(
+        `exceeded the ${NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES}-byte transport limit`
+      )
+      expect(terminated).toEqual(['python'])
+      expect(procFor(executor, 'python')).toBeUndefined()
+
+      await expect(
+        executor.execute({ ...baseRequest(cwdDir), code: 'after-oversized-line' })
+      ).resolves.toMatchObject({ status: 'completed', stdout: 'after-oversized-line' })
     } finally {
       await executor.shutdown()
     }
