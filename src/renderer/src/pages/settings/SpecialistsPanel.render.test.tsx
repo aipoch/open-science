@@ -1177,8 +1177,10 @@ describe('SpecialistsPanel', () => {
       document.body.querySelector('[aria-label="Change appearance for Builtin Curator"]')
     ).toBeNull()
     const builtinRow = builtin?.closest('[data-slot="settings-list-row"]')
+    expect(builtinRow?.firstElementChild?.tagName).toBe('SPAN')
     expect(builtinRow?.firstElementChild?.className).toContain('size-11')
     expect(builtinRow?.children[1]?.className).toContain('flex-1')
+    expect(builtinRow?.querySelectorAll('[aria-label="View Builtin Curator"]')).toHaveLength(2)
 
     const reviewerLabel = Array.from(document.body.querySelectorAll('span')).find(
       (element) => element.textContent === 'Reviewer'
