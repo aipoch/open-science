@@ -133,6 +133,46 @@ describe('TokenUsagePanel', () => {
     )
   })
 
+  it('refreshes the SQLite usage projection after the Project catalog changes', async () => {
+    const now = localTime(2026, 8, 15, 18)
+    const projection = (projectCreatedAt: number[]): SessionUsageProjection => ({
+      sessionCreatedAt: [],
+      projectCreatedAt,
+      artifactCreatedAt: [],
+      runsAt: [],
+      usageEvents: [],
+      totalArtifacts: 0
+    })
+    const loadUsage = vi
+      .fn()
+      .mockResolvedValueOnce(projection([now]))
+      .mockResolvedValueOnce(projection([now, now]))
+    window.api = { sessions: { loadUsage } } as unknown as Window['api']
+
+    await act(async () => {
+      root.render(<TokenUsagePanel sessions={[]} projects={[createProject(now)]} now={now} />)
+    })
+    expect(loadUsage).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      root.render(
+        <TokenUsagePanel
+          sessions={[]}
+          projects={[
+            createProject(now),
+            { ...createProject(now), id: 'project-2', name: 'Second project' }
+          ]}
+          now={now}
+        />
+      )
+    })
+
+    expect(loadUsage).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
+      'Total projects2'
+    )
+  })
+
   it('renders the stat strip, 30-day charts, coverage, and period controls', () => {
     const now = localTime(2026, 8, 15, 18)
 

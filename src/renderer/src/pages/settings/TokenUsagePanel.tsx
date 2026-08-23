@@ -88,6 +88,10 @@ function TokenUsagePanel({
   const usageRevision = sessions
     .map((session) => `${session.id}:${session.revision ?? 0}`)
     .join('\u0000')
+  const projectRevision = projects
+    .map((project) => `${project.id}:${project.createdAt}`)
+    .sort()
+    .join('\u0000')
 
   useEffect(() => {
     const loadUsage = window.api?.sessions?.loadUsage
@@ -101,7 +105,7 @@ function TokenUsagePanel({
     return () => {
       active = false
     }
-  }, [usageRevision])
+  }, [usageRevision, projectRevision])
 
   useEffect(() => {
     if (providedNow !== undefined) return

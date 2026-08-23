@@ -587,4 +587,12 @@ describe('Compute service architecture', () => {
     expect(broker).toContain('resolveSshTarget')
     expect(broker).toContain('runner.run')
   })
+
+  it('filters Compute Host access when a lazy Session is opened', () => {
+    const mainIpc = readSource(computePaths.mainIpc)
+    expect(mainIpc).toMatch(
+      /if \(session\) \{\s*await sessionEnabledComputeHostsOwnerRef\.current\?\.reconcile\(\[session\], false\)\s*\}/u
+    )
+    expect(mainIpc).not.toContain('sessionEnabledComputeHostsOwnerRef.current?.project(session)')
+  })
 })

@@ -931,7 +931,9 @@ const createApplicationModules = async (
     loadOne: async ({ projectId, sessionId }) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
       const session = await sessionRepository.loadSession(projectId, sessionId)
-      if (session) sessionEnabledComputeHostsOwnerRef.current?.project(session)
+      if (session) {
+        await sessionEnabledComputeHostsOwnerRef.current?.reconcile([session], false)
+      }
       return session
     },
     saveSession: async (session, options) => {
