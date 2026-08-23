@@ -8,6 +8,17 @@ import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import type { PermissionUndo } from '@/stores/permission-grants-store'
 import { useArchiveUndoStore, type ArchiveUndo } from '@/stores/archive-undo-store'
 
+const EDITABLE_SHORTCUT_TARGET =
+  'input, textarea, select, [role="textbox"], [contenteditable]:not([contenteditable="false"])'
+
+const archiveUndoShortcut = (): { aria: string; label: string } =>
+  window.api.platform === 'darwin'
+    ? { aria: 'Meta+Z', label: '⌘Z' }
+    : { aria: 'Control+Z', label: 'Ctrl+Z' }
+
+const isEditableShortcutTarget = (target: EventTarget | null): boolean =>
+  target instanceof Element && target.closest(EDITABLE_SHORTCUT_TARGET) !== null
+
 const PermissionUndoItem = ({
   undo,
   extend,
@@ -133,14 +144,17 @@ const ArchiveUndoItem = ({
   undo,
   dismiss,
   restore,
-  isRestoring
+  isRestoring,
+  isShortcutTarget
 }: {
   undo: ArchiveUndo
   dismiss: (key: string) => void
   restore: (key: string) => Promise<void>
   isRestoring: boolean
+  isShortcutTarget: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const shortcut = archiveUndoShortcut()
 
   const [pointerPaused, setPointerPaused] = useState(false)
   const [focusPaused, setFocusPaused] = useState(false)
@@ -178,6 +192,7 @@ const ArchiveUndoItem = ({
         variant="ghost"
         size="sm"
         className="relative ml-1 h-8 gap-1.5 whitespace-nowrap px-2 font-medium before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']"
+        aria-keyshortcuts={isShortcutTarget ? shortcut.aria : undefined}
         disabled={isRestoring}
         onClick={() => void restore(undo.key)}
       >
@@ -196,6 +211,14 @@ const ArchiveUndoItem = ({
           : undo.retry
             ? t('Retry')
             : t('Undo')}
+        {isShortcutTarget && !isRestoring ? (
+          <kbd
+            aria-hidden="true"
+            className="rounded border border-border/80 bg-muted px-1 py-0.5 font-mono text-[10px] leading-none text-muted-foreground"
+          >
+            {shortcut.label}
+          </kbd>
+        ) : null}
       </Button>
       <TooltipProvider delayDuration={200}>
         <Tooltip>
@@ -233,6 +256,37 @@ const PermissionUndoSnackbar = (): React.JSX.Element | null => {
   const dismissArchive = useArchiveUndoStore((state) => state.dismiss)
   const archiveRestoringKey = useArchiveUndoStore((state) => state.restoringKey)
 
+  useEffect(() => {
+    const undoLatestArchive = (event: KeyboardEvent): void => {
+      const primaryModifier =
+        window.api.platform === 'darwin'
+          ? event.metaKey && !event.ctrlKey
+          : event.ctrlKey && !event.metaKey
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.repeat ||
+        event.key.toLowerCase() !== 'z' ||
+        !primaryModifier ||
+        event.altKey ||
+        event.shiftKey ||
+        isEditableShortcutTarget(event.target)
+      ) {
+        return
+      }
+
+      const archiveUndo = useArchiveUndoStore.getState()
+      const latest = archiveUndo.notices.find((notice) => notice.expiresAt > Date.now())
+      if (!latest || archiveUndo.restoringKey !== undefined) return
+
+      event.preventDefault()
+      void archiveUndo.undo(latest.key)
+    }
+
+    window.addEventListener('keydown', undoLatestArchive)
+    return () => window.removeEventListener('keydown', undoLatestArchive)
+  }, [])
+
   const items = useMemo(
     () => [undo, ...undoQueue].filter((item): item is PermissionUndo => Boolean(item)),
     [undo, undoQueue]
@@ -258,13 +312,14 @@ const PermissionUndoSnackbar = (): React.JSX.Element | null => {
             isRestoring={isRestoring}
           />
         ))}
-        {archiveNotices.map((item) => (
+        {archiveNotices.map((item, index) => (
           <ArchiveUndoItem
             key={item.key}
             undo={item}
             dismiss={dismissArchive}
             restore={restoreArchive}
             isRestoring={archiveRestoringKey === item.key}
+            isShortcutTarget={index === 0}
           />
         ))}
       </div>

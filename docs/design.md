@@ -392,6 +392,12 @@ colors communicate a successful or failed probe/migration result.
   recovery, legacy data move, update, compute approval, Connector approval, Skill import approval,
   global search, Settings, preview, then base content. A covered presentation stays requested and
   resumes when higher-priority work clears.
+- A successful Project or Session archive adds an eight-second app-root Undo receipt. The latest
+  unexpired archive owns the visible shortcut hint and responds to `Cmd+Z` on macOS or `Ctrl+Z` on
+  Windows/Linux; older receipts remain clickable. Text inputs, textareas, selects, ARIA textboxes,
+  contenteditable editors, IME composition, modified chords, and key repeat retain native behavior.
+  Expired receipts never consume the shortcut, and Settings -> Archived remains the durable restore
+  path after the transient receipt disappears.
 - Session visibility, App Shell shortcut eligibility, and `Cmd/Ctrl+W` routing must consume that
   projection. Do not rebuild parallel Boolean gate lists in `AppContent` or feature components.
 - When a presentation above preview/base owns the shell, base content is `inert` and

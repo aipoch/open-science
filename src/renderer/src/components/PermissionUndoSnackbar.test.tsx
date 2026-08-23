@@ -8,6 +8,20 @@ import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { PermissionUndoSnackbar } from './PermissionUndoSnackbar'
 
+const archivedProjectNotice = (
+  id = 'project-1',
+  archivedAt = 10,
+  name = 'Project'
+): ReturnType<typeof useArchiveUndoStore.getState>['notices'][number] => ({
+  key: `project:${id}:${archivedAt}`,
+  kind: 'project',
+  projectId: id,
+  archivedAt,
+  expiresAt: Date.now() + 8_000,
+  messageKey: 'Archived project “{{name}}”.',
+  messageParams: { name }
+})
+
 describe('PermissionUndoSnackbar', () => {
   let container: HTMLDivElement
   let root: Root
@@ -42,6 +56,7 @@ describe('PermissionUndoSnackbar', () => {
       updatedAt: 1
     })
     window.api = {
+      platform: 'darwin',
       permissions: { extendUndo, restore },
       projects: { updateArchive: updateProjectArchive }
     } as unknown as Window['api']
@@ -129,17 +144,7 @@ describe('PermissionUndoSnackbar', () => {
 
   it('shares the top stack with Archive Undo actions', async () => {
     useArchiveUndoStore.setState({
-      notices: [
-        {
-          key: 'project:project-1:10',
-          kind: 'project',
-          projectId: 'project-1',
-          archivedAt: 10,
-          expiresAt: Date.now() + 8_000,
-          messageKey: 'Archived project “{{name}}”.',
-          messageParams: { name: 'Project' }
-        }
-      ],
+      notices: [archivedProjectNotice()],
       restoringKey: undefined
     })
     await act(async () => root.render(<PermissionUndoSnackbar />))
@@ -160,6 +165,119 @@ describe('PermissionUndoSnackbar', () => {
       expectedArchivedAt: 10
     })
     expect(container.querySelector('[data-testid="archive-undo-snackbar"]')).toBeNull()
+  })
+
+  it('shows the platform shortcut only on the latest Archive Undo action', async () => {
+    useArchiveUndoStore.setState({
+      notices: [
+        archivedProjectNotice('project-2', 20, 'Latest'),
+        archivedProjectNotice('project-1', 10, 'Earlier')
+      ],
+      restoringKey: undefined
+    })
+    await act(async () => root.render(<PermissionUndoSnackbar />))
+
+    const actions = container.querySelectorAll<HTMLButtonElement>(
+      '[data-testid="archive-undo-snackbar"] button:not([aria-label])'
+    )
+    expect(actions[0]?.getAttribute('aria-keyshortcuts')).toBe('Meta+Z')
+    expect(actions[0]?.textContent).toContain('⌘Z')
+    expect(actions[1]?.hasAttribute('aria-keyshortcuts')).toBe(false)
+    expect(actions[1]?.textContent).not.toContain('⌘Z')
+  })
+
+  it('undoes the latest archive with Cmd+Z without restoring a permission receipt', async () => {
+    useArchiveUndoStore.setState({
+      notices: [
+        archivedProjectNotice('project-2', 20, 'Latest'),
+        archivedProjectNotice('project-1', 10, 'Earlier')
+      ],
+      restoringKey: undefined
+    })
+    await act(async () => root.render(<PermissionUndoSnackbar />))
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'z',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+
+    await act(async () => window.dispatchEvent(shortcut))
+
+    expect(shortcut.defaultPrevented).toBe(true)
+    expect(updateProjectArchive).toHaveBeenCalledWith({
+      id: 'project-2',
+      archived: false,
+      expectedArchivedAt: 20
+    })
+    expect(restore).not.toHaveBeenCalled()
+  })
+
+  it('uses Ctrl+Z outside macOS', async () => {
+    window.api.platform = 'win32'
+    useArchiveUndoStore.setState({
+      notices: [archivedProjectNotice()],
+      restoringKey: undefined
+    })
+    await act(async () => root.render(<PermissionUndoSnackbar />))
+    const action = container.querySelector<HTMLButtonElement>(
+      '[data-testid="archive-undo-snackbar"] button:not([aria-label])'
+    )
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+
+    expect(action?.getAttribute('aria-keyshortcuts')).toBe('Control+Z')
+    expect(action?.textContent).toContain('Ctrl+Z')
+
+    await act(async () => window.dispatchEvent(shortcut))
+
+    expect(shortcut.defaultPrevented).toBe(true)
+    expect(updateProjectArchive).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['input', () => document.createElement('input')],
+    ['textarea', () => document.createElement('textarea')],
+    [
+      'contenteditable',
+      () => {
+        const editor = document.createElement('div')
+        editor.setAttribute('contenteditable', 'true')
+        return editor
+      }
+    ],
+    [
+      'ARIA textbox',
+      () => {
+        const editor = document.createElement('div')
+        editor.setAttribute('role', 'textbox')
+        return editor
+      }
+    ]
+  ])('preserves native Cmd+Z in an %s', async (_, createEditor) => {
+    useArchiveUndoStore.setState({
+      notices: [archivedProjectNotice()],
+      restoringKey: undefined
+    })
+    await act(async () => root.render(<PermissionUndoSnackbar />))
+    const editor = createEditor()
+    document.body.appendChild(editor)
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'z',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+
+    await act(async () => editor.dispatchEvent(shortcut))
+
+    expect(shortcut.defaultPrevented).toBe(false)
+    expect(updateProjectArchive).not.toHaveBeenCalled()
+    editor.remove()
   })
 
   it('renews the authoritative receipt while automatic dismissal is paused by hover', async () => {
