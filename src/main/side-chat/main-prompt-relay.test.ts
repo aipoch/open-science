@@ -260,6 +260,47 @@ describe('main prompt side-chat relay', () => {
     )
   })
 
+  it('does not report the current relay as injected when an older bounded claim fills the turn', async () => {
+    const relay = new SideChatRelayOwner({
+      targetState: () => 'running',
+      appendRelay: async () => undefined
+    })
+    relay.bind({
+      sideSessionId: 'side-1',
+      sideChatId: 'chat-1',
+      parentSessionId: 'main-1',
+      projectId: 'project-1'
+    })
+    const first = await relay.send({
+      sideSessionId: 'side-1',
+      target: 'main',
+      text: `first-${'a'.repeat(7_000)}`
+    })
+    const second = await relay.send({
+      sideSessionId: 'side-1',
+      target: 'main',
+      text: `second-${'b'.repeat(7_000)}`
+    })
+    const commitSideChatRelays = vi.fn(async () => [])
+    const adapter = createMainPromptSideChatRelay({
+      relay,
+      steerAdvisory: vi.fn(async () => ({
+        injected: true as const,
+        promptMessageId: 'prompt-live'
+      })),
+      commitSideChatRelays,
+      onDelivered: vi.fn()
+    })
+
+    await expect(adapter.tryInject('main-1', second)).resolves.toBe(second)
+    expect(commitSideChatRelays).toHaveBeenCalledWith(
+      expect.objectContaining({ relayIds: [first.messageId], promptMessageId: 'prompt-live' })
+    )
+    const remaining = adapter.claim('main-1')
+    expect(remaining?.historyPreamble).toContain('second-')
+    remaining?.restore()
+  })
+
   it('restores a claim before provider admission', async () => {
     const relay = new SideChatRelayOwner({
       targetState: () => 'completed',

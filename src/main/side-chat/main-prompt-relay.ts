@@ -26,6 +26,7 @@ type MainPromptSideChatRelayOptions = Readonly<{
 
 type MainPromptSideChatRelayClaim = Readonly<{
   historyPreamble: string
+  includes: (messageId: string) => boolean
   restore: () => void
   commit: (promptMessageId?: string) => Promise<void>
 }>
@@ -65,6 +66,7 @@ const createMainPromptSideChatRelay = (
     if (!claim) return undefined
     return {
       historyPreamble: formatAdvisories(claim.messages),
+      includes: (messageId) => claim.messages.some((message) => message.id === messageId),
       restore: claim.restore,
       commit: async (promptMessageId?: string): Promise<void> => {
         const messages = claim.messages
@@ -109,6 +111,7 @@ const createMainPromptSideChatRelay = (
       if (queued.targetState !== 'running' || !options.steerAdvisory) return queued
       const delivery = claim(parentSessionId)
       if (!delivery) return queued
+      const includesQueued = delivery.includes(queued.messageId)
       let steered: Awaited<ReturnType<NonNullable<typeof options.steerAdvisory>>>
       try {
         steered = await options.steerAdvisory({
@@ -124,6 +127,7 @@ const createMainPromptSideChatRelay = (
         return queued
       }
       await delivery.commit(steered.promptMessageId)
+      if (!includesQueued) return queued
       return {
         ...queued,
         status: 'injected',
