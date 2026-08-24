@@ -1261,6 +1261,44 @@ describe('compactNotebookExecutionResult', () => {
     expect(raw.outputs[0].traceback).toBe(traceback)
   })
 
+  it('keeps the actionable SyntaxError after the VM source preamble', () => {
+    const traceback = [
+      '<repl>:2',
+      'const value =',
+      '             ^',
+      '',
+      'SyntaxError: Unexpected end of input',
+      '    at new Script (node:vm:117:7)',
+      '    at Object.runInContext (node:vm:301:6)',
+      '    at run (/Users/alice/open-science/resources/notebook/repl_loop.js:3527:28)'
+    ].join('\n')
+    const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
+
+    const compact = replTool?.mapResult?.(
+      { ...runSummary({ traceback }), status: 'failed' },
+      {}
+    ) as { traceback: string }
+
+    expect(compact.traceback).toBe('SyntaxError: Unexpected end of input')
+  })
+
+  it('preserves multiline REPL error messages while omitting stack frames', () => {
+    const traceback = [
+      'Error: first diagnostic line',
+      'second diagnostic line',
+      '    at <repl>:1:7',
+      '    at run (/Users/alice/open-science/resources/notebook/repl_loop.js:3527:28)'
+    ].join('\n')
+    const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
+
+    const compact = replTool?.mapResult?.(
+      { ...runSummary({ traceback }), status: 'failed' },
+      {}
+    ) as { traceback: string }
+
+    expect(compact.traceback).toBe('Error: first diagnostic line\nsecond diagnostic line')
+  })
+
   it('keeps Python tracebacks intact for the agent', () => {
     const traceback =
       'Traceback (most recent call last):\n  File "analysis.py", line 2\nValueError: boom'

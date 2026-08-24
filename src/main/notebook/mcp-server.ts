@@ -655,17 +655,27 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
 }
 
 // Internal VM frames remain in the durable run but do not help the Agent repair its REPL request.
+const compactReplTraceback = (value: string): string => {
+  const lines = value.split(/\r?\n/)
+  const errorLine = lines.findIndex((line) => /^[A-Za-z_$][\w$]*(?:Error|Exception)\b/.test(line))
+  const messageStart = errorLine === -1 ? 0 : errorLine
+  const frameStart = lines.findIndex(
+    (line, index) => index >= messageStart && /^\s+at(?:\s|$)/.test(line)
+  )
+  const message = lines.slice(messageStart, frameStart === -1 ? undefined : frameStart).join('\n')
+  return message.trim() || value
+}
+
 const compactReplExecutionResult = (raw: unknown): unknown => {
   const record = asRecord(raw)
   if (!record) return raw
 
-  const conciseTraceback = (value: string): string => value.split(/\r?\n/, 1)[0] || value
   const text = asRecord(record.text)
   const outputs = Array.isArray(record.outputs)
     ? record.outputs.map((value) => {
         const output = asRecord(value)
         return output?.type === 'error' && typeof output.traceback === 'string'
-          ? { ...output, traceback: conciseTraceback(output.traceback) }
+          ? { ...output, traceback: compactReplTraceback(output.traceback) }
           : value
       })
     : record.outputs
@@ -673,10 +683,10 @@ const compactReplExecutionResult = (raw: unknown): unknown => {
   return compactNotebookExecutionResult({
     ...record,
     ...(typeof record.traceback === 'string'
-      ? { traceback: conciseTraceback(record.traceback) }
+      ? { traceback: compactReplTraceback(record.traceback) }
       : {}),
     ...(text && typeof text.traceback === 'string'
-      ? { text: { ...text, traceback: conciseTraceback(text.traceback) } }
+      ? { text: { ...text, traceback: compactReplTraceback(text.traceback) } }
       : {}),
     ...(Array.isArray(record.outputs) ? { outputs } : {})
   })
