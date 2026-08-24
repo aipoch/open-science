@@ -192,18 +192,16 @@ class ArtifactProvenanceProducerCapture {
         inputFiles
       }
     }
-    // Local files require an app-side observation before an Agent-declared run may become evidence.
-    // Inline bytes have no file observation, so they retain the declared run only after the durable
-    // Notebook Session and graph-scope checks below succeed.
+    if (request.producerRunId && !request.notebookSessionId) {
+      throw new Error('producerRunId requires notebookSessionId in the active Artifact run.')
+    }
+    // Agent-declared local files require an app observation; inline bytes use the durable checks below.
     if (
       request.producerRunId &&
       !request.sourceFileObservation &&
       request.sourceKind !== 'inline'
     ) {
-      return { state: 'unavailable', reason: 'producer-source-unverifiable' }
-    }
-    if (request.producerRunId && !request.notebookSessionId) {
-      throw new Error('producerRunId requires notebookSessionId in the active Artifact run.')
+      throw new Error(`Notebook producer source observation is required: ${request.producerRunId}`)
     }
     if (!request.notebookSessionId) {
       return { state: 'unavailable', reason: 'producer-not-supplied' }
@@ -234,6 +232,9 @@ class ArtifactProvenanceProducerCapture {
         )
       : undefined
     if (request.sourceFileObservation && !sourceFileObservation) {
+      if (request.producerRunId) {
+        throw new Error(`Notebook producer source could not be verified: ${request.producerRunId}`)
+      }
       return { state: 'unavailable', reason: 'producer-source-unverifiable' }
     }
     const expected = {
@@ -285,7 +286,7 @@ class ArtifactProvenanceProducerCapture {
         )
       }
       if (observedOwners.length !== 1) {
-        return { state: 'unavailable', reason: 'producer-source-unverifiable' }
+        throw new Error(`Producer source must have exactly one Run owner: ${request.producerRunId}`)
       }
     }
 

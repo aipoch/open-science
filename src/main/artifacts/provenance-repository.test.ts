@@ -2785,27 +2785,29 @@ describe('artifact provenance repository', () => {
       filename: 'spoof.png',
       source: createPngInlineSource('different artifact bytes')
     })
-    const spoofedObservation = await repository.createVersion({
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-spoofed-source-observation',
-      writeRequestChecksum: 'e'.repeat(64),
-      ...graph,
-      notebookSessionId: 'session-1',
-      producerRunId: 'notebook-run-owner',
-      sourceFileObservation,
-      filename: 'spoof.png',
-      contentType: 'image/png'
-    })
-    const spoofedRow = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: spoofedObservation.versionId }
-    })
-    expect(spoofedRow).toMatchObject({ producerRunId: null, producerRunIndex: null })
-    expect(JSON.parse(spoofedRow.evidenceJson)).toMatchObject({
-      producer: { state: 'unavailable', reason: 'producer-source-unverifiable' }
-    })
+    await expect(
+      repository.createVersion({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-spoofed-source-observation',
+        writeRequestChecksum: 'e'.repeat(64),
+        ...graph,
+        notebookSessionId: 'session-1',
+        producerRunId: 'notebook-run-owner',
+        sourceFileObservation,
+        filename: 'spoof.png',
+        contentType: 'image/png'
+      })
+    ).rejects.toThrow('Notebook producer source could not be verified: notebook-run-owner')
+    await expect(
+      repository.listRunVersions({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactRunId: 'artifact-run-1'
+      })
+    ).resolves.toHaveLength(1)
 
     await compatibilityRepository.writePendingFile({
       projectId: 'project-1',
@@ -2851,28 +2853,29 @@ describe('artifact provenance repository', () => {
       filename: 'unobserved-local.png',
       source: createPngInlineSource('unobserved local bytes')
     })
-    const unobservedLocal = await repository.createVersion({
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-unobserved-local-producer',
-      writeRequestChecksum: 'c'.repeat(64),
-      ...graph,
-      notebookSessionId: 'session-1',
-      producerRunId: 'notebook-run-owner',
-      sourceKind: 'localPath',
-      filename: 'unobserved-local.png',
-      contentType: 'image/png'
-    })
-    const unobservedLocalRow = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: unobservedLocal.versionId }
-    })
-    expect(unobservedLocalRow).toMatchObject({ producerRunId: null, producerRunIndex: null })
-    expect(JSON.parse(unobservedLocalRow.evidenceJson)).toMatchObject({
-      producer: { state: 'unavailable', reason: 'producer-source-unverifiable' },
-      execution_status: { state: 'unavailable', reason: 'producer-source-unverifiable' }
-    })
+    await expect(
+      repository.createVersion({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-unobserved-local-producer',
+        writeRequestChecksum: 'c'.repeat(64),
+        ...graph,
+        notebookSessionId: 'session-1',
+        producerRunId: 'notebook-run-owner',
+        sourceKind: 'localPath',
+        filename: 'unobserved-local.png',
+        contentType: 'image/png'
+      })
+    ).rejects.toThrow('Notebook producer source observation is required: notebook-run-owner')
+    await expect(
+      repository.listRunVersions({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactRunId: 'artifact-run-1'
+      })
+    ).resolves.toHaveLength(2)
   })
 
   it('rejects a renderer-supplied message that the durable Conversation Graph does not own', async () => {

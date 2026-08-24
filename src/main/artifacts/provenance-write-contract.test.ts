@@ -26,6 +26,15 @@ const fixture = async (): Promise<Fixture> => {
   return value
 }
 
+const listFixtureRunVersions = (
+  value: Fixture
+): ReturnType<Fixture['repository']['listRunVersions']> =>
+  value.repository.listRunVersions({
+    projectId: 'project-1',
+    appSessionId: 'session-1',
+    artifactRunId: 'artifact-run-1'
+  })
+
 afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((value) => value.dispose()))
 })
@@ -479,7 +488,7 @@ describe('artifact provenance producer and source validation', () => {
     })
   })
 
-  it('fails closed to unavailable evidence when the source observation is corrupt', async () => {
+  it('rejects Artifact Finalization when a declared producer source observation is corrupt', async () => {
     const value = await fixture()
     const observation = await appendNotebookRun(value, {
       runId: 'observed-run',
@@ -489,22 +498,65 @@ describe('artifact provenance producer and source validation', () => {
     })
     await value.stagePng('observed bytes')
 
-    const version = await value.repository.createVersion(
-      createArtifactVersionRequest({
-        writeOperationId: 'corrupt-observation-operation',
-        notebookSessionId: 'session-1',
-        producerRunId: 'observed-run',
-        sourceKind: 'localPath',
-        sourceFileObservation: { ...observation, sizeBytes: observation.sizeBytes + 1 }
-      })
-    )
-    const row = await value.client.artifactVersion.findUniqueOrThrow({
-      where: { id: version.versionId }
+    await expect(
+      value.repository.createVersion(
+        createArtifactVersionRequest({
+          writeOperationId: 'corrupt-observation-operation',
+          notebookSessionId: 'session-1',
+          producerRunId: 'observed-run',
+          sourceKind: 'localPath',
+          sourceFileObservation: { ...observation, sizeBytes: observation.sizeBytes + 1 }
+        })
+      )
+    ).rejects.toThrow('Notebook producer source could not be verified: observed-run')
+    await expect(listFixtureRunVersions(value)).resolves.toEqual([])
+  })
+
+  it('rejects Artifact Finalization when a declared local producer has no source observation', async () => {
+    const value = await fixture()
+    await appendNotebookRun(value, {
+      runId: 'unobserved-source-run',
+      filename: 'plot.png',
+      payload: 'unobserved source bytes',
+      ownsSource: true
     })
-    expect(row).toMatchObject({ producerRunId: null, producerRunIndex: null })
-    expect(JSON.parse(row.evidenceJson)).toMatchObject({
-      producer: { state: 'unavailable', reason: 'producer-source-unverifiable' }
+    await value.stagePng('unobserved source bytes')
+
+    await expect(
+      value.repository.createVersion(
+        createArtifactVersionRequest({
+          writeOperationId: 'unobserved-source-operation',
+          notebookSessionId: 'session-1',
+          producerRunId: 'unobserved-source-run',
+          sourceKind: 'localPath'
+        })
+      )
+    ).rejects.toThrow('Notebook producer source observation is required: unobserved-source-run')
+    await expect(listFixtureRunVersions(value)).resolves.toEqual([])
+  })
+
+  it('rejects Artifact Finalization when no Run owns the declared producer source', async () => {
+    const value = await fixture()
+    const observation = await appendNotebookRun(value, {
+      runId: 'unowned-source-run',
+      filename: 'plot.png',
+      payload: 'unowned source bytes',
+      ownsSource: false
     })
+    await value.stagePng('unowned source bytes')
+
+    await expect(
+      value.repository.createVersion(
+        createArtifactVersionRequest({
+          writeOperationId: 'unowned-source-operation',
+          notebookSessionId: 'session-1',
+          producerRunId: 'unowned-source-run',
+          sourceKind: 'localPath',
+          sourceFileObservation: observation
+        })
+      )
+    ).rejects.toThrow('Producer source must have exactly one Run owner: unowned-source-run')
+    await expect(listFixtureRunVersions(value)).resolves.toEqual([])
   })
 
   it('requires a Notebook Session for an inline declared producer', async () => {
@@ -536,28 +588,22 @@ describe('artifact provenance producer and source validation', () => {
     const outsideStat = await stat(outsidePath)
     await value.stagePng('outside root bytes')
 
-    const version = await value.repository.createVersion(
-      createArtifactVersionRequest({
-        writeOperationId: 'outside-root-observation-operation',
-        notebookSessionId: 'session-1',
-        producerRunId: 'outside-root-run',
-        sourceKind: 'localPath',
-        sourceFileObservation: {
-          path: await realpath(outsidePath),
-          sizeBytes: outsideStat.size,
-          mtimeMs: outsideStat.mtimeMs
-        }
-      })
-    )
-    const row = await value.client.artifactVersion.findUniqueOrThrow({
-      where: { id: version.versionId }
-    })
-
-    expect(row).toMatchObject({ producerRunId: null, producerRunIndex: null })
-    expect(JSON.parse(row.evidenceJson)).toMatchObject({
-      producer: { state: 'unavailable', reason: 'producer-source-unverifiable' },
-      execution_status: { state: 'unavailable', reason: 'producer-source-unverifiable' }
-    })
+    await expect(
+      value.repository.createVersion(
+        createArtifactVersionRequest({
+          writeOperationId: 'outside-root-observation-operation',
+          notebookSessionId: 'session-1',
+          producerRunId: 'outside-root-run',
+          sourceKind: 'localPath',
+          sourceFileObservation: {
+            path: await realpath(outsidePath),
+            sizeBytes: outsideStat.size,
+            mtimeMs: outsideStat.mtimeMs
+          }
+        })
+      )
+    ).rejects.toThrow('Notebook producer source could not be verified: outside-root-run')
+    await expect(listFixtureRunVersions(value)).resolves.toEqual([])
   })
 })
 
