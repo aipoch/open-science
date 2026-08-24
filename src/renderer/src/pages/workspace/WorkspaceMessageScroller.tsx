@@ -603,6 +603,10 @@ const WorkspaceMessageScrollerImpl = ({
   useEffect(() => {
     return window.api?.window?.onShowWindowFind?.(revealFullTranscript)
   }, [revealFullTranscript])
+  const restoreTranscriptWindow = transcriptWindow.restoreWindow
+  useEffect(() => {
+    return window.api?.window?.onHideWindowFind?.(restoreTranscriptWindow)
+  }, [restoreTranscriptWindow])
   // Brand-new conversation (nothing presented, no resume in flight): invite the first prompt with
   // a centered placeholder banner over the empty transcript area.
   const showEmptyConversationBanner =

@@ -8,7 +8,7 @@ import { createPreviewResourceKey } from './preview-resource-key'
 const MAX_CACHED_IMAGE_BYTES = 64 * 1024 * 1024
 const MAX_CACHED_IMAGE_COUNT = 32
 
-type CachedImage = { url: string; size: number }
+type CachedImage = { url: string; size: number; managedResourceId?: string }
 type CachedImageEntry = {
   key: string
   promise: Promise<CachedImage>
@@ -33,7 +33,13 @@ let cachedImageBytes = 0
 const dispose = (entry: CachedImageEntry): void => {
   if (entry.disposed || entry.refs > 0 || entry.retained) return
   entry.disposed = true
-  void entry.promise.then(({ url }) => URL.revokeObjectURL(url)).catch(() => undefined)
+  void entry.promise
+    .then(({ url, managedResourceId }) =>
+      managedResourceId
+        ? window.api.previewResources.release({ resourceId: managedResourceId })
+        : URL.revokeObjectURL(url)
+    )
+    .catch(() => undefined)
 }
 
 const evict = (entry: CachedImageEntry): void => {
@@ -60,6 +66,11 @@ const loadImage = async (item: PreviewImageItem): Promise<CachedImage> => {
     ...(requestScope.sessionId ? { sessionId: requestScope.sessionId } : {}),
     ...(item.mimeType ? { mimeType: item.mimeType } : {})
   })
+
+  const imageSize = Math.max(item.size ?? 0, resource.size)
+  if (imageSize > MAX_CACHED_IMAGE_BYTES) {
+    return { url: resource.url, size: imageSize, managedResourceId: resource.id }
+  }
 
   try {
     // The managed protocol intentionally disables HTTP caching. Copy the decoded source bytes into
@@ -95,7 +106,10 @@ const acquire = (item: PreviewImageItem, key: string): CachedImageEntry => {
   entry.promise = pending.then(
     (value) => {
       entry.value = value
-      if (entry.retained) {
+      if (value.managedResourceId) {
+        entry.retained = false
+        if (entry.refs === 0) evict(entry)
+      } else if (entry.retained) {
         cachedImageBytes += value.size
         prune()
       } else {
@@ -115,7 +129,8 @@ const acquire = (item: PreviewImageItem, key: string): CachedImageEntry => {
 
 const release = (entry: CachedImageEntry): void => {
   entry.refs = Math.max(0, entry.refs - 1)
-  dispose(entry)
+  if (entry.refs === 0 && !entry.retained) evict(entry)
+  else dispose(entry)
   prune()
 }
 

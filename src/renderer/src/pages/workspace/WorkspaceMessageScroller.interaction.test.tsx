@@ -229,6 +229,13 @@ const onShowWindowFind = vi.fn((listener: () => void) => {
     if (showWindowFindListener === listener) showWindowFindListener = undefined
   }
 })
+let hideWindowFindListener: (() => void) | undefined
+const onHideWindowFind = vi.fn((listener: () => void) => {
+  hideWindowFindListener = listener
+  return () => {
+    if (hideWindowFindListener === listener) hideWindowFindListener = undefined
+  }
+})
 
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
@@ -347,6 +354,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     announceWindowFindReady.mockClear()
     onShowWindowFind.mockClear()
     showWindowFindListener = undefined
+    onHideWindowFind.mockClear()
+    hideWindowFindListener = undefined
     flushSessionPersistenceMock.mockReset().mockResolvedValue(undefined)
     useReviewStore.setState(createInitialReviewState())
     container = document.createElement('div')
@@ -386,7 +395,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       },
       window: {
         announceWindowFindReady,
-        onShowWindowFind
+        onShowWindowFind,
+        onHideWindowFind
       }
     } as unknown as Window['api']
   })
@@ -3563,9 +3573,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.textContent).toContain('oldest transcript sentinel')
   })
 
-  it('reveals the full transcript while whole-window find is open', async () => {
+  it('reveals the full transcript only while whole-window find is open', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
-    const messages = Array.from({ length: 240 }, (_, index) =>
+    const messages = Array.from({ length: 120 }, (_, index) =>
       createMessage({
         id: `message-${index + 1}`,
         role: index % 2 === 0 ? 'user' : 'agent',
@@ -3589,6 +3599,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.textContent).not.toContain('searchable oldest sentinel')
     await act(async () => showWindowFindListener?.())
     expect(container.textContent).toContain('searchable oldest sentinel')
+    await act(async () => hideWindowFindListener?.())
+    expect(container.textContent).not.toContain('searchable oldest sentinel')
+    expect(container.textContent).toContain('transcript message 120')
   })
 
   it('does not leave the active Plan card in the transcript', async () => {

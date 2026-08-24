@@ -1042,6 +1042,8 @@ export interface OpenScienceAPI {
     onFindInPageResult?(listener: AcpListener<WindowFindResult>): RemoveListener
     // Overlay-only: main signals the bar was shown; the overlay asks main to hide it.
     onShowWindowFind?(listener: AcpListener<WindowFindAppearance>): RemoveListener
+    // Main renderer only: the overlay was hidden, so temporary searchable content can be released.
+    onHideWindowFind?(listener: () => void): RemoveListener
     onWindowFindAppearance?(listener: AcpListener<WindowFindAppearance>): RemoveListener
     announceWindowFindAppearance?(appearance: WindowFindAppearance): void
     closeFind?(): void

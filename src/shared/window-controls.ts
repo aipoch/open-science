@@ -36,6 +36,10 @@ export const WINDOW_FIND_RESULT_CHANNEL = 'window:find-in-page-result'
 // live-follow OS changes without trying to read the renderer's origin-scoped localStorage.
 export const WINDOW_FIND_SHOW_CHANNEL = 'window:find-show'
 
+// Main -> main renderer: the find overlay was hidden, so any temporary searchable expansion can be
+// released and the transcript can return to its previous bounded window.
+export const WINDOW_FIND_HIDE_CHANNEL = 'window:find-hide'
+
 // Main -> overlay: refresh only the overlay appearance after an asynchronous renderer lookup. Kept
 // separate from SHOW so a late theme result never steals focus or re-runs the remembered query.
 export const WINDOW_FIND_APPEARANCE_CHANNEL = 'window:find-appearance'

@@ -7,7 +7,11 @@ import {
   createFindOverlayManager,
   type FindOverlayManager
 } from './find-overlay'
-import { WINDOW_FIND_APPEARANCE_CHANNEL, WINDOW_FIND_SHOW_CHANNEL } from '../shared/window-controls'
+import {
+  WINDOW_FIND_APPEARANCE_CHANNEL,
+  WINDOW_FIND_HIDE_CHANNEL,
+  WINDOW_FIND_SHOW_CHANNEL
+} from '../shared/window-controls'
 
 describe('computeOverlayBounds', () => {
   it('anchors the bar to the top-right of the content area with a margin', () => {
@@ -39,7 +43,7 @@ type FindOverlayTestFakes = {
     getContentBounds: () => { width: number; height: number }
     on: Mock
     removeListener: Mock
-    webContents: { focus: Mock; stopFindInPage: Mock }
+    webContents: { focus: Mock; send: Mock; stopFindInPage: Mock }
   }
   createView: Mock
   registerOwner: Mock
@@ -58,7 +62,7 @@ const createFakes = (): FindOverlayTestFakes => {
     getContentBounds: () => ({ width: 1000, height: 800 }),
     on: vi.fn(),
     removeListener: vi.fn(),
-    webContents: { focus: vi.fn(), stopFindInPage: vi.fn() }
+    webContents: { focus: vi.fn(), send: vi.fn(), stopFindInPage: vi.fn() }
   }
   const createView = vi.fn(() => view)
   const registerOwner = vi.fn()
@@ -137,6 +141,7 @@ describe('find overlay manager', () => {
 
     expect(view.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
     expect(mainWindow.webContents.stopFindInPage).toHaveBeenCalledWith('clearSelection')
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith(WINDOW_FIND_HIDE_CHANNEL)
     expect(manager.isOpen()).toBe(false)
   })
 
@@ -256,7 +261,7 @@ describe('find overlay manager', () => {
     const mainWindow = Object.assign(new EventEmitter(), {
       contentView: { addChildView: vi.fn() },
       getContentBounds: () => ({ width: 1000, height: 800 }),
-      webContents: { focus: vi.fn(), stopFindInPage: vi.fn() }
+      webContents: { focus: vi.fn(), send: vi.fn(), stopFindInPage: vi.fn() }
     })
     const manager = createFindOverlayManager({
       mainWindow,

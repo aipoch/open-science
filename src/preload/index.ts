@@ -873,6 +873,8 @@ const api: OpenScienceAPI = {
     // overlay asks main to hide it. The localhost Web UI never loads this overlay, so both stay optional.
     onShowWindowFind: (listener) =>
       electronRendererContracts.subscribe('window.onShowWindowFind', listener),
+    onHideWindowFind: (listener) =>
+      electronRendererContracts.subscribe('window.onHideWindowFind', listener),
     onWindowFindAppearance: (listener) =>
       electronRendererContracts.subscribe('window.onWindowFindAppearance', listener),
     announceWindowFindAppearance: (appearance) =>

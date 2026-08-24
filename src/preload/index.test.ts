@@ -155,6 +155,7 @@ type PreloadApi = {
     onShowWindowFind?: (
       listener: (appearance: { theme: 'light' | 'dark'; followsSystem: boolean }) => void
     ) => unknown
+    onHideWindowFind?: (listener: () => void) => unknown
     onWindowFindAppearance?: (
       listener: (appearance: { theme: 'light' | 'dark'; followsSystem: boolean }) => void
     ) => unknown
@@ -631,6 +632,7 @@ describe('preload bridge — public surface inventory', () => {
       'window.onCloseActivePane',
       'window.onCloseConfirmRequest',
       'window.onFindInPageResult',
+      'window.onHideWindowFind',
       'window.onShowWindowFind',
       'window.onWindowFindAppearance',
       'window.sendCloseConfirmResponse'
@@ -940,15 +942,18 @@ describe('preload bridge — window find IPC channels', () => {
     expect(sendMock).toHaveBeenNthCalledWith(2, 'window:clear-find-in-page')
   })
 
-  it('forwards the overlay close request and both appearance-bearing events from main', () => {
+  it('forwards the overlay close request and find-overlay events from main', () => {
     const showListener = vi.fn()
+    const hideListener = vi.fn()
     const appearanceListener = vi.fn()
     api.window.closeFind?.()
     api.window.onShowWindowFind?.(showListener)
+    api.window.onHideWindowFind?.(hideListener)
     api.window.onWindowFindAppearance?.(appearanceListener)
 
     expect(sendMock).toHaveBeenCalledWith('window:find-close')
     expect(onMock).toHaveBeenCalledWith('window:find-show', expect.any(Function))
+    expect(onMock).toHaveBeenCalledWith('window:find-hide', expect.any(Function))
     expect(onMock).toHaveBeenCalledWith('window:find-appearance', expect.any(Function))
 
     const wrappedListener = onMock.mock.calls.find(

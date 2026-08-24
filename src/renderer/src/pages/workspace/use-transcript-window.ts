@@ -22,6 +22,7 @@ const useTranscriptWindow = (
   end: number
   revealMessage: (messageId: string) => void
   revealAll: () => void
+  restoreWindow: () => void
   expandAtScrollEdge: (previousScrollTop: number) => void
 } => {
   const [state, setState] = useState<TranscriptWindowState>(() => ({
@@ -39,6 +40,7 @@ const useTranscriptWindow = (
         : Math.min(state.end, items.length)
       : items.length
   const pendingTargetRef = useRef<string | undefined>(undefined)
+  const findRestoreRef = useRef<TranscriptWindowState | undefined>(undefined)
 
   const revealMessage = useCallback(
     (messageId: string): void => {
@@ -61,11 +63,31 @@ const useTranscriptWindow = (
   )
 
   const revealAll = useCallback((): void => {
+    if (findRestoreRef.current?.scopeId !== scopeId) {
+      findRestoreRef.current = { scopeId, itemCount: items.length, start, end }
+    }
     setState({
       scopeId,
       itemCount: items.length,
       start: 0,
       end: items.length
+    })
+  }, [end, items.length, scopeId, start])
+
+  const restoreWindow = useCallback((): void => {
+    const previous = findRestoreRef.current
+    findRestoreRef.current = undefined
+    if (!previous || previous.scopeId !== scopeId) return
+
+    const wasPinnedToEnd = previous.end === previous.itemCount
+    const previousWindowSize = previous.end - previous.start
+    setState({
+      scopeId,
+      itemCount: items.length,
+      start: wasPinnedToEnd
+        ? Math.max(0, items.length - previousWindowSize)
+        : Math.min(previous.start, items.length),
+      end: wasPinnedToEnd ? items.length : Math.min(previous.end, items.length)
     })
   }, [items.length, scopeId])
 
@@ -115,7 +137,7 @@ const useTranscriptWindow = (
       ? items.map((item, itemIndex) => ({ item, itemIndex }))
       : items.slice(start, end).map((item, offset) => ({ item, itemIndex: start + offset }))
 
-  return { entries, end, revealMessage, revealAll, expandAtScrollEdge }
+  return { entries, end, revealMessage, revealAll, restoreWindow, expandAtScrollEdge }
 }
 
 export { useTranscriptWindow }

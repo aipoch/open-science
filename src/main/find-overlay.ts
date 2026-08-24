@@ -1,5 +1,6 @@
 import {
   WINDOW_FIND_APPEARANCE_CHANNEL,
+  WINDOW_FIND_HIDE_CHANNEL,
   WINDOW_FIND_SHOW_CHANNEL,
   type WindowFindAppearance
 } from '../shared/window-controls'
@@ -47,7 +48,11 @@ type OverlayMainWindow = {
   on(event: 'resize', listener: () => void): void
   removeListener?(event: 'resize', listener: () => void): void
   off?(event: 'resize', listener: () => void): void
-  webContents: { focus(): void; stopFindInPage(action: 'clearSelection'): void }
+  webContents: {
+    focus(): void
+    send(channel: string, payload?: unknown): void
+    stopFindInPage(action: 'clearSelection'): void
+  }
 }
 
 export type FindOverlayDeps = {
@@ -106,6 +111,7 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
     opened = false
     view?.setBounds(ZERO_BOUNDS)
     deps.mainWindow.webContents.stopFindInPage('clearSelection')
+    deps.mainWindow.webContents.send(WINDOW_FIND_HIDE_CHANNEL)
     deps.mainWindow.webContents.focus()
   }
 

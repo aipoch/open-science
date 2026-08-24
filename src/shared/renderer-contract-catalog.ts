@@ -399,7 +399,8 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['clearFind', 'window:clear-find-in-page', SEND], ['close', 'window:close', MAPPED_NATIVE], ['closeFind', 'window:find-close', SEND],
     ['findInPage', 'window:find-in-page', SEND], ['onCloseActivePane', 'shortcut:close-active-pane', CLOSE_PANE_EVENT],
     ['onCloseConfirmRequest', 'window:close-confirm-request', ELECTRON_EVENT], ['onFindInPageResult', 'window:find-in-page-result', ELECTRON_EVENT],
-    ['onShowWindowFind', 'window:find-show', ELECTRON_EVENT], ['onWindowFindAppearance', 'window:find-appearance', ELECTRON_EVENT],
+    ['onHideWindowFind', 'window:find-hide', ELECTRON_EVENT], ['onShowWindowFind', 'window:find-show', ELECTRON_EVENT],
+    ['onWindowFindAppearance', 'window:find-appearance', ELECTRON_EVENT],
     ['sendCloseConfirmResponse', 'window:close-confirm-response', SEND],
   ]),
 ])
