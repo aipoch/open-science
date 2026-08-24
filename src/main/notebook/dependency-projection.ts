@@ -209,6 +209,7 @@ const projectNotebookDependencies = (
   const typeSummariesByNamespace = new Map<string, Map<string, NotebookDependencyTypeSummary>>()
   const objectTypesByNamespace = new Map<string, Map<string, NotebookDependencyTypeSummary>>()
   const shadowedMembersByNamespace = new Map<string, Map<string, Set<string>>>()
+  const shadowedTypeMembers = new WeakMap<NotebookDependencyTypeSummary, Set<string>>()
   const safeCallConsumersByNamespace = new Map<string, Map<string, Set<string>>>()
   const possibleConsumersByNamespace = new Map<string, Map<string, Set<string>>>()
   const unknownReasonsByNamespace = new Map<string, string[]>()
@@ -420,6 +421,12 @@ const projectNotebookDependencies = (
         .filter(([, summary]) => summary === classSummary)
         .map(([name]) => name)
       for (const name of affectedObjects) typeBehaviorChanges.add(name)
+      if (write.conditional) {
+        const members = shadowedTypeMembers.get(classSummary) ?? new Set<string>()
+        members.add(write.member ?? '*')
+        shadowedTypeMembers.set(classSummary, members)
+        continue
+      }
       const methods = write.member
         ? classSummary.methods.filter((method) => method.name === write.member)
         : classSummary.methods
@@ -515,7 +522,13 @@ const projectNotebookDependencies = (
       let projectedReceiverValueNames = [call.receiver]
       let chainProvenanceResolved = false
       for (const [chainIndex, chainedMember] of (call.receiverChain ?? []).entries()) {
-        if (priorShadow?.has('*') === true || priorShadow?.has(chainedMember) === true) {
+        const typeShadow = typeSummary ? shadowedTypeMembers.get(typeSummary) : undefined
+        if (
+          priorShadow?.has('*') === true ||
+          priorShadow?.has(chainedMember) === true ||
+          typeShadow?.has('*') === true ||
+          typeShadow?.has(chainedMember) === true
+        ) {
           chainWasShadowed = true
           typeSummary = undefined
           break
@@ -594,11 +607,14 @@ const projectNotebookDependencies = (
           receiversMayAlias(write.receiver, call.receiver) &&
           (write.member === undefined || write.member === call.member)
       )
+      const typeShadow = typeSummary ? shadowedTypeMembers.get(typeSummary) : undefined
       const methodWasShadowed =
         chainWasShadowed ||
         writtenInThisRun ||
         priorShadow?.has('*') === true ||
-        priorShadow?.has(call.member) === true
+        priorShadow?.has(call.member) === true ||
+        typeShadow?.has('*') === true ||
+        typeShadow?.has(call.member) === true
       const methodName = call.kind === 'callable' ? '__call__' : call.member
       const method = methodWasShadowed
         ? undefined
@@ -826,7 +842,15 @@ const projectNotebookDependencies = (
             if (writtenInThisRun) return true
             const token = referenceTokens.get(reference.root)
             const shadow = token ? shadowedMembers.get(token) : undefined
-            if (shadow?.has('*') || shadow?.has(reference.member)) return true
+            const typeShadow = shadowedTypeMembers.get(summary)
+            if (
+              shadow?.has('*') ||
+              shadow?.has(reference.member) ||
+              typeShadow?.has('*') ||
+              typeShadow?.has(reference.member)
+            ) {
+              return true
+            }
             return (
               summary.methods.find((candidate) => candidate.name === reference.member)?.effect !==
               'read'
@@ -1304,6 +1328,7 @@ const projectNotebookDependencies = (
         receiversMayAlias(write.receiver, name)
       )?.[1]
       if (classSummary) {
+        if (write.conditional) continue
         if (write.member) {
           const method = classSummary.methods.find((candidate) => candidate.name === write.member)
           if (method) {

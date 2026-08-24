@@ -91,6 +91,16 @@ describe('reported Python call tracking regressions', () => {
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
+  it('preserves modeled effects for aliases assigned from module members', async () => {
+    const projection = await project([
+      'import numpy as np\nsine = np.sin\nvalues = [0.0]\nresult = sine(values)',
+      'unrelated = 1'
+    ])
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+  })
+
   it('keeps dependencies on conditionally assigned names unknown', async () => {
     const projection = await project([
       'source = []\nvalue = 1',

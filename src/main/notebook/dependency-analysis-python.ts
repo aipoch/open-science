@@ -2223,7 +2223,11 @@ class Analyzer extends NodeVisitor {
     ) {
       if (memberSource) this.addPossibleAlias(target.id, memberSource, memberAccess, member)
       if (value.type === 'Attribute' && importedMemberModule && member) {
-        this.bindUnknownImport(target.id, importedMemberModule, member)
+        this.bindLibraryModule(target.id, `${importedMemberModule}.${member}`)
+        this.bindLibraryFunction(target.id, importedMemberModule, member)
+        if (!this.importedModules.has(target.id) && !this.importedFunctions.has(target.id)) {
+          this.bindUnknownImport(target.id, importedMemberModule, member)
+        }
       }
     } else if (
       constructor &&
