@@ -10,6 +10,11 @@ vi.mock('electron', () => ({
 }))
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import {
+  createLinearConversationGraph,
+  forkEditedConversationMessage,
+  synchronizeActiveConversationMessages
+} from '../../shared/conversation-graph'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ProjectRepository } from '../projects/repository'
 import { buildSessionProjection, SessionProjectionRepository } from './projection'
@@ -110,6 +115,31 @@ describe('Session projection', () => {
     expect(buildSessionProjection(session('finalized-artifact')).summary.needsStartupRecovery).toBe(
       false
     )
+  })
+
+  it('marks pending Artifact paths referenced only by an inactive conversation Branch', () => {
+    const pending = session('inactive-pending-artifact')
+    pending.artifacts![0].path = '/managed/.pending/run-1/report.md'
+    const [originalPrompt, originalAnswer] = pending.messages
+    const originalGraph = createLinearConversationGraph({
+      sessionId: pending.id,
+      messages: [originalPrompt, originalAnswer],
+      createdAt: pending.createdAt,
+      updatedAt: pending.updatedAt
+    })
+    const revisedPrompt = {
+      ...originalPrompt,
+      id: `${pending.id}-revised-run`,
+      artifactIds: []
+    }
+    pending.conversationGraph = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(originalGraph, originalPrompt.id, 'revised-branch', 200),
+      [revisedPrompt],
+      201
+    )
+    pending.messages = [revisedPrompt]
+
+    expect(buildSessionProjection(pending).summary.needsStartupRecovery).toBe(true)
   })
 
   it('allocates a global number and serves summaries and usage without Session JSON', async () => {

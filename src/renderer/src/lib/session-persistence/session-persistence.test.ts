@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   activateConversationBranch,
+  createLinearConversationGraph,
   forkEditedConversationMessage,
   synchronizeActiveConversationMessages
 } from '../../../../shared/conversation-graph'
@@ -132,6 +133,95 @@ describe('reconcilePendingArtifacts', () => {
     await reconcilePendingArtifacts(api)
 
     expect(api.reconcilePendingArtifacts).not.toHaveBeenCalled()
+  })
+
+  it('re-finalizes pending artifacts referenced only by an inactive conversation Branch', async () => {
+    const pendingPath = '/data/artifacts/proj-1/session-1/.pending/run-1/report.md'
+    const originalPrompt = {
+      id: 'original-prompt',
+      role: 'user' as const,
+      content: 'Create a report',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000
+    }
+    const originalAnswer = {
+      id: 'inactive-answer',
+      role: 'agent' as const,
+      content: 'done',
+      status: 'complete' as const,
+      eventIds: [],
+      artifactIds: ['session-1:run-1:report.md'],
+      createdAt: 1710000000001,
+      updatedAt: 1710000000001
+    }
+    const originalGraph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [originalPrompt, originalAnswer],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000001
+    })
+    const revisedPrompt = {
+      ...originalPrompt,
+      id: 'revised-prompt',
+      content: 'Create a chart'
+    }
+    const conversationGraph = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(
+        originalGraph,
+        originalPrompt.id,
+        'revised-branch',
+        1710000000002
+      ),
+      [revisedPrompt],
+      1710000000003
+    )
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        messages: [revisedPrompt],
+        conversationGraph,
+        artifacts: [
+          {
+            id: 'session-1:run-1:report.md',
+            kind: 'managed-file',
+            path: pendingPath,
+            name: 'report.md',
+            mimeType: 'text/markdown'
+          }
+        ]
+      })
+    ])
+    const finalized = {
+      id: 'session-1:inactive-answer:report.md',
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: originalAnswer.id,
+      name: 'report.md',
+      path: '/data/artifacts/proj-1/session-1/inactive-answer/report.md',
+      fileUrl: 'file:///data/artifacts/proj-1/session-1/inactive-answer/report.md',
+      mimeType: 'text/markdown',
+      size: 3,
+      mtimeMs: 1710000000004
+    }
+    const api = { reconcilePendingArtifacts: vi.fn().mockResolvedValue([finalized]) }
+
+    await reconcilePendingArtifacts(api)
+
+    expect(api.reconcilePendingArtifacts).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: originalAnswer.id,
+      pendingPaths: [pendingPath]
+    })
+    const restored = useSessionStore.getState().sessions[0]
+    expect(restored.messages.map(({ id }) => id)).toEqual([revisedPrompt.id])
+    expect(
+      restored.conversationGraph?.messages.find(({ id }) => id === originalAnswer.id)?.artifactIds
+    ).toEqual([finalized.id])
+    expect(restored.artifacts?.map(({ path }) => path)).toEqual([finalized.path])
   })
 })
 

@@ -91,7 +91,7 @@ const hasPendingArtifact = (session: PersistedChatSession): boolean => {
       )
       .map(({ id }) => id)
   )
-  return session.messages.some((message) =>
+  return projectionMessages(session).some(({ message }) =>
     message.artifactIds?.some((artifactId) => pendingArtifactIds.has(artifactId))
   )
 }

@@ -716,7 +716,8 @@ const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<voi
       (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
     )
 
-    for (const message of session.messages) {
+    const messages = session.conversationGraph?.messages ?? session.messages
+    for (const message of messages) {
       const pendingPaths = (message.artifactIds ?? [])
         .map((id) => artifactsById.get(id)?.path)
         .filter(isPendingArtifactPath)
