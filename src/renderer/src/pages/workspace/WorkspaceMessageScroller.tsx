@@ -625,7 +625,13 @@ const WorkspaceMessageScrollerImpl = ({
     if (windowFindOpen) revealFullTranscript()
   }, [currentPresentationScopeId, revealFullTranscript, windowFindOpen])
   useLayoutEffect(() => {
-    if (!windowFindOpen || transcriptWindow.entries.length !== conversationItems.length) return
+    if (
+      !windowFindOpen ||
+      presentationBarrierIndex >= 0 ||
+      transcriptWindow.entries.length !== conversationItems.length
+    ) {
+      return
+    }
     const acknowledgedScope = windowFindAcknowledgedScopeRef.current
     if (acknowledgedScope && acknowledgedScope.scopeId === currentPresentationScopeId) return
     windowFindAcknowledgedScopeRef.current = { scopeId: currentPresentationScopeId }
@@ -633,6 +639,7 @@ const WorkspaceMessageScrollerImpl = ({
   }, [
     conversationItems.length,
     currentPresentationScopeId,
+    presentationBarrierIndex,
     transcriptWindow.entries.length,
     windowFindOpen
   ])

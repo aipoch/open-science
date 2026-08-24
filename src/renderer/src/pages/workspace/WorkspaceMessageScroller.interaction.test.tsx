@@ -3651,6 +3651,61 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.textContent).toContain('transcript message 120')
   }, 30_000)
 
+  it('waits for the presentation barrier to clear before announcing find readiness', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const prompt = createMessage({ id: 'prompt-find-barrier', createdAt: 100 })
+    const streamingAnswer = createMessage({
+      id: 'answer-find-barrier',
+      role: 'agent',
+      content: 'Hold find readiness until this presentation finishes.',
+      status: 'streaming',
+      streamId: 'stream-find-barrier',
+      responseToMessageId: prompt.id,
+      createdAt: 101
+    })
+    const bufferedPrompt = createMessage({ id: 'prompt-behind-find-barrier', createdAt: 102 })
+    const bufferedAnswer = createMessage({
+      id: 'answer-behind-find-barrier',
+      role: 'agent',
+      content: 'Searchable only after the presentation barrier clears.',
+      responseToMessageId: bufferedPrompt.id,
+      createdAt: 103
+    })
+    const render = async (messages: ChatMessage[]): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({
+              messages,
+              activeRun: { promptMessageId: prompt.id, startedAt: 100 }
+            })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render([prompt])
+    await render([prompt, streamingAnswer])
+    await render([prompt, streamingAnswer, bufferedPrompt, bufferedAnswer])
+
+    await act(async () => showWindowFindListener?.())
+    expect(container.textContent).not.toContain('Searchable only after the presentation barrier')
+    expect(announceWindowFindContentReady).not.toHaveBeenCalled()
+
+    await act(async () => vi.advanceTimersByTimeAsync(5_000))
+    expect(container.textContent).toContain('Searchable only after the presentation barrier')
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
+  })
+
   it('does not leave the active Plan card in the transcript', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const activePlanProjection: ActivePlanProjection = {
