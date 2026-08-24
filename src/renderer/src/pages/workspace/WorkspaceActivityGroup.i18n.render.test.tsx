@@ -210,6 +210,54 @@ describe('WorkspaceActivityGroup i18n', () => {
     expect(container.querySelector('.install-progress-indeterminate')).toBeNull()
   })
 
+  it('renders a completed tool with ok false as a package failure', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-failed-result',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-failed-result',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['numpy'] },
+                rawOutput: {
+                  structuredContent: {
+                    ok: false,
+                    needsRestart: false,
+                    method: 'conda',
+                    environmentName: 'analysis',
+                    error: 'The analysis environment is read-only.'
+                  }
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{}}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const progress = container.querySelector('[data-testid="manage-packages-progress"]')
+    expect(progress?.textContent).toContain('Installing 1 package')
+    expect(progress?.textContent).toContain('The analysis environment is read-only.')
+    expect(progress?.querySelector('.text-status-failure-foreground')).not.toBeNull()
+    expect(progress?.querySelector('.text-status-success-foreground')).toBeNull()
+    expect(progress?.querySelector('.install-progress-indeterminate')).toBeNull()
+  })
+
   it('anchors the group in view before toggling its height', () => {
     const onToggleGroup = vi.fn()
     act(() => {

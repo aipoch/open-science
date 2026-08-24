@@ -62,8 +62,10 @@ const WorkspaceManagePackagesActivityRow = ({
   const count = requestedPackages.length
   const isRemoving = input?.operation === 'uninstall'
   const isActive = phase === 'executing'
-  const isFailed = phase === 'failed'
   const result = parseManagePackagesResult(activity)
+  const isFailed = phase === 'failed' || result?.ok === false
+  const failureMessage =
+    typeof result?.error === 'string' && result.error.trim() ? result.error.trim() : null
   const needsRestart = result?.needsRestart === true
   const packageChanges = Array.isArray(result?.packageChanges)
     ? result.packageChanges.filter(
@@ -161,7 +163,7 @@ const WorkspaceManagePackagesActivityRow = ({
                   : 'text-status-success-foreground dark:text-status-success-dark-foreground'
           )}
         >
-          <WorkspaceActivityIcon activity={activity} phase={phase} />
+          <WorkspaceActivityIcon activity={activity} phase={isFailed ? 'failed' : phase} />
         </span>
         <span className="min-w-0 flex-1 text-left">
           <span className="block font-medium leading-5 text-text-000">{actionLabel}</span>
@@ -264,8 +266,11 @@ const WorkspaceManagePackagesActivityRow = ({
             </div>
           </>
         ) : isFailed ? (
-          <p className="text-[12px] text-status-failure-foreground dark:text-status-failure-dark-foreground">
-            {t('Failed')}
+          <p
+            className="line-clamp-2 break-words text-[12px] text-status-failure-foreground dark:text-status-failure-dark-foreground"
+            title={failureMessage ?? undefined}
+          >
+            {failureMessage ?? t('Failed')}
           </p>
         ) : needsRestart ? (
           <p className="text-[12px] text-status-warning-foreground dark:text-status-warning-dark-foreground">
