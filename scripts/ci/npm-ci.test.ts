@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -62,5 +65,20 @@ describe('npm ci Electron mirror policy', () => {
         stdio: 'inherit'
       })
     )
+  })
+
+  it('routes Electron-installing workflow npm ci through the GitHub mirror helper', () => {
+    const workflowDir = join(process.cwd(), '.github', 'workflows')
+    const leftover: string[] = []
+    for (const name of readdirSync(workflowDir).filter((file) => file.endsWith('.yml'))) {
+      const text = readFileSync(join(workflowDir, name), 'utf8')
+      for (const [lineNumber, line] of text.split('\n').entries()) {
+        const match = line.match(/^\s+run:\s*(npm ci.*)$/)
+        if (!match) continue
+        if (match[1].includes('--ignore-scripts')) continue
+        leftover.push(`${name}:${lineNumber + 1}: ${match[1]}`)
+      }
+    }
+    expect(leftover).toEqual([])
   })
 })

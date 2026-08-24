@@ -343,7 +343,9 @@ describe('PR Gate workflow', () => {
     expect(legacyCoverage.steps?.filter(({ run }) => run === 'npm run test:coverage')).toHaveLength(
       1
     )
-    expect(legacyCoverage.steps?.filter(({ run }) => run === 'npm ci')).toHaveLength(1)
+    expect(
+      legacyCoverage.steps?.filter(({ run }) => run === 'node scripts/ci/npm-ci.mjs')
+    ).toHaveLength(1)
     expect(unit).toMatchObject({
       name: 'Module tests and coverage',
       needs: ['preflight', 'unit_shard'],
@@ -417,13 +419,17 @@ describe('PR Gate workflow', () => {
   it('shares dependency installation and Electron builds inside platform bundles', () => {
     for (const bundle of ['static', 'unit', 'unit_shard', 'windows_core', 'macos_e2e']) {
       expect(
-        workflow.jobs[bundle].steps?.filter(({ run }) => run === 'npm ci'),
+        workflow.jobs[bundle].steps?.filter(({ run }) => run === 'node scripts/ci/npm-ci.mjs'),
         `${bundle} must install dependencies exactly once`
       ).toHaveLength(1)
     }
     expect(
       workflow.jobs.windows_e2e.steps?.filter(({ name }) => name === 'Install dependencies')
-    ).toEqual([expect.objectContaining({ run: 'npm ci --prefer-offline --no-audit --fund=false' })])
+    ).toEqual([
+      expect.objectContaining({
+        run: 'node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false'
+      })
+    ])
 
     const macosRuns = workflow.jobs.macos_e2e.steps?.map(({ run }) => run).filter(Boolean)
     expect(macosRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
