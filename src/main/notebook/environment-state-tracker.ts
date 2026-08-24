@@ -324,6 +324,40 @@ const exactVersionFromSpec = (value: string, language: NotebookLanguage): string
   return value.trim().match(/^[A-Za-z0-9_.-]+==([^\s;,]+)$/u)?.[1]
 }
 
+const normalizedPythonVersion = (
+  value: string
+): { publicVersion: string; localVersion?: string } | undefined => {
+  const [publicValue, localValue] = value.trim().toLowerCase().replace(/^v/u, '').split('+', 2)
+  if (!publicValue) return undefined
+  const match = publicValue.match(/^(?:(\d+)!)?(\d+(?:\.\d+)*)(.*)$/u)
+  if (!match) return undefined
+  const release = match[2].split('.').map(Number)
+  while (release.length > 1 && release.at(-1) === 0) release.pop()
+  const suffix = match[3]
+    .replace(/[-_.]+/gu, '.')
+    .replace(/^\.(?:alpha|a)(\d*)$/u, 'a$1')
+    .replace(/^\.(?:beta|b)(\d*)$/u, 'b$1')
+    .replace(/^\.(?:c|pre|preview|rc)(\d*)$/u, 'rc$1')
+    .replace(/^\.(?:post|rev|r)(\d*)$/u, 'post$1')
+    .replace(/^\.dev(\d*)$/u, 'dev$1')
+  return {
+    publicVersion: `${match[1] ?? '0'}!${release.join('.')}${suffix}`,
+    ...(localValue ? { localVersion: localValue.replace(/[-_.]+/gu, '.') } : {})
+  }
+}
+
+const pythonExactVersionMatches = (requested: string, installed: string | undefined): boolean => {
+  if (!installed) return false
+  const requestedVersion = normalizedPythonVersion(requested)
+  const installedVersion = normalizedPythonVersion(installed)
+  if (!requestedVersion || !installedVersion) return requested === installed
+  return (
+    requestedVersion.publicVersion === installedVersion.publicVersion &&
+    (requestedVersion.localVersion === undefined ||
+      requestedVersion.localVersion === installedVersion.localVersion)
+  )
+}
+
 const inspectRequestedPackage = (
   target: EnvironmentCaptureTarget,
   requested: string,
@@ -368,7 +402,10 @@ const verifyPackageMutation = (
     )
     if (outcome.operation === 'uninstall') return installed !== undefined
     const exactVersion = exactVersionFromSpec(spec, target.language)
-    return !installed || (exactVersion !== undefined && installed.version !== exactVersion)
+    return (
+      !installed ||
+      (exactVersion !== undefined && !pythonExactVersionMatches(exactVersion, installed.version))
+    )
   })
   return unsatisfiedPackages.length > 0
     ? { result: 'failure', unsatisfiedPackages }
@@ -547,7 +584,7 @@ const R_INVENTORY_SCRIPT = [
   '    descriptionPath <- file.path(ip[i, "LibPath"], ip[i, "Package"], "DESCRIPTION")',
   '    description <- tryCatch(read.dcf(descriptionPath), error=function(e) matrix(character(), nrow=0, ncol=0))',
   '    field <- function(name) if (nrow(description) > 0 && name %in% colnames(description) && !is.na(description[1, name])) gsub("[\\t\\r\\n]", " ", description[1, name]) else ""',
-  '    cat("PACKAGE\\t", ip[i, "Package"], "\\t", ip[i, "Version"], "\\t", priority, "\\t", built, "\\t", libraryRank, "\\t", libraryScope, "\\t", field("RemoteUsername"), "\\t", field("RemoteRepo"), "\\t", field("RemoteRef"), "\\t", field("RemoteSha"), "\\n", sep="")',
+  '    cat("PACKAGE\\t", ip[i, "Package"], "\\t", ip[i, "Version"], "\\t", priority, "\\t", built, "\\t", libraryRank, "\\t", libraryScope, "\\t", field("RemoteType"), "\\t", field("RemoteHost"), "\\t", field("RemoteUsername"), "\\t", field("RemoteRepo"), "\\t", field("RemoteRef"), "\\t", field("RemoteSha"), "\\n", sep="")',
   '  }',
   '}'
 ].join('\n')
@@ -607,6 +644,8 @@ const parseInventory = (
       built,
       libraryRankValue,
       libraryScope,
+      remoteType,
+      remoteHost,
       remoteUsername,
       remoteRepo,
       remoteRef,
@@ -641,7 +680,11 @@ const parseInventory = (
         : language === 'r'
           ? { libraryScope: 'unknown' as const }
           : {}),
-      ...(remoteUsername && remoteRepo
+      ...(remoteType?.toLowerCase() === 'github' &&
+      (remoteHost?.toLowerCase() === 'github.com' ||
+        remoteHost?.toLowerCase() === 'api.github.com') &&
+      remoteUsername &&
+      remoteRepo
         ? {
             source: {
               type: 'github' as const,

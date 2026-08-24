@@ -83,7 +83,8 @@ describe('EnvironmentStateTracker', () => {
           options.maxBuffer === 8 * 1024 * 1024
             ? 'FILE\tconda-meta/history\t1\t1\n'
             : 'RUNTIME\t4.5.1\twin32\tx86_64\n' +
-              'PACKAGE\tggplot2\t4.0.0.9000\t\t4.5.1\t1\tenvironment\ttidyverse\tggplot2\tmain\ta7b92f1\n',
+              'PACKAGE\tggplot2\t4.0.0.9000\t\t4.5.1\t1\tenvironment\tgithub\tapi.github.com\ttidyverse\tggplot2\tmain\ta7b92f1\n' +
+              'PACKAGE\tfakepkg\t1.0.0\t\t4.5.1\t1\tenvironment\tgitlab\tgitlab.com\tgroup\tfakepkg\tmain\tdeadbeef\n',
         stderr: ''
       })
     )
@@ -116,11 +117,18 @@ describe('EnvironmentStateTracker', () => {
         }
       ]
     })
+    await expect(tracker.inspectPackages(rTarget, ['fakepkg'])).resolves.toMatchObject({
+      packages: [{ name: 'fakepkg', version: '1.0.0', status: 'installed' }]
+    })
+    const fakePackage = (await tracker.inspectPackages(rTarget, ['fakepkg'])).packages[0]
+    expect(fakePackage).not.toHaveProperty('source')
 
-    expect(execute).toHaveBeenCalledTimes(4)
+    expect(execute).toHaveBeenCalledTimes(6)
     expect(execute.mock.calls.map(([, , options]) => options.maxBuffer)).toEqual([
       8 * 1024 * 1024,
       16 * 1024 * 1024,
+      8 * 1024 * 1024,
+      8 * 1024 * 1024,
       8 * 1024 * 1024,
       8 * 1024 * 1024
     ])
@@ -310,6 +318,44 @@ describe('EnvironmentStateTracker', () => {
       result: 'failure',
       unsatisfiedPackages: ['numpy==2.0.0']
     })
+  })
+
+  it('accepts equivalent normalized Python versions for an exact request', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-version-normalized-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '3.13.2', packages: [] })
+      .mockResolvedValueOnce({
+        runtimeVersion: '3.13.2',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.0',
+            versionStatus: 'known',
+            ecosystem: 'python',
+            evidenceSources: ['python-importlib-metadata']
+          }
+        ]
+      })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+
+    await tracker.markPackageMutationDirty(target, {
+      operationId: 'operation-version-normalized',
+      operation: 'install',
+      packages: ['numpy==2.0.0']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(target, {
+      operationId: 'operation-version-normalized',
+      operation: 'install',
+      packages: ['numpy==2.0.0'],
+      result: 'success'
+    })
+
+    expect(verification.result).toBe('success')
   })
 
   it('matches a GitHub request to the installed R package source and retains related changes', async () => {
