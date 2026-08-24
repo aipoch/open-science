@@ -1173,7 +1173,13 @@ describe('SpecialistsPanel', () => {
     })
 
     const toolbar = document.body.querySelector('[data-slot="specialists-toolbar"]')
-    expect(toolbar?.querySelector('input[type="search"]')).not.toBeNull()
+    const search = toolbar?.querySelector('input[type="search"]')
+    const sourceFilter = toolbar?.querySelector('[aria-label="Filter specialists by category"]')
+    const tagFilter = toolbar?.querySelector('[aria-label="Filter by Tag"]')
+    expect(search).not.toBeNull()
+    expect(search?.parentElement?.parentElement).toBe(toolbar)
+    expect(sourceFilter?.parentElement).toBe(toolbar)
+    expect(tagFilter?.parentElement).toBe(toolbar)
     expect(toolbar?.textContent).not.toContain('Add specialist')
 
     const browseButton = Array.from(

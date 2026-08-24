@@ -1445,35 +1445,37 @@ const InstalledSpecialistsPanel = ({
       </div>
       {/* Toolbar */}
       {items.length > 0 ? (
-        <div data-slot="specialists-toolbar" className="mb-4 flex flex-col gap-2">
+        <div data-slot="specialists-toolbar" className="mb-4 flex items-center gap-2">
           <SettingsSearchInput
+            containerClassName="min-w-0"
             aria-label={t('Search specialists')}
             placeholder={t('Search specialists…')}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={filter} onValueChange={(value) => setFilter(value as CategoryFilter)}>
-              <SelectTrigger aria-label={t('Filter specialists by category')} className="w-44">
-                <span>{getFilterLabel(filter, t)}</span>
-              </SelectTrigger>
-              <SelectContent>
-                {(['all', 'custom', 'marketplace', 'builtin'] as const).map((key) => (
-                  <SelectItem key={key} value={key}>
-                    {getFilterLabel(key, t)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {hasAssignedTags ? (
-              <TagFilter
-                resourceType="catalog.specialist"
-                value={tagFilter}
-                onChange={setTagFilter}
-                className="w-44"
-              />
-            ) : null}
-          </div>
+          <Select value={filter} onValueChange={(value) => setFilter(value as CategoryFilter)}>
+            <SelectTrigger
+              aria-label={t('Filter specialists by category')}
+              className="w-44 shrink-0"
+            >
+              <span>{getFilterLabel(filter, t)}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {(['all', 'custom', 'marketplace', 'builtin'] as const).map((key) => (
+                <SelectItem key={key} value={key}>
+                  {getFilterLabel(key, t)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {hasAssignedTags ? (
+            <TagFilter
+              resourceType="catalog.specialist"
+              value={tagFilter}
+              onChange={setTagFilter}
+              className="w-44 shrink-0"
+            />
+          ) : null}
         </div>
       ) : null}
 
