@@ -164,6 +164,7 @@ type PreloadApi = {
       followsSystem: boolean
     }) => void
     announceWindowFindReady?: () => unknown
+    announceWindowFindContentReady?: () => void
     onCloseActivePane: (listener: () => void) => () => void
   }
 }
@@ -624,6 +625,7 @@ describe('preload bridge — public surface inventory', () => {
       'uploads.stageLocalFile',
       'uploads.stageLocalPath',
       'window.announceWindowFindAppearance',
+      'window.announceWindowFindContentReady',
       'window.announceWindowFindReady',
       'window.clearFind',
       'window.close',
@@ -978,6 +980,12 @@ describe('preload bridge — window find IPC channels', () => {
     dispose?.()
 
     expect(sendMock).toHaveBeenNthCalledWith(2, 'shortcut:window-find-unready')
+  })
+
+  it('announces that the searchable transcript has committed before native find opens', () => {
+    api.window.announceWindowFindContentReady?.()
+
+    expect(sendMock).toHaveBeenCalledWith('shortcut:window-find-content-ready')
   })
 
   it('forwards renderer theme changes to main as a typed appearance payload', () => {

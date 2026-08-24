@@ -25,6 +25,7 @@ export const CLOSE_ACTIVE_PANE_UNREADY_CHANNEL = 'shortcut:close-active-pane-unr
 // normal Cmd/Ctrl+F behavior outside Workspace rather than swallowing the chord into a missing UI.
 export const WINDOW_FIND_READY_CHANNEL = 'shortcut:window-find-ready'
 export const WINDOW_FIND_UNREADY_CHANNEL = 'shortcut:window-find-unready'
+export const WINDOW_FIND_CONTENT_READY_CHANNEL = 'shortcut:window-find-content-ready'
 
 // Renderer -> main requests and main -> renderer result events for Electron's native whole-window find.
 export const WINDOW_FIND_REQUEST_CHANNEL = 'window:find-in-page'

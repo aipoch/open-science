@@ -119,6 +119,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'specialist.setSessionSpecialist',
   'specialist.update',
   'window.announceWindowFindAppearance',
+  'window.announceWindowFindContentReady',
   'window.announceWindowFindReady',
   'window.clearFind',
   'window.closeFind',

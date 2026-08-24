@@ -222,6 +222,7 @@ const createSessionSubagentsPreviewItem = vi.fn(
   })
 )
 const announceWindowFindReady = vi.fn(() => () => undefined)
+const announceWindowFindContentReady = vi.fn()
 let showWindowFindListener: (() => void) | undefined
 const onShowWindowFind = vi.fn((listener: () => void) => {
   showWindowFindListener = listener
@@ -352,6 +353,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
     createSessionSubagentsPreviewItem.mockClear()
     announceWindowFindReady.mockClear()
+    announceWindowFindContentReady.mockClear()
     onShowWindowFind.mockClear()
     showWindowFindListener = undefined
     onHideWindowFind.mockClear()
@@ -395,6 +397,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       },
       window: {
         announceWindowFindReady,
+        announceWindowFindContentReady,
         onShowWindowFind,
         onHideWindowFind
       }
@@ -3599,8 +3602,30 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.textContent).not.toContain('searchable oldest sentinel')
     await act(async () => showWindowFindListener?.())
     expect(container.textContent).toContain('searchable oldest sentinel')
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
+
+    const nextSessionMessages = messages.map((message, index) => ({
+      ...message,
+      id: `next-${message.id}`,
+      content: index === 0 ? 'next session oldest sentinel' : message.content
+    }))
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({
+            id: 'session-2',
+            status: 'idle',
+            messages: nextSessionMessages
+          })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    expect(container.textContent).toContain('next session oldest sentinel')
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(2)
+
     await act(async () => hideWindowFindListener?.())
-    expect(container.textContent).not.toContain('searchable oldest sentinel')
+    expect(container.textContent).not.toContain('next session oldest sentinel')
     expect(container.textContent).toContain('transcript message 120')
   })
 

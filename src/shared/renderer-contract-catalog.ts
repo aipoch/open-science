@@ -395,7 +395,8 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['stageLocalFile', 'uploads:stage-local-file', MAPPED_ELECTRON, NATIVE_FILE_UPLOAD], ['stageLocalPath', 'uploads:stage-local-path', LOCAL],
   ]),
   group('window', 'window', [
-    ['announceWindowFindAppearance', 'window:find-appearance-changed', SEND], ['announceWindowFindReady', 'shortcut:window-find-ready', WINDOW_FIND_READY],
+    ['announceWindowFindAppearance', 'window:find-appearance-changed', SEND], ['announceWindowFindContentReady', 'shortcut:window-find-content-ready', SEND],
+    ['announceWindowFindReady', 'shortcut:window-find-ready', WINDOW_FIND_READY],
     ['clearFind', 'window:clear-find-in-page', SEND], ['close', 'window:close', MAPPED_NATIVE], ['closeFind', 'window:find-close', SEND],
     ['findInPage', 'window:find-in-page', SEND], ['onCloseActivePane', 'shortcut:close-active-pane', CLOSE_PANE_EVENT],
     ['onCloseConfirmRequest', 'window:close-confirm-request', ELECTRON_EVENT], ['onFindInPageResult', 'window:find-in-page-result', ELECTRON_EVENT],

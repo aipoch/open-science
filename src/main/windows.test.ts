@@ -4,6 +4,7 @@ import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
+  WINDOW_FIND_CONTENT_READY_CHANNEL,
   WINDOW_FIND_READY_CHANNEL,
   WINDOW_FIND_SHOW_CHANNEL,
   WINDOW_FIND_UNREADY_CHANNEL,
@@ -362,6 +363,9 @@ describe('close chord interception', () => {
   const signalWindowFindGone = (window: FakeBrowserWindow): void =>
     fireHandshake(window, WINDOW_FIND_UNREADY_CHANNEL)
 
+  const signalWindowFindContentReady = (window: FakeBrowserWindow): void =>
+    fireHandshake(window, WINDOW_FIND_CONTENT_READY_CHANNEL)
+
   // Drives one of the captured webContents lifecycle handlers (render-process-gone, unresponsive, ...).
   const fireWebContentsEvent = (
     window: FakeBrowserWindow,
@@ -408,7 +412,7 @@ describe('close chord interception', () => {
     expect(window.closeMock).not.toHaveBeenCalled()
   })
 
-  it('opens the find overlay only after the Workspace listener is ready', () => {
+  it('opens the find overlay only after the full Workspace transcript is mounted', () => {
     createMainWindow()
     const window = currentWindow!
 
@@ -416,11 +420,20 @@ describe('close chord interception', () => {
     const preventDefault = fireInput(window, findChord())
 
     expect(preventDefault).toHaveBeenCalled()
-    expect(findOverlayMock.open).toHaveBeenCalledTimes(1)
+    expect(findOverlayMock.open).not.toHaveBeenCalled()
     expect(window.sendMock).toHaveBeenCalledWith(WINDOW_FIND_SHOW_CHANNEL, {
       theme: 'light',
       followsSystem: true
     })
+
+    signalWindowFindContentReady(window)
+    expect(findOverlayMock.open).toHaveBeenCalledTimes(1)
+
+    // A Session switch commits a new full transcript while the same overlay remains open. Re-open is
+    // intentional: the overlay re-runs its remembered query against the new Session DOM.
+    findOverlayMock.isOpen.mockReturnValue(true)
+    signalWindowFindContentReady(window)
+    expect(findOverlayMock.open).toHaveBeenCalledTimes(2)
     expect(window.closeMock).not.toHaveBeenCalled()
   })
 

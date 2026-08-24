@@ -600,13 +600,34 @@ const WorkspaceMessageScrollerImpl = ({
     messageScrollerViewportRef
   )
   const revealFullTranscript = transcriptWindow.revealAll
-  useEffect(() => {
-    return window.api?.window?.onShowWindowFind?.(revealFullTranscript)
+  const [windowFindOpen, setWindowFindOpen] = useState(false)
+  const showWindowFind = useCallback((): void => {
+    setWindowFindOpen(true)
+    revealFullTranscript()
   }, [revealFullTranscript])
-  const restoreTranscriptWindow = transcriptWindow.restoreWindow
   useEffect(() => {
-    return window.api?.window?.onHideWindowFind?.(restoreTranscriptWindow)
+    return window.api?.window?.onShowWindowFind?.(showWindowFind)
+  }, [showWindowFind])
+  const restoreTranscriptWindow = transcriptWindow.restoreWindow
+  const hideWindowFind = useCallback((): void => {
+    setWindowFindOpen(false)
+    restoreTranscriptWindow()
   }, [restoreTranscriptWindow])
+  useEffect(() => {
+    return window.api?.window?.onHideWindowFind?.(hideWindowFind)
+  }, [hideWindowFind])
+  useLayoutEffect(() => {
+    if (windowFindOpen) revealFullTranscript()
+  }, [currentPresentationScopeId, revealFullTranscript, windowFindOpen])
+  useLayoutEffect(() => {
+    if (!windowFindOpen || transcriptWindow.entries.length !== conversationItems.length) return
+    window.api?.window?.announceWindowFindContentReady?.()
+  }, [
+    conversationItems.length,
+    currentPresentationScopeId,
+    transcriptWindow.entries.length,
+    windowFindOpen
+  ])
   // Brand-new conversation (nothing presented, no resume in flight): invite the first prompt with
   // a centered placeholder banner over the empty transcript area.
   const showEmptyConversationBanner =
