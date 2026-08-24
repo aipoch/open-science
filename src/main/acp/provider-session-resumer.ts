@@ -406,6 +406,7 @@ export class AcpProviderSessionResumer {
             session: provisionalSession,
             permissionProfile: permission
           })
+          specialistProjection = await resolveSpecialistProjection(specialistId, backend)
           continue
         }
         identity.assertCurrent()
