@@ -3743,6 +3743,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     await render([...history, prompt, streamingAnswer, bufferedPrompt, bufferedAnswer])
 
     expect(container.textContent).not.toContain('presentation history oldest sentinel')
+    const oldestRun = document.body.querySelector<HTMLButtonElement>('[aria-label^="Go to run 1:"]')
+    expect(oldestRun).not.toBeNull()
+    expect(oldestRun?.disabled).toBe(true)
     await act(async () => showWindowFindListener?.())
     expect(container.textContent).not.toContain('Searchable only after the presentation barrier')
     expect(announceWindowFindContentReady).not.toHaveBeenCalled()
@@ -3750,6 +3753,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     await act(async () => vi.advanceTimersByTimeAsync(5_000))
     expect(container.textContent).toContain('presentation history oldest sentinel')
     expect(container.textContent).toContain('Searchable only after the presentation barrier')
+    expect(oldestRun?.disabled).toBe(false)
     expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
   })
 

@@ -1121,7 +1121,9 @@ const WorkspaceMessageScrollerImpl = ({
           <WorkspaceRunMarks
             items={presentedConversationItems}
             viewport={messageScrollerViewport}
-            onRevealMessage={transcriptWindow.revealMessage}
+            onRevealMessage={
+              presentationBarrierIndex >= 0 ? undefined : transcriptWindow.revealMessage
+            }
           />
           <div
             aria-hidden="true"
