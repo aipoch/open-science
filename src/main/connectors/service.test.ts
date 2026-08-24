@@ -23,7 +23,9 @@ describe('ConnectorService', () => {
     })
     await expect(
       svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] }, internal)
-    ).rejects.toThrow(/not enabled/)
+    ).rejects.toThrow(
+      'Connector "chemistry" is disabled. Do not retry with guessed Connector names. Ask the user to enable it in Settings > Connectors, then retry the same call.'
+    )
   })
   it('treats a bundled connector as enabled by default (opt-out model)', async () => {
     const svc = new ConnectorService({
@@ -789,7 +791,9 @@ describe('ConnectorService', () => {
         }),
         resolveApiKey: () => undefined
       })
-      await expect(svc.call('myserver', 'do_thing', {}, internal)).rejects.toThrow(/not enabled/)
+      await expect(svc.call('myserver', 'do_thing', {}, internal)).rejects.toThrow(
+        'Connector "My server" is disabled. Do not retry with guessed Connector names. Ask the user to enable it in Settings > Connectors, then retry the same call.'
+      )
       expect(call).not.toHaveBeenCalled()
     })
 
@@ -837,7 +841,9 @@ describe('ConnectorService', () => {
         getConnectors: () => ({ enabledIds: [], autoAllowIds: [], customMcpServers: [] }),
         resolveApiKey: () => undefined
       })
-      await expect(svc.call('nope', 'do_thing', {}, internal)).rejects.toThrow(/not enabled/)
+      await expect(svc.call('nope', 'do_thing', {}, internal)).rejects.toThrow(
+        'Connector "nope" is unavailable. Do not retry with guessed Connector names. Use only Connector names and methods documented by a loaded mcp-* Skill. If the required Skill is unavailable, ask the user to enable or add the Connector in Settings > Connectors, then retry.'
+      )
     })
 
     it('threads context.sessionId through to requestApproval for custom MCP tools', async () => {
@@ -1570,7 +1576,7 @@ describe('ConnectorService specialist capability gate', () => {
     // connector without inheriting Main's block list.
     await expect(
       svc.call('molecule', 'preview_molecule', { smiles: 'SECRET_ARGS' }, internal)
-    ).rejects.toThrow(/connector not enabled/)
+    ).rejects.toThrow(/Connector "molecule" is disabled/)
     for (const framework of ['claude-code', 'codex', 'opencode']) {
       await expect(
         svc.call(

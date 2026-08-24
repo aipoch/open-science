@@ -139,6 +139,17 @@ const customServerCredentialFingerprint = (server: StoredCustomMcpServer): strin
 const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string =>
   JSON.stringify([server.oauth ?? null, customServerCredentialFingerprint(server)])
 
+const unavailableConnectorMessage = (connector: string): string =>
+  `Connector ${JSON.stringify(connector)} is unavailable. ` +
+  'Do not retry with guessed Connector names. ' +
+  'Use only Connector names and methods documented by a loaded mcp-* Skill. ' +
+  'If the required Skill is unavailable, ask the user to enable or add the Connector in Settings > Connectors, then retry.'
+
+const disabledConnectorMessage = (connector: string): string =>
+  `Connector ${JSON.stringify(connector)} is disabled. ` +
+  'Do not retry with guessed Connector names. ' +
+  'Ask the user to enable it in Settings > Connectors, then retry the same call.'
+
 // Deliberately contains only a stable category. In particular it must not interpolate connector
 // arguments, custom-server headers, credentials, or a Specialist's system prompt into an error that
 // may be rendered back to an agent.
@@ -246,7 +257,7 @@ export class ConnectorService {
     if (!custom) {
       throw new ConnectorGateError(
         'connector_unavailable',
-        access.specialistScoped ? undefined : `connector not enabled: ${connector}`
+        access.specialistScoped ? undefined : unavailableConnectorMessage(connector)
       )
     }
     return this.callCustom(custom, customServers, method, args, context, access, signal)
@@ -342,7 +353,7 @@ export class ConnectorService {
     if (!access.bypassMainEnablement && !custom.enabled) {
       throw new ConnectorGateError(
         'connector_disabled',
-        `connector not enabled: ${custom.displayName}`
+        disabledConnectorMessage(custom.displayName)
       )
     }
     if (!this.isCustomConfigRunnable(custom, customServers)) {
@@ -547,10 +558,7 @@ export class ConnectorService {
       const connectors = await this.currentConnectors()
       signal?.throwIfAborted()
       if (!this.isEnabled(connectorLabel, connectors)) {
-        throw new ConnectorGateError(
-          'connector_disabled',
-          `connector not enabled: ${connectorLabel}`
-        )
+        throw new ConnectorGateError('connector_disabled', disabledConnectorMessage(connectorLabel))
       }
       const request = this.authorizationRequest(
         connectorLabel,
@@ -601,7 +609,7 @@ export class ConnectorService {
       if (!access.bypassMainEnablement && !current.enabled) {
         throw new ConnectorGateError(
           'connector_disabled',
-          `connector not enabled: ${current.displayName}`
+          disabledConnectorMessage(current.displayName)
         )
       }
       if (!this.isCustomConfigRunnable(current, customServers)) {
