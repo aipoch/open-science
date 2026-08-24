@@ -31,6 +31,7 @@ type WorkflowJob = {
 }
 
 type Workflow = {
+  concurrency?: { 'cancel-in-progress'?: boolean; group?: string }
   jobs: Record<string, WorkflowJob>
   permissions?: Record<string, string>
   on?: {
@@ -40,7 +41,9 @@ type Workflow = {
     workflow_call?: {
       inputs?: Record<string, { default?: unknown; description?: string; type?: string }>
     }
-    workflow_dispatch?: unknown
+    workflow_dispatch?: {
+      inputs?: Record<string, { default?: unknown; options?: string[]; type?: string }>
+    }
   }
 }
 
@@ -93,9 +96,47 @@ describe('post-merge Windows validation', () => {
     const smoke = findStep(job, 'Smoke test Windows installer')
 
     expect(job['continue-on-error']).toBeUndefined()
-    expect(smoke.if).toBe("matrix.platform == 'win'")
+    expect(smoke.if).toBe("${{ !inputs.install_only && matrix.platform == 'win' }}")
     expect(smoke.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(smoke['timeout-minutes']).toBe(10)
+  })
+
+  it('installs Electron from GitHub mirrors and exposes an install-only dry-run', () => {
+    const smokeWorkflow = readWorkflow('package-smoke.yml')
+    const job = smokeWorkflow.jobs.smoke
+    const install = findStep(job, 'Install dependencies')
+    const download = findStep(job, 'Download packaged artifacts')
+    const linux = findStep(job, 'Smoke test Linux packages')
+    const evidence = findStep(job, 'Record platform certification evidence')
+    const uploadEvidence = findStep(job, 'Upload platform certification evidence')
+    const dispatch = smokeWorkflow.on?.workflow_dispatch
+
+    expect(smokeWorkflow.on).toHaveProperty('workflow_call')
+    expect(smokeWorkflow.on).toHaveProperty('workflow_dispatch')
+    expect(smokeWorkflow.on?.workflow_call?.inputs?.install_only).toMatchObject({
+      type: 'boolean',
+      default: false
+    })
+    expect(dispatch?.inputs?.install_only).toMatchObject({ type: 'boolean', default: true })
+    expect(dispatch?.inputs?.platform_name).toMatchObject({
+      type: 'choice',
+      default: 'macos-x64',
+      options: ['macos-x64', 'macos-arm64', 'linux-x64', 'windows-x64', 'all']
+    })
+    expect(smokeWorkflow.permissions).toEqual({ contents: 'read' })
+    expect(smokeWorkflow.concurrency).toEqual({
+      group:
+        "package-smoke-${{ github.workflow }}-${{ github.ref }}-${{ inputs.platform_name || 'all' }}",
+      'cancel-in-progress': true
+    })
+    expect(job.if).toBe(
+      "${{ inputs.platform_name == '' || inputs.platform_name == 'all' || matrix.name == inputs.platform_name }}"
+    )
+    expect(install.run).toBe('node scripts/ci/npm-ci.mjs')
+    expect(download.if).toBe('${{ !inputs.install_only }}')
+    expect(linux.if).toBe("${{ !inputs.install_only && matrix.platform == 'linux' }}")
+    expect(evidence.if).toBe('${{ !inputs.install_only }}')
+    expect(uploadEvidence.if).toBe('${{ !inputs.install_only }}')
   })
 
   it('keeps Windows packaging unsigned until signing credentials are available', () => {
@@ -254,7 +295,7 @@ describe('post-merge Windows validation', () => {
     })
     expect(downloadPackage.with?.name).toBe('${{ matrix.name }}')
     expect(downloadPackage.with?.path).toBe('dist')
-    expect(macos.if).toBe("matrix.platform == 'mac'")
+    expect(macos.if).toBe("${{ !inputs.install_only && matrix.platform == 'mac' }}")
     expect(macos.run).toBe('node scripts/macos-package-smoke.mjs --artifact-dir dist')
     expect(windows.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(linux.run).toContain('scripts/linux-package-smoke.mjs')

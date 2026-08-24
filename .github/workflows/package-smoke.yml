@@ -2,17 +2,52 @@ name: Package Smoke
 
 # Blocking native-package certification. Each matrix leg downloads the exact artifact produced by
 # build.yml, so a failed smoke can be retried without rebuilding or re-signing any package.
+#
+# A manual dispatch with install_only reuses this exact job, runner, and npm ci path without
+# downloading artifacts or publishing anything. Use that to certify Electron mirror resolution.
 on:
   workflow_call:
+    inputs:
+      install_only:
+        description: Skip artifact download and package execution; only install dependencies
+        type: boolean
+        required: false
+        default: false
+      platform_name:
+        description: Limit the smoke matrix to one platform name, or empty for every platform
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      install_only:
+        description: Skip artifact download and package execution; only install dependencies
+        type: boolean
+        default: true
+      platform_name:
+        description: Platform to install on
+        type: choice
+        default: macos-x64
+        options:
+          - macos-x64
+          - macos-arm64
+          - linux-x64
+          - windows-x64
+          - all
 
 permissions:
   contents: read
+
+concurrency:
+  group: package-smoke-${{ github.workflow }}-${{ github.ref }}-${{ inputs.platform_name || 'all' }}
+  cancel-in-progress: true
 
 jobs:
   smoke:
     name: Smoke ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    if: ${{ inputs.platform_name == '' || inputs.platform_name == 'all' || matrix.name == inputs.platform_name }}
     strategy:
       fail-fast: false
       matrix:
@@ -40,26 +75,27 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
 
       - name: Download packaged artifacts
+        if: ${{ !inputs.install_only }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ${{ matrix.name }}
           path: dist
 
       - name: Smoke test macOS packages
-        if: matrix.platform == 'mac'
+        if: ${{ !inputs.install_only && matrix.platform == 'mac' }}
         timeout-minutes: 10
         run: node scripts/macos-package-smoke.mjs --artifact-dir dist
 
       - name: Smoke test Windows installer
-        if: matrix.platform == 'win'
+        if: ${{ !inputs.install_only && matrix.platform == 'win' }}
         timeout-minutes: 10
         run: node scripts/windows-installer-smoke.mjs --installer-dir dist
 
       - name: Smoke test Linux packages
-        if: matrix.platform == 'linux'
+        if: ${{ !inputs.install_only && matrix.platform == 'linux' }}
         timeout-minutes: 10
         shell: bash
         run: |
@@ -70,6 +106,7 @@ jobs:
             --installed-executable /usr/bin/open-science
 
       - name: Record platform certification evidence
+        if: ${{ !inputs.install_only }}
         shell: bash
         run: |
           database_certification="dist/database-migration-certification-${{ matrix.name }}.json"
@@ -89,6 +126,7 @@ jobs:
             --authenticode "$authenticode"
 
       - name: Upload platform certification evidence
+        if: ${{ !inputs.install_only }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: certification-${{ matrix.name }}
