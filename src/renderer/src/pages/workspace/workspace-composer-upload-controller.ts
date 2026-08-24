@@ -392,15 +392,18 @@ export const useWorkspaceComposerUploadController = ({
   )
 
   const reconcileRemovedPastedTextUploads = useCallback(
-    (nextDoc: ComposerDoc, draftKey: string): void => {
+    (nextDoc: ComposerDoc, draftKey: string): number => {
       const nextPastedIds = new Set(
         nextDoc.nodes.flatMap((node) => (node.type === 'pasted-text' ? [node.id] : []))
       )
+      let releasedSlots = 0
       for (const node of docRef.current.nodes) {
         if (node.type === 'pasted-text' && !nextPastedIds.has(node.id)) {
+          if (node.transferId || node.attachmentId) releasedSlots += 1
           deletePastedTextUpload(node, draftKey)
         }
       }
+      return releasedSlots
     },
     [deletePastedTextUpload, docRef]
   )
@@ -411,10 +414,13 @@ export const useWorkspaceComposerUploadController = ({
       if (!preserveRemovalUndo) clearPastedTextUndo(draftKey)
       clearHistory(draftKey)
       markChanged(draftKey)
-      reconcileRemovedPastedTextUploads(nextDoc, draftKey)
+      const releasedSlots = reconcileRemovedPastedTextUploads(nextDoc, draftKey)
       const file = new File([node.text], PASTED_TEXT_FILENAME, { type: 'text/plain' })
       const intake = canStageAttachments
-        ? planComposerAttachmentIntake([file], attachments.length + transfers.length)
+        ? planComposerAttachmentIntake(
+            [file],
+            Math.max(0, attachments.length + transfers.length - releasedSlots)
+          )
         : { accepted: [], error: null }
       setError(intake.error)
       if (intake.accepted.length === 0) {

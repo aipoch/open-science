@@ -432,6 +432,35 @@ describe('workspace composer controller', () => {
     )
   })
 
+  it('reuses the attachment slot when a new long paste replaces an anchor at the cap', () => {
+    const blocked = deferred<UploadedAttachment | null>()
+    const hook = renderController(uploads(vi.fn(() => blocked.promise)))
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.actions.stageFiles(
+        Array.from({ length: 9 }, (_, index) => new File(['x'], `file-${index}.txt`))
+      )
+    )
+    const oldPaste: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-old', text: 'old' }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(oldPaste), oldPaste))
+    expect(hook.result.current.view.transfers).toHaveLength(10)
+
+    const newPaste: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-new', text: 'new' }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(newPaste), newPaste))
+
+    expect(hook.result.current.view.transfers).toHaveLength(10)
+    expect(
+      hook.result.current.view.transfers.some((item) => item.pastedTextId === 'paste-old')
+    ).toBe(false)
+    expect(
+      hook.result.current.view.transfers.some((item) => item.pastedTextId === 'paste-new')
+    ).toBe(true)
+    expect(hook.result.current.view.doc.nodes).toContainEqual(
+      expect.objectContaining({ type: 'pasted-text', id: 'paste-new' })
+    )
+    expect(hook.result.current.view.error).toBeNull()
+  })
+
   it('commits a completed upload to the draft that started it after selection changes', async () => {
     const staged = deferred<UploadedAttachment | null>()
     const hook = renderController(uploads(vi.fn(() => staged.promise)))
