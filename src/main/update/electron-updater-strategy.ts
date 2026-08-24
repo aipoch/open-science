@@ -185,7 +185,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // latest, so an older (drained) download can't clear a newer one's lifecycle.
   private downloadGeneration = 0
   private downloadOperation?: DiagnosticOperation
-  private checkInFlight = false
+  // In-flight check() promise. Overlapping check()/download() await this instead of returning a
+  // snapshot taken after `update-available` but before notes hydration finishes.
+  private checkLifecycle?: Promise<UpdateStatus>
   private readyCheckStatus?: UpdateStatus
   private readyCheckError?: unknown
   private status: UpdateStatus
@@ -358,46 +360,54 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   async check(): Promise<UpdateStatus> {
     // Keep provider checks mutually exclusive with downloads. A ready update may still be refreshed,
     // but its events are reconciled against the downloaded version by the subscribers above.
-    if (this.applying || this.checkInFlight || this.downloadLifecycle) {
+    if (this.applying || this.downloadLifecycle) {
       return this.status
     }
+    if (this.checkLifecycle) return this.checkLifecycle
+
     const readyStatus = this.status.state === 'ready' ? this.status : undefined
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-check',
       fields: { strategy: 'in-place' }
     })
-    this.checkInFlight = true
     this.readyCheckStatus = readyStatus
     this.readyCheckError = undefined
-    try {
-      operation.phase('query-provider')
-      let providerFailure: unknown
+    const lifecycle = (async () => {
       try {
-        await this.updater.checkForUpdates()
-      } catch (error) {
-        providerFailure = error
-        if (!readyStatus || this.status !== readyStatus) {
-          this.setStatus({
-            state: 'error',
-            error: error instanceof Error ? error.message : 'Update check failed'
-          })
+        operation.phase('query-provider')
+        let providerFailure: unknown
+        try {
+          await this.updater.checkForUpdates()
+        } catch (error) {
+          providerFailure = error
+          if (!readyStatus || this.status !== readyStatus) {
+            this.setStatus({
+              state: 'error',
+              error: error instanceof Error ? error.message : 'Update check failed'
+            })
+          }
         }
+        // Wait for the notes fetch triggered by update-available so the returned status carries them.
+        await this.notesHydration
+        providerFailure ??= this.readyCheckError
+        if (providerFailure) {
+          operation.fail(providerFailure, { result: 'error' })
+        } else if (this.status.state === 'error') {
+          operation.fail(new Error('Updater check failed'), { result: 'error' })
+        } else {
+          operation.complete({ result: this.status.state })
+        }
+        return this.status
+      } finally {
+        this.readyCheckStatus = undefined
+        this.readyCheckError = undefined
       }
-      // Wait for the notes fetch triggered by update-available so the returned status carries them.
-      await this.notesHydration
-      providerFailure ??= this.readyCheckError
-      if (providerFailure) {
-        operation.fail(providerFailure, { result: 'error' })
-      } else if (this.status.state === 'error') {
-        operation.fail(new Error('Updater check failed'), { result: 'error' })
-      } else {
-        operation.complete({ result: this.status.state })
-      }
-      return this.status
+    })()
+    this.checkLifecycle = lifecycle
+    try {
+      return await lifecycle
     } finally {
-      this.checkInFlight = false
-      this.readyCheckStatus = undefined
-      this.readyCheckError = undefined
+      if (this.checkLifecycle === lifecycle) this.checkLifecycle = undefined
     }
   }
 
@@ -405,7 +415,14 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // An active download is in flight; ignore repeat clicks / concurrent renderers. Starting a second
     // would overwrite downloadToken and orphan the first (cancel() could no longer stop it). This guard
     // and the token claim below are synchronous so a racing download()/cancel() sees a consistent slot.
-    if (this.applying || this.checkInFlight || this.downloadToken) return this.status
+    if (this.applying || this.downloadToken) return this.status
+    // The startup scheduler and notes hydration keep check() in flight after `update-available` has
+    // already marked the status `available`. Returning that snapshot dropped RPC/UI download requests,
+    // including the Windows upgrade-smoke harness talking to 0.18.0+. Wait for the check, then start.
+    if (this.checkLifecycle) await this.checkLifecycle
+    if (this.applying || this.downloadToken) return this.status
+    if (this.status.state === 'ready') return this.status
+    if (this.status.state !== 'available') return this.status
 
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-download',
