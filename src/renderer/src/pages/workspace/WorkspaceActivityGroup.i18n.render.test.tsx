@@ -114,16 +114,18 @@ describe('WorkspaceActivityGroup i18n', () => {
                 updatedAt: 46_000,
                 rawInput: { language: 'r', packages: ['ggplot2'] },
                 rawOutput: {
-                  ok: true,
-                  needsRestart: true,
-                  method: 'conda',
-                  packageChanges: [
-                    {
-                      name: 'ggplot2',
-                      change: 'unchanged',
-                      afterVersion: '4.0.3'
-                    }
-                  ]
+                  structuredContent: {
+                    ok: true,
+                    needsRestart: true,
+                    method: 'conda',
+                    packageChanges: [
+                      {
+                        name: 'ggplot2',
+                        change: 'unchanged',
+                        afterVersion: '4.0.3'
+                      }
+                    ]
+                  }
                 }
               }
             ]

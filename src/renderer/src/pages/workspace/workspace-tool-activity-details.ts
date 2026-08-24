@@ -799,19 +799,54 @@ const isManagePackagesActivity = (activity: ToolActivity): boolean => {
   )
 }
 
-// Reads the install result the manage_packages tool returns as JSON content (or raw output).
-const parseManagePackagesResult = (activity: ToolActivity): Record<string, unknown> | undefined => {
-  for (const text of collectToolTexts(activity)) {
-    try {
-      const parsed: unknown = JSON.parse(text)
+const isManagePackagesResult = (value: unknown): value is Record<string, unknown> =>
+  isRecord(value) &&
+  ['ok', 'needsRestart', 'method', 'packageChanges', 'error'].some((key) => key in value)
 
-      if (isRecord(parsed)) return parsed
+// ACP providers retain MCP results in different envelopes. Unwrap only the known result/content
+// fields so the renderer can use the compact verified package versions without reading installer logs.
+const parseManagePackagesResultValue = (
+  value: unknown,
+  depth = 0
+): Record<string, unknown> | undefined => {
+  if (depth > 3) return undefined
+
+  if (typeof value === 'string') {
+    try {
+      return parseManagePackagesResultValue(JSON.parse(value), depth + 1)
     } catch {
-      // Not a JSON payload; keep scanning the remaining content blocks.
+      return undefined
     }
   }
 
-  return isRecord(activity.rawOutput) ? activity.rawOutput : undefined
+  if (!isRecord(value)) return undefined
+  for (const key of ['structuredContent', 'result'] as const) {
+    const nested = parseManagePackagesResultValue(value[key], depth + 1)
+    if (nested) return nested
+  }
+
+  if (Array.isArray(value.content)) {
+    for (const block of value.content) {
+      if (!isRecord(block) || block.type !== 'text') continue
+      const nested = parseManagePackagesResultValue(block.text, depth + 1)
+      if (nested) return nested
+    }
+  } else {
+    const nested = parseManagePackagesResultValue(value.content, depth + 1)
+    if (nested) return nested
+  }
+
+  return isManagePackagesResult(value) ? value : undefined
+}
+
+// Reads the install result the manage_packages tool returns as JSON content (or raw output).
+const parseManagePackagesResult = (activity: ToolActivity): Record<string, unknown> | undefined => {
+  for (const text of collectToolTexts(activity)) {
+    const result = parseManagePackagesResultValue(text)
+    if (result) return result
+  }
+
+  return parseManagePackagesResultValue(activity.rawOutput)
 }
 
 // Trims the install log for display: drops libmamba trace/debug verbosity and backtrace decoration
