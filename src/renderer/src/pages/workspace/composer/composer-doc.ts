@@ -463,7 +463,7 @@ export const createPastedTextAnchor = (node: ComposerPastedTextNode): HTMLSpanEl
   span.setAttribute('aria-hidden', 'true')
   span.setAttribute('data-composer-node-type', PASTED_TEXT_NODE_TYPE)
   span.setAttribute('data-pasted-text-id', node.id)
-  span.className = 'inline-block w-0 overflow-hidden align-baseline select-none'
+  span.className = 'inline-block h-0 w-0 overflow-hidden align-baseline select-none'
   span.textContent = '\u2060'
   pastedTextByAnchor.set(span, { ...node })
   return span

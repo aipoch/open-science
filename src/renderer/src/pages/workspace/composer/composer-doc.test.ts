@@ -170,6 +170,7 @@ describe('long pasted text', () => {
     expect(Array.from(anchor.attributes).map((attribute) => attribute.value)).not.toContain(
       node.text
     )
+    expect(anchor.className).toContain('h-0')
     expect(domToDoc(root)).toEqual({ nodes: [node] })
   })
 })
