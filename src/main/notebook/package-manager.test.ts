@@ -622,6 +622,25 @@ describe('installPackages', () => {
     })
   })
 
+  it.each([
+    ['biocmanager' as const, 'DESeq2', undefined],
+    ['github' as const, 'tidyverse/ggplot2@main', 'analysis-r']
+  ])(
+    'does not report %s source metadata after a failed install',
+    async (installer, pkg, environment) => {
+      const { spawn } = scriptedSpawn([
+        { code: 1, stdout: 'OPEN_SCIENCE_BIOC_VERSION\t3.21\n', stderr: 'install failed' }
+      ])
+      const result = await installPackages(
+        { language: 'r', packages: [pkg], installer, ...(environment ? { environment } : {}) },
+        { spawn, ...base, pathExists: () => true }
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result).not.toHaveProperty('source')
+    }
+  )
+
   it('rejects malformed GitHub R package specs before spawning', async () => {
     const { spawn, calls } = scriptedSpawn([])
     const result = await installPackages(

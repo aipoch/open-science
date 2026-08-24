@@ -1579,7 +1579,7 @@ export async function installPackages(
       attempts: [installerAttempt(0, req.installer, req.packages, result)],
       fallbackUsed: false,
       prefix: rLib,
-      ...(source ? { source } : {}),
+      ...(ok && source ? { source } : {}),
       error: ok ? undefined : `${req.installer} install failed.`
     }
   }
