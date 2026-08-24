@@ -189,7 +189,8 @@ describe('session persistence startup', () => {
       useSessionStore.getState().selectSession(lazy.id)
       await Promise.resolve()
     })
-    expect(loadOne).toHaveBeenCalledTimes(2)
+    expect(loadOne).toHaveBeenCalledOnce()
+    expect(loadOne).toHaveBeenCalledWith({ projectId: lazy.projectId, sessionId: lazy.id })
 
     await act(async () => {
       useSessionStore.getState().deleteSession(lazy.id)

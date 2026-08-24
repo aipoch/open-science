@@ -367,48 +367,60 @@ const createSettingsStoreState = (
     // generation and remains authoritative over any older request.
     if (!options?.force && settingsLoadPromise) return settingsLoadPromise
     const generation = get().settingsLoadGeneration + 1
+    const shouldInitializeRuntime = options?.force || !get().isLoaded
     set(
-      options?.force || !get().isLoaded
+      shouldInitializeRuntime
         ? { settingsLoadGeneration: generation, isLoading: true, loadError: undefined }
         : { settingsLoadGeneration: generation }
     )
 
     const loadPromise = (async (): Promise<boolean> => {
+      const settingsPromise = window.api.settings.getSettings()
+      const runtimeInitialization = shouldInitializeRuntime
+        ? Promise.all([
+            window.api.settings.getPreflight(),
+            window.api.settings.isEncryptionAvailable(),
+            window.api.settings.isNpmAvailable()
+          ])
+        : undefined
+      // A newer forced load may supersede this generation before it awaits the runtime result.
+      // Attach a rejection handler immediately so a stale subprocess failure is never unhandled.
+      void runtimeInitialization?.catch(() => undefined)
+
       try {
-        const [snapshot, preflight, encryptionAvailable, npmAvailable] = await Promise.all([
-          window.api.settings.getSettings(),
-          get().isLoading ? window.api.settings.getPreflight() : Promise.resolve(undefined),
-          get().isLoading
-            ? window.api.settings.isEncryptionAvailable()
-            : Promise.resolve(undefined),
-          get().isLoading ? window.api.settings.isNpmAvailable() : Promise.resolve(undefined)
-        ])
+        const snapshot = await settingsPromise
 
         if (get().settingsLoadGeneration !== generation) return false
-
-        if (
-          preflight === undefined ||
-          encryptionAvailable === undefined ||
-          npmAvailable === undefined
-        ) {
+        if (!runtimeInitialization) {
           set({ ...applySnapshot(snapshot), loadError: undefined })
           return true
         }
 
-        set({
-          ...applySnapshot(snapshot),
-          ...createRuntimeSetupLoadPatch(preflight, npmAvailable),
-          encryptionAvailable,
-          isLoaded: true,
-          isLoading: false,
-          loadError: undefined
-        })
+        // The persisted Settings authority is enough for an existing user to enter Home. Runtime
+        // probes continue in this same deduplicated pass; first-run onboarding still waits in App.
+        set({ ...applySnapshot(snapshot), isLoaded: true, loadError: undefined })
+
+        try {
+          const [preflight, encryptionAvailable, npmAvailable] = await runtimeInitialization
+          if (get().settingsLoadGeneration !== generation) return false
+
+          set({
+            ...createRuntimeSetupLoadPatch(preflight, npmAvailable),
+            encryptionAvailable,
+            isLoading: false,
+            loadError: undefined
+          })
+        } catch (error) {
+          if (get().settingsLoadGeneration !== generation) return false
+          reportSettingsLoadError(error)
+          set({ isLoading: false, loadError: undefined })
+        }
         return true
       } catch (error) {
         if (get().settingsLoadGeneration !== generation) return false
 
         reportSettingsLoadError(error)
-        if (get().isLoading) {
+        if (shouldInitializeRuntime) {
           set({
             isLoading: false,
             loadError: SAFE_SETTINGS_LOAD_ERROR

@@ -514,7 +514,7 @@ const AppContent = (): React.JSX.Element | null => {
 
   // Settings carry the persisted first-run marker. No environment result is awaited here: existing
   // users proceed directly to Home while the launch check runs in the background.
-  if (!isSettingsLoaded) {
+  if (!isSettingsLoaded || (startupView === 'onboarding' && isSettingsLoading)) {
     if (settingsLoadError) {
       return (
         <main
