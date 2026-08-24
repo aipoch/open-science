@@ -246,6 +246,11 @@ class SessionRepository {
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private readonly sessionRevisions = new Map<string, number>()
   private projectionWritesSuspended = false
+  private readonly suspendedProjectionSessionWrites = new Map<
+    string,
+    Readonly<{ projectId: string; sessionId: string }>
+  >()
+  private suspendedProjectionCatalogMutation = false
   private projectionInitialization:
     Promise<{ result?: LoadAllSessionsResult; sessions: SessionSummary[] }> | undefined
   private backupSequence = 0
@@ -384,21 +389,11 @@ class SessionRepository {
       if (!summaries.some((session) => session.needsStartupRecovery)) {
         return { sessions: summaries }
       }
-      const result = await loadAuthority()
+      const result = await this.loadAuthorityWithSuspendedProjection(loadAuthority)
       return this.operationScheduler.runGlobal(async () => {
-        const freshScan = await this.loadAllWithDiagnostics({ mode: 'read-only' })
-        const freshResult: LoadAllSessionsResult = {
-          ...result,
-          ...freshScan.result,
-          diagnostics: {
-            ...result.diagnostics,
-            isComplete: freshScan.isComplete,
-            warnings: freshScan.warnings ?? [],
-            failure: freshScan.failure
-          }
-        }
+        const freshResult = await this.refreshProjectionBuildAuthority(result)
         const numbers = new Map(summaries.map((session) => [session.id, session.number]))
-        if (!freshScan.isComplete || result.diagnostics?.isComplete === false) {
+        if (freshResult.diagnostics?.isComplete === false) {
           return {
             result: freshResult,
             sessions: projectIncompleteSummaries(freshResult, numbers)
@@ -421,26 +416,10 @@ class SessionRepository {
       if (await this.projection.isReady()) return loadReadyProjection()
     }
 
-    this.projectionWritesSuspended = true
-    let result: LoadAllSessionsResult
-    try {
-      result = await loadAuthority()
-    } finally {
-      this.projectionWritesSuspended = false
-    }
+    const result = await this.loadAuthorityWithSuspendedProjection(loadAuthority)
     return this.operationScheduler.runGlobal(async () => {
-      const freshScan = await this.loadAllWithDiagnostics({ mode: 'read-only' })
-      const freshResult: LoadAllSessionsResult = {
-        ...result,
-        ...freshScan.result,
-        diagnostics: {
-          ...result.diagnostics,
-          isComplete: freshScan.isComplete,
-          warnings: freshScan.warnings ?? [],
-          failure: freshScan.failure
-        }
-      }
-      if (!freshScan.isComplete || result.diagnostics?.isComplete === false) {
+      const freshResult = await this.refreshProjectionBuildAuthority(result)
+      if (freshResult.diagnostics?.isComplete === false) {
         return { result: freshResult, sessions: projectIncompleteSummaries(freshResult) }
       }
       const assignments = await this.projection!.numberAssignments()
@@ -489,6 +468,64 @@ class SessionRepository {
         sessions: await this.projection!.list()
       }
     })
+  }
+
+  private async loadAuthorityWithSuspendedProjection(
+    loadAuthority: () => Promise<LoadAllSessionsResult>
+  ): Promise<LoadAllSessionsResult> {
+    this.projectionWritesSuspended = true
+    this.suspendedProjectionSessionWrites.clear()
+    this.suspendedProjectionCatalogMutation = false
+    try {
+      return await loadAuthority()
+    } catch (error) {
+      this.projectionWritesSuspended = false
+      throw error
+    }
+  }
+
+  private async refreshProjectionBuildAuthority(
+    result: LoadAllSessionsResult
+  ): Promise<LoadAllSessionsResult> {
+    try {
+      if (this.suspendedProjectionCatalogMutation) {
+        const scan = await this.loadAllWithDiagnostics({ mode: 'read-only' })
+        return {
+          ...result,
+          ...scan.result,
+          diagnostics: {
+            ...result.diagnostics,
+            isComplete: scan.isComplete,
+            warnings: scan.warnings ?? [],
+            failure: scan.failure
+          }
+        }
+      }
+
+      const sessions = new Map(result.sessions.map((session) => [session.id, session]))
+      for (const { projectId, sessionId } of this.suspendedProjectionSessionWrites.values()) {
+        const loaded = await this.loadSessionWithDiagnostics(projectId, sessionId, {
+          mode: 'read-only'
+        })
+        if (loaded.status === 'unreadable') {
+          this.suspendedProjectionCatalogMutation = true
+          return this.refreshProjectionBuildAuthority(result)
+        }
+        if (loaded.status === 'found') sessions.set(sessionId, loaded.session)
+        else sessions.delete(sessionId)
+      }
+      return {
+        ...result,
+        sessions: [...sessions.values()],
+        diagnostics: {
+          isComplete: result.diagnostics?.isComplete ?? true,
+          warnings: result.diagnostics?.warnings ?? [],
+          ...result.diagnostics
+        }
+      }
+    } finally {
+      this.projectionWritesSuspended = false
+    }
   }
 
   async loadSessionSummaries(): Promise<SessionSummary[]> {
@@ -715,7 +752,14 @@ class SessionRepository {
       revision: actualRevision + 1
     }
     await this.writeSession(durableSession)
-    if (!this.projectionWritesSuspended) await this.projection?.commitSave(durableSession)
+    if (this.projectionWritesSuspended) {
+      this.suspendedProjectionSessionWrites.set(key, {
+        projectId: session.projectId,
+        sessionId: session.id
+      })
+    } else {
+      await this.projection?.commitSave(durableSession)
+    }
     this.sessionRevisions.set(key, durableSession.revision!)
     return durableSession
   }
@@ -731,6 +775,7 @@ class SessionRepository {
         revision: Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0) + 1
       }
       await this.writeSessionToDirectory(durableSession, this.deletedProjectDir(session.projectId))
+      if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
       this.sessionRevisions.set(key, durableSession.revision!)
     })
   }
@@ -786,7 +831,12 @@ class SessionRepository {
       force: true,
       recursive: false
     })
-    if (!this.projectionWritesSuspended) {
+    if (this.projectionWritesSuspended) {
+      this.suspendedProjectionSessionWrites.set(revisionKey, {
+        projectId: safeProjectId,
+        sessionId: safeSessionId
+      })
+    } else {
       await this.projection?.commitDelete(safeProjectId, safeSessionId)
     }
     this.sessionRevisions.delete(revisionKey)
@@ -808,6 +858,7 @@ class SessionRepository {
       await mkdir(liveProjectDir, { recursive: true })
       await writeFile(join(liveProjectDir, PROJECT_DELETION_COMMIT_MARKER), '', 'utf8')
       await rename(liveProjectDir, deletedProjectDir)
+      if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
     })
   }
 
@@ -868,16 +919,18 @@ class SessionRepository {
         join(this.deletedProjectDir(assertSafeSegment(projectId)), PROJECT_DELETION_COMMIT_MARKER),
         ''
       )
+      if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
     })
   }
 
   async completeProjectSessionDeletion(projectId: string): Promise<void> {
-    await this.operationScheduler.runProject(projectId, () =>
-      this.dependencies.remove(this.deletedProjectDir(assertSafeSegment(projectId)), {
+    await this.operationScheduler.runProject(projectId, async () => {
+      await this.dependencies.remove(this.deletedProjectDir(assertSafeSegment(projectId)), {
         recursive: true,
         force: true
       })
-    )
+      if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
+    })
   }
 
   async listLegacyProjectSessionTombstones(): Promise<string[]> {

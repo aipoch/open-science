@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -431,6 +431,42 @@ describe('Session projection', () => {
     })
   })
 
+  it('scans historical Session authority once while building the projection', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-single-scan-backfill-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const repository = new SessionRepository(
+      storageRoot,
+      {},
+      new SessionProjectionRepository(async () => client!)
+    )
+    await repository.saveSession(session('session-1'))
+    const scan = vi.spyOn(repository, 'loadAllWithDiagnostics')
+
+    await repository.ensureSessionProjection(() => repository.loadAll())
+
+    expect(scan).toHaveBeenCalledOnce()
+  })
+
+  it('scans Session authority once when startup recovery is required', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-single-scan-recovery-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const pending = session('pending-artifact')
+    pending.artifacts![0].path = '/managed/.pending/run-1/report.md'
+    const saved = await repository.saveSession(pending)
+    await projection.replaceAll([saved])
+    const scan = vi.spyOn(repository, 'loadAllWithDiagnostics')
+
+    await repository.ensureSessionProjection(() => repository.loadAll())
+
+    expect(scan).toHaveBeenCalledOnce()
+  })
+
   it('does not reuse retained tombstone numbers during a projection-version rebuild', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-reversion-'))
     client = createProjectDbClient(storageRoot)
@@ -521,5 +557,58 @@ describe('Session projection', () => {
     )
     expect(secondResult.sessions).toEqual(firstResult.sessions)
     await expect(projection.isReady()).resolves.toBe(true)
+  })
+
+  it('includes a Session save that finishes while projection publication waits for its barrier', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-backfill-barrier-race-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const files = new SessionRepository(storageRoot)
+    await files.saveSession(session('older', 100))
+    const stale = await files.loadAll()
+
+    const saveStarted = createDeferred<void>()
+    const saveReleased = createDeferred<void>()
+    let blockNextRename = true
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(
+      storageRoot,
+      {
+        renameFile: async (source, destination) => {
+          if (blockNextRename) {
+            blockNextRename = false
+            saveStarted.resolve()
+            await saveReleased.promise
+          }
+          await rename(source, destination)
+        }
+      },
+      projection
+    )
+    const authorityStarted = createDeferred<void>()
+    const authorityReleased = createDeferred<void>()
+    const initializing = repository.ensureSessionProjection(async () => {
+      authorityStarted.resolve()
+      await authorityReleased.promise
+      return stale
+    })
+
+    await authorityStarted.promise
+    const saving = repository.saveSession(session('concurrent', 200))
+    await saveStarted.promise
+    authorityReleased.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    saveReleased.resolve()
+    await saving
+
+    const initialized = await initializing
+    expect(initialized.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'older', number: 1 }),
+        expect.objectContaining({ id: 'concurrent', number: 2 })
+      ])
+    )
   })
 })
