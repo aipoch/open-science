@@ -90,6 +90,23 @@ describe('reported Python call tracking regressions', () => {
     })
   })
 
+  it.each([
+    ['method call', 'if enabled:\n    items.append(1)'],
+    ['augmented assignment', 'if enabled:\n    items += [1]'],
+    ['member write', 'if enabled:\n    items.value = 1']
+  ])('keeps conditional %s mutations possible rather than definite', async (_, mutation) => {
+    const projection = await project([
+      'items = []\nenabled = True',
+      'snapshot = len(items)',
+      mutation
+    ])
+
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['control-flow'])
+    })
+  })
+
   it('scopes unknown imported call effects to their arguments', async () => {
     const projection = await project([
       'from custom import transform\nsource = []\nresult = transform(source)',

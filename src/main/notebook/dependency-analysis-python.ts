@@ -1680,6 +1680,15 @@ class Analyzer extends NodeVisitor {
     else this.priorUsed.set(name, priorCount - 1)
   }
 
+  addMutation(name: string): void {
+    if (this.controlDepth > 0) this.possiblyMutated.add(name)
+    else this.mutated.add(name)
+  }
+
+  conditionalFact(): { conditional?: true } {
+    return this.controlDepth > 0 ? { conditional: true } : {}
+  }
+
   addPossibleAlias(target: string, source: string, access?: string, member?: string): void {
     this.possibleAliases.add(`${target}\0${source}\0${access ?? ''}\0${member ?? ''}`)
   }
@@ -2074,7 +2083,7 @@ class Analyzer extends NodeVisitor {
       if (this.controlDepth > 0) this.conditionallyDefined.add(node.id)
     } else if (node.ctx === 'Del') {
       this.prepareAssignment([node.id])
-      this.mutated.add(node.id)
+      this.addMutation(node.id)
     }
   }
 
@@ -2348,11 +2357,12 @@ class Analyzer extends NodeVisitor {
     if (name) {
       this.addUsed(name)
       const patchedMember = node.target ? dynamicMemberWrite(node.target) : undefined
-      if (!patchedMember || !patchedMember[1]) this.mutated.add(name)
+      if (!patchedMember || !patchedMember[1]) this.addMutation(name)
       if (patchedMember) {
         const [member, typeWide] = patchedMember
         this.memberWrites.push({
           receiver: name,
+          ...this.conditionalFact(),
           ...(member ? { member } : {}),
           ...(typeWide ? { scope: 'type' as const } : {})
         })
@@ -2371,11 +2381,12 @@ class Analyzer extends NodeVisitor {
       if (name) {
         this.addUsed(name)
         const patchedMember = dynamicMemberWrite(node)
-        if (!patchedMember || !patchedMember[1]) this.mutated.add(name)
+        if (!patchedMember || !patchedMember[1]) this.addMutation(name)
         if (patchedMember) {
           const [member, typeWide] = patchedMember
           this.memberWrites.push({
             receiver: name,
+            ...this.conditionalFact(),
             ...(member ? { member } : {}),
             ...(typeWide ? { scope: 'type' as const } : {})
           })
@@ -2398,9 +2409,10 @@ class Analyzer extends NodeVisitor {
         this.addUsed(name)
         const patchedMember = dynamicMemberWrite(node)
         const [member, typeWide] = patchedMember ?? [node.attr, false]
-        if (!typeWide) this.mutated.add(name)
+        if (!typeWide) this.addMutation(name)
         this.memberWrites.push({
           receiver: name,
+          ...this.conditionalFact(),
           ...(member ? { member } : {}),
           ...(typeWide ? { scope: 'type' as const } : {})
         })
@@ -2439,6 +2451,7 @@ class Analyzer extends NodeVisitor {
         this.receiverCalls.push({
           receiver: node.func.id,
           member: '__call__',
+          ...this.conditionalFact(),
           kind: 'callable',
           argumentNames: this.visibleRoots(candidates),
           receiverChain: [],
@@ -2512,6 +2525,7 @@ class Analyzer extends NodeVisitor {
       this.receiverCalls.push({
         receiver: this.importedFunctions.get(node.func.id) ?? node.func.id,
         member: '__call__',
+        ...this.conditionalFact(),
         kind: 'callable',
         argumentNames: this.visibleRoots([
           ...args,
@@ -2543,6 +2557,7 @@ class Analyzer extends NodeVisitor {
       this.receiverCalls.push({
         receiver: node.func.id,
         member: '__call__',
+        ...this.conditionalFact(),
         kind: 'callable',
         argumentNames: this.visibleRoots([
           ...args,
@@ -2597,6 +2612,7 @@ class Analyzer extends NodeVisitor {
           this.receiverCalls.push({
             receiver: name,
             member: node.func.attr ?? '',
+            ...this.conditionalFact(),
             ...(MUTATING_METHODS.has(node.func.attr ?? '') || inplace
               ? { kind: 'mutating' as const }
               : {}),
@@ -2633,7 +2649,7 @@ class Analyzer extends NodeVisitor {
               if (this.hasLocalRoot(keyword.value)) {
                 this.possiblyMutated.add(output)
                 this.unknown.add('opaque-mutation')
-              } else this.mutated.add(output)
+              } else this.addMutation(output)
             }
           }
         }
@@ -2681,6 +2697,7 @@ class Analyzer extends NodeVisitor {
         const typeWide = args[0]?.type === 'Attribute' && args[0].attr === '__class__'
         this.memberWrites.push({
           receiver,
+          ...this.conditionalFact(),
           ...(member ? { member } : {}),
           ...(typeWide ? { scope: 'type' as const } : {})
         })

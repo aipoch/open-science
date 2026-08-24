@@ -464,6 +464,14 @@ const projectNotebookDependencies = (
     }
 
     for (const call of facts.receiverCalls ?? []) {
+      const addTypeAwareMutation = (names: readonly string[]): void => {
+        if (call.conditional) {
+          typeAwarePossiblyMutatedNames.push(...names)
+          if (names.length) typeAwareReasons.push('opaque-mutation')
+        } else {
+          typeAwareMutatedNames.push(...names)
+        }
+      }
       const modifiedR6Summary =
         call.member === 'set'
           ? [...typeSummaries.entries()].find(
@@ -490,6 +498,7 @@ const projectNotebookDependencies = (
       const configuredTypeName = typeSummary
         ? (facts.memberWrites ?? []).find(
             (write) =>
+              !write.conditional &&
               write.member !== undefined &&
               receiversMayAlias(write.receiver, call.receiver) &&
               PYTHON_LIBRARY_EFFECTS[typeSummary!.name]?.typeWhenMembersWritten?.[write.member]
@@ -604,6 +613,7 @@ const projectNotebookDependencies = (
       const hasUnpackedKeywords = call.keywordArguments?.some((keyword) => keyword.name === '**')
       if (
         !incompleteRun &&
+        !call.conditional &&
         receiverTypeRule &&
         ((receiverTypeKeyword && receiverTypeKeyword.staticBoolean !== true) || hasUnpackedKeywords)
       ) {
@@ -832,12 +842,12 @@ const projectNotebookDependencies = (
         (keyword) => keyword.name === method?.mutatesKeyword
       )
       if (libraryEffect?.mutatesPositionalArgument !== undefined) {
-        typeAwareMutatedNames.push(
-          ...(call.positionalArgumentNames?.[libraryEffect.mutatesPositionalArgument] ?? [])
+        addTypeAwareMutation(
+          call.positionalArgumentNames?.[libraryEffect.mutatesPositionalArgument] ?? []
         )
       }
       if (mutatedKeyword?.argumentNames) {
-        typeAwareMutatedNames.push(...mutatedKeyword.argumentNames)
+        addTypeAwareMutation(mutatedKeyword.argumentNames)
       }
       if (mutatedKeyword?.possibleArgumentNames?.length) {
         typeAwarePossiblyMutatedNames.push(...mutatedKeyword.possibleArgumentNames)
@@ -861,7 +871,7 @@ const projectNotebookDependencies = (
           typeAwarePossiblyMutatedNames.push(...mutationReceiverNames)
           if (mutationReceiverNames.length) typeAwareReasons.push('opaque-mutation')
         } else {
-          typeAwareMutatedNames.push(call.receiver)
+          addTypeAwareMutation([call.receiver])
         }
       } else if (knownConstructorCall) continue
       else if (methodWasShadowed) {
@@ -1274,7 +1284,7 @@ const projectNotebookDependencies = (
     for (const write of facts.memberWrites ?? []) {
       const receiverSummary = objectTypes.get(write.receiver)
       const configuredType =
-        write.member && receiverSummary
+        !write.conditional && write.member && receiverSummary
           ? PYTHON_LIBRARY_EFFECTS[receiverSummary.name]?.typeWhenMembersWritten?.[write.member]
           : undefined
       const configuredSummary = configuredType ? typeSummaries.get(configuredType) : undefined
@@ -1372,7 +1382,11 @@ const projectNotebookDependencies = (
         const member = call.member.startsWith('data.table::')
           ? call.member.slice('data.table::'.length)
           : call.member
-        if (call.kind === 'mutating' && R_DATA_TABLE_REFERENCE_MUTATORS.has(member)) {
+        if (
+          !call.conditional &&
+          call.kind === 'mutating' &&
+          R_DATA_TABLE_REFERENCE_MUTATORS.has(member)
+        ) {
           const shadowedUnqualifiedCall =
             member === call.member &&
             currentSafeCallNames.includes(member) &&
@@ -1408,7 +1422,11 @@ const projectNotebookDependencies = (
           : namesSharingRCopy(namesSharingReference(target))
       )
     }
-    const copyWriteNames = new Set((facts.memberWrites ?? []).map((write) => write.receiver))
+    const copyWriteNames = new Set(
+      (facts.memberWrites ?? [])
+        .filter((write) => !write.conditional)
+        .map((write) => write.receiver)
+    )
     const ambiguousCopyWriteNames = new Set<string>()
     const ambiguousReferenceAliasNames = new Set<string>()
     const referenceAliasStates = new Map<string, 'stale' | 'unknown'>()
@@ -1477,6 +1495,9 @@ const projectNotebookDependencies = (
     const possibleMutations = new Set<string>()
     const possibleMutationRoots = [
       ...(facts.possiblyMutatedNames ?? []),
+      ...(facts.memberWrites ?? [])
+        .filter((write) => write.conditional)
+        .map((write) => write.receiver),
       ...(incompleteRun ? typeAwareMutatedNames : []),
       ...typeAwarePossiblyMutatedNames,
       ...ambiguousReferenceAliasNames,

@@ -43,6 +43,7 @@ type NotebookDependencyCopyBinding = {
 type NotebookDependencyReceiverCall = {
   receiver: string
   member: string
+  conditional?: boolean
   kind?: 'receiver' | 'generic' | 'mutating' | 'callable'
   argumentNames?: string[]
   receiverChain?: string[]
@@ -69,6 +70,7 @@ type NotebookDependencyMemberWrite = {
   receiver: string
   member?: string
   scope?: 'instance' | 'type'
+  conditional?: boolean
 }
 
 type NotebookRunDependencyFacts =

@@ -28,7 +28,7 @@ import { getNotebookSessionRoot, getRuntimeRoot, type NotebookRunRepository } fr
 import { envPrefix, pythonBin, resolveEnvName, rScriptBin } from './runtime-paths'
 
 const ANALYZER_VERSION = 1 as const
-const ANALYZER_REVISION = 'tree-sitter-in-process-2'
+const ANALYZER_REVISION = 'tree-sitter-in-process-3'
 const SIDECAR_FILE = 'dependency-analysis.json'
 const MAX_NAMES_PER_RUN = 512
 const RETRYABLE_ANALYSIS_FAILURES = new Set([
@@ -268,14 +268,16 @@ const memberWriteArray = (
       typeof record.receiver !== 'string' ||
       (record.member !== undefined && typeof record.member !== 'string') ||
       (requireScope && record.scope === undefined) ||
-      (record.scope !== undefined && record.scope !== 'instance' && record.scope !== 'type')
+      (record.scope !== undefined && record.scope !== 'instance' && record.scope !== 'type') ||
+      (record.conditional !== undefined && typeof record.conditional !== 'boolean')
     ) {
       return undefined
     }
     writes.push({
       receiver: record.receiver,
       ...(record.member ? { member: record.member } : {}),
-      scope: record.scope === 'type' ? 'type' : 'instance'
+      scope: record.scope === 'type' ? 'type' : 'instance',
+      ...(record.conditional === true ? { conditional: true } : {})
     })
   }
   return writes
@@ -507,6 +509,7 @@ const receiverCallArray = (
         record.kind !== 'generic' &&
         record.kind !== 'mutating' &&
         record.kind !== 'callable') ||
+      (record.conditional !== undefined && typeof record.conditional !== 'boolean') ||
       (requireArgumentNames && record.kind === undefined) ||
       (requireArgumentNames && record.argumentNames === undefined) ||
       (requireArgumentNames && record.receiverChain === undefined) ||
@@ -556,6 +559,7 @@ const receiverCallArray = (
     calls.push({
       receiver: record.receiver,
       member: record.member,
+      ...(record.conditional === true ? { conditional: true } : {}),
       kind:
         record.kind === 'generic' || record.kind === 'mutating' || record.kind === 'callable'
           ? record.kind
