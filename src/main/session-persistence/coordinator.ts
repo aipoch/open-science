@@ -78,7 +78,6 @@ import {
   type SessionUpdatePublisher
 } from './session-update-publication'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
-
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
@@ -234,7 +233,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,
       assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
-      recordSession: (session) => this.stateOwner.recordSession(session)
+      recordSession: (session) => this.stateOwner.recordSession(session),
+      notifySessionUpdated: (session) => publishSessionUpdate(session, 'runtime-context')
     })
     this.deletionOwner = new SessionPersistenceDeletionOwner({
       repository,

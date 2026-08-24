@@ -582,6 +582,65 @@ describe('SessionPersistenceCoordinator', () => {
     })
   })
 
+  it('publishes the parent Session after every Side chat mutation', async () => {
+    let durable = createSession()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const publishSession = vi.fn()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      publishSession
+    )
+
+    await coordinator.saveSideChatProjection({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      sideChat: createSideChatProjection()
+    })
+    await coordinator.appendSideChatRelay({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      sideChatId: 'side-chat-1',
+      relay: { id: 'relay-1', text: 'Use a black line.', createdAt: 11 }
+    })
+    await coordinator.commitSideChatRelays({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      relayIds: ['relay-1'],
+      promptMessageId: 'main-prompt-1'
+    })
+    await coordinator.clearSideChat({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      sideChatId: 'side-chat-1'
+    })
+
+    expect(publishSession.mock.calls).toEqual(
+      [1, 2, 3, 4].map((revision) => [
+        expect.objectContaining({
+          id: 'session-1',
+          runtimeContext: expect.objectContaining({ revision })
+        }),
+        'runtime-context'
+      ])
+    )
+  })
+
   it('keeps durable relays deliverable after clearing their producer Side chat', async () => {
     let durable = createSession({
       runtimeContext: {
