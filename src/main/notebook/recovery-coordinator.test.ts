@@ -128,6 +128,31 @@ describe('NotebookRecoveryCoordinator', () => {
     expect(coordinator.isRuntimeIdBlocked(DEFAULT_PY_ENV)).toBe(true)
   })
 
+  it('retains an incomplete prefix when the managed env root resolves outside the runtime', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const outsideEnvs = join(dirname(runtimeRoot), 'outside-envs')
+    await mkdir(outsideEnvs, { recursive: true })
+    await mkdir(runtimeRoot, { recursive: true })
+    await symlink(
+      outsideEnvs,
+      join(runtimeRoot, 'envs'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    await mkdir(join(prefix, 'conda-meta'), { recursive: true })
+    const journal = await beginInterruptedMaterialize(runtimeRoot, 'escaping-env-root', prefix)
+
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+    await coordinator.recover()
+
+    expect(existsSync(prefix)).toBe(true)
+    expect((await journal.pending()).map(({ operationId }) => operationId)).toEqual([
+      'escaping-env-root'
+    ])
+    expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
+    expect(coordinator.isRuntimeIdBlocked(DEFAULT_PY_ENV)).toBe(true)
+  })
+
   it('fails closed after disposal even if reset commands clear known blocks', async () => {
     const coordinator = new NotebookRecoveryCoordinator(await createRuntimeRoot())
     const prefix = '/runtime/envs/default-python'

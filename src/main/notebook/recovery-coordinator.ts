@@ -208,19 +208,25 @@ export class NotebookRecoveryCoordinator {
           rejectUnsafe('Interrupted environment target is outside the managed runtime root.')
         }
         if (!existsSync(targetPath)) return
+        const [canonicalRuntimeRoot, canonicalEnvsRoot, canonicalPrefix] = await Promise.all([
+          realpath(this.runtimeRoot),
+          realpath(envsRoot),
+          realpath(targetPath)
+        ]).catch(() => rejectUnsafe('Interrupted environment paths could not be validated.'))
+        if (
+          canonicalEnvsRoot !== join(canonicalRuntimeRoot, 'envs') ||
+          !isDirectChild(canonicalEnvsRoot, canonicalPrefix)
+        ) {
+          rejectUnsafe('Interrupted environment target escapes the managed runtime root.')
+        }
         const bin = [pythonBin(targetPath), rBin(targetPath)].find((candidate) =>
           existsSync(candidate)
         )
         if (existsSync(join(targetPath, 'conda-meta')) && bin) {
-          const [canonicalEnvsRoot, canonicalPrefix, canonicalBin] = await Promise.all([
-            realpath(envsRoot),
-            realpath(targetPath),
-            realpath(bin)
-          ]).catch(() => rejectUnsafe('Interrupted environment paths could not be validated.'))
-          if (
-            !isDirectChild(canonicalEnvsRoot, canonicalPrefix) ||
-            !isPathInside(canonicalPrefix, canonicalBin)
-          ) {
+          const canonicalBin = await realpath(bin).catch(() =>
+            rejectUnsafe('Interrupted environment executable could not be validated.')
+          )
+          if (!isPathInside(canonicalPrefix, canonicalBin)) {
             rejectUnsafe('Interrupted environment executable escapes the managed runtime root.')
           }
           try {
@@ -230,7 +236,7 @@ export class NotebookRecoveryCoordinator {
             // An interrupted mutation can leave an interpreter file before the prefix is runnable.
           }
         }
-        await rm(targetPath, { recursive: true, force: true })
+        await rm(canonicalPrefix, { recursive: true, force: true })
       },
       markRepairRequired: async (record) => {
         if (!record.runtimeId) return
