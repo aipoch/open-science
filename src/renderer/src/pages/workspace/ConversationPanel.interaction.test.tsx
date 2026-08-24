@@ -1764,6 +1764,8 @@ describe('ConversationPanel composer intake', () => {
     expect(progress?.getAttribute('aria-valuenow')).toBe('25')
     expect(container.textContent).toContain('25% of 100 B')
     expect(cancel).not.toBeNull()
+    expect(cancel?.parentElement?.className).toContain('h-9')
+    expect(cancel?.parentElement?.className).not.toContain('h-11')
     act(() => cancel?.click())
     expect(onCancelAttachmentTransfer).toHaveBeenCalledWith(transfer)
   })

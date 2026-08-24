@@ -1424,10 +1424,7 @@ const ConversationPanel = ({
                                     : `${percent}% of ${formatAttachmentSize(transfer.totalBytes)}`
 
                             return (
-                              <div
-                                key={transfer.transferId}
-                                className={`${attachmentChipClassName} h-11`}
-                              >
+                              <div key={transfer.transferId} className={attachmentChipClassName}>
                                 <AttachmentIcon
                                   className="size-4 shrink-0 text-text-300"
                                   strokeWidth={2}
