@@ -1409,6 +1409,25 @@ class FunctionEffectVisitor extends NodeVisitor {
   visit_DictComp = this.visit_ListComp
   visit_GeneratorExp = this.visit_ListComp
 
+  visitImplicitEffect(node: PyNode): void {
+    this.unknown()
+    this.genericVisit(node)
+  }
+  visit_With = this.visitImplicitEffect
+  visit_AsyncWith = this.visitImplicitEffect
+  visit_For = this.visitImplicitEffect
+  visit_AsyncFor = this.visitImplicitEffect
+  visit_Await = this.visitImplicitEffect
+  visit_Yield = this.visitImplicitEffect
+  visit_YieldFrom = this.visitImplicitEffect
+
+  visitImport(node: PyNode): void {
+    this.unknown(true)
+    this.genericVisit(node)
+  }
+  visit_Import = this.visitImport
+  visit_ImportFrom = this.visitImport
+
   visit_Assign(node: PyNode): void {
     if (
       (node.targets ?? []).some(
@@ -1691,6 +1710,12 @@ class Analyzer extends NodeVisitor {
 
   addPossibleAlias(target: string, source: string, access?: string, member?: string): void {
     this.possibleAliases.add(`${target}\0${source}\0${access ?? ''}\0${member ?? ''}`)
+  }
+
+  clearPossibleAliases(target: string): void {
+    for (const alias of this.possibleAliases) {
+      if (alias.split('\0', 1)[0] === target) this.possibleAliases.delete(alias)
+    }
   }
 
   visibleRootName(node: PyNode | null | undefined): string | undefined {
@@ -2050,8 +2075,11 @@ class Analyzer extends NodeVisitor {
     if (conditional) {
       this.unknown.add('control-flow')
       for (const name of targetNames) this.conditionallyDefined.add(name)
+    } else {
+      for (const name of targetNames) this.conditionallyDefined.delete(name)
     }
     for (const name of targetNames) {
+      if (!conditional) this.clearPossibleAliases(name)
       this.importedModules.delete(name)
       this.importedFunctions.delete(name)
       this.typeBindings = this.typeBindings.filter((binding) => binding.target !== name)
@@ -2752,8 +2780,16 @@ const analyzePythonTree = (root: Node): NotebookRunDependencyFacts => {
   const analyzer = new Analyzer(scopedEffectLoops(tree))
   analyzer.visit(tree)
   const facts = factsFromAnalyzer(analyzer)
-  if (analyzer.unknown.size) {
-    return { state: 'unknown', reasons: [...analyzer.unknown].sort(), ...facts }
+  const reasons = new Set(analyzer.unknown)
+  const hasRemainingConditionalEffects =
+    analyzer.conditionallyDefined.size > 0 ||
+    analyzer.possiblyMutated.size > 0 ||
+    analyzer.possibleAliases.size > 0 ||
+    analyzer.receiverCalls.some((call) => call.conditional) ||
+    analyzer.memberWrites.some((write) => write.conditional)
+  if (!hasRemainingConditionalEffects) reasons.delete('control-flow')
+  if (reasons.size) {
+    return { state: 'unknown', reasons: [...reasons].sort(), ...facts }
   }
   return { state: 'available', ...facts }
 }

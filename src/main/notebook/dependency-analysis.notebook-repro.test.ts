@@ -90,6 +90,16 @@ describe('reported Python call tracking regressions', () => {
     })
   })
 
+  it('restores a definite binding after unconditional reassignment', async () => {
+    const projection = await project([
+      'source = []\nenabled = True\nif enabled:\n    value = source\nvalue = 2',
+      'snapshot = value',
+      'source.append(1)'
+    ])
+
+    expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+  })
+
   it.each([
     ['method call', 'if enabled:\n    items.append(1)'],
     ['augmented assignment', 'if enabled:\n    items += [1]'],
@@ -130,6 +140,31 @@ describe('reported Python call tracking regressions', () => {
     expect(projection.stalenessByRunId['run-2']).toMatchObject({
       state: 'unknown',
       reasons: expect.arrayContaining(['opaque-mutation'])
+    })
+  })
+
+  it('keeps implicit iteration effects in local functions conservative', async () => {
+    const projection = await project([
+      'items = []',
+      'snapshot = len(items)',
+      'def consume():\n    for item in items:\n        pass\nconsume()'
+    ])
+
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-mutation'])
+    })
+  })
+
+  it('keeps imports inside local functions namespace-scoped', async () => {
+    const projection = await project([
+      'def load():\n    import custom_plugin\nload()',
+      'unrelated = 1'
+    ])
+
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['dynamic-namespace'])
     })
   })
 
