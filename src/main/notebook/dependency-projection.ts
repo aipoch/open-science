@@ -1177,6 +1177,7 @@ const projectNotebookDependencies = (
       builtinContainers.delete(name)
       copyOnModifyNames.delete(name)
       objectTypes.delete(name)
+      typeSummaries.delete(name)
     }
     for (const name of typeBehaviorChanges) {
       invalidateName(name, 'unknown', ['opaque-mutation'], false)

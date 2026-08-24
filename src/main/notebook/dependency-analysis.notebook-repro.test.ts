@@ -59,16 +59,30 @@ describe('reported Python call tracking regressions', () => {
     })
   })
 
-  it('classifies import and reflection helpers as read-only', async () => {
+  it('keeps dynamic module imports opaque without poisoning unrelated bindings', async () => {
     const projection = await project([
-      [
-        'import importlib',
-        'module = importlib.import_module("json")',
-        'version = getattr(module, "__version__", "ok")'
-      ].join('\n')
+      'import importlib\nmodule = importlib.import_module("custom_plugin")',
+      'unrelated = 1'
     ])
 
-    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['scoped-opaque-call'])
+    })
+    expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+  })
+
+  it('keeps reflection hooks conservative', async () => {
+    const projection = await project([
+      'items = []',
+      'snapshot = len(items)',
+      'value = getattr(items, "custom", None)'
+    ])
+
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-mutation'])
+    })
   })
 
   it('classifies JSON decoding as read-only', async () => {
@@ -98,6 +112,18 @@ describe('reported Python call tracking regressions', () => {
     ])
 
     expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+  })
+
+  it('does not retain summaries for conditionally defined classes', async () => {
+    const projection = await project([
+      'enabled = True\nif enabled:\n    class Conditional:\n        pass',
+      'instance = Conditional()'
+    ])
+
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call'])
+    })
   })
 
   it.each([

@@ -50,13 +50,9 @@ const SAFE_CALLS = new Set([
   'filter',
   'float',
   'frozenset',
-  'getattr',
   'hash',
-  'hasattr',
   'id',
   'int',
-  'isinstance',
-  'issubclass',
   'len',
   'list',
   'map',
@@ -78,6 +74,7 @@ const SAFE_CALLS = new Set([
 ])
 const EXTERNAL_READ_CALLS = new Set(['open'])
 const SCOPED_MUTATION_CALLS = new Set(['next'])
+const SCOPED_OPAQUE_CALLS = new Set(['getattr', 'hasattr', 'isinstance', 'issubclass'])
 const SAFE_LITERAL_METHODS = new Set([
   'capitalize',
   'casefold',
@@ -1974,6 +1971,7 @@ class Analyzer extends NodeVisitor {
       const methods = Object.entries(summary.methods).map(([methodName, effect]) => ({
         name: methodName,
         effect: effect.effect,
+        ...(effect.unknownScope ? { unknownScope: effect.unknownScope } : {}),
         ...(effect.returnType ? { returnType: effect.returnType } : {}),
         ...(effect.destructuredReturnTypes
           ? { destructuredReturnTypes: effect.destructuredReturnTypes }
@@ -2006,6 +2004,7 @@ class Analyzer extends NodeVisitor {
     const method = {
       name: '__call__',
       effect: effect.effect,
+      ...(effect.unknownScope ? { unknownScope: effect.unknownScope } : {}),
       ...(effect.returnType ? { returnType: effect.returnType } : {}),
       ...(effect.destructuredReturnTypes
         ? { destructuredReturnTypes: effect.destructuredReturnTypes }
@@ -2189,6 +2188,7 @@ class Analyzer extends NodeVisitor {
       !DYNAMIC_CALLS.has(value.func.id) &&
       !EXTERNAL_READ_CALLS.has(value.func.id) &&
       !SCOPED_MUTATION_CALLS.has(value.func.id) &&
+      !SCOPED_OPAQUE_CALLS.has(value.func.id) &&
       !this.importedFunctions.has(value.func.id)
     let constructorArguments = new Set<string>()
     if (constructor && value) {
@@ -2460,6 +2460,8 @@ class Analyzer extends NodeVisitor {
       this.unknown.add('opaque-call')
       this.unknown.add('dynamic-namespace')
     }
+    if (libraryEffect?.scopedOpaque) this.unknown.add('scoped-opaque-call')
+    if (libraryEffect?.externalState) this.unknown.add('external-state')
     const formulaRule = libraryEffect?.formulaArgument
     if (formulaRule) {
       const args = Array.isArray(node.args) ? node.args : []
@@ -2543,6 +2545,23 @@ class Analyzer extends NodeVisitor {
       )
       for (const name of possible) this.safeCallArgumentNames.add(name)
       for (const name of possible) this.possiblyMutated.add(name)
+      if (possible.size) this.unknown.add('opaque-mutation')
+    } else if (
+      isPyNode(node.func) &&
+      node.func.type === 'Name' &&
+      SCOPED_OPAQUE_CALLS.has(node.func.id ?? '')
+    ) {
+      this.safeCallNames.add(node.func.id ?? '')
+      const possible = new Set(
+        [...args, ...(node.keywords ?? []).map((keyword) => keyword.value)]
+          .map((candidate) => this.visibleRootName(candidate))
+          .filter((name): name is string => Boolean(name))
+      )
+      for (const name of possible) {
+        this.safeCallArgumentNames.add(name)
+        this.possiblyMutated.add(name)
+      }
+      this.unknown.add('scoped-opaque-call')
       if (possible.size) this.unknown.add('opaque-mutation')
     } else if (
       isPyNode(node.func) &&

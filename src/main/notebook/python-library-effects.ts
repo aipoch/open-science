@@ -1,6 +1,9 @@
 export type PythonLibraryMethodEffect = {
-  effect: 'read' | 'mutate'
+  effect: 'read' | 'mutate' | 'unknown'
+  unknownScope?: 'receiver' | 'namespace'
   unsafeNamespace?: boolean
+  scopedOpaque?: boolean
+  externalState?: boolean
   returnType?: string
   destructuredReturnTypes?: string[]
   mutatesKeyword?: string
@@ -49,7 +52,12 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   importlib: {
     kind: 'module',
     methods: {
-      import_module: { effect: 'read' }
+      import_module: {
+        effect: 'unknown',
+        unknownScope: 'receiver',
+        scopedOpaque: true,
+        externalState: true
+      }
     }
   },
   pickle: {
