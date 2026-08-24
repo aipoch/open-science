@@ -3263,5 +3263,10 @@
   "Figure {{index}}": "圖表 {{index}}",
   "{{count}} lines of output_other": "{{count}} 行輸出",
   "done": "完成",
-  "Esc to close": "按 Esc 關閉"
+  "Esc to close": "按 Esc 關閉",
+  "Installing packages": "正在安裝軟體套件",
+  "Installing {{count}} packages_other": "正在安裝 {{count}} 個軟體套件",
+  "Preparing the runtime": "正在準備執行環境",
+  "{{elapsed}} elapsed": "已耗時 {{elapsed}}",
+  "This can take several minutes": "可能需要幾分鐘"
 }

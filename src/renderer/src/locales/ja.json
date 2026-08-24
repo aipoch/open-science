@@ -3263,5 +3263,10 @@
   "Figure {{index}}": "図 {{index}}",
   "{{count}} lines of output_other": "{{count}} 行の出力",
   "done": "完了",
-  "Esc to close": "Esc で閉じる"
+  "Esc to close": "Esc で閉じる",
+  "Installing packages": "パッケージをインストール中",
+  "Installing {{count}} packages_other": "{{count}} 個のパッケージをインストール中",
+  "Preparing the runtime": "ランタイムを準備中",
+  "{{elapsed}} elapsed": "経過時間 {{elapsed}}",
+  "This can take several minutes": "数分かかる場合があります"
 }

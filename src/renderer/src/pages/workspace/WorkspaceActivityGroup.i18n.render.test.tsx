@@ -27,12 +27,58 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  vi.useRealTimers()
   act(() => root.unmount())
   container.remove()
   await i18next.changeLanguage('en')
 })
 
 describe('WorkspaceActivityGroup i18n', () => {
+  it('renders active manage_packages progress inside its tool group', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-24T00:02:05Z'))
+    const createdAt = Date.now() - 65_000
+
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-1',
+            type: 'activity-group',
+            createdAt,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-1',
+                kind: 'tool',
+                title: 'manage_packages',
+                status: 'in_progress',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt,
+                updatedAt: createdAt,
+                providerToolName: 'mcp__open-science-notebook__manage_packages',
+                rawInput: { language: 'python', packages: ['numpy', 'pandas'] }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{}}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const progress = container.querySelector('[data-testid="manage-packages-progress"]')
+    expect(container.querySelector('[data-testid="tool-group"]')?.contains(progress)).toBe(true)
+    expect(progress?.textContent).toContain('Installing 2 packages')
+    expect(progress?.textContent).toContain('Preparing the runtime')
+    expect(progress?.textContent).toContain('1:05 elapsed')
+    expect(progress?.textContent).toContain('This can take several minutes')
+    expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
+  })
+
   it('anchors the group in view before toggling its height', () => {
     const onToggleGroup = vi.fn()
     act(() => {

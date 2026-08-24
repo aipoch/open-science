@@ -11,6 +11,7 @@ import { RemoteJobRow } from '@/components/RemoteJobRow'
 import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { WorkspaceToolActivityRow } from './WorkspaceToolActivityRow'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
+import { WorkspaceManagePackagesActivityRow } from './WorkspaceManagePackagesActivityRow'
 import { WorkspaceWebSearchActivityRow } from './WorkspaceWebSearchActivityRow'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
 import {
@@ -28,6 +29,11 @@ import type {
 import { formatWebSearchDetails } from './workspace-web-search-details'
 import { getCorrelatedNotebookRun, getToolExecutionPhase } from './tool-execution-phase'
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
+
+const isManagePackagesActivity = (
+  activity: ConversationActivityGroupItem['activities'][number]
+): boolean =>
+  activity.providerToolName?.toLowerCase().replaceAll('-', '_').endsWith('manage_packages') === true
 
 type WorkspaceActivityGroupProps = {
   group: ConversationActivityGroupItem
@@ -151,10 +157,14 @@ const WorkspaceActivityGroup = ({
                   // All tool rows — notebook cells included — default collapsed (meaningful title
                   // only); clicking the title reveals the code and output. A user toggle still wins.
                   const isRowExpanded = expansionOverrides[activity.id] ?? false
+                  const showManagePackagesProgress =
+                    phase === 'executing' && isManagePackagesActivity(activity)
 
                   return (
                     <div key={activity.id} className="w-full overflow-hidden">
-                      {searchDetails ? (
+                      {showManagePackagesProgress ? (
+                        <WorkspaceManagePackagesActivityRow activity={activity} />
+                      ) : searchDetails ? (
                         <WorkspaceWebSearchActivityRow
                           activity={activity}
                           phase={phase}

@@ -3537,5 +3537,12 @@
   "{{count}} lines of output_many": "{{count}} lignes de sortie",
   "{{count}} lines of output_other": "{{count}} lignes de sortie",
   "done": "terminé",
-  "Esc to close": "Échap pour fermer"
+  "Esc to close": "Échap pour fermer",
+  "Installing packages": "Installation des paquets",
+  "Installing {{count}} packages_one": "Installation de {{count}} paquet",
+  "Installing {{count}} packages_many": "Installation de {{count}} paquets",
+  "Installing {{count}} packages_other": "Installation de {{count}} paquets",
+  "Preparing the runtime": "Préparation de l’environnement d’exécution",
+  "{{elapsed}} elapsed": "{{elapsed}} écoulé",
+  "This can take several minutes": "Cela peut prendre plusieurs minutes"
 }
