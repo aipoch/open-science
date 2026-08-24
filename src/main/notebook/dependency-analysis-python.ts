@@ -1390,7 +1390,7 @@ class FunctionEffectVisitor extends NodeVisitor {
   }
 
   visit_FunctionDef(): void {
-    this.unknown()
+    this.unknown(true)
   }
   visit_AsyncFunctionDef = this.visit_FunctionDef
   visit_Lambda(): void {

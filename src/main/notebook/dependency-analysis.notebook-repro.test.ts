@@ -128,6 +128,25 @@ describe('reported Python call tracking regressions', () => {
     })
   })
 
+  it('keeps nested helper effects namespace-scoped', async () => {
+    const projection = await project([
+      [
+        'items = []',
+        'def outer():',
+        '    def nested():',
+        '        items.append(1)',
+        '    nested()',
+        'outer()'
+      ].join('\n'),
+      'unrelated = 1'
+    ])
+
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['dynamic-namespace'])
+    })
+  })
+
   it('recognizes callables assigned from imported module attributes', async () => {
     const projection = await project([
       'import matplotlib.pyplot as plt\ncmap = plt.cm.Set2\ncolor = cmap(0)',
