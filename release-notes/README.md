@@ -24,3 +24,7 @@ missing, current clients identify the fallback and show English.
 `Mirror to website` reads `release-notes/<version>/` when it builds `version.json`. Its `dry_run` input
 executes the same local manifest and feed transformations with sparse installer placeholders, while
 skipping AWS credentials, historical blockmap backfill, and every S3 write.
+
+For historical releases that predate this directory, the mirror workflow preserves the legacy path:
+it reads and condenses the GitHub Release body into English notes. A historical release therefore does
+not need a repository directory unless localized backfill is wanted.

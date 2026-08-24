@@ -127,6 +127,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.ref.outputs.tag }}
         run: |
+          if [ ! -d "$NOTES_DIR" ]; then
+            NOTES="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+            unset NOTES_DIR
+            export NOTES
+          fi
           RELEASE_DATE="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json publishedAt --jq .publishedAt)"
           export RELEASE_DATE
           node scripts/generate-version-manifest.mjs

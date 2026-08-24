@@ -564,9 +564,9 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(dryRunStage.run).toContain('truncate -s "$size" "dist-assets/$name"')
     const generate = findStep(mirror, 'Generate version.json')
     expect(generate.env?.NOTES_DIR).toBe('release-notes/${{ steps.ref.outputs.version }}')
-    expect(generate.run).not.toContain(
-      'gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body'
-    )
+    expect(generate.run).toContain('if [ ! -d "$NOTES_DIR" ]')
+    expect(generate.run).toContain('gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body')
+    expect(generate.run).toContain('unset NOTES_DIR')
     expect(findStep(mirror, 'Summarize dry run').if).toBe('${{ inputs.dry_run }}')
     expect(mirror.steps?.filter(({ run }) => run?.includes('npm install'))).toEqual([])
     expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Install manifest dependencies'))
