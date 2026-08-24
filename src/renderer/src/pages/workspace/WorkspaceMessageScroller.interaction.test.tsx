@@ -3569,6 +3569,38 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.textContent).not.toContain('oldest transcript sentinel')
     expect(agentMarkdownRenderMock.mock.calls.length).toBeLessThan(80)
 
+    await act(async () => showWindowFindListener?.())
+    await act(async () => hideWindowFindListener?.())
+    expect(container.textContent).not.toContain('oldest transcript sentinel')
+
+    const appendedMessages = [
+      ...messages,
+      ...Array.from({ length: 80 }, (_, offset) => {
+        const index = messages.length + offset
+        return createMessage({
+          id: `message-${index + 1}`,
+          role: index % 2 === 0 ? 'user' : 'agent',
+          content:
+            index === 319
+              ? 'newest appended transcript sentinel'
+              : `transcript message ${index + 1}`,
+          responseToMessageId: index % 2 === 0 ? undefined : `message-${index}`,
+          createdAt: 1710000000000 + index,
+          updatedAt: 1710000000000 + index
+        })
+      })
+    ]
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages: appendedMessages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    expect(container.textContent).toContain('newest appended transcript sentinel')
+    expect(container.textContent).not.toContain('transcript message 161')
+
     const firstRun = document.body.querySelector<HTMLButtonElement>('[aria-label^="Go to run 1:"]')
     expect(firstRun).not.toBeNull()
     await act(async () => firstRun?.click())
@@ -3660,7 +3692,19 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     )
     vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
-    const prompt = createMessage({ id: 'prompt-find-barrier', createdAt: 100 })
+    const history = Array.from({ length: 120 }, (_, index) =>
+      createMessage({
+        id: `history-${index + 1}`,
+        role: index % 2 === 0 ? 'user' : 'agent',
+        content:
+          index === 0
+            ? 'presentation history oldest sentinel'
+            : `presentation history ${index + 1}`,
+        responseToMessageId: index % 2 === 0 ? undefined : `history-${index}`,
+        createdAt: index
+      })
+    )
+    const prompt = createMessage({ id: 'prompt-find-barrier', createdAt: 120 })
     const streamingAnswer = createMessage({
       id: 'answer-find-barrier',
       role: 'agent',
@@ -3668,15 +3712,15 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       status: 'streaming',
       streamId: 'stream-find-barrier',
       responseToMessageId: prompt.id,
-      createdAt: 101
+      createdAt: 121
     })
-    const bufferedPrompt = createMessage({ id: 'prompt-behind-find-barrier', createdAt: 102 })
+    const bufferedPrompt = createMessage({ id: 'prompt-behind-find-barrier', createdAt: 122 })
     const bufferedAnswer = createMessage({
       id: 'answer-behind-find-barrier',
       role: 'agent',
       content: 'Searchable only after the presentation barrier clears.',
       responseToMessageId: bufferedPrompt.id,
-      createdAt: 103
+      createdAt: 123
     })
     const render = async (messages: ChatMessage[]): Promise<void> => {
       await act(async () => {
@@ -3684,7 +3728,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           <WorkspaceMessageScroller
             activeSession={createSession({
               messages,
-              activeRun: { promptMessageId: prompt.id, startedAt: 100 }
+              activeRun: { promptMessageId: prompt.id, startedAt: 120 }
             })}
             onSendEditedMessage={vi.fn()}
           />
@@ -3693,15 +3737,18 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     }
 
     root = createRoot(container)
-    await render([prompt])
-    await render([prompt, streamingAnswer])
-    await render([prompt, streamingAnswer, bufferedPrompt, bufferedAnswer])
+    await render(history)
+    await render([...history, prompt])
+    await render([...history, prompt, streamingAnswer])
+    await render([...history, prompt, streamingAnswer, bufferedPrompt, bufferedAnswer])
 
+    expect(container.textContent).not.toContain('presentation history oldest sentinel')
     await act(async () => showWindowFindListener?.())
     expect(container.textContent).not.toContain('Searchable only after the presentation barrier')
     expect(announceWindowFindContentReady).not.toHaveBeenCalled()
 
     await act(async () => vi.advanceTimersByTimeAsync(5_000))
+    expect(container.textContent).toContain('presentation history oldest sentinel')
     expect(container.textContent).toContain('Searchable only after the presentation barrier')
     expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
   })

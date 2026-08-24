@@ -32,13 +32,19 @@ const useTranscriptWindow = (
     end: 0
   }))
   const initialStart = Math.max(0, items.length - TRANSCRIPT_WINDOW_SIZE)
-  const start = state.scopeId === scopeId ? Math.min(state.start, items.length) : initialStart
-  const end =
-    state.scopeId === scopeId
-      ? state.end === state.itemCount
-        ? items.length
-        : Math.min(state.end, items.length)
-      : items.length
+  const stateMatchesScope = state.scopeId === scopeId && state.itemCount > 0
+  const wasPinnedToEnd = stateMatchesScope && state.end === state.itemCount
+  const retainedWindowSize = state.end - state.start
+  const start = stateMatchesScope
+    ? wasPinnedToEnd
+      ? Math.max(0, items.length - retainedWindowSize)
+      : Math.min(state.start, items.length)
+    : initialStart
+  const end = stateMatchesScope
+    ? state.end === state.itemCount
+      ? items.length
+      : Math.min(state.end, items.length)
+    : items.length
   const pendingTargetRef = useRef<string | undefined>(undefined)
   const findRestoreRef = useRef<TranscriptWindowState | undefined>(undefined)
 
@@ -132,9 +138,18 @@ const useTranscriptWindow = (
     else viewport.scrollTop = top
   }, [end, start, viewportRef])
 
+  const presentationStart = Math.max(0, presentationBarrierIndex - TRANSCRIPT_WINDOW_SIZE + 1)
   const entries =
     presentationBarrierIndex >= 0
-      ? items.map((item, itemIndex) => ({ item, itemIndex }))
+      ? items.flatMap((item, itemIndex) => {
+          const withinPresentationWindow =
+            itemIndex >= presentationStart && itemIndex <= presentationBarrierIndex
+          const liveActivityAfterBarrier =
+            itemIndex > presentationBarrierIndex &&
+            item.type !== 'message' &&
+            item.type !== 'subagent-message'
+          return withinPresentationWindow || liveActivityAfterBarrier ? [{ item, itemIndex }] : []
+        })
       : items.slice(start, end).map((item, offset) => ({ item, itemIndex: start + offset }))
 
   return { entries, end, revealMessage, revealAll, restoreWindow, expandAtScrollEdge }
