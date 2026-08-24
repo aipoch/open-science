@@ -2,7 +2,7 @@
   "name": "open-science",
   "productName": "Open Science",
   "desktopName": "open-science.desktop",
-  "version": "0.18.2",
+  "version": "0.19.0",
   "description": "Open Science — an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",

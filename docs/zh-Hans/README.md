@@ -22,7 +22,7 @@ Open Science 是面向科学家和研究人员的开源、本地优先且模型�
 
 Open Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
-> 💡 **[Open Science v0.18.2 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 8 月）_。Open Science v0.18.2 新增俄文本地化、Markdown 和 PDF 对话导出的轮次选择，以及支持加密密钥存储和发行者固定的自定义连接器预注册 OAuth 客户端。受限事件准入和项目产物 ZIP 流式导出可在高负载时保持工作区响应，Notebook 执行则新增进度心跳与 UTF-8 源码解码。消息编辑现会保留附件，不透明的 Codex 恢复失败可自动恢复，Task API 重试具备幂等性，并修复了多项工作区、更新和持久化问题。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[Open Science v0.19.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 8 月）_。Open Science v0.19.0 新增 xAI (Grok) OAuth 订阅提供商、受管治的市场安装专家、基于 tree-sitter 分析的笔记本跨运行依赖跟踪、通过原生后续转向的中途立即发送、消息内 Markdown 产物预览、上下文压缩转录边界、基于 SQLite 索引的会话元数据实现摘要优先快速启动、终止笔记本只读预览、重新设计的关于与帮助中心、归档撤销快捷键、自定义模型令牌上限、完整的 OAuth 连接器生命周期，以及 deepseek-v4-flash-vision-exp；同时合并工具突发 IPC、批量事件排空，并修复大量笔记本、编辑器、工作区与提供商问题。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science 开源 AI 研究工作台桌面应用工作区，其中显示了包含生成产物的智能体会话" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
