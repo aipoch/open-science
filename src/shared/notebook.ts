@@ -417,7 +417,8 @@ export type NotebookRunRecord = {
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
   // Trusted turn/Branch attribution injected by the main-process RPC bridge. Legacy and user-run
-  // records may omit it; a supplied Artifact producer must match all five fields.
+  // records may omit it. An Artifact producer must share root/agent identity, belong to the trusted
+  // Branch and message ancestry, and match the active Runtime Segment for the active prompt.
   rootFrameId?: string
   agentFrameId?: string
   messageBranchId?: string

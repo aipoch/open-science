@@ -2366,7 +2366,7 @@ describe('artifact provenance repository', () => {
     ).rejects.toThrow(/execution snapshot input metadata mismatch/i)
   })
 
-  it('does not infer an omitted producer from source mtime alone', async () => {
+  it('rejects an omitted Notebook producer when mtime is the only association', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-auto-producer-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -2444,46 +2444,32 @@ describe('artifact provenance repository', () => {
       source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
     })
 
-    const version = await repository.createVersion({
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-auto-producer',
-      writeRequestChecksum: 'f'.repeat(64),
-      ...graph,
-      notebookSessionId: 'session-1',
-      sourceFileObservation: {
-        path: resolvedSourcePath,
-        sizeBytes: sourceStat.size,
-        mtimeMs: sourceStat.mtimeMs
-      },
-      filename: 'sin.png',
-      contentType: 'image/png'
-    })
-    const row = await client.artifactVersion.findUniqueOrThrow({
-      where: { id: version.versionId }
-    })
-
-    expect(row).toMatchObject({ producerRunId: null, producerRunIndex: null })
-    expect(JSON.parse(row.evidenceJson)).toMatchObject({
-      producer: {
-        state: 'unavailable',
-        reason: 'producer-source-unverifiable'
-      },
-      execution_status: { state: 'unavailable', reason: 'producer-source-unverifiable' }
-    })
     await expect(
-      repository.replayVersion({
+      repository.createVersion({
         projectId: 'project-1',
         appSessionId: 'session-1',
         artifactStorageSessionId: 'artifact-session-1',
         artifactRunId: 'artifact-run-1',
         writeOperationId: 'write-auto-producer',
+        writeRequestChecksum: 'f'.repeat(64),
+        ...graph,
+        notebookSessionId: 'session-1',
+        sourceFileObservation: {
+          path: resolvedSourcePath,
+          sizeBytes: sourceStat.size,
+          mtimeMs: sourceStat.mtimeMs
+        },
         filename: 'sin.png',
         contentType: 'image/png'
       })
-    ).resolves.toMatchObject({ versionId: version.versionId })
+    ).rejects.toThrow('Notebook source must have exactly one eligible Run owner.')
+    await expect(
+      repository.listRunVersions({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactRunId: 'artifact-run-1'
+      })
+    ).resolves.toEqual([])
   })
 
   it('bounds execution evidence while retaining the producer run', async () => {

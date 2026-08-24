@@ -173,6 +173,7 @@ class ArtifactProvenanceRepository {
     this.producerCapture = new ArtifactProvenanceProducerCapture({
       inputAuthority,
       notebookRepository,
+      storageRoot: options.storageRoot,
       createId: this.createId
     })
     this.messageFinalizer = new ArtifactProvenanceMessageFinalizer({
