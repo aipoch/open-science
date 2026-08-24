@@ -58,6 +58,7 @@ const useTranscriptWindow = (
 
       const nextStart = Math.max(0, itemIndex - Math.floor(TRANSCRIPT_WINDOW_SIZE / 4))
       pendingTargetRef.current = messageId
+      if (findRestoreRef.current?.scopeId === scopeId) return
       setState({
         scopeId,
         itemCount: items.length,
