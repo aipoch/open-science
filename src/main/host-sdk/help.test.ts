@@ -238,21 +238,21 @@ describe('Host SDK help', () => {
     })
     const childFields = fields(canonical.returns, 'child_fields')
     expect(childFields.map(({ name }) => name)).toEqual([
-      'frame_id',
-      'attempt_id',
+      'frameId',
+      'attemptId',
       'name',
-      'agent_name',
+      'agentName',
       'status',
-      'terminal_message_id',
+      'terminalMessageId',
       'response',
-      'artifacts_created',
-      'cancellation_reason',
+      'artifactsCreated',
+      'cancellationReason',
       'error',
-      'structured_output',
-      'structured_output_unsatisfied'
+      'structuredOutput',
+      'structuredOutputUnsatisfied'
     ])
-    expect(named(childFields, 'frame_id')).toMatchObject({ type: 'string', required: true })
-    expect(named(childFields, 'artifacts_created')).toMatchObject({
+    expect(named(childFields, 'frameId')).toMatchObject({ type: 'string', required: true })
+    expect(named(childFields, 'artifactsCreated')).toMatchObject({
       type: 'array',
       when: 'terminal'
     })
@@ -289,11 +289,11 @@ describe('Host SDK help', () => {
       expect.objectContaining({ name: 'frameIds', type: 'string[]', required: false })
     ])
     expect(fields(children.returns, 'item_fields').map(({ name }) => name)).toEqual([
-      'frame_id',
-      'attempt_id',
+      'frameId',
+      'attemptId',
       'title',
       'name',
-      'agent_name',
+      'agentName',
       'status'
     ])
     expect(named(fields(children.returns, 'item_fields'), 'status').description).toContain(
@@ -311,14 +311,14 @@ describe('Host SDK help', () => {
     expect(named(fields(collect.options), 'returnWhen')).toMatchObject({ default: 'all' })
     expect(collect.constraints.join(' ')).toContain('currently running')
     expect(collect.call_forms[0]?.signature).toBe('await host.collect(selectors, options?)')
-    expect(collect.examples[0]?.code).toContain('{ frameId: frame_id, attemptId: attempt_id }')
+    expect(collect.examples[0]?.code).toContain('{ frameId, attemptId }')
 
     const stop = operation('stopChild')
     expect(fields(stop.request)).toEqual([
       expect.objectContaining({ name: 'frameIds', type: 'string[]', required: true })
     ])
     expect(fields(stop.returns, 'item_fields').map(({ name }) => name)).toEqual([
-      'frame_id',
+      'frameId',
       'status'
     ])
     expect(stop.call_forms[0]?.signature).toBe('await host.stopChild(frameIds)')
@@ -361,29 +361,29 @@ describe('Host SDK help', () => {
         ]
       })
       expect(fields(help.returns).map(({ name }) => name)).toEqual([
-        'request_id',
-        'message_id',
-        'source_frame_id',
-        'target_frame_id',
-        'reply_to_message_id',
-        'queued_at',
+        'requestId',
+        'messageId',
+        'sourceFrameId',
+        'targetFrameId',
+        'replyToMessageId',
+        'queuedAt',
         'direction',
         'disposition',
-        'target_attempt_id',
-        'continuation_attempt_id',
-        'source_attempt_id',
-        'root_prompt_message_id',
+        'targetAttemptId',
+        'continuationAttemptId',
+        'sourceAttemptId',
+        'rootPromptMessageId',
         'status',
-        'dispatch_started_at',
-        'accepted_at',
+        'dispatchStartedAt',
+        'acceptedAt',
         'evidence',
-        'failed_at',
+        'failedAt',
         'error',
-        'uncertain_at',
-        'delivery_may_have_occurred',
+        'uncertainAt',
+        'deliveryMayHaveOccurred',
         'resolution',
-        'new_request_retry_safe',
-        'same_request_safe'
+        'newRequestRetrySafe',
+        'sameRequestSafe'
       ])
     }
     expect(operation('resolveMessage').returns).toMatchObject({

@@ -44,7 +44,7 @@ describe('Agent-facing delegate contract', () => {
     })
     expect(DELEGATE_AGENT_CONTRACT.options.properties).not.toHaveProperty('timeout_seconds')
     expect(DELEGATE_AGENT_CONTRACT.returns.oneOf[0].properties.children.items.required).toContain(
-      'frame_id'
+      'frameId'
     )
     expect(singleRequest.properties.profile.description).toContain(
       'Omit to inherit the authenticated parent Specialist'
@@ -117,7 +117,7 @@ describe('Agent-facing delegate contract', () => {
 })
 
 describe('Agent-facing collect contract', () => {
-  it('publishes camel-case selector and option inputs while retaining snake-case returns', () => {
+  it('publishes camel-case selector, option, and return fields', () => {
     const explicitSelector = COLLECT_AGENT_CONTRACT.selectors.items.oneOf[1]
     expect(explicitSelector).toMatchObject({
       additionalProperties: false,
@@ -137,8 +137,8 @@ describe('Agent-facing collect contract', () => {
     })
     expect(COLLECT_AGENT_CONTRACT.options.properties).not.toHaveProperty('timeout_seconds')
     expect(COLLECT_AGENT_CONTRACT.options.additionalProperties).toBe(false)
-    expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('frame_id')
-    expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('attempt_id')
+    expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('frameId')
+    expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('attemptId')
   })
 
   it('parses private snake-case wire selectors with bounded options', () => {

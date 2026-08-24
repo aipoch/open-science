@@ -100,15 +100,15 @@ const rootOnlyAvailability =
 const NO_OPTIONS = { fields: [] } as const
 
 const DELEGATION_CHILD_FIELDS = [
-  { name: 'frame_id', type: 'string', required: true, description: 'Child Frame id.' },
+  { name: 'frameId', type: 'string', required: true, description: 'Child Frame id.' },
   {
-    name: 'attempt_id',
+    name: 'attemptId',
     type: 'string',
     required: true,
     description: 'Selected Attempt id.'
   },
   { name: 'name', type: 'string', required: true, description: 'Child name.' },
-  { name: 'agent_name', type: 'string', required: true, description: 'Specialist.' },
+  { name: 'agentName', type: 'string', required: true, description: 'Specialist.' },
   {
     name: 'status',
     type: 'string',
@@ -116,33 +116,33 @@ const DELEGATION_CHILD_FIELDS = [
     description: 'running/completed/cancelled/error.'
   },
   {
-    name: 'terminal_message_id',
+    name: 'terminalMessageId',
     type: 'string',
     when: 'terminal',
     description: 'Terminal message id.'
   },
   { name: 'response', type: 'string', when: 'completed', description: 'Final text.' },
   {
-    name: 'artifacts_created',
+    name: 'artifactsCreated',
     type: 'array',
     when: 'terminal',
     description: 'Created Artifacts.'
   },
   {
-    name: 'cancellation_reason',
+    name: 'cancellationReason',
     type: 'string',
     when: 'cancelled',
     description: 'Stop reason.'
   },
   { name: 'error', type: 'object', when: 'error', description: 'Failure details.' },
   {
-    name: 'structured_output',
+    name: 'structuredOutput',
     type: 'JSON value',
     when: 'submitted',
     description: 'Validated output.'
   },
   {
-    name: 'structured_output_unsatisfied',
+    name: 'structuredOutputUnsatisfied',
     type: 'boolean',
     when: 'terminal without required submission',
     description: 'Required output missing.'
@@ -257,11 +257,11 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
 }
 
 const INVENTORY_FIELDS = [
-  { name: 'frame_id', type: 'string', required: true, description: 'Stable child Frame id.' },
-  { name: 'attempt_id', type: 'string', required: true, description: 'Current Attempt id.' },
+  { name: 'frameId', type: 'string', required: true, description: 'Stable child Frame id.' },
+  { name: 'attemptId', type: 'string', required: true, description: 'Current Attempt id.' },
   { name: 'title', type: 'string', required: false, description: 'Legacy display title.' },
   { name: 'name', type: 'string', required: true, description: 'Child name.' },
-  { name: 'agent_name', type: 'string', required: true, description: 'Specialist name.' },
+  { name: 'agentName', type: 'string', required: true, description: 'Specialist name.' },
   {
     name: 'status',
     type: 'string',
@@ -347,7 +347,7 @@ const COLLECT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   examples: [
     {
       title: 'Collect pinned Attempts',
-      code: 'await host.collect(sent.children.map(({ frame_id, attempt_id }) => ({ frameId: frame_id, attemptId: attempt_id })))'
+      code: 'await host.collect(sent.children.map(({ frameId, attemptId }) => ({ frameId, attemptId })))'
     }
   ],
   resolveAvailability: rootOnlyAvailability('collect', 'Delegate agents cannot collect children.')
@@ -376,7 +376,7 @@ const STOP_CHILD_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   returns: {
     type: 'array',
     item_fields: [
-      { name: 'frame_id', type: 'string', required: true, description: 'Requested Frame.' },
+      { name: 'frameId', type: 'string', required: true, description: 'Requested Frame.' },
       {
         name: 'status',
         type: 'string',
@@ -392,7 +392,7 @@ const STOP_CHILD_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   examples: [
     {
       title: 'Stop children',
-      code: 'await host.stopChild(current.map(({ frame_id }) => frame_id))'
+      code: 'await host.stopChild(current.map(({ frameId }) => frameId))'
     }
   ],
   resolveAvailability: rootOnlyAvailability(
@@ -449,17 +449,17 @@ const messageAvailability =
     capabilities[operation] ? { status: 'available' } : unavailableProvisioning(operation)
 
 const DELIVERY_RECEIPT_FIELDS = [
-  { name: 'request_id', type: 'string', required: true, description: 'Idempotency key.' },
-  { name: 'message_id', type: 'string', required: true, description: 'Command id.' },
-  { name: 'source_frame_id', type: 'string', required: true, description: 'Sender Frame.' },
-  { name: 'target_frame_id', type: 'string', required: true, description: 'Receiver Frame.' },
+  { name: 'requestId', type: 'string', required: true, description: 'Idempotency key.' },
+  { name: 'messageId', type: 'string', required: true, description: 'Command id.' },
+  { name: 'sourceFrameId', type: 'string', required: true, description: 'Sender Frame.' },
+  { name: 'targetFrameId', type: 'string', required: true, description: 'Receiver Frame.' },
   {
-    name: 'reply_to_message_id',
+    name: 'replyToMessageId',
     type: 'string',
     required: false,
     description: 'Replied-to message.'
   },
-  { name: 'queued_at', type: 'number', required: true, description: 'Queue time.' },
+  { name: 'queuedAt', type: 'number', required: true, description: 'Queue time.' },
   { name: 'direction', type: 'string', required: true, description: 'Route.' },
   {
     name: 'disposition',
@@ -468,25 +468,25 @@ const DELIVERY_RECEIPT_FIELDS = [
     description: 'Delivery form.'
   },
   {
-    name: 'target_attempt_id',
+    name: 'targetAttemptId',
     type: 'string',
     when: 'to_child message',
     description: 'Receiver Attempt.'
   },
   {
-    name: 'continuation_attempt_id',
+    name: 'continuationAttemptId',
     type: 'string',
     when: 'to_child continued',
     description: 'New Attempt.'
   },
   {
-    name: 'source_attempt_id',
+    name: 'sourceAttemptId',
     type: 'string',
     when: 'to_parent',
     description: 'Sender Attempt.'
   },
   {
-    name: 'root_prompt_message_id',
+    name: 'rootPromptMessageId',
     type: 'string',
     when: 'to_parent',
     description: 'Root prompt id.'
@@ -498,18 +498,18 @@ const DELIVERY_RECEIPT_FIELDS = [
     description: 'Delivery state.'
   },
   {
-    name: 'dispatch_started_at',
+    name: 'dispatchStartedAt',
     type: 'number',
     when: 'queued',
     description: 'Dispatch start.'
   },
-  { name: 'accepted_at', type: 'number', when: 'accepted', description: 'Acceptance time.' },
+  { name: 'acceptedAt', type: 'number', when: 'accepted', description: 'Acceptance time.' },
   { name: 'evidence', type: 'string', when: 'accepted', description: 'Acceptance proof.' },
-  { name: 'failed_at', type: 'number', when: 'failed', description: 'Failure time.' },
+  { name: 'failedAt', type: 'number', when: 'failed', description: 'Failure time.' },
   { name: 'error', type: 'object', when: 'failed', description: 'Failure/retry details.' },
-  { name: 'uncertain_at', type: 'number', when: 'uncertain', description: 'Uncertainty time.' },
+  { name: 'uncertainAt', type: 'number', when: 'uncertain', description: 'Uncertainty time.' },
   {
-    name: 'delivery_may_have_occurred',
+    name: 'deliveryMayHaveOccurred',
     type: 'boolean',
     when: 'uncertain',
     description: 'Delivery is unknown.'
@@ -521,13 +521,13 @@ const DELIVERY_RECEIPT_FIELDS = [
     description: 'Risk resolution.'
   },
   {
-    name: 'new_request_retry_safe',
+    name: 'newRequestRetrySafe',
     type: 'boolean',
     required: true,
     description: 'New-id retry safety.'
   },
   {
-    name: 'same_request_safe',
+    name: 'sameRequestSafe',
     type: 'boolean',
     required: true,
     description: 'Same-id recovery safety.'
@@ -636,7 +636,7 @@ const MESSAGE_RECEIPT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   examples: [
     {
       title: 'Observe delivery',
-      code: 'await host.messageReceipt(receipt.message_id, { timeoutSeconds: 30 })'
+      code: 'await host.messageReceipt(receipt.messageId, { timeoutSeconds: 30 })'
     }
   ],
   resolveAvailability: messageAvailability('messageReceipt')
@@ -683,7 +683,7 @@ const RESOLVE_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   examples: [
     {
       title: 'Release fence',
-      code: "await host.resolveMessage(receipt.message_id, { action: 'acknowledge_uncertain' })"
+      code: "await host.resolveMessage(receipt.messageId, { action: 'acknowledge_uncertain' })"
     }
   ],
   resolveAvailability: rootOnlyAvailability(

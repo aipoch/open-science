@@ -303,35 +303,35 @@ describe('repl_loop local RPC transport', () => {
           kind: 'results',
           children: [
             {
-              frame_id: 'child-1',
-              attempt_id: 'attempt-1',
+              frameId: 'child-1',
+              attemptId: 'attempt-1',
               name: 'Source trace',
-              agent_name: 'Evidence Analyst',
+              agentName: 'Evidence Analyst',
               status: 'completed',
               response: 'Durable answer',
-              artifacts_created: []
+              artifactsCreated: []
             }
           ]
         },
         children: [
           {
-            frame_id: 'child-1',
-            attempt_id: 'attempt-1',
+            frameId: 'child-1',
+            attemptId: 'attempt-1',
             title: 'Source trace',
             name: 'Source trace',
-            agent_name: 'Evidence Analyst',
+            agentName: 'Evidence Analyst',
             status: 'completed'
           }
         ],
         collected: [
           {
-            frame_id: 'child-1',
-            attempt_id: 'attempt-1',
+            frameId: 'child-1',
+            attemptId: 'attempt-1',
             name: 'Source trace',
-            agent_name: 'Evidence Analyst',
+            agentName: 'Evidence Analyst',
             status: 'completed',
             response: 'Durable answer',
-            artifacts_created: []
+            artifactsCreated: []
           }
         ]
       })
@@ -408,15 +408,15 @@ describe('repl_loop local RPC transport', () => {
       const result = JSON.parse(response.result ?? '{}')
       expect(result.selected).toEqual({ id: selected.id, name: selected.name })
       expect(result.byId.children[0]).toMatchObject({
-        agent_name: 'Evidence Analyst',
+        agentName: 'Evidence Analyst',
         status: 'running'
       })
       expect(result.byName.children[0]).toMatchObject({
-        agent_name: 'Evidence Analyst',
+        agentName: 'Evidence Analyst',
         status: 'running'
       })
       expect(result.main.children[0]).toMatchObject({
-        agent_name: 'Main Agent',
+        agentName: 'Main Agent',
         status: 'running'
       })
 
@@ -537,42 +537,42 @@ describe('repl_loop local RPC transport', () => {
           kind: 'receipts',
           children: [
             {
-              frame_id: 'child-1',
-              attempt_id: 'attempt-1',
+              frameId: 'child-1',
+              attemptId: 'attempt-1',
               name: 'Source trace',
-              agent_name: 'Main Agent',
+              agentName: 'Main Agent',
               status: 'running'
             }
           ]
         },
         children: [
           {
-            frame_id: 'child-1',
-            attempt_id: 'attempt-1',
+            frameId: 'child-1',
+            attemptId: 'attempt-1',
             title: 'Source trace',
             status: 'running'
           }
         ]
       })
       const secondCell = await send(
-        "return { results: await host.collect(globalThis.pendingDelegation.children.map(({ frame_id, attempt_id }) => ({ frameId: frame_id, attemptId: attempt_id })), { timeoutSeconds: 0, returnWhen: 'any' }) }"
+        "return { results: await host.collect(globalThis.pendingDelegation.children.map(({ frameId, attemptId }) => ({ frameId, attemptId })), { timeoutSeconds: 0, returnWhen: 'any' }) }"
       )
       expect(secondCell.error).toBeNull()
       expect(JSON.parse(secondCell.result ?? '{}')).toEqual({
         results: [
           {
-            frame_id: 'child-1',
-            attempt_id: 'attempt-1',
+            frameId: 'child-1',
+            attemptId: 'attempt-1',
             status: 'completed',
-            terminal_message_id: 'message-1',
+            terminalMessageId: 'message-1',
             response: 'Durable answer',
-            artifacts_created: []
+            artifactsCreated: []
           },
           {
-            frame_id: 'child-2',
-            attempt_id: 'attempt-2',
+            frameId: 'child-2',
+            attemptId: 'attempt-2',
             name: 'Long analysis',
-            agent_name: 'Main Agent',
+            agentName: 'Main Agent',
             status: 'running'
           }
         ]
@@ -684,7 +684,7 @@ describe('repl_loop local RPC transport', () => {
         direction: 'to_child',
         disposition: 'continued',
         status: 'queued',
-        continuation_attempt_id: 'attempt-2'
+        continuationAttemptId: 'attempt-2'
       })
       expect(received).toEqual({
         method: 'delegatedWorkCall',
@@ -746,7 +746,7 @@ describe('repl_loop local RPC transport', () => {
         direction: 'to_child',
         disposition: 'continued',
         status: 'queued',
-        continuation_attempt_id: 'attempt-2'
+        continuationAttemptId: 'attempt-2'
       })
       expect(received).toEqual({
         method: 'delegatedWorkCall',
@@ -806,9 +806,9 @@ describe('repl_loop local RPC transport', () => {
         direction: 'to_parent',
         disposition: 'message',
         status: 'queued',
-        message_id: 'message-1',
-        target_frame_id: 'parent-frame',
-        source_attempt_id: 'attempt-1'
+        messageId: 'message-1',
+        targetFrameId: 'parent-frame',
+        sourceAttemptId: 'attempt-1'
       })
       expect(received).toEqual({
         method: 'delegatedWorkCall',
@@ -860,7 +860,7 @@ describe('repl_loop local RPC transport', () => {
       )
       expect(result.error).toBeNull()
       expect(JSON.parse(result.result ?? '{}')).toEqual({
-        stopped: [{ frame_id: 'child-frame', status: 'cancelled' }],
+        stopped: [{ frameId: 'child-frame', status: 'cancelled' }],
         observed: { status: 'accepted' },
         resolved: { status: 'accepted' }
       })
@@ -1425,9 +1425,9 @@ describe('repl_loop local RPC transport', () => {
           'environmentFrozen: Object.isFrozen(core.environment), ' +
           'packagesFrozen: Object.isFrozen(core.environment.packages), ' +
           'packageFrozen: Object.isFrozen(core.environment.packages[0]), ' +
-          'opLogFrozen: Object.isFrozen(core.environment.op_log), ' +
-          'attemptFrozen: Object.isFrozen(core.environment.op_log[0].attempts[0]), ' +
-          'returnFields: [first.root_version_id, first.nodes[0].version_id, core.version_id] })'
+          'opLogFrozen: Object.isFrozen(core.environment.opLog), ' +
+          'attemptFrozen: Object.isFrozen(core.environment.opLog[0].attempts[0]), ' +
+          'returnFields: [first.rootVersionId, first.nodes[0].versionId, core.versionId] })'
       )
       expect(projection.error).toBeNull()
       expect(JSON.parse(projection.result ?? '{}')).toEqual({
@@ -2127,18 +2127,18 @@ describe('repl_loop local RPC transport', () => {
           'framesFrozen: Object.isFrozen(page.frames), frameFrozen: Object.isFrozen(page.frames[0]), ' +
           'detailFrozen: Object.isFrozen(detail), transcriptFrozen: Object.isFrozen(detail.transcript), ' +
           'sessionFrozen: Object.isFrozen(detail.session), detailFrameFrozen: Object.isFrozen(detail.frame), ' +
-          'branchFrozen: Object.isFrozen(detail.branch), segmentsFrozen: Object.isFrozen(detail.runtime_segments), ' +
-          'segmentFrozen: Object.isFrozen(detail.runtime_segments[0]), ' +
+          'branchFrozen: Object.isFrozen(detail.branch), segmentsFrozen: Object.isFrozen(detail.runtimeSegments), ' +
+          'segmentFrozen: Object.isFrozen(detail.runtimeSegments[0]), ' +
           'messagesFrozen: Object.isFrozen(detail.transcript.messages), ' +
           'messageFrozen: Object.isFrozen(detail.transcript.messages[0]), ' +
-          'usageFrozen: Object.isFrozen(detail.transcript.messages[0].turn_usage), ' +
+          'usageFrozen: Object.isFrozen(detail.transcript.messages[0].turnUsage), ' +
           'attachmentsFrozen: Object.isFrozen(detail.transcript.messages[0].attachments), ' +
           'attachmentFrozen: Object.isFrozen(detail.transcript.messages[0].attachments[0]) })'
       )
       expect(projection.error).toBeNull()
       expect(JSON.parse(projection.result ?? '{}')).toMatchObject({
-        page: { project_id: 'project-a', total_count: 1, next_cursor: 'next' },
-        detail: { project_id: 'project-a', frame: { frame_id: 'frame-1' } },
+        page: { projectId: 'project-a', totalCount: 1, nextCursor: 'next' },
+        detail: { projectId: 'project-a', frame: { frameId: 'frame-1' } },
         pageFrozen: true,
         framesFrozen: true,
         frameFrozen: true,

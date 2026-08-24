@@ -8,55 +8,55 @@ import { MAX_DELEGATE_NAME_CODE_POINTS } from '../delegation/delegated-work-admi
 
 const RUNNING_OBSERVATION_SCHEMA = {
   type: 'object',
-  required: ['frame_id', 'attempt_id', 'name', 'agent_name', 'status'],
+  required: ['frameId', 'attemptId', 'name', 'agentName', 'status'],
   optional: [],
   properties: {
-    frame_id: { type: 'string' },
-    attempt_id: { type: 'string' },
+    frameId: { type: 'string' },
+    attemptId: { type: 'string' },
     name: { type: 'string' },
-    agent_name: { type: 'string' },
+    agentName: { type: 'string' },
     status: { type: 'string', enum: ['running'] }
   }
 } as const
 
 const AWAITING_USER_OBSERVATION_SCHEMA = {
   type: 'object',
-  required: ['frame_id', 'attempt_id', 'name', 'agent_name', 'status'],
+  required: ['frameId', 'attemptId', 'name', 'agentName', 'status'],
   optional: ['title'],
   properties: {
-    frame_id: { type: 'string' },
-    attempt_id: { type: 'string' },
+    frameId: { type: 'string' },
+    attemptId: { type: 'string' },
     title: { type: 'string' },
     name: { type: 'string' },
-    agent_name: { type: 'string' },
+    agentName: { type: 'string' },
     status: { type: 'string', enum: ['awaiting_user'] }
   }
 } as const
 
 const TERMINAL_RESULT_SCHEMA = {
   type: 'object',
-  required: ['frame_id', 'attempt_id', 'name', 'agent_name', 'status', 'artifacts_created'],
+  required: ['frameId', 'attemptId', 'name', 'agentName', 'status', 'artifactsCreated'],
   optional: [
-    'terminal_message_id',
+    'terminalMessageId',
     'response',
-    'cancellation_reason',
+    'cancellationReason',
     'error',
-    'structured_output',
-    'structured_output_unsatisfied'
+    'structuredOutput',
+    'structuredOutputUnsatisfied'
   ],
   properties: {
-    frame_id: { type: 'string' },
-    attempt_id: { type: 'string' },
+    frameId: { type: 'string' },
+    attemptId: { type: 'string' },
     name: { type: 'string', description: 'Child delegation name.' },
-    agent_name: { type: 'string', description: 'Resolved Attempt agent display name.' },
+    agentName: { type: 'string', description: 'Resolved Attempt agent display name.' },
     status: { type: 'string', enum: ['completed', 'cancelled', 'error'] },
-    terminal_message_id: { type: 'string' },
+    terminalMessageId: { type: 'string' },
     response: { type: 'string' },
-    artifacts_created: {
+    artifactsCreated: {
       type: 'array',
       items: { type: 'object', description: 'Finalized Artifact Version metadata.' }
     },
-    cancellation_reason: {
+    cancellationReason: {
       type: 'string',
       enum: ['main_agent_stop', 'session_stop', 'runtime_interrupted']
     },
@@ -65,8 +65,8 @@ const TERMINAL_RESULT_SCHEMA = {
       required: ['code', 'message'],
       properties: { code: { type: 'string' }, message: { type: 'string' } }
     },
-    structured_output: { description: 'Accepted JSON value for the exact Attempt.' },
-    structured_output_unsatisfied: { type: 'boolean' }
+    structuredOutput: { description: 'Accepted JSON value for the exact Attempt.' },
+    structuredOutputUnsatisfied: { type: 'boolean' }
   }
 } as const
 
@@ -194,13 +194,13 @@ const DELEGATE_AGENT_CONTRACT = {
             type: 'array',
             items: {
               type: 'object',
-              required: ['frame_id', 'attempt_id', 'name', 'agent_name', 'status'],
+              required: ['frameId', 'attemptId', 'name', 'agentName', 'status'],
               optional: [],
               properties: {
-                frame_id: { type: 'string' },
-                attempt_id: { type: 'string' },
+                frameId: { type: 'string' },
+                attemptId: { type: 'string' },
                 name: { type: 'string', description: 'Child delegation name.' },
-                agent_name: { type: 'string', description: 'Resolved Attempt agent display name.' },
+                agentName: { type: 'string', description: 'Resolved Attempt agent display name.' },
                 status: { type: 'string', enum: ['running'] }
               }
             }

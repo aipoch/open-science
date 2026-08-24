@@ -772,7 +772,7 @@ if (process.argv.includes('--version')) {
           const terminal = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const slow = globalThis.s2Pending.children[1]; return await host.collect([{ frameId: slow.frame_id, attemptId: slow.attempt_id }], { timeoutSeconds: 30 })`
+              `const slow = globalThis.s2Pending.children[1]; return await host.collect([{ frameId: slow.frameId, attemptId: slow.attemptId }], { timeoutSeconds: 30 })`
             )
           )
           if (terminal.length !== 1 || terminal[0].status !== 'completed') {
@@ -834,7 +834,7 @@ if (process.argv.includes('--version')) {
           if (
             delegated.kind !== 'results' ||
             delegated.children?.[0]?.status !== 'completed' ||
-            delegated.children?.[0]?.agent_name !== 'Release Specialist'
+            delegated.children?.[0]?.agentName !== 'Release Specialist'
           ) {
             throw new Error(`Inherited Specialist delegation failed: ${JSON.stringify(delegated)}`)
           }
@@ -848,14 +848,14 @@ if (process.argv.includes('--version')) {
             )
           )
           const child = dispatched.children?.[0]
-          if (!child?.frame_id || !child?.attempt_id) {
+          if (!child?.frameId || !child?.attemptId) {
             throw new Error(`Reliable child admission failed: ${JSON.stringify(dispatched)}`)
           }
-          reliableMessagingChildren.set(context.params.sessionId, child.frame_id)
+          reliableMessagingChildren.set(context.params.sessionId, child.frameId)
           const downward = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const sent = await host.sendFrameMessage(${JSON.stringify(child.frame_id)}, ${JSON.stringify(RELIABLE_CHILD_DIRECTIVE)}, { kind: "info", requestId: "e2e-main-to-child" }); return await host.messageReceipt(sent.message_id, { timeoutSeconds: 30 })`
+              `const sent = await host.sendFrameMessage(${JSON.stringify(child.frameId)}, ${JSON.stringify(RELIABLE_CHILD_DIRECTIVE)}, { kind: "info", requestId: "e2e-main-to-child" }); return await host.messageReceipt(sent.messageId, { timeoutSeconds: 30 })`
             )
           )
           if (downward.status !== 'accepted' || downward.direction !== 'to_child') {
@@ -974,7 +974,7 @@ if (process.argv.includes('--version')) {
           if (delegated.kind !== 'results' || child?.status !== 'completed') {
             throw new Error(`Subagent model initial Attempt failed: ${JSON.stringify(delegated)}`)
           }
-          globalThis.subagentModelContinuationFrameId = child.frame_id
+          globalThis.subagentModelContinuationFrameId = child.frameId
           reply = 'Subagent model initial Attempt completed.'
         } else if (prompt.includes(SUBAGENT_MODEL_CONTINUATION_FINISH_PROMPT)) {
           const frameId = globalThis.subagentModelContinuationFrameId
@@ -982,7 +982,7 @@ if (process.argv.includes('--version')) {
           const continued = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const receipt = await host.sendFrameMessage(${JSON.stringify(frameId)}, "Continue after Settings changed"); return await host.collect([{ frameId: receipt.target_frame_id, attemptId: receipt.continuation_attempt_id }], { timeoutSeconds: 30 })`
+              `const receipt = await host.sendFrameMessage(${JSON.stringify(frameId)}, "Continue after Settings changed"); return await host.collect([{ frameId: receipt.targetFrameId, attemptId: receipt.continuationAttemptId }], { timeoutSeconds: 30 })`
             )
           )
           if (continued.length !== 1 || continued[0].status !== 'completed') {
@@ -1035,7 +1035,7 @@ if (process.argv.includes('--version')) {
             child.response !== 'Structured child completed.' ||
             child.structured_output?.count !== 3 ||
             child.structured_output_unsatisfied !== false ||
-            child.artifacts_created?.length !== 1
+            child.artifactsCreated?.length !== 1
           ) {
             throw new Error(`Structured delegation failed: ${JSON.stringify(delegated)}`)
           }
@@ -1057,7 +1057,7 @@ if (process.argv.includes('--version')) {
           const upward = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const sent = await host.sendFrameMessage("parent", "Child reliable question reached Main", { kind: "question", requestId: "e2e-child-to-main" }); return await host.messageReceipt(sent.message_id, { timeoutSeconds: 0 })`
+              `const sent = await host.sendFrameMessage("parent", "Child reliable question reached Main", { kind: "question", requestId: "e2e-child-to-main" }); return await host.messageReceipt(sent.messageId, { timeoutSeconds: 0 })`
             )
           )
           if (upward.status !== 'queued' || upward.direction !== 'to_parent') {
@@ -1099,7 +1099,7 @@ if (process.argv.includes('--version')) {
           const answered = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const sent = await host.sendFrameMessage(${JSON.stringify(childFrameId)}, "Main answered the reliable child question", { kind: "info", requestId: "e2e-main-reply-to-child" }); return await host.messageReceipt(sent.message_id, { timeoutSeconds: 30 })`
+              `const sent = await host.sendFrameMessage(${JSON.stringify(childFrameId)}, "Main answered the reliable child question", { kind: "info", requestId: "e2e-main-reply-to-child" }); return await host.messageReceipt(sent.messageId, { timeoutSeconds: 30 })`
             )
           )
           if (answered.status !== 'accepted' || answered.direction !== 'to_child') {
