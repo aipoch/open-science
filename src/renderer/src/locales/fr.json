@@ -3548,5 +3548,13 @@
   "Removing packages": "Suppression des paquets",
   "Removing {{count}} packages_one": "Suppression de {{count}} paquet",
   "Removing {{count}} packages_many": "Suppression de {{count}} paquets",
-  "Removing {{count}} packages_other": "Suppression de {{count}} paquets"
+  "Removing {{count}} packages_other": "Suppression de {{count}} paquets",
+  "Installed packages": "Paquets installés",
+  "Installed {{count}} packages_one": "{{count}} paquet installé",
+  "Installed {{count}} packages_many": "{{count}} paquets installés",
+  "Installed {{count}} packages_other": "{{count}} paquets installés",
+  "Removed packages": "Paquets supprimés",
+  "Removed {{count}} packages_one": "{{count}} paquet supprimé",
+  "Removed {{count}} packages_many": "{{count}} paquets supprimés",
+  "Removed {{count}} packages_other": "{{count}} paquets supprimés"
 }

@@ -1,11 +1,14 @@
 import type { ToolActivity } from '@/stores/session-store'
+import { cn } from '@/lib/utils'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
+import type { ToolExecutionPhase } from './tool-execution-phase'
 
 type WorkspaceManagePackagesActivityRowProps = {
   activity: ToolActivity
+  phase: ToolExecutionPhase
 }
 
 const ELAPSED_TICK_MS = 1_000
@@ -37,7 +40,8 @@ const formatElapsed = (elapsedMs: number): string => {
 // A renderer-only projection for the long-running package tool. It deliberately derives everything
 // from the existing activity so no progress chatter enters the tool result or Agent context.
 const WorkspaceManagePackagesActivityRow = ({
-  activity
+  activity,
+  phase
 }: WorkspaceManagePackagesActivityRowProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [now, setNow] = useState(() => Date.now())
@@ -46,11 +50,43 @@ const WorkspaceManagePackagesActivityRow = ({
     ? input.packages.filter((value): value is string => typeof value === 'string').length
     : 0
   const isRemoving = input?.operation === 'uninstall'
+  const isActive = phase === 'executing'
+  const isFailed = phase === 'failed'
+  const useActionLabel = isActive || isFailed
+  const elapsedUntil = isActive ? now : activity.updatedAt
+  const actionLabel = isRemoving
+    ? useActionLabel
+      ? count > 0
+        ? t('Removing {{count}} packages', {
+            count,
+            defaultValue_one: 'Removing {{count}} package'
+          })
+        : t('Removing packages')
+      : count > 0
+        ? t('Removed {{count}} packages', {
+            count,
+            defaultValue_one: 'Removed {{count}} package'
+          })
+        : t('Removed packages')
+    : useActionLabel
+      ? count > 0
+        ? t('Installing {{count}} packages', {
+            count,
+            defaultValue_one: 'Installing {{count}} package'
+          })
+        : t('Installing packages')
+      : count > 0
+        ? t('Installed {{count}} packages', {
+            count,
+            defaultValue_one: 'Installed {{count}} package'
+          })
+        : t('Installed packages')
 
   useEffect(() => {
+    if (!isActive) return undefined
     const timer = setInterval(() => setNow(Date.now()), ELAPSED_TICK_MS)
     return () => clearInterval(timer)
-  }, [])
+  }, [isActive])
 
   return (
     <div
@@ -61,47 +97,57 @@ const WorkspaceManagePackagesActivityRow = ({
     >
       <div className="flex min-h-[44px] w-full items-start gap-2 px-1.5 py-2 text-[13px] md:min-h-0 md:py-[5px]">
         <span className="mt-0.5 inline-flex shrink-0 md:mt-0">
-          <WorkspaceActivityIcon activity={activity} phase="executing" />
+          <WorkspaceActivityIcon activity={activity} phase={phase} />
         </span>
         <span className="min-w-0 flex-1 text-left">
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="font-medium text-text-000">
-              {isRemoving
-                ? count > 0
-                  ? t('Removing {{count}} packages', {
-                      count,
-                      defaultValue_one: 'Removing {{count}} package'
-                    })
-                  : t('Removing packages')
-                : count > 0
-                  ? t('Installing {{count}} packages', {
-                      count,
-                      defaultValue_one: 'Installing {{count}} package'
-                    })
-                  : t('Installing packages')}
-            </span>
+            <span className="font-medium text-text-000">{actionLabel}</span>
             <span className="hidden shrink-0 text-text-300 sm:inline">·</span>
             <span className="hidden min-w-0 truncate font-normal text-text-100 sm:inline">
               {MANAGE_PACKAGES_IDENTITY}
             </span>
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px]">
-            <span className="font-medium text-text-000">{t('Preparing the runtime')}</span>
-            <span className="tabular-nums text-text-100" aria-hidden="true">
-              {t('{{elapsed}} elapsed', { elapsed: formatElapsed(now - activity.createdAt) })}
+            <span className="font-medium text-text-000">
+              {isActive ? t('Preparing the runtime') : isFailed ? t('Failed') : t('Completed')}
             </span>
-            <span className="text-text-100">{t('This can take several minutes')}</span>
+            <span className="tabular-nums text-text-100" aria-hidden="true">
+              {t('{{elapsed}} elapsed', {
+                elapsed: formatElapsed(elapsedUntil - activity.createdAt)
+              })}
+            </span>
+            {isActive ? (
+              <span className="text-text-100">{t('This can take several minutes')}</span>
+            ) : null}
           </span>
         </span>
-        <span className="mt-0.5 shrink-0 rounded-full bg-status-info-surface px-1.5 py-0.5 text-[11px] font-medium text-status-info-foreground dark:bg-status-info-dark-surface dark:text-status-info-dark-foreground">
-          {t('Running')}
+        <span
+          className={cn(
+            'mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium',
+            isActive
+              ? 'bg-status-info-surface text-status-info-foreground dark:bg-status-info-dark-surface dark:text-status-info-dark-foreground'
+              : isFailed
+                ? 'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground'
+                : 'bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground'
+          )}
+        >
+          {isActive ? t('Running') : isFailed ? t('Failed') : t('Completed')}
         </span>
       </div>
       <div
         className="mx-2 ml-[30px] h-0.5 overflow-hidden rounded-full bg-border-200"
         aria-hidden="true"
       >
-        <div className="install-progress-indeterminate h-full w-1/3 rounded-full bg-primary motion-reduce:animate-none" />
+        <div
+          className={cn(
+            'h-full rounded-full',
+            isActive
+              ? 'install-progress-indeterminate w-1/3 bg-primary motion-reduce:animate-none'
+              : isFailed
+                ? 'w-full bg-status-failure-accent'
+                : 'w-full bg-status-success-accent'
+          )}
+        />
       </div>
     </div>
   )

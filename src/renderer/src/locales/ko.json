@@ -3268,5 +3268,9 @@
   "{{elapsed}} elapsed": "{{elapsed}} 경과",
   "This can take several minutes": "몇 분 정도 걸릴 수 있습니다",
   "Removing packages": "패키지 제거 중",
-  "Removing {{count}} packages_other": "패키지 {{count}}개 제거 중"
+  "Removing {{count}} packages_other": "패키지 {{count}}개 제거 중",
+  "Installed packages": "패키지 설치 완료",
+  "Installed {{count}} packages_other": "패키지 {{count}}개 설치 완료",
+  "Removed packages": "패키지 제거 완료",
+  "Removed {{count}} packages_other": "패키지 {{count}}개 제거 완료"
 }

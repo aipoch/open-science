@@ -3270,5 +3270,9 @@
   "{{elapsed}} elapsed": "已耗時 {{elapsed}}",
   "This can take several minutes": "可能需要幾分鐘",
   "Removing packages": "正在移除軟體套件",
-  "Removing {{count}} packages_other": "正在移除 {{count}} 個軟體套件"
+  "Removing {{count}} packages_other": "正在移除 {{count}} 個軟體套件",
+  "Installed packages": "已安裝軟體套件",
+  "Installed {{count}} packages_other": "已安裝 {{count}} 個軟體套件",
+  "Removed packages": "已移除軟體套件",
+  "Removed {{count}} packages_other": "已移除 {{count}} 個軟體套件"
 }

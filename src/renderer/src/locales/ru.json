@@ -3662,5 +3662,15 @@
   "Removing {{count}} packages_one": "Удаление {{count}} пакета",
   "Removing {{count}} packages_few": "Удаление {{count}} пакетов",
   "Removing {{count}} packages_many": "Удаление {{count}} пакетов",
-  "Removing {{count}} packages_other": "Удаление {{count}} пакета"
+  "Removing {{count}} packages_other": "Удаление {{count}} пакета",
+  "Installed packages": "Пакеты установлены",
+  "Installed {{count}} packages_one": "Установлен {{count}} пакет",
+  "Installed {{count}} packages_few": "Установлено {{count}} пакета",
+  "Installed {{count}} packages_many": "Установлено {{count}} пакетов",
+  "Installed {{count}} packages_other": "Установлено {{count}} пакета",
+  "Removed packages": "Пакеты удалены",
+  "Removed {{count}} packages_one": "Удалён {{count}} пакет",
+  "Removed {{count}} packages_few": "Удалено {{count}} пакета",
+  "Removed {{count}} packages_many": "Удалено {{count}} пакетов",
+  "Removed {{count}} packages_other": "Удалено {{count}} пакета"
 }

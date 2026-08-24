@@ -84,6 +84,43 @@ describe('WorkspaceActivityGroup i18n', () => {
     expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
   })
 
+  it('keeps the manage_packages presentation after the tool completes', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-completed',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-completed',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 46_000,
+                rawInput: { language: 'r', packages: ['ggplot2'] },
+                rawOutput: { ok: true, needsRestart: true, method: 'conda' }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{}}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="manage-packages-progress"]')).not.toBeNull()
+    expect(container.textContent).toContain('Installed 1 package')
+    expect(container.textContent).not.toContain('manage_packages()')
+  })
+
   it('anchors the group in view before toggling its height', () => {
     const onToggleGroup = vi.fn()
     act(() => {

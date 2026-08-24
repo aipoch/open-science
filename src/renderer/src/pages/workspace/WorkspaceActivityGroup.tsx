@@ -160,12 +160,13 @@ const WorkspaceActivityGroup = ({
                   // only); clicking the title reveals the code and output. A user toggle still wins.
                   const isRowExpanded = expansionOverrides[activity.id] ?? false
                   const showManagePackagesProgress =
-                    phase === 'executing' && isManagePackagesActivity(activity)
+                    isManagePackagesActivity(activity) &&
+                    (phase === 'executing' || phase === 'completed' || phase === 'failed')
 
                   return (
                     <div key={activity.id} className="w-full overflow-hidden">
                       {showManagePackagesProgress ? (
-                        <WorkspaceManagePackagesActivityRow activity={activity} />
+                        <WorkspaceManagePackagesActivityRow activity={activity} phase={phase} />
                       ) : searchDetails ? (
                         <WorkspaceWebSearchActivityRow
                           activity={activity}
