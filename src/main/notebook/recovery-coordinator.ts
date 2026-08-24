@@ -207,10 +207,11 @@ export class NotebookRecoveryCoordinator {
         if (!isDirectChild(envsRoot, targetPath)) {
           rejectUnsafe('Interrupted environment target is outside the managed runtime root.')
         }
-        if (!existsSync(targetPath)) return
-        const targetStat = await lstat(targetPath).catch(() =>
-          rejectUnsafe('Interrupted environment target could not be validated.')
-        )
+        const targetStat = await lstat(targetPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return undefined
+          return rejectUnsafe('Interrupted environment target could not be validated.')
+        })
+        if (!targetStat) return
         if (targetStat.isSymbolicLink()) {
           rejectUnsafe('Interrupted environment target must not be a symbolic link.')
         }

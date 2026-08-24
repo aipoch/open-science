@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -167,6 +167,28 @@ describe('NotebookRecoveryCoordinator', () => {
     expect(existsSync(sibling)).toBe(true)
     expect((await journal.pending()).map(({ operationId }) => operationId)).toEqual([
       'sibling-prefix'
+    ])
+    expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
+    expect(coordinator.isRuntimeIdBlocked(DEFAULT_PY_ENV)).toBe(true)
+  })
+
+  it('retains recovery evidence for a dangling managed prefix symlink', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    await mkdir(dirname(prefix), { recursive: true })
+    await symlink(
+      join(dirname(prefix), 'missing'),
+      prefix,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const journal = await beginInterruptedMaterialize(runtimeRoot, 'dangling-prefix', prefix)
+
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+    await coordinator.recover()
+
+    expect((await lstat(prefix)).isSymbolicLink()).toBe(true)
+    expect((await journal.pending()).map(({ operationId }) => operationId)).toEqual([
+      'dangling-prefix'
     ])
     expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
     expect(coordinator.isRuntimeIdBlocked(DEFAULT_PY_ENV)).toBe(true)
