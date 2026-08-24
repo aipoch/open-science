@@ -78,6 +78,8 @@ import { ComposerEditor } from './composer/ComposerEditor'
 import {
   appendArtifactMention,
   docToSkillIds,
+  pastedTextAttachmentDomId,
+  pastedTextPreviewName,
   type ComposerPastedTextNode
 } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
@@ -167,13 +169,12 @@ const composerCancelButtonClassName = cn(
 const composerContentClassName = 'mx-auto w-full max-w-4xl'
 const attachmentChipClassName =
   'flex h-9 min-w-0 max-w-[220px] items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-2 text-text-000'
-const pastedTextPreviewName = (text: string): string =>
-  `${Array.from(text.trim().replace(/\s+/gu, ' ')).slice(0, 20).join('')}...`
 const attachmentRemoveButtonClassName = cn(
   "relative flex size-6 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-2 [@media(pointer:coarse)]:before:content-['']",
   composerInteractiveTransitionClassName
 )
-/* Hallmark · component: reversible paste attachment · genre: modern-minimal · theme: existing
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4
+ * component: reversible paste attachment + inline locator · genre: modern-minimal · theme: existing
  * states: default · hover · focus · active · disabled · loading · error · success
  * slop: pass (1–58) · contrast: inherited semantic tokens · mobile: pass (34, 49–57)
  */
@@ -796,6 +797,7 @@ const ConversationPanel = ({
   const pastedTextNodes = draftDoc.nodes.filter(
     (node): node is ComposerPastedTextNode => node.type === 'pasted-text'
   )
+  const pastedTextById = new Map(pastedTextNodes.map((node) => [node.id, node]))
   const pastedTextByAttachmentId = new Map(
     pastedTextNodes.flatMap((node) =>
       node.attachmentId ? ([[node.attachmentId, node]] as const) : []
@@ -864,6 +866,30 @@ const ConversationPanel = ({
     if (transfer.pastedTextId) {
       setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
     }
+  }
+
+  const handleLocatePastedText = (pastedTextId: string): void => {
+    const attachment = document.getElementById(pastedTextAttachmentDomId(pastedTextId))
+    if (!attachment) return
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    attachment.scrollIntoView?.({
+      behavior: reducedMotion ? 'auto' : 'smooth',
+      block: 'nearest',
+      inline: 'nearest'
+    })
+    attachment.animate?.(
+      reducedMotion
+        ? [{ opacity: 1 }, { opacity: 0.72 }, { opacity: 1 }]
+        : [
+            { transform: 'scale(1)', opacity: 1 },
+            { transform: 'scale(1.012)', opacity: 0.72 },
+            { transform: 'scale(1)', opacity: 1 }
+          ],
+      {
+        duration: reducedMotion ? 140 : 480,
+        easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+      }
+    )
   }
 
   return (
@@ -1350,6 +1376,9 @@ const ConversationPanel = ({
                             return (
                               <div
                                 key={attachment.id}
+                                id={
+                                  pastedText ? pastedTextAttachmentDomId(pastedText.id) : undefined
+                                }
                                 data-pasted-text-attachment={pastedText ? 'true' : undefined}
                                 data-state={pastedText ? 'success' : undefined}
                                 className={attachmentChipClassName}
@@ -1422,19 +1451,36 @@ const ConversationPanel = ({
                                   : transfer.status === 'error'
                                     ? transfer.error || t('Upload failed')
                                     : `${percent}% of ${formatAttachmentSize(transfer.totalBytes)}`
+                            const pastedText = transfer.pastedTextId
+                              ? pastedTextById.get(transfer.pastedTextId)
+                              : undefined
 
                             return (
-                              <div key={transfer.transferId} className={attachmentChipClassName}>
+                              <div
+                                key={transfer.transferId}
+                                id={
+                                  pastedText ? pastedTextAttachmentDomId(pastedText.id) : undefined
+                                }
+                                data-pasted-text-attachment={pastedText ? 'true' : undefined}
+                                data-state={pastedText ? transfer.status : undefined}
+                                className={attachmentChipClassName}
+                              >
                                 <AttachmentIcon
                                   className="size-4 shrink-0 text-text-300"
                                   strokeWidth={2}
                                   aria-hidden="true"
                                 />
                                 <div className="min-w-0 flex-1">
-                                  <ExtensionPreservingFileName
-                                    name={transfer.name}
-                                    className="text-[12px] leading-4"
-                                  />
+                                  {pastedText ? (
+                                    <div className="truncate text-[12px] leading-4">
+                                      {pastedTextPreviewName(pastedText.text)}
+                                    </div>
+                                  ) : (
+                                    <ExtensionPreservingFileName
+                                      name={transfer.name}
+                                      className="text-[12px] leading-4"
+                                    />
+                                  )}
                                   <div
                                     className={`truncate text-[11px] leading-3 ${
                                       transfer.status === 'error' ? 'text-red-600' : 'text-text-300'
@@ -1489,6 +1535,7 @@ const ConversationPanel = ({
                           onSubmit={handleSubmit}
                           onPaste={handleMessageDraftPaste}
                           onLongTextPaste={onStagePastedText}
+                          onLocatePastedText={handleLocatePastedText}
                           onUndoPastedTextRemoval={onUndoPastedTextRemoval}
                           disabled={!canEditDraft}
                           placeholder={t(

@@ -17,7 +17,8 @@ import {
   updatePastedTextNode,
   type ComposerCaretPosition,
   type ComposerDoc,
-  type ComposerPastedTextNode
+  type ComposerPastedTextNode,
+  type ComposerPastedTextStage
 } from './composer/composer-doc'
 
 export type ComposerDraft = {
@@ -61,7 +62,7 @@ type WorkspaceComposerUploadController = {
   actions: {
     changeDoc: (doc: ComposerDoc) => void
     stageFiles: (files: File[]) => void
-    stagePastedText: (doc: ComposerDoc, node: ComposerPastedTextNode) => void
+    stagePastedText: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
     cancelTransfer: (transfer: ComposerUploadTransfer) => void
     removeAttachment: (attachment: UploadedAttachment) => void
     restorePastedText: (pastedTextId: string) => void
@@ -410,45 +411,60 @@ export const useWorkspaceComposerUploadController = ({
   )
 
   const stagePastedText = useCallback(
-    (nextDoc: ComposerDoc, node: ComposerPastedTextNode, preserveRemovalUndo = false): void => {
+    (nextDoc: ComposerDoc, staged: ComposerPastedTextStage, preserveRemovalUndo = false): void => {
       const draftKey = activeDraftKeyRef.current
       if (!preserveRemovalUndo) clearPastedTextUndo(draftKey)
       clearHistory(draftKey)
       markChanged(draftKey)
       const releasedSlots = reconcileRemovedPastedTextUploads(nextDoc, draftKey)
-      const file = new File([node.text], PASTED_TEXT_FILENAME, { type: 'text/plain' })
+      const nodes: readonly ComposerPastedTextNode[] = Array.isArray(staged)
+        ? staged
+        : [staged as ComposerPastedTextNode]
+      const records = nodes.map((node) => ({
+        node,
+        file: new File([node.text], PASTED_TEXT_FILENAME, { type: 'text/plain' })
+      }))
       const intake = canStageAttachments
         ? planComposerAttachmentIntake(
-            [file],
+            records.map(({ file }) => file),
             Math.max(0, attachments.length + transfers.length - releasedSlots)
           )
         : { accepted: [], error: null }
       setError(intake.error)
-      if (intake.accepted.length === 0) {
-        const restored = restorePastedTextNode(nextDoc, node.id)
-        setActiveDoc(restored?.doc ?? nextDoc)
-        if (restored) requestCaret(restored.caret)
-        return
-      }
-      const transfer: ComposerUploadTransfer = {
-        transferId: crypto.randomUUID(),
-        pastedTextId: node.id,
-        name: PASTED_TEXT_FILENAME,
-        mimeType: file.type,
-        receivedBytes: 0,
-        totalBytes: file.size,
-        status: 'queued'
-      }
-      setActiveDoc(
-        updatePastedTextNode(nextDoc, node.id, (current) => ({
+      const acceptedFiles = new Set(intake.accepted)
+      const pending: Array<{ file: File; transfer: ComposerUploadTransfer }> = []
+      let stagedDoc = nextDoc
+      let restoredCaret: ComposerCaretPosition | undefined
+      for (const { node, file } of records) {
+        if (!acceptedFiles.has(file)) {
+          const restored = restorePastedTextNode(stagedDoc, node.id)
+          stagedDoc = restored?.doc ?? stagedDoc
+          restoredCaret = restored?.caret ?? restoredCaret
+          continue
+        }
+        const transfer: ComposerUploadTransfer = {
+          transferId: crypto.randomUUID(),
+          pastedTextId: node.id,
+          name: PASTED_TEXT_FILENAME,
+          mimeType: file.type,
+          receivedBytes: 0,
+          totalBytes: file.size,
+          status: 'queued'
+        }
+        stagedDoc = updatePastedTextNode(stagedDoc, node.id, (current) => ({
           ...current,
           transferId: transfer.transferId,
           attachmentId: undefined
         }))
-      )
-      setTransfers((current) => [...current, transfer])
-      deletionCleanupRef.current[draftKey]?.attachmentTransfers.push(transfer)
-      runPendingUploads(draftKey, [{ file, transfer }])
+        pending.push({ file, transfer })
+      }
+      setActiveDoc(stagedDoc)
+      if (restoredCaret) requestCaret(restoredCaret)
+      if (pending.length === 0) return
+      const pendingTransfers = pending.map(({ transfer }) => transfer)
+      setTransfers((current) => [...current, ...pendingTransfers])
+      deletionCleanupRef.current[draftKey]?.attachmentTransfers.push(...pendingTransfers)
+      runPendingUploads(draftKey, pending)
     },
     [
       activeDraftKeyRef,

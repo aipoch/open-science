@@ -160,7 +160,7 @@ describe('long pasted text', () => {
     })
   })
 
-  it('round-trips an invisible anchor without putting the payload in the DOM', () => {
+  it('round-trips a compact visible marker without putting the payload in the DOM', () => {
     const root = document.createElement('div')
     const node = { type: 'pasted-text' as const, id: 'paste-1', text: 'private payload' }
     const anchor = createPastedTextAnchor(node)
@@ -170,7 +170,11 @@ describe('long pasted text', () => {
     expect(Array.from(anchor.attributes).map((attribute) => attribute.value)).not.toContain(
       node.text
     )
-    expect(anchor.className).toContain('h-0')
+    expect(anchor.textContent).toBe('…')
+    expect(anchor.getAttribute('role')).toBe('button')
+    expect(anchor.getAttribute('aria-controls')).toBe('composer-pasted-text-attachment-paste-1')
+    expect(anchor.className).toContain('h-5')
+    expect(anchor.className).not.toContain('h-0')
     expect(domToDoc(root)).toEqual({ nodes: [node] })
   })
 })

@@ -28,7 +28,8 @@ import {
   type ComposerCaretPosition,
   type ComposerDoc,
   type ComposerNode,
-  type ComposerPastedTextNode
+  type ComposerPastedTextNode,
+  type ComposerPastedTextStage
 } from './composer-doc'
 import { SkillMentionPopup } from './SkillMentionPopup'
 import { SessionMentionPopup, type PickedSession } from './SessionMentionPopup'
@@ -49,7 +50,8 @@ type ComposerEditorProps = {
   onDocChange: (doc: ComposerDoc) => void
   onSubmit: () => void
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
-  onLongTextPaste?: (doc: ComposerDoc, node: ComposerPastedTextNode) => void
+  onLongTextPaste?: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
+  onLocatePastedText?: (pastedTextId: string) => void
   onUndoPastedTextRemoval?: () => boolean
   disabled?: boolean
   placeholder: string
@@ -141,6 +143,133 @@ const insertPastedTextAtCaret = (node: ComposerPastedTextNode): void => {
   selection.addRange(range)
 }
 
+const PASTED_TEXT_CLIPBOARD_TYPE = 'application/x-open-science-composer-fragment'
+
+type ComposerClipboardNode = { type: 'text'; text: string } | { type: 'pasted-text'; text: string }
+
+type ComposerClipboardFragment = { version: 1; nodes: ComposerClipboardNode[] }
+
+const appendClipboardNode = (nodes: ComposerClipboardNode[], node: ComposerClipboardNode): void => {
+  if (node.text === '') return
+  const previous = nodes.at(-1)
+  if (node.type === 'text' && previous?.type === 'text') previous.text += node.text
+  else nodes.push(node)
+}
+
+const clipboardNodesFromSelection = (
+  root: HTMLElement,
+  doc: ComposerDoc,
+  eventTarget: EventTarget | null
+): ComposerClipboardNode[] | undefined => {
+  const pastedTextById = new Map(
+    doc.nodes
+      .filter((node): node is ComposerPastedTextNode => node.type === 'pasted-text')
+      .map((node) => [node.id, node])
+  )
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return undefined
+  const range = selection.getRangeAt(0)
+  if (!root.contains(range.commonAncestorContainer)) return undefined
+
+  let selectedNodes: Node[]
+  if (range.collapsed) {
+    const marker = (eventTarget as HTMLElement | null)?.closest?.(
+      '[data-composer-node-type="pasted-text"]'
+    )
+    if (!marker || !root.contains(marker)) return undefined
+    selectedNodes = [marker]
+  } else {
+    selectedNodes = Array.from(range.cloneContents().childNodes)
+  }
+
+  const nodes: ComposerClipboardNode[] = []
+  for (const selected of selectedNodes) {
+    if (selected.nodeType === Node.TEXT_NODE) {
+      appendClipboardNode(nodes, {
+        type: 'text',
+        text: (selected.textContent ?? '').replaceAll(PASTED_TEXT_CARET_MARKER, '')
+      })
+      continue
+    }
+    if (selected.nodeType !== Node.ELEMENT_NODE) continue
+    const element = selected as HTMLElement
+    if (element.getAttribute('data-composer-node-type') === 'pasted-text') {
+      const id = element.getAttribute('data-pasted-text-id')
+      const pastedText = id ? pastedTextById.get(id) : undefined
+      if (pastedText) appendClipboardNode(nodes, { type: 'pasted-text', text: pastedText.text })
+      continue
+    }
+    appendClipboardNode(nodes, {
+      type: 'text',
+      text: (element.textContent ?? '').replaceAll(PASTED_TEXT_CARET_MARKER, '')
+    })
+  }
+  return nodes.some((node) => node.type === 'pasted-text') ? nodes : undefined
+}
+
+const parseComposerClipboardFragment = (value: string): ComposerClipboardFragment | undefined => {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!parsed || typeof parsed !== 'object') return undefined
+    const candidate = parsed as { version?: unknown; nodes?: unknown }
+    if (candidate.version !== 1 || !Array.isArray(candidate.nodes)) return undefined
+    const nodes: ComposerClipboardNode[] = []
+    for (const node of candidate.nodes) {
+      if (!node || typeof node !== 'object') return undefined
+      const valueNode = node as { type?: unknown; text?: unknown }
+      if (
+        (valueNode.type !== 'text' && valueNode.type !== 'pasted-text') ||
+        typeof valueNode.text !== 'string'
+      ) {
+        return undefined
+      }
+      appendClipboardNode(nodes, { type: valueNode.type, text: valueNode.text })
+    }
+    if (!nodes.some((node) => node.type === 'pasted-text')) return undefined
+    return { version: 1, nodes }
+  } catch {
+    return undefined
+  }
+}
+
+const insertComposerClipboardFragmentAtCaret = (
+  fragment: ComposerClipboardFragment
+): ComposerPastedTextNode[] => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return []
+  const range = selection.getRangeAt(0)
+  range.deleteContents()
+  const inserted = document.createDocumentFragment()
+  const pastedTextNodes: ComposerPastedTextNode[] = []
+  for (const node of fragment.nodes) {
+    if (node.type === 'text') inserted.appendChild(document.createTextNode(node.text))
+    else {
+      const pastedText: ComposerPastedTextNode = {
+        type: 'pasted-text',
+        id: crypto.randomUUID(),
+        text: node.text
+      }
+      pastedTextNodes.push(pastedText)
+      inserted.appendChild(createPastedTextAnchor(pastedText))
+    }
+  }
+  const lastInserted = inserted.lastChild
+  range.insertNode(inserted)
+  if (!lastInserted) return []
+  if (lastInserted.nodeType === Node.ELEMENT_NODE) {
+    const caretHost = createPastedTextCaretHost()
+    lastInserted.after(caretHost)
+    range.setStart(caretHost, 0)
+  } else {
+    range.setStartAfter(lastInserted)
+  }
+  range.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  return pastedTextNodes
+}
+
 // A rendered mention chip element (skill or artifact) — any atomic, non-editable token span.
 const asAtomicChip = (node: Node | null): HTMLElement | null =>
   node?.nodeType === Node.ELEMENT_NODE &&
@@ -227,6 +356,7 @@ export const ComposerEditor = ({
   onSubmit,
   onPaste,
   onLongTextPaste,
+  onLocatePastedText,
   onUndoPastedTextRemoval,
   disabled = false,
   placeholder,
@@ -256,8 +386,10 @@ export const ComposerEditor = ({
   // At most one skill per message: once a chip exists, suppress the trigger so a further `/` does nothing.
   const hasSkill = doc.nodes.some((node) => node.type === 'skill')
   const hasVisibleContent = doc.nodes.some(
-    (node) => node.type !== 'pasted-text' && (node.type !== 'text' || node.text.trim() !== '')
+    (node) => node.type !== 'pasted-text' && (node.type !== 'text' || node.text !== '')
   )
+  const hasPastedText = doc.nodes.some((node) => node.type === 'pasted-text')
+  const showInlinePlaceholder = hasPastedText && !hasVisibleContent
 
   // The hook guards a null current internally; widen the element type for its generic ref option.
   const mention = useMentionTrigger({
@@ -325,6 +457,16 @@ export const ComposerEditor = ({
   // inert, then open through the mention preview item.
   const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     const root = editorRef.current
+    const pastedTextMarker = (event.target as HTMLElement).closest?.(
+      '[data-composer-node-type="pasted-text"]'
+    ) as HTMLElement | null
+    if (root && pastedTextMarker && root.contains(pastedTextMarker)) {
+      const pastedTextId = pastedTextMarker.getAttribute('data-pasted-text-id')
+      if (!pastedTextId) return
+      event.preventDefault()
+      onLocatePastedText?.(pastedTextId)
+      return
+    }
     const sessionChip = (event.target as HTMLElement).closest?.(
       '[data-mention-type="session"]'
     ) as HTMLElement | null
@@ -394,6 +536,21 @@ export const ComposerEditor = ({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const pastedTextMarker = (event.target as HTMLElement).closest?.(
+      '[data-composer-node-type="pasted-text"]'
+    ) as HTMLElement | null
+    if (
+      pastedTextMarker &&
+      (event.key === 'Enter' || event.key === ' ') &&
+      editorRef.current?.contains(pastedTextMarker)
+    ) {
+      const pastedTextId = pastedTextMarker.getAttribute('data-pasted-text-id')
+      if (pastedTextId) {
+        event.preventDefault()
+        onLocatePastedText?.(pastedTextId)
+      }
+      return
+    }
     if (disabled) return
     const primaryUndoModifier =
       (event.metaKey && !event.ctrlKey) || (event.ctrlKey && !event.metaKey)
@@ -457,6 +614,18 @@ export const ComposerEditor = ({
     // Forward first so the panel can route file attachments to its intake.
     onPaste(event)
     if (disabled || event.isDefaultPrevented()) return
+    const internalFragment = parseComposerClipboardFragment(
+      event.clipboardData?.getData(PASTED_TEXT_CLIPBOARD_TYPE) ?? ''
+    )
+    if (internalFragment && onLongTextPaste) {
+      event.preventDefault()
+      const pastedTextNodes = insertComposerClipboardFragmentAtCaret(internalFragment)
+      const root = editorRef.current
+      if (root && pastedTextNodes.length > 0) {
+        onLongTextPaste(domToDoc(root), pastedTextNodes)
+      }
+      return
+    }
     // For text, insert it as plain text ourselves to keep the contenteditable free of rich HTML.
     const text = event.clipboardData?.getData('text/plain') ?? ''
     if (text) {
@@ -475,6 +644,17 @@ export const ComposerEditor = ({
         emitDocFromDom()
       }
     }
+  }
+
+  const handleCopy = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    const root = editorRef.current
+    if (!root) return
+    const nodes = clipboardNodesFromSelection(root, doc, event.target)
+    if (!nodes) return
+    const fragment: ComposerClipboardFragment = { version: 1, nodes }
+    event.clipboardData.setData(PASTED_TEXT_CLIPBOARD_TYPE, JSON.stringify(fragment))
+    event.clipboardData.setData('text/plain', nodes.map((node) => node.text).join(''))
+    event.preventDefault()
   }
 
   // Replace the active `/query` token with a skill chip, then close the popup.
@@ -518,11 +698,18 @@ export const ComposerEditor = ({
         contentEditable={!disabled}
         suppressContentEditableWarning
         data-placeholder={placeholder}
-        className={cn(composerEditorClassName, className)}
+        data-inline-placeholder={showInlinePlaceholder ? 'true' : undefined}
+        className={cn(
+          composerEditorClassName,
+          showInlinePlaceholder &&
+            'after:pointer-events-none after:text-muted-foreground after:content-[attr(data-placeholder)]',
+          className
+        )}
         onInput={handleInput}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
+        onCopy={handleCopy}
         onCompositionStart={() => {
           composingRef.current = true
         }}
@@ -536,8 +723,7 @@ export const ComposerEditor = ({
       <span id={historyStatusId} role="status" aria-live="polite" className="sr-only">
         {historyStatus}
       </span>
-      {/* Attachment anchors are invisible, so they do not suppress the text-field placeholder. */}
-      {!hasVisibleContent ? (
+      {!hasVisibleContent && !hasPastedText ? (
         <div aria-hidden="true" className={composerPlaceholderClassName}>
           {placeholder}
         </div>

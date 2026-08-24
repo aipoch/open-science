@@ -1803,7 +1803,8 @@ describe('ConversationPanel composer intake', () => {
       }
     })
 
-    const card = container.querySelector('[data-pasted-text-attachment="true"]')
+    const card = container.querySelector<HTMLElement>('[data-pasted-text-attachment="true"]')
+    if (!card) throw new Error('pasted-text attachment not found')
     const restore = Array.from(card?.querySelectorAll('button') ?? []).find((button) =>
       button.textContent?.includes('Show in text field')
     )
@@ -1812,11 +1813,24 @@ describe('ConversationPanel composer intake', () => {
     )
 
     expect(card?.getAttribute('data-state')).toBe('success')
+    expect(card?.id).toBe('composer-pasted-text-attachment-paste-1')
     expect(card?.className).toContain('h-9')
     expect(card?.className).not.toContain('h-12')
     expect(card?.textContent).toContain('<div class="contents...')
     expect(card?.textContent).not.toContain('Pasted text.txt')
     expect(restore?.querySelector('span')?.className).toContain('whitespace-nowrap')
+    const scrollIntoView = vi.fn()
+    const animate = vi.fn()
+    Object.defineProperty(card, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    Object.defineProperty(card, 'animate', { configurable: true, value: animate })
+    const marker = getComposerEditor().querySelector<HTMLElement>('[data-pasted-text-id="paste-1"]')
+    act(() => marker?.click())
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'nearest'
+    })
+    expect(animate).toHaveBeenCalledOnce()
     act(() => restore?.click())
     expect(restorePastedText).toHaveBeenCalledWith('paste-1')
     act(() => remove?.click())

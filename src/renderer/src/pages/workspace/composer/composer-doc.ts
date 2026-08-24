@@ -27,6 +27,8 @@ export type ComposerPastedTextNode = {
   attachmentId?: string
 }
 
+export type ComposerPastedTextStage = ComposerPastedTextNode | readonly ComposerPastedTextNode[]
+
 export type ComposerNode =
   | { type: 'text'; text: string }
   | { type: 'skill'; id: string; name: string }
@@ -42,6 +44,12 @@ export const MAX_COMPOSER_SESSION_MENTIONS = MAX_SESSION_REFERENCES_PER_MESSAGE
 
 export const LONG_PASTE_CHARACTER_THRESHOLD = 10_000
 export const LONG_PASTE_LINE_THRESHOLD = 300
+
+export const pastedTextPreviewName = (text: string): string =>
+  `${Array.from(text.trim().replace(/\s+/gu, ' ')).slice(0, 20).join('')}...`
+
+export const pastedTextAttachmentDomId = (id: string): string =>
+  `composer-pasted-text-attachment-${id}`
 
 // Shared canonical empty document.
 export const emptyDoc: ComposerDoc = { nodes: [] }
@@ -455,16 +463,21 @@ export const createSessionChip = (node: ComposerSessionNode): HTMLSpanElement =>
   return span
 }
 
-// The anchor occupies a DOM boundary without rendering the large text or exposing it in an
-// attribute. A WeakMap lets domToDoc recover the live node while the span remains in the editor.
+// The compact marker preserves the pasted text's logical position without rendering the payload.
+// A WeakMap lets domToDoc recover the live node while only a short preview reaches the DOM.
 export const createPastedTextAnchor = (node: ComposerPastedTextNode): HTMLSpanElement => {
   const span = document.createElement('span')
   span.setAttribute('contenteditable', 'false')
-  span.setAttribute('aria-hidden', 'true')
+  span.setAttribute('role', 'button')
+  span.setAttribute('tabindex', '0')
+  span.setAttribute('aria-label', pastedTextPreviewName(node.text))
+  span.setAttribute('aria-controls', pastedTextAttachmentDomId(node.id))
   span.setAttribute('data-composer-node-type', PASTED_TEXT_NODE_TYPE)
   span.setAttribute('data-pasted-text-id', node.id)
-  span.className = 'inline-block h-0 w-0 overflow-hidden align-baseline select-none'
-  span.textContent = '\u2060'
+  span.className =
+    'mx-0.5 inline-flex h-5 min-w-5 cursor-pointer select-all items-center justify-center rounded border border-border-200 bg-bg-200 px-1 align-middle text-[11px] leading-none text-text-300 transition-[background-color,color,transform,opacity] duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:transition-none motion-reduce:active:translate-y-0'
+  span.title = pastedTextPreviewName(node.text)
+  span.textContent = '…'
   pastedTextByAnchor.set(span, { ...node })
   return span
 }

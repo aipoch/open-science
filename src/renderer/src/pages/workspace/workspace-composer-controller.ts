@@ -10,7 +10,7 @@ import {
   emptyDoc,
   type ComposerCaretPosition,
   type ComposerDoc,
-  type ComposerPastedTextNode
+  type ComposerPastedTextStage
 } from './composer/composer-doc'
 import { normalizeHistorySkills, type ComposerHistoryEntry } from './composer/composer-history'
 import {
@@ -70,7 +70,7 @@ type WorkspaceComposerController = {
     changeDoc: (doc: ComposerDoc) => void
     navigateHistory: (direction: 'previous' | 'next') => boolean
     stageFiles: (files: File[]) => void
-    stagePastedText: (doc: ComposerDoc, node: ComposerPastedTextNode) => void
+    stagePastedText: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
     cancelTransfer: (transfer: ComposerUploadTransfer) => void
     removeAttachment: (attachment: UploadedAttachment) => void
     restorePastedText: (pastedTextId: string) => void

@@ -9,7 +9,8 @@ import {
   emptyDoc,
   LONG_PASTE_CHARACTER_THRESHOLD,
   type ComposerDoc,
-  type ComposerPastedTextNode
+  type ComposerPastedTextNode,
+  type ComposerPastedTextStage
 } from './composer-doc'
 import {
   createInitialGrantedFoldersState,
@@ -207,7 +208,8 @@ type Overrides = Partial<{
   onDocChange: (doc: ComposerDoc) => void
   onSubmit: () => void
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
-  onLongTextPaste: (doc: ComposerDoc, node: ComposerPastedTextNode) => void
+  onLongTextPaste: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
+  onLocatePastedText: (pastedTextId: string) => void
   onUndoPastedTextRemoval: () => boolean
   disabled: boolean
   isHistoryBrowsing: boolean
@@ -228,6 +230,7 @@ const renderEditor = (overrides: Overrides = {}): void => {
         onSubmit={overrides.onSubmit ?? noop}
         onPaste={overrides.onPaste ?? noop}
         onLongTextPaste={overrides.onLongTextPaste}
+        onLocatePastedText={overrides.onLocatePastedText}
         onUndoPastedTextRemoval={overrides.onUndoPastedTextRemoval}
         disabled={overrides.disabled}
         placeholder="Ask anything"
@@ -297,7 +300,7 @@ describe('ComposerEditor', () => {
     expect(document.body.querySelector('[aria-hidden="true"]')).toBeNull()
   })
 
-  it('keeps the placeholder and a visible caret host when only a pasted-text anchor remains', () => {
+  it('keeps an inline placeholder and a visible caret host after a pasted-text marker', () => {
     renderEditor({ focusRequest: 'session-a' })
     const root = editor()
 
@@ -308,15 +311,30 @@ describe('ComposerEditor', () => {
       focusRequest: 'session-a'
     })
 
+    expect(root.getAttribute('data-inline-placeholder')).toBe('true')
+    expect(root.className).toContain('after:content-[attr(data-placeholder)]')
+    expect(root.querySelector('[data-pasted-text-id="paste-1"]')?.textContent).toBe('…')
     expect(
       Array.from(document.body.querySelectorAll('[aria-hidden="true"]')).some(
         (node) => node.textContent === 'Ask anything'
       )
-    ).toBe(true)
+    ).toBe(false)
     expect(document.activeElement).toBe(root)
     expect(window.getSelection()?.anchorNode?.nodeType).toBe(Node.TEXT_NODE)
     expect(window.getSelection()?.anchorNode?.textContent).toBe('\u2060')
     expect(window.getSelection()?.anchorOffset).toBe(0)
+
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'pasted-text', id: 'paste-1', text: 'payload', attachmentId: 'upload-1' },
+          { type: 'text', text: ' ' }
+        ]
+      },
+      focusRequest: 'session-a'
+    })
+    expect(root.getAttribute('data-inline-placeholder')).toBeNull()
+    expect(root.className).not.toContain('after:content-[attr(data-placeholder)]')
   })
 
   it('preserves the caret after a pasted-text anchor when upload metadata changes', () => {
@@ -346,6 +364,23 @@ describe('ComposerEditor', () => {
     expect(window.getSelection()?.anchorNode).toBe(root.childNodes[2])
     expect(window.getSelection()?.anchorOffset).toBe(0)
     expect(domToDoc(root).nodes[1]).toEqual({ ...pastedText, attachmentId: 'upload-1' })
+  })
+
+  it('locates the matching pasted-text attachment by pointer and keyboard', () => {
+    const onLocatePastedText = vi.fn()
+    renderEditor({
+      doc: { nodes: [{ type: 'pasted-text', id: 'paste-1', text: 'payload' }] },
+      onLocatePastedText
+    })
+    const marker = editor().querySelector<HTMLElement>('[data-pasted-text-id="paste-1"]')!
+
+    act(() => marker.click())
+    dispatchKey(marker, 'Enter')
+    dispatchKey(marker, ' ')
+
+    expect(onLocatePastedText).toHaveBeenNthCalledWith(1, 'paste-1')
+    expect(onLocatePastedText).toHaveBeenNthCalledWith(2, 'paste-1')
+    expect(onLocatePastedText).toHaveBeenNthCalledWith(3, 'paste-1')
   })
 
   it('refreshes an artifact chip when only its MIME type changes', () => {
@@ -585,6 +620,65 @@ describe('ComposerEditor', () => {
       nodes: [{ type: 'text', text: 'before ' }, node, { type: 'text', text: ' after' }]
     })
     expect(editor().textContent).not.toContain(payload)
+  })
+
+  it('copies pasted-text markers as fresh independent anchors when pasted in the composer', () => {
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'text', text: 'before ' },
+          { type: 'pasted-text', id: 'paste-a', text: 'alpha' },
+          { type: 'text', text: ' middle ' },
+          { type: 'pasted-text', id: 'paste-b', text: 'bravo' },
+          { type: 'text', text: ' after' }
+        ]
+      }
+    })
+    const range = document.createRange()
+    range.selectNodeContents(editor())
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    const clipboard = new Map<string, string>()
+    const copy = new Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(copy, 'clipboardData', {
+      value: { setData: (type: string, value: string) => clipboard.set(type, value) }
+    })
+
+    act(() => editor().dispatchEvent(copy))
+
+    expect(copy.defaultPrevented).toBe(true)
+    expect(clipboard.get('text/plain')).toBe('before alpha middle bravo after')
+    expect(clipboard.get('application/x-open-science-composer-fragment')).not.toContain('paste-a')
+
+    const onLongTextPaste = vi.fn()
+    renderEditor({ onLongTextPaste })
+    setCaret(editor(), 0)
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) => clipboard.get(type) ?? ''
+      }
+    })
+    act(() => editor().dispatchEvent(paste))
+
+    const [nextDoc, staged] = onLongTextPaste.mock.calls[0] as [
+      ComposerDoc,
+      ComposerPastedTextNode[]
+    ]
+    expect(staged).toHaveLength(2)
+    expect(staged.map((node) => node.id)).not.toContain('paste-a')
+    expect(staged.map((node) => node.id)).not.toContain('paste-b')
+    expect(staged.map((node) => node.text)).toEqual(['alpha', 'bravo'])
+    expect(nextDoc.nodes).toEqual([
+      { type: 'text', text: 'before ' },
+      staged[0],
+      { type: 'text', text: ' middle ' },
+      staged[1],
+      { type: 'text', text: ' after' }
+    ])
+    expect(editor().textContent).not.toContain('alpha')
+    expect(editor().textContent).not.toContain('bravo')
   })
 
   it('uses custom Cmd+Z only while a pasted-text removal is undoable', () => {

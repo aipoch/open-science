@@ -154,6 +154,66 @@ describe('workspace composer controller', () => {
     expect(docToText(hook.result.current.view.doc)).toBe('before  after')
   })
 
+  it('stages copied pasted-text anchors as one independent upload batch', async () => {
+    const stageLocalFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'upload-a',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/a.txt',
+        mimeType: 'text/plain',
+        size: 5
+      })
+      .mockResolvedValueOnce({
+        id: 'upload-b',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/b.txt',
+        mimeType: 'text/plain',
+        size: 5
+      })
+    const hook = renderController(uploads(stageLocalFile))
+    mounted.push(hook)
+    const pasteA: ComposerPastedTextNode = { type: 'pasted-text', id: 'copy-a', text: 'alpha' }
+    const pasteB: ComposerPastedTextNode = { type: 'pasted-text', id: 'copy-b', text: 'bravo' }
+    const doc: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'before ' },
+        pasteA,
+        { type: 'text', text: ' middle ' },
+        pasteB,
+        { type: 'text', text: ' after' }
+      ]
+    }
+
+    act(() => hook.result.current.actions.stagePastedText(doc, [pasteA, pasteB]))
+
+    expect(hook.result.current.view.transfers).toHaveLength(2)
+    expect(hook.result.current.view.transfers.map((transfer) => transfer.pastedTextId)).toEqual([
+      'copy-a',
+      'copy-b'
+    ])
+
+    await flushAsyncWork()
+
+    expect(stageLocalFile).toHaveBeenCalledTimes(2)
+    expect(hook.result.current.view.attachments.map((attachment) => attachment.id)).toEqual([
+      'upload-a',
+      'upload-b'
+    ])
+    expect(
+      hook.result.current.view.doc.nodes
+        .filter((node): node is ComposerPastedTextNode => node.type === 'pasted-text')
+        .map((node) => ({ id: node.id, attachmentId: node.attachmentId }))
+    ).toEqual([
+      { id: 'copy-a', attachmentId: 'upload-a' },
+      { id: 'copy-b', attachmentId: 'upload-b' }
+    ])
+  })
+
   it('restores staged pasted text at its exact position and Cmd+Z converts it back', async () => {
     const uploadApi = uploads(
       vi
