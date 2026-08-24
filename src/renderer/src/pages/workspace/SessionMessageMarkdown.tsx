@@ -135,6 +135,7 @@ const SessionMessageMarkdown = memo(
         a: ({
           href,
           className,
+          title,
           children,
           'data-incomplete': dataIncomplete
         }: SessionMessageLinkComponentProps) => {
@@ -144,6 +145,7 @@ const SessionMessageMarkdown = memo(
               <SessionMessageLink
                 href={href}
                 className={className}
+                title={title}
                 data-incomplete={dataIncomplete}
               >
                 {children}

@@ -187,7 +187,7 @@ const restoredToSlice = (restored: RestoredPreviewSlice, projectId: string): Pre
 // Persistence owns file tabs and the Session-scoped Subagents selection. Other tool tabs are
 // reconstructed by their runtime owners and must survive a durable snapshot refresh.
 const isDurablePreviewItem = (item: PreviewItem): boolean =>
-  item.type === 'file' || item.toolKind === 'subagents'
+  item.type === 'file' || (item.type === 'tool' && item.toolKind === 'subagents')
 
 const mergeRestoredPreviewSlice = (
   current: PreviewSlice,
