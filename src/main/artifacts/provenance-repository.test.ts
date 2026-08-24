@@ -1623,7 +1623,13 @@ describe('artifact provenance repository', () => {
           versionStatus: 'known',
           ecosystem: 'python',
           evidenceSources: ['python-importlib-metadata', 'python-kernel-modules'],
-          loadedState: 'loaded'
+          loadedState: 'loaded',
+          source: {
+            type: 'github',
+            repository: 'numpy/numpy',
+            ref: 'v2.2.0',
+            commit: 'abc123'
+          }
         }
       ],
       // Persisted manifests from before structured installer evidence contain only these five
@@ -1653,7 +1659,13 @@ describe('artifact provenance repository', () => {
               relationship: 'requested',
               change: 'updated',
               beforeVersion: '2.1.0',
-              afterVersion: '2.2.0'
+              afterVersion: '2.2.0',
+              source: {
+                type: 'github',
+                repository: 'numpy/numpy',
+                ref: 'v2.2.0',
+                commit: 'abc123'
+              }
             }
           ]
         }
@@ -1883,7 +1895,13 @@ describe('artifact provenance repository', () => {
           expect.objectContaining({
             name: 'numpy',
             version: '2.2.0',
-            loaded_state: 'loaded'
+            loaded_state: 'loaded',
+            source: {
+              type: 'github',
+              repository: 'numpy/numpy',
+              ref: 'v2.2.0',
+              commit: 'abc123'
+            }
           })
         ],
         op_log: [
@@ -1902,7 +1920,13 @@ describe('artifact provenance repository', () => {
                 relationship: 'requested',
                 change: 'updated',
                 before_version: '2.1.0',
-                after_version: '2.2.0'
+                after_version: '2.2.0',
+                source: {
+                  type: 'github',
+                  repository: 'numpy/numpy',
+                  ref: 'v2.2.0',
+                  commit: 'abc123'
+                }
               })
             ]
           })

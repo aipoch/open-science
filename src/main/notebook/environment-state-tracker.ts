@@ -285,9 +285,13 @@ const packageIdentityKey = (pkg: NotebookEnvironmentPackage): string =>
 
 const requestedPackageKey = (value: string): string => packageKey(value).replace(/[-_.]+/gu, '-')
 
-const githubRepositoryFromSpec = (value: string): string | undefined => {
-  const repository = value.trim().split('@')[0]
-  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) ? packageKey(repository) : undefined
+const githubSourceFromSpec = (value: string): { repository: string; ref?: string } | undefined => {
+  const spec = value.trim()
+  const separator = spec.lastIndexOf('@')
+  const repository = separator > 0 ? spec.slice(0, separator) : spec
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) return undefined
+  const ref = separator > 0 ? spec.slice(separator + 1) : undefined
+  return { repository: packageKey(repository), ...(ref ? { ref } : {}) }
 }
 
 const packageNameFromSpec = (value: string, language: NotebookLanguage): string | undefined => {
@@ -333,11 +337,13 @@ const verifyPackageMutation = (
   )
   const unsatisfiedPackages = outcome.packages.filter((spec) => {
     const name = packageNameFromSpec(spec, target.language)
-    const githubRepository = githubRepositoryFromSpec(spec)
-    if (githubRepository) {
+    const githubSource = githubSourceFromSpec(spec)
+    if (githubSource) {
       return !packages.some(
         (pkg) =>
-          pkg.source?.type === 'github' && packageKey(pkg.source.repository) === githubRepository
+          pkg.source?.type === 'github' &&
+          packageKey(pkg.source.repository) === githubSource.repository &&
+          (githubSource.ref === undefined || pkg.source.ref === githubSource.ref)
       )
     }
     if (!name) return false
@@ -362,15 +368,15 @@ const packageChangesForOperation = ({
 }): NotebookEnvironmentPackageChange[] => {
   const requestedKeys = new Set(
     requestedPackages.flatMap((spec) => {
-      if (githubRepositoryFromSpec(spec)) return []
+      if (githubSourceFromSpec(spec)) return []
       const name = packageNameFromSpec(spec, language)
       return name ? [requestedPackageKey(name)] : []
     })
   )
   const requestedGithubRepositories = new Set(
     requestedPackages.flatMap((spec) => {
-      const repository = githubRepositoryFromSpec(spec)
-      return repository ? [repository] : []
+      const source = githubSourceFromSpec(spec)
+      return source ? [source.repository] : []
     })
   )
   const relationshipFor = (

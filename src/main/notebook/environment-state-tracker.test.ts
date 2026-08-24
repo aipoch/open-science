@@ -348,6 +348,48 @@ describe('EnvironmentStateTracker', () => {
     })
   })
 
+  it('rejects a GitHub package when the installed source has a different requested ref', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-github-ref-mismatch-'))
+    const installedPackage = {
+      name: 'ggplot2',
+      version: '4.0.0.9000',
+      versionStatus: 'known' as const,
+      ecosystem: 'r' as const,
+      evidenceSources: ['r-installed-packages' as const],
+      source: {
+        type: 'github' as const,
+        repository: 'tidyverse/ggplot2',
+        ref: 'release'
+      }
+    }
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi
+        .fn()
+        .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [] })
+        .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [installedPackage] }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = { ...target, language: 'r' as const, command: '/opt/r/bin/Rscript' }
+
+    await tracker.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-github-ref-mismatch',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@main']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+      operationId: 'operation-github-ref-mismatch',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@main'],
+      result: 'success'
+    })
+
+    expect(verification).toMatchObject({
+      result: 'failure',
+      unsatisfiedPackages: ['tidyverse/ggplot2@main']
+    })
+  })
+
   it('captures a baseline before the first package mutation so uninstalls have a verified change', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-first-uninstall-'))
     const inspectInstalled = vi

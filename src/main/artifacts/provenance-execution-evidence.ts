@@ -301,7 +301,8 @@ const environmentPackageEvidence = (
   ...(pkg.libraryRank !== undefined ? { library_rank: pkg.libraryRank } : {}),
   ...(pkg.libraryScope ? { library_scope: pkg.libraryScope } : {}),
   ...(pkg.builtForRuntime ? { built_for_runtime: pkg.builtForRuntime } : {}),
-  ...(pkg.priority ? { priority: pkg.priority } : {})
+  ...(pkg.priority ? { priority: pkg.priority } : {}),
+  ...(pkg.source ? { source: pkg.source } : {})
 })
 
 const environmentEvidence = (
@@ -357,7 +358,8 @@ const environmentEvidence = (
                   ...(change.beforeVersion ? { before_version: change.beforeVersion } : {}),
                   ...(change.afterVersion ? { after_version: change.afterVersion } : {}),
                   ...(change.libraryRank !== undefined ? { library_rank: change.libraryRank } : {}),
-                  ...(change.libraryScope ? { library_scope: change.libraryScope } : {})
+                  ...(change.libraryScope ? { library_scope: change.libraryScope } : {}),
+                  ...(change.source ? { source: change.source } : {})
                 }))
               }
             : {})

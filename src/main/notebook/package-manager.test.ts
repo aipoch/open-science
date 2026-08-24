@@ -639,6 +639,18 @@ describe('installPackages', () => {
     expect(calls).toHaveLength(0)
   })
 
+  it('does not run an R source installer when the protected r-base identity is unavailable', async () => {
+    const { spawn, calls } = scriptedSpawn([])
+    const result = await installPackages(
+      { language: 'r', packages: ['DESeq2'], installer: 'biocmanager' },
+      { spawn, ...base, readCondaPackageIdentity: () => undefined }
+    )
+
+    expect(result).toMatchObject({ ok: false, method: 'biocmanager', attempts: [] })
+    expect(result.error).toContain('Cannot verify the installed r-base version and build')
+    expect(calls).toHaveLength(0)
+  })
+
   it('points bioconda at the same mirror host when the conda channel is a mirror URL', async () => {
     const { spawn, calls } = scriptedSpawn([safeRRemovePlan, ok])
     await installPackages(

@@ -1527,6 +1527,25 @@ export async function installPackages(
       }
     }
 
+    const installedRBaseIdentity = (deps.readCondaPackageIdentity ?? readCondaPackageIdentity)(
+      prefix,
+      'r-base'
+    )
+    if (!hasVerifiableCondaBuild(installedRBaseIdentity)) {
+      return {
+        ok: false,
+        needsRestart: false,
+        log: '',
+        method: req.installer,
+        attempts: [],
+        fallbackUsed: false,
+        prefix,
+        error:
+          `Cannot verify the installed r-base version and build in ${prefix}; repair this R runtime ` +
+          'before installing packages. Open Science will not run an incompletely pinned R package transaction.'
+      }
+    }
+
     const rLib = envRLibrary(prefix)
     const cran = deps.cranMirror ?? DEFAULT_CRAN_MIRROR
     const vector = req.packages.map((pkg) => JSON.stringify(pkg.trim())).join(', ')
