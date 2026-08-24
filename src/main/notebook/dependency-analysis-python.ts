@@ -1406,6 +1406,12 @@ class FunctionEffectVisitor extends NodeVisitor {
   visit_DictComp = this.visit_ListComp
   visit_GeneratorExp = this.visit_ListComp
 
+  visit_Return(node: PyNode): void {
+    const value = isPyNode(node.value) ? node.value : undefined
+    if (value && value.type !== 'Constant') this.unknown(true)
+    this.genericVisit(node)
+  }
+
   visitImplicitEffect(node: PyNode): void {
     this.unknown()
     this.genericVisit(node)
@@ -2030,7 +2036,7 @@ class Analyzer extends NodeVisitor {
         name: callableType,
         kind: 'python-class',
         fields: [],
-        methods: [{ name: '__call__', effect: 'unknown', unknownScope: 'receiver' }]
+        methods: [{ name: '__call__', effect: 'unknown', unknownScope: 'namespace' }]
       })
     }
     this.typeBindings.push({ target, typeName: callableType, argumentNames: [] })

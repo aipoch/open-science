@@ -143,7 +143,7 @@ describe('reported Python call tracking regressions', () => {
     })
   })
 
-  it('scopes unknown imported call effects to their arguments', async () => {
+  it('keeps unknown imported call effects namespace-scoped', async () => {
     const projection = await project([
       'from custom import transform\nsource = []\nresult = transform(source)',
       'unrelated = 1'
@@ -151,9 +151,12 @@ describe('reported Python call tracking regressions', () => {
 
     expect(projection.stalenessByRunId['run-1']).toMatchObject({
       state: 'unknown',
-      reasons: expect.arrayContaining(['scoped-opaque-call'])
+      reasons: expect.arrayContaining(['dynamic-namespace'])
     })
-    expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['dynamic-namespace'])
+    })
   })
 
   it('tracks captured names mutated by a local function', async () => {
@@ -166,6 +169,19 @@ describe('reported Python call tracking regressions', () => {
     expect(projection.stalenessByRunId['run-2']).toMatchObject({
       state: 'unknown',
       reasons: expect.arrayContaining(['opaque-mutation'])
+    })
+  })
+
+  it('keeps mutable return aliases from local functions conservative', async () => {
+    const projection = await project([
+      'items = []\ndef expose():\n    return items\nout = expose()',
+      'snapshot = len(items)',
+      'out.append(1)'
+    ])
+
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['dynamic-namespace'])
     })
   })
 
@@ -225,7 +241,7 @@ describe('reported Python call tracking regressions', () => {
     })
   })
 
-  it('recognizes callables assigned from imported module attributes', async () => {
+  it('keeps unmodeled callables assigned from module attributes conservative', async () => {
     const projection = await project([
       'import matplotlib.pyplot as plt\ncmap = plt.cm.Set2\ncolor = cmap(0)',
       'unrelated = 1'
@@ -235,7 +251,10 @@ describe('reported Python call tracking regressions', () => {
       state: 'unknown',
       reasons: expect.arrayContaining(['scoped-opaque-call'])
     })
-    expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['dynamic-namespace'])
+    })
   })
 
   it('keeps unknown members of from-import bindings scoped', async () => {
