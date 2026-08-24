@@ -52,6 +52,16 @@ function redactUrl(url: string): string {
   }
 }
 
+class ConnectorRequestTimeoutError extends Error {
+  override readonly name = 'ConnectorRequestTimeoutError'
+
+  constructor(url: string, timeoutMs: number, attempts: number) {
+    super(
+      `Connector request timed out after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} of ${timeoutMs}ms for ${redactUrl(url)}`
+    )
+  }
+}
+
 // Generic executor shared by every connector: declarative { url, parse } or a run() escape hatch.
 export class ParserEngine {
   private readonly fetchImpl: typeof fetch
@@ -120,10 +130,14 @@ export class ParserEngine {
           })
         } catch (err) {
           if (signal?.aborted) throw err
+          const timedOut = controller.signal.aborted
           // Network failure or timeout abort — retry a bounded number of times, then give up.
           if (attempt < this.retries) {
             await sleep(nextDelay(attempt, null), signal)
             continue
+          }
+          if (timedOut) {
+            throw new ConnectorRequestTimeoutError(url, this.timeoutMs, attempt + 1)
           }
           throw err
         } finally {

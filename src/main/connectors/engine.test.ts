@@ -92,6 +92,58 @@ describe('ParserEngine declarative path', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
+  it('reports the request and retry budget when every attempt times out', async () => {
+    const fetchImpl = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+        new Promise((_, reject) => {
+          const requestSignal = init?.signal
+          requestSignal?.addEventListener('abort', () => reject(requestSignal.reason), {
+            once: true
+          })
+        })
+    )
+    const engine = new ParserEngine({
+      fetchImpl,
+      timeoutMs: 5,
+      retries: 2,
+      retryBackoffMs: 0
+    })
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      url: () => 'https://x.test/data',
+      parse: (raw) => raw
+    }
+
+    await expect(engine.call(desc, {}, {})).rejects.toMatchObject({
+      name: 'ConnectorRequestTimeoutError',
+      message: 'Connector request timed out after 3 attempts of 5ms for https://x.test/data'
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
+  it('disarms the request timeout once the upstream response arrives', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => new Promise((resolve) => setTimeout(() => resolve({ value: 9 }), 20))
+    } as Response)
+    const engine = new ParserEngine({ fetchImpl, timeoutMs: 5, retries: 2, retryBackoffMs: 0 })
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      url: () => 'https://x.test/data',
+      parse: (raw) => (raw as { value: number }).value
+    }
+
+    await expect(engine.call(desc, {}, {})).resolves.toBe(9)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
   it('aborts an active request without retrying it', async () => {
     let observedSignal: AbortSignal | undefined
     const fetchImpl = vi.fn(
