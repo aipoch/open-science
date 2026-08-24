@@ -1139,11 +1139,14 @@ describe('compactNotebookExecutionResult', () => {
   })
 
   it('applies the compact projection and global budget to every execution tool', () => {
-    for (const name of ['notebook_execute', 'repl_execute', 'bash_execute']) {
+    for (const name of ['notebook_execute', 'bash_execute']) {
       const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === name)
       expect(tool?.mapResult).toBe(compactNotebookExecutionResult)
       expect(tool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
     }
+    const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
+    expect(replTool?.mapResult).not.toBe(compactNotebookExecutionResult)
+    expect(replTool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
   })
 
   it('keeps diagnostic streams once and removes duplicated structured stream outputs', () => {
@@ -1218,6 +1221,57 @@ describe('compactNotebookExecutionResult', () => {
 
     expect(compact.stdout).toBe(stdout)
     expect(compact.truncated).toBeUndefined()
+  })
+
+  it('omits internal REPL stack frames from the agent-facing error', () => {
+    const traceback = [
+      'ReferenceError: en2 is not defined',
+      '    at <repl>:5:21',
+      '    at Script.runInContext (node:vm:149:12)',
+      '    at Object.runInContext (node:vm:301:6)',
+      '    at run (/Users/alice/open-science/resources/notebook/repl_loop.js:3527:28)'
+    ].join('\n')
+
+    const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
+    const summary = runSummary({ traceback })
+    const raw = {
+      ...summary,
+      status: 'failed',
+      outputs: [
+        {
+          type: 'error',
+          message: 'ReferenceError: en2 is not defined',
+          traceback
+        }
+      ]
+    }
+    const compact = replTool?.mapResult?.(raw, {}) as {
+      traceback: string
+      outputs: Array<Record<string, unknown>>
+    }
+
+    expect(compact.traceback).toBe('ReferenceError: en2 is not defined')
+    expect(compact.outputs).toEqual([
+      { type: 'error', message: 'ReferenceError: en2 is not defined' }
+    ])
+    expect(JSON.stringify(compact)).not.toContain('<repl>')
+    expect(JSON.stringify(compact)).not.toContain('node:vm')
+    expect(JSON.stringify(compact)).not.toContain('repl_loop.js')
+    expect((summary.text as { traceback: string }).traceback).toBe(traceback)
+    expect(raw.outputs[0].traceback).toBe(traceback)
+  })
+
+  it('keeps Python tracebacks intact for the agent', () => {
+    const traceback =
+      'Traceback (most recent call last):\n  File "analysis.py", line 2\nValueError: boom'
+
+    const compact = compactNotebookExecutionResult({
+      ...runSummary({ traceback }),
+      kernelKind: 'python',
+      status: 'failed'
+    }) as { traceback: string }
+
+    expect(compact.traceback).toBe(traceback)
   })
 
   it('preserves producer truncation when no additional MCP clipping is needed', () => {

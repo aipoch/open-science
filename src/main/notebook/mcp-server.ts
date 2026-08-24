@@ -654,6 +654,34 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
   }
 }
 
+// Internal VM frames remain in the durable run but do not help the Agent repair its REPL request.
+const compactReplExecutionResult = (raw: unknown): unknown => {
+  const record = asRecord(raw)
+  if (!record) return raw
+
+  const conciseTraceback = (value: string): string => value.split(/\r?\n/, 1)[0] || value
+  const text = asRecord(record.text)
+  const outputs = Array.isArray(record.outputs)
+    ? record.outputs.map((value) => {
+        const output = asRecord(value)
+        return output?.type === 'error' && typeof output.traceback === 'string'
+          ? { ...output, traceback: conciseTraceback(output.traceback) }
+          : value
+      })
+    : record.outputs
+
+  return compactNotebookExecutionResult({
+    ...record,
+    ...(typeof record.traceback === 'string'
+      ? { traceback: conciseTraceback(record.traceback) }
+      : {}),
+    ...(text && typeof text.traceback === 'string'
+      ? { text: { ...text, traceback: conciseTraceback(text.traceback) } }
+      : {}),
+    ...(Array.isArray(record.outputs) ? { outputs } : {})
+  })
+}
+
 const compactStateRun = (
   value: unknown,
   includeOutputPreview: boolean,
@@ -1128,7 +1156,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: REPL_EXECUTE_DOC,
     method: 'executeControl',
     inputSchema: replExecuteToolSchema,
-    mapResult: compactNotebookExecutionResult,
+    mapResult: compactReplExecutionResult,
     includeViewImages: true,
     resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
     progressMessage: 'Control-plane REPL execution is still running.'
