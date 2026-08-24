@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
-import { DEFAULT_PY_ENV, envPrefix } from './runtime-paths'
+import { DEFAULT_PY_ENV, envPrefix, pythonBin } from './runtime-paths'
 
 let root: string | undefined
 
@@ -20,6 +20,23 @@ afterEach(async () => {
 const createRuntimeRoot = async (): Promise<string> => {
   root = await mkdtemp(join(tmpdir(), 'open-science-notebook-recovery-'))
   return join(root, 'runtime')
+}
+
+const beginInterruptedMaterialize = async (
+  runtimeRoot: string,
+  operationId: string,
+  targetPath: string
+): Promise<RuntimeOperationJournal> => {
+  const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+  await journal.begin({
+    operationId,
+    kind: 'materialize',
+    runtimeId: DEFAULT_PY_ENV,
+    phase: 'create-python',
+    startedAt: 100,
+    targetPath
+  })
+  return journal
 }
 
 describe('NotebookRecoveryCoordinator', () => {
@@ -62,15 +79,7 @@ describe('NotebookRecoveryCoordinator', () => {
     const runtimeRoot = await createRuntimeRoot()
     const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
     await mkdir(join(prefix, 'conda-meta'), { recursive: true })
-    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
-    await journal.begin({
-      operationId: 'partial-python',
-      kind: 'materialize',
-      runtimeId: DEFAULT_PY_ENV,
-      phase: 'create-python',
-      startedAt: 100,
-      targetPath: prefix
-    })
+    const journal = await beginInterruptedMaterialize(runtimeRoot, 'partial-python', prefix)
 
     await new NotebookRecoveryCoordinator(runtimeRoot).recover()
 
@@ -78,6 +87,45 @@ describe('NotebookRecoveryCoordinator', () => {
       prefixExists: false,
       pending: []
     })
+  })
+
+  it('retains recovery evidence without touching a journal target outside managed envs', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const outside = join(dirname(runtimeRoot), 'outside')
+    await mkdir(join(outside, 'conda-meta'), { recursive: true })
+    const journal = await beginInterruptedMaterialize(runtimeRoot, 'outside-target', outside)
+
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+    await coordinator.recover()
+
+    expect(existsSync(outside)).toBe(true)
+    expect((await journal.pending()).map(({ operationId }) => operationId)).toEqual([
+      'outside-target'
+    ])
+    expect(coordinator.isPrefixBlocked(outside)).toBe(true)
+    expect(coordinator.isRuntimeIdBlocked(DEFAULT_PY_ENV)).toBe(true)
+  })
+
+  it('retains recovery evidence when a managed prefix resolves outside the env root', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const outside = join(dirname(runtimeRoot), 'outside')
+    await mkdir(join(outside, 'conda-meta'), { recursive: true })
+    await mkdir(dirname(pythonBin(outside)), { recursive: true })
+    await writeFile(pythonBin(outside), 'not an interpreter')
+    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    await mkdir(dirname(prefix), { recursive: true })
+    await symlink(outside, prefix, process.platform === 'win32' ? 'junction' : 'dir')
+    const journal = await beginInterruptedMaterialize(runtimeRoot, 'escaping-prefix', prefix)
+
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+    await coordinator.recover()
+
+    expect(existsSync(prefix)).toBe(true)
+    expect((await journal.pending()).map(({ operationId }) => operationId)).toEqual([
+      'escaping-prefix'
+    ])
+    expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
+    expect(coordinator.isRuntimeIdBlocked(DEFAULT_PY_ENV)).toBe(true)
   })
 
   it('fails closed after disposal even if reset commands clear known blocks', async () => {

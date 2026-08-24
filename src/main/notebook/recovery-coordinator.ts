@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { realpath, rm } from 'node:fs/promises'
+import { isAbsolute, join, relative, sep } from 'node:path'
 
 import {
   operationJournalPath,
@@ -12,6 +12,14 @@ import { defaultOperationChildLiveness, reconcileInterruptedOperations } from '.
 import { verifyExecutable } from './provisioner-runtime'
 import { addRepairRequired, pythonBin, rBin } from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+
+const isPathInside = (root: string, candidate: string): boolean => {
+  const nested = relative(root, candidate)
+  return nested !== '' && !isAbsolute(nested) && nested !== '..' && !nested.startsWith(`..${sep}`)
+}
+
+const isDirectChild = (root: string, candidate: string): boolean =>
+  isPathInside(root, candidate) && !relative(root, candidate).includes(sep)
 
 export type NotebookRecoveryReadiness =
   'not-started' | 'recovering' | 'ready' | 'failed' | 'disposed'
@@ -188,19 +196,41 @@ export class NotebookRecoveryCoordinator {
         if (record.targetPath) await rm(record.targetPath, { recursive: true, force: true })
       },
       verifyOrRebuildEnv: async (record) => {
-        if (!record.targetPath || !existsSync(record.targetPath)) return
-        const bin = [pythonBin(record.targetPath), rBin(record.targetPath)].find((candidate) =>
+        const targetPath = record.targetPath
+        if (!targetPath) return
+        const rejectUnsafe = (message: string): never => {
+          nextStartupBlockedPrefixes.add(targetPath)
+          nextStartupBlockedRuntimeIds.add(record.runtimeId)
+          throw new Error(message)
+        }
+        const envsRoot = join(this.runtimeRoot, 'envs')
+        if (!isDirectChild(envsRoot, targetPath)) {
+          rejectUnsafe('Interrupted environment target is outside the managed runtime root.')
+        }
+        if (!existsSync(targetPath)) return
+        const bin = [pythonBin(targetPath), rBin(targetPath)].find((candidate) =>
           existsSync(candidate)
         )
-        if (existsSync(join(record.targetPath, 'conda-meta')) && bin) {
+        if (existsSync(join(targetPath, 'conda-meta')) && bin) {
+          const [canonicalEnvsRoot, canonicalPrefix, canonicalBin] = await Promise.all([
+            realpath(envsRoot),
+            realpath(targetPath),
+            realpath(bin)
+          ]).catch(() => rejectUnsafe('Interrupted environment paths could not be validated.'))
+          if (
+            !isDirectChild(canonicalEnvsRoot, canonicalPrefix) ||
+            !isPathInside(canonicalPrefix, canonicalBin)
+          ) {
+            rejectUnsafe('Interrupted environment executable escapes the managed runtime root.')
+          }
           try {
-            await verifyExecutable(bin, { prefix: record.targetPath })
+            await verifyExecutable(canonicalBin, { prefix: canonicalPrefix })
             return
           } catch {
             // An interrupted mutation can leave an interpreter file before the prefix is runnable.
           }
         }
-        await rm(record.targetPath, { recursive: true, force: true })
+        await rm(targetPath, { recursive: true, force: true })
       },
       markRepairRequired: async (record) => {
         if (!record.runtimeId) return
