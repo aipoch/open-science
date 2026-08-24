@@ -2005,7 +2005,6 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       mtimeMs: 1710000000100,
       artifactId: 'artifact-lineage-1',
       managedFileId: 'artifact-lineage-1',
-      selectedVersionId: 'artifact-version-1',
       versionNumber: 2
     })
   })
@@ -2159,10 +2158,10 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(rootInvocationPreview).toEqual(
       expect.objectContaining({
         artifactId: 'child-artifact',
-        selectedVersionId: 'child-version',
         path: 'artifact-version:default/session-42/child-artifact/child-version'
       })
     )
+    expect(rootInvocationPreview).not.toHaveProperty('selectedVersionId')
 
     const childGraph = structuredClone(normalized.conversationGraph)!
     childGraph.activeFrameId = 'child-frame'
@@ -3109,15 +3108,16 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       encoding: 'utf8'
     })
     expect(upsertAndActivateItem).toHaveBeenCalledTimes(1)
-    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+    const previewItem = upsertAndActivateItem.mock.calls[0]?.[0]
+    expect(previewItem).toEqual(
       expect.objectContaining({
         id: 'upload:upload-file-1',
         managedFileId: 'upload-file-1',
-        selectedVersionId: 'upload-version-1',
         projectId: 'project-1',
         sessionId: 'source-session'
       })
     )
+    expect(previewItem).not.toHaveProperty('selectedVersionId')
   })
 
   const linkedFolderSession = (): ChatSession =>

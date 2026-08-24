@@ -310,6 +310,31 @@ describe('PR Gate workflow', () => {
     expect(manifest.laneOrder).toContain('i18n')
   })
 
+  it('runs and enforces the Linux version storage contract for bootstrap full and selective plans', () => {
+    const contract = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Test immutable version storage on Linux'
+    )
+    const enforce = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Enforce selected static checks'
+    )
+
+    expect(contract).toMatchObject({
+      id: 'version_storage_linux',
+      'continue-on-error': true,
+      run: 'npx vitest run src/main/managed-file-versions/version-file-operator.test.ts'
+    })
+    expect(contract?.if).toContain("mode == 'full'")
+    expect(contract?.if).toContain("'version_storage_linux'")
+    expect(enforce?.env).toMatchObject({
+      VERSION_STORAGE_LINUX_OUTCOME: '${{ steps.version_storage_linux.outcome }}',
+      VERSION_STORAGE_LINUX_REQUIRED:
+        "${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_storage_linux') }}"
+    })
+    expect(enforce?.run).toContain(
+      'require_success version_storage_linux "$VERSION_STORAGE_LINUX_OUTCOME" "$VERSION_STORAGE_LINUX_REQUIRED"'
+    )
+  })
+
   it('shards only full macOS Module tests and merges coverage into the stable unit bundle', () => {
     const unit = workflow.jobs.unit
     const shards = workflow.jobs.unit_shard
@@ -567,6 +592,7 @@ describe('PR Gate workflow', () => {
       'src/main/windows-icon-assets.test.ts',
       'src/main/windows-powershell.test.ts',
       'src/main/file-save.test.ts',
+      'src/main/managed-file-versions/version-file-operator.test.ts',
       'src/main/specialist/repository.test.ts',
       'src/main/notebook/micromamba-cache-powershell.test.ts',
       'src/main/notebook/micromamba-cache-acl.integration.test.ts'

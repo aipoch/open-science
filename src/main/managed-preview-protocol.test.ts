@@ -219,9 +219,12 @@ describe('managed preview protocol', () => {
       verifyUnchanged: vi.fn().mockResolvedValue(undefined),
       close
     }
+    const openLatestManagedFile = vi.fn().mockResolvedValue(lease)
+    const openManagedFileVersion = vi.fn()
     const resources = new (await import('./managed-preview-resources')).ManagedPreviewResources({
       resolvePath: vi.fn(),
-      openManagedFileVersion: vi.fn().mockResolvedValue(lease),
+      openLatestManagedFile,
+      openManagedFileVersion,
       createId: () => 'trusted-resource'
     } as never)
     await resources.acquire(17, {
@@ -237,6 +240,11 @@ describe('managed preview protocol', () => {
 
     await expect(response.text()).resolves.toBe('verified managed version')
     expect(lease.read).toHaveBeenCalled()
+    expect(openLatestManagedFile).toHaveBeenCalledWith('artifact', {
+      projectId: 'project-1',
+      fileId: 'artifact-1'
+    })
+    expect(openManagedFileVersion).not.toHaveBeenCalled()
     expect(close).not.toHaveBeenCalled()
     resources.release(17, { resourceId: 'trusted-resource' })
     expect(close).toHaveBeenCalledOnce()

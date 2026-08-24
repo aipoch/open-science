@@ -100,26 +100,33 @@ const OfficeDownloadFallback = ({
   source: OfficePreviewSource
   title: string
   message: string
-}): React.JSX.Element => (
-  <PreviewFallbackCard
-    icon={FileWarning}
-    name={item.name}
-    title={title}
-    message={message}
-    action={
-      <ManagedFileDownloadButton
-        source={source}
-        path={item.path}
-        projectId={item.projectId}
-        fileId={item.managedFileId}
-        versionId={item.selectedVersionId}
-        suggestedName={item.name}
-        appearance="primary"
-        wrapperClassName="mt-3"
-      />
-    }
-  />
-)
+}): React.JSX.Element => {
+  const runtime = usePreviewRuntime()
+
+  return (
+    <PreviewFallbackCard
+      icon={FileWarning}
+      name={item.name}
+      title={title}
+      message={message}
+      action={
+        <ManagedFileDownloadButton
+          source={source}
+          path={item.path}
+          projectId={item.projectId}
+          fileId={item.managedFileId}
+          versionId={item.selectedVersionId}
+          versionNumber={runtime?.downloadVersionContext?.versionNumber}
+          latestVersionId={runtime?.downloadVersionContext?.latestVersionId}
+          latestVersionNumber={runtime?.downloadVersionContext?.latestVersionNumber}
+          suggestedName={item.name}
+          appearance="primary"
+          wrapperClassName="mt-3"
+        />
+      }
+    />
+  )
+}
 
 // Returns the catalog key for errors that leave download as the only remedy, or undefined when the
 // error is a plain render failure that keeps the retryable card.

@@ -10,6 +10,7 @@ import {
   OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
 } from '../../../../../../shared/office-preview'
 import { PreviewRuntimeBoundary } from '../preview-runtime'
+import type { PreviewDownloadVersionContext } from '../preview-runtime-context'
 import { OfficePreviewRenderer } from './OfficePreview'
 
 const OFFICE_PREVIEW_RUNTIME_ORIGIN = 'open-science-office-preview://runtime'
@@ -63,11 +64,15 @@ describe('OfficePreviewRenderer', () => {
     stateListener?.({ ...state, requestId })
   }
 
-  const renderPreview = async (item = createItem(), withRuntimeBoundary = false): Promise<void> => {
+  const renderPreview = async (
+    item = createItem(),
+    withRuntimeBoundary = false,
+    downloadVersionContext?: PreviewDownloadVersionContext
+  ): Promise<void> => {
     await act(async () => {
       root.render(
         withRuntimeBoundary ? (
-          <PreviewRuntimeBoundary item={item}>
+          <PreviewRuntimeBoundary item={item} downloadVersionContext={downloadVersionContext}>
             <OfficePreviewRenderer item={item} />
           </PreviewRuntimeBoundary>
         ) : (
@@ -397,12 +402,30 @@ describe('OfficePreviewRenderer', () => {
       projectId: 'project-1',
       managedFileId: 'upload-1',
       selectedVersionId: 'upload-v2',
+      versionNumber: 2,
       path: 'upload-version:stale-projection'
     })
 
-    await renderPreview(item, true)
+    await renderPreview(item, true, {
+      versionId: 'upload-v2',
+      versionNumber: 2,
+      latestVersionId: 'upload-v4',
+      latestVersionNumber: 4
+    })
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="Download report.docx"]')?.click()
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Download options for report.docx"]')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await flushMicrotasks()
+    })
+    expect(window.api.saveManagedFile).not.toHaveBeenCalled()
+
+    const selectedVersion = [
+      ...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ].find((menuItem) => menuItem.textContent === 'Download version v2')
+    expect(selectedVersion).toBeDefined()
+    await act(async () => {
+      selectedVersion?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await flushMicrotasks()
     })
 

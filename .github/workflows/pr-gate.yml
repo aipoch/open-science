@@ -404,6 +404,11 @@ jobs:
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'i18n') }}
         continue-on-error: true
         run: npx vitest run src/renderer/src/i18n/resources.test.ts
+      - name: Test immutable version storage on Linux
+        id: version_storage_linux
+        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_storage_linux') }}
+        continue-on-error: true
+        run: npx vitest run src/main/managed-file-versions/version-file-operator.test.ts
       - name: Enforce selected static checks
         if: ${{ always() }}
         shell: bash
@@ -417,12 +422,20 @@ jobs:
           TYPECHECK_NODE_OUTCOME: ${{ steps.typechecks.outputs.node }}
           TYPECHECKS_OUTCOME: ${{ steps.typechecks.outcome }}
           TYPECHECK_WEB_OUTCOME: ${{ steps.typechecks.outputs.web }}
+          VERSION_STORAGE_LINUX_OUTCOME: ${{ steps.version_storage_linux.outcome }}
+          VERSION_STORAGE_LINUX_REQUIRED: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_storage_linux') }}
         run: |
           set -euo pipefail
           failed=0
           check() {
             if [[ "$2" == "failure" || "$2" == "cancelled" ]]; then
               echo "$1 ended with $2" >&2
+              failed=1
+            fi
+          }
+          require_success() {
+            if [[ "$3" == "true" && "$2" != "success" ]]; then
+              echo "$1 required success but ended with $2" >&2
               failed=1
             fi
           }
@@ -435,6 +448,7 @@ jobs:
           check interface_contracts "$INTERFACE_CONTRACTS_OUTCOME"
           check cli_sdk "$CLI_SDK_OUTCOME"
           check i18n "$I18N_OUTCOME"
+          require_success version_storage_linux "$VERSION_STORAGE_LINUX_OUTCOME" "$VERSION_STORAGE_LINUX_REQUIRED"
           exit "$failed"
 
   unit_shard:
@@ -633,6 +647,7 @@ jobs:
           src/main/windows-icon-assets.test.ts
           src/main/windows-powershell.test.ts
           src/main/file-save.test.ts
+          src/main/managed-file-versions/version-file-operator.test.ts
           src/main/specialist/repository.test.ts
           src/main/notebook/micromamba-cache-powershell.test.ts
           src/main/notebook/micromamba-cache-acl.integration.test.ts

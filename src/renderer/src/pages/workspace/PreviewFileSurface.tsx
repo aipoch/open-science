@@ -9,6 +9,7 @@ import {
   Pencil,
   X
 } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import {
   forwardRef,
   useCallback,
@@ -32,6 +33,7 @@ import {
   MANAGED_TEXT_EDIT_EXTENSIONS,
   type ManagedFileVersionDescriptor,
   type ManagedFileVersionDiffResult,
+  type ManagedFileVersionErrorCode,
   type ManagedFileVersionInspectResult
 } from '../../../../shared/managed-file-versions'
 import {
@@ -51,6 +53,7 @@ import {
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
+import type { PreviewDownloadVersionContext } from './previews/preview-runtime-context'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 import { ManagedVersionDiffContent } from './ManagedVersionDiffContent'
 
@@ -81,6 +84,25 @@ type PreviewFileSurfaceHandle = {
 }
 
 const previewHeaderActionClassName = 'text-text-000 hover:text-text-000'
+
+const managedSaveErrorMessage = (code: ManagedFileVersionErrorCode, t: TFunction): string => {
+  switch (code) {
+    case 'STORAGE_UNAVAILABLE':
+      return t('File storage is unavailable. Check the storage location and try again.')
+    case 'PERMISSION_DENIED':
+      return t('Open Science does not have permission to save this file.')
+    case 'OUT_OF_SPACE':
+      return t('There is not enough storage space to save this file.')
+    // The file operator and service use different integrity codes for the same recovery action.
+    case 'INTEGRITY_FAILED':
+    case 'CONTENT_INTEGRITY_FAILED':
+      return t('The file could not be verified after saving. Reopen it and try again.')
+    case 'VERSION_CONFLICT':
+      return t('The file changed before your edit could be saved. Reopen it and try again.')
+    default:
+      return t('Changes could not be saved.')
+  }
+}
 
 const isDiffModeSourceTextVersion = (inspect: ManagedFileVersionInspectResult): boolean => {
   const selectedVersion = inspect.versions.find(
@@ -175,7 +197,8 @@ const PreviewFileHeader = ({
   provenanceEntry = 'menu',
   tooltipClassName,
   managedControls,
-  managedControlsOnly = false
+  managedControlsOnly = false,
+  downloadVersionContext
 }: Pick<
   PreviewFileSurfaceProps,
   | 'item'
@@ -190,6 +213,7 @@ const PreviewFileHeader = ({
   viewInContextDisabled?: boolean
   managedControls?: React.ReactNode
   managedControlsOnly?: boolean
+  downloadVersionContext?: PreviewDownloadVersionContext
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -267,7 +291,8 @@ const PreviewFileHeader = ({
                   ? {
                       projectId: item.projectId,
                       fileId: item.managedFileId,
-                      ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {})
+                      ...(downloadVersionContext ??
+                        (item.selectedVersionId ? { versionId: item.selectedVersionId } : {}))
                     }
                   : {})}
                 suggestedName={item.name}
@@ -610,6 +635,21 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         : undefined)
     const managedControlsInspect =
       managedInspect ?? (mode === 'diff' ? managedNavigationInspect : undefined)
+    const selectedDownloadVersion = managedNavigationInspect?.versions.find(
+      (version) => version.id === managedNavigationInspect.selectedVersionId
+    )
+    const latestDownloadVersion = managedNavigationInspect?.versions.find(
+      (version) => version.id === managedNavigationInspect.headVersionId
+    )
+    const downloadVersionContext =
+      selectedDownloadVersion && latestDownloadVersion
+        ? {
+            versionId: selectedDownloadVersion.id,
+            versionNumber: selectedDownloadVersion.versionNumber,
+            latestVersionId: latestDownloadVersion.id,
+            latestVersionNumber: latestDownloadVersion.versionNumber
+          }
+        : undefined
     // Text eligibility controls the version toolset, while current write permission only controls
     // editing. Read-only projects and hosts keep history and comparison available.
     const showManagedTextTools = managedControlsInspect?.text !== undefined
@@ -842,7 +882,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       if (saveGenerationRef.current !== saveGeneration) return
       setSaving(false)
       if (!result.ok) {
-        setEditError(t('Changes could not be saved.'))
+        setEditError(managedSaveErrorMessage(result.error.code, t))
         return
       }
       if (result.value.kind === 'conflict') {
@@ -928,6 +968,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           onViewInContext={canViewInContext ? viewInContext : undefined}
           viewInContextDisabled={originSessionArchived}
           tooltipClassName={tooltipClassName}
+          downloadVersionContext={downloadVersionContext}
           managedControlsOnly={mode === 'edit'}
           managedControls={
             showManagedTextTools && managedControlsInspect ? (
@@ -1087,6 +1128,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                 <PreviewFileContent
                   key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
                   item={resolvedPreviewItem}
+                  downloadVersionContext={downloadVersionContext}
                 />
               ) : null
             ) : diffResult ? (
@@ -1104,6 +1146,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             <PreviewFileContent
               key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
               item={resolvedPreviewItem}
+              downloadVersionContext={downloadVersionContext}
             />
           ) : null}
         </div>

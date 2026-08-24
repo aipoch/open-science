@@ -209,6 +209,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     planService,
     promptContentOwner: new AcpPromptContentOwner({
       uploadRepository,
+      managedFileVersions: options.artifacts?.managedFileVersions,
       fileReferenceResolver,
       inlineImageBudgetBytes: options.inlineImageBudgetBytes
     }),

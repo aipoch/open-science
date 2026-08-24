@@ -559,14 +559,9 @@ const createApplicationModules = async (
     }
   ): Promise<string> => {
     if ((source === 'artifact' || source === 'upload') && request.projectId && request.fileId) {
-      return managedFileVersionService
-        .resolve({
-          source,
-          projectId: request.projectId,
-          fileId: request.fileId,
-          ...(request.versionId ? { versionId: request.versionId } : {})
-        })
-        .then((resolved) => resolved.path)
+      return Promise.reject(
+        new Error('Managed logical files must be opened through a Version file lease.')
+      )
     }
     if (source === 'artifact') {
       const versionIdentity = parseArtifactVersionLocator(request.path)
@@ -604,8 +599,13 @@ const createApplicationModules = async (
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
     resolvePath: resolveManagedFilePath,
+    openLatestManagedFile: (source, request) =>
+      managedFileVersionService.openLatest({ source, ...request }),
     openManagedFileVersion: (source, request) =>
-      managedFileVersionService.openResolved({ source, ...request })
+      managedFileVersionService.openVersion(
+        { source, projectId: request.projectId, fileId: request.fileId },
+        request.versionId
+      )
   })
   const managedPreviewOwners = createManagedPreviewOwnerRegistry(previewResources)
 
@@ -772,13 +772,17 @@ const createApplicationModules = async (
   })
   const uploadCommandOwner = createUploadCommandOwner(uploadRepository, {
     resolveManagedFilePath: (request) => resolveManagedFilePath('upload', request),
-    openManagedFileVersion: (request) =>
-      managedFileVersionService.openResolved({
+    openLatestManagedFile: (request) =>
+      managedFileVersionService.openLatest({
         source: 'upload',
         projectId: request.projectId!,
-        fileId: request.fileId!,
-        ...(request.versionId ? { versionId: request.versionId } : {})
+        fileId: request.fileId!
       }),
+    openManagedFileVersion: (request) =>
+      managedFileVersionService.openVersion(
+        { source: 'upload', projectId: request.projectId!, fileId: request.fileId! },
+        request.versionId
+      ),
     withSessionMutation: (projectId, sessionId, mutation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
   })
@@ -2019,24 +2023,15 @@ const createApplicationModules = async (
   const logsCommandOwner = createLogsCommandOwner()
   declareElectronAdapter('desktop-utilities', () => {
     registerFileSaveHandlers({
-      resolveManagedFilePath: (source, request) =>
-        (source === 'artifact' || source === 'upload') && request.projectId && request.fileId
-          ? managedFileVersionService
-              .resolvePath({
-                source,
-                projectId: request.projectId,
-                fileId: request.fileId,
-                ...(request.versionId ? { versionId: request.versionId } : {})
-              })
-              .then((resolved) => ({
-                path: resolved.path,
-                expectedSize: Number(resolved.version.sizeBytes),
-                expectedChecksum: resolved.version.checksum
-              }))
-          : resolveManagedFilePath(source, request),
+      resolveManagedFilePath,
       resolveSessionArtifactFilePath,
+      openLatestManagedFile: (source, request) =>
+        managedFileVersionService.openLatest({ source, ...request }),
       openManagedFileVersion: (source, request) =>
-        managedFileVersionService.openResolved({ source, ...request }),
+        managedFileVersionService.openVersion(
+          { source, projectId: request.projectId, fileId: request.fileId },
+          request.versionId
+        ),
       translate
     })
     registerLogsIpcHandlers(logsCommandOwner)
@@ -2867,13 +2862,17 @@ const createApplicationModules = async (
       runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : [],
     provenance: artifactProvenanceRepository,
     resolveManagedFilePath: (request) => resolveManagedFilePath('artifact', request),
-    openManagedFileVersion: (request) =>
-      managedFileVersionService.openResolved({
+    openLatestManagedFile: (request) =>
+      managedFileVersionService.openLatest({
         source: 'artifact',
         projectId: request.projectId!,
-        fileId: request.fileId!,
-        ...(request.versionId ? { versionId: request.versionId } : {})
+        fileId: request.fileId!
       }),
+    openManagedFileVersion: (request) =>
+      managedFileVersionService.openVersion(
+        { source: 'artifact', projectId: request.projectId!, fileId: request.fileId! },
+        request.versionId
+      ),
     codeReconstruction,
     withSessionMutation: (projectId, sessionId, mutation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)

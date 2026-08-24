@@ -328,6 +328,11 @@ describe('pull request change classification', () => {
     ['session persistence', 'src/main/session-persistence/ipc.ts'],
     ['notebook shell process', 'src/main/notebook/shell-process.ts'],
     ['file save', 'src/main/file-save.ts'],
+    ['immutable version file operator', 'src/main/managed-file-versions/version-file-operator.ts'],
+    [
+      'immutable version file operator contract',
+      'src/main/managed-file-versions/version-file-operator.test.ts'
+    ],
     ['specialist repository', 'src/main/specialist/repository.ts'],
     ['notebook runtime settings', 'src/main/settings/notebook-runtime-settings.ts'],
     ['preferences', 'src/main/settings/preferences.ts']
@@ -347,6 +352,17 @@ describe('pull request change classification', () => {
     expect(plan.roots).not.toContain('windows_sensitive')
     expect(plan.lanes).not.toContain('windows_runtime')
     expect(plan.lanes).not.toContain('windows_path')
+  })
+
+  it.each([
+    ['source', 'src/main/managed-file-versions/version-file-operator.ts'],
+    ['contract', 'src/main/managed-file-versions/version-file-operator.test.ts']
+  ])('selects the Linux immutable-version contract for operator %s changes', (_label, path) => {
+    const plan = classifyChanges([{ path, status: 'modified' }])
+
+    expect(plan.roots).toContain('version_file_operator')
+    expect(plan.lanes).toContain('version_storage_linux')
+    expect(plan.reasonChains).toContain(`${path} -> version_file_operator`)
   })
 
   it.each([

@@ -62,9 +62,13 @@ type ManagedPreviewResourcesOptions = {
     source: ManagedPreviewSource,
     request: AcquireManagedPreviewRequest
   ) => Promise<string>
+  openLatestManagedFile?: (
+    source: 'artifact' | 'upload',
+    request: { projectId: string; fileId: string }
+  ) => Promise<ManagedFileReadLease>
   openManagedFileVersion?: (
     source: 'artifact' | 'upload',
-    request: { projectId: string; fileId: string; versionId?: string }
+    request: { projectId: string; fileId: string; versionId: string }
   ) => Promise<ManagedFileReadLease>
   createId?: () => string
 }
@@ -417,17 +421,24 @@ class ManagedPreviewResources {
     request: AcquireManagedPreviewRequest
   ): Promise<ManagedFileReadLease | undefined> {
     if (
-      !this.options.openManagedFileVersion ||
       (request.source !== 'artifact' && request.source !== 'upload') ||
       !request.projectId ||
       !request.fileId
     ) {
       return Promise.resolve(undefined)
     }
-    return this.options.openManagedFileVersion(request.source, {
+    if (request.versionId) {
+      if (!this.options.openManagedFileVersion) return Promise.resolve(undefined)
+      return this.options.openManagedFileVersion(request.source, {
+        projectId: request.projectId,
+        fileId: request.fileId,
+        versionId: request.versionId
+      })
+    }
+    if (!this.options.openLatestManagedFile) return Promise.resolve(undefined)
+    return this.options.openLatestManagedFile(request.source, {
       projectId: request.projectId,
-      fileId: request.fileId,
-      ...(request.versionId ? { versionId: request.versionId } : {})
+      fileId: request.fileId
     })
   }
 }

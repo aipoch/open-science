@@ -434,7 +434,7 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
         retainedReviewIdsJson: null
       }
     })
-    await expectCatalogIds(['artifact-a', 'upload-a'])
+    await expectCatalogIds([])
   })
 
   it('projects latest generated Artifacts and Uploads from the current Project catalog', async () => {

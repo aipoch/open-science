@@ -6,6 +6,7 @@ import type { AcpReplayMessageImage } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
 import { estimateHistoryTokens, truncateTextToEstimatedTokens } from '../../shared/history-preamble'
 import {
+  createUploadVersionReference,
   imageAttachmentMimeType,
   PENDING_UPLOAD_SESSION_ID,
   type UploadedAttachment
@@ -26,6 +27,7 @@ import {
   MAX_SESSION_INLINE_IMAGE_BYTES,
   type InlineImageBudget
 } from '../uploads/attachment-media'
+import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { UploadRepository } from '../uploads/repository'
 import {
   isImportableSkillArchive,
@@ -56,6 +58,7 @@ type CodexSkillInput = {
 
 type AcpPromptContentOwnerOptions = {
   uploadRepository?: UploadRepository
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openLatest'>
   fileReferenceResolver: FileReferenceResolver
   inlineImageBudgetBytes?: number
   createResourceSnapshotStore?: () => TurnResourceSnapshotStore
@@ -261,19 +264,24 @@ class AcpPromptContentOwner {
 
         // Preserve the existing order: history uploads, current uploads, then explicit references.
         for (let index = 0; index < promptUploads.length; index += 1) {
-          const attachment = promptUploads[index]
-          const blocks = await this.createAttachmentContentBlocks(
+          const resolved = await this.createAttachmentContentBlocks(
             input,
-            attachment,
+            promptUploads[index],
             index < input.historyUploads.length,
-            fileTextBudget
+            fileTextBudget,
+            snapshots
           )
-          for (const block of blocks) {
+          promptUploads[index] = resolved.attachment
+          for (const block of resolved.blocks) {
             const appended = appendBlock(
               block,
-              this.imageOverflowResourceLink(block, attachment.originalName, attachment.size),
-              attachment.versionId
-                ? { kind: 'upload-version', uploadVersionId: attachment.versionId }
+              this.imageOverflowResourceLink(
+                block,
+                resolved.attachment.originalName,
+                resolved.attachment.size
+              ),
+              resolved.attachment.versionId
+                ? { kind: 'upload-version', uploadVersionId: resolved.attachment.versionId }
                 : undefined
             )
             if (index < input.historyUploads.length && isImageBlock(block) && appended) {
@@ -390,9 +398,64 @@ class AcpPromptContentOwner {
     input: PrepareAcpPromptContentInput,
     attachment: UploadedAttachment,
     isHistoryUpload: boolean,
-    fileTextBudget: PromptFileTextBudget
-  ): Promise<ContentBlock[]> {
+    fileTextBudget: PromptFileTextBudget,
+    snapshots: TurnResourceSnapshotStore
+  ): Promise<{ attachment: UploadedAttachment; blocks: ContentBlock[] }> {
     if (!this.options.uploadRepository) throw new Error('Upload storage is not configured.')
+
+    if (this.options.managedFileVersions) {
+      const lease = await this.options.managedFileVersions.openLatest({
+        source: 'upload',
+        projectId: input.projectId,
+        fileId: attachment.id
+      })
+
+      let prepared: { attachment: UploadedAttachment; blocks: ContentBlock[] }
+      try {
+        const exactAttachment: UploadedAttachment = {
+          id: lease.logicalFile.id,
+          versionId: lease.version.id,
+          versionNumber: lease.version.versionNumber,
+          sessionId: lease.logicalFile.sessionId,
+          name: lease.version.filename,
+          originalName: lease.logicalFile.displayName,
+          path: createUploadVersionReference(lease.version.id, {
+            projectId: lease.logicalFile.projectId,
+            sessionId: lease.logicalFile.sessionId
+          }),
+          ...(lease.version.contentType ? { mimeType: lease.version.contentType } : {}),
+          size: lease.size,
+          checksum: lease.version.checksum,
+          createdAt: lease.version.createdAt.toISOString()
+        }
+        // Provider adapters may dereference file URIs after prompt preparation returns. Keep an
+        // exact private copy alive for the prepared turn instead of exposing the managed path after
+        // its integrity lease closes.
+        const snapshot = await snapshots.create(exactAttachment.originalName, lease)
+        prepared = {
+          attachment: exactAttachment,
+          blocks: await this.buildFileContentBlocks(
+            input,
+            {
+              absolutePath: snapshot.absolutePath,
+              uri: snapshot.uri,
+              name: exactAttachment.originalName || exactAttachment.name,
+              mimeType: exactAttachment.mimeType,
+              size: lease.size,
+              allowSkillImportReference: true,
+              trustedLease: lease
+            },
+            fileTextBudget,
+            isHistoryUpload
+          )
+        }
+      } catch (error) {
+        await lease.close().catch(() => undefined)
+        throw error
+      }
+      await lease.close()
+      return prepared
+    }
 
     const filePath = await this.options.uploadRepository.resolveManagedUploadPath(
       { path: attachment.path },
@@ -403,19 +466,22 @@ class AcpPromptContentOwner {
     )
     const { size } = await stat(filePath)
 
-    return this.buildFileContentBlocks(
-      input,
-      {
-        absolutePath: filePath,
-        uri: pathToFileURL(filePath).href,
-        name: attachment.originalName || attachment.name,
-        mimeType: attachment.mimeType,
-        size,
-        allowSkillImportReference: true
-      },
-      fileTextBudget,
-      isHistoryUpload
-    )
+    return {
+      attachment,
+      blocks: await this.buildFileContentBlocks(
+        input,
+        {
+          absolutePath: filePath,
+          uri: pathToFileURL(filePath).href,
+          name: attachment.originalName || attachment.name,
+          mimeType: attachment.mimeType,
+          size,
+          allowSkillImportReference: true
+        },
+        fileTextBudget,
+        isHistoryUpload
+      )
+    }
   }
 
   private async createReferencedArtifactContentBlocks(

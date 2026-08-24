@@ -27,9 +27,9 @@ afterEach(async () => {
 })
 
 describe('managed file reference resolver', () => {
-  it('opens an exact trusted lease for a logical reference without reopening its path', async () => {
+  it('opens the latest trusted lease for a logical reference without reopening its path', async () => {
     const close = vi.fn(async () => undefined)
-    const openResolved = vi.fn().mockResolvedValue({
+    const openLatest = vi.fn().mockResolvedValue({
       path: '/replaced-after-open.txt',
       size: 12,
       read: vi.fn(),
@@ -44,7 +44,7 @@ describe('managed file reference resolver', () => {
       }
     })
     const resolver = createManagedFileReferenceResolver({
-      managedFileVersions: { openResolved } as never
+      managedFileVersions: { openLatest } as never
     })
 
     const resolved = await resolver.resolve(
@@ -59,11 +59,10 @@ describe('managed file reference resolver', () => {
       }
     )
 
-    expect(openResolved).toHaveBeenCalledWith({
+    expect(openLatest).toHaveBeenCalledWith({
       source: 'artifact',
       projectId: 'project-1',
-      fileId: 'artifact-file',
-      versionId: 'artifact-version-2'
+      fileId: 'artifact-file'
     })
     expect(resolved).toMatchObject({
       absolutePath: '/replaced-after-open.txt',
@@ -83,7 +82,7 @@ describe('managed file reference resolver', () => {
       const headPath = join(root, `${source}-v2.csv`)
       await writeFile(headPath, 'head bytes')
       const close = vi.fn(async () => undefined)
-      const openResolved = vi.fn().mockResolvedValue({
+      const openLatest = vi.fn().mockResolvedValue({
         path: headPath,
         size: 10,
         read: vi.fn(),
@@ -98,7 +97,7 @@ describe('managed file reference resolver', () => {
         }
       })
       const resolver = createManagedFileReferenceResolver({
-        managedFileVersions: { openResolved } as never
+        managedFileVersions: { openLatest } as never
       })
 
       await expect(
@@ -121,7 +120,7 @@ describe('managed file reference resolver', () => {
         versionId: `${source}-version-2`,
         checksum: '2'.repeat(64)
       })
-      expect(openResolved).toHaveBeenCalledWith({
+      expect(openLatest).toHaveBeenCalledWith({
         source,
         projectId: 'project-1',
         fileId: `${source}-file`
@@ -130,13 +129,13 @@ describe('managed file reference resolver', () => {
     }
   )
 
-  it('preserves an explicit historical Version when preparing an Agent reference', async () => {
+  it('resolves an Agent reference to the latest Version even when projection metadata is stale', async () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-exact-'))
-    const historicalPath = join(root, 'artifact-v1.csv')
-    await writeFile(historicalPath, 'v1 bytes')
+    const latestPath = join(root, 'artifact-v2.csv')
+    await writeFile(latestPath, 'v2 bytes')
     const close = vi.fn(async () => undefined)
-    const openResolved = vi.fn().mockResolvedValue({
-      path: historicalPath,
+    const openLatest = vi.fn().mockResolvedValue({
+      path: latestPath,
       size: 8,
       read: vi.fn(),
       readRange: vi.fn(),
@@ -144,13 +143,13 @@ describe('managed file reference resolver', () => {
       close,
       logicalFile: { id: 'artifact-file', displayName: 'study.csv' },
       version: {
-        id: 'artifact-version-1',
-        checksum: '1'.repeat(64),
+        id: 'artifact-version-2',
+        checksum: '2'.repeat(64),
         contentType: 'text/csv'
       }
     })
     const resolver = createManagedFileReferenceResolver({
-      managedFileVersions: { openResolved } as never
+      managedFileVersions: { openLatest } as never
     })
 
     await expect(
@@ -167,15 +166,14 @@ describe('managed file reference resolver', () => {
       )
     ).resolves.toMatchObject({
       sourceFileId: 'artifact-file',
-      versionId: 'artifact-version-1',
-      checksum: '1'.repeat(64)
+      versionId: 'artifact-version-2',
+      checksum: '2'.repeat(64)
     })
 
-    expect(openResolved).toHaveBeenCalledWith({
+    expect(openLatest).toHaveBeenCalledWith({
       source: 'artifact',
       projectId: 'project-1',
-      fileId: 'artifact-file',
-      versionId: 'artifact-version-1'
+      fileId: 'artifact-file'
     })
     expect(close).not.toHaveBeenCalled()
   })

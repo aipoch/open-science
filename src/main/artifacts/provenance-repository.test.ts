@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import {
   mkdir,
   mkdtemp,
+  open as openFile,
   readdir,
   readFile,
   realpath,
@@ -29,6 +30,10 @@ import {
 import { requireAgentArtifactVersion } from './provenance-version-kind'
 import { ArtifactRepository } from './repository'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
+import {
+  NodeVersionFileOperator,
+  VersionFileOperatorError
+} from '../managed-file-versions/version-file-operator'
 
 let storageRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
@@ -4606,6 +4611,243 @@ describe('artifact provenance repository', () => {
     )
   })
 
+  it('retains every Project Version and write journal when Version storage deletion fails', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-version-operator-delete-retry-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const artifactBytes = Buffer.from('artifact version')
+    const uploadBytes = Buffer.from('upload version')
+    const artifactStorageRef =
+      'artifacts/project-1/session-1/artifact-1/managed-versions/vabc12345_report.md'
+    const uploadStorageRef =
+      'uploads/project-1/session-1/upload-1/managed-versions/vdef67890_input.csv'
+    for (const [storageRef, bytes] of [
+      [artifactStorageRef, artifactBytes],
+      [uploadStorageRef, uploadBytes]
+    ] as const) {
+      const path = join(storageRoot, ...storageRef.split('/'))
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, bytes)
+    }
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'artifact-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        normalizedFilename: 'report.md',
+        filename: 'report.md',
+        versions: {
+          create: {
+            id: 'artifact-v1',
+            versionNumber: 1,
+            filename: 'report.md',
+            originKind: 'legacy',
+            state: 'finalized',
+            contentStorageKey: artifactStorageRef,
+            sizeBytes: artifactBytes.byteLength,
+            checksum: createHash('sha256').update(artifactBytes).digest('hex')
+          }
+        }
+      }
+    })
+    await client.artifactLineage.update({
+      where: { id: 'artifact-1' },
+      data: { currentVersionId: 'artifact-v1' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'input.csv',
+        originalFilename: 'input.csv',
+        versions: {
+          create: {
+            id: 'upload-v1',
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey: uploadStorageRef,
+            filename: 'input.csv',
+            originalFilename: 'input.csv',
+            sizeBytes: uploadBytes.byteLength,
+            checksum: createHash('sha256').update(uploadBytes).digest('hex')
+          }
+        }
+      }
+    })
+    await client.uploadFile.update({
+      where: { id: 'upload-1' },
+      data: { currentVersionId: 'upload-v1' }
+    })
+    await client.managedFileVersionWriteOperation.create({
+      data: {
+        operationId: 'artifact-operation-1',
+        source: 'artifact',
+        projectId: 'project-1',
+        sourceFileId: 'artifact-1',
+        basedOnVersionId: 'artifact-v1',
+        expectedHeadVersionId: 'artifact-v1',
+        state: 'published',
+        storageTag: 'vabc12345',
+        storedFilename: 'vabc12345_report.md',
+        contentStorageKey: artifactStorageRef,
+        checksum: createHash('sha256').update(artifactBytes).digest('hex'),
+        sizeBytes: artifactBytes.byteLength,
+        textFormatJson: '{}',
+        resultVersionId: 'artifact-v1'
+      }
+    })
+    const removeImmutable = vi.fn(async (storageRef: string) => {
+      if (storageRef === uploadStorageRef) throw new Error('simulated storage outage')
+      await rm(join(storageRoot!, ...storageRef.split('/')), { force: true })
+    })
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      versionFileOperator: { removeImmutable } as never
+    })
+
+    await expect(repository.deleteProjectProvenance('project-1')).rejects.toThrow(
+      'simulated storage outage'
+    )
+
+    expect(removeImmutable).toHaveBeenCalledWith(artifactStorageRef, {
+      sizeBytes: artifactBytes.byteLength,
+      checksum: createHash('sha256').update(artifactBytes).digest('hex')
+    })
+    expect(removeImmutable).toHaveBeenCalledWith(uploadStorageRef, {
+      sizeBytes: uploadBytes.byteLength,
+      checksum: createHash('sha256').update(uploadBytes).digest('hex')
+    })
+    await expect(client.artifactVersion.count()).resolves.toBe(1)
+    await expect(client.uploadVersion.count()).resolves.toBe(1)
+    await expect(client.managedFileVersionWriteOperation.count()).resolves.toBe(1)
+    await expect(client.artifactLineage.count()).resolves.toBe(1)
+    await expect(client.uploadFile.count()).resolves.toBe(1)
+    await expect(client.fileOriginSession.count()).resolves.toBe(1)
+  })
+
+  it('retries claimed partial journal deletion without repairing its bytes manually', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-partial-journal-delete-retry-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    let corruptPublication = true
+    const operator = new NodeVersionFileOperator({
+      storageRoot,
+      fileSystem: {
+        open: async (...args) => {
+          const handle = await openFile(...args)
+          if (!corruptPublication || typeof args[1] !== 'string' || !args[1].startsWith('wx')) {
+            return handle
+          }
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === 'write') {
+                return async (
+                  buffer: Uint8Array,
+                  offset: number,
+                  length: number,
+                  position: number
+                ) => {
+                  const changed = Buffer.from(buffer.subarray(offset, offset + length))
+                  if (changed.byteLength > 0) changed[0] = changed[0]! ^ 0xff
+                  return target.write(changed, 0, changed.byteLength, position)
+                }
+              }
+              const value = Reflect.get(target, property, target)
+              return typeof value === 'function' ? value.bind(target) : value
+            }
+          })
+        }
+      }
+    })
+    const planInput = {
+      operationId: 'partial-journal-operation',
+      scope: {
+        source: 'upload' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'upload-1'
+      },
+      logicalFilename: 'input.csv',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(planInput)
+    const expectedBytes = Buffer.from('complete upload edit')
+    await expect(
+      operator.publishImmutable({ ...planInput, plannedFile, content: expectedBytes })
+    ).rejects.toBeDefined()
+    const partialPath = join(storageRoot, ...plannedFile.storageRef.split('/'))
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'input.csv',
+        originalFilename: 'input.csv'
+      }
+    })
+    await client.managedFileVersionWriteOperation.create({
+      data: {
+        operationId: planInput.operationId,
+        source: 'upload',
+        projectId: 'project-1',
+        sourceFileId: 'upload-1',
+        basedOnVersionId: 'upload-v1',
+        expectedHeadVersionId: 'upload-v1',
+        state: 'failed',
+        storageTag: `v${plannedFile.versionToken}`,
+        storedFilename: plannedFile.storedFilename,
+        contentStorageKey: plannedFile.storageRef,
+        checksum: createHash('sha256').update(expectedBytes).digest('hex'),
+        sizeBytes: expectedBytes.byteLength,
+        textFormatJson: '{}',
+        errorCode: 'CONTENT_INTEGRITY_FAILED'
+      }
+    })
+    const removeIncomplete = operator.removeIncomplete.bind(operator)
+    let removalAttempts = 0
+    const versionFileOperator = Object.assign(operator, {
+      removeIncomplete: async (...args: Parameters<typeof removeIncomplete>) => {
+        removalAttempts += 1
+        if (removalAttempts === 1) {
+          throw new VersionFileOperatorError('STORAGE_UNAVAILABLE', 'temporary delete failure')
+        }
+        return removeIncomplete(...args)
+      }
+    })
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      versionFileOperator
+    })
+
+    await expect(repository.deleteProjectProvenance('project-1')).rejects.toMatchObject({
+      code: 'STORAGE_UNAVAILABLE'
+    })
+    expect(removalAttempts).toBe(1)
+    await expect(readFile(partialPath)).resolves.toHaveLength(expectedBytes.byteLength)
+    await expect(client.managedFileVersionWriteOperation.count()).resolves.toBe(1)
+    await expect(client.uploadFile.count()).resolves.toBe(1)
+    await expect(client.fileOriginSession.count()).resolves.toBe(1)
+
+    corruptPublication = false
+    await expect(repository.deleteProjectProvenance('project-1')).resolves.toBeUndefined()
+    expect(removalAttempts).toBe(2)
+    await expect(readFile(partialPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(client.managedFileVersionWriteOperation.count()).resolves.toBe(0)
+    await expect(client.uploadFile.count()).resolves.toBe(0)
+    await expect(client.fileOriginSession.count()).resolves.toBe(0)
+  })
+
   it('deletes migrated Artifact and Upload graphs with multiple derived Versions', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-version-chain-delete-'))
     const client = createProjectDbClient(storageRoot)
@@ -4681,7 +4923,7 @@ describe('artifact provenance repository', () => {
           filename: 'input.csv',
           originalFilename: 'Input.csv',
           sizeBytes: 1,
-          checksum: 'c'.repeat(64)
+          checksum: createHash('sha256').update('x').digest('hex')
         },
         {
           id: 'upload-v2',
@@ -4695,8 +4937,8 @@ describe('artifact provenance repository', () => {
           contentStorageKey: 'uploads/project-1/session-1/upload-1/v2/content',
           filename: 'input.csv',
           originalFilename: 'Input.csv',
-          sizeBytes: 2,
-          checksum: 'd'.repeat(64)
+          sizeBytes: 1,
+          checksum: createHash('sha256').update('x').digest('hex')
         }
       ]
     })
@@ -4789,7 +5031,7 @@ describe('artifact provenance repository', () => {
             filename: 'notes.txt',
             originalFilename: 'Notes.txt',
             sizeBytes: 1,
-            checksum: 'f'.repeat(64)
+            checksum: createHash('sha256').update('x').digest('hex')
           }
         }
       }
@@ -4807,7 +5049,7 @@ describe('artifact provenance repository', () => {
         expectedHeadVersionId: `${operation.source}-v1`,
         storageTag: `vjournal${index}`,
         storedFilename: `vjournal${index}_notes.txt`,
-        checksum: String(index).repeat(64),
+        checksum: createHash('sha256').update('x').digest('hex'),
         sizeBytes: 1,
         textFormatJson: '{}'
       }))
@@ -4882,7 +5124,7 @@ describe('artifact provenance repository', () => {
             originalFilename: 'input.csv',
             contentType: 'text/csv',
             sizeBytes: BigInt(1),
-            checksum: 'a'.repeat(64)
+            checksum: createHash('sha256').update('x').digest('hex')
           }
         }
       }

@@ -12,6 +12,7 @@
     "cli_sdk",
     "i18n",
     "unit_macos",
+    "version_storage_linux",
     "windows_runtime",
     "windows_path",
     "build",
@@ -34,6 +35,7 @@
     "cli_sdk": "static",
     "i18n": "static",
     "unit_macos": "unit",
+    "version_storage_linux": "static",
     "windows_runtime": "windows_core",
     "windows_path": "windows_core",
     "build": "macos_e2e",
@@ -171,6 +173,8 @@
         "src/main/update/electron-updater-strategy.ts",
         "src/main/session-persistence/**",
         "src/main/file-save.ts",
+        "src/main/managed-file-versions/version-file-operator.test.ts",
+        "src/main/managed-file-versions/version-file-operator.ts",
         "src/main/specialist/repository.ts",
         "src/preload/**/*windows*.ts",
         "src/preload/**/*powershell*.ts",
@@ -182,6 +186,15 @@
         "src/shared/update.ts"
       ],
       "capabilities": ["windows_sensitive"]
+    },
+    {
+      "id": "version_file_operator",
+      "role": "overlay",
+      "paths": [
+        "src/main/managed-file-versions/version-file-operator.test.ts",
+        "src/main/managed-file-versions/version-file-operator.ts"
+      ],
+      "capabilities": ["version_file_operator"]
     },
     {
       "id": "renderer_view",
@@ -262,6 +275,10 @@
         "e2e_functional_windows",
         "e2e_workspace_windows"
       ]
+    },
+    "version_file_operator": {
+      "consumers": [],
+      "lanes": ["version_storage_linux"]
     },
     "renderer_view": {
       "consumers": ["e2e_functional", "e2e_accessibility", "e2e_visual", "i18n_catalog"],

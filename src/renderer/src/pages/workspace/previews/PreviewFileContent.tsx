@@ -1,13 +1,20 @@
 import { renderPreviewFile } from './preview-registry'
 import { PreviewUnsupportedContent } from './PreviewFallback'
 import { PreviewRuntimeBoundary } from './preview-runtime'
+import type { PreviewDownloadVersionContext } from './preview-runtime-context'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
-export const PreviewFileContent = ({ item }: { item: PreviewFileItem }): React.JSX.Element => {
+export const PreviewFileContent = ({
+  item,
+  downloadVersionContext
+}: {
+  item: PreviewFileItem
+  downloadVersionContext?: PreviewDownloadVersionContext
+}): React.JSX.Element => {
   const content = renderPreviewFile({ item })
 
   return (
-    <PreviewRuntimeBoundary item={item}>
+    <PreviewRuntimeBoundary item={item} downloadVersionContext={downloadVersionContext}>
       {content ?? (
         <PreviewUnsupportedContent
           path={item.path}

@@ -2570,7 +2570,6 @@ describe('workspace runtime events', () => {
       expect.objectContaining({
         id: 'artifact-lineage-1',
         artifactId: 'artifact-lineage-1',
-        selectedVersionId: 'artifact-version-2',
         versionNumber: 2,
         path: 'artifact-version:default-project/transport-session-1/artifact-lineage-1/artifact-version-2',
         type: 'file',
@@ -2620,7 +2619,6 @@ describe('workspace runtime events', () => {
       items: [
         expect.objectContaining({
           id: 'artifact-lineage-activating',
-          selectedVersionId: 'artifact-version-activating',
           format: 'molecule'
         })
       ]

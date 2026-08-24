@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { PreviewFileContent } from './PreviewFileContent'
+import type { PreviewDownloadVersionContext } from './preview-runtime-context'
 
 const highlightSpy = vi.hoisted(() => vi.fn())
 const addModel = vi.fn()
@@ -181,7 +182,7 @@ describe('PreviewFileContent', () => {
     highlightSpy.mockClear()
   })
 
-  it('keeps the exact managed identity in the unsupported-preview download fallback', async () => {
+  it('downloads the selected historical version from the unsupported-preview fallback menu', async () => {
     const saveManagedFile = vi.fn().mockResolvedValue({ saved: false })
     window.api.saveManagedFile = saveManagedFile
     const unsupportedItem: PreviewFileItem = {
@@ -195,12 +196,30 @@ describe('PreviewFileContent', () => {
       name: 'archive.bin',
       format: 'unknown',
       managedFileId: 'upload-1',
-      selectedVersionId: 'upload-v5'
+      selectedVersionId: 'upload-v5',
+      versionNumber: 5
     }
 
-    await renderFile(unsupportedItem)
+    await renderFile(unsupportedItem, {
+      versionId: 'upload-v5',
+      versionNumber: 5,
+      latestVersionId: 'upload-v7',
+      latestVersionNumber: 7
+    })
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="Download archive.bin"]')?.click()
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Download options for archive.bin"]')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(saveManagedFile).not.toHaveBeenCalled()
+
+    const selectedVersion = [
+      ...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ].find((item) => item.textContent === 'Download version v5')
+    expect(selectedVersion).toBeDefined()
+    await act(async () => {
+      selectedVersion?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
     })
 
@@ -214,6 +233,34 @@ describe('PreviewFileContent', () => {
     })
   })
 
+  it('does not download a managed fallback while version context is pending', async () => {
+    const saveManagedFile = vi.fn().mockResolvedValue({ saved: false })
+    window.api.saveManagedFile = saveManagedFile
+
+    await renderFile(
+      createFileItem({
+        source: 'upload',
+        projectId: 'project-1',
+        managedFileId: 'upload-1',
+        selectedVersionId: 'upload-v5',
+        path: 'upload-version:stale-projection',
+        name: 'archive.bin',
+        title: 'archive.bin',
+        format: 'unknown'
+      })
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>('button')
+    expect(trigger?.disabled).toBe(true)
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(saveManagedFile).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="menuitem"]')).toBeNull()
+  })
+
   afterEach(async () => {
     await act(async () => {
       root.unmount()
@@ -224,10 +271,15 @@ describe('PreviewFileContent', () => {
     vi.unstubAllGlobals()
   })
 
-  const renderFile = async (item: PreviewFileItem): Promise<void> => {
+  const renderFile = async (
+    item: PreviewFileItem,
+    downloadVersionContext?: PreviewDownloadVersionContext
+  ): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
-      root.render(<PreviewFileContent item={item} />)
+      root.render(
+        <PreviewFileContent item={item} downloadVersionContext={downloadVersionContext} />
+      )
     })
   }
 

@@ -292,6 +292,7 @@ describe('Artifact Provenance repository architecture', () => {
         'readModel',
         'stagingRecovery',
         'unindexedRecovery',
+        'versionFileOperator',
         'versionWriter',
         'writeBudgetOwner'
       ].sort()
@@ -302,6 +303,7 @@ describe('Artifact Provenance repository architecture', () => {
         'SAFE_SEGMENT_PATTERN',
         'assertSafeSegment',
         'hasServerInferredProducer',
+        'journalRecoveryPlan',
         'recordValue'
       ].sort()
     )

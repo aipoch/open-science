@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { dirname, join, posix } from 'node:path'
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 
@@ -176,6 +175,7 @@ describe('artifact provenance allocation and write identity', () => {
 
   it('diffs a generated text Version against its published or same-run predecessor', async () => {
     const value = await fixture()
+    await value.client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const prompt = {
       id: 'prompt-1',
       role: 'user' as const,
@@ -303,9 +303,7 @@ describe('artifact provenance allocation and write identity', () => {
 
     const service = new ManagedFileVersionService({
       storageRoot: value.storageRoot,
-      getClient: () => Promise.resolve(value.client),
-      nativeWriteAvailable: true,
-      readAnchored: (_rootPath, parentPath, name) => readFileSync(join(parentPath, name))
+      getClient: () => Promise.resolve(value.client)
     })
     await expect(
       service.diffText({

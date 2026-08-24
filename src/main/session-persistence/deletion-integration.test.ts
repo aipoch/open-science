@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ManagedFileIndexRepository } from '../project-files/repository'
 import { ProjectDeletionCoordinator } from '../projects/deletion-coordinator'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
@@ -114,6 +115,102 @@ describe('managed-file deletion integration', () => {
     await expect(readFile(uploadPath, 'utf8')).resolves.toBe('upload bytes')
     await expect(readFile(artifactPath, 'utf8')).resolves.toBe('artifact bytes')
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('hides Version history during Session deletion and restores the unchanged head on compensation', async () => {
+    await client.project.create({ data: { id: PROJECT_ID, name: 'Project A' } })
+    const secondStorageRef =
+      'uploads/project-a/session-a/upload-1/managed-versions/vabc12345_input.csv'
+    const secondPath = join(storageRoot, ...secondStorageRef.split('/'))
+    const secondBytes = Buffer.from('edited upload bytes')
+    await writeManagedFile(secondPath, secondBytes.toString('utf8'))
+    await client.uploadVersion.create({
+      data: {
+        id: 'upload-version-2',
+        uploadFileId: 'upload-1',
+        versionNumber: 2,
+        state: 'ready',
+        originKind: 'user_edit',
+        basedOnVersionId: 'upload-version-1',
+        storageTag: 'vabc12345',
+        storedFilename: 'vabc12345_input.csv',
+        contentStorageKey: secondStorageRef,
+        filename: 'input.csv',
+        originalFilename: 'input.csv',
+        sizeBytes: secondBytes.byteLength,
+        checksum: createHash('sha256').update(secondBytes).digest('hex'),
+        createdAt: new Date(200)
+      }
+    })
+    await client.uploadFile.update({
+      where: { id: 'upload-1' },
+      data: { currentVersionId: 'upload-version-2' }
+    })
+    const versionService = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const sessionPath = join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`)
+    let signalPrimaryRemoval!: () => void
+    let releasePrimaryRemoval!: () => void
+    const primaryRemovalStarted = new Promise<void>((resolve) => {
+      signalPrimaryRemoval = resolve
+    })
+    const primaryRemovalMayFail = new Promise<void>((resolve) => {
+      releasePrimaryRemoval = resolve
+    })
+    const failingSessions = new SessionRepository(storageRoot, {
+      remove: async (path, options) => {
+        if (path === sessionPath) {
+          signalPrimaryRemoval()
+          await primaryRemovalMayFail
+          throw new Error('simulated Session authority delete failure')
+        }
+        await rm(path, options)
+      }
+    })
+    const compensatingCoordinator = new SessionPersistenceCoordinator(
+      failingSessions,
+      files,
+      undefined,
+      undefined,
+      new UploadRepository(storageRoot, { getClient: () => Promise.resolve(client) })
+    )
+    await compensatingCoordinator.loadAll()
+
+    const deletion = compensatingCoordinator.deleteSession(PROJECT_ID, SESSION_ID)
+    await primaryRemovalStarted
+    await expect(
+      versionService.openLatest({ source: 'upload', projectId: PROJECT_ID, fileId: 'upload-1' })
+    ).rejects.toMatchObject({ code: 'FILE_DELETED' })
+    await expect(
+      versionService.openVersion(
+        { source: 'upload', projectId: PROJECT_ID, fileId: 'upload-1' },
+        'upload-version-1'
+      )
+    ).rejects.toMatchObject({ code: 'FILE_DELETED' })
+
+    releasePrimaryRemoval()
+    await expect(deletion).rejects.toThrow('simulated Session authority delete failure')
+
+    const latest = await versionService.openLatest({
+      source: 'upload',
+      projectId: PROJECT_ID,
+      fileId: 'upload-1'
+    })
+    const historical = await versionService.openVersion(
+      { source: 'upload', projectId: PROJECT_ID, fileId: 'upload-1' },
+      'upload-version-1'
+    )
+    try {
+      expect(latest.version.id).toBe('upload-version-2')
+      expect(historical.version.id).toBe('upload-version-1')
+    } finally {
+      await Promise.all([latest.close(), historical.close()])
+    }
+    await expect(
+      client.uploadFile.findUniqueOrThrow({ where: { id: 'upload-1' } })
+    ).resolves.toMatchObject({ currentVersionId: 'upload-version-2' })
   })
 
   it('deletes a recovered Session and its superseded quarantine without blocking Project deletion', async () => {

@@ -339,7 +339,7 @@ export const createManagedFileReferenceResolver = (dependencies: {
   grantedRoots?: {
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
-  managedFileVersions?: Pick<ManagedFileVersionService, 'openResolved'>
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openLatest'>
 }): FileReferenceResolver => {
   const adapters: FileReferenceAdapter[] = []
   const readOnlyProjection = dependencies.grantedRoots
@@ -351,11 +351,10 @@ export const createManagedFileReferenceResolver = (dependencies: {
     reference: Extract<FileReference, { source: 'artifact' | 'upload' }>
   ): Promise<ManagedFileReadLease | undefined> => {
     if (!reference.sourceFileId || !dependencies.managedFileVersions) return undefined
-    return dependencies.managedFileVersions.openResolved({
+    return dependencies.managedFileVersions.openLatest({
       source: reference.source,
       projectId,
-      fileId: reference.sourceFileId,
-      ...(reference.versionId ? { versionId: reference.versionId } : {})
+      fileId: reference.sourceFileId
     })
   }
 

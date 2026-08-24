@@ -148,7 +148,7 @@ describe('ManagedPreviewResources', () => {
 
   it('closes the temporary trusted lease used for Office admission inspection', async () => {
     const close = vi.fn().mockResolvedValue(undefined)
-    const openManagedFileVersion = vi.fn().mockResolvedValue({
+    const openLatestManagedFile = vi.fn().mockResolvedValue({
       path: '/managed/report.xlsx',
       size: 6,
       versionToken: 42,
@@ -161,7 +161,7 @@ describe('ManagedPreviewResources', () => {
     })
     const resources = new ManagedPreviewResources({
       resolvePath: vi.fn(),
-      openManagedFileVersion
+      openLatestManagedFile
     } as never)
 
     await expect(
@@ -172,6 +172,10 @@ describe('ManagedPreviewResources', () => {
         fileId: 'artifact-1'
       })
     ).resolves.toEqual({ size: 6, version: 42, dev: 1n, ino: 2n, mtimeNs: 3n })
+    expect(openLatestManagedFile).toHaveBeenCalledWith('artifact', {
+      projectId: 'project-1',
+      fileId: 'artifact-1'
+    })
     expect(close).toHaveBeenCalledOnce()
   })
 

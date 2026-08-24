@@ -58,8 +58,11 @@ type UploadProgressTarget = Readonly<{
 
 type UploadCommandOwnerOptions = Readonly<{
   resolveManagedFilePath?: (request: ReadArtifactPreviewRequest) => Promise<string>
+  openLatestManagedFile?: (
+    request: Omit<ReadArtifactPreviewRequest, 'versionId'> & { versionId?: never }
+  ) => Promise<ManagedFilePreviewReadLease>
   openManagedFileVersion?: (
-    request: ReadArtifactPreviewRequest
+    request: ReadArtifactPreviewRequest & { versionId: string }
   ) => Promise<ManagedFilePreviewReadLease>
   withSessionMutation?: <Result>(
     projectId: string,
@@ -402,8 +405,15 @@ const createUploadCommandOwner = (
           : finalize()
       }),
     readPreview: async ({ args: [request] }) => {
-      if (request.projectId && request.fileId && options.openManagedFileVersion) {
-        const lease = await options.openManagedFileVersion(request)
+      const lease =
+        request.projectId && request.fileId
+          ? request.versionId && options.openManagedFileVersion
+            ? await options.openManagedFileVersion({ ...request, versionId: request.versionId })
+            : !request.versionId && options.openLatestManagedFile
+              ? await options.openLatestManagedFile({ ...request, versionId: undefined })
+              : undefined
+          : undefined
+      if (lease) {
         try {
           return await readBoundedManagedFilePreviewLease(
             lease,

@@ -72,11 +72,7 @@ type ManagedFileVersionInspectResult = {
   versions: ManagedFileVersionDescriptor[]
   canEdit: boolean
   canDiff: boolean
-  unavailableReason?:
-    | ManagedTextEditUnavailableReason
-    | 'NATIVE_WRITE_REQUIRED'
-    | 'PROJECT_NOT_WRITABLE'
-    | 'FILE_DELETED'
+  unavailableReason?: ManagedTextEditUnavailableReason | 'PROJECT_NOT_WRITABLE' | 'FILE_DELETED'
   text?: string
   textFormat?: ManagedTextFormat
 }
@@ -85,15 +81,18 @@ type ManagedFileVersionErrorCode =
   | ManagedTextEditUnavailableReason
   | 'VERSION_NOT_FOUND'
   | 'VERSION_NOT_IN_FILE'
-  | 'HEAD_CHANGED'
   | 'FILE_DELETED'
   | 'FILE_NOT_FOUND'
   | 'PROJECT_NOT_WRITABLE'
   | 'CONTENT_INTEGRITY_FAILED'
+  | 'STORAGE_UNAVAILABLE'
+  | 'PERMISSION_DENIED'
+  | 'OUT_OF_SPACE'
+  | 'INTEGRITY_FAILED'
+  | 'VERSION_CONFLICT'
   | 'INVALID_REQUEST'
   | 'OPERATION_REUSED'
   | 'STORAGE_COLLISION'
-  | 'NATIVE_WRITE_REQUIRED'
   | 'DIFF_BASE_NOT_FOUND'
   | 'DIFF_INPUT_LIMIT_EXCEEDED'
   | 'DIFF_OUTPUT_LIMIT_EXCEEDED'
@@ -110,7 +109,6 @@ type ManagedFileVersionIpcResult<Value> =
   { ok: true; value: Value } | { ok: false; error: ManagedFileVersionErrorShape }
 
 type ManagedFileVersionInspectRequest = ManagedFileIdentity & { versionId?: string }
-type ManagedFileVersionResolveRequest = ManagedFileIdentity & { versionId?: string }
 type ManagedFileVersionDiffRequest = ManagedFileIdentity & { versionId: string; requestId: string }
 type ManagedFileVersionCancelDiffRequest = { requestId: string }
 
@@ -178,14 +176,12 @@ type ManagedTextEditEligibility =
 type SecureRandomIndexSource = (upperBound: number) => number
 
 type ManagedFileVersionHostCapability =
-  { available: true } | { available: false; reason: 'NATIVE_WRITE_REQUIRED' }
+  { available: true } | { available: false; reason: 'STORAGE_UNAVAILABLE' }
 
 const managedFileVersionHostCapability = (
-  hasNativeManagedFileVersionApi: boolean
+  hasVersionFileOperator: boolean
 ): ManagedFileVersionHostCapability =>
-  hasNativeManagedFileVersionApi
-    ? { available: true }
-    : { available: false, reason: 'NATIVE_WRITE_REQUIRED' }
+  hasVersionFileOperator ? { available: true } : { available: false, reason: 'STORAGE_UNAVAILABLE' }
 
 const extensionOf = (filename: string): string | undefined => {
   const index = filename.lastIndexOf('.')
@@ -309,7 +305,6 @@ export {
   type ManagedFileVersionDiffSegment,
   type ManagedFileVersionInspectRequest,
   type ManagedFileVersionOriginKind,
-  type ManagedFileVersionResolveRequest,
   type ManagedFileVersionSaveTextEditRequest,
   type ManagedTextEditEligibility,
   type ManagedTextEditUnavailableReason,

@@ -1,28 +1,19 @@
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
-import {
-  linkSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync
-} from 'node:fs'
+import { renameSync, symlinkSync } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
+  open as openFile,
   readFile,
   readdir,
   rename,
   rm,
   stat,
   symlink,
-  utimes,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -30,29 +21,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { MANAGED_TEXT_EDIT_MAX_BYTES } from '../../shared/managed-file-versions'
 import { ManagedFileVersionError, ManagedFileVersionService } from './service'
+import { NodeVersionFileOperator, VersionFileOperatorError } from './version-file-operator'
 
 const checksum = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
-const testPublish = (
-  _rootPath: string,
-  parentPath: string,
-  sourceName: string,
-  destinationName: string
-): void => {
-  linkSync(join(parentPath, sourceName), join(parentPath, destinationName))
-  unlinkSync(join(parentPath, sourceName))
-}
-const testWriteAndPublish = (
-  rootPath: string,
-  parentPath: string,
-  temporaryName: string,
-  destinationName: string,
-  bytes: Buffer
-): void => {
-  mkdirSync(parentPath, { recursive: true })
-  writeFileSync(join(parentPath, temporaryName), bytes)
-  testPublish(rootPath, parentPath, temporaryName, destinationName)
-}
-
 type SourceFixture = {
   source: 'artifact' | 'upload'
   fileId: string
@@ -183,7 +154,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       const fixture = await createFixture(source)
       const service = new ManagedFileVersionService({
         storageRoot,
-        writeAndPublish: testWriteAndPublish,
         getClient: () => Promise.resolve(client)
       })
 
@@ -217,15 +187,210 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       })
 
       await expect(
-        service.resolve({
-          source,
-          projectId: 'project-1',
-          fileId: fixture.fileId,
-          versionId: `${source}-other-version`
-        })
+        service.openVersion(
+          { source, projectId: 'project-1', fileId: fixture.fileId },
+          `${source}-other-version`
+        )
       ).rejects.toMatchObject({ code: 'VERSION_NOT_FOUND' })
     }
   )
+
+  it.each(['artifact', 'upload'] as const)(
+    'separates latest, explicit historical, and based-on diff reads for %s files',
+    async (source) => {
+      const fixture = await createFixture(source)
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const identity = {
+        source,
+        projectId: 'project-1',
+        fileId: fixture.fileId
+      }
+
+      const latest = await service.openLatest(identity)
+      try {
+        await expect(latest.readRange(0, latest.size)).resolves.toEqual(
+          new Uint8Array(Buffer.from('second\n'))
+        )
+        expect(latest.version.id).toBe(fixture.versionIds[1])
+      } finally {
+        await latest.close()
+      }
+
+      const historical = await service.openVersion(identity, fixture.versionIds[0])
+      try {
+        await expect(historical.readRange(0, historical.size)).resolves.toEqual(
+          new Uint8Array(Buffer.from('\ufefffirst\r\nline\r\n'))
+        )
+        expect(historical.version.id).toBe(fixture.versionIds[0])
+      } finally {
+        await historical.close()
+      }
+
+      await expect(
+        service.diffVersion(identity, fixture.versionIds[1], `${source}-explicit-diff`)
+      ).resolves.toMatchObject({
+        baseVersionId: fixture.versionIds[0],
+        selectedVersionId: fixture.versionIds[1]
+      })
+    }
+  )
+
+  it.each(['artifact', 'upload'] as const)(
+    'hides latest and historical %s versions while the logical file is soft-deleted',
+    async (source) => {
+      const fixture = await createFixture(source)
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const identity = {
+        source,
+        projectId: 'project-1',
+        fileId: fixture.fileId
+      }
+      await client.managedFile.update({
+        where: {
+          projectId_source_sourceFileId: {
+            projectId: 'project-1',
+            source,
+            sourceFileId: fixture.fileId
+          }
+        },
+        data: { deletedAt: new Date('2026-08-24T00:00:00.000Z'), deleteOperationId: 'delete-1' }
+      })
+
+      await expect(service.openLatest(identity)).rejects.toMatchObject({ code: 'FILE_DELETED' })
+      await expect(service.openVersion(identity, fixture.versionIds[0])).rejects.toMatchObject({
+        code: 'FILE_DELETED'
+      })
+      await expect(
+        service.diffVersion(identity, fixture.versionIds[1], `${source}-deleted-diff`)
+      ).rejects.toMatchObject({ code: 'FILE_DELETED' })
+    }
+  )
+
+  it.each(['artifact', 'upload'] as const)(
+    'restores all readable %s history when its Session is restored',
+    async (source) => {
+      const fixture = await createFixture(source)
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const identity = {
+        source,
+        projectId: 'project-1',
+        fileId: fixture.fileId
+      }
+      const readCurrentVersionId = async (): Promise<string | null> =>
+        source === 'artifact'
+          ? (
+              await client.artifactLineage.findUniqueOrThrow({
+                where: { id: fixture.fileId },
+                select: { currentVersionId: true }
+              })
+            ).currentVersionId
+          : (
+              await client.uploadFile.findUniqueOrThrow({
+                where: { id: fixture.fileId },
+                select: { currentVersionId: true }
+              })
+            ).currentVersionId
+      await client.fileOriginSession.update({
+        where: { projectId_sessionId: { projectId: 'project-1', sessionId: 'session-1' } },
+        data: {
+          state: 'deleted',
+          deletedAt: new Date('2026-08-24T00:00:00.000Z'),
+          deletionOperationId: null
+        }
+      })
+
+      await expect(service.openLatest(identity)).rejects.toMatchObject({ code: 'FILE_DELETED' })
+      await expect(readCurrentVersionId()).resolves.toBe(fixture.versionIds[1])
+
+      await client.fileOriginSession.update({
+        where: { projectId_sessionId: { projectId: 'project-1', sessionId: 'session-1' } },
+        data: { state: 'active', deletedAt: null, deletionOperationId: null }
+      })
+      const restored = await service.openVersion(identity, fixture.versionIds[0])
+      try {
+        expect(restored.version.id).toBe(fixture.versionIds[0])
+      } finally {
+        await restored.close()
+      }
+      await expect(readCurrentVersionId()).resolves.toBe(fixture.versionIds[1])
+    }
+  )
+
+  it('uses the Node version file operator when native managed-file support is unavailable', async () => {
+    const fixture = await createFixture('artifact')
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const operationId = 'node-version-operation'
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      versionFileOperator
+    })
+
+    const inspected = await service.inspect({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: fixture.fileId
+    })
+    expect(inspected).toMatchObject({
+      canEdit: true,
+      text: 'second\n',
+      selectedVersionId: fixture.versionIds[1]
+    })
+
+    const result = await service.saveTextEdit({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      expectedHeadVersionId: fixture.versionIds[1],
+      operationId,
+      content: 'third\n'
+    })
+    expect(result.kind).toBe('created')
+
+    const expectedPlan = versionFileOperator.planImmutable({
+      operationId,
+      scope: {
+        source: 'artifact',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: fixture.fileId
+      },
+      logicalFilename: 'README.md',
+      candidateIndex: 0
+    })
+    const operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
+      where: { operationId }
+    })
+    expect(operation.contentStorageKey).toBe(expectedPlan.storageRef)
+    expect(operation.storedFilename).toBe(expectedPlan.storedFilename)
+  })
+
+  it('creates a Node version file operator by default without consulting native capability', async () => {
+    const fixture = await createFixture('upload')
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+
+    expect(service.getCapability()).toEqual({ available: true })
+    await expect(
+      service.inspect({
+        source: 'upload',
+        projectId: 'project-1',
+        fileId: fixture.fileId
+      })
+    ).resolves.toMatchObject({ canEdit: true, text: 'second\n' })
+  })
 
   it.each(['artifact', 'upload'] as const)(
     'keeps the verified %s inode pinned when its storage path is replaced before consumption',
@@ -233,15 +398,9 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       const fixture = await createFixture(source)
       const service = new ManagedFileVersionService({
         storageRoot,
-        writeAndPublish: testWriteAndPublish,
-        getClient: () => Promise.resolve(client),
-        nativeWriteAvailable: true,
-        verifyAnchored: (_rootPath, parentPath, name, expectedSizeBytes, expectedChecksum) => {
-          const bytes = readFileSync(join(parentPath, name))
-          return bytes.byteLength === expectedSizeBytes && checksum(bytes) === expectedChecksum
-        }
+        getClient: () => Promise.resolve(client)
       })
-      const lease = await service.openResolved({
+      const lease = await service.openLatest({
         source,
         projectId: 'project-1',
         fileId: fixture.fileId
@@ -272,7 +431,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       const fixture = await createFixture(source)
       const service = new ManagedFileVersionService({
         storageRoot,
-        writeAndPublish: testWriteAndPublish,
         getClient: () => Promise.resolve(client)
       })
 
@@ -315,7 +473,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     const cancel = vi.fn(() => false)
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: async () => {
         await clientGate
         return client
@@ -355,7 +512,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     const cancel = vi.fn(() => false)
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
       diffTaskRunner: { run, cancel }
     })
@@ -387,21 +543,24 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       'versions'
     )
     let readAttempts = 0
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const openImmutable = versionFileOperator.openImmutable.bind(versionFileOperator)
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      readAnchored: () => {
-        readAttempts += 1
-        renameSync(versionsPath, `${versionsPath}-replaced`)
-        symlinkSync(outsideRoot!, versionsPath, process.platform === 'win32' ? 'junction' : 'dir')
-        throw Object.assign(new Error('anchored parent changed'), { code: 'ELOOP' })
-      }
+      versionFileOperator: Object.assign(versionFileOperator, {
+        openImmutable: async (...args: Parameters<typeof openImmutable>) => {
+          readAttempts += 1
+          renameSync(versionsPath, `${versionsPath}-replaced`)
+          symlinkSync(outsideRoot!, versionsPath, process.platform === 'win32' ? 'junction' : 'dir')
+          return openImmutable(...args)
+        }
+      })
     })
 
     await expect(
       service.inspect({ source: 'upload', projectId: 'project-1', fileId: fixture.fileId })
-    ).rejects.toMatchObject({ code: 'CONTENT_INTEGRITY_FAILED' })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
     expect(readAttempts).toBe(1)
   })
 
@@ -417,16 +576,19 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       'versions'
     )
     let readAttempts = 0
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const openImmutable = versionFileOperator.openImmutable.bind(versionFileOperator)
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      readAnchored: () => {
-        readAttempts += 1
-        renameSync(versionsPath, `${versionsPath}-replaced`)
-        symlinkSync(outsideRoot!, versionsPath, process.platform === 'win32' ? 'junction' : 'dir')
-        throw Object.assign(new Error('anchored parent changed'), { code: 'ELOOP' })
-      }
+      versionFileOperator: Object.assign(versionFileOperator, {
+        openImmutable: async (...args: Parameters<typeof openImmutable>) => {
+          readAttempts += 1
+          renameSync(versionsPath, `${versionsPath}-replaced`)
+          symlinkSync(outsideRoot!, versionsPath, process.platform === 'win32' ? 'junction' : 'dir')
+          return openImmutable(...args)
+        }
+      })
     })
 
     await expect(
@@ -439,7 +601,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         content: 'changed\n',
         operationId: 'anchored-baseline-read'
       })
-    ).rejects.toMatchObject({ code: 'CONTENT_INTEGRITY_FAILED' })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
     expect(readAttempts).toBe(1)
   })
 
@@ -454,15 +616,12 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       where: { id: version.id },
       data: { sizeBytes: BigInt(bytes.byteLength), checksum: checksum(bytes) }
     })
-    let bodyReads = 0
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const openImmutable = vi.fn(versionFileOperator.openImmutable.bind(versionFileOperator))
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      readAnchored: () => {
-        bodyReads += 1
-        throw new Error('large body must not be read')
-      }
+      versionFileOperator: Object.assign(versionFileOperator, { openImmutable })
     })
 
     await expect(
@@ -472,17 +631,18 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       canDiff: false,
       unavailableReason: 'EDIT_LIMIT_EXCEEDED'
     })
-    expect(bodyReads).toBe(0)
+    expect(openImmutable).not.toHaveBeenCalled()
   })
 
   it('maps an atomic bounded-read overflow to EDIT_LIMIT_EXCEEDED', async () => {
     const fixture = await createFixture('upload')
+    await client.uploadVersion.update({
+      where: { id: fixture.versionIds[1] },
+      data: { sizeBytes: BigInt(MANAGED_TEXT_EDIT_MAX_BYTES + 1) }
+    })
     const service = new ManagedFileVersionService({
       storageRoot,
-      getClient: () => Promise.resolve(client),
-      readAnchoredBounded: () => {
-        throw Object.assign(new Error('bounded read overflow'), { code: 'EFBIG' })
-      }
+      getClient: () => Promise.resolve(client)
     })
 
     await expect(
@@ -529,7 +689,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     })
 
@@ -600,23 +759,24 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       }
     })
     let hidBaseline = false
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const publishImmutable = versionFileOperator.publishImmutable.bind(versionFileOperator)
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
       createId: () => 'artifact-racing-v3',
-      createStorageTag: () => 'vrace0001',
-      durability: {
-        syncFile: () => Promise.resolve(),
-        syncDirectory: async () => {
-          if (hidBaseline) return
+      versionFileOperator: Object.assign(versionFileOperator, {
+        publishImmutable: async (...args: Parameters<typeof publishImmutable>) => {
+          const stored = await publishImmutable(...args)
+          if (hidBaseline) return stored
           hidBaseline = true
           await client.artifactVersion.update({
             where: { id: fixture.versionIds[1] },
             data: { managedVisibleAt: null }
           })
+          return stored
         }
-      }
+      })
     })
 
     await expect(
@@ -645,12 +805,12 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     'saves a %s historical edit as the next immutable head and synchronizes the Files projection',
     async (source) => {
       const fixture = await createFixture(source)
+      const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
       const service = new ManagedFileVersionService({
         storageRoot,
-        writeAndPublish: testWriteAndPublish,
         getClient: () => Promise.resolve(client),
         createId: () => `${source}-v3`,
-        createStorageTag: () => 'va1b2c3d4'
+        versionFileOperator
       })
 
       await client.managedFile.update({
@@ -685,13 +845,28 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
           displayName: 'README.md'
         }
       })
-      const resolved = await service.resolve({
+      const resolved = await service.openLatest({
         source,
         projectId: 'project-1',
         fileId: fixture.fileId
       })
-      expect(resolved.version.id).toBe(`${source}-v3`)
-      expect(resolved.version.storedFilename).toBe('va1b2c3d4_README.md')
+      try {
+        expect(resolved.version.id).toBe(`${source}-v3`)
+      } finally {
+        await resolved.close()
+      }
+      const plannedFile = versionFileOperator.planImmutable({
+        operationId: `${source}-operation-1`,
+        scope: {
+          source,
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          logicalFileId: fixture.fileId
+        },
+        logicalFilename: 'README.md',
+        candidateIndex: 0
+      })
+      expect(resolved.version.storedFilename).toBe(plannedFile.storedFilename)
       expect(await readFile(resolved.path)).toEqual(
         Buffer.from('\ufeffchanged\r\nfrom history\r\n')
       )
@@ -723,7 +898,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       const fixture = await createFixture(source)
       const service = new ManagedFileVersionService({
         storageRoot,
-        writeAndPublish: testWriteAndPublish,
         getClient: () => Promise.resolve(client)
       })
       const before =
@@ -760,7 +934,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       const fixture = await createFixture('upload')
       const service = new ManagedFileVersionService({
         storageRoot,
-        writeAndPublish: testWriteAndPublish,
         getClient: () => Promise.resolve(client)
       })
 
@@ -784,8 +957,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     const getClient = vi.fn().mockRejectedValue(new Error('database must not be opened'))
     const service = new ManagedFileVersionService({
       storageRoot,
-      getClient,
-      nativeWriteAvailable: true
+      getClient
     })
 
     await expect(
@@ -805,13 +977,10 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
   it('allows only one of two concurrent saves against the same head to publish', async () => {
     const fixture = await createFixture('upload')
     let id = 2
-    let tag = 0
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      createId: () => `upload-v${++id}`,
-      createStorageTag: () => `v0000000${++tag}`
+      createId: () => `upload-v${++id}`
     })
     const base = {
       source: 'upload' as const,
@@ -831,21 +1000,41 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     expect(
       await client.managedFileVersionWriteOperation.count({ where: { state: 'conflict' } })
     ).toBe(1)
+    await expect(
+      client.managedFileVersionWriteOperation.findFirstOrThrow({ where: { state: 'conflict' } })
+    ).resolves.toMatchObject({ errorCode: 'VERSION_CONFLICT' })
   })
 
-  it('retries a colliding physical storage tag without clobbering existing bytes', async () => {
+  it('advances monotonically across colliding physical storage tags without clobbering bytes', async () => {
     const fixture = await createFixture('artifact')
-    const collidingKey = `artifacts/project-1/session-1/${fixture.fileId}/managed-versions/vaaaaaaaa_README.md`
-    const collidingPath = join(storageRoot, ...collidingKey.split('/'))
+    const operationId = 'artifact-collision-operation'
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const planInput = {
+      operationId,
+      scope: {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: fixture.fileId
+      },
+      logicalFilename: 'README.md'
+    }
+    const collidingPlan = versionFileOperator.planImmutable({ ...planInput, candidateIndex: 0 })
+    const secondCollidingPlan = versionFileOperator.planImmutable({
+      ...planInput,
+      candidateIndex: 1
+    })
+    const expectedPlan = versionFileOperator.planImmutable({ ...planInput, candidateIndex: 2 })
+    const collidingPath = join(storageRoot, ...collidingPlan.storageRef.split('/'))
+    const secondCollidingPath = join(storageRoot, ...secondCollidingPlan.storageRef.split('/'))
     await mkdir(dirname(collidingPath), { recursive: true })
     await writeFile(collidingPath, 'do not replace')
-    const tags = ['vaaaaaaaa', 'vbbbbbbbb']
+    await writeFile(secondCollidingPath, 'also do not replace')
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
       createId: () => 'artifact-v3',
-      createStorageTag: () => tags.shift()!
+      versionFileOperator
     })
 
     const result = await service.saveTextEdit({
@@ -855,36 +1044,46 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       basedOnVersionId: fixture.versionIds[1],
       expectedHeadVersionId: fixture.versionIds[1],
       content: 'new bytes\n',
-      operationId: 'artifact-collision-operation'
+      operationId
     })
 
     expect(result).toMatchObject({ kind: 'created' })
-    await expect(
-      service.resolve({
-        source: 'artifact',
-        projectId: 'project-1',
-        fileId: fixture.fileId
-      })
-    ).resolves.toMatchObject({ version: { storedFilename: 'vbbbbbbbb_README.md' } })
+    const resolved = await service.openLatest({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: fixture.fileId
+    })
+    try {
+      expect(resolved).toMatchObject({ version: { storedFilename: expectedPlan.storedFilename } })
+    } finally {
+      await resolved.close()
+    }
     await expect(readFile(collidingPath, 'utf8')).resolves.toBe('do not replace')
+    await expect(readFile(secondCollidingPath, 'utf8')).resolves.toBe('also do not replace')
   })
 
   it('reallocates the journal destination when a no-clobber publication loses a filesystem race', async () => {
     const fixture = await createFixture('upload')
-    const tags = ['vrace0001', 'vrace0002']
     let publicationAttempts = 0
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const publishImmutable = versionFileOperator.publishImmutable.bind(versionFileOperator)
     const service = new ManagedFileVersionService({
       storageRoot,
       getClient: () => Promise.resolve(client),
       createId: () => 'upload-v3',
-      createStorageTag: () => tags.shift()!,
-      writeAndPublish: (rootPath, parentPath, temporaryName, destinationName, bytes) => {
-        publicationAttempts += 1
-        if (publicationAttempts === 1) {
-          throw Object.assign(new Error('simulated no-replace race'), { code: 'EEXIST' })
+      versionFileOperator: Object.assign(versionFileOperator, {
+        publishImmutable: async (...args: Parameters<typeof publishImmutable>) => {
+          publicationAttempts += 1
+          if (publicationAttempts === 1) {
+            throw new VersionFileOperatorError(
+              'INTEGRITY_FAILED',
+              'simulated no-replace race',
+              'DESTINATION_COLLISION'
+            )
+          }
+          return publishImmutable(...args)
         }
-        testWriteAndPublish(rootPath, parentPath, temporaryName, destinationName, bytes)
-      }
+      })
     })
 
     await expect(
@@ -899,32 +1098,133 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       })
     ).resolves.toMatchObject({ kind: 'created' })
     expect(publicationAttempts).toBe(2)
-    await expect(
-      client.managedFileVersionWriteOperation.findUniqueOrThrow({
-        where: { operationId: 'race-operation' }
-      })
-    ).resolves.toMatchObject({
-      state: 'published',
-      storageTag: 'vrace0002',
-      storedFilename: 'vrace0002_README.md'
+    const operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
+      where: { operationId: 'race-operation' }
     })
+    const expectedPlan = versionFileOperator.planImmutable({
+      operationId: 'race-operation',
+      scope: {
+        source: 'upload',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: fixture.fileId
+      },
+      logicalFilename: 'README.md',
+      candidateIndex: 1
+    })
+    expect(operation).toMatchObject({
+      state: 'published',
+      storageTag: `v${expectedPlan.versionToken}`,
+      storedFilename: expectedPlan.storedFilename
+    })
+  })
+
+  it('replays a failed partial publication on the journaled destination without leaving an orphan', async () => {
+    const fixture = await createFixture('upload')
+    let corruptPublication = true
+    const versionFileOperator = new NodeVersionFileOperator({
+      storageRoot,
+      fileSystem: {
+        open: async (...args) => {
+          const handle = await openFile(...args)
+          if (!corruptPublication || typeof args[1] !== 'string' || !args[1].startsWith('wx')) {
+            return handle
+          }
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === 'write') {
+                return async (
+                  buffer: Uint8Array,
+                  offset: number,
+                  length: number,
+                  position: number
+                ) => {
+                  const changed = Buffer.from(buffer.subarray(offset, offset + length))
+                  if (changed.byteLength > 0) changed[0] = changed[0]! ^ 0xff
+                  return target.write(changed, 0, changed.byteLength, position)
+                }
+              }
+              const value = Reflect.get(target, property, target)
+              return typeof value === 'function' ? value.bind(target) : value
+            }
+          })
+        }
+      }
+    })
+    const operationId = 'partial-publication-replay'
+    const request = {
+      source: 'upload' as const,
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      expectedHeadVersionId: fixture.versionIds[1],
+      content: 'retry the same immutable destination\n',
+      operationId
+    }
+    const planInput = {
+      operationId,
+      scope: {
+        source: 'upload' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: fixture.fileId
+      },
+      logicalFilename: 'README.md'
+    }
+    const firstPlan = versionFileOperator.planImmutable({ ...planInput, candidateIndex: 0 })
+    const secondPlan = versionFileOperator.planImmutable({ ...planInput, candidateIndex: 1 })
+    const firstPath = join(storageRoot, ...firstPlan.storageRef.split('/'))
+    const secondPath = join(storageRoot, ...secondPlan.storageRef.split('/'))
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      createId: () => 'upload-v3',
+      versionFileOperator
+    })
+
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({
+      code: 'INTEGRITY_FAILED'
+    })
+    await expect(
+      client.managedFileVersionWriteOperation.findUniqueOrThrow({ where: { operationId } })
+    ).resolves.toMatchObject({ state: 'staging', contentStorageKey: firstPlan.storageRef })
+    expect(await readFile(firstPath)).not.toEqual(Buffer.from(request.content))
+
+    corruptPublication = false
+    await expect(service.saveTextEdit(request)).resolves.toMatchObject({
+      kind: 'created',
+      headVersionId: 'upload-v3'
+    })
+    await expect(
+      client.managedFileVersionWriteOperation.findUniqueOrThrow({ where: { operationId } })
+    ).resolves.toMatchObject({ state: 'published', contentStorageKey: firstPlan.storageRef })
+    await expect(readFile(firstPath)).resolves.toEqual(Buffer.from(request.content))
+    await expect(readFile(secondPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readdir(dirname(firstPath))).resolves.toEqual([firstPlan.storedFilename])
   })
 
   it('does not delete an existing destination when every no-clobber publication collides', async () => {
     const fixture = await createFixture('upload')
-    const tags = Array.from({ length: 16 }, (_, index) => `vcoll${String(index).padStart(4, '0')}`)
     const collidingPaths: string[] = []
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
     const service = new ManagedFileVersionService({
       storageRoot,
       getClient: () => Promise.resolve(client),
-      createStorageTag: () => tags.shift()!,
-      writeAndPublish: (_rootPath, parentPath, _temporaryName, destinationName) => {
-        mkdirSync(parentPath, { recursive: true })
-        const destinationPath = join(parentPath, destinationName)
-        writeFileSync(destinationPath, 'existing bytes')
-        collidingPaths.push(destinationPath)
-        throw Object.assign(new Error('simulated no-replace collision'), { code: 'EEXIST' })
-      }
+      versionFileOperator: Object.assign(versionFileOperator, {
+        publishImmutable: async (
+          input: Parameters<typeof versionFileOperator.publishImmutable>[0]
+        ) => {
+          const destinationPath = join(storageRoot, ...input.plannedFile.storageRef.split('/'))
+          await mkdir(dirname(destinationPath), { recursive: true })
+          await writeFile(destinationPath, 'existing bytes')
+          collidingPaths.push(destinationPath)
+          throw new VersionFileOperatorError(
+            'INTEGRITY_FAILED',
+            'simulated no-replace collision',
+            'DESTINATION_COLLISION'
+          )
+        }
+      })
     })
 
     await expect(
@@ -968,11 +1268,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     )
     const service = new ManagedFileVersionService({
       storageRoot,
-      getClient: () => Promise.resolve(client),
-      createStorageTag: () => 'vsymlink1',
-      writeAndPublish: () => {
-        throw Object.assign(new Error('anchored publisher rejected symlink'), { code: 'ELOOP' })
-      }
+      getClient: () => Promise.resolve(client)
     })
 
     await expect(
@@ -985,7 +1281,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         content: 'must stay in root\n',
         operationId: 'symlink-escape-operation'
       })
-    ).rejects.toMatchObject({ code: 'ELOOP' })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
 
     expect(await readdir(outsideRoot)).toEqual([])
   })
@@ -1000,23 +1296,24 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     const firstMayContinue = new Promise<void>((resolve) => {
       releaseFirstAfterPublish = resolve
     })
-    let directorySyncCount = 0
+    let publicationCount = 0
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const publishImmutable = versionFileOperator.publishImmutable.bind(versionFileOperator)
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
       createId: () => 'upload-v3',
-      createStorageTag: () => 'vreplay01',
-      durability: {
-        syncFile: () => Promise.resolve(),
-        syncDirectory: async () => {
-          directorySyncCount += 1
-          if (directorySyncCount === 1) {
+      versionFileOperator: Object.assign(versionFileOperator, {
+        publishImmutable: async (...args: Parameters<typeof publishImmutable>) => {
+          const stored = await publishImmutable(...args)
+          publicationCount += 1
+          if (publicationCount === 1) {
             signalFirstAfterPublish()
             await firstMayContinue
           }
+          return stored
         }
-      }
+      })
     })
     const request = {
       source: 'upload' as const,
@@ -1045,24 +1342,27 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         where: { operationId: request.operationId }
       })
     ).resolves.toMatchObject({ state: 'published', resultVersionId: 'upload-v3' })
-    const resolved = await service.resolve({
+    const resolved = await service.openLatest({
       source: 'upload',
       projectId: 'project-1',
       fileId: fixture.fileId
     })
-    await expect(readFile(resolved.path, 'utf8')).resolves.toBe('one durable publication\n')
+    try {
+      await expect(resolved.readRange(0, resolved.size)).resolves.toEqual(
+        new Uint8Array(Buffer.from('one durable publication\n'))
+      )
+    } finally {
+      await resolved.close()
+    }
   })
 
   it('replays the original published result after a later head and rejects corrupt result bytes', async () => {
     const fixture = await createFixture('upload')
-    const tags = ['vreplay02', 'vreplay03']
     const ids = ['upload-v3', 'upload-v4']
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      createId: () => ids.shift()!,
-      createStorageTag: () => tags.shift()!
+      createId: () => ids.shift()!
     })
     const firstRequest = {
       source: 'upload' as const,
@@ -1091,14 +1391,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
     const replayWithoutBaseline = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
-      getClient: () => Promise.resolve(client),
-      readAnchored: (_rootPath, parentPath, name) => {
-        if (parentPath.endsWith('/versions/upload-v2')) {
-          throw new Error('published replay must not read the baseline')
-        }
-        return Buffer.from(readFileSync(join(parentPath, name)))
-      }
+      getClient: () => Promise.resolve(client)
     })
     expect(publishedVersion.storedFilename).not.toBe('content')
     await expect(replayWithoutBaseline.saveTextEdit(firstRequest)).resolves.toMatchObject({
@@ -1107,15 +1400,9 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       version: { id: 'upload-v3' },
       replayed: true
     })
-    const original = await service.resolve({
-      source: 'upload',
-      projectId: 'project-1',
-      fileId: fixture.fileId,
-      versionId: 'upload-v3'
-    })
-    await writeFile(original.path, 'corrupt')
+    await writeFile(join(storageRoot, ...publishedVersion.contentStorageKey.split('/')), 'corrupt')
     await expect(service.saveTextEdit(firstRequest)).rejects.toMatchObject({
-      code: 'CONTENT_INTEGRITY_FAILED'
+      code: 'INTEGRITY_FAILED'
     })
   })
 
@@ -1150,7 +1437,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     })
 
@@ -1171,10 +1457,8 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     const fixture = await createFixture('upload')
     const crashing = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
       createId: () => 'upload-v3',
-      createStorageTag: () => 'vcrash001',
       testFaultAt: 'after-file-publish'
     })
     await expect(
@@ -1196,7 +1480,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
       createId: () => 'upload-v3'
     })
@@ -1213,13 +1496,11 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     ).resolves.toMatchObject({ state: 'published', resultVersionId: 'upload-v3' })
   })
 
-  it('publishes an intact deterministic temp left before rename instead of failing recovery', async () => {
+  it('does not remove an incomplete recovery file referenced by an immutable Version', async () => {
     const fixture = await createFixture('upload')
     const crashing = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      createStorageTag: () => 'vtmprec01',
       testFaultAt: 'after-journal'
     })
     await expect(
@@ -1229,92 +1510,163 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         fileId: fixture.fileId,
         basedOnVersionId: fixture.versionIds[1],
         expectedHeadVersionId: fixture.versionIds[1],
-        content: 'recover deterministic temp\n',
-        operationId: 'temp-before-rename-operation'
+        content: 'expected complete bytes\n',
+        operationId: 'owned-incomplete-recovery'
+      })
+    ).rejects.toThrow('simulated managed version crash')
+    const operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
+      where: { operationId: 'owned-incomplete-recovery' }
+    })
+    const partial = Buffer.from('partial')
+    const localPath = join(storageRoot, ...operation.contentStorageKey.split('/'))
+    await mkdir(dirname(localPath), { recursive: true })
+    await writeFile(localPath, partial)
+    await client.uploadVersion.create({
+      data: {
+        id: 'upload-version-owning-incomplete-file',
+        uploadFileId: fixture.fileId,
+        versionNumber: 3,
+        state: 'ready',
+        originKind: 'legacy',
+        basedOnVersionId: fixture.versionIds[1],
+        contentStorageKey: operation.contentStorageKey,
+        filename: 'README.md',
+        originalFilename: 'README.md',
+        contentType: 'text/markdown',
+        sizeBytes: BigInt(partial.byteLength),
+        checksum: checksum(partial)
+      }
+    })
+
+    const recovering = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    await expect(recovering.recoverPendingWrites()).resolves.toMatchObject({ failed: 1 })
+
+    await expect(readFile(localPath)).resolves.toEqual(partial)
+    await expect(
+      client.managedFileVersionWriteOperation.findUniqueOrThrow({
+        where: { operationId: 'owned-incomplete-recovery' }
+      })
+    ).resolves.toMatchObject({ state: 'failed' })
+  })
+
+  it('does not remove unknown bytes that appeared after a journal-only crash', async () => {
+    const fixture = await createFixture('upload')
+    const crashing = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      testFaultAt: 'after-journal'
+    })
+    await expect(
+      crashing.saveTextEdit({
+        source: 'upload',
+        projectId: 'project-1',
+        fileId: fixture.fileId,
+        basedOnVersionId: fixture.versionIds[1],
+        expectedHeadVersionId: fixture.versionIds[1],
+        content: 'expected complete bytes\n',
+        operationId: 'partial-final-operation'
       })
     ).rejects.toThrow()
     const operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
-      where: { operationId: 'temp-before-rename-operation' }
+      where: { operationId: 'partial-final-operation' }
     })
-    const parentPath = dirname(join(storageRoot, ...operation.contentStorageKey.split('/')))
-    const operationDigest = createHash('sha256')
-      .update('temp-before-rename-operation')
-      .digest('hex')
-      .slice(0, 16)
-    const tempName = `.${operation.storedFilename}.${operationDigest}.tmp`
-    await mkdir(parentPath, { recursive: true })
-    const relativeParentPath = relative(storageRoot, parentPath)
-    const child = spawn(
-      process.execPath,
-      [
-        '-e',
-        `
-          const binding = require(process.argv[1])
-          binding.writeAndPublishNoReplace(
-            process.argv[2],
-            process.argv[3],
-            process.argv[4],
-            process.argv[5],
-            Buffer.from('recover deterministic temp\\n')
-          )
-        `,
-        join(process.cwd(), 'packages/safe-file-publisher-native'),
-        storageRoot,
-        relativeParentPath,
-        tempName,
-        operation.storedFilename
-      ],
-      {
-        env: {
-          ...process.env,
-          NODE_ENV: 'test',
-          VITEST: 'true',
-          OPEN_SCIENCE_NATIVE_TEST_HOOKS: '1',
-          OPEN_SCIENCE_TEST_EXIT_AFTER_DURABLE_TEMP: '86'
-        },
-        stdio: 'ignore'
-      }
-    )
-    const childExit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolveExit, rejectExit) => {
-        const timeout = setTimeout(() => {
-          child.kill('SIGKILL')
-          rejectExit(new Error('durable-temp child timed out'))
-        }, 5_000)
-        child.once('exit', (code, signal) => {
-          clearTimeout(timeout)
-          resolveExit({ code, signal })
-        })
-        child.once('error', rejectExit)
-      }
-    )
-    expect(childExit).toEqual({ code: 86, signal: null })
-    await expect(readFile(join(parentPath, tempName), 'utf8')).resolves.toBe(
-      'recover deterministic temp\n'
-    )
-    await expect(readFile(join(parentPath, operation.storedFilename))).rejects.toMatchObject({
-      code: 'ENOENT'
-    })
+    const finalPath = join(storageRoot, ...operation.contentStorageKey.split('/'))
+    await mkdir(dirname(finalPath), { recursive: true })
+    await writeFile(finalPath, 'partial')
 
     const recovered = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      createId: () => 'upload-temp-recovered-v3'
+      createId: () => 'unused-version-id'
     })
     await expect(recovered.recoverPendingWrites()).resolves.toMatchObject({
-      recovered: 1,
-      failed: 0
+      recovered: 0,
+      failed: 1
     })
+    await expect(readFile(finalPath, 'utf8')).resolves.toBe('partial')
+    await expect(
+      client.managedFileVersionWriteOperation.findUniqueOrThrow({
+        where: { operationId: 'partial-final-operation' }
+      })
+    ).resolves.toMatchObject({ state: 'failed', errorCode: 'CONTENT_INTEGRITY_FAILED' })
+  })
+
+  it('retries cleanup of a claimed incomplete file after a transient deletion failure', async () => {
+    const fixture = await createFixture('upload')
+    const crashing = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      testFaultAt: 'after-journal'
+    })
+    const operationId = 'retry-incomplete-cleanup'
+    await expect(
+      crashing.saveTextEdit({
+        source: 'upload',
+        projectId: 'project-1',
+        fileId: fixture.fileId,
+        basedOnVersionId: fixture.versionIds[1],
+        expectedHeadVersionId: fixture.versionIds[1],
+        content: 'expected complete bytes\n',
+        operationId
+      })
+    ).rejects.toThrow('simulated managed version crash')
+    const operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
+      where: { operationId }
+    })
+    const localPath = join(storageRoot, ...operation.contentStorageKey.split('/'))
+    await mkdir(dirname(localPath), { recursive: true })
+    await writeFile(localPath, 'claimed partial')
+    const partial = Buffer.from('claimed partial')
+    let removeAttempts = 0
+    const realOperator = new NodeVersionFileOperator({ storageRoot })
+    const retryingOperator = Object.assign(realOperator, {
+      inspectRecovery: async () => {
+        try {
+          await readFile(localPath)
+          return {
+            state: 'incomplete' as const,
+            actualIntegrity: {
+              sizeBytes: partial.byteLength,
+              checksum: checksum(partial)
+            }
+          }
+        } catch {
+          return { state: 'missing' as const }
+        }
+      },
+      removeIncomplete: async () => {
+        removeAttempts += 1
+        if (removeAttempts <= 2) {
+          throw new VersionFileOperatorError('PERMISSION_DENIED', 'temporarily denied')
+        }
+        await rm(localPath)
+      }
+    })
+    const recovering = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      versionFileOperator: retryingOperator
+    })
+
+    await recovering.recoverPendingWrites()
+    await expect(readFile(localPath, 'utf8')).resolves.toBe('claimed partial')
+    await recovering.recoverPendingWrites()
+
+    await expect(readFile(localPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(removeAttempts).toBe(3)
+    await expect(
+      client.managedFileVersionWriteOperation.findUniqueOrThrow({ where: { operationId } })
+    ).resolves.toMatchObject({ state: 'failed' })
   })
 
   it('keeps a transient recovery read failure pending for the next startup retry', async () => {
     const fixture = await createFixture('upload')
     const crashing = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      createStorageTag: () => 'vtrans001',
       testFaultAt: 'after-file-publish'
     })
     await expect(
@@ -1329,13 +1681,20 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       })
     ).rejects.toThrow('simulated managed version crash')
 
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
     const retryable = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      readAnchored: () => {
-        throw Object.assign(new Error('temporary filesystem outage'), { code: 'EIO' })
-      }
+      versionFileOperator: Object.assign(versionFileOperator, {
+        inspectRecovery: async () => {
+          throw new VersionFileOperatorError(
+            'STORAGE_UNAVAILABLE',
+            'temporary filesystem outage',
+            undefined,
+            { cause: Object.assign(new Error('temporary filesystem outage'), { code: 'EIO' }) }
+          )
+        }
+      })
     })
     await expect(retryable.recoverPendingWrites()).resolves.toMatchObject({
       recovered: 0,
@@ -1354,10 +1713,8 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       const fixture = await createFixture('artifact')
       const crashing = new ManagedFileVersionService({
         storageRoot,
-        writeAndPublish: testWriteAndPublish,
         getClient: () => Promise.resolve(client),
         createId: () => 'artifact-v3',
-        createStorageTag: () => `v${testFaultAt === 'after-temp-write' ? 'temp0001' : 'ready001'}`,
         testFaultAt
       })
       const request = {
@@ -1375,7 +1732,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
       const service = new ManagedFileVersionService({
         storageRoot,
-        writeAndPublish: testWriteAndPublish,
         getClient: () => Promise.resolve(client),
         createId: () => 'artifact-v3'
       })
@@ -1397,10 +1753,8 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       const fixture = await createFixture(source)
       const crashing = new ManagedFileVersionService({
         storageRoot,
-        writeAndPublish: testWriteAndPublish,
         getClient: () => Promise.resolve(client),
         createId: () => `${source}-v3`,
-        createStorageTag: () => 'vdelete01',
         testFaultAt: 'after-file-ready'
       })
       await expect(
@@ -1443,7 +1797,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
       const recovery = await new ManagedFileVersionService({
         storageRoot,
-        writeAndPublish: testWriteAndPublish,
         getClient: () => Promise.resolve(client)
       }).recoverPendingWrites()
 
@@ -1490,14 +1843,12 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
-      getClient: () => Promise.resolve(client),
-      createStorageTag: () => 'vblocked1'
+      getClient: () => Promise.resolve(client)
     })
 
     await expect(
       service.inspect({ source: 'upload', projectId: 'project-1', fileId: fixture.fileId })
-    ).resolves.toMatchObject({ canEdit: false, unavailableReason: 'FILE_DELETED' })
+    ).rejects.toMatchObject({ code: 'FILE_DELETED' })
     await expect(
       service.saveTextEdit({
         source: 'upload',
@@ -1529,7 +1880,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
     await new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     }).recoverPendingWrites()
 
@@ -1542,7 +1892,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
     await new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     }).recoverPendingWrites()
 
@@ -1556,9 +1905,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     const fixture = await createFixture('upload')
     const crashing = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      createStorageTag: () => 'vjournal1',
       testFaultAt: 'after-journal'
     })
     await expect(
@@ -1575,7 +1922,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     })
     await expect(service.recoverPendingWrites()).resolves.toMatchObject({ failed: 1 })
@@ -1614,12 +1960,19 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         }
       })
     })
-    const terminalPath = join(
-      storageRoot,
-      'uploads/project-1/session-1',
-      fixture.fileId,
-      'managed-versions/vterminal_README.md'
-    )
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const terminalPlan = versionFileOperator.planImmutable({
+      operationId: 'zz-paged-terminal',
+      scope: {
+        source: 'upload',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: fixture.fileId
+      },
+      logicalFilename: 'README.md',
+      candidateIndex: 0
+    })
+    const terminalPath = join(storageRoot, ...terminalPlan.storageRef.split('/'))
     await mkdir(dirname(terminalPath), { recursive: true })
     await writeFile(terminalPath, 'terminal cleanup\n')
     await client.managedFileVersionWriteOperation.create({
@@ -1631,9 +1984,9 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         basedOnVersionId: fixture.versionIds[1],
         expectedHeadVersionId: fixture.versionIds[1],
         state: 'failed',
-        storageTag: 'vterminal',
-        storedFilename: 'vterminal_README.md',
-        contentStorageKey: `uploads/project-1/session-1/${fixture.fileId}/managed-versions/vterminal_README.md`,
+        storageTag: `v${terminalPlan.versionToken}`,
+        storedFilename: terminalPlan.storedFilename,
+        contentStorageKey: terminalPlan.storageRef,
         checksum: checksum(Buffer.from('terminal cleanup\n')),
         sizeBytes: BigInt(Buffer.byteLength('terminal cleanup\n')),
         textFormatJson: format,
@@ -1643,7 +1996,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
     const recovery = await new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     }).recoverPendingWrites()
 
@@ -1668,10 +2020,8 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     const fixture = await createFixture('artifact')
     const crashing = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
       createId: () => 'artifact-v3',
-      createStorageTag: () => 'vcrash002',
       testFaultAt: 'after-file-publish'
     })
     await expect(
@@ -1692,7 +2042,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     })
     const recovery = await service.recoverPendingWrites()
@@ -1733,7 +2082,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
     const recovery = await new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     }).recoverPendingWrites()
 
@@ -1750,21 +2098,34 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     'retries cleanup of an unowned %s final without changing terminal journal state',
     async (state) => {
       const fixture = await createFixture('upload')
-      const contentStorageKey = `uploads/project-1/session-1/${fixture.fileId}/managed-versions/vcleanup1_README.md`
+      const operationId = `${state}-cleanup-operation`
+      const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+      const plannedFile = versionFileOperator.planImmutable({
+        operationId,
+        scope: {
+          source: 'upload',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          logicalFileId: fixture.fileId
+        },
+        logicalFilename: 'README.md',
+        candidateIndex: 0
+      })
+      const contentStorageKey = plannedFile.storageRef
       const finalPath = join(storageRoot, ...contentStorageKey.split('/'))
       await mkdir(dirname(finalPath), { recursive: true })
       await writeFile(finalPath, 'orphan final\n')
       await client.managedFileVersionWriteOperation.create({
         data: {
-          operationId: `${state}-cleanup-operation`,
+          operationId,
           source: 'upload',
           projectId: 'project-1',
           sourceFileId: fixture.fileId,
           basedOnVersionId: fixture.versionIds[1],
           expectedHeadVersionId: fixture.versionIds[1],
           state,
-          storageTag: 'vcleanup1',
-          storedFilename: 'vcleanup1_README.md',
+          storageTag: `v${plannedFile.versionToken}`,
+          storedFilename: plannedFile.storedFilename,
           contentStorageKey,
           checksum: checksum(Buffer.from('orphan final\n')),
           sizeBytes: BigInt(Buffer.byteLength('orphan final\n')),
@@ -1779,18 +2140,122 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
       await new ManagedFileVersionService({
         storageRoot,
-        writeAndPublish: testWriteAndPublish,
         getClient: () => Promise.resolve(client)
       }).recoverPendingWrites()
 
       await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(
         client.managedFileVersionWriteOperation.findUniqueOrThrow({
-          where: { operationId: `${state}-cleanup-operation` }
+          where: { operationId }
         })
       ).resolves.toMatchObject({ state })
     }
   )
+
+  it('retries terminal incomplete-file cleanup on the next recovery pass', async () => {
+    const fixture = await createFixture('upload')
+    const operationId = 'failed-incomplete-cleanup-operation'
+    const expectedBytes = Buffer.from('complete journal bytes\n')
+    const partialBytes = Buffer.from('partial')
+    let partialWritten = false
+    const delegate = new NodeVersionFileOperator({
+      storageRoot,
+      fileSystem: {
+        open: async (...args) => {
+          const handle = await openFile(...args)
+          if (typeof args[1] !== 'string' || !args[1].startsWith('wx')) return handle
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === 'write') {
+                return async () => {
+                  if (partialWritten) {
+                    throw Object.assign(new Error('interrupted publication'), { code: 'EIO' })
+                  }
+                  partialWritten = true
+                  return target.write(partialBytes, 0, partialBytes.byteLength, 0)
+                }
+              }
+              const value = Reflect.get(target, property, target)
+              return typeof value === 'function' ? value.bind(target) : value
+            }
+          })
+        }
+      }
+    })
+    const plannedFile = delegate.planImmutable({
+      operationId,
+      scope: {
+        source: 'upload',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: fixture.fileId
+      },
+      logicalFilename: 'README.md',
+      candidateIndex: 0
+    })
+    const finalPath = join(storageRoot, ...plannedFile.storageRef.split('/'))
+    await expect(
+      delegate.publishImmutable({
+        operationId,
+        scope: {
+          source: 'upload',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          logicalFileId: fixture.fileId
+        },
+        logicalFilename: 'README.md',
+        candidateIndex: 0,
+        plannedFile,
+        content: expectedBytes
+      })
+    ).rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
+    await expect(readFile(finalPath)).resolves.toEqual(partialBytes)
+    await client.managedFileVersionWriteOperation.create({
+      data: {
+        operationId,
+        source: 'upload',
+        projectId: 'project-1',
+        sourceFileId: fixture.fileId,
+        basedOnVersionId: fixture.versionIds[1],
+        expectedHeadVersionId: fixture.versionIds[1],
+        state: 'failed',
+        storageTag: `v${plannedFile.versionToken}`,
+        storedFilename: plannedFile.storedFilename,
+        contentStorageKey: plannedFile.storageRef,
+        checksum: checksum(expectedBytes),
+        sizeBytes: expectedBytes.byteLength,
+        textFormatJson: '{}',
+        errorCode: 'CONTENT_INTEGRITY_FAILED'
+      }
+    })
+    const removeIncomplete = delegate.removeIncomplete.bind(delegate)
+    let removalAttempts = 0
+    const versionFileOperator = Object.assign(delegate, {
+      removeIncomplete: async (...args: Parameters<typeof removeIncomplete>) => {
+        removalAttempts += 1
+        if (removalAttempts === 1) {
+          throw new VersionFileOperatorError('STORAGE_UNAVAILABLE', 'temporary delete failure')
+        }
+        return removeIncomplete(...args)
+      }
+    })
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      versionFileOperator
+    })
+
+    await service.recoverPendingWrites()
+    expect(removalAttempts).toBe(1)
+    await expect(readFile(finalPath)).resolves.toEqual(partialBytes)
+
+    await service.recoverPendingWrites()
+    expect(removalAttempts).toBe(2)
+    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      client.managedFileVersionWriteOperation.findUniqueOrThrow({ where: { operationId } })
+    ).resolves.toMatchObject({ state: 'failed', errorCode: 'CONTENT_INTEGRITY_FAILED' })
+  })
 
   it('does not clean unowned terminal paths whose bytes do not match the journal', async () => {
     const fixture = await createFixture('upload')
@@ -1823,42 +2288,13 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
     await new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     }).recoverPendingWrites()
 
     await expect(readFile(finalPath, 'utf8')).resolves.toBe('foreign bytes\n')
   })
 
-  it('removes only stale managed-version temporary files that have no journal', async () => {
-    const fixture = await createFixture('artifact')
-    const parentPath = join(
-      storageRoot,
-      'artifacts',
-      'project-1',
-      'session-1',
-      fixture.fileId,
-      'managed-versions'
-    )
-    await mkdir(parentPath, { recursive: true })
-    const staleName = '.vorphan01_README.md.0123456789abcdef.tmp'
-    const freshName = '.vfresh001_README.md.0123456789abcdef.tmp'
-    await writeFile(join(parentPath, staleName), 'stale')
-    await writeFile(join(parentPath, freshName), 'fresh')
-    await utimes(join(parentPath, staleName), new Date(0), new Date(0))
-
-    await new ManagedFileVersionService({
-      storageRoot,
-      writeAndPublish: testWriteAndPublish,
-      getClient: () => Promise.resolve(client),
-      now: () => new Date('2026-08-12T00:00:00.000Z')
-    }).recoverPendingWrites()
-
-    await expect(readFile(join(parentPath, staleName))).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(readFile(join(parentPath, freshName), 'utf8')).resolves.toBe('fresh')
-  })
-
-  it('paginates file roots while preserving a stale temp with exact journal ownership', async () => {
+  it('paginates file roots while rebuilding the latest-version projection', async () => {
     const fixture = await createFixture('upload')
     const fileRows = Array.from({ length: 101 }, (_, index) => {
       const suffix = index.toString().padStart(3, '0')
@@ -1908,57 +2344,13 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       }))
     })
     const last = fileRows.at(-1)!
-    const storedFilename = 'vprotect1_100.txt'
-    const operationId = 'protected-temp-operation'
-    const digest = createHash('sha256').update(operationId).digest('hex').slice(0, 16)
-    const protectedTemp = `.${storedFilename}.${digest}.tmp`
-    const orphanTemp = '.vorphan02_100.txt.0123456789abcdef.tmp'
-    const lastParent = join(
-      storageRoot,
-      'uploads',
-      'project-1',
-      'session-1',
-      last.id,
-      'managed-versions'
-    )
-    await mkdir(lastParent, { recursive: true })
-    await writeFile(join(lastParent, protectedTemp), 'protected')
-    await writeFile(join(lastParent, orphanTemp), 'orphan')
-    await utimes(join(lastParent, protectedTemp), new Date(0), new Date(0))
-    await utimes(join(lastParent, orphanTemp), new Date(0), new Date(0))
-    await client.managedFileVersionWriteOperation.create({
-      data: {
-        operationId,
-        source: 'upload',
-        projectId: 'project-1',
-        sourceFileId: last.id,
-        basedOnVersionId: `${last.id}-v1`,
-        expectedHeadVersionId: `${last.id}-v1`,
-        state: 'published',
-        storageTag: 'vprotect1',
-        storedFilename,
-        contentStorageKey: `uploads/project-1/session-1/${last.id}/managed-versions/${storedFilename}`,
-        checksum: checksum(Buffer.from('protected')),
-        sizeBytes: BigInt(Buffer.byteLength('protected')),
-        textFormatJson: JSON.stringify({
-          hasUtf8Bom: false,
-          newline: 'lf',
-          hasTrailingNewline: false
-        }),
-        resultVersionId: `${last.id}-v1`
-      }
-    })
 
     const transactionSpy = vi.spyOn(client, '$transaction')
     await new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
-      getClient: () => Promise.resolve(client),
-      now: () => new Date('2026-08-13T00:00:00.000Z')
+      getClient: () => Promise.resolve(client)
     }).recoverPendingWrites()
 
-    await expect(readFile(join(lastParent, protectedTemp), 'utf8')).resolves.toBe('protected')
-    await expect(readFile(join(lastParent, orphanTemp))).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       client.managedFile.findUniqueOrThrow({
         where: {
@@ -1974,34 +2366,10 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     transactionSpy.mockRestore()
   })
 
-  it('fails closed when stale temporary-file recovery encounters a replaced symlink parent', async () => {
-    const fixture = await createFixture('artifact')
-    outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-managed-version-outside-'))
-    const fileRoot = join(storageRoot, 'artifacts', 'project-1', 'session-1', fixture.fileId)
-    const originalRoot = `${fileRoot}-original`
-    await mkdir(join(fileRoot, 'managed-versions'), { recursive: true })
-    await rename(fileRoot, originalRoot)
-    await symlink(outsideRoot, fileRoot)
-    await writeFile(join(outsideRoot, '.vorphan01_README.md.0123456789abcdef.tmp'), 'outside')
-
-    await expect(
-      new ManagedFileVersionService({
-        storageRoot,
-        writeAndPublish: testWriteAndPublish,
-        getClient: () => Promise.resolve(client),
-        now: () => new Date('2026-08-12T00:00:00.000Z')
-      }).recoverPendingWrites()
-    ).rejects.toMatchObject({ code: 'ELOOP' })
-    await expect(
-      readFile(join(outsideRoot, '.vorphan01_README.md.0123456789abcdef.tmp'), 'utf8')
-    ).resolves.toBe('outside')
-  })
-
   it('rejects archived projects and corrupted completed head bytes with stable error codes', async () => {
     const fixture = await createFixture('artifact')
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     })
     await client.project.update({
@@ -2032,15 +2400,13 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     )
 
     await client.project.update({ where: { id: 'project-1' }, data: { archivedAt: null } })
-    const resolved = await service.resolve({
-      source: 'artifact',
-      projectId: 'project-1',
-      fileId: fixture.fileId
+    const head = await client.artifactVersion.findUniqueOrThrow({
+      where: { id: fixture.versionIds[1] }
     })
-    await writeFile(resolved.path, 'corrupt')
+    await writeFile(join(storageRoot, ...head.contentStorageKey.split('/')), 'corrupt')
     await expect(
       service.inspect({ source: 'artifact', projectId: 'project-1', fileId: fixture.fileId })
-    ).rejects.toMatchObject({ code: 'CONTENT_INTEGRITY_FAILED' })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
   })
 
   it('reports an unsafe stable basename as ineligible instead of failing during save allocation', async () => {
@@ -2051,7 +2417,6 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     })
 
@@ -2060,31 +2425,21 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     ).resolves.toMatchObject({ canEdit: false, unavailableReason: 'UNSAFE_FILENAME' })
   })
 
-  it('keeps trusted reads available when anchored writes are unavailable', async () => {
+  it('keeps read, diff, and write capabilities independent of native bindings', async () => {
     const fixture = await createFixture('upload')
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
-      getClient: () => Promise.resolve(client),
-      nativeWriteAvailable: false,
-      nativeReadFallbackAvailable: true,
-      readAnchored: () => {
-        throw Object.assign(new Error('anchored reads unavailable'), { code: 'ENOTSUP' })
-      },
-      verifyAnchored: () => {
-        throw Object.assign(new Error('anchored verification unavailable'), { code: 'ENOTSUP' })
-      }
+      getClient: () => Promise.resolve(client)
     })
 
     await expect(
       service.inspect({ source: 'upload', projectId: 'project-1', fileId: fixture.fileId })
     ).resolves.toMatchObject({
-      canEdit: false,
+      canEdit: true,
       canDiff: true,
-      text: 'second\n',
-      unavailableReason: 'NATIVE_WRITE_REQUIRED'
+      text: 'second\n'
     })
-    const lease = await service.openResolved({
+    const lease = await service.openLatest({
       source: 'upload',
       projectId: 'project-1',
       fileId: fixture.fileId
@@ -2099,22 +2454,25 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         projectId: 'project-1',
         fileId: fixture.fileId,
         versionId: fixture.versionIds[1],
-        requestId: 'native-read-fallback'
+        requestId: 'node-version-read'
       })
     ).resolves.toMatchObject({
       baseVersionId: fixture.versionIds[0],
       selectedVersionId: fixture.versionIds[1]
     })
     await expect(service.auditActiveVersionIntegrity()).resolves.toEqual([])
-    const currentPath = await service.resolvePath({
+    const current = await service.openLatest({
       source: 'upload',
       projectId: 'project-1',
       fileId: fixture.fileId
     })
-    await expect(readFile(currentPath.path, 'utf8')).resolves.toBe('second\n')
-    await expect(
-      service.resolve({ source: 'upload', projectId: 'project-1', fileId: fixture.fileId })
-    ).rejects.toMatchObject({ code: 'NATIVE_WRITE_REQUIRED' })
+    try {
+      await expect(current.readRange(0, current.size)).resolves.toEqual(
+        new Uint8Array(Buffer.from('second\n'))
+      )
+    } finally {
+      await current.close()
+    }
     await expect(
       service.saveTextEdit({
         source: 'upload',
@@ -2122,66 +2480,105 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         fileId: fixture.fileId,
         basedOnVersionId: fixture.versionIds[1],
         expectedHeadVersionId: fixture.versionIds[1],
-        content: 'blocked native write\n',
-        operationId: 'native-write-unavailable'
+        content: 'node-managed write\n',
+        operationId: 'node-managed-write'
       })
-    ).rejects.toMatchObject({ code: 'NATIVE_WRITE_REQUIRED' })
+    ).resolves.toMatchObject({ kind: 'created' })
   })
 
-  it('fails closed when the native binding is unavailable rather than explicitly read-only', async () => {
+  it('preserves STORAGE_UNAVAILABLE from the version file operator', async () => {
     const fixture = await createFixture('upload')
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client),
-      nativeWriteAvailable: false,
-      nativeReadFallbackAvailable: false
+      versionFileOperator: Object.assign(versionFileOperator, {
+        openImmutable: async () => {
+          throw new VersionFileOperatorError(
+            'STORAGE_UNAVAILABLE',
+            'configured storage is unavailable'
+          )
+        }
+      })
     })
 
     await expect(
       service.inspect({ source: 'upload', projectId: 'project-1', fileId: fixture.fileId })
-    ).resolves.toMatchObject({
-      canEdit: false,
-      canDiff: false,
-      unavailableReason: 'NATIVE_WRITE_REQUIRED'
+    ).rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
+  })
+
+  it('keeps file_ready retryable when published storage is temporarily unavailable', async () => {
+    const fixture = await createFixture('upload')
+    const delegate = new NodeVersionFileOperator({ storageRoot })
+    let unavailableStorageRef: string | undefined
+    const versionFileOperator = {
+      planImmutable: delegate.planImmutable.bind(delegate),
+      publishImmutable: async (
+        ...args: Parameters<NodeVersionFileOperator['publishImmutable']>
+      ) => {
+        const stored = await delegate.publishImmutable(...args)
+        unavailableStorageRef = stored.storageRef
+        return stored
+      },
+      inspectRecovery: delegate.inspectRecovery.bind(delegate),
+      removeIncomplete: delegate.removeIncomplete.bind(delegate),
+      removeImmutable: delegate.removeImmutable.bind(delegate),
+      openImmutable: async (...args: Parameters<NodeVersionFileOperator['openImmutable']>) => {
+        if (args[0] === unavailableStorageRef) {
+          throw new VersionFileOperatorError(
+            'STORAGE_UNAVAILABLE',
+            'configured storage is temporarily unavailable'
+          )
+        }
+        return delegate.openImmutable(...args)
+      }
+    }
+    const request = {
+      source: 'upload' as const,
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      expectedHeadVersionId: fixture.versionIds[1],
+      content: 'retry after storage returns\n',
+      operationId: 'temporary-storage-outage'
+    }
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      createId: () => 'upload-v3',
+      versionFileOperator
+    })
+
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({
+      code: 'STORAGE_UNAVAILABLE'
     })
     await expect(
-      service.inspect({ source: 'upload', projectId: 'project-1', fileId: fixture.fileId })
-    ).resolves.not.toHaveProperty('text')
-    await expect(
-      service.openResolved({
-        source: 'upload',
-        projectId: 'project-1',
-        fileId: fixture.fileId
+      client.managedFileVersionWriteOperation.findUniqueOrThrow({
+        where: { operationId: request.operationId }
       })
-    ).rejects.toMatchObject({ code: 'NATIVE_WRITE_REQUIRED' })
-    await expect(
-      service.diffText({
-        source: 'upload',
-        projectId: 'project-1',
-        fileId: fixture.fileId,
-        versionId: fixture.versionIds[1],
-        requestId: 'missing-native-binding'
-      })
-    ).rejects.toMatchObject({ code: 'NATIVE_WRITE_REQUIRED' })
+    ).resolves.toMatchObject({ state: 'file_ready', errorCode: null })
+
+    unavailableStorageRef = undefined
+    await expect(service.recoverPendingWrites()).resolves.toMatchObject({ recovered: 1, failed: 0 })
+    const latest = await service.openLatest(request)
+    try {
+      expect(latest).toMatchObject({ version: { id: 'upload-v3' } })
+    } finally {
+      await latest.close()
+    }
   })
 
   it('audits only active heads during startup and validates historical bytes lazily', async () => {
     const fixture = await createFixture('artifact')
-    const historical = await new ManagedFileVersionService({
-      storageRoot,
-      writeAndPublish: testWriteAndPublish,
-      getClient: () => Promise.resolve(client)
-    }).resolve({
-      source: 'artifact',
-      projectId: 'project-1',
-      fileId: fixture.fileId,
-      versionId: fixture.versionIds[0]
+    const historical = await client.artifactVersion.findUniqueOrThrow({
+      where: { id: fixture.versionIds[0] }
     })
-    await writeFile(historical.path, 'corrupt historical bytes')
+    await writeFile(
+      join(storageRoot, ...historical.contentStorageKey.split('/')),
+      'corrupt historical bytes'
+    )
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     })
 
@@ -2193,22 +2590,19 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         fileId: fixture.fileId,
         versionId: fixture.versionIds[0]
       })
-    ).rejects.toMatchObject({ code: 'CONTENT_INTEGRITY_FAILED' })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
   })
 
   it('keeps blocking journal recovery separate from the explicit active-head integrity audit', async () => {
     const fixture = await createFixture('artifact')
     const service = new ManagedFileVersionService({
       storageRoot,
-      writeAndPublish: testWriteAndPublish,
       getClient: () => Promise.resolve(client)
     })
-    const head = await service.resolve({
-      source: 'artifact',
-      projectId: 'project-1',
-      fileId: fixture.fileId
+    const head = await client.artifactVersion.findUniqueOrThrow({
+      where: { id: fixture.versionIds[1] }
     })
-    await writeFile(head.path, 'corrupt active head')
+    await writeFile(join(storageRoot, ...head.contentStorageKey.split('/')), 'corrupt active head')
 
     await expect(service.recoverPendingWrites()).resolves.toMatchObject({ integrityErrors: [] })
     await expect(service.auditActiveVersionIntegrity()).resolves.toEqual([
@@ -2229,11 +2623,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
     const service = new ManagedFileVersionService({
       storageRoot,
-      getClient: () => Promise.resolve(client),
-      verifyAnchored: () => true,
-      readAnchored: () => {
-        throw new Error('audit must not allocate the file body')
-      }
+      getClient: () => Promise.resolve(client)
     })
 
     await expect(service.auditActiveVersionIntegrity()).resolves.toEqual([])

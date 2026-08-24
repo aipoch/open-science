@@ -21,6 +21,7 @@ import {
 const provenancePanelSpy = vi.hoisted(() => vi.fn())
 const previewContentSpy = vi.hoisted(() => vi.fn())
 const markdownSpy = vi.hoisted(() => vi.fn())
+const downloadButtonSpy = vi.hoisted(() => vi.fn())
 
 vi.mock('./ArtifactProvenancePanel', () => ({
   ArtifactProvenancePanel: (props: {
@@ -40,7 +41,10 @@ vi.mock('./ArtifactProvenancePanel', () => ({
 }))
 
 vi.mock('./ManagedFileDownloadButton', () => ({
-  ManagedFileDownloadButton: () => <button type="button">Download file</button>
+  ManagedFileDownloadButton: (props: Record<string, unknown>) => {
+    downloadButtonSpy(props)
+    return <button type="button">Download file</button>
+  }
 }))
 
 vi.mock('./previews/PreviewFileContent', () => ({
@@ -170,6 +174,7 @@ beforeEach(() => {
   provenancePanelSpy.mockClear()
   previewContentSpy.mockClear()
   markdownSpy.mockClear()
+  downloadButtonSpy.mockClear()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   usePreviewWorkbenchStore.getState().activateProject('project-1')
   useSessionStore.setState(createInitialSessionState())
@@ -271,7 +276,7 @@ describe('PreviewFileSurface managed text versions', () => {
         managedFileVersions: {
           getCapability: vi.fn(() => ({
             available: false,
-            reason: 'NATIVE_WRITE_REQUIRED'
+            reason: 'STORAGE_UNAVAILABLE'
           }))
         }
       }
@@ -342,6 +347,31 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(
       container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')?.disabled
     ).toBe(true)
+  })
+
+  it('gives the download control both the viewed and latest managed versions', async () => {
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { ...managedInspect, selectedVersionId: 'upload-v1', text: '# Original\n' }
+    })
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...managedUploadItem, selectedVersionId: 'upload-v1', versionNumber: 1 }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+
+    expect(downloadButtonSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        versionId: 'upload-v1',
+        versionNumber: 1,
+        latestVersionId: 'upload-v2',
+        latestVersionNumber: 2
+      })
+    )
   })
 
   it('replaces preview actions with text-only Cancel and Save controls while editing', async () => {
@@ -466,6 +496,81 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('无法保存更改。')
 
     await act(async () => i18next.changeLanguage('en'))
+  })
+
+  it.each([
+    {
+      code: 'STORAGE_UNAVAILABLE' as const,
+      message: 'File storage is unavailable. Check the storage location and try again.'
+    },
+    {
+      code: 'PERMISSION_DENIED' as const,
+      message: 'Open Science does not have permission to save this file.'
+    },
+    {
+      code: 'OUT_OF_SPACE' as const,
+      message: 'There is not enough storage space to save this file.'
+    },
+    {
+      code: 'INTEGRITY_FAILED' as const,
+      message: 'The file could not be verified after saving. Reopen it and try again.'
+    },
+    {
+      code: 'CONTENT_INTEGRITY_FAILED' as const,
+      message: 'The file could not be verified after saving. Reopen it and try again.'
+    },
+    {
+      code: 'VERSION_CONFLICT' as const,
+      message: 'The file changed before your edit could be saved. Reopen it and try again.'
+    }
+  ])('explains a $code save failure and preserves the draft', async ({ code, message }) => {
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { code, message: 'Internal storage detail.' }
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    await changeTextarea(textarea, '# Unsaved draft\n')
+    await click(container.querySelector('[aria-label="Save changes"]'))
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(message)
+    expect(container.querySelector('[role="alert"]')?.textContent).not.toContain(
+      'Internal storage detail.'
+    )
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
+      '# Unsaved draft\n'
+    )
+  })
+
+  it('uses the generic save failure for an unknown error code and preserves the draft', async () => {
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { code: 'INVALID_REQUEST', message: 'Unexpected backend detail.' }
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    await changeTextarea(textarea, '# Unsaved draft\n')
+    await click(container.querySelector('[aria-label="Save changes"]'))
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Changes could not be saved.'
+    )
+    expect(container.querySelector('[role="alert"]')?.textContent).not.toContain(
+      'Unexpected backend detail.'
+    )
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
+      '# Unsaved draft\n'
+    )
   })
 
   it('preserves a dirty draft on conflict and offers the latest version', async () => {
@@ -793,7 +898,7 @@ describe('PreviewFileSurface managed text versions', () => {
               canDiff: false,
               text: undefined,
               textFormat: undefined,
-              unavailableReason: 'NATIVE_WRITE_REQUIRED' as const
+              unavailableReason: 'INVALID_UTF8' as const
             }
           : managedInspect
     }))
@@ -844,7 +949,7 @@ describe('PreviewFileSurface managed text versions', () => {
               canDiff: false,
               text: undefined,
               textFormat: undefined,
-              unavailableReason: 'NATIVE_WRITE_REQUIRED' as const
+              unavailableReason: 'INVALID_UTF8' as const
             }
           : inspectV3
     }))

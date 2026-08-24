@@ -85,8 +85,11 @@ type ArtifactHandlerDependencies = {
   openPath?: (path: string) => Promise<string>
   logger?: Pick<Logger, 'error'>
   resolveManagedFilePath?: (request: ReadArtifactPreviewRequest) => Promise<string>
+  openLatestManagedFile?: (
+    request: Omit<ReadArtifactPreviewRequest, 'versionId'> & { versionId?: never }
+  ) => Promise<ManagedFilePreviewReadLease>
   openManagedFileVersion?: (
-    request: ReadArtifactPreviewRequest
+    request: ReadArtifactPreviewRequest & { versionId: string }
   ) => Promise<ManagedFilePreviewReadLease>
   // Run ids of turns in flight right now (live runtime state). Their pending files are still being
   // written, so the orphan scan excludes them; a crashed run is absent here and correctly surfaces.
@@ -208,8 +211,18 @@ const createArtifactHandlers = (
       }
     },
     readPreview: async (request) => {
-      if (request.projectId && request.fileId && dependencies.openManagedFileVersion) {
-        const lease = await dependencies.openManagedFileVersion(request)
+      const lease =
+        request.projectId && request.fileId
+          ? request.versionId && dependencies.openManagedFileVersion
+            ? await dependencies.openManagedFileVersion({
+                ...request,
+                versionId: request.versionId
+              })
+            : !request.versionId && dependencies.openLatestManagedFile
+              ? await dependencies.openLatestManagedFile({ ...request, versionId: undefined })
+              : undefined
+          : undefined
+      if (lease) {
         try {
           return await readBoundedManagedFilePreviewLease(
             lease,

@@ -131,7 +131,7 @@ describe('managed file version IPC', () => {
       {
         getCapability: vi.fn(() => ({
           available: false as const,
-          reason: 'NATIVE_WRITE_REQUIRED' as const
+          reason: 'STORAGE_UNAVAILABLE' as const
         })),
         inspect: vi.fn(async () => {
           throw new ManagedFileVersionError('INVALID_UTF8', 'Not valid UTF-8.')

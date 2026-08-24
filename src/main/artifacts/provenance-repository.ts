@@ -56,6 +56,16 @@ import { requireAgentArtifactVersion } from './provenance-version-kind'
 import { LOCAL_RESOURCE_BUDGETS, type LocalResourceBudgetOverrides } from '../resource-budget'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 import { digestFileWithinBudget } from '../bounded-file-io'
+import {
+  NodeVersionFileOperator,
+  VERSION_FILE_CANDIDATE_LIMIT,
+  VersionFileOperatorError,
+  type Integrity,
+  type PlanImmutableInput,
+  type PlannedFile,
+  type VersionFileOperator,
+  type VersionFileRecovery
+} from '../managed-file-versions/version-file-operator'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -73,6 +83,7 @@ type ArtifactProvenanceRepositoryOptions = {
   now?: () => Date
   durability?: ArtifactDurability
   resourceBudgets?: LocalResourceBudgetOverrides
+  versionFileOperator?: VersionFileOperator & VersionFileRecovery
 }
 
 type ProjectableVersionFileRecord = Omit<PersistedVersionFileRecord, 'artifactRunId'> & {
@@ -110,6 +121,23 @@ type ArtifactStorageReconciliationResult = {
   recoveredMessageArtifacts: Array<{ messageId: string; artifacts: ArtifactVersionFile[] }>
 }
 
+type ProjectVersionWriteOperation = {
+  operationId: string
+  source: string
+  projectId: string
+  sourceFileId: string
+  storageTag: string
+  storedFilename: string
+  contentStorageKey: string
+  checksum: string
+  sizeBytes: bigint
+}
+
+type JournalRecoveryPlan = {
+  input: PlanImmutableInput
+  plannedFile: PlannedFile
+}
+
 const assertSafeSegment = (value: string, label: string): string => {
   if (!SAFE_SEGMENT_PATTERN.test(value)) {
     throw new Error(`Invalid ${label}: ${value}`)
@@ -132,6 +160,49 @@ const hasServerInferredProducer = (evidenceJson: string): boolean => {
   }
 }
 
+const journalRecoveryPlan = (
+  operator: VersionFileOperator,
+  operation: ProjectVersionWriteOperation
+): JournalRecoveryPlan | undefined => {
+  if (operation.source !== 'artifact' && operation.source !== 'upload') return undefined
+  const filenameMatch = /^v[a-z0-9]{8}_(.+)$/u.exec(operation.storedFilename)
+  if (!filenameMatch) return undefined
+  const segments = operation.contentStorageKey.split('/')
+  if (
+    segments.length !== 6 ||
+    segments[0] !== `${operation.source}s` ||
+    segments[1] !== operation.projectId ||
+    segments[3] !== operation.sourceFileId ||
+    segments[4] !== 'managed-versions' ||
+    segments[5] !== operation.storedFilename
+  ) {
+    return undefined
+  }
+  const logicalFilename = filenameMatch[1]!
+  for (let candidateIndex = 0; candidateIndex < VERSION_FILE_CANDIDATE_LIMIT; candidateIndex += 1) {
+    const input: PlanImmutableInput = {
+      operationId: operation.operationId,
+      scope: {
+        source: operation.source,
+        projectId: operation.projectId,
+        sessionId: segments[2]!,
+        logicalFileId: operation.sourceFileId
+      },
+      logicalFilename,
+      candidateIndex
+    }
+    const plannedFile = operator.planImmutable(input)
+    if (
+      plannedFile.storageRef === operation.contentStorageKey &&
+      plannedFile.storedFilename === operation.storedFilename &&
+      `v${plannedFile.versionToken}` === operation.storageTag
+    ) {
+      return { input, plannedFile }
+    }
+  }
+  return undefined
+}
+
 class ArtifactProvenanceRepository {
   private readonly compatibilityRepository: ArtifactRepository
   private readonly createId: () => string
@@ -146,6 +217,7 @@ class ArtifactProvenanceRepository {
   private readonly unindexedRecovery: ArtifactProvenanceUnindexedRecovery
   private readonly versionWriter: ArtifactProvenanceVersionWriter
   private readonly writeBudgetOwner: ArtifactWriteBudgetOwner
+  private readonly versionFileOperator: VersionFileOperator & VersionFileRecovery
 
   constructor(private readonly options: ArtifactProvenanceRepositoryOptions) {
     this.compatibilityRepository =
@@ -155,6 +227,9 @@ class ArtifactProvenanceRepository {
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
     this.durability = options.durability ?? defaultArtifactDurability
+    this.versionFileOperator =
+      options.versionFileOperator ??
+      new NodeVersionFileOperator({ storageRoot: options.storageRoot })
     this.writeBudgetOwner = new ArtifactWriteBudgetOwner({
       storageRoot: options.storageRoot,
       getClient: options.getClient,
@@ -706,29 +781,121 @@ class ArtifactProvenanceRepository {
   async deleteProjectProvenance(projectIdValue: string): Promise<void> {
     const projectId = assertSafeSegment(projectIdValue, 'project id')
     const client = await this.options.getClient()
-    const [uploadVersions, versionWriteOperations] = await Promise.all([
+    const [artifactVersions, uploadVersions, versionWriteOperations] = await Promise.all([
+      client.artifactVersion.findMany({
+        where: { artifact: { is: { projectId } } },
+        select: { contentStorageKey: true, sizeBytes: true, checksum: true }
+      }),
       client.uploadVersion.findMany({
         where: { uploadFile: { is: { projectId } } },
-        select: { contentStorageKey: true }
+        select: { contentStorageKey: true, sizeBytes: true, checksum: true }
       }),
       client.managedFileVersionWriteOperation.findMany({
         where: { projectId, source: { in: ['artifact', 'upload'] } },
         orderBy: { operationId: 'asc' },
-        select: { contentStorageKey: true }
+        select: {
+          operationId: true,
+          source: true,
+          projectId: true,
+          sourceFileId: true,
+          storageTag: true,
+          storedFilename: true,
+          contentStorageKey: true,
+          sizeBytes: true,
+          checksum: true
+        }
       })
     ])
 
-    // Journal paths are explicit authority and need not live under a source's conventional root.
-    // Keep every row until all unique Upload Version and Artifact/Upload journal paths are removed,
-    // so a partial filesystem failure remains idempotently replayable from the complete journal.
-    const managedStorageKeys = new Set(
-      [...uploadVersions, ...versionWriteOperations].map((entry) => entry.contentStorageKey)
-    )
-    for (const contentStorageKey of managedStorageKeys) {
-      await rm(resolveStorageKey(this.options.storageRoot, contentStorageKey), {
-        force: true
-      })
+    // Version rows remain the retry authority until every immutable byte has been removed. A write
+    // journal may share that storage reference only when both authorities agree on its integrity.
+    const immutableStorage = new Map<string, Integrity>()
+    const integrityFor = (entry: {
+      contentStorageKey: string
+      sizeBytes: bigint
+      checksum: string
+    }): Integrity => {
+      const sizeBytes = Number(entry.sizeBytes)
+      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+        throw new Error(
+          `Immutable Version size is outside the supported range: ${entry.contentStorageKey}`
+        )
+      }
+      return { sizeBytes, checksum: entry.checksum }
     }
+    for (const entry of [...artifactVersions, ...uploadVersions]) {
+      const integrity = integrityFor(entry)
+      const existing = immutableStorage.get(entry.contentStorageKey)
+      if (
+        existing &&
+        (existing.sizeBytes !== integrity.sizeBytes || existing.checksum !== integrity.checksum)
+      ) {
+        throw new Error(`Conflicting immutable Version integrity: ${entry.contentStorageKey}`)
+      }
+      immutableStorage.set(entry.contentStorageKey, integrity)
+    }
+    for (const [storageRef, expectedIntegrity] of immutableStorage) {
+      await this.versionFileOperator.removeImmutable(storageRef, expectedIntegrity)
+    }
+
+    for (const operation of versionWriteOperations) {
+      const expectedIntegrity = integrityFor(operation)
+      const versionIntegrity = immutableStorage.get(operation.contentStorageKey)
+      if (versionIntegrity) {
+        if (
+          versionIntegrity.sizeBytes !== expectedIntegrity.sizeBytes ||
+          versionIntegrity.checksum !== expectedIntegrity.checksum
+        ) {
+          throw new Error(`Conflicting immutable Version integrity: ${operation.contentStorageKey}`)
+        }
+        continue
+      }
+
+      // Legacy journals have no durable claim and can only be removed when their complete bytes
+      // match. Current journals use the operator claim to distinguish owned partial writes from
+      // unrelated occupants before any incomplete content is removed.
+      const recoveryPlan = journalRecoveryPlan(this.versionFileOperator, operation)
+      if (!recoveryPlan) {
+        await this.versionFileOperator.removeImmutable(
+          operation.contentStorageKey,
+          expectedIntegrity
+        )
+        continue
+      }
+      const inspection = await this.versionFileOperator.inspectRecovery({
+        ...recoveryPlan.input,
+        plannedFile: recoveryPlan.plannedFile,
+        expectedIntegrity
+      })
+      if (inspection.state === 'complete') {
+        await this.versionFileOperator.removeImmutable(
+          operation.contentStorageKey,
+          expectedIntegrity
+        )
+      } else if (inspection.state === 'incomplete') {
+        await this.versionFileOperator.removeIncomplete({
+          ...recoveryPlan.input,
+          plannedFile: recoveryPlan.plannedFile,
+          actualIntegrity: inspection.actualIntegrity
+        })
+      } else if (inspection.state === 'occupied') {
+        throw new VersionFileOperatorError(
+          'INTEGRITY_FAILED',
+          `Unclaimed Version journal storage is occupied: ${operation.contentStorageKey}`
+        )
+      }
+    }
+
+    // Auxiliary provenance evidence and legacy compatibility files are not immutable Version
+    // content. Remove both source roots before the database transaction so failure keeps authority.
+    await rm(resolveStorageKey(this.options.storageRoot, storageKey('artifacts', projectId)), {
+      recursive: true,
+      force: true
+    })
+    await rm(resolveStorageKey(this.options.storageRoot, storageKey('uploads', projectId)), {
+      recursive: true,
+      force: true
+    })
 
     await client.$transaction(async (tx) => {
       await tx.artifactVersionInput.deleteMany({
@@ -768,11 +935,6 @@ class ArtifactProvenanceRepository {
       await tx.uploadFile.deleteMany({ where: { projectId } })
       await tx.artifactMessageSnapshot.deleteMany({ where: { projectId } })
       await tx.fileOriginSession.deleteMany({ where: { projectId } })
-    })
-
-    await rm(resolveStorageKey(this.options.storageRoot, storageKey('artifacts', projectId)), {
-      recursive: true,
-      force: true
     })
   }
 

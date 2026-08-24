@@ -1,17 +1,12 @@
-import { createHash, randomInt, randomUUID } from 'node:crypto'
-import { constants, type BigIntStats } from 'node:fs'
-import { open, type FileHandle } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 
 import {
   MANAGED_TEXT_EDIT_MAX_BYTES,
   MANAGED_DIFF_MAX_INPUT_BYTES,
-  buildManagedVersionStoredFilename,
-  createManagedVersionStorageTag,
   inspectManagedTextEditEligibility,
-  isManagedVersionStoredFilename,
+  type ManagedFileIdentity,
   type ManagedFileSource,
   type ManagedFileVersionDescriptor,
   type ManagedFileVersionDiffRequest,
@@ -20,32 +15,26 @@ import {
   type ManagedFileVersionInspectRequest,
   type ManagedFileVersionInspectResult,
   type ManagedFileVersionHostCapability,
-  type ManagedFileVersionResolveRequest,
   type ManagedFileVersionSaveTextEditRequest,
   type ManagedTextFormat,
   type SaveTextEditResult
 } from '../../shared/managed-file-versions'
 import { ManagedTextDiffTaskRunner } from './diff-task'
-import { defaultArtifactDurability, type ArtifactDurability } from '../artifacts/durability'
-import { sha256 } from '../artifacts/provenance-canonical'
 import {
-  readAnchoredFile,
-  readAnchoredFileBounded,
-  listAnchoredDirectory,
-  managedFileVersionNativeCapability,
-  removeAnchoredFile,
-  publishVerifiedAnchoredFileNoReplace,
-  verifyAnchoredFile,
-  writeAndPublishNoReplace
-} from '../uploads/atomic-no-replace-publisher'
+  NodeVersionFileOperator,
+  VersionFileOperatorError,
+  type PlannedFile,
+  type ReadLease,
+  type VersionFileOperator,
+  type VersionFileRecovery
+} from './version-file-operator'
+import { sha256 } from '../artifacts/provenance-canonical'
 
 const COMPLETE_STATE = { artifact: 'finalized', upload: 'ready' } as const
 const STORAGE_COLLISION_MAX_ATTEMPTS = 16
-const ORPHAN_TEMP_MIN_AGE_MS = 24 * 60 * 60 * 1000
 const INTEGRITY_AUDIT_BATCH_SIZE = 100
 const INTEGRITY_AUDIT_MAX_ERRORS = 1000
 const SAFE_STORAGE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
-const MANAGED_VERSION_TEMP_PATTERN = /^\.(v[a-z0-9]{8}_.+)\.[a-f0-9]{16}\.tmp$/u
 
 type ManagedFileVersionRecord = {
   id: string
@@ -79,10 +68,10 @@ type ManagedLogicalFile = {
 type ResolvedManagedFileVersion = {
   logicalFile: ManagedLogicalFile
   version: ManagedFileVersionRecord
-  path: string
 }
 
 type ManagedFileReadLease = ResolvedManagedFileVersion & {
+  path: string
   size: number
   versionToken: number
   snapshot: ManagedFileLeaseSnapshot
@@ -98,176 +87,11 @@ type ManagedFileReadLease = ResolvedManagedFileVersion & {
   close: () => Promise<void>
 }
 
-type ManagedFileLeaseSnapshot = Pick<BigIntStats, 'dev' | 'ino' | 'size' | 'mtimeNs'>
-
-const leaseSnapshotMatches = (snapshot: ManagedFileLeaseSnapshot, current: BigIntStats): boolean =>
-  current.isFile() &&
-  current.dev === snapshot.dev &&
-  current.ino === snapshot.ino &&
-  current.size === snapshot.size &&
-  current.mtimeNs === snapshot.mtimeNs
-
-const readExactFromHandle = async (
-  fileHandle: FileHandle,
-  buffer: Uint8Array,
-  position: number
-): Promise<void> => {
-  let offset = 0
-  while (offset < buffer.byteLength) {
-    const { bytesRead } = await fileHandle.read(
-      buffer,
-      offset,
-      buffer.byteLength - offset,
-      position + offset
-    )
-    if (bytesRead <= 0) throw new Error('Managed file changed during trusted consumption.')
-    offset += bytesRead
-  }
-}
-
-const checksumOpenHandle = async (fileHandle: FileHandle, size: number): Promise<string> => {
-  const hash = createHash('sha256')
-  let position = 0
-  while (position < size) {
-    const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, size - position))
-    await readExactFromHandle(fileHandle, buffer, position)
-    hash.update(buffer)
-    position += buffer.byteLength
-  }
-  return hash.digest('hex')
-}
-
-const openManagedFileReadLease = async (
-  resolved: ResolvedManagedFileVersion
-): Promise<ManagedFileReadLease> => {
-  const expectedSize = Number(resolved.version.sizeBytes)
-  if (!Number.isSafeInteger(expectedSize) || expectedSize < 0) {
-    operationError('CONTENT_INTEGRITY_FAILED', 'Managed file version size is invalid.')
-  }
-
-  const fileHandle = await open(resolved.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
-  let closed = false
-  let snapshot: ManagedFileLeaseSnapshot
-  try {
-    const before = await fileHandle.stat({ bigint: true })
-    if (!before.isFile() || before.size !== BigInt(expectedSize)) {
-      throw new Error('Managed file version size or type changed before trusted consumption.')
-    }
-    snapshot = {
-      dev: before.dev,
-      ino: before.ino,
-      size: before.size,
-      mtimeNs: before.mtimeNs
-    }
-    const actualChecksum = await checksumOpenHandle(fileHandle, expectedSize)
-    const after = await fileHandle.stat({ bigint: true })
-    if (actualChecksum !== resolved.version.checksum || !leaseSnapshotMatches(snapshot, after)) {
-      throw new Error('Managed file version changed during trusted verification.')
-    }
-  } catch (error) {
-    await fileHandle.close().catch(() => undefined)
-    throw new ManagedFileVersionError(
-      'CONTENT_INTEGRITY_FAILED',
-      'Managed file version content is unavailable or corrupt.',
-      { cause: error }
-    )
-  }
-
-  const assertOpen = (): void => {
-    if (closed) throw new Error('Managed file read lease is closed.')
-  }
-  const verifyUnchanged = async (): Promise<void> => {
-    assertOpen()
-    const current = await fileHandle.stat({ bigint: true })
-    if (!leaseSnapshotMatches(snapshot, current)) {
-      throw new ManagedFileVersionError(
-        'CONTENT_INTEGRITY_FAILED',
-        'Managed file version changed during trusted consumption.'
-      )
-    }
-  }
-  const readRange = async (begin: number, end: number): Promise<Uint8Array> => {
-    assertOpen()
-    if (
-      !Number.isSafeInteger(begin) ||
-      !Number.isSafeInteger(end) ||
-      begin < 0 ||
-      end <= begin ||
-      end > expectedSize
-    ) {
-      throw new Error('Invalid managed file lease range.')
-    }
-    const buffer = Buffer.allocUnsafe(end - begin)
-    await readExactFromHandle(fileHandle, buffer, begin)
-    await verifyUnchanged()
-    return new Uint8Array(buffer)
-  }
-  const copyTo = async (
-    destinationPath: string,
-    options?: { exclusive?: boolean }
-  ): Promise<void> => {
-    assertOpen()
-    const destinationHandle = await open(
-      destinationPath,
-      constants.O_CREAT | constants.O_RDWR | (options?.exclusive ? constants.O_EXCL : 0),
-      0o666
-    )
-    try {
-      const sourceStat = await fileHandle.stat()
-      const destinationStat = await destinationHandle.stat()
-      if (destinationStat.dev === sourceStat.dev && destinationStat.ino === sourceStat.ino) {
-        throw new Error('Cannot save a managed file over its source.')
-      }
-      await destinationHandle.truncate(0)
-      const hash = createHash('sha256')
-      let position = 0
-      while (position < expectedSize) {
-        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, expectedSize - position))
-        await readExactFromHandle(fileHandle, buffer, position)
-        hash.update(buffer)
-        let written = 0
-        while (written < buffer.byteLength) {
-          const result = await destinationHandle.write(
-            buffer,
-            written,
-            buffer.byteLength - written,
-            position + written
-          )
-          if (result.bytesWritten <= 0) throw new Error('Managed file destination write stalled.')
-          written += result.bytesWritten
-        }
-        position += buffer.byteLength
-      }
-      if (hash.digest('hex') !== resolved.version.checksum) {
-        throw new ManagedFileVersionError(
-          'CONTENT_INTEGRITY_FAILED',
-          'Managed file version changed during export.'
-        )
-      }
-      await verifyUnchanged()
-    } finally {
-      await destinationHandle.close()
-    }
-  }
-
-  return {
-    ...resolved,
-    size: expectedSize,
-    versionToken: Number(snapshot.mtimeNs) / 1_000_000,
-    snapshot: { ...snapshot },
-    read: async (buffer, offset, length, position) => {
-      assertOpen()
-      return fileHandle.read(buffer, offset, length, position)
-    },
-    readRange,
-    copyTo,
-    verifyUnchanged,
-    close: async () => {
-      if (closed) return
-      closed = true
-      await fileHandle.close()
-    }
-  }
+type ManagedFileLeaseSnapshot = {
+  dev: bigint
+  ino: bigint
+  size: bigint
+  mtimeNs: bigint
 }
 
 type ManagedFileVersionRecoveryResult = {
@@ -290,20 +114,10 @@ type ManagedFileVersionTestFault =
 type ManagedFileVersionServiceOptions = {
   storageRoot: string
   getClient: () => Promise<PrismaClient>
+  versionFileOperator?: VersionFileOperator & VersionFileRecovery
   createId?: () => string
-  createStorageTag?: () => string
   now?: () => Date
-  durability?: ArtifactDurability
-  writeAndPublish?: typeof writeAndPublishNoReplace
-  readAnchored?: typeof readAnchoredFile
-  readAnchoredBounded?: typeof readAnchoredFileBounded
-  verifyAnchored?: typeof verifyAnchoredFile
-  publishVerified?: typeof publishVerifiedAnchoredFileNoReplace
-  listAnchored?: typeof listAnchoredDirectory
-  removeAnchored?: typeof removeAnchoredFile
   testFaultAt?: ManagedFileVersionTestFault
-  nativeWriteAvailable?: boolean
-  nativeReadFallbackAvailable?: boolean
   diffTaskRunner?: Pick<ManagedTextDiffTaskRunner, 'run' | 'cancel'>
 }
 
@@ -325,15 +139,18 @@ const operationError = (code: ManagedFileVersionErrorCode, message: string): nev
   throw new ManagedFileVersionError(code, message)
 }
 
-const isMissing = (error: unknown): boolean =>
-  typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
-
-const isExists = (error: unknown): boolean =>
-  typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST'
+const translateVersionFileError = (error: unknown, message: string): ManagedFileVersionError => {
+  if (error instanceof ManagedFileVersionError) return error
+  if (error instanceof VersionFileOperatorError) {
+    return new ManagedFileVersionError(error.code, message, { cause: error })
+  }
+  return new ManagedFileVersionError('CONTENT_INTEGRITY_FAILED', message, { cause: error })
+}
 
 const isRetryableRecoveryError = (error: unknown): boolean => {
   if (typeof error !== 'object' || error === null) return false
   const code = 'code' in error ? error.code : undefined
+  if (code === 'STORAGE_UNAVAILABLE' || code === 'PERMISSION_DENIED') return true
   if (code === 'EIO' || code === 'EBUSY' || code === 'ETIMEDOUT') return true
   return 'cause' in error && isRetryableRecoveryError(error.cause)
 }
@@ -378,70 +195,27 @@ const normalizeTextBytes = (content: string, format: ManagedTextFormat): Buffer 
   return bytes
 }
 
-const temporaryFilename = (operationId: string, storedFilename: string): string =>
-  `.${storedFilename}.${createHash('sha256').update(operationId).digest('hex').slice(0, 16)}.tmp`
-
 const isManagedVisibleArtifactVersion = (version: ManagedFileVersionRecord): boolean =>
   version.originKind !== 'agent_generated' || version.managedVisibleAt != null
 
 class ManagedFileVersionService {
   private readonly createId: () => string
-  private readonly createStorageTag: () => string
   private readonly now: () => Date
-  private readonly durability: ArtifactDurability
-  private readonly writeAndPublish: typeof writeAndPublishNoReplace
-  private readonly readAnchoredBounded: typeof readAnchoredFileBounded
-  private readonly verifyAnchored: typeof verifyAnchoredFile
-  private readonly publishVerified: typeof publishVerifiedAnchoredFileNoReplace
-  private readonly listAnchored: typeof listAnchoredDirectory
-  private readonly removeAnchored: typeof removeAnchoredFile
-  private readonly nativeWriteAvailable: boolean
-  private readonly nativeReadFallbackAvailable: boolean
+  private readonly versionFileOperator: VersionFileOperator & VersionFileRecovery
   private readonly diffTaskRunner: Pick<ManagedTextDiffTaskRunner, 'run' | 'cancel'>
   private readonly activeDiffs = new Map<string, { cancelled: boolean; workerStarted: boolean }>()
 
   constructor(private readonly options: ManagedFileVersionServiceOptions) {
     this.createId = options.createId ?? randomUUID
-    this.createStorageTag =
-      options.createStorageTag ??
-      (() => createManagedVersionStorageTag((limit) => randomInt(limit)))
     this.now = options.now ?? (() => new Date())
-    this.durability = options.durability ?? defaultArtifactDurability
-    this.writeAndPublish = options.writeAndPublish ?? writeAndPublishNoReplace
-    this.readAnchoredBounded =
-      options.readAnchoredBounded ??
-      (options.readAnchored
-        ? (rootPath, parentPath, name, maxBytes) => {
-            const bytes = options.readAnchored!(rootPath, parentPath, name)
-            if (bytes.byteLength > maxBytes) {
-              throw Object.assign(new Error('bounded read overflow'), { code: 'EFBIG' })
-            }
-            return bytes
-          }
-        : readAnchoredFileBounded)
-    this.verifyAnchored =
-      options.verifyAnchored ??
-      (options.readAnchored
-        ? (rootPath, parentPath, name, expectedSizeBytes, expectedSha256) => {
-            const bytes = options.readAnchored!(rootPath, parentPath, name)
-            return bytes.byteLength === expectedSizeBytes && sha256(bytes) === expectedSha256
-          }
-        : verifyAnchoredFile)
-    this.publishVerified = options.publishVerified ?? publishVerifiedAnchoredFileNoReplace
-    this.listAnchored = options.listAnchored ?? listAnchoredDirectory
-    this.removeAnchored = options.removeAnchored ?? removeAnchoredFile
-    const nativeCapability = managedFileVersionNativeCapability()
-    this.nativeWriteAvailable = options.nativeWriteAvailable ?? nativeCapability.available
-    this.nativeReadFallbackAvailable =
-      options.nativeReadFallbackAvailable ??
-      (options.nativeWriteAvailable === undefined ? nativeCapability.readFallbackAvailable : false)
+    this.versionFileOperator =
+      options.versionFileOperator ??
+      new NodeVersionFileOperator({ storageRoot: options.storageRoot })
     this.diffTaskRunner = options.diffTaskRunner ?? new ManagedTextDiffTaskRunner()
   }
 
   getCapability(): ManagedFileVersionHostCapability {
-    return this.nativeWriteAvailable
-      ? { available: true }
-      : { available: false, reason: 'NATIVE_WRITE_REQUIRED' }
+    return { available: true }
   }
 
   async inspect(
@@ -450,23 +224,6 @@ class ManagedFileVersionService {
     const resolved = await this.resolveRecord(request)
     const versions = await this.listVersions(resolved.logicalFile)
     const writeUnavailableReason = await this.writeUnavailableReason(resolved.logicalFile)
-    if (writeUnavailableReason === 'NATIVE_WRITE_REQUIRED' && !this.nativeReadFallbackAvailable) {
-      return {
-        source: request.source,
-        projectId: request.projectId,
-        fileId: request.fileId,
-        sessionId: resolved.logicalFile.sessionId,
-        displayName: resolved.logicalFile.displayName,
-        headVersionId: resolved.logicalFile.currentVersionId!,
-        selectedVersionId: resolved.version.id,
-        versions: versions.map((version) =>
-          toDescriptor(request.source, resolved.logicalFile.displayName, version)
-        ),
-        canEdit: false,
-        canDiff: false,
-        unavailableReason: writeUnavailableReason
-      }
-    }
     const eligibility = await this.readTextEligibility(resolved)
 
     return {
@@ -491,44 +248,37 @@ class ManagedFileVersionService {
     }
   }
 
-  async resolve(request: ManagedFileVersionResolveRequest): Promise<ResolvedManagedFileVersion> {
-    const resolved = await this.resolveRecord(request)
-    if (!this.nativeWriteAvailable) {
-      operationError('NATIVE_WRITE_REQUIRED', 'Native anchored managed-file access is unavailable.')
-    }
-    this.verifyVersion(resolved.version)
-    return resolved
+  async openLatest(request: ManagedFileIdentity): Promise<ManagedFileReadLease> {
+    return this.openVersionLease(await this.resolveRecord(request))
   }
 
-  // Resolves only the authoritative DB identity. Export callers use this after anchored reads report
-  // that the host lacks native support, then pin and bound the resulting path with their own handle.
-  async resolvePath(
-    request: ManagedFileVersionResolveRequest
-  ): Promise<ResolvedManagedFileVersion> {
-    return this.resolveRecord(request)
-  }
-
-  async openResolved(request: ManagedFileVersionResolveRequest): Promise<ManagedFileReadLease> {
-    const resolved = await this.resolveRecord(request)
-    if (this.nativeWriteAvailable) this.verifyVersion(resolved.version)
-    else if (!this.nativeReadFallbackAvailable) {
-      operationError('NATIVE_WRITE_REQUIRED', 'Native anchored managed-file access is unavailable.')
-    }
-    return openManagedFileReadLease(resolved)
+  async openVersion(
+    request: ManagedFileIdentity,
+    versionId: string
+  ): Promise<ManagedFileReadLease> {
+    return this.openVersionLease(await this.resolveRecord({ ...request, versionId }))
   }
 
   async diffText(request: ManagedFileVersionDiffRequest): Promise<ManagedFileVersionDiffResult> {
-    if (!request.requestId) operationError('INVALID_REQUEST', 'Diff request id is required.')
-    if (this.activeDiffs.has(request.requestId)) {
+    return this.diffVersion(request, request.versionId, request.requestId)
+  }
+
+  async diffVersion(
+    request: ManagedFileIdentity,
+    versionId: string,
+    requestId: string
+  ): Promise<ManagedFileVersionDiffResult> {
+    if (!requestId) operationError('INVALID_REQUEST', 'Diff request id is required.')
+    if (this.activeDiffs.has(requestId)) {
       operationError('INVALID_REQUEST', 'Diff request id is already active.')
     }
     const active = { cancelled: false, workerStarted: false }
-    this.activeDiffs.set(request.requestId, active)
+    this.activeDiffs.set(requestId, active)
     const assertNotCancelled = (): void => {
       if (active.cancelled) operationError('DIFF_CANCELLED', 'Diff request was cancelled.')
     }
     try {
-      const selected = await this.resolveRecord(request)
+      const selected = await this.resolveRecord({ ...request, versionId })
       assertNotCancelled()
       const baseVersionId = selected.version.basedOnVersionId
       if (!baseVersionId)
@@ -540,12 +290,12 @@ class ManagedFileVersionService {
       const after = await this.readTextForDiff(selected)
       assertNotCancelled()
       active.workerStarted = true
-      const lines = await this.diffTaskRunner.run({ requestId: request.requestId, before, after })
+      const lines = await this.diffTaskRunner.run({ requestId, before, after })
       assertNotCancelled()
       return { baseVersionId: ownedBaseVersionId, selectedVersionId: selected.version.id, lines }
     } finally {
-      if (this.activeDiffs.get(request.requestId) === active) {
-        this.activeDiffs.delete(request.requestId)
+      if (this.activeDiffs.get(requestId) === active) {
+        this.activeDiffs.delete(requestId)
       }
     }
   }
@@ -559,11 +309,12 @@ class ManagedFileVersionService {
   }
 
   private async resolveRecord(
-    request: ManagedFileVersionResolveRequest
+    request: ManagedFileIdentity & { versionId?: string }
   ): Promise<ResolvedManagedFileVersion> {
     this.assertIdentity(request)
     const client = await this.options.getClient()
     const logicalFile = await this.loadLogicalFile(client, request)
+    await this.assertReadable(client, logicalFile)
     const headVersionId = logicalFile.currentVersionId
     if (!headVersionId) {
       throw new ManagedFileVersionError(
@@ -585,14 +336,11 @@ class ManagedFileVersionService {
     if (version.state !== COMPLETE_STATE[request.source]) {
       operationError('VERSION_NOT_FOUND', 'Managed file version is not published.')
     }
-    return { logicalFile, version, path: this.resolveStoragePath(version.contentStorageKey) }
+    return { logicalFile, version }
   }
 
   async saveTextEdit(request: ManagedFileVersionSaveTextEditRequest): Promise<SaveTextEditResult> {
     this.assertSaveRequest(request)
-    if (!this.nativeWriteAvailable) {
-      operationError('NATIVE_WRITE_REQUIRED', 'Native anchored file writes are unavailable.')
-    }
     const client = await this.options.getClient()
     await this.assertProjectWritable(client, request.projectId)
     const logicalFile = await this.loadLogicalFile(client, request)
@@ -607,7 +355,7 @@ class ManagedFileVersionService {
       const format = this.parseOperationFormat(existing.textFormatJson)
       const replayBytes = normalizeTextBytes(request.content, format)
       this.assertOperationMatches(existing, request, sha256(replayBytes), replayBytes.byteLength)
-      return this.resumeOperation(client, logicalFile, existing, replayBytes)
+      return this.resumeOperation(client, logicalFile, existing, replayBytes, 0, true)
     }
     const headVersionId = logicalFile.currentVersionId
     if (!headVersionId) {
@@ -632,8 +380,7 @@ class ManagedFileVersionService {
     }
     const eligibility = await this.readTextEligibility({
       logicalFile,
-      version: basedOn,
-      path: this.resolveStoragePath(basedOn.contentStorageKey)
+      version: basedOn
     })
     if (!eligibility.editable) {
       throw new ManagedFileVersionError(
@@ -719,7 +466,6 @@ class ManagedFileVersionService {
     }
 
     await this.cleanupTerminalOperations(client)
-    await this.cleanupOrphanTemporaryFiles(client)
     await this.rebuildHeadProjections(client)
     return result
   }
@@ -729,7 +475,7 @@ class ManagedFileVersionService {
     return this.auditActiveVersions(client)
   }
 
-  private assertIdentity(request: ManagedFileVersionResolveRequest): void {
+  private assertIdentity(request: ManagedFileIdentity & { versionId?: string }): void {
     if (!request || (request.source !== 'artifact' && request.source !== 'upload')) {
       operationError('INVALID_REQUEST', 'Managed file source is invalid.')
     }
@@ -779,6 +525,61 @@ class ManagedFileVersionService {
       select: { deletedAt: true }
     })
     if (projection?.deletedAt) operationError('FILE_DELETED', 'Managed file is deleted.')
+  }
+
+  private async assertReadable(
+    client: PrismaClient | Prisma.TransactionClient,
+    logicalFile: ManagedLogicalFile
+  ): Promise<void> {
+    const [project, deleting, origin, sync, projection] = await Promise.all([
+      client.project.findUnique({
+        where: { id: logicalFile.projectId },
+        select: { id: true }
+      }),
+      client.projectDeletionIntent.findUnique({
+        where: { projectId: logicalFile.projectId },
+        select: { projectId: true }
+      }),
+      client.fileOriginSession.findUnique({
+        where: {
+          projectId_sessionId: {
+            projectId: logicalFile.projectId,
+            sessionId: logicalFile.sessionId
+          }
+        },
+        select: { state: true, deletedAt: true, deletionOperationId: true }
+      }),
+      client.managedFileSessionSync.findUnique({
+        where: {
+          projectId_sessionId: {
+            projectId: logicalFile.projectId,
+            sessionId: logicalFile.sessionId
+          }
+        },
+        select: { deletedAt: true, deleteOperationId: true }
+      }),
+      client.managedFile.findUnique({
+        where: {
+          projectId_source_sourceFileId: {
+            projectId: logicalFile.projectId,
+            source: logicalFile.source,
+            sourceFileId: logicalFile.id
+          }
+        },
+        select: { deletedAt: true, deleteOperationId: true }
+      })
+    ])
+    if (!project) operationError('FILE_NOT_FOUND', 'Managed file project was not found.')
+    if (
+      deleting ||
+      (origin && (origin.state !== 'active' || origin.deletedAt || origin.deletionOperationId)) ||
+      sync?.deletedAt ||
+      sync?.deleteOperationId ||
+      projection?.deletedAt ||
+      projection?.deleteOperationId
+    ) {
+      operationError('FILE_DELETED', 'Managed file or its Session is deleted.')
+    }
   }
 
   private async assertPublicationAllowed(
@@ -839,8 +640,7 @@ class ManagedFileVersionService {
 
   private async writeUnavailableReason(
     logicalFile: ManagedLogicalFile
-  ): Promise<'NATIVE_WRITE_REQUIRED' | 'PROJECT_NOT_WRITABLE' | 'FILE_DELETED' | undefined> {
-    if (!this.nativeWriteAvailable) return 'NATIVE_WRITE_REQUIRED'
+  ): Promise<'PROJECT_NOT_WRITABLE' | 'FILE_DELETED' | undefined> {
     const client = await this.options.getClient()
     const [project, deleting, origin, sync, projection] = await Promise.all([
       client.project.findUnique({
@@ -992,57 +792,49 @@ class ManagedFileVersionService {
     }))
   }
 
-  private resolveStoragePath(contentStorageKey: string): string {
-    if (
-      isAbsolute(contentStorageKey) ||
-      contentStorageKey.includes('\\') ||
-      contentStorageKey
-        .split('/')
-        .some((segment) => !segment || segment === '.' || segment === '..')
-    ) {
-      operationError('CONTENT_INTEGRITY_FAILED', 'Managed storage key is invalid.')
-    }
-    const path = resolve(this.options.storageRoot, ...contentStorageKey.split('/'))
-    const relativePath = relative(resolve(this.options.storageRoot), path)
-    if (
-      relativePath === '' ||
-      relativePath === '..' ||
-      relativePath.startsWith(`..${sep}`) ||
-      isAbsolute(relativePath)
-    ) {
-      operationError('CONTENT_INTEGRITY_FAILED', 'Managed storage key escapes its root.')
-    }
-    return path
-  }
-
-  private versionAnchor(version: ManagedFileVersionRecord): {
-    path: string
-    parentPath: string
-    name: string
-  } {
-    const path = this.resolveStoragePath(version.contentStorageKey)
-    return { path, parentPath: dirname(path), name: basename(path) }
-  }
-
-  private verifyVersion(version: ManagedFileVersionRecord): void {
-    const { parentPath, name } = this.versionAnchor(version)
+  private async openVersionLease(
+    resolved: ResolvedManagedFileVersion
+  ): Promise<ManagedFileReadLease> {
+    let operatorLease: ReadLease
     try {
-      const matches = this.verifyAnchored(
-        this.options.storageRoot,
-        parentPath,
-        name,
-        Number(version.sizeBytes),
-        version.checksum
+      operatorLease = await this.versionFileOperator.openImmutable(
+        resolved.version.contentStorageKey,
+        {
+          sizeBytes: Number(resolved.version.sizeBytes),
+          checksum: resolved.version.checksum
+        }
       )
-      if (!matches) {
-        throw new Error('checksum or size mismatch')
-      }
     } catch (error) {
-      throw new ManagedFileVersionError(
-        'CONTENT_INTEGRITY_FAILED',
-        'Managed file version content is unavailable or corrupt.',
-        { cause: error }
+      throw translateVersionFileError(
+        error,
+        'Managed file version content is unavailable or corrupt.'
       )
+    }
+
+    const versionToken = resolved.version.createdAt.getTime()
+    const snapshot: ManagedFileLeaseSnapshot = {
+      dev: 0n,
+      ino: BigInt(`0x${resolved.version.checksum.slice(0, 16)}`),
+      size: BigInt(operatorLease.sizeBytes),
+      mtimeNs: BigInt(versionToken) * 1_000_000n
+    }
+    return {
+      ...resolved,
+      path: operatorLease.localPath,
+      size: operatorLease.sizeBytes,
+      versionToken,
+      snapshot,
+      read: async (buffer, offset, length, position) => {
+        if (position >= operatorLease.sizeBytes || length <= 0) return { bytesRead: 0 }
+        const end = Math.min(position + length, operatorLease.sizeBytes)
+        const bytes = await operatorLease.readRange(position, end)
+        buffer.set(bytes, offset)
+        return { bytesRead: bytes.byteLength }
+      },
+      readRange: operatorLease.readRange,
+      copyTo: (destinationPath, options) => operatorLease.copyTo(destinationPath, options),
+      verifyUnchanged: operatorLease.verifyUnchanged,
+      close: operatorLease.close
     }
   }
 
@@ -1052,60 +844,11 @@ class ManagedFileVersionService {
     if (resolved.version.sizeBytes > BigInt(MANAGED_TEXT_EDIT_MAX_BYTES)) {
       return { editable: false, reason: 'EDIT_LIMIT_EXCEEDED' }
     }
-    if (this.nativeWriteAvailable) {
-      const { parentPath, name } = this.versionAnchor(resolved.version)
-      try {
-        const bytes = this.readAnchoredBounded(
-          this.options.storageRoot,
-          parentPath,
-          name,
-          MANAGED_TEXT_EDIT_MAX_BYTES
-        )
-        if (
-          bytes.byteLength !== Number(resolved.version.sizeBytes) ||
-          sha256(bytes) !== resolved.version.checksum
-        ) {
-          throw new Error('checksum or size mismatch')
-        }
-        return inspectManagedTextEditEligibility(resolved.logicalFile.displayName, bytes)
-      } catch (error) {
-        if (
-          typeof error === 'object' &&
-          error !== null &&
-          'code' in error &&
-          error.code === 'EFBIG'
-        ) {
-          return { editable: false, reason: 'EDIT_LIMIT_EXCEEDED' }
-        }
-        throw new ManagedFileVersionError(
-          'CONTENT_INTEGRITY_FAILED',
-          'Managed file version content is unavailable or corrupt.',
-          { cause: error }
-        )
-      }
-    }
-    if (!this.nativeReadFallbackAvailable) {
-      operationError('NATIVE_WRITE_REQUIRED', 'Native anchored managed-file access is unavailable.')
-    }
     let lease: ManagedFileReadLease | undefined
     try {
-      lease = await openManagedFileReadLease(resolved)
+      lease = await this.openVersionLease(resolved)
       const bytes = lease.size === 0 ? new Uint8Array() : await lease.readRange(0, lease.size)
       return inspectManagedTextEditEligibility(resolved.logicalFile.displayName, bytes)
-    } catch (error) {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        error.code === 'EFBIG'
-      ) {
-        return { editable: false, reason: 'EDIT_LIMIT_EXCEEDED' }
-      }
-      throw new ManagedFileVersionError(
-        'CONTENT_INTEGRITY_FAILED',
-        'Managed file version content is unavailable or corrupt.',
-        { cause: error }
-      )
     } finally {
       await lease?.close().catch(() => undefined)
     }
@@ -1126,14 +869,7 @@ class ManagedFileVersionService {
   }
 
   private async verifyResolvedVersion(resolved: ResolvedManagedFileVersion): Promise<void> {
-    if (this.nativeWriteAvailable) {
-      this.verifyVersion(resolved.version)
-      return
-    }
-    if (!this.nativeReadFallbackAvailable) {
-      operationError('NATIVE_WRITE_REQUIRED', 'Native anchored managed-file access is unavailable.')
-    }
-    const lease = await openManagedFileReadLease(resolved)
+    const lease = await this.openVersionLease(resolved)
     await lease.close()
   }
 
@@ -1146,16 +882,20 @@ class ManagedFileVersionService {
     format: ManagedTextFormat
   ): Promise<WriteOperationRecord> {
     for (let attempt = 0; attempt < STORAGE_COLLISION_MAX_ATTEMPTS; attempt += 1) {
-      const storageTag = this.createStorageTag()
-      const storedFilename = buildManagedVersionStoredFilename(logicalFile.displayName, storageTag)
-      const contentStorageKey = [
-        `${logicalFile.source}s`,
-        logicalFile.projectId,
-        logicalFile.sessionId,
-        logicalFile.id,
-        'managed-versions',
-        storedFilename
-      ].join('/')
+      const plannedFile = this.versionFileOperator.planImmutable({
+        operationId: request.operationId,
+        scope: {
+          source: logicalFile.source,
+          projectId: logicalFile.projectId,
+          sessionId: logicalFile.sessionId,
+          logicalFileId: logicalFile.id
+        },
+        logicalFilename: logicalFile.displayName,
+        candidateIndex: attempt
+      })
+      const storageTag = `v${plannedFile.versionToken}`
+      const storedFilename = plannedFile.storedFilename
+      const contentStorageKey = plannedFile.storageRef
       const existingKey = await client.managedFileVersionWriteOperation.findFirst({
         where: { contentStorageKey },
         select: { operationId: true }
@@ -1248,96 +988,187 @@ class ManagedFileVersionService {
     logicalFile: ManagedLogicalFile,
     initialOperation: WriteOperationRecord,
     bytes?: Buffer,
-    collisionAttempt = 0
+    collisionAttempt = 0,
+    recoverExistingAttempt = false
   ): Promise<SaveTextEditResult> {
-    let operation = initialOperation
+    const operation = initialOperation
     if (operation.state === 'published') return this.publishedResult(client, logicalFile, operation)
     if (operation.state === 'conflict') return this.conflictResult(client, logicalFile, operation)
     if (operation.state === 'failed') {
       operationError('CONTENT_INTEGRITY_FAILED', 'Managed file write operation failed recovery.')
     }
 
-    const finalPath = this.resolveStoragePath(operation.contentStorageKey)
-    const parentPath = dirname(finalPath)
-    const tempName = temporaryFilename(operation.operationId, operation.storedFilename)
+    return this.resumeVersionFileOperation(
+      client,
+      logicalFile,
+      operation,
+      bytes,
+      collisionAttempt,
+      recoverExistingAttempt
+    )
+  }
+
+  private plannedFileForOperation(
+    logicalFile: ManagedLogicalFile,
+    operation: WriteOperationRecord
+  ): PlannedFile {
+    for (
+      let candidateIndex = 0;
+      candidateIndex < STORAGE_COLLISION_MAX_ATTEMPTS;
+      candidateIndex += 1
+    ) {
+      const plannedFile = this.versionFileOperator.planImmutable({
+        operationId: operation.operationId,
+        scope: {
+          source: logicalFile.source,
+          projectId: logicalFile.projectId,
+          sessionId: logicalFile.sessionId,
+          logicalFileId: logicalFile.id
+        },
+        logicalFilename: logicalFile.displayName,
+        candidateIndex
+      })
+      if (
+        plannedFile.storageRef === operation.contentStorageKey &&
+        plannedFile.storedFilename === operation.storedFilename &&
+        `v${plannedFile.versionToken}` === operation.storageTag
+      ) {
+        return plannedFile
+      }
+    }
+    return operationError(
+      'CONTENT_INTEGRITY_FAILED',
+      'Managed file write operation has an invalid immutable storage plan.'
+    )
+  }
+
+  private async resumeVersionFileOperation(
+    client: PrismaClient,
+    logicalFile: ManagedLogicalFile,
+    initialOperation: WriteOperationRecord,
+    bytes?: Buffer,
+    collisionAttempt = 0,
+    recoverExistingAttempt = false
+  ): Promise<SaveTextEditResult> {
+    let operation = initialOperation
+    const expectedIntegrity = {
+      sizeBytes: Number(operation.sizeBytes),
+      checksum: operation.checksum
+    }
 
     if (operation.state === 'staging') {
-      if (!this.isOperationFileValid(operation, parentPath, operation.storedFilename)) {
-        if (!bytes) {
-          try {
-            const tempBytes = this.readAnchoredBounded(
-              this.options.storageRoot,
-              parentPath,
-              tempName,
-              Number(operation.sizeBytes)
-            )
-            if (
-              tempBytes.byteLength === Number(operation.sizeBytes) &&
-              sha256(tempBytes) === operation.checksum
-            ) {
-              this.publishVerified(
-                this.options.storageRoot,
-                parentPath,
-                tempName,
-                operation.storedFilename,
-                tempBytes
-              )
-            }
-          } catch (error) {
-            if (!isMissing(error)) throw error
-          }
-        }
-        if (!bytes) {
-          if (!this.isOperationFileValid(operation, parentPath, operation.storedFilename)) {
-            await this.failOperation(client, operation, 'CONTENT_INTEGRITY_FAILED')
-            throw new ManagedFileVersionError(
-              'CONTENT_INTEGRITY_FAILED',
-              'Managed file write bytes are unavailable for recovery.'
-            )
-          }
-        }
-        if (bytes)
-          try {
-            this.writeAndPublish(
-              this.options.storageRoot,
-              parentPath,
-              tempName,
-              operation.storedFilename,
-              bytes
-            )
-            this.maybeCrash('after-temp-write')
-          } catch (error) {
-            if (isExists(error)) {
-              if (collisionAttempt + 1 >= STORAGE_COLLISION_MAX_ATTEMPTS) {
-                await this.failOperation(client, operation, 'STORAGE_COLLISION', false)
-                operationError('STORAGE_COLLISION', 'Managed version destination already exists.')
-              }
-              const reallocated = await this.reallocateOperationDestination(
-                client,
-                logicalFile,
-                operation
-              )
-              return this.resumeOperation(
-                client,
-                logicalFile,
-                reallocated,
-                bytes,
-                collisionAttempt + 1
-              )
-            }
-            throw error
-          }
-        await this.durability.syncDirectory(parentPath)
+      const plannedFile = this.plannedFileForOperation(logicalFile, operation)
+      const recoveryPlan = {
+        operationId: operation.operationId,
+        scope: {
+          source: logicalFile.source,
+          projectId: logicalFile.projectId,
+          sessionId: logicalFile.sessionId,
+          logicalFileId: logicalFile.id
+        },
+        logicalFilename: logicalFile.displayName,
+        candidateIndex: plannedFile.candidateIndex,
+        plannedFile
       }
+      if (bytes) {
+        try {
+          let shouldPublish = true
+          if (recoverExistingAttempt) {
+            const inspection = await this.versionFileOperator.inspectRecovery({
+              ...recoveryPlan,
+              expectedIntegrity
+            })
+            if (inspection.state === 'complete') {
+              shouldPublish = false
+            } else if (inspection.state === 'incomplete') {
+              const removable = await this.isOperationStorageUnowned(client, operation, ['staging'])
+              if (!removable) {
+                operationError(
+                  'CONTENT_INTEGRITY_FAILED',
+                  'Incomplete managed version storage is no longer owned by its write operation.'
+                )
+              }
+              await this.versionFileOperator.removeIncomplete({
+                ...recoveryPlan,
+                actualIntegrity: inspection.actualIntegrity
+              })
+            }
+          }
+          if (shouldPublish) {
+            const stored = await this.versionFileOperator.publishImmutable({
+              ...recoveryPlan,
+              content: bytes
+            })
+            if (
+              stored.storageRef !== operation.contentStorageKey ||
+              stored.storedFilename !== operation.storedFilename ||
+              stored.sizeBytes !== expectedIntegrity.sizeBytes ||
+              stored.checksum !== expectedIntegrity.checksum
+            ) {
+              operationError(
+                'CONTENT_INTEGRITY_FAILED',
+                'Version file operator returned a mismatched publication.'
+              )
+            }
+          }
+        } catch (error) {
+          if (
+            error instanceof VersionFileOperatorError &&
+            error.reason === 'DESTINATION_COLLISION'
+          ) {
+            if (collisionAttempt + 1 >= STORAGE_COLLISION_MAX_ATTEMPTS) {
+              await this.failOperation(client, operation, 'STORAGE_COLLISION', false)
+              operationError('STORAGE_COLLISION', 'Managed version destination already exists.')
+            }
+            const reallocated = await this.reallocateOperationDestination(
+              client,
+              logicalFile,
+              operation
+            )
+            return this.resumeVersionFileOperation(
+              client,
+              logicalFile,
+              reallocated,
+              bytes,
+              collisionAttempt + 1,
+              false
+            )
+          }
+          throw translateVersionFileError(error, 'Unable to publish immutable managed file.')
+        }
+        this.maybeCrash('after-temp-write')
+      } else {
+        const inspection = await this.versionFileOperator.inspectRecovery({
+          ...recoveryPlan,
+          expectedIntegrity
+        })
+        if (inspection.state !== 'complete') {
+          await this.failOperation(client, operation, 'CONTENT_INTEGRITY_FAILED', false)
+          if (inspection.state === 'incomplete') {
+            const removable = await this.isOperationStorageUnowned(client, operation, ['failed'])
+            if (removable) {
+              await this.versionFileOperator.removeIncomplete({
+                ...recoveryPlan,
+                actualIntegrity: inspection.actualIntegrity
+              })
+            }
+          }
+          operationError(
+            'CONTENT_INTEGRITY_FAILED',
+            'Managed file write bytes are unavailable for recovery.'
+          )
+        }
+      }
+
       this.maybeCrash('after-file-publish')
       const advanced = await client.managedFileVersionWriteOperation.updateMany({
         where: { operationId: operation.operationId, state: 'staging' },
         data: { state: 'file_ready', errorCode: null }
       })
+      operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
+        where: { operationId: operation.operationId }
+      })
       if (advanced.count !== 1) {
-        operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
-          where: { operationId: operation.operationId }
-        })
         if (operation.state === 'published') {
           return this.publishedResult(client, logicalFile, operation)
         }
@@ -1347,23 +1178,25 @@ class ManagedFileVersionService {
         if (operation.state !== 'file_ready') {
           operationError('CONTENT_INTEGRITY_FAILED', 'Managed file write state is invalid.')
         }
-      } else {
-        operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
-          where: { operationId: operation.operationId }
-        })
       }
       this.maybeCrash('after-file-ready')
     }
 
-    if (!this.isOperationFileValid(operation, parentPath, operation.storedFilename)) {
-      await this.failOperation(client, operation, 'CONTENT_INTEGRITY_FAILED')
-      operationError('CONTENT_INTEGRITY_FAILED', 'Managed version publication is corrupt.')
+    try {
+      const lease = await this.versionFileOperator.openImmutable(
+        operation.contentStorageKey,
+        expectedIntegrity
+      )
+      await lease.close()
+    } catch (error) {
+      const translated = translateVersionFileError(error, 'Managed version publication is corrupt.')
+      if (!isRetryableRecoveryError(translated)) {
+        await this.failOperation(client, operation, 'CONTENT_INTEGRITY_FAILED')
+      }
+      throw translated
     }
     const result = await this.publishDatabaseTransaction(client, logicalFile, operation)
-    if (result.kind === 'conflict') {
-      await this.removeFinalIfUnowned(client, operation)
-    }
-    this.tryRemoveAnchored(parentPath, tempName)
+    if (result.kind === 'conflict') await this.removeFinalIfUnowned(client, operation)
     return result
   }
 
@@ -1372,17 +1205,38 @@ class ManagedFileVersionService {
     logicalFile: ManagedLogicalFile,
     operation: WriteOperationRecord
   ): Promise<WriteOperationRecord> {
-    for (let attempt = 0; attempt < STORAGE_COLLISION_MAX_ATTEMPTS; attempt += 1) {
-      const storageTag = this.createStorageTag()
-      const storedFilename = buildManagedVersionStoredFilename(logicalFile.displayName, storageTag)
-      const contentStorageKey = [
-        `${logicalFile.source}s`,
-        logicalFile.projectId,
-        logicalFile.sessionId,
-        logicalFile.id,
-        'managed-versions',
-        storedFilename
-      ].join('/')
+    const planFor = (candidateIndex: number): PlannedFile =>
+      this.versionFileOperator.planImmutable({
+        operationId: operation.operationId,
+        scope: {
+          source: logicalFile.source,
+          projectId: logicalFile.projectId,
+          sessionId: logicalFile.sessionId,
+          logicalFileId: logicalFile.id
+        },
+        logicalFilename: logicalFile.displayName,
+        candidateIndex
+      })
+    let nextCandidateIndex = 0
+    for (
+      let candidateIndex = 0;
+      candidateIndex < STORAGE_COLLISION_MAX_ATTEMPTS;
+      candidateIndex += 1
+    ) {
+      if (planFor(candidateIndex).storageRef === operation.contentStorageKey) {
+        nextCandidateIndex = candidateIndex + 1
+        break
+      }
+    }
+    for (
+      let candidateIndex = nextCandidateIndex;
+      candidateIndex < STORAGE_COLLISION_MAX_ATTEMPTS;
+      candidateIndex += 1
+    ) {
+      const plannedFile = planFor(candidateIndex)
+      const storageTag = `v${plannedFile.versionToken}`
+      const storedFilename = plannedFile.storedFilename
+      const contentStorageKey = plannedFile.storageRef
       try {
         return await client.managedFileVersionWriteOperation.update({
           where: { operationId: operation.operationId, state: 'staging' },
@@ -1422,7 +1276,7 @@ class ManagedFileVersionService {
       if (currentFile.currentVersionId !== operation.expectedHeadVersionId) {
         const conflicted = await tx.managedFileVersionWriteOperation.updateMany({
           where: { operationId: operation.operationId, state: 'file_ready' },
-          data: { state: 'conflict', errorCode: 'HEAD_CHANGED' }
+          data: { state: 'conflict', errorCode: 'VERSION_CONFLICT' }
         })
         if (conflicted.count !== 1) {
           const currentOperation = await tx.managedFileVersionWriteOperation.findUniqueOrThrow({
@@ -1594,7 +1448,7 @@ class ManagedFileVersionService {
             where: { id: logicalFile.id, currentVersionId: expectedHeadVersionId },
             data: { currentVersionId: resultVersionId }
           })
-    if (updated.count !== 1) operationError('HEAD_CHANGED', 'Managed file head changed.')
+    if (updated.count !== 1) operationError('VERSION_CONFLICT', 'Managed file head changed.')
   }
 
   private async upsertProjection(
@@ -1656,7 +1510,10 @@ class ManagedFileVersionService {
     }
     const version = await this.loadVersion(client, logicalFile, resultVersionId)
     this.assertPublishedVersionMatches(operation, logicalFile, version)
-    this.verifyVersion(version)
+    await this.verifyResolvedVersion({
+      logicalFile,
+      version
+    })
     return {
       kind: 'created',
       replayed: true,
@@ -1709,44 +1566,12 @@ class ManagedFileVersionService {
     }
   }
 
-  private isOperationFileValid(
-    operation: WriteOperationRecord,
-    parentPath: string,
-    name: string
-  ): boolean {
-    try {
-      return this.verifyAnchored(
-        this.options.storageRoot,
-        parentPath,
-        name,
-        Number(operation.sizeBytes),
-        operation.checksum
-      )
-    } catch (error) {
-      if (isMissing(error)) return false
-      throw error
-    }
-  }
-
-  private tryRemoveAnchored(parentPath: string, name: string): void {
-    try {
-      this.removeAnchored(this.options.storageRoot, parentPath, name)
-    } catch (error) {
-      if (!isMissing(error)) throw error
-    }
-  }
-
   private async failOperation(
     client: PrismaClient,
     operation: WriteOperationRecord,
     errorCode: ManagedFileVersionErrorCode,
     removeFinal = true
   ): Promise<void> {
-    const finalPath = this.resolveStoragePath(operation.contentStorageKey)
-    const tempPath = join(
-      dirname(finalPath),
-      temporaryFilename(operation.operationId, operation.storedFilename)
-    )
     const failed = await client.managedFileVersionWriteOperation.updateMany({
       where: {
         operationId: operation.operationId,
@@ -1756,17 +1581,74 @@ class ManagedFileVersionService {
     })
     if (failed.count !== 1) return
     if (removeFinal) await this.removeFinalIfUnowned(client, operation)
-    this.tryRemoveAnchored(
-      dirname(tempPath),
-      temporaryFilename(operation.operationId, operation.storedFilename)
-    )
   }
 
   private async removeFinalIfUnowned(
     client: PrismaClient,
     operation: WriteOperationRecord
   ): Promise<void> {
-    const removable = await client.$transaction(async (tx) => {
+    const removable = await this.isOperationStorageUnowned(client, operation, [
+      'staging',
+      'file_ready',
+      'failed',
+      'conflict'
+    ])
+    if (!removable) return
+    try {
+      const logicalFile = await this.loadLogicalFile(client, {
+        source: operation.source as ManagedFileSource,
+        projectId: operation.projectId,
+        fileId: operation.sourceFileId
+      })
+      const plannedFile = this.plannedFileForOperation(logicalFile, operation)
+      const expectedIntegrity = {
+        sizeBytes: Number(operation.sizeBytes),
+        checksum: operation.checksum
+      }
+      const inspection = await this.versionFileOperator.inspectRecovery({
+        operationId: operation.operationId,
+        scope: {
+          source: logicalFile.source,
+          projectId: logicalFile.projectId,
+          sessionId: logicalFile.sessionId,
+          logicalFileId: logicalFile.id
+        },
+        logicalFilename: logicalFile.displayName,
+        candidateIndex: plannedFile.candidateIndex,
+        plannedFile,
+        expectedIntegrity
+      })
+      if (inspection.state === 'complete') {
+        await this.versionFileOperator.removeImmutable(
+          operation.contentStorageKey,
+          expectedIntegrity
+        )
+      } else if (inspection.state === 'incomplete') {
+        await this.versionFileOperator.removeIncomplete({
+          operationId: operation.operationId,
+          scope: {
+            source: logicalFile.source,
+            projectId: logicalFile.projectId,
+            sessionId: logicalFile.sessionId,
+            logicalFileId: logicalFile.id
+          },
+          logicalFilename: logicalFile.displayName,
+          candidateIndex: plannedFile.candidateIndex,
+          plannedFile,
+          actualIntegrity: inspection.actualIntegrity
+        })
+      }
+    } catch {
+      return
+    }
+  }
+
+  private async isOperationStorageUnowned(
+    client: PrismaClient,
+    operation: WriteOperationRecord,
+    allowedStates: string[]
+  ): Promise<boolean> {
+    return client.$transaction(async (tx) => {
       const [journal, artifactOwner, uploadOwner] = await Promise.all([
         tx.managedFileVersionWriteOperation.findUnique({
           where: { operationId: operation.operationId },
@@ -1784,29 +1666,12 @@ class ManagedFileVersionService {
       return (
         !!journal &&
         journal.contentStorageKey === operation.contentStorageKey &&
-        journal.state !== 'published' &&
+        allowedStates.includes(journal.state) &&
         journal.resultVersionId === null &&
         !artifactOwner &&
         !uploadOwner
       )
     })
-    if (!removable) return
-    const finalPath = this.resolveStoragePath(operation.contentStorageKey)
-    // A stale journal must not remove a path that now contains unrelated bytes. The database
-    // ownership proof above prevents deleting a referenced Version; the byte proof prevents a
-    // failed retry from deleting a reused or externally replaced destination.
-    let fileMatchesJournal = false
-    try {
-      fileMatchesJournal = this.isOperationFileValid(
-        operation,
-        dirname(finalPath),
-        operation.storedFilename
-      )
-    } catch {
-      return
-    }
-    if (!fileMatchesJournal) return
-    this.tryRemoveAnchored(dirname(finalPath), operation.storedFilename)
   }
 
   private async auditActiveVersions(
@@ -1841,8 +1706,7 @@ class ManagedFileVersionService {
               displayName: file.filename,
               currentVersionId: file.currentVersionId
             },
-            version: record,
-            path: this.resolveStoragePath(record.contentStorageKey)
+            version: record
           })
         } catch {
           integrityErrors.push({
@@ -1887,8 +1751,7 @@ class ManagedFileVersionService {
               displayName: file.originalFilename || file.filename,
               currentVersionId: file.currentVersionId
             },
-            version: record,
-            path: this.resolveStoragePath(record.contentStorageKey)
+            version: record
           })
         } catch {
           integrityErrors.push({
@@ -1919,78 +1782,11 @@ class ManagedFileVersionService {
       })
       for (const operation of operations) {
         await this.removeFinalIfUnowned(client, operation)
-        this.tryRemoveAnchored(
-          dirname(this.resolveStoragePath(operation.contentStorageKey)),
-          temporaryFilename(operation.operationId, operation.storedFilename)
-        )
       }
       if (operations.length < INTEGRITY_AUDIT_BATCH_SIZE) break
       cursor = operations.at(-1)?.operationId
       if (!cursor) break
       await new Promise<void>((resolveCleanupYield) => setImmediate(resolveCleanupYield))
-    }
-  }
-
-  private async cleanupOrphanTemporaryFiles(client: PrismaClient): Promise<void> {
-    const cutoff = this.now().getTime() - ORPHAN_TEMP_MIN_AGE_MS
-    for (const source of ['upload', 'artifact'] as const) {
-      let cursor: string | undefined
-      for (;;) {
-        const files =
-          source === 'upload'
-            ? await client.uploadFile.findMany({
-                orderBy: { id: 'asc' },
-                take: INTEGRITY_AUDIT_BATCH_SIZE,
-                ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-                select: { projectId: true, sessionId: true, id: true }
-              })
-            : await client.artifactLineage.findMany({
-                orderBy: { id: 'asc' },
-                take: INTEGRITY_AUDIT_BATCH_SIZE,
-                ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-                select: { projectId: true, sessionId: true, id: true }
-              })
-        for (const file of files) {
-          const parentPath = this.resolveStoragePath(
-            `${source}s/${file.projectId}/${file.sessionId}/${file.id}/managed-versions`
-          )
-          let entries: Array<{ name: string; isFile: boolean; mtimeMs: number }>
-          try {
-            entries = this.listAnchored(this.options.storageRoot, parentPath)
-          } catch (error) {
-            if (isMissing(error)) continue
-            throw error
-          }
-          for (const entry of entries) {
-            if (!entry.isFile) continue
-            const match = MANAGED_VERSION_TEMP_PATTERN.exec(entry.name)
-            if (!match || !isManagedVersionStoredFilename(match[1]!)) continue
-            if (entry.mtimeMs > cutoff) continue
-            const owners = await client.managedFileVersionWriteOperation.findMany({
-              where: {
-                source,
-                projectId: file.projectId,
-                sourceFileId: file.id,
-                storedFilename: match[1]!
-              },
-              select: { operationId: true, storedFilename: true }
-            })
-            if (
-              owners.some(
-                (operation) =>
-                  temporaryFilename(operation.operationId, operation.storedFilename) === entry.name
-              )
-            ) {
-              continue
-            }
-            this.tryRemoveAnchored(parentPath, entry.name)
-          }
-        }
-        if (files.length < INTEGRITY_AUDIT_BATCH_SIZE) break
-        cursor = files.at(-1)?.id
-        if (!cursor) break
-        await new Promise<void>((resolveOrphanYield) => setImmediate(resolveOrphanYield))
-      }
     }
   }
 

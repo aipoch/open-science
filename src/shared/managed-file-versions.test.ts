@@ -198,10 +198,10 @@ describe('managed version storage names', () => {
 })
 
 describe('managed file version host capability', () => {
-  it('fails closed with a stable reason outside the native Electron surface', () => {
+  it('fails closed with a storage reason outside the Electron file-operator surface', () => {
     expect(managedFileVersionHostCapability(false)).toEqual({
       available: false,
-      reason: 'NATIVE_WRITE_REQUIRED'
+      reason: 'STORAGE_UNAVAILABLE'
     })
     expect(managedFileVersionHostCapability(true)).toEqual({ available: true })
   })

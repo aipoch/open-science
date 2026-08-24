@@ -316,12 +316,12 @@ describe('file save IPC handlers', () => {
     const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/path-must-not-be-used.csv')
     const copyTo = vi.fn().mockResolvedValue(undefined)
     const close = vi.fn().mockResolvedValue(undefined)
-    const openManagedFileVersion = vi.fn().mockResolvedValue({ copyTo, close })
+    const openLatestManagedFile = vi.fn().mockResolvedValue({ copyTo, close })
     showSaveDialog.mockResolvedValue({
       canceled: false,
       filePath: join(downloadsPath, 'report.csv')
     })
-    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFileVersion } as never)
+    registerFileSaveHandlers({ resolveManagedFilePath, openLatestManagedFile } as never)
 
     await handlers.get('file:save-managed')!(
       { sender: {} },
@@ -334,7 +334,7 @@ describe('file save IPC handlers', () => {
       }
     )
 
-    expect(openManagedFileVersion).toHaveBeenCalledWith('artifact', {
+    expect(openLatestManagedFile).toHaveBeenCalledWith('artifact', {
       projectId: 'project-1',
       fileId: 'artifact-1'
     })
@@ -344,16 +344,15 @@ describe('file save IPC handlers', () => {
   })
 
   it('preserves an explicit historical version when exporting a logical managed file', async () => {
-    const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/v1-report.csv')
-    const openManagedFile = vi.fn().mockResolvedValue({
-      copyTo: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined)
-    })
+    const resolveManagedFilePath = vi.fn()
+    const copyTo = vi.fn().mockResolvedValue(undefined)
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openManagedFileVersion = vi.fn().mockResolvedValue({ copyTo, close })
     showSaveDialog.mockResolvedValue({
       canceled: false,
       filePath: join(downloadsPath, 'report.csv')
     })
-    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFile } as never)
+    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFileVersion } as never)
 
     await handlers.get('file:save-managed')!(
       { sender: {} },
@@ -367,12 +366,14 @@ describe('file save IPC handlers', () => {
       }
     )
 
-    expect(resolveManagedFilePath).toHaveBeenCalledWith('artifact', {
-      path: 'artifact-version:v1',
+    expect(openManagedFileVersion).toHaveBeenCalledWith('artifact', {
       projectId: 'project-1',
       fileId: 'artifact-1',
       versionId: 'version-1'
     })
+    expect(resolveManagedFilePath).not.toHaveBeenCalled()
+    expect(copyTo).toHaveBeenCalledWith(join(downloadsPath, 'report.csv'))
+    expect(close).toHaveBeenCalledOnce()
   })
 
   it('resolves every logical Session Artifact after the destination folder is chosen', async () => {
@@ -424,13 +425,10 @@ describe('file save IPC handlers', () => {
       copyTo: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined)
     }
-    const openManagedFileVersion = vi
-      .fn()
-      .mockResolvedValueOnce(first)
-      .mockResolvedValueOnce(second)
+    const openLatestManagedFile = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second)
     const resolveManagedFilePath = vi.fn()
     showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
-    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFileVersion } as never)
+    registerFileSaveHandlers({ resolveManagedFilePath, openLatestManagedFile } as never)
 
     await handlers.get('file:save-session-artifacts')!(
       { sender: {} },
@@ -442,21 +440,19 @@ describe('file save IPC handlers', () => {
           {
             path: 'stale-b',
             fileId: 'artifact-b',
-            versionId: 'artifact-b-v1',
             suggestedName: 'b.csv'
           }
         ]
       }
     )
 
-    expect(openManagedFileVersion).toHaveBeenNthCalledWith(1, 'artifact', {
+    expect(openLatestManagedFile).toHaveBeenNthCalledWith(1, 'artifact', {
       projectId: 'project-1',
       fileId: 'artifact-a'
     })
-    expect(openManagedFileVersion).toHaveBeenNthCalledWith(2, 'artifact', {
+    expect(openLatestManagedFile).toHaveBeenNthCalledWith(2, 'artifact', {
       projectId: 'project-1',
-      fileId: 'artifact-b',
-      versionId: 'artifact-b-v1'
+      fileId: 'artifact-b'
     })
     expect(resolveManagedFilePath).not.toHaveBeenCalled()
     expect(first.close).toHaveBeenCalledOnce()
@@ -873,7 +869,7 @@ describe('file save IPC handlers', () => {
     const closeUpload = vi.fn().mockResolvedValue(undefined)
     const verifyArtifact = vi.fn().mockResolvedValue(undefined)
     const verifyUpload = vi.fn().mockResolvedValue(undefined)
-    const openManagedFileVersion = vi
+    const openLatestManagedFile = vi
       .fn()
       .mockResolvedValueOnce({
         size: 21,
@@ -893,7 +889,7 @@ describe('file save IPC handlers', () => {
     registerFileSaveHandlers({
       resolveManagedFilePath,
       resolveSessionArtifactFilePath,
-      openManagedFileVersion
+      openLatestManagedFile
     } as never)
 
     try {
@@ -922,7 +918,7 @@ describe('file save IPC handlers', () => {
       )
 
       expect(result).toEqual({ saved: true, filePath: destinationPath })
-      expect(openManagedFileVersion.mock.calls).toEqual([
+      expect(openLatestManagedFile.mock.calls).toEqual([
         ['artifact', { projectId: 'project-1', fileId: 'artifact-file-1' }],
         ['upload', { projectId: 'project-1', fileId: 'upload-file-1' }]
       ])
@@ -952,7 +948,7 @@ describe('file save IPC handlers', () => {
       filePath: join(downloadsPath, 'Research-artifacts.zip')
     })
     registerFileSaveHandlers({
-      openManagedFileVersion: vi.fn().mockResolvedValue({
+      openLatestManagedFile: vi.fn().mockResolvedValue({
         size: 1,
         readRange,
         verifyUnchanged,
@@ -1093,56 +1089,7 @@ describe('file save IPC handlers', () => {
     }
   })
 
-  it('keeps an explicit Project file version pinned during zip export', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-exact-version-'))
-    const destinationPath = join(root, 'Research-artifacts.zip')
-    const close = vi.fn().mockResolvedValue(undefined)
-    const openManagedFileVersion = vi.fn().mockResolvedValue({
-      size: 18,
-      readRange: vi.fn().mockResolvedValue(Buffer.from('historical version')),
-      verifyUnchanged: vi.fn().mockResolvedValue(undefined),
-      copyTo: vi.fn(),
-      close
-    })
-    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
-    registerFileSaveHandlers({ openManagedFileVersion } as never)
-
-    try {
-      const result = await handlers.get('file:save-project-artifacts')!(
-        { sender: {} },
-        {
-          projectId: 'project-1',
-          suggestedArchiveName: 'Research',
-          files: [
-            {
-              source: 'artifact',
-              sessionId: 'session-1',
-              path: '/stale/report.csv',
-              fileId: 'artifact-file-1',
-              versionId: 'artifact-version-2',
-              suggestedName: 'report.csv'
-            }
-          ]
-        }
-      )
-
-      expect(result).toEqual({ saved: true, filePath: destinationPath })
-      expect(openManagedFileVersion).toHaveBeenCalledWith('artifact', {
-        projectId: 'project-1',
-        fileId: 'artifact-file-1',
-        versionId: 'artifact-version-2'
-      })
-      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
-      expect(Buffer.from(entries['generated/report.csv']!).toString('utf8')).toBe(
-        'historical version'
-      )
-      expect(close).toHaveBeenCalledOnce()
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })
-
-  it('falls back to the legacy managed path only when anchored Version reads are unavailable', async () => {
+  it('does not bypass a managed Version lease failure through a legacy path', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-native-fallback-'))
     const sourcePath = join(root, 'managed-report.csv')
     const destinationPath = join(root, 'Research-artifacts.zip')
@@ -1153,73 +1100,17 @@ describe('file save IPC handlers', () => {
       expectedChecksum: sha256('legacy fallback bytes')
     })
     const resolveSessionArtifactFilePath = vi.fn()
-    const openManagedFileVersion = vi.fn().mockRejectedValue(
-      Object.assign(new Error('Native anchored managed-file access is unavailable.'), {
-        code: 'NATIVE_WRITE_REQUIRED'
+    const openLatestManagedFile = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Managed version storage is unavailable.'), {
+        code: 'STORAGE_UNAVAILABLE'
       })
     )
     showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
     registerFileSaveHandlers({
       resolveManagedFilePath,
       resolveSessionArtifactFilePath,
-      openManagedFileVersion
+      openLatestManagedFile
     } as never)
-
-    try {
-      const result = await handlers.get('file:save-project-artifacts')!(
-        { sender: {} },
-        {
-          projectId: 'project-1',
-          suggestedArchiveName: 'Research',
-          files: [
-            {
-              source: 'artifact',
-              sessionId: 'session-1',
-              path: 'artifact://legacy-report',
-              fileId: 'artifact-file-1',
-              suggestedName: 'report.csv'
-            }
-          ]
-        }
-      )
-
-      expect(result).toEqual({ saved: true, filePath: destinationPath })
-      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
-      expect(Buffer.from(entries['generated/report.csv']!).toString('utf8')).toBe(
-        'legacy fallback bytes'
-      )
-      expect(resolveManagedFilePath).toHaveBeenCalledWith('artifact', {
-        path: 'artifact://legacy-report',
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        fileId: 'artifact-file-1'
-      })
-      expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })
-
-  it('rejects a same-size replacement during managed Version path fallback', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-corrupt-fallback-'))
-    const sourcePath = join(root, 'managed-report.csv')
-    const destinationPath = join(root, 'Research-artifacts.zip')
-    const expectedBytes = 'trusted version'
-    const replacementBytes = 'replaced bytes!'
-    expect(Buffer.byteLength(replacementBytes)).toBe(Buffer.byteLength(expectedBytes))
-    await writeFile(sourcePath, replacementBytes)
-    const resolveManagedFilePath = vi.fn().mockResolvedValue({
-      path: sourcePath,
-      expectedSize: Buffer.byteLength(expectedBytes),
-      expectedChecksum: sha256(expectedBytes)
-    })
-    const openManagedFileVersion = vi.fn().mockRejectedValue(
-      Object.assign(new Error('Native anchored managed-file access is unavailable.'), {
-        code: 'NATIVE_WRITE_REQUIRED'
-      })
-    )
-    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
-    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFileVersion } as never)
 
     try {
       const result = await handlers.get('file:save-project-artifacts')!(
@@ -1248,10 +1139,12 @@ describe('file save IPC handlers', () => {
             path: 'artifact://legacy-report',
             fileId: 'artifact-file-1',
             suggestedName: 'report.csv',
-            message: 'Project export source does not match the managed Version record.'
+            message: 'Managed version storage is unavailable.'
           }
         ]
       })
+      expect(resolveManagedFilePath).not.toHaveBeenCalled()
+      expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
       expect(showSaveDialog).not.toHaveBeenCalled()
       await expect(readFile(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
@@ -1261,12 +1154,12 @@ describe('file save IPC handlers', () => {
 
   it('does not hide managed Version integrity failures behind the legacy path fallback', async () => {
     const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue('/managed/legacy-report.csv')
-    const openManagedFileVersion = vi.fn().mockRejectedValue(
+    const openLatestManagedFile = vi.fn().mockRejectedValue(
       Object.assign(new Error('Managed file version content is unavailable or corrupt.'), {
         code: 'CONTENT_INTEGRITY_FAILED'
       })
     )
-    registerFileSaveHandlers({ resolveSessionArtifactFilePath, openManagedFileVersion } as never)
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath, openLatestManagedFile } as never)
 
     const result = await handlers.get('file:save-project-artifacts')!(
       { sender: {} },
@@ -1302,20 +1195,18 @@ describe('file save IPC handlers', () => {
     expect(showSaveDialog).not.toHaveBeenCalled()
   })
 
-  it('does not replace an explicit historical version with the legacy current path', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-exact-no-native-'))
-    const legacyCurrentPath = join(root, 'current-report.csv')
-    await writeFile(legacyCurrentPath, 'wrong current bytes')
-    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue(legacyCurrentPath)
-    const openManagedFileVersion = vi.fn().mockRejectedValue(
-      Object.assign(new Error('Native anchored managed-file access is unavailable.'), {
-        code: 'NATIVE_WRITE_REQUIRED'
-      })
-    )
-    registerFileSaveHandlers({ resolveSessionArtifactFilePath, openManagedFileVersion } as never)
+  it('does not let a stale Project version hint bypass latest resolution', async () => {
+    const resolveSessionArtifactFilePath = vi.fn()
+    const openLatestManagedFile = vi.fn()
+    const openManagedFileVersion = vi.fn()
+    registerFileSaveHandlers({
+      resolveSessionArtifactFilePath,
+      openLatestManagedFile,
+      openManagedFileVersion
+    } as never)
 
-    try {
-      const result = await handlers.get('file:save-project-artifacts')!(
+    await expect(
+      handlers.get('file:save-project-artifacts')!(
         { sender: {} },
         {
           projectId: 'project-1',
@@ -1332,26 +1223,11 @@ describe('file save IPC handlers', () => {
           ]
         }
       )
-
-      expect(result).toEqual({
-        saved: true,
-        failures: [
-          {
-            source: 'artifact',
-            sessionId: 'session-1',
-            path: 'artifact://current-report',
-            fileId: 'artifact-file-1',
-            versionId: 'artifact-version-1',
-            suggestedName: 'report.csv',
-            message: 'Native anchored managed-file access is unavailable.'
-          }
-        ]
-      })
-      expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
-      expect(showSaveDialog).not.toHaveBeenCalled()
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
+    ).rejects.toThrow('Invalid Project Artifact save request.')
+    expect(openLatestManagedFile).not.toHaveBeenCalled()
+    expect(openManagedFileVersion).not.toHaveBeenCalled()
+    expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
+    expect(showSaveDialog).not.toHaveBeenCalled()
   })
 
   it('applies collision suffixes within each source category only', async () => {

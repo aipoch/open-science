@@ -113,7 +113,6 @@ export const createPreviewFileItemFromArtifact = (
     mtimeMs: artifact.mtimeMs,
     artifactId: artifact.artifactId,
     managedFileId: artifact.artifactId,
-    selectedVersionId: artifact.versionId,
     versionNumber: artifact.versionNumber
   })
 }
@@ -205,7 +204,6 @@ export const createPreviewFileItemFromUpload = (
     name: attachmentName,
     mimeType: attachment.mimeType,
     size: attachment.size,
-    selectedVersionId: attachment.versionId,
     versionNumber: attachment.versionNumber
   })
 }
@@ -260,11 +258,6 @@ export const createPreviewFileItemFromMention = (
       ? (part.sourceFileId ?? artifactId)
       : (part.sourceFileId ??
         (part.id.startsWith('upload:') ? part.id.slice('upload:'.length) || undefined : undefined))
-  const selectedVersionId =
-    part.source === 'artifact'
-      ? (artifactIdentity?.versionId ?? part.versionId)
-      : (uploadIdentity?.versionId ?? part.versionId)
-
   return createPreviewFileItem({
     id: artifactId ?? part.id,
     projectId: artifactIdentity?.projectId ?? uploadIdentity?.projectId ?? projectId,
@@ -274,7 +267,6 @@ export const createPreviewFileItemFromMention = (
     mimeType: part.mimeType,
     source: part.source === 'upload' ? 'upload' : undefined,
     artifactId,
-    managedFileId,
-    selectedVersionId
+    managedFileId
   })
 }

@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { UploadedAttachment } from '../../shared/uploads'
+import { createUploadVersionReference, type UploadedAttachment } from '../../shared/uploads'
 import { estimateHistoryTokens } from '../../shared/history-preamble'
 import { MAX_AUTO_PROCESS_IMAGE_BYTES } from '../uploads/attachment-media'
 import { UploadRepository } from '../uploads/repository'
@@ -664,6 +664,285 @@ describe('AcpPromptContentOwner', () => {
       'default-project'
     )
     expect(result.turnInputs?.references).toEqual([reference])
+  })
+
+  it('reads finalized uploads from the current managed head and registers that exact head', async () => {
+    const staleAttachment: UploadedAttachment = {
+      id: 'upload-file-1',
+      versionId: 'upload-version-1',
+      versionNumber: 1,
+      sessionId: 'target-session',
+      name: 'notes-v1.txt',
+      originalName: 'notes.txt',
+      path: createUploadVersionReference('upload-version-1', {
+        projectId: 'project-1',
+        sessionId: 'target-session'
+      }),
+      mimeType: 'text/plain',
+      size: 8,
+      checksum: '1'.repeat(64),
+      createdAt: '2026-08-23T00:00:00.000Z'
+    }
+    const finalizePendingSessionUploads = vi.fn(async () => [staleAttachment])
+    const resolveManagedUploadPath = vi.fn(async () => {
+      throw new Error('The finalized path must not be used for managed prompt reads.')
+    })
+    const headBytes = Buffer.from('current head bytes')
+    const headLease = createTrustedLease(headBytes)
+    const openLatest = vi.fn(async () => ({
+      ...headLease,
+      path: '/managed/upload-file-1/v2.txt',
+      logicalFile: {
+        source: 'upload' as const,
+        id: 'upload-file-1',
+        projectId: 'project-1',
+        sessionId: 'target-session',
+        displayName: 'notes.txt',
+        currentVersionId: 'upload-version-2'
+      },
+      version: {
+        id: 'upload-version-2',
+        fileId: 'upload-file-1',
+        versionNumber: 2,
+        state: 'ready',
+        originKind: 'user_edit',
+        basedOnVersionId: 'upload-version-1',
+        storageTag: 'vabc12345',
+        storedFilename: 'vabc12345_notes.txt',
+        writeOperationId: 'operation-2',
+        contentStorageKey:
+          'uploads/project-1/target-session/upload-file-1/managed-versions/vabc12345_notes.txt',
+        filename: 'notes.txt',
+        originalFilename: 'notes.txt',
+        contentType: 'text/plain',
+        sizeBytes: BigInt(headBytes.byteLength),
+        checksum: '2'.repeat(64),
+        createdAt: new Date('2026-08-24T00:00:00.000Z')
+      },
+      versionToken: 2,
+      snapshot: { dev: 0n, ino: 0n, size: BigInt(headBytes.byteLength), mtimeNs: 0n }
+    }))
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: {
+        finalizePendingSessionUploads,
+        resolveManagedUploadPath
+      } as never,
+      managedFileVersions: { openLatest } as never,
+      fileReferenceResolver: new FileReferenceResolver([])
+    })
+
+    const result = await owner.prepare({
+      appSessionId: 'target-session',
+      projectId: 'project-1',
+      text: 'read this',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [staleAttachment],
+      references: [],
+      codexSkillInputs: [],
+      skillImportEnabled: false
+    })
+
+    expect(openLatest).toHaveBeenCalledOnce()
+    expect(openLatest).toHaveBeenCalledWith({
+      source: 'upload',
+      projectId: 'project-1',
+      fileId: 'upload-file-1'
+    })
+    expect(resolveManagedUploadPath).not.toHaveBeenCalled()
+    expect(contentBlocks(result.content)).toContainEqual({
+      type: 'resource',
+      resource: expect.objectContaining({ text: 'current head bytes' })
+    })
+    expect(result.turnInputs?.uploads).toEqual([
+      {
+        id: 'upload-file-1',
+        versionId: 'upload-version-2',
+        versionNumber: 2,
+        sessionId: 'target-session',
+        name: 'notes.txt',
+        originalName: 'notes.txt',
+        path: createUploadVersionReference('upload-version-2', {
+          projectId: 'project-1',
+          sessionId: 'target-session'
+        }),
+        mimeType: 'text/plain',
+        size: headBytes.byteLength,
+        checksum: '2'.repeat(64),
+        createdAt: '2026-08-24T00:00:00.000Z'
+      }
+    ])
+    expect(headLease.close).toHaveBeenCalledOnce()
+    result.close()
+  })
+
+  it('keeps managed upload links on a verified turn snapshot until prepared content closes', async () => {
+    const root = await createRoot()
+    const managedPath = join(root, 'vabc12345_notes.txt')
+    await writeFile(managedPath, 'untrusted path bytes')
+    const headBytes = Buffer.from('verified current head bytes')
+    const headLease = createTrustedLease(headBytes)
+    const staleAttachment: UploadedAttachment = {
+      id: 'upload-file-1',
+      versionId: 'upload-version-1',
+      versionNumber: 1,
+      sessionId: 'target-session',
+      name: 'notes.txt',
+      originalName: 'notes.txt',
+      path: createUploadVersionReference('upload-version-1', {
+        projectId: 'project-1',
+        sessionId: 'target-session'
+      }),
+      mimeType: 'text/plain',
+      size: 8,
+      checksum: '1'.repeat(64),
+      createdAt: '2026-08-23T00:00:00.000Z'
+    }
+    const openLatest = vi.fn(async () => ({
+      ...headLease,
+      path: managedPath,
+      logicalFile: {
+        source: 'upload' as const,
+        id: 'upload-file-1',
+        projectId: 'project-1',
+        sessionId: 'target-session',
+        displayName: 'notes.txt',
+        currentVersionId: 'upload-version-2'
+      },
+      version: {
+        id: 'upload-version-2',
+        fileId: 'upload-file-1',
+        versionNumber: 2,
+        state: 'ready',
+        originKind: 'user_edit',
+        basedOnVersionId: 'upload-version-1',
+        storageTag: 'vabc12345',
+        storedFilename: 'vabc12345_notes.txt',
+        writeOperationId: 'operation-2',
+        contentStorageKey:
+          'uploads/project-1/target-session/upload-file-1/managed-versions/vabc12345_notes.txt',
+        filename: 'notes.txt',
+        originalFilename: 'notes.txt',
+        contentType: 'text/plain',
+        sizeBytes: BigInt(headBytes.byteLength),
+        checksum: '2'.repeat(64),
+        createdAt: new Date('2026-08-24T00:00:00.000Z')
+      },
+      versionToken: 2,
+      snapshot: { dev: 0n, ino: 0n, size: BigInt(headBytes.byteLength), mtimeNs: 0n }
+    }))
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: {
+        finalizePendingSessionUploads: vi.fn(async () => [staleAttachment]),
+        resolveManagedUploadPath: vi.fn()
+      } as never,
+      managedFileVersions: { openLatest } as never,
+      fileReferenceResolver: new FileReferenceResolver([])
+    })
+
+    const prepared = await owner.prepare({
+      appSessionId: 'target-session',
+      projectId: 'project-1',
+      text: 'read this',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [staleAttachment],
+      references: [],
+      codexSkillInputs: [],
+      skillImportEnabled: false,
+      fileTextBudget: 1
+    })
+
+    const resourceLink = contentBlocks(prepared.content).find(
+      (block): block is Extract<ContentBlock, { type: 'resource_link' }> =>
+        block.type === 'resource_link'
+    )
+    expect(resourceLink).toMatchObject({ name: 'notes.txt', mimeType: 'text/plain' })
+    const snapshotPath = fileURLToPath(resourceLink!.uri)
+    expect(snapshotPath).not.toBe(managedPath)
+    await writeFile(managedPath, 'replaced after prepare')
+    await expect(readFile(snapshotPath)).resolves.toEqual(headBytes)
+    expect(headLease.copyTo).toHaveBeenCalledWith(snapshotPath, { exclusive: true })
+    expect(headLease.close).toHaveBeenCalledOnce()
+
+    prepared.close()
+    await expect(access(snapshotPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('preserves a managed upload snapshot error when lease close also fails', async () => {
+    const copyError = new Error('managed upload snapshot failed')
+    const headLease = createTrustedLease(Buffer.from('verified bytes'))
+    headLease.copyTo.mockRejectedValueOnce(copyError)
+    headLease.close.mockRejectedValueOnce(new Error('lease close failed'))
+    const attachment: UploadedAttachment = {
+      id: 'upload-file-1',
+      versionId: 'upload-version-1',
+      versionNumber: 1,
+      sessionId: 'session-1',
+      name: 'notes.txt',
+      originalName: 'notes.txt',
+      path: 'upload-version:stale',
+      mimeType: 'text/plain',
+      size: 1,
+      checksum: '1'.repeat(64),
+      createdAt: '2026-08-23T00:00:00.000Z'
+    }
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: {
+        finalizePendingSessionUploads: vi.fn(async () => [attachment])
+      } as never,
+      managedFileVersions: {
+        openLatest: vi.fn(async () => ({
+          ...headLease,
+          path: '/managed/v2_notes.txt',
+          logicalFile: {
+            source: 'upload' as const,
+            id: 'upload-file-1',
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            displayName: 'notes.txt',
+            currentVersionId: 'upload-version-2'
+          },
+          version: {
+            id: 'upload-version-2',
+            fileId: 'upload-file-1',
+            versionNumber: 2,
+            state: 'ready',
+            originKind: 'user_edit',
+            basedOnVersionId: 'upload-version-1',
+            storageTag: 'vabc12345',
+            storedFilename: 'vabc12345_notes.txt',
+            writeOperationId: 'operation-2',
+            contentStorageKey:
+              'uploads/project-1/session-1/upload-file-1/managed-versions/vabc12345_notes.txt',
+            filename: 'notes.txt',
+            originalFilename: 'notes.txt',
+            contentType: 'text/plain',
+            sizeBytes: BigInt(headLease.size),
+            checksum: '2'.repeat(64),
+            createdAt: new Date('2026-08-24T00:00:00.000Z')
+          },
+          versionToken: 2,
+          snapshot: { dev: 0n, ino: 0n, size: BigInt(headLease.size), mtimeNs: 0n }
+        }))
+      } as never,
+      fileReferenceResolver: new FileReferenceResolver([])
+    })
+
+    await expect(
+      owner.prepare({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        text: 'read this',
+        historyImages: [],
+        historyUploads: [],
+        currentUploads: [attachment],
+        references: [],
+        codexSkillInputs: [],
+        skillImportEnabled: false
+      })
+    ).rejects.toBe(copyError)
+    expect(headLease.close).toHaveBeenCalledOnce()
   })
 
   it('shares one text budget across current files and keeps both ends of prose previews', async () => {
