@@ -10,7 +10,7 @@ import {
 } from './operation-journal'
 import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
 import { verifyExecutable } from './provisioner-runtime'
-import { addRepairRequired, pythonBin, rBin } from './runtime-paths'
+import { addRepairRequired, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 
 const isPathInside = (root: string, candidate: string): boolean => {
@@ -226,9 +226,25 @@ export class NotebookRecoveryCoordinator {
         ) {
           rejectUnsafe('Interrupted environment target escapes the managed runtime root.')
         }
-        const bin = [pythonBin(targetPath), rBin(targetPath)].find((candidate) =>
-          existsSync(candidate)
-        )
+        const language =
+          record.phase.endsWith('-r') ||
+          (record.phase === 'restore' && record.runtimeId === DEFAULT_R_ENV)
+            ? 'r'
+            : record.phase.endsWith('-python') ||
+                (record.phase === 'restore' && record.runtimeId === DEFAULT_PY_ENV)
+              ? 'python'
+              : undefined
+        const expectedBin =
+          language === 'r'
+            ? rBin(targetPath)
+            : language === 'python'
+              ? pythonBin(targetPath)
+              : undefined
+        const bin = expectedBin
+          ? existsSync(expectedBin)
+            ? expectedBin
+            : undefined
+          : [pythonBin(targetPath), rBin(targetPath)].find((candidate) => existsSync(candidate))
         if (existsSync(join(targetPath, 'conda-meta')) && bin) {
           const canonicalBin = await realpath(bin).catch(() =>
             rejectUnsafe('Interrupted environment executable could not be validated.')

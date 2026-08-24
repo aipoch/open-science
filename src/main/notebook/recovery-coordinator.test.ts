@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs'
-import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
-import { DEFAULT_PY_ENV, envPrefix, pythonBin } from './runtime-paths'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from './runtime-paths'
 
 let root: string | undefined
 
@@ -25,14 +25,15 @@ const createRuntimeRoot = async (): Promise<string> => {
 const beginInterruptedMaterialize = async (
   runtimeRoot: string,
   operationId: string,
-  targetPath: string
+  targetPath: string,
+  options: { runtimeId?: string; phase?: string } = {}
 ): Promise<RuntimeOperationJournal> => {
   const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
   await journal.begin({
     operationId,
     kind: 'materialize',
-    runtimeId: DEFAULT_PY_ENV,
-    phase: 'create-python',
+    runtimeId: options.runtimeId ?? DEFAULT_PY_ENV,
+    phase: options.phase ?? 'create-python',
     startedAt: 100,
     targetPath
   })
@@ -87,6 +88,32 @@ describe('NotebookRecoveryCoordinator', () => {
       prefixExists: false,
       pending: []
     })
+  })
+
+  describe.skipIf(process.platform === 'win32')('language-specific interpreter recovery', () => {
+    it.each(['create-r', 'restore'])(
+      'verifies the R interpreter for an interrupted %s operation',
+      async (phase) => {
+        const runtimeRoot = await createRuntimeRoot()
+        const prefix = envPrefix(runtimeRoot, DEFAULT_R_ENV)
+        await mkdir(join(prefix, 'conda-meta'), { recursive: true })
+        await mkdir(dirname(pythonBin(prefix)), { recursive: true })
+        await writeFile(pythonBin(prefix), `#!${process.execPath}\nprocess.exit(0)\n`)
+        await chmod(pythonBin(prefix), 0o755)
+        await writeFile(rBin(prefix), 'not an R interpreter')
+        const journal = await beginInterruptedMaterialize(runtimeRoot, `r-${phase}`, prefix, {
+          runtimeId: DEFAULT_R_ENV,
+          phase
+        })
+
+        await new NotebookRecoveryCoordinator(runtimeRoot).recover()
+
+        expect({ prefixExists: existsSync(prefix), pending: await journal.pending() }).toEqual({
+          prefixExists: false,
+          pending: []
+        })
+      }
+    )
   })
 
   it('retains recovery evidence without touching a journal target outside managed envs', async () => {
