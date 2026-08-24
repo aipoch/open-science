@@ -153,6 +153,25 @@ describe('NotebookRecoveryCoordinator', () => {
     expect(coordinator.isRuntimeIdBlocked(DEFAULT_PY_ENV)).toBe(true)
   })
 
+  it('retains a managed prefix symlink without deleting its sibling target', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const sibling = join(runtimeRoot, 'envs', 'sibling')
+    await mkdir(join(sibling, 'conda-meta'), { recursive: true })
+    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    await symlink(sibling, prefix, process.platform === 'win32' ? 'junction' : 'dir')
+    const journal = await beginInterruptedMaterialize(runtimeRoot, 'sibling-prefix', prefix)
+
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+    await coordinator.recover()
+
+    expect(existsSync(sibling)).toBe(true)
+    expect((await journal.pending()).map(({ operationId }) => operationId)).toEqual([
+      'sibling-prefix'
+    ])
+    expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
+    expect(coordinator.isRuntimeIdBlocked(DEFAULT_PY_ENV)).toBe(true)
+  })
+
   it('fails closed after disposal even if reset commands clear known blocks', async () => {
     const coordinator = new NotebookRecoveryCoordinator(await createRuntimeRoot())
     const prefix = '/runtime/envs/default-python'

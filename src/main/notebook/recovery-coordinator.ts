@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { realpath, rm } from 'node:fs/promises'
+import { lstat, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
 import {
@@ -208,6 +208,12 @@ export class NotebookRecoveryCoordinator {
           rejectUnsafe('Interrupted environment target is outside the managed runtime root.')
         }
         if (!existsSync(targetPath)) return
+        const targetStat = await lstat(targetPath).catch(() =>
+          rejectUnsafe('Interrupted environment target could not be validated.')
+        )
+        if (targetStat.isSymbolicLink()) {
+          rejectUnsafe('Interrupted environment target must not be a symbolic link.')
+        }
         const [canonicalRuntimeRoot, canonicalEnvsRoot, canonicalPrefix] = await Promise.all([
           realpath(this.runtimeRoot),
           realpath(envsRoot),
