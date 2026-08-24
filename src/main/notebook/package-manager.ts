@@ -18,6 +18,7 @@ import type { RuntimeTargetReceipt } from '../../shared/notebook-runtime'
 import type {
   NotebookEnvironmentPackageChange,
   NotebookLanguage,
+  NotebookPackageSource,
   NotebookPackageInstaller,
   NotebookPackageInstallerAttempt
 } from '../../shared/notebook'
@@ -59,6 +60,7 @@ export type InstallRequest = OptionalProjectIdScope & {
   language: NotebookLanguage
   packages: string[]
   usePip?: boolean
+  installer?: 'biocmanager' | 'github'
   channels?: string[]
   environment?: string
   // Which action to run against the env; defaults to 'install' (fully backward compatible).
@@ -86,11 +88,11 @@ export type InstallResult = {
   // Present when the bounded installer stdout/stderr collectors discarded older bytes. The count is
   // aggregated across every command whose retained output contributes to `log`.
   logTruncation?: { droppedBytes: number }
-  method?: 'conda' | 'pip' | 'cran'
+  method?: 'conda' | 'pip' | 'cran' | 'biocmanager' | 'github'
+  source?: NotebookPackageSource
   attempts?: NotebookPackageInstallerAttempt[]
   fallbackUsed?: boolean
-  // Verified changes for the explicitly requested packages only. Transitive dependency changes stay
-  // in the immutable operation manifest so the agent-facing result remains compact.
+  // Verified requested and related changes from the before/after target-runtime inventory.
   packageChanges?: NotebookEnvironmentPackageChange[]
   // Absolute env prefix the packages were installed into (<dataRoot>/runtime/envs/<env>), so the
   // UI/agent can see the concrete, env-scoped install location. Set on every real install outcome.
@@ -1064,6 +1066,20 @@ const DEFAULT_ADDITIVE_SPEC = /^[A-Za-z0-9][A-Za-z0-9._-]*(==[A-Za-z0-9][A-Za-z0
 const firstNonAdditiveSpec = (packages: string[]): string | undefined =>
   packages.find((pkg) => !DEFAULT_ADDITIVE_SPEC.test(pkg.trim()))
 
+const R_PACKAGE_NAME = /^[A-Za-z][A-Za-z0-9.]*$/u
+const GITHUB_REPOSITORY_SPEC = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:@[A-Za-z0-9._/-]+)?$/u
+const githubSource = (spec: string): Extract<NotebookPackageSource, { type: 'github' }> => {
+  const separator = spec.lastIndexOf('@')
+  return {
+    type: 'github',
+    repository: separator > 0 ? spec.slice(0, separator) : spec,
+    ...(separator > 0 ? { ref: spec.slice(separator + 1) } : {})
+  }
+}
+
+const bioconductorVersionFromLog = (result: SpawnResult): string | undefined =>
+  /^OPEN_SCIENCE_BIOC_VERSION\t(.+)$/mu.exec(`${result.stdout}\n${result.stderr}`)?.[1]?.trim()
+
 const resolveInstallMicromamba = (
   deps: Partial<InstallDeps>
 ): string | undefined | Promise<string> => {
@@ -1090,6 +1106,18 @@ export async function installPackages(
 
   if (req.packages.length === 0) {
     return { ok: false, needsRestart: false, log: '', error: 'No packages requested.' }
+  }
+
+  if (
+    req.installer &&
+    (req.language !== 'r' || req.operation === 'uninstall' || req.usePip === true)
+  ) {
+    return {
+      ok: false,
+      needsRestart: false,
+      log: '',
+      error: `${req.installer} is supported only for R package installation.`
+    }
   }
 
   // Universal anti-injection guard (ALL envs, install and uninstall). `req.packages` is agent-supplied
@@ -1477,6 +1505,63 @@ export async function installPackages(
       fallbackUsed: false,
       prefix,
       error: condaFailureMessage('install', result)
+    }
+  }
+
+  if (req.installer) {
+    const invalid = req.packages.find((pkg) =>
+      req.installer === 'github'
+        ? !GITHUB_REPOSITORY_SPEC.test(pkg.trim())
+        : !R_PACKAGE_NAME.test(pkg.trim())
+    )
+    if (invalid) {
+      return {
+        ok: false,
+        needsRestart: false,
+        log: '',
+        method: req.installer,
+        error:
+          req.installer === 'github'
+            ? `"${invalid}" is not a valid GitHub R package specifier; use owner/repository or owner/repository@ref.`
+            : `"${invalid}" is not a valid Bioconductor R package name.`
+      }
+    }
+
+    const rLib = envRLibrary(prefix)
+    const cran = deps.cranMirror ?? DEFAULT_CRAN_MIRROR
+    const vector = req.packages.map((pkg) => JSON.stringify(pkg.trim())).join(', ')
+    const bootstrap = (packageName: string): string =>
+      `if (!requireNamespace(${JSON.stringify(packageName)}, quietly=TRUE, lib.loc=.libPaths())) ` +
+      `install.packages(${JSON.stringify(packageName)}, lib=${JSON.stringify(rLib)}, repos=${JSON.stringify(cran)}); `
+    const script =
+      `dir.create(${JSON.stringify(rLib)}, recursive=TRUE, showWarnings=FALSE); ` +
+      `.libPaths(c(${JSON.stringify(rLib)}, .libPaths())); ` +
+      (req.installer === 'biocmanager'
+        ? bootstrap('BiocManager') +
+          `BiocManager::install(c(${vector}), lib=${JSON.stringify(rLib)}, ask=FALSE, update=FALSE); ` +
+          `cat("OPEN_SCIENCE_BIOC_VERSION\\t", as.character(BiocManager::version()), "\\n", sep="")`
+        : bootstrap('remotes') +
+          `invisible(lapply(c(${vector}), function(repo) remotes::install_github(repo, ` +
+          `lib=${JSON.stringify(rLib)}, dependencies=TRUE, upgrade="never")))`)
+    const result = await run(rScriptBin(prefix), ['--vanilla', '--slave', '-e', script])
+    const ok = result.code === 0
+    const source: NotebookPackageSource | undefined =
+      req.installer === 'biocmanager'
+        ? { type: 'bioconductor', version: bioconductorVersionFromLog(result) }
+        : req.packages.length === 1
+          ? githubSource(req.packages[0].trim())
+          : undefined
+    return {
+      ok,
+      needsRestart: ok,
+      log: mergeLog(result),
+      ...installLogTruncation(result),
+      method: req.installer,
+      attempts: [installerAttempt(0, req.installer, req.packages, result)],
+      fallbackUsed: false,
+      prefix: rLib,
+      ...(source ? { source } : {}),
+      error: ok ? undefined : `${req.installer} install failed.`
     }
   }
 

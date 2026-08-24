@@ -578,6 +578,67 @@ describe('installPackages', () => {
     expect(result.ok).toBe(true)
   })
 
+  it('installs R packages through BiocManager and records the release', async () => {
+    const { spawn, calls } = scriptedSpawn([
+      { code: 0, stdout: 'OPEN_SCIENCE_BIOC_VERSION\t3.21\ndone', stderr: '' }
+    ])
+    const result = await installPackages(
+      { language: 'r', packages: ['DESeq2'], installer: 'biocmanager' },
+      { spawn, ...base, cranMirror: 'https://cran.mirror.test' }
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0][0]).toBe(rScriptBin(envPrefix(runtimeRoot('/root'), DEFAULT_R_ENV)))
+    expect(calls[0][1].join(' ')).toContain('BiocManager::install')
+    expect(calls[0][1].join(' ')).toContain('update=FALSE')
+    expect(result).toMatchObject({
+      ok: true,
+      method: 'biocmanager',
+      needsRestart: true,
+      source: { type: 'bioconductor', version: '3.21' }
+    })
+  })
+
+  it('installs an R package from GitHub with the requested ref', async () => {
+    const { spawn, calls } = scriptedSpawn([ok])
+    const result = await installPackages(
+      {
+        language: 'r',
+        packages: ['tidyverse/ggplot2@main'],
+        installer: 'github',
+        environment: 'analysis-r'
+      },
+      { spawn, ...base, pathExists: () => true, cranMirror: 'https://cran.mirror.test' }
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0][1].join(' ')).toContain('remotes::install_github')
+    expect(calls[0][1].join(' ')).toContain('dependencies=TRUE')
+    expect(calls[0][1].join(' ')).toContain('upgrade="never"')
+    expect(result).toMatchObject({
+      ok: true,
+      method: 'github',
+      source: { type: 'github', repository: 'tidyverse/ggplot2', ref: 'main' }
+    })
+  })
+
+  it('rejects malformed GitHub R package specs before spawning', async () => {
+    const { spawn, calls } = scriptedSpawn([])
+    const result = await installPackages(
+      {
+        language: 'r',
+        packages: ['https://github.com/tidyverse/ggplot2'],
+        installer: 'github',
+        environment: 'analysis-r'
+      },
+      { spawn, ...base, pathExists: () => true }
+    )
+
+    expect(result).toMatchObject({ ok: false, method: 'github' })
+    expect(result.error).toContain('owner/repository')
+    expect(calls).toHaveLength(0)
+  })
+
   it('points bioconda at the same mirror host when the conda channel is a mirror URL', async () => {
     const { spawn, calls } = scriptedSpawn([safeRRemovePlan, ok])
     await installPackages(

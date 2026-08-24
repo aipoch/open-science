@@ -745,11 +745,26 @@ describe('manage_packages tool', () => {
     expect(tool?.method).toBe('managePackages')
     expect(tool?.mapResult).toBe(compactManagePackagesResult)
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(
-      expect.arrayContaining(['language', 'packages', 'usePip', 'channels'])
+      expect.arrayContaining(['language', 'packages', 'usePip', 'installer', 'channels'])
     )
     expect(tool?.description).toContain('target receipt')
     expect(tool?.description).toContain('distribution metadata')
     expect(tool?.description).toContain('notebook_execute')
+  })
+
+  it('accepts explicit Bioconductor and GitHub installers for R requests', () => {
+    const schema = z.object(tool?.inputSchema ?? {})
+
+    expect(schema.parse({ language: 'r', packages: ['DESeq2'], installer: 'biocmanager' })).toEqual(
+      { language: 'r', packages: ['DESeq2'], installer: 'biocmanager' }
+    )
+    expect(
+      schema.parse({ language: 'r', packages: ['tidyverse/ggplot2@main'], installer: 'github' })
+    ).toEqual({
+      language: 'r',
+      packages: ['tidyverse/ggplot2@main'],
+      installer: 'github'
+    })
   })
 
   it('preserves bounded installer-log truncation metadata in the compact result', () => {
@@ -996,6 +1011,20 @@ describe('compactManagePackagesResult', () => {
           change: 'unchanged',
           beforeVersion: '1.1.4',
           afterVersion: '1.1.4'
+        },
+        {
+          name: 'cli',
+          ecosystem: 'r',
+          relationship: 'unattributed',
+          change: 'updated',
+          beforeVersion: '3.6.4',
+          afterVersion: '3.6.5',
+          source: {
+            type: 'github',
+            repository: 'r-lib/cli',
+            ref: 'main',
+            commit: 'abc123'
+          }
         }
       ],
       log: JSON.stringify({
@@ -1038,6 +1067,20 @@ describe('compactManagePackagesResult', () => {
           change: 'unchanged',
           beforeVersion: '1.1.4',
           afterVersion: '1.1.4'
+        },
+        {
+          name: 'cli',
+          ecosystem: 'r',
+          relationship: 'unattributed',
+          change: 'updated',
+          beforeVersion: '3.6.4',
+          afterVersion: '3.6.5',
+          source: {
+            type: 'github',
+            repository: 'r-lib/cli',
+            ref: 'main',
+            commit: 'abc123'
+          }
         }
       ]
     })

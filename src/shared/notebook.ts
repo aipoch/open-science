@@ -97,6 +97,18 @@ export const notebookEnvironmentApplicationCommandContracts = Object.freeze({
 // control-plane/shell.
 export type NotebookKernelKind = 'python' | 'r' | 'repl' | 'bash'
 
+export type NotebookPackageSource =
+  | {
+      type: 'github'
+      repository: string
+      ref?: string
+      commit?: string
+    }
+  | {
+      type: 'bioconductor'
+      version?: string
+    }
+
 export type NotebookEnvironmentPackage = {
   name: string
   version?: string
@@ -113,6 +125,7 @@ export type NotebookEnvironmentPackage = {
   libraryScope?: 'environment' | 'user' | 'system' | 'unknown'
   builtForRuntime?: string
   priority?: 'base' | 'recommended' | 'other'
+  source?: NotebookPackageSource
 }
 
 export type NotebookPackageInstaller =
@@ -124,6 +137,7 @@ export type NotebookPackageInstaller =
   | 'renv'
   | 'pak'
   | 'biocmanager'
+  | 'github'
   | 'unknown'
 
 export type NotebookPackageInstallerAttempt = {
@@ -164,6 +178,7 @@ export type NotebookEnvironmentPackageChange = {
   afterVersion?: string
   libraryRank?: number
   libraryScope?: NotebookEnvironmentPackage['libraryScope']
+  source?: NotebookPackageSource
 }
 
 export type NotebookEnvironmentOperation = {

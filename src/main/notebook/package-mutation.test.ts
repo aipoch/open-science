@@ -225,7 +225,10 @@ describe('NotebookPackageMutationOwner', () => {
 
     expect(result).toMatchObject({
       ok: true,
-      packageChanges: [{ name: 'numpy', relationship: 'requested' }]
+      packageChanges: [
+        { name: 'numpy', relationship: 'requested' },
+        { name: 'python-dateutil', relationship: 'dependency' }
+      ]
     })
     expect(order).toEqual([
       'lock',

@@ -285,6 +285,11 @@ const packageIdentityKey = (pkg: NotebookEnvironmentPackage): string =>
 
 const requestedPackageKey = (value: string): string => packageKey(value).replace(/[-_.]+/gu, '-')
 
+const githubRepositoryFromSpec = (value: string): string | undefined => {
+  const repository = value.trim().split('@')[0]
+  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) ? packageKey(repository) : undefined
+}
+
 const packageNameFromSpec = (value: string, language: NotebookLanguage): string | undefined => {
   const unqualified = value.trim().split('::').at(-1) ?? ''
   const name = unqualified.match(/^[A-Za-z0-9_.-]+/u)?.[0]
@@ -328,6 +333,13 @@ const verifyPackageMutation = (
   )
   const unsatisfiedPackages = outcome.packages.filter((spec) => {
     const name = packageNameFromSpec(spec, target.language)
+    const githubRepository = githubRepositoryFromSpec(spec)
+    if (githubRepository) {
+      return !packages.some(
+        (pkg) =>
+          pkg.source?.type === 'github' && packageKey(pkg.source.repository) === githubRepository
+      )
+    }
     if (!name) return false
     const installed = installedNames.has(requestedPackageKey(name))
     return outcome.operation === 'uninstall' ? installed : !installed
@@ -350,14 +362,25 @@ const packageChangesForOperation = ({
 }): NotebookEnvironmentPackageChange[] => {
   const requestedKeys = new Set(
     requestedPackages.flatMap((spec) => {
+      if (githubRepositoryFromSpec(spec)) return []
       const name = packageNameFromSpec(spec, language)
       return name ? [requestedPackageKey(name)] : []
+    })
+  )
+  const requestedGithubRepositories = new Set(
+    requestedPackages.flatMap((spec) => {
+      const repository = githubRepositoryFromSpec(spec)
+      return repository ? [repository] : []
     })
   )
   const relationshipFor = (
     pkg: NotebookEnvironmentPackage
   ): NotebookEnvironmentPackageChange['relationship'] =>
-    requestedKeys.has(requestedPackageKey(pkg.name)) ? 'requested' : 'unattributed'
+    requestedKeys.has(requestedPackageKey(pkg.name)) ||
+    (pkg.source?.type === 'github' &&
+      requestedGithubRepositories.has(packageKey(pkg.source.repository)))
+      ? 'requested'
+      : 'unattributed'
   const toChange = (
     pkg: NotebookEnvironmentPackage,
     relationship: NotebookEnvironmentPackageChange['relationship'],
@@ -372,7 +395,8 @@ const packageChangesForOperation = ({
     ...(beforeVersion ? { beforeVersion } : {}),
     ...(afterVersion ? { afterVersion } : {}),
     ...(pkg.libraryRank !== undefined ? { libraryRank: pkg.libraryRank } : {}),
-    ...(pkg.libraryScope ? { libraryScope: pkg.libraryScope } : {})
+    ...(pkg.libraryScope ? { libraryScope: pkg.libraryScope } : {}),
+    ...(pkg.source ? { source: pkg.source } : {})
   })
 
   if (!before) {
@@ -482,7 +506,10 @@ const R_INVENTORY_SCRIPT = [
   '    libraryPath <- normalizePath(ip[i, "LibPath"], winslash="/", mustWork=FALSE)',
   '    libraryRank <- match(libraryPath, libraryPaths)',
   '    libraryScope <- if (startsWith(libraryPath, paste0(runtimeHome, "/"))) "environment" else if (nzchar(userLibrary) && startsWith(libraryPath, userLibrary)) "user" else "system"',
-  '    cat("PACKAGE\\t", ip[i, "Package"], "\\t", ip[i, "Version"], "\\t", priority, "\\t", built, "\\t", libraryRank, "\\t", libraryScope, "\\n", sep="")',
+  '    descriptionPath <- file.path(ip[i, "LibPath"], ip[i, "Package"], "DESCRIPTION")',
+  '    description <- tryCatch(read.dcf(descriptionPath), error=function(e) matrix(character(), nrow=0, ncol=0))',
+  '    field <- function(name) if (nrow(description) > 0 && name %in% colnames(description) && !is.na(description[1, name])) gsub("[\\t\\r\\n]", " ", description[1, name]) else ""',
+  '    cat("PACKAGE\\t", ip[i, "Package"], "\\t", ip[i, "Version"], "\\t", priority, "\\t", built, "\\t", libraryRank, "\\t", libraryScope, "\\t", field("RemoteUsername"), "\\t", field("RemoteRepo"), "\\t", field("RemoteRef"), "\\t", field("RemoteSha"), "\\n", sep="")',
   '  }',
   '}'
 ].join('\n')
@@ -534,8 +561,19 @@ const parseInventory = (
   let runtimeArchitecture: string | undefined
   const packages: NotebookEnvironmentPackage[] = []
   for (const line of stdout.split(/\r?\n/u)) {
-    const [kind, nameOrVersion, version, priority, built, libraryRankValue, libraryScope] =
-      line.split('\t')
+    const [
+      kind,
+      nameOrVersion,
+      version,
+      priority,
+      built,
+      libraryRankValue,
+      libraryScope,
+      remoteUsername,
+      remoteRepo,
+      remoteRef,
+      remoteSha
+    ] = line.split('\t')
     if (kind === 'RUNTIME') {
       runtimeVersion = nameOrVersion || undefined
       runtimePlatform = version || undefined
@@ -564,7 +602,17 @@ const parseInventory = (
         ? { libraryScope }
         : language === 'r'
           ? { libraryScope: 'unknown' as const }
-          : {})
+          : {}),
+      ...(remoteUsername && remoteRepo
+        ? {
+            source: {
+              type: 'github' as const,
+              repository: `${remoteUsername}/${remoteRepo}`,
+              ...(remoteRef ? { ref: remoteRef } : {}),
+              ...(remoteSha ? { commit: remoteSha } : {})
+            }
+          }
+        : {})
     })
   }
   return {

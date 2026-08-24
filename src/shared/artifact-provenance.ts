@@ -327,6 +327,7 @@ export type ArtifactVersionEnvironmentEvidence = {
         | 'renv'
         | 'pak'
         | 'biocmanager'
+        | 'github'
         | 'unknown'
       packages: string[]
       status: 'succeeded' | 'failed' | 'skipped'

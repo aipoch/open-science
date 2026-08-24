@@ -82,7 +82,7 @@ describe('EnvironmentStateTracker', () => {
           options.maxBuffer === 8 * 1024 * 1024
             ? 'FILE\tconda-meta/history\t1\t1\n'
             : 'RUNTIME\t4.5.1\twin32\tx86_64\n' +
-              'PACKAGE\tbase\t4.5.1\tbase\t4.5.1\t1\tenvironment\n',
+              'PACKAGE\tggplot2\t4.0.0.9000\t\t4.5.1\t1\tenvironment\ttidyverse\tggplot2\tmain\ta7b92f1\n',
         stderr: ''
       })
     )
@@ -92,21 +92,35 @@ describe('EnvironmentStateTracker', () => {
       execFile: execute
     })
 
-    await expect(
-      tracker.prepareRun({
-        language: 'r',
-        environmentName: 'default-r',
-        runtimeSource: 'managed',
-        command: `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
-        args: [],
-        condaPrefix: prefix
-      })
-    ).resolves.toMatchObject({ inventoryRefreshed: true })
+    const rTarget = {
+      language: 'r' as const,
+      environmentName: 'default-r',
+      runtimeSource: 'managed' as const,
+      command: `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
+      args: [],
+      condaPrefix: prefix
+    }
+    await expect(tracker.prepareRun(rTarget)).resolves.toMatchObject({ inventoryRefreshed: true })
+    await expect(tracker.inspectPackages(rTarget, ['ggplot2'])).resolves.toMatchObject({
+      packages: [
+        {
+          name: 'ggplot2',
+          version: '4.0.0.9000',
+          source: {
+            type: 'github',
+            repository: 'tidyverse/ggplot2',
+            ref: 'main',
+            commit: 'a7b92f1'
+          }
+        }
+      ]
+    })
 
-    expect(execute).toHaveBeenCalledTimes(3)
+    expect(execute).toHaveBeenCalledTimes(4)
     expect(execute.mock.calls.map(([, , options]) => options.maxBuffer)).toEqual([
       8 * 1024 * 1024,
       16 * 1024 * 1024,
+      8 * 1024 * 1024,
       8 * 1024 * 1024
     ])
     for (const [command, , options] of execute.mock.calls) {
@@ -254,6 +268,84 @@ describe('EnvironmentStateTracker', () => {
         afterVersion: '2.2.0'
       })
     ])
+  })
+
+  it('matches a GitHub request to the installed R package source and retains related changes', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-github-mutation-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [] })
+      .mockResolvedValueOnce({
+        runtimeVersion: '4.5.1',
+        packages: [
+          {
+            name: 'ggplot2',
+            version: '4.0.0.9000',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            evidenceSources: ['r-installed-packages'],
+            source: {
+              type: 'github',
+              repository: 'tidyverse/ggplot2',
+              ref: 'main',
+              commit: 'a7b92f1'
+            }
+          },
+          {
+            name: 'S7',
+            version: '0.2.0',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            evidenceSources: ['r-installed-packages']
+          }
+        ]
+      })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = {
+      ...target,
+      language: 'r' as const,
+      command: '/opt/r/bin/Rscript'
+    }
+
+    await tracker.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-github-install',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@main']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+      operationId: 'operation-github-install',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@main'],
+      result: 'success'
+    })
+
+    expect(verification).toMatchObject({
+      result: 'success',
+      packageChanges: [
+        {
+          name: 'ggplot2',
+          relationship: 'requested',
+          change: 'installed',
+          afterVersion: '4.0.0.9000',
+          source: {
+            type: 'github',
+            repository: 'tidyverse/ggplot2',
+            ref: 'main',
+            commit: 'a7b92f1'
+          }
+        },
+        {
+          name: 'S7',
+          relationship: 'unattributed',
+          change: 'installed',
+          afterVersion: '0.2.0'
+        }
+      ]
+    })
   })
 
   it('captures a baseline before the first package mutation so uninstalls have a verified change', async () => {

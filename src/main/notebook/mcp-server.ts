@@ -85,6 +85,7 @@ const managePackagesToolSchema = {
   language: z.enum(['python', 'r']),
   packages: z.array(z.string().min(1)).min(1),
   usePip: z.boolean().optional(),
+  installer: z.enum(['biocmanager', 'github']).optional(),
   channels: z.array(z.string().min(1)).optional(),
   // No `environment`: packages install into the session's bound runtime (notebook_bind_runtime).
   operation: z.enum(['install', 'uninstall']).optional()
@@ -147,6 +148,7 @@ const INSPECT_PACKAGES_DOC = [
 
 const MANAGE_PACKAGES_DOC = [
   'Install packages in the session-bound runtime through this trusted tool only. Select with language="python" or language="r", usePip=true only for PyPI-only packages, and pass channels only when needed.',
+  'For managed R runtimes, installer="biocmanager" accepts Bioconductor package names and installer="github" accepts owner/repository or owner/repository@ref. Both are verified from the target R library inventory after installation.',
   'conda installs resolve conda-forge + bioconda by default. A CRAN R package is installed by its plain name (e.g. "dplyr" → r-dplyr); a Bioconductor R package must be named by its bioconda package id "bioconductor-<name>" in lowercase (e.g. DESeq2 → "bioconductor-deseq2"), which is left as-is (not r- prefixed).',
   'There is no per-call environment: bind/switch first. Default runtimes are additive-only (bare name or exact name==version); uninstall, ranges, URLs, extras, and downgrades require a named environment. External runtimes may refuse writes; surface that result.',
   'operation:"uninstall" is named-only. Results include a target receipt. unchanged means only target distribution metadata is unchanged; verify imports with notebook_execute. Use notebook_restart when needsRestart.',
@@ -1156,6 +1158,17 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
     needsRestart: result.needsRestart,
     ...(result.environmentName !== undefined ? { environmentName: result.environmentName } : {}),
     ...(result.method !== undefined ? { method: result.method } : {}),
+    ...(asRecord(result.source)
+      ? {
+          source: pickDefined(asRecord(result.source)!, [
+            'type',
+            'repository',
+            'ref',
+            'commit',
+            'version'
+          ])
+        }
+      : {}),
     ...(result.fallbackUsed !== undefined ? { fallbackUsed: result.fallbackUsed } : {}),
     ...(droppedLogBytes !== undefined ? { logTruncation: { droppedBytes: droppedLogBytes } } : {}),
     ...(target ? { target } : {}),
@@ -1180,6 +1193,10 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
     ])
     for (const [key, value] of Object.entries(compact)) {
       if (typeof value === 'string') compact[key] = clipToolDiagnostic(value, 256)
+    }
+    const source = asRecord(item.source)
+    if (source) {
+      compact.source = pickDefined(source, ['type', 'repository', 'ref', 'commit', 'version'])
     }
     return [compact]
   })
