@@ -788,6 +788,16 @@ describe('SettingsPage layout', () => {
         section.getAttribute('aria-label')
       )
     ).toEqual(['Main model', 'Scenario models', 'Providers'])
+    const mainModel = Array.from(
+      document.body.querySelectorAll('[data-slot="settings-section"]')
+    ).find((section) => section.getAttribute('aria-label') === 'Main model')
+    expect(mainModel?.querySelector('[aria-label="Reasoning effort"]')).not.toBeNull()
+    expect(mainModel?.querySelector('[data-slot="settings-row"]')?.className).toContain(
+      'grid-cols-1'
+    )
+    expect(mainModel?.querySelector('[data-slot="settings-row"]')?.className).toContain(
+      'lg:grid-cols-[minmax(0,1fr)_auto]'
+    )
     expect(document.body.textContent).toContain(
       'Models for subagents, review, and image understanding.'
     )

@@ -121,20 +121,20 @@ for a known set of script-specific characters and will fail on cross-script cont
 
 ### Glossary (mandatory)
 
-| Term                 | fr                  | zh-Hans      | zh-Hant      | ja                     | ko                | ru                       | Note                                              |
-| -------------------- | ------------------- | ------------ | ------------ | ---------------------- | ----------------- | ------------------------ | ------------------------------------------------- |
-| Skill / Skills       | **Compétence(s)**   | **技能**     | **技能**     | **スキル**             | **스킬**          | **Навык / Навыки**       | Translate user-visible prose                      |
-| Agent / Agents       | **Agent(s)**        | **智能体**   | **智能體**   | **エージェント**       | **에이전트**      | **Агент / Агенты**       | Translate user-visible prose                      |
-| Notebook             | **Notebook**        | **Notebook** | **Notebook** | **Notebook**           | **Notebook**      | **Notebook**             | Keep as-is                                        |
-| token (model usage)  | **Jeton(s)**        | **词元**     | **詞元**     | **トークン**           | **토큰**          | **токен**                | Model input, output, context, and usage counts    |
-| token (credential)   | **Jeton(s)**        | **令牌**     | **權杖**     | **トークン**           | **토큰**          | **токен**                | Authentication and personal access credentials    |
-| Specialist           | **Spécialiste**     | **专家**     | **專家**     | **スペシャリスト**     | **스페셜리스트**  | **Специалист**           | Generic role; translate                           |
-| Marketplace          | **Place de marché** | **市场**     | **市集**     | **マーケットプレイス** | **마켓플레이스**  | **Маркетплейс**          | Generic surface; retain third-party product names |
-| Connector            | **Connecteur**      | **连接器**   | **連接器**   | **コネクタ**           | **커넥터**        | **Коннектор**            | Generic noun; retain exact directory names        |
-| Main Agent           | **Agent principal** | **主智能体** | **主智能體** | **メインエージェント** | **메인 에이전트** | **Главный агент**        | Translate as a complete compound                  |
-| Main model           | **Modèle principal** | **主模型** | **主模型** | **メインモデル** | **메인 모델** | **Основная модель** | Settings main-model label; not a Main Agent role  |
-| Subagent / Subagents | **Sous-agent(s)**   | **子智能体** | **子智能體** | **サブエージェント**   | **서브에이전트**  | **Субагент / Субагенты** | Translate as a complete compound                  |
-| Shell                | **Terminal**        | **命令行**   | **命令列**   | **シェル**             | **셸**            | **Командная строка**     | User-facing label; `Notebook` remains English     |
+| Term                 | fr                   | zh-Hans      | zh-Hant      | ja                     | ko                | ru                       | Note                                              |
+| -------------------- | -------------------- | ------------ | ------------ | ---------------------- | ----------------- | ------------------------ | ------------------------------------------------- |
+| Skill / Skills       | **Compétence(s)**    | **技能**     | **技能**     | **スキル**             | **스킬**          | **Навык / Навыки**       | Translate user-visible prose                      |
+| Agent / Agents       | **Agent(s)**         | **智能体**   | **智能體**   | **エージェント**       | **에이전트**      | **Агент / Агенты**       | Translate user-visible prose                      |
+| Notebook             | **Notebook**         | **Notebook** | **Notebook** | **Notebook**           | **Notebook**      | **Notebook**             | Keep as-is                                        |
+| token (model usage)  | **Jeton(s)**         | **词元**     | **詞元**     | **トークン**           | **토큰**          | **токен**                | Model input, output, context, and usage counts    |
+| token (credential)   | **Jeton(s)**         | **令牌**     | **權杖**     | **トークン**           | **토큰**          | **токен**                | Authentication and personal access credentials    |
+| Specialist           | **Spécialiste**      | **专家**     | **專家**     | **スペシャリスト**     | **스페셜리스트**  | **Специалист**           | Generic role; translate                           |
+| Marketplace          | **Place de marché**  | **市场**     | **市集**     | **マーケットプレイス** | **마켓플레이스**  | **Маркетплейс**          | Generic surface; retain third-party product names |
+| Connector            | **Connecteur**       | **连接器**   | **連接器**   | **コネクタ**           | **커넥터**        | **Коннектор**            | Generic noun; retain exact directory names        |
+| Main Agent           | **Agent principal**  | **主智能体** | **主智能體** | **メインエージェント** | **메인 에이전트** | **Главный агент**        | Translate as a complete compound                  |
+| Main model           | **Modèle principal** | **主模型**   | **主模型**   | **メインモデル**       | **메인 모델**     | **Основная модель**      | Settings main-model label; not a Main Agent role  |
+| Subagent / Subagents | **Sous-agent(s)**    | **子智能体** | **子智能體** | **サブエージェント**   | **서브에이전트**  | **Субагент / Субагенты** | Translate as a complete compound                  |
+| Shell                | **Terminal**         | **命令行**   | **命令列**   | **シェル**             | **셸**            | **Командная строка**     | User-facing label; `Notebook` remains English     |
 
 Exact technical identifiers are exempt from prose translation. Keep file names, extensions,
 commands, paths, protocol identifiers, and code spans unchanged, including `SKILL.md`, `.skill`,
