@@ -12,6 +12,14 @@ const PermissionUndoSnackbar = (): React.JSX.Element => (
   <PermissionUndoSnackbarComponent allowsArchiveShortcut={() => true} />
 )
 
+const expectSnackbarExiting = (container: HTMLElement, selector: string): void => {
+  const snackbar = container.querySelector(selector)
+  const presence = snackbar?.closest<HTMLElement>('[data-testid="undo-snackbar-presence"]')
+  expect(presence?.getAttribute('aria-hidden')).toBe('true')
+  expect(presence?.hasAttribute('inert')).toBe(true)
+  expect(presence?.style.pointerEvents).toBe('none')
+}
+
 const archivedProjectNotice = (
   id = 'project-1',
   archivedAt = 10,
@@ -34,6 +42,7 @@ describe('PermissionUndoSnackbar', () => {
   const updateProjectArchive = vi.fn()
 
   beforeEach(async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
     await i18next.changeLanguage('en')
     vi.useFakeTimers()
     container = document.createElement('div')
@@ -97,7 +106,7 @@ describe('PermissionUndoSnackbar', () => {
 
     expect(restore).toHaveBeenCalledOnce()
     expect(restore).toHaveBeenCalledWith({ undoToken: 'undo-1' })
-    expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).toBeNull()
+    expectSnackbarExiting(container, '[data-undo-token="undo-1"]')
   })
 
   it('supports explicit dismiss and expiry after Settings has closed', async () => {
@@ -105,7 +114,7 @@ describe('PermissionUndoSnackbar', () => {
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Dismiss permission Undo"]')?.click()
     )
-    expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).toBeNull()
+    expectSnackbarExiting(container, '[data-undo-token="undo-1"]')
 
     await act(async () =>
       usePermissionGrantsStore.setState({
@@ -119,7 +128,7 @@ describe('PermissionUndoSnackbar', () => {
     expect(container.textContent).toContain('Revoked Python')
 
     await act(async () => vi.advanceTimersByTime(8_000))
-    expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).toBeNull()
+    expectSnackbarExiting(container, '[data-undo-token="undo-2"]')
   })
 
   it('retranslates a permission notice when the language changes', async () => {
@@ -155,8 +164,9 @@ describe('PermissionUndoSnackbar', () => {
 
     const snackbar = container.querySelector<HTMLElement>('[data-testid="archive-undo-snackbar"]')
     expect(snackbar?.className).toContain('rounded-2xl')
-    expect(snackbar?.className).toContain('shadow-lg')
-    expect(snackbar?.className).not.toContain('shadow-xl')
+    expect(snackbar?.className).toContain('shadow-card')
+    expect(snackbar?.className).not.toContain('border-border')
+    expect(snackbar?.className).not.toContain('shadow-lg')
     // The notice carries a key plus params, so the interpolated text proves it is translated at
     // render time rather than frozen into the store when the project was archived.
     expect(snackbar?.textContent).toContain('Archived project “Project”.')
@@ -168,7 +178,7 @@ describe('PermissionUndoSnackbar', () => {
       archived: false,
       expectedArchivedAt: 10
     })
-    expect(container.querySelector('[data-testid="archive-undo-snackbar"]')).toBeNull()
+    expectSnackbarExiting(container, '[data-testid="archive-undo-snackbar"]')
   })
 
   it('shows the platform shortcut only on the latest Archive Undo action', async () => {
@@ -343,7 +353,7 @@ describe('PermissionUndoSnackbar', () => {
     await act(async () => vi.advanceTimersByTimeAsync(7_999))
     expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).not.toBeNull()
     await act(async () => vi.advanceTimersByTimeAsync(1))
-    expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).toBeNull()
+    expectSnackbarExiting(container, '[data-undo-token="undo-1"]')
   })
 
   it('dismisses the action when its authoritative receipt cannot be renewed', async () => {
@@ -355,7 +365,7 @@ describe('PermissionUndoSnackbar', () => {
 
     await act(async () => snackbar?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
 
-    expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).toBeNull()
+    expectSnackbarExiting(container, '[data-undo-token="undo-1"]')
   })
 
   it('locally pauses a non-restorable explanation without trying to renew a receipt', async () => {
@@ -379,7 +389,7 @@ describe('PermissionUndoSnackbar', () => {
 
     await act(async () => snackbar?.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })))
     await act(async () => vi.advanceTimersByTime(0))
-    expect(container.querySelector('[data-testid="permission-undo-snackbar"]')).toBeNull()
+    expectSnackbarExiting(container, '[data-undo-token="undo-1"]')
   })
 
   it('renders every unexpired receipt as an independently operable Undo action', async () => {
@@ -418,7 +428,7 @@ describe('PermissionUndoSnackbar', () => {
     await act(async () => fourthUndo?.click())
 
     expect(restore).toHaveBeenCalledWith({ undoToken: 'undo-4' })
-    expect(container.querySelector('[data-undo-token="undo-4"]')).toBeNull()
+    expectSnackbarExiting(container, '[data-undo-token="undo-4"]')
     expect(container.querySelector('[data-undo-token="undo-1"]')).not.toBeNull()
   })
 

@@ -398,6 +398,12 @@ colors communicate a successful or failed probe/migration result.
   contenteditable editors, IME composition, modified chords, and key repeat retain native behavior.
   Expired receipts never consume the shortcut, and Settings -> Archived remains the durable restore
   path after the transient receipt disappears.
+- Undo notices appear immediately at the top center, entering over 400ms with an 8px upward offset
+  and leaving over 280ms with a 6px upward offset. Animate only opacity and transform; reduced-motion
+  uses a 120ms opacity crossfade. Remaining notices reposition over 220ms when the stack changes.
+  Pause expiry while the notice has pointer hover or keyboard focus. Use the existing opaque popover
+  surface with `shadow-card` and no additional border, and keep the Undo action visually light rather
+  than presenting it as a filled primary button.
 - Session visibility, App Shell shortcut eligibility, and `Cmd/Ctrl+W` routing must consume that
   projection. Do not rebuild parallel Boolean gate lists in `AppContent` or feature components.
 - When a presentation above preview/base owns the shell, base content is `inert` and
