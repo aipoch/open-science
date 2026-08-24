@@ -50,13 +50,29 @@ const WorkspaceManagePackagesActivityRow = ({
   const { t } = useTranslation()
   const [now, setNow] = useState(() => Date.now())
   const input = managePackagesInput(activity)
-  const count = Array.isArray(input?.packages)
-    ? input.packages.filter((value): value is string => typeof value === 'string').length
-    : 0
+  const requestedPackages = Array.isArray(input?.packages)
+    ? input.packages.filter((value): value is string => typeof value === 'string')
+    : []
+  const count = requestedPackages.length
   const isRemoving = input?.operation === 'uninstall'
   const isActive = phase === 'executing'
   const isFailed = phase === 'failed'
-  const needsRestart = parseManagePackagesResult(activity)?.needsRestart === true
+  const result = parseManagePackagesResult(activity)
+  const needsRestart = result?.needsRestart === true
+  const packageChanges = Array.isArray(result?.packageChanges)
+    ? result.packageChanges.filter(
+        (change): change is Record<string, unknown> =>
+          typeof change === 'object' && change !== null && !Array.isArray(change)
+      )
+    : []
+  const packageDetails = requestedPackages.map((name) => {
+    const change = packageChanges.find(
+      (candidate) =>
+        typeof candidate.name === 'string' && candidate.name.toLowerCase() === name.toLowerCase()
+    )
+    const version = isRemoving ? change?.beforeVersion : change?.afterVersion
+    return typeof version === 'string' && version.trim() ? `${name} ${version.trim()}` : name
+  })
   const useActionLabel = isActive || isFailed
   const elapsedUntil = isActive ? now : activity.updatedAt
   const actionLabel = isRemoving
@@ -115,17 +131,32 @@ const WorkspaceManagePackagesActivityRow = ({
         >
           <WorkspaceActivityIcon activity={activity} phase={phase} />
         </span>
-        <span className="min-w-0 flex-1 text-left font-medium text-text-000">
-          {actionLabel}
-          <span className="font-normal text-text-100">
-            {isActive
-              ? ` · ${t('This can take several minutes')}`
-              : isFailed
-                ? ` · ${t('Failed')}`
-                : needsRestart
-                  ? ` · ${t('restart needed')}`
-                  : null}
+        <span className="min-w-0 flex-1 text-left">
+          <span className="block font-medium text-text-000">
+            {actionLabel}
+            <span className="font-normal text-text-100">
+              {isActive
+                ? ` · ${t('This can take several minutes')}`
+                : isFailed
+                  ? ` · ${t('Failed')}`
+                  : needsRestart
+                    ? ` · ${t('restart needed')}`
+                    : null}
+            </span>
           </span>
+          {packageDetails.length > 0 ? (
+            <span
+              className="mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0 text-[12px] text-text-100"
+              data-testid="manage-packages-details"
+            >
+              {packageDetails.map((detail, index) => (
+                <span key={`${detail}-${index}`} className="whitespace-nowrap">
+                  {index > 0 ? '· ' : null}
+                  {detail}
+                </span>
+              ))}
+            </span>
+          ) : null}
         </span>
         <span className="shrink-0 tabular-nums text-[12px] text-text-100" aria-hidden="true">
           {formatElapsed(elapsedUntil - activity.createdAt)}

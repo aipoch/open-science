@@ -80,6 +80,9 @@ describe('WorkspaceActivityGroup i18n', () => {
     expect(progress?.textContent).toContain('Removing 2 packages')
     expect(progress?.textContent).toContain('This can take several minutes')
     expect(progress?.textContent).toContain('1:05')
+    expect(
+      progress?.querySelector('[data-testid="manage-packages-details"]')?.textContent
+    ).toContain('numpy· pandas')
     expect(progress?.textContent).not.toContain('Notebook · manage_packages')
     expect(progress?.textContent).not.toContain('Running')
     expect(progress?.querySelector('.bg-status-info-foreground')).not.toBeNull()
@@ -106,7 +109,18 @@ describe('WorkspaceActivityGroup i18n', () => {
                 createdAt: 1,
                 updatedAt: 46_000,
                 rawInput: { language: 'r', packages: ['ggplot2'] },
-                rawOutput: { ok: true, needsRestart: true, method: 'conda' }
+                rawOutput: {
+                  ok: true,
+                  needsRestart: true,
+                  method: 'conda',
+                  packageChanges: [
+                    {
+                      name: 'ggplot2',
+                      change: 'unchanged',
+                      afterVersion: '4.0.3'
+                    }
+                  ]
+                }
               }
             ]
           }}
@@ -120,6 +134,9 @@ describe('WorkspaceActivityGroup i18n', () => {
 
     expect(container.querySelector('[data-testid="manage-packages-progress"]')).not.toBeNull()
     expect(container.textContent).toContain('Installed 1 package')
+    expect(
+      container.querySelector('[data-testid="manage-packages-details"]')?.textContent
+    ).toContain('ggplot2 4.0.3')
     expect(container.textContent).toContain('restart needed')
     expect(container.textContent).not.toContain('Completed')
     expect(container.querySelector('.bg-status-warning-foreground')).not.toBeNull()
