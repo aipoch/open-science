@@ -390,6 +390,7 @@ describe('AgentMarkdown renderer recovery', () => {
 
   it('previews any HTTPS Agent link on hover and opens it directly in the source panel', async () => {
     vi.useFakeTimers()
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
 
     await act(async () => {
       root.render(
@@ -416,23 +417,44 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(hoverCard?.textContent).toContain('Genome study')
     expect(hoverCard?.textContent).toContain('example.com')
     expect(hoverCard?.textContent).toContain('https://example.com/paper#results')
+    const hoverTitle = hoverCard?.querySelector<HTMLElement>('[data-source-preview-hover-title]')
+    expect(hoverTitle?.textContent).toBe('Genome study')
+    expect(hoverTitle?.className).toContain('text-text-000')
+    const hoverHostname = hoverCard?.querySelector<HTMLElement>(
+      '[data-source-preview-hover-hostname]'
+    )
+    expect(hoverHostname?.textContent).toBe('example.com')
+    expect(hoverHostname?.className).toContain('text-text-100')
     const hoverFavicon = hoverCard?.querySelector<HTMLElement>('[data-session-link-favicon]')
     expect(hoverFavicon).not.toBeNull()
-    expect(hoverFavicon?.querySelector('[data-session-link-favicon-skeleton]')).not.toBeNull()
-    const hoverFaviconImage = hoverFavicon?.querySelector<HTMLImageElement>('img')
-    await act(async () => {
-      fireEvent.load(hoverFaviconImage!)
-    })
     expect(hoverFavicon?.querySelector('[data-session-link-favicon-skeleton]')).toBeNull()
-    expect(hoverFaviconImage?.className).toContain('opacity-100')
-    const hoverCardUrl = hoverCard?.querySelector<HTMLElement>(
-      '[title="https://example.com/paper#results"]'
+    expect(hoverFavicon?.querySelector('[data-session-link-favicon-fallback]')).not.toBeNull()
+    const hoverCardUrl = hoverCard?.querySelector<HTMLAnchorElement>(
+      '[data-source-preview-hover-url]'
     )
-    expect(hoverCardUrl?.className).toContain('text-text-300')
-    expect(hoverCardUrl?.className).not.toContain('text-text-400')
+    expect(hoverCardUrl?.tagName).toBe('A')
+    expect(hoverCardUrl?.href).toBe('https://example.com/paper#results')
+    expect(hoverCardUrl?.textContent).toBe('https://example.com/paper#results')
+    expect(hoverCardUrl?.className).toContain('text-text-000')
+    expect(hoverCardUrl?.className).not.toContain('text-text-300')
+    const externalButton = hoverCard?.querySelector<HTMLButtonElement>(
+      '[data-source-preview-hover-external]'
+    )
+    expect(externalButton?.getAttribute('aria-label')).toBe('Open source in browser')
+    const previewStateBeforeExternalOpen = usePreviewWorkbenchStore.getState()
 
     await act(async () => {
-      sourceLink?.click()
+      externalButton?.click()
+    })
+    expect(open).toHaveBeenCalledWith('https://example.com/paper#results', '_blank', 'noreferrer')
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      panelState: previewStateBeforeExternalOpen.panelState,
+      activeItemId: previewStateBeforeExternalOpen.activeItemId,
+      items: []
+    })
+
+    await act(async () => {
+      hoverCardUrl?.click()
     })
 
     expect(

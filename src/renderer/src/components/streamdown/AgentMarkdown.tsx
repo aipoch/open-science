@@ -15,7 +15,7 @@ import { code } from '@streamdown/code'
 import { cjk } from '@streamdown/cjk'
 import { createMathPlugin } from '@streamdown/math'
 import { mermaid } from '@streamdown/mermaid'
-import { Globe2 } from 'lucide-react'
+import { ExternalLink, Globe2 } from 'lucide-react'
 import { Streamdown, type Components, type LinkSafetyConfig } from 'streamdown'
 import 'katex/dist/katex.min.css'
 
@@ -27,7 +27,9 @@ import { useSmoothStreamingContent } from './use-smooth-streaming-content'
 import { cn } from '@/lib/utils'
 import { createSourcePreviewItem } from '@/lib/source-preview'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 type AgentMarkdownProps = {
   content: string
@@ -78,12 +80,10 @@ const getSessionLinkText = (children: ReactNode): string | undefined => {
 
 const SessionLinkFavicon = ({
   src,
-  className,
-  loadingFallback = 'globe'
+  className
 }: {
   src: string
   className?: string
-  loadingFallback?: 'globe' | 'skeleton'
 }): React.JSX.Element => {
   const [state, setState] = useState<FaviconState>('loading')
 
@@ -97,20 +97,13 @@ const SessionLinkFavicon = ({
         className
       )}
     >
-      {state === 'loading' && loadingFallback === 'skeleton' ? (
-        <span
-          data-session-link-favicon-skeleton=""
-          className="absolute inset-0 size-full rounded-sm bg-bg-300 motion-safe:animate-pulse"
-        />
-      ) : (
-        <Globe2
-          data-session-link-favicon-fallback=""
-          className={cn(
-            'absolute inset-0 m-0! size-full! max-w-none! border-0! bg-transparent! p-0! transition-opacity duration-150',
-            state === 'success' ? 'opacity-0' : state === 'loading' ? 'opacity-50' : 'opacity-75'
-          )}
-        />
-      )}
+      <Globe2
+        data-session-link-favicon-fallback=""
+        className={cn(
+          'absolute inset-0 m-0! size-full! max-w-none! border-0! bg-transparent! p-0! transition-opacity duration-150',
+          state === 'success' ? 'opacity-0' : state === 'loading' ? 'opacity-50' : 'opacity-75'
+        )}
+      />
       {state !== 'error' ? (
         <img
           src={src}
@@ -140,6 +133,7 @@ const SessionMessageLink = ({
   title,
   'data-incomplete': dataIncomplete
 }: SessionMessageLinkProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
   const upsertAndActivateItem = usePreviewWorkbenchStore((state) => state.upsertAndActivateItem)
   const faviconUrl = getSessionLinkFaviconUrl(href)
@@ -181,24 +175,55 @@ const SessionMessageLink = ({
         <HoverCardContent side="top" data-source-preview-hover-card="">
           <div className="flex min-w-0 items-start gap-2.5">
             {faviconUrl ? (
-              <SessionLinkFavicon
-                className="mt-0.5 me-0 size-5 shrink-0"
-                src={faviconUrl}
-                loadingFallback="skeleton"
-              />
+              <SessionLinkFavicon className="mt-0.5 me-0 size-5 shrink-0" src={faviconUrl} />
             ) : null}
             <div className="min-w-0 flex-1">
-              <div className="break-words text-sm font-medium leading-5 text-text-100">
+              <div
+                data-source-preview-hover-title=""
+                className="break-words text-sm font-medium leading-5 text-text-000"
+              >
                 {sourceItem.title}
               </div>
-              <div className="truncate text-xs leading-4 text-text-300">{hostname}</div>
+              <div
+                data-source-preview-hover-hostname=""
+                className="truncate text-xs leading-4 text-text-100"
+              >
+                {hostname}
+              </div>
+              <a
+                href={sourceItem.url}
+                data-source-preview-hover-url=""
+                title={sourceItem.url}
+                className="mt-1 block break-all text-xs leading-4 text-text-000 underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+                onClick={(event) => {
+                  event.preventDefault()
+                  upsertAndActivateItem(sourceItem)
+                }}
+              >
+                {sourceItem.url}
+              </a>
             </div>
-          </div>
-          <div
-            className="mt-2 break-all text-[11px] leading-4 text-text-300"
-            title={sourceItem.url}
-          >
-            {sourceItem.url}
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    data-source-preview-hover-external=""
+                    aria-label={t('Open source in browser')}
+                    className="mt-0.5 text-text-100 hover:text-text-000"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      window.open(sourceItem.url, '_blank', 'noreferrer')
+                    }}
+                  >
+                    <ExternalLink className="size-3.5" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Open source in browser')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </HoverCardContent>
       </HoverCard>
