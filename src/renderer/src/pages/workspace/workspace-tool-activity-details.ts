@@ -1078,6 +1078,7 @@ export {
   getLoadedSkillName,
   getToolDisplayName,
   isEditActivity,
+  parseManagePackagesResult,
   isSkillActivity
 }
 export type {

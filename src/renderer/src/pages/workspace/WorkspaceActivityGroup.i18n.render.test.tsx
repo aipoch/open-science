@@ -78,9 +78,11 @@ describe('WorkspaceActivityGroup i18n', () => {
     const progress = container.querySelector('[data-testid="manage-packages-progress"]')
     expect(container.querySelector('[data-testid="tool-group"]')?.contains(progress)).toBe(true)
     expect(progress?.textContent).toContain('Removing 2 packages')
-    expect(progress?.textContent).toContain('Preparing the runtime')
-    expect(progress?.textContent).toContain('1:05 elapsed')
     expect(progress?.textContent).toContain('This can take several minutes')
+    expect(progress?.textContent).toContain('1:05')
+    expect(progress?.textContent).not.toContain('Notebook · manage_packages')
+    expect(progress?.textContent).not.toContain('Running')
+    expect(progress?.querySelector('.bg-status-info-foreground')).not.toBeNull()
     expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
   })
 
@@ -118,6 +120,9 @@ describe('WorkspaceActivityGroup i18n', () => {
 
     expect(container.querySelector('[data-testid="manage-packages-progress"]')).not.toBeNull()
     expect(container.textContent).toContain('Installed 1 package')
+    expect(container.textContent).toContain('restart needed')
+    expect(container.textContent).not.toContain('Completed')
+    expect(container.querySelector('.bg-status-warning-foreground')).not.toBeNull()
     expect(container.textContent).not.toContain('manage_packages()')
   })
 

@@ -3542,8 +3542,6 @@
   "Installing {{count}} packages_one": "Installation de {{count}} paquet",
   "Installing {{count}} packages_many": "Installation de {{count}} paquets",
   "Installing {{count}} packages_other": "Installation de {{count}} paquets",
-  "Preparing the runtime": "Préparation de l’environnement d’exécution",
-  "{{elapsed}} elapsed": "{{elapsed}} écoulé",
   "This can take several minutes": "Cela peut prendre plusieurs minutes",
   "Removing packages": "Suppression des paquets",
   "Removing {{count}} packages_one": "Suppression de {{count}} paquet",

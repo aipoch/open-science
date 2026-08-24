@@ -1,3 +1,7 @@
+/* Hallmark · component: async tool status · genre: modern-minimal · theme: project tokens
+ * states: loading · warning · error · success
+ * contrast: pass · pre-emit critique: P5 H5 E5 S5 R5 V4
+ */
 import type { ToolActivity } from '@/stores/session-store'
 import { cn } from '@/lib/utils'
 import { useEffect, useState } from 'react'
@@ -5,6 +9,7 @@ import { useTranslation } from 'react-i18next'
 
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
 import type { ToolExecutionPhase } from './tool-execution-phase'
+import { parseManagePackagesResult } from './workspace-tool-activity-details'
 
 type WorkspaceManagePackagesActivityRowProps = {
   activity: ToolActivity
@@ -12,7 +17,6 @@ type WorkspaceManagePackagesActivityRowProps = {
 }
 
 const ELAPSED_TICK_MS = 1_000
-const MANAGE_PACKAGES_IDENTITY = 'Notebook · manage_packages'
 
 const managePackagesInput = (activity: ToolActivity): Record<string, unknown> | undefined => {
   if (
@@ -52,6 +56,7 @@ const WorkspaceManagePackagesActivityRow = ({
   const isRemoving = input?.operation === 'uninstall'
   const isActive = phase === 'executing'
   const isFailed = phase === 'failed'
+  const needsRestart = parseManagePackagesResult(activity)?.needsRestart === true
   const useActionLabel = isActive || isFailed
   const elapsedUntil = isActive ? now : activity.updatedAt
   const actionLabel = isRemoving
@@ -95,43 +100,35 @@ const WorkspaceManagePackagesActivityRow = ({
       role="status"
       aria-live="polite"
     >
-      <div className="flex min-h-[44px] w-full items-start gap-2 px-1.5 py-2 text-[13px] md:min-h-0 md:py-[5px]">
-        <span className="mt-0.5 inline-flex shrink-0 md:mt-0">
-          <WorkspaceActivityIcon activity={activity} phase={phase} />
-        </span>
-        <span className="min-w-0 flex-1 text-left">
-          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="font-medium text-text-000">{actionLabel}</span>
-            <span className="hidden shrink-0 text-text-300 sm:inline">·</span>
-            <span className="hidden min-w-0 truncate font-normal text-text-100 sm:inline">
-              {MANAGE_PACKAGES_IDENTITY}
-            </span>
-          </span>
-          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px]">
-            <span className="font-medium text-text-000">
-              {isActive ? t('Preparing the runtime') : isFailed ? t('Failed') : t('Completed')}
-            </span>
-            <span className="tabular-nums text-text-100" aria-hidden="true">
-              {t('{{elapsed}} elapsed', {
-                elapsed: formatElapsed(elapsedUntil - activity.createdAt)
-              })}
-            </span>
-            {isActive ? (
-              <span className="text-text-100">{t('This can take several minutes')}</span>
-            ) : null}
-          </span>
-        </span>
+      <div className="flex min-h-[44px] w-full items-center gap-2 px-1.5 py-2 text-[13px] md:min-h-0 md:py-[5px]">
         <span
           className={cn(
-            'mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium',
+            'inline-flex shrink-0',
             isActive
-              ? 'bg-status-info-surface text-status-info-foreground dark:bg-status-info-dark-surface dark:text-status-info-dark-foreground'
+              ? 'text-status-info-foreground dark:text-status-info-dark-foreground'
               : isFailed
-                ? 'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground'
-                : 'bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground'
+                ? 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
+                : needsRestart
+                  ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                  : 'text-status-success-foreground dark:text-status-success-dark-foreground'
           )}
         >
-          {isActive ? t('Running') : isFailed ? t('Failed') : t('Completed')}
+          <WorkspaceActivityIcon activity={activity} phase={phase} />
+        </span>
+        <span className="min-w-0 flex-1 text-left font-medium text-text-000">
+          {actionLabel}
+          <span className="font-normal text-text-100">
+            {isActive
+              ? ` · ${t('This can take several minutes')}`
+              : isFailed
+                ? ` · ${t('Failed')}`
+                : needsRestart
+                  ? ` · ${t('restart needed')}`
+                  : null}
+          </span>
+        </span>
+        <span className="shrink-0 tabular-nums text-[12px] text-text-100" aria-hidden="true">
+          {formatElapsed(elapsedUntil - activity.createdAt)}
         </span>
       </div>
       <div
@@ -142,10 +139,12 @@ const WorkspaceManagePackagesActivityRow = ({
           className={cn(
             'h-full rounded-full',
             isActive
-              ? 'install-progress-indeterminate w-1/3 bg-primary motion-reduce:animate-none'
+              ? 'install-progress-indeterminate w-1/3 bg-status-info-foreground motion-reduce:animate-none dark:bg-status-info-dark-foreground'
               : isFailed
                 ? 'w-full bg-status-failure-accent'
-                : 'w-full bg-status-success-accent'
+                : needsRestart
+                  ? 'w-full bg-status-warning-foreground dark:bg-status-warning-dark-foreground'
+                  : 'w-full bg-status-success-accent'
           )}
         />
       </div>
