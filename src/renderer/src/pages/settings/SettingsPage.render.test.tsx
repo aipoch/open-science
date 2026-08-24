@@ -3328,10 +3328,10 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
     await act(async () => {
-      const marketplaceTab = Array.from(
-        document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')
-      ).find((button) => button.textContent?.trim() === 'Marketplace')
-      if (marketplaceTab) fireEvent.mouseDown(marketplaceTab, { button: 0 })
+      const marketplaceEntry = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('button')
+      ).find((button) => button.textContent?.trim() === 'Browse Marketplace')
+      marketplaceEntry?.click()
       await Promise.resolve()
     })
     await act(async () => {

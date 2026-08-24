@@ -28,7 +28,6 @@ import type {
 } from '../../../../shared/specialist-marketplace'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SettingsIconAction } from './SettingsLayout'
-import { SettingsSegmentedControl } from './SettingsSegmentedControl'
 import { ConnectorsNavIcon } from './connector-icons'
 import { SpecialistSkillConflictChoices } from './SpecialistSkillConflictChoices'
 import {
@@ -109,42 +108,6 @@ const SpecialistIdentity = ({
     </div>
   )
 }
-
-const MarketplaceTabs = ({
-  active,
-  installedCount,
-  onNavigate,
-  t
-}: {
-  active: 'installed' | 'marketplace'
-  installedCount?: number
-  onNavigate: Props['onNavigate']
-  t: ReturnType<typeof useTranslation>['t']
-}): React.JSX.Element => (
-  <SettingsSegmentedControl
-    value={active}
-    options={[
-      {
-        value: 'installed',
-        label: (
-          <>
-            {t('Installed')}
-            {installedCount === undefined ? null : (
-              <span className="ml-1.5 tabular-nums text-muted-foreground">{installedCount}</span>
-            )}
-          </>
-        )
-      },
-      { value: 'marketplace', label: t('Marketplace') }
-    ]}
-    onValueChange={(value) =>
-      onNavigate(value === 'installed' ? { kind: 'list' } : { kind: 'marketplace' })
-    }
-    ariaLabel={t('Specialist library')}
-    semantics="tab"
-    columnWidth="7.5rem"
-  />
-)
 
 const MarketplaceError = ({
   message,
@@ -962,13 +925,13 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
 
   return (
     <div className="p-5">
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <MarketplaceTabs
-          active="marketplace"
-          installedCount={installedSpecialists.length}
-          onNavigate={onNavigate}
-          t={t}
-        />
+      <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-foreground">{t('Marketplace')}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t('Browse and install Specialists from configured sources.')}
+          </p>
+        </div>
         <div className="flex items-center gap-1">
           <SettingsIconAction
             label={t('Refresh Marketplace')}
@@ -1195,4 +1158,4 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   )
 }
 
-export { MarketplaceTabs, SpecialistMarketplace }
+export { SpecialistMarketplace }

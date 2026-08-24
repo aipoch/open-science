@@ -160,7 +160,11 @@ describe('SpecialistsPanel', () => {
         root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
       })
 
-      expect(document.body.textContent).toContain('No specialists yet')
+      expect(document.body.textContent).toContain('No Specialists installed yet.')
+      expect(document.body.textContent).toContain(
+        'Browse the Marketplace or create a Specialist to get started.'
+      )
+      expect(document.body.querySelector('[data-slot="specialists-toolbar"]')).toBeNull()
       expect(useSpecialistStore.getState().isLoaded).toBe(true)
     } finally {
       window.api.specialist = specialistApi
@@ -1055,7 +1059,7 @@ describe('SpecialistsPanel', () => {
     expect(metadata?.querySelector('[title="Research"]')).not.toBeNull()
   })
 
-  it('collapses each Specialist source group independently', async () => {
+  it('keeps source groups visible as static hierarchy instead of duplicate disclosure filters', async () => {
     const marketplace: SpecialistListItem = {
       ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
       id: 'marketplace-specialist',
@@ -1088,14 +1092,12 @@ describe('SpecialistsPanel', () => {
       const group = document.body.querySelector<HTMLElement>(
         `[data-slot="specialists-source-group"][data-source="${source}"]`
       )
-      const toggle = group?.firstElementChild as HTMLButtonElement | undefined
       const list = group?.querySelector('ul')
-      expect(toggle?.getAttribute('aria-expanded')).toBe('true')
+      const heading = group?.firstElementChild
       expect(group?.textContent).toContain(rowName)
       expect(list?.hidden).toBe(false)
-      await act(async () => fireEvent.click(toggle!))
-      expect(toggle?.getAttribute('aria-expanded')).toBe('false')
-      expect(list?.hidden).toBe(true)
+      expect(heading?.tagName).toBe('DIV')
+      expect(heading?.hasAttribute('aria-expanded')).toBe(false)
     }
   })
 
@@ -1114,7 +1116,31 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).not.toContain('RNA Reviewer')
   })
 
-  it('shows item counts in the category filter dropdown', async () => {
+  it('shows one no-results state and resets the installed filters', async () => {
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const search = document.body.querySelector<HTMLInputElement>('input[type="search"]')!
+    await act(async () => {
+      fireEvent.change(search, { target: { value: 'no matching specialist' } })
+    })
+
+    expect(document.body.textContent).toContain('No installed Specialists match these filters.')
+    expect(document.body.querySelector('[data-slot="specialists-source-group"]')).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent?.trim() === 'Show all Specialists'
+        )!
+      )
+    })
+    expect(search.value).toBe('')
+    expect(document.body.textContent).toContain('RNA Reviewer')
+  })
+
+  it('keeps source filter labels concise instead of repeating installed counts', async () => {
     await act(async () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
@@ -1122,26 +1148,44 @@ describe('SpecialistsPanel', () => {
     const filter = document.body.querySelector<HTMLElement>(
       '[aria-label="Filter specialists by category"]'
     )
-    expect(filter?.textContent).toContain('All (4)')
+    expect(filter?.textContent).toBe('All')
     openRadixMenu(filter)
     const labels = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).map(
       (option) => option.textContent ?? ''
     )
-    // 2 custom + 1 runnable builtin + Reviewer = 4 total
-    expect(labels).toEqual(['All (4)', 'Custom (2)', 'Marketplace (0)', 'Built-in (2)'])
+    expect(labels).toEqual(['All', 'Custom', 'Marketplace', 'Built-in'])
   })
 
-  it('aligns the add action right and matches the Skill row action order', async () => {
+  it('omits the Tag filter when no installed Specialist has a Tag', async () => {
+    useTagStore.setState({ assignments: [] })
+
     await act(async () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
+    expect(document.body.querySelector('[aria-label="Filter by Tag"]')).toBeNull()
+  })
+
+  it('separates Marketplace acquisition from creation and matches the Skill row action order', async () => {
+    const onNavigate = vi.fn()
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+
     const toolbar = document.body.querySelector('[data-slot="specialists-toolbar"]')
-    const addButton = Array.from(toolbar?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+    expect(toolbar?.querySelector('input[type="search"]')).not.toBeNull()
+    expect(toolbar?.textContent).not.toContain('Add specialist')
+
+    const browseButton = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Browse Marketplace')
+    const addButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.includes('Add specialist')
     )
-    expect(addButton?.className).toContain('ml-auto')
-    expect(toolbar?.lastElementChild).toBe(addButton)
+    expect(browseButton).not.toBeNull()
+    expect(addButton).not.toBeNull()
+    await act(async () => fireEvent.click(browseButton!))
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'marketplace' })
 
     const toggle = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Toggle RNA Reviewer"]'
