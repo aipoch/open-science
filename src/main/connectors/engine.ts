@@ -114,23 +114,63 @@ export class ParserEngine {
       return Math.min(this.backoffMs * 2 ** attempt, 4_000) + Math.random() * this.backoffMs
     }
 
-    const doFetch = async (url: string, accept: string, init?: RequestInit): Promise<Response> => {
+    const doFetch = async (
+      url: string,
+      accept: string,
+      init?: RequestInit
+    ): Promise<{ response: Response; bodyText?: string }> => {
       for (let attempt = 0; ; attempt++) {
         const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), this.timeoutMs)
+        let timer: ReturnType<typeof setTimeout> | undefined
+        let timedOut = false
+        const armTimeout = (): void => {
+          if (timer) clearTimeout(timer)
+          timer = setTimeout(() => {
+            timedOut = true
+            controller.abort()
+          }, this.timeoutMs)
+        }
         const requestSignal = signal
           ? AbortSignal.any([controller.signal, signal])
           : controller.signal
-        let res: Response
+        let res: Response | undefined
+        let bodyText: string | undefined
+        let caught = false
+        let failure: unknown
         try {
+          armTimeout()
           res = await this.fetchImpl(url, {
             ...init,
             headers: { accept, 'user-agent': USER_AGENT, ...init?.headers },
             signal: requestSignal
           })
+          if (res.ok && res.body) {
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            const chunks: string[] = []
+            try {
+              armTimeout()
+              for (;;) {
+                const chunk = await reader.read()
+                if (chunk.done) break
+                if (chunk.value.byteLength === 0) continue
+                chunks.push(decoder.decode(chunk.value, { stream: true }))
+                armTimeout()
+              }
+              chunks.push(decoder.decode())
+              bodyText = chunks.join('')
+            } finally {
+              reader.releaseLock()
+            }
+          }
         } catch (err) {
-          if (signal?.aborted) throw err
-          const timedOut = controller.signal.aborted
+          caught = true
+          failure = err
+        } finally {
+          if (timer) clearTimeout(timer)
+        }
+        if (caught) {
+          if (signal?.aborted) throw failure
           // Network failure or timeout abort — retry a bounded number of times, then give up.
           if (attempt < this.retries) {
             await sleep(nextDelay(attempt, null), signal)
@@ -139,13 +179,12 @@ export class ParserEngine {
           if (timedOut) {
             throw new ConnectorRequestTimeoutError(url, this.timeoutMs, attempt + 1)
           }
-          throw err
-        } finally {
-          clearTimeout(timer)
+          throw failure
         }
+        if (!res) throw new Error(`No response for ${redactUrl(url)}`)
         if (res.ok) {
           signal?.throwIfAborted()
-          return res
+          return { response: res, ...(bodyText !== undefined ? { bodyText } : {}) }
         }
         // Retry only transient upstream statuses; client errors (4xx except 429) fail fast.
         if (attempt < this.retries && RETRYABLE_STATUS.has(res.status)) {
@@ -158,20 +197,29 @@ export class ParserEngine {
     return {
       ...(signal ? { signal } : {}),
       credentials,
-      fetchJson: async (url) => (await doFetch(url, 'application/json')).json(),
-      fetchJsonWithHeaders: async (url) => {
-        const res = await doFetch(url, 'application/json')
-        return { body: await res.json(), headers: res.headers }
+      fetchJson: async (url) => {
+        const { response, bodyText } = await doFetch(url, 'application/json')
+        return bodyText === undefined ? response.json() : JSON.parse(bodyText)
       },
-      fetchText: async (url) => (await doFetch(url, 'text/plain, application/xml, */*')).text(),
-      postJson: async (url, body) =>
-        (
-          await doFetch(url, 'application/json', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body)
-          })
-        ).json()
+      fetchJsonWithHeaders: async (url) => {
+        const { response, bodyText } = await doFetch(url, 'application/json')
+        return {
+          body: bodyText === undefined ? await response.json() : JSON.parse(bodyText),
+          headers: response.headers
+        }
+      },
+      fetchText: async (url) => {
+        const { response, bodyText } = await doFetch(url, 'text/plain, application/xml, */*')
+        return bodyText === undefined ? response.text() : bodyText
+      },
+      postJson: async (url, body) => {
+        const { response, bodyText } = await doFetch(url, 'application/json', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body)
+        })
+        return bodyText === undefined ? response.json() : JSON.parse(bodyText)
+      }
     }
   }
 }

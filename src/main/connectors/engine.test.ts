@@ -124,13 +124,20 @@ describe('ParserEngine declarative path', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
 
-  it('disarms the request timeout once the upstream response arrives', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => new Promise((resolve) => setTimeout(() => resolve({ value: 9 }), 20))
-    } as Response)
-    const engine = new ParserEngine({ fetchImpl, timeoutMs: 5, retries: 2, retryBackoffMs: 0 })
+  it('resets the timeout while response body chunks keep arriving', async () => {
+    const encoder = new TextEncoder()
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            setTimeout(() => controller.enqueue(encoder.encode('{"value":')), 10)
+            setTimeout(() => controller.enqueue(encoder.encode('9}')), 20)
+            setTimeout(() => controller.close(), 40)
+          }
+        })
+      )
+    )
+    const engine = new ParserEngine({ fetchImpl, timeoutMs: 30, retries: 2, retryBackoffMs: 0 })
     const desc: ToolDescriptor = {
       id: 't',
       connector: 'c',
@@ -142,6 +149,49 @@ describe('ParserEngine declarative path', () => {
 
     await expect(engine.call(desc, {}, {})).resolves.toBe(9)
     expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('times out and retries when a response body stops producing chunks', async () => {
+    const encoder = new TextEncoder()
+    const fetchImpl = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode('{"value":'))
+              init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), {
+                once: true
+              })
+            }
+          })
+        )
+    )
+    const engine = new ParserEngine({
+      fetchImpl,
+      timeoutMs: 5,
+      retries: 2,
+      retryBackoffMs: 0
+    })
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      url: () => 'https://x.test/data',
+      parse: (raw) => raw
+    }
+    const result = engine.call(desc, {}, {}).catch((error: unknown) => error)
+
+    await expect(
+      Promise.race([
+        result,
+        new Promise((resolve) => setTimeout(() => resolve('still pending'), 100))
+      ])
+    ).resolves.toMatchObject({
+      name: 'ConnectorRequestTimeoutError',
+      message: 'Connector request timed out after 3 attempts of 5ms for https://x.test/data'
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
 
   it('aborts an active request without retrying it', async () => {
