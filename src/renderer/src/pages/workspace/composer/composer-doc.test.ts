@@ -390,6 +390,8 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(chip?.getAttribute('data-frame-id')).toBeNull()
     expect(chip?.getAttribute('title')).toBe(title)
     expect(chip?.className).toContain('truncate')
+    expect(chip?.className).toContain('bg-accent')
+    expect(chip?.className).toContain('text-accent-foreground')
     expect(domToDoc(root)).toEqual(doc)
   })
 

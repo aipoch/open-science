@@ -1124,7 +1124,7 @@ const MessagePartsContent = ({
               className={cn(
                 mentionPillClassName,
                 mentionButtonClassName,
-                'bg-bg-300 text-text-100'
+                'bg-accent text-accent-foreground'
               )}
               onClick={() => useNavigationStore.getState().openSessionById(part.sessionId, 'user')}
               aria-label={t('Open session {{title}}', { title: part.title })}

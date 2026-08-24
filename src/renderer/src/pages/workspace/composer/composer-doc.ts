@@ -307,7 +307,7 @@ export const createSessionChip = (node: ComposerSessionNode): HTMLSpanElement =>
   span.setAttribute('data-mention-type', SESSION_MENTION_TYPE)
   span.setAttribute('data-session-id', node.sessionId)
   span.setAttribute('data-session-title', node.title)
-  span.className = `${CHIP_BASE_CLASS} cursor-pointer select-none bg-bg-300 text-text-100`
+  span.className = `${CHIP_BASE_CLASS} cursor-pointer select-none bg-accent text-accent-foreground`
   span.textContent = `#${node.title}`
   span.title = node.title
   return span

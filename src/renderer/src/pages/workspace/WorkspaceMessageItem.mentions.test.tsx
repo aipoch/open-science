@@ -217,6 +217,8 @@ describe('WorkspaceMessageItem mention pills', () => {
 
     const pill = container.querySelector(`[aria-label="Open session ${title}"]`)
     expect(pill?.className).toContain('truncate')
+    expect(pill?.className).toContain('bg-accent')
+    expect(pill?.className).toContain('text-accent-foreground')
     expect(pill?.getAttribute('title')).toBe(title)
     clickButton(`Open session ${title}`)
     expect(openSessionById).toHaveBeenCalledWith('session-2', 'user')

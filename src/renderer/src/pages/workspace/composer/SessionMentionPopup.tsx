@@ -21,14 +21,17 @@ type SessionMentionPopupProps = {
 }
 
 type SessionRow = PickedSession & {
+  number: number | undefined
   projectId: string
   projectName: string
   updatedAt: number
   positions: number[]
+  exactNumberMatch: boolean
+  score: number
 }
 
-// Suggests active Sessions across active Projects. Current-Project rows sort first; picking a row
-// snapshots only global Session identity plus its current title into the composer.
+// Suggests active Sessions across active Projects. Exact numeric lookup wins, then current-Project
+// rows sort first; picking a row snapshots only global Session identity plus its current title.
 export const SessionMentionPopup = ({
   query,
   listboxId,
@@ -52,6 +55,7 @@ export const SessionMentionPopup = ({
         .map((project) => [project.id, project.name])
     )
     const needle = query.trim()
+    const numericNeedle = /^\d+$/.test(needle) ? needle : undefined
 
     return sessions
       .filter(
@@ -62,27 +66,48 @@ export const SessionMentionPopup = ({
           activeProjects.has(session.projectId)
       )
       .map((session) => {
-        const titleMatch = needle ? fuzzyScore(needle, session.title) : undefined
         const projectName = activeProjects.get(session.projectId) ?? ''
+        const number =
+          session.number !== undefined && Number.isSafeInteger(session.number) && session.number > 0
+            ? session.number
+            : undefined
+        const numberText = number === undefined ? '' : String(number)
+        if (numericNeedle && !numberText.startsWith(numericNeedle)) return null
+
+        const titleMatch = needle && !numericNeedle ? fuzzyScore(needle, session.title) : undefined
         const projectMatch = needle
-          ? projectName.toLocaleLowerCase().includes(needle.toLocaleLowerCase())
+          ? !numericNeedle && projectName.toLocaleLowerCase().includes(needle.toLocaleLowerCase())
           : true
-        if (needle && !titleMatch && !projectMatch) return null
+        if (needle && !numericNeedle && !titleMatch && !projectMatch) return null
         return {
           type: 'session' as const,
           sessionId: session.id,
           title: session.title,
+          number,
           projectId: session.projectId,
           projectName,
           updatedAt: session.updatedAt,
           positions: titleMatch?.positions ?? [],
+          exactNumberMatch: numericNeedle !== undefined && numberText === numericNeedle,
           score: titleMatch?.score ?? Number.NEGATIVE_INFINITY
         }
       })
-      .filter((row): row is SessionRow & { score: number } => row !== null)
+      .filter((row): row is SessionRow => row !== null)
       .sort((left, right) => {
+        if (numericNeedle) {
+          const exactMatchOrder = Number(right.exactNumberMatch) - Number(left.exactNumberMatch)
+          if (exactMatchOrder !== 0) return exactMatchOrder
+        }
         const leftCurrent = left.projectId === activeProjectId ? 1 : 0
         const rightCurrent = right.projectId === activeProjectId ? 1 : 0
+        if (numericNeedle) {
+          return (
+            rightCurrent - leftCurrent ||
+            (left.number ?? Number.POSITIVE_INFINITY) -
+              (right.number ?? Number.POSITIVE_INFINITY) ||
+            right.updatedAt - left.updatedAt
+          )
+        }
         return (
           rightCurrent - leftCurrent || right.score - left.score || right.updatedAt - left.updatedAt
         )
@@ -169,12 +194,23 @@ export const SessionMentionPopup = ({
                 <div className="truncate font-medium">
                   <HighlightedText text={session.title} positions={session.positions} />
                 </div>
-                <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-text-300">
-                  <span className="truncate">{session.projectName}</span>
-                  <span aria-hidden="true">·</span>
+                <div
+                  data-slot="session-mention-meta"
+                  className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-text-300"
+                >
                   <span className="shrink-0">{formatDate(session.updatedAt, 'timestamp')}</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="truncate">{session.projectName}</span>
                 </div>
               </div>
+              {session.number !== undefined && (
+                <span
+                  data-slot="session-mention-number"
+                  className="shrink-0 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-accent-foreground tabular-nums"
+                >
+                  #{session.number}
+                </span>
+              )}
             </li>
           )
         })}
