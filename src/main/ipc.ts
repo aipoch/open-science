@@ -299,7 +299,7 @@ import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import { withDataRootWrite } from './storage/migration-state'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
-import { createDelegatedActivityProjection, detectActiveSessions } from './storage/detect-active'
+import { detectActiveSessions } from './storage/detect-active'
 import {
   computeDefaultDataRoot,
   initDataRoot,
@@ -717,14 +717,6 @@ const createApplicationModules = async (
       return computeJobDeletionRef.current.abortProjectJobDeletion(projectId)
     }
   }
-  // Delegated execution can outlive its root Turn and therefore is absent from the ACP runtime's
-  // active-prompt list. Keep a synchronous projection of durable delegated mutations for the
-  // close/quit and storage-migration safety gates. The selector deliberately ignores active routes:
-  // inactive-branch work still owns processes/files and must block disruptive operations.
-  const delegatedActivity = createDelegatedActivityProjection()
-  const getActiveDelegatedSessions = (): { projectId: string; sessionId: string }[] =>
-    delegatedActivity.getActiveDelegatedSessions()
-
   const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
     sessionRepository,
     projectFilesRepository,
@@ -746,13 +738,16 @@ const createApplicationModules = async (
         })
         return
       }
-      delegatedActivity.recordSession(session)
       broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
         session,
         originClientId: MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID
       })
     }
   )
+  // Delegated execution can outlive its root Turn. The persistence coordinator owns the synchronous
+  // durable-state index used by close/quit, archive, update, and storage-migration safety gates.
+  const getActiveDelegatedSessions = (): { projectId: string; sessionId: string }[] =>
+    sessionPersistenceCoordinator.getActiveDelegatedSessions()
   const sideChatRelay = new SideChatRelayOwner({
     targetState: (parentSessionId) => {
       const runtime = runtimeRef.current

@@ -47,7 +47,6 @@ const dependencyBlock = compact(
     '// The shared coordinator remains the sole ACP + Notebook teardown owner.'
   )
 )
-
 describe('production application command wiring', () => {
   it('injects each stateful owner into its Electron adapter and command composition', () => {
     const sharedOwners = [
