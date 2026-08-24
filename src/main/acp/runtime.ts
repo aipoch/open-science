@@ -437,7 +437,8 @@ class AcpRuntime {
     string,
     Readonly<{
       sessionId: string
-      provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
+      provenanceContext?: NonNullable<AcpPromptRequest['provenanceContext']>
+      referencedSessions?: AcpPromptRequest['referencedSessions']
     }>
   >()
   private readonly durableContinuationContext: AcpRuntimeSessionOwners['durableContinuationContext']
@@ -1398,6 +1399,9 @@ class AcpRuntime {
       selectedOption?.kind.toLowerCase().startsWith('reject_')
     )
     if (permissionRequest && promptInteraction && continueAfterProviderCancellation) {
+      const referencedSessions = this.handoffContinuity.copyReferencedSessions(
+        permissionRequest.sessionId
+      )
       this.appContinuations.set(permissionRequest.sessionId, {
         condition: 'provider-cancelled',
         request: {
@@ -1406,7 +1410,8 @@ class AcpRuntime {
           suppressUserMessage: true,
           ...(promptInteraction.promptMessageId
             ? { provenanceContext: { promptMessageId: promptInteraction.promptMessageId } }
-            : {})
+            : {}),
+          ...(referencedSessions?.length ? { referencedSessions } : {})
         }
       })
     }
@@ -1540,6 +1545,9 @@ class AcpRuntime {
         text,
         suppressUserMessage: true,
         provenanceContext: continuation.provenanceContext,
+        ...(continuation.referencedSessions?.length
+          ? { referencedSessions: continuation.referencedSessions }
+          : {}),
         ...(continuation.historyReplay?.historyPreamble
           ? { historyPreamble: continuation.historyReplay.historyPreamble }
           : {}),
@@ -1625,7 +1633,7 @@ class AcpRuntime {
       }
     }
 
-    const liveProvenance = this.userChoiceProvenanceContexts.get(response.requestId)
+    const livePromptContext = this.userChoiceProvenanceContexts.get(response.requestId)
     const resolution = this.elicitationOwner.respond(response)
     this.userChoiceProvenanceContexts.delete(response.requestId)
     if (resolution.detached) {
@@ -1633,7 +1641,8 @@ class AcpRuntime {
         resolution.request,
         resolution.response,
         restoredContinuation?.historyReplay,
-        restoredContinuation?.provenanceContext ?? liveProvenance?.provenanceContext
+        restoredContinuation?.provenanceContext ?? livePromptContext?.provenanceContext,
+        restoredContinuation?.referencedSessions ?? livePromptContext?.referencedSessions
       )
       if (continuation) {
         this.appContinuations.set(resolution.request.sessionId, {
@@ -1741,10 +1750,17 @@ class AcpRuntime {
     )
 
     if (!pending) return { action: 'cancelled' }
-    if (promptInteraction?.kind === 'prompt' && promptInteraction.provenanceContext) {
+    const referencedSessions = this.handoffContinuity.copyReferencedSessions(request.sessionId)
+    if (
+      promptInteraction?.kind === 'prompt' &&
+      (promptInteraction.provenanceContext || referencedSessions?.length)
+    ) {
       this.userChoiceProvenanceContexts.set(requestId, {
         sessionId: request.sessionId,
-        provenanceContext: promptInteraction.provenanceContext
+        ...(promptInteraction.provenanceContext
+          ? { provenanceContext: promptInteraction.provenanceContext }
+          : {}),
+        ...(referencedSessions?.length ? { referencedSessions } : {})
       })
     }
     return { action: 'pending' }
@@ -1754,7 +1770,8 @@ class AcpRuntime {
     request: PendingElicitationRequest,
     response: CreateElicitationResponse,
     historyReplay?: ElicitationResponse['historyReplay'],
-    provenanceContext?: AcpPromptRequest['provenanceContext']
+    provenanceContext?: AcpPromptRequest['provenanceContext'],
+    referencedSessions?: AcpPromptRequest['referencedSessions']
   ): AcpPromptRequest | undefined {
     if (response.action === 'cancel') return undefined
     const content =
@@ -1808,6 +1825,7 @@ class AcpRuntime {
       text,
       suppressUserMessage: true,
       ...(continuationProvenance ? { provenanceContext: continuationProvenance } : {}),
+      ...(referencedSessions?.length ? { referencedSessions } : {}),
       ...(historyReplay?.historyPreamble ? { historyPreamble: historyReplay.historyPreamble } : {}),
       ...(historyReplay?.historyAttachments?.length
         ? { historyAttachments: historyReplay.historyAttachments }
@@ -1976,6 +1994,9 @@ class AcpRuntime {
             'Do not regenerate, broaden, or reinterpret the approved Plan.',
       suppressUserMessage: true,
       provenanceContext: continuation.provenanceContext,
+      ...(continuation.referencedSessions?.length
+        ? { referencedSessions: continuation.referencedSessions }
+        : {}),
       planContinuation: {
         projectId,
         artifactVersionId: plan.artifactVersionId,

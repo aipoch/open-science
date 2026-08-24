@@ -6051,6 +6051,62 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it('preserves Session reference guidance and authority across an app-owned choice', async () => {
+    const process = new FakeAgentProcess()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    let appSessionId = ''
+    let continuationAuthorized = false
+    const fakeAgent = startFakeAgent(process, ['referenced-user-choice-session'], {
+      onPrompt: async ({ text }) => {
+        if (text.includes('start the referenced workflow')) {
+          await runtime.requestUserInput({
+            sessionId: appSessionId,
+            questions: [
+              {
+                question: 'Which implementation should I use?',
+                options: [{ label: 'Minimal' }, { label: 'Expanded' }]
+              }
+            ]
+          })
+          return
+        }
+        continuationAuthorized = (
+          runtime as unknown as {
+            sessionInteractions: {
+              isSessionReferenceAllowed(sessionId: string, referencedSessionId: string): boolean
+            }
+          }
+        ).sessionInteractions.isSessionReferenceAllowed(appSessionId, 'referenced-session')
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    appSessionId = session.sessionId
+    await runtime.sendPrompt({
+      sessionId: appSessionId,
+      text: 'start the referenced workflow',
+      referencedSessions: [
+        { type: 'session', sessionId: 'referenced-session', title: 'Prior analysis' }
+      ]
+    })
+
+    const request = runtime.getSnapshot().pendingElicitations?.[0]
+    expect(request).toBeDefined()
+    await runtime.respondToElicitation({
+      requestId: request!.requestId,
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+    })
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
+    expect(fakeAgent.prompts[1].text).toContain('sessionId="referenced-session"')
+    expect(continuationAuthorized).toBe(true)
+  })
+
   it('preserves the originating Agent Frame when an app-owned choice continues the turn', async () => {
     const storageRoot = await createTemporaryRoot()
     const process = new FakeAgentProcess()
