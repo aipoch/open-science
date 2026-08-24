@@ -319,6 +319,11 @@ const packageNameFromSpec = (value: string, language: NotebookLanguage): string 
   return name
 }
 
+const exactVersionFromSpec = (value: string, language: NotebookLanguage): string | undefined => {
+  if (language !== 'python') return undefined
+  return value.trim().match(/^[A-Za-z0-9_.-]+==([^\s;,]+)$/u)?.[1]
+}
+
 const inspectRequestedPackage = (
   target: EnvironmentCaptureTarget,
   requested: string,
@@ -346,9 +351,6 @@ const verifyPackageMutation = (
   packages: NotebookEnvironmentPackage[]
 ): PackageMutationVerification => {
   if (outcome.result !== 'success') return { result: outcome.result }
-  const installedNames = new Set(
-    packages.map((pkg) => requestedPackageKey(pkg.name)).filter((name) => name.length > 0)
-  )
   const unsatisfiedPackages = outcome.packages.filter((spec) => {
     const name = packageNameFromSpec(spec, target.language)
     const githubSource = target.language === 'r' ? githubSourceFromSpec(spec) : undefined
@@ -361,8 +363,12 @@ const verifyPackageMutation = (
       )
     }
     if (!name) return false
-    const installed = installedNames.has(requestedPackageKey(name))
-    return outcome.operation === 'uninstall' ? installed : !installed
+    const installed = packages.find(
+      (pkg) => requestedPackageKey(pkg.name) === requestedPackageKey(name)
+    )
+    if (outcome.operation === 'uninstall') return installed !== undefined
+    const exactVersion = exactVersionFromSpec(spec, target.language)
+    return !installed || (exactVersion !== undefined && installed.version !== exactVersion)
   })
   return unsatisfiedPackages.length > 0
     ? { result: 'failure', unsatisfiedPackages }

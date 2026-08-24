@@ -95,6 +95,53 @@ describe('WorkspaceActivityGroup i18n', () => {
     expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
   })
 
+  it('keeps a terminal package row collapsed until the user expands it', () => {
+    const onToggleRow = vi.fn()
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-collapsed',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-collapsed',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['numpy'] },
+                rawOutput: {
+                  ok: true,
+                  packageChanges: [
+                    { name: 'numpy', relationship: 'requested', change: 'installed' }
+                  ]
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{}}
+          onToggleRow={onToggleRow}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="manage-packages-package-row"]')).toBeNull()
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="manage-packages-progress"] > button')
+        ?.click()
+    )
+    expect(onToggleRow).toHaveBeenCalledWith('activity-packages-collapsed', true)
+  })
+
   it('keeps the manage_packages presentation after the tool completes', () => {
     act(() => {
       root.render(
@@ -135,7 +182,7 @@ describe('WorkspaceActivityGroup i18n', () => {
           }}
           isExpanded={true}
           onToggleGroup={vi.fn()}
-          expansionOverrides={{}}
+          expansionOverrides={{ 'activity-packages-completed': true }}
           onToggleRow={vi.fn()}
         />
       )
@@ -196,7 +243,7 @@ describe('WorkspaceActivityGroup i18n', () => {
           }}
           isExpanded={true}
           onToggleGroup={vi.fn()}
-          expansionOverrides={{}}
+          expansionOverrides={{ 'activity-packages-updated': true }}
           onToggleRow={vi.fn()}
         />
       )
@@ -252,7 +299,7 @@ describe('WorkspaceActivityGroup i18n', () => {
           }}
           isExpanded={true}
           onToggleGroup={vi.fn()}
-          expansionOverrides={{}}
+          expansionOverrides={{ 'activity-packages-removed': true }}
           onToggleRow={vi.fn()}
         />
       )
@@ -323,7 +370,7 @@ describe('WorkspaceActivityGroup i18n', () => {
           }}
           isExpanded={true}
           onToggleGroup={vi.fn()}
-          expansionOverrides={{}}
+          expansionOverrides={{ 'activity-packages-github': true }}
           onToggleRow={vi.fn()}
         />
       )
@@ -375,7 +422,7 @@ describe('WorkspaceActivityGroup i18n', () => {
           }}
           isExpanded={true}
           onToggleGroup={vi.fn()}
-          expansionOverrides={{}}
+          expansionOverrides={{ 'activity-packages-failed-result': true }}
           onToggleRow={vi.fn()}
         />
       )
@@ -387,6 +434,57 @@ describe('WorkspaceActivityGroup i18n', () => {
     expect(progress?.querySelector('.text-status-failure-foreground')).not.toBeNull()
     expect(progress?.querySelector('.text-status-success-foreground')).toBeNull()
     expect(progress?.querySelector('.install-progress-indeterminate')).toBeNull()
+  })
+
+  it('keeps every requested package visible when only some have change records', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-partial-failure',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-partial-failure',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'failed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['numpy', 'missingpkg'] },
+                rawOutput: {
+                  ok: false,
+                  method: 'conda',
+                  packageChanges: [
+                    {
+                      name: 'numpy',
+                      relationship: 'requested',
+                      change: 'installed',
+                      afterVersion: '2.1.0'
+                    }
+                  ]
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{ 'activity-packages-partial-failure': true }}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const rows = container.querySelectorAll('[data-testid="manage-packages-package-row"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.textContent).toContain('numpy')
+    expect(rows[0]?.textContent).toContain('Installed')
+    expect(rows[1]?.textContent).toContain('missingpkg')
+    expect(rows[1]?.textContent).toContain('Failed')
   })
 
   it('preserves a plain-text package failure detail', () => {
@@ -415,7 +513,7 @@ describe('WorkspaceActivityGroup i18n', () => {
           }}
           isExpanded={true}
           onToggleGroup={vi.fn()}
-          expansionOverrides={{}}
+          expansionOverrides={{ 'activity-packages-plain-failure': true }}
           onToggleRow={vi.fn()}
         />
       )

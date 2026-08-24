@@ -166,7 +166,12 @@ const WorkspaceActivityGroup = ({
                   return (
                     <div key={activity.id} className="w-full overflow-hidden">
                       {showManagePackagesProgress ? (
-                        <WorkspaceManagePackagesActivityRow activity={activity} phase={phase} />
+                        <WorkspaceManagePackagesActivityRow
+                          activity={activity}
+                          phase={phase}
+                          isExpanded={isRowExpanded}
+                          onToggle={onToggleRow}
+                        />
                       ) : searchDetails ? (
                         <WorkspaceWebSearchActivityRow
                           activity={activity}

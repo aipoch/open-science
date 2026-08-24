@@ -17,6 +17,8 @@ import {
 type WorkspaceManagePackagesActivityRowProps = {
   activity: ToolActivity
   phase: ToolExecutionPhase
+  isExpanded: boolean
+  onToggle: (activityId: string, nextExpanded: boolean) => void
 }
 
 const ELAPSED_TICK_MS = 1_000
@@ -55,7 +57,9 @@ type PackageDetail = {
 // from the existing activity so no progress chatter enters the tool result or Agent context.
 const WorkspaceManagePackagesActivityRow = ({
   activity,
-  phase
+  phase,
+  isExpanded,
+  onToggle
 }: WorkspaceManagePackagesActivityRowProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [now, setNow] = useState(() => Date.now())
@@ -114,17 +118,24 @@ const WorkspaceManagePackagesActivityRow = ({
     }
   }
   const requestedChanges = packageChanges.filter((change) => change.relationship === 'requested')
-  const packageDetails: PackageDetail[] =
-    requestedChanges.length > 0
-      ? requestedChanges.map(detailFromChange).filter((detail) => detail.name)
-      : requestedPackages.map((name) => {
-          const change = packageChanges.find(
-            (candidate) =>
-              typeof candidate.name === 'string' &&
-              candidate.name.toLowerCase() === name.toLowerCase()
-          )
-          return change ? detailFromChange(change) : { name }
-        })
+  const packageDetails: PackageDetail[] = requestedPackages.map((name) => {
+    const change = packageChanges.find(
+      (candidate) =>
+        typeof candidate.name === 'string' && candidate.name.toLowerCase() === name.toLowerCase()
+    )
+    return change ? detailFromChange(change) : { name }
+  })
+  for (const change of requestedChanges) {
+    const detail = detailFromChange(change)
+    if (
+      detail.name &&
+      !packageDetails.some(
+        (candidate) => candidate.name.toLowerCase() === detail.name.toLowerCase()
+      )
+    ) {
+      packageDetails.push(detail)
+    }
+  }
   const relatedPackageDetails = packageChanges
     .filter((change) => change.relationship !== 'requested' && change.change !== 'unchanged')
     .map(detailFromChange)
@@ -151,6 +162,7 @@ const WorkspaceManagePackagesActivityRow = ({
       : null
   const useActionLabel = isActive || isFailed
   const elapsedUntil = isActive ? now : activity.updatedAt
+  const showDetails = isActive || isExpanded
   const actionLabel = isRemoving
     ? useActionLabel
       ? count > 0
@@ -192,7 +204,13 @@ const WorkspaceManagePackagesActivityRow = ({
       role="status"
       aria-live="polite"
     >
-      <div className="flex min-h-[44px] w-full items-start gap-2 py-2 text-[13px] md:min-h-0">
+      <button
+        type="button"
+        className="flex min-h-[44px] w-full items-start gap-2 rounded-md py-2 text-[13px] hover:bg-bg-100 md:min-h-0"
+        aria-expanded={showDetails}
+        disabled={isActive}
+        onClick={() => onToggle(activity.id, !isExpanded)}
+      >
         <span
           className={cn(
             'mt-0.5 inline-flex shrink-0',
@@ -216,8 +234,17 @@ const WorkspaceManagePackagesActivityRow = ({
         <span className="shrink-0 tabular-nums text-[12px] text-text-100" aria-hidden="true">
           {formatElapsed(elapsedUntil - activity.createdAt)}
         </span>
-      </div>
-      {packageDetails.length > 0 ? (
+        <span
+          aria-hidden="true"
+          className={cn(
+            'mt-0.5 inline-block text-text-100 transition-transform duration-150 motion-reduce:transition-none',
+            showDetails ? 'rotate-90' : undefined
+          )}
+        >
+          ›
+        </span>
+      </button>
+      {showDetails && packageDetails.length > 0 ? (
         <div className="ml-[26px] border-y border-border-200" data-testid="manage-packages-details">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 border-b border-border-200 px-2.5 py-1.5 text-[11px] font-medium text-text-200 sm:grid-cols-[minmax(0,1fr)_minmax(76px,auto)_minmax(88px,auto)]">
             <span>{t('Package')}</span>
@@ -298,7 +325,7 @@ const WorkspaceManagePackagesActivityRow = ({
           </div>
         </div>
       ) : null}
-      {relatedPackageDetails.length > 0 ? (
+      {showDetails && relatedPackageDetails.length > 0 ? (
         <details className="group ml-[26px] border-b border-border-200 text-[12px]">
           <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 py-2 text-text-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
             <span className="inline-flex items-center gap-1.5 font-medium text-text-000">
@@ -335,37 +362,39 @@ const WorkspaceManagePackagesActivityRow = ({
           </div>
         </details>
       ) : null}
-      <div className="ml-[26px] mt-2">
-        {isActive ? (
-          <>
-            <div className="flex items-center justify-between gap-3 text-[11px] text-text-100">
-              <span>{t('This can take several minutes')}</span>
-              <span className="shrink-0 text-status-info-foreground dark:text-status-info-dark-foreground">
-                {isRemoving ? t('Removing…') : t('Installing…')}
-              </span>
-            </div>
-            <div
-              className="mt-1.5 h-0.5 overflow-hidden rounded-full bg-border-200"
-              aria-hidden="true"
+      {showDetails ? (
+        <div className="ml-[26px] mt-2">
+          {isActive ? (
+            <>
+              <div className="flex items-center justify-between gap-3 text-[11px] text-text-100">
+                <span>{t('This can take several minutes')}</span>
+                <span className="shrink-0 text-status-info-foreground dark:text-status-info-dark-foreground">
+                  {isRemoving ? t('Removing…') : t('Installing…')}
+                </span>
+              </div>
+              <div
+                className="mt-1.5 h-0.5 overflow-hidden rounded-full bg-border-200"
+                aria-hidden="true"
+              >
+                <div className="install-progress-indeterminate h-full w-1/3 rounded-full bg-status-info-foreground motion-reduce:animate-none dark:bg-status-info-dark-foreground" />
+              </div>
+            </>
+          ) : isFailed ? (
+            <p
+              className="line-clamp-2 break-words text-[12px] text-status-failure-foreground dark:text-status-failure-dark-foreground"
+              title={failureMessage ?? undefined}
             >
-              <div className="install-progress-indeterminate h-full w-1/3 rounded-full bg-status-info-foreground motion-reduce:animate-none dark:bg-status-info-dark-foreground" />
-            </div>
-          </>
-        ) : isFailed ? (
-          <p
-            className="line-clamp-2 break-words text-[12px] text-status-failure-foreground dark:text-status-failure-dark-foreground"
-            title={failureMessage ?? undefined}
-          >
-            {failureMessage ?? t('Failed')}
-          </p>
-        ) : needsRestart ? (
-          <p className="text-[12px] text-status-warning-foreground dark:text-status-warning-dark-foreground">
-            {isRemoving
-              ? t('Removed R packages need a kernel restart to unload.')
-              : t('Installed R packages need a kernel restart to load.')}
-          </p>
-        ) : null}
-      </div>
+              {failureMessage ?? t('Failed')}
+            </p>
+          ) : needsRestart ? (
+            <p className="text-[12px] text-status-warning-foreground dark:text-status-warning-dark-foreground">
+              {isRemoving
+                ? t('Removed R packages need a kernel restart to unload.')
+                : t('Installed R packages need a kernel restart to load.')}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

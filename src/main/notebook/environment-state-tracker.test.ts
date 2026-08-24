@@ -271,6 +271,47 @@ describe('EnvironmentStateTracker', () => {
     ])
   })
 
+  it('rejects an installed Python package whose inventory version differs from the exact request', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-version-mismatch-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '3.13.2', packages: [] })
+      .mockResolvedValueOnce({
+        runtimeVersion: '3.13.2',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.1.0',
+            versionStatus: 'known',
+            ecosystem: 'python',
+            evidenceSources: ['python-importlib-metadata']
+          }
+        ]
+      })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+
+    await tracker.markPackageMutationDirty(target, {
+      operationId: 'operation-version-mismatch',
+      operation: 'install',
+      packages: ['numpy==2.0.0']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(target, {
+      operationId: 'operation-version-mismatch',
+      operation: 'install',
+      packages: ['numpy==2.0.0'],
+      result: 'success'
+    })
+
+    expect(verification).toMatchObject({
+      result: 'failure',
+      unsatisfiedPackages: ['numpy==2.0.0']
+    })
+  })
+
   it('matches a GitHub request to the installed R package source and retains related changes', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-github-mutation-'))
     const inspectInstalled = vi
