@@ -3657,5 +3657,10 @@
   "Installing {{count}} packages_other": "Установка {{count}} пакета",
   "Preparing the runtime": "Подготовка среды выполнения",
   "{{elapsed}} elapsed": "Прошло {{elapsed}}",
-  "This can take several minutes": "Это может занять несколько минут"
+  "This can take several minutes": "Это может занять несколько минут",
+  "Removing packages": "Удаление пакетов",
+  "Removing {{count}} packages_one": "Удаление {{count}} пакета",
+  "Removing {{count}} packages_few": "Удаление {{count}} пакетов",
+  "Removing {{count}} packages_many": "Удаление {{count}} пакетов",
+  "Removing {{count}} packages_other": "Удаление {{count}} пакета"
 }

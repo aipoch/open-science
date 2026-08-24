@@ -11,22 +11,20 @@ type WorkspaceManagePackagesActivityRowProps = {
 const ELAPSED_TICK_MS = 1_000
 const MANAGE_PACKAGES_IDENTITY = 'Notebook · manage_packages'
 
-const packageCount = (activity: ToolActivity): number => {
+const managePackagesInput = (activity: ToolActivity): Record<string, unknown> | undefined => {
   if (
     !activity.rawInput ||
     typeof activity.rawInput !== 'object' ||
     Array.isArray(activity.rawInput)
   ) {
-    return 0
+    return undefined
   }
   const input = activity.rawInput as Record<string, unknown>
   const args =
     input.arguments && typeof input.arguments === 'object' && !Array.isArray(input.arguments)
       ? (input.arguments as Record<string, unknown>)
       : input
-  return Array.isArray(args.packages)
-    ? args.packages.filter((value): value is string => typeof value === 'string').length
-    : 0
+  return args
 }
 
 const formatElapsed = (elapsedMs: number): string => {
@@ -43,7 +41,11 @@ const WorkspaceManagePackagesActivityRow = ({
 }: WorkspaceManagePackagesActivityRowProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [now, setNow] = useState(() => Date.now())
-  const count = packageCount(activity)
+  const input = managePackagesInput(activity)
+  const count = Array.isArray(input?.packages)
+    ? input.packages.filter((value): value is string => typeof value === 'string').length
+    : 0
+  const isRemoving = input?.operation === 'uninstall'
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), ELAPSED_TICK_MS)
@@ -64,12 +66,19 @@ const WorkspaceManagePackagesActivityRow = ({
         <span className="min-w-0 flex-1 text-left">
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="font-medium text-text-000">
-              {count > 0
-                ? t('Installing {{count}} packages', {
-                    count,
-                    defaultValue_one: 'Installing {{count}} package'
-                  })
-                : t('Installing packages')}
+              {isRemoving
+                ? count > 0
+                  ? t('Removing {{count}} packages', {
+                      count,
+                      defaultValue_one: 'Removing {{count}} package'
+                    })
+                  : t('Removing packages')
+                : count > 0
+                  ? t('Installing {{count}} packages', {
+                      count,
+                      defaultValue_one: 'Installing {{count}} package'
+                    })
+                  : t('Installing packages')}
             </span>
             <span className="hidden shrink-0 text-text-300 sm:inline">·</span>
             <span className="hidden min-w-0 truncate font-normal text-text-100 sm:inline">

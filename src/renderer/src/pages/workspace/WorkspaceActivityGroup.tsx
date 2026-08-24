@@ -29,11 +29,13 @@ import type {
 import { formatWebSearchDetails } from './workspace-web-search-details'
 import { getCorrelatedNotebookRun, getToolExecutionPhase } from './tool-execution-phase'
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
+import { isNotebookManagePackagesToolName } from './notebook-tool-names'
 
 const isManagePackagesActivity = (
   activity: ConversationActivityGroupItem['activities'][number]
 ): boolean =>
-  activity.providerToolName?.toLowerCase().replaceAll('-', '_').endsWith('manage_packages') === true
+  isNotebookManagePackagesToolName(activity.providerToolName) ||
+  isNotebookManagePackagesToolName(activity.title)
 
 type WorkspaceActivityGroupProps = {
   group: ConversationActivityGroupItem

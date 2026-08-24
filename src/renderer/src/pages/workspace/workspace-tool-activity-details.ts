@@ -3,7 +3,11 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 import { formatByteSize } from '@/lib/utils'
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunStatus } from '../../../../shared/notebook'
-import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
+import {
+  isNotebookManagePackagesToolName,
+  resolveNotebookLanguage,
+  resolveNotebookRunToolName
+} from './notebook-tool-names'
 import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
 
 type ToolCodeSection = {
@@ -789,9 +793,10 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
 
 // Detects the manage_packages MCP tool so an install renders a friendly summary, not raw JSON.
 const isManagePackagesActivity = (activity: ToolActivity): boolean => {
-  const providerName = trimDetail(activity.providerToolName)?.toLowerCase() ?? ''
-
-  return providerName.endsWith('manage_packages')
+  return (
+    isNotebookManagePackagesToolName(activity.providerToolName) ||
+    isNotebookManagePackagesToolName(activity.title)
+  )
 }
 
 // Reads the install result the manage_packages tool returns as JSON content (or raw output).

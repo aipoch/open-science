@@ -3268,5 +3268,7 @@
   "Installing {{count}} packages_other": "正在安装 {{count}} 个软件包",
   "Preparing the runtime": "正在准备运行环境",
   "{{elapsed}} elapsed": "已用时 {{elapsed}}",
-  "This can take several minutes": "可能需要几分钟"
+  "This can take several minutes": "可能需要几分钟",
+  "Removing packages": "正在移除软件包",
+  "Removing {{count}} packages_other": "正在移除 {{count}} 个软件包"
 }

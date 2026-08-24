@@ -51,14 +51,19 @@ describe('WorkspaceActivityGroup i18n', () => {
               {
                 id: 'activity-packages-1',
                 kind: 'tool',
-                title: 'manage_packages',
+                title: 'open-science-notebook.manage_packages',
                 status: 'in_progress',
                 eventIds: [],
                 sortIndex: 1,
                 createdAt,
                 updatedAt: createdAt,
-                providerToolName: 'mcp__open-science-notebook__manage_packages',
-                rawInput: { language: 'python', packages: ['numpy', 'pandas'] }
+                rawInput: {
+                  arguments: {
+                    language: 'python',
+                    packages: ['numpy', 'pandas'],
+                    operation: 'uninstall'
+                  }
+                }
               }
             ]
           }}
@@ -72,7 +77,7 @@ describe('WorkspaceActivityGroup i18n', () => {
 
     const progress = container.querySelector('[data-testid="manage-packages-progress"]')
     expect(container.querySelector('[data-testid="tool-group"]')?.contains(progress)).toBe(true)
-    expect(progress?.textContent).toContain('Installing 2 packages')
+    expect(progress?.textContent).toContain('Removing 2 packages')
     expect(progress?.textContent).toContain('Preparing the runtime')
     expect(progress?.textContent).toContain('1:05 elapsed')
     expect(progress?.textContent).toContain('This can take several minutes')
