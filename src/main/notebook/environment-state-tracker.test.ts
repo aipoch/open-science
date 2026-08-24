@@ -216,6 +216,45 @@ describe('EnvironmentStateTracker', () => {
     expect(inspectInstalled).toHaveBeenCalledOnce()
   })
 
+  it('inspects an R GitHub spec by repository and ref', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-inspect-github-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockResolvedValue({
+        runtimeVersion: '4.5.1',
+        packages: [
+          {
+            name: 'ggplot2',
+            version: '4.0.0.9000',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            evidenceSources: ['r-installed-packages'],
+            source: {
+              type: 'github',
+              repository: 'tidyverse/ggplot2',
+              ref: 'main',
+              commit: 'abc123'
+            }
+          }
+        ]
+      }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = { ...target, language: 'r' as const, command: '/opt/r/bin/Rscript' }
+
+    const result = await tracker.inspectPackages(rTarget, ['tidyverse/ggplot2@main'])
+
+    expect(result.packages).toEqual([
+      expect.objectContaining({
+        requested: 'tidyverse/ggplot2@main',
+        name: 'ggplot2',
+        status: 'installed',
+        version: '4.0.0.9000',
+        source: expect.objectContaining({ repository: 'tidyverse/ggplot2', ref: 'main' })
+      })
+    ])
+  })
+
   it('reports unknown instead of missing when installed inventory cannot be read', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-inspect-unavailable-'))
     const tracker = new EnvironmentStateTracker({

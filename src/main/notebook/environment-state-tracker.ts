@@ -363,7 +363,10 @@ const inspectRequestedPackage = (
   requested: string,
   installed: NotebookEnvironmentPackage[] | undefined
 ): InspectedPackage => {
-  const requestedName = packageNameFromSpec(requested, target.language)
+  const githubSource = target.language === 'r' ? githubSourceFromSpec(requested) : undefined
+  const requestedName = githubSource
+    ? githubSource.repository.split('/').at(-1)
+    : packageNameFromSpec(requested, target.language)
   if (!requestedName || !installed) {
     return {
       requested,
@@ -371,9 +374,14 @@ const inspectRequestedPackage = (
       status: 'unknown'
     }
   }
-  const match = installed.find(
-    (pkg) => requestedPackageKey(pkg.name) === requestedPackageKey(requestedName)
-  )
+  const match = githubSource
+    ? installed.find(
+        (pkg) =>
+          pkg.source?.type === 'github' &&
+          packageKey(pkg.source.repository) === githubSource.repository &&
+          (githubSource.ref === undefined || pkg.source.ref === githubSource.ref)
+      )
+    : installed.find((pkg) => requestedPackageKey(pkg.name) === requestedPackageKey(requestedName))
   return match
     ? { requested, ...match, status: 'installed' }
     : { requested, name: requestedName, status: 'missing' }
