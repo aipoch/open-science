@@ -92,7 +92,6 @@ type SessionPersistenceStateOwnerOptions = {
   fileIndex: SessionStateFileIndex
   assertMutable(projectId: string, sessionId: string, operation: 'save' | 'mutate'): void
   notifyFilesChanged(event: ProjectFilesChangedEvent): void
-  observeCommittedSession(session: PersistedChatSession): void
   notifyRuntimeContextSessionUpdated(session: PersistedChatSession): void
   provenance?: SessionStateProvenance
   uploads?: SessionStateUploads
@@ -245,7 +244,6 @@ class SessionPersistenceStateOwner {
       projectId: session.projectId,
       title: session.title
     })
-    this.options.observeCommittedSession(session)
   }
   markMetadataIncomplete(): void {
     this.isSessionMetadataComplete = false

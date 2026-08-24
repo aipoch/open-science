@@ -74,9 +74,9 @@ import {
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
 import { isSessionCatalogAuthoritative } from './catalog-authority'
 import {
-  SessionUpdatePublicationOwner,
+  SessionCommitProjectionOwner,
   type SessionUpdatePublisher
-} from './session-update-publication'
+} from './session-commit-projection-owner'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
 
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
@@ -185,18 +185,19 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
+  private readonly repository: SessionMutationRepository
   private readonly stateOwner: SessionPersistenceStateOwner
   private readonly sideChatOwner: SessionSideChatPersistenceOwner
   private readonly deletionOwner: SessionPersistenceDeletionOwner
   private readonly reconciliationOwner: SessionPersistenceReconciliationOwner
   private readonly delegatedWorkOwner: SessionDelegatedWorkPersistenceOwner
-  private readonly sessionUpdates: SessionUpdatePublicationOwner
+  private readonly sessionCommitProjection: SessionCommitProjectionOwner
   private destructiveStartupWindowOpen = true
   private delegatedStartupRecoveryComplete = false
   private sessionDeletionHandlers: SessionDeletionHandlers | undefined
 
   constructor(
-    private readonly repository: SessionMutationRepository,
+    repository: SessionMutationRepository,
     private readonly fileIndex: SessionFileIndex,
     private readonly onFilesChanged?: (event: ProjectFilesChangedEvent) => void,
     provenance?: SessionProvenancePersistence,
@@ -205,9 +206,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     permissionGrants?: SessionPermissionGrantReconciliation,
     private readonly log: Logger = createLogger('session-persistence'),
     private readonly computeJobs?: ComputeJobDeletionParticipant,
-    onDelegatedWorkSessionUpdated?: SessionUpdatePublisher
+    publishSessionUpdate?: SessionUpdatePublisher
   ) {
-    this.sessionUpdates = new SessionUpdatePublicationOwner(onDelegatedWorkSessionUpdated, log)
+    this.sessionCommitProjection = new SessionCommitProjectionOwner(publishSessionUpdate, log)
+    const commitRepository = this.sessionCommitProjection.observeRepository(repository)
+    this.repository = commitRepository
     const assertMutable = (
       projectId: string,
       sessionId: string,
@@ -221,24 +224,23 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       }
     }
     this.stateOwner = new SessionPersistenceStateOwner({
-      repository,
+      repository: commitRepository,
       fileIndex,
       provenance,
       uploads,
       log,
       assertMutable,
       notifyFilesChanged: (event) => this.notifyFilesChanged(event),
-      observeCommittedSession: (session) => this.sessionUpdates.observeCommittedSession(session),
       notifyRuntimeContextSessionUpdated: (session) =>
-        this.sessionUpdates.publish(session, 'runtime-context')
+        this.sessionCommitProjection.publish(session, 'runtime-context')
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
-      repository,
+      repository: commitRepository,
       assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
       recordSession: (session) => this.stateOwner.recordSession(session)
     })
     this.deletionOwner = new SessionPersistenceDeletionOwner({
-      repository,
+      repository: commitRepository,
       fileIndex,
       stateOwner: this.stateOwner,
       provenance,
@@ -257,7 +259,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       notifySessionsDeleted: (sessionIds) => this.notifySessionsDeleted(sessionIds)
     })
     this.reconciliationOwner = new SessionPersistenceReconciliationOwner({
-      repository,
+      repository: commitRepository,
       fileIndex,
       provenance,
       uploads,
@@ -265,7 +267,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       permissionGrants
     })
     this.delegatedWorkOwner = new SessionDelegatedWorkPersistenceOwner({
-      repository,
+      repository: commitRepository,
       runExclusive: (key, work) =>
         key
           ? this.operationScheduler.runSession(key.projectId, key.sessionId, work)
@@ -274,12 +276,13 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       markStartupRecoveryComplete: () => {
         this.delegatedStartupRecoveryComplete = true
       },
-      notifySessionUpdated: (session) => this.sessionUpdates.publish(session, 'delegated-work')
+      notifySessionUpdated: (session) =>
+        this.sessionCommitProjection.publish(session, 'delegated-work')
     })
   }
 
   getActiveDelegatedSessions(): { projectId: string; sessionId: string }[] {
-    return this.sessionUpdates.getActiveDelegatedSessions()
+    return this.sessionCommitProjection.getActiveDelegatedSessions()
   }
 
   containsMessageOnActiveBranch(
@@ -715,7 +718,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
-  // Fresh, unsaved Sessions have no durable archive owner and return undefined.
   sessionProjectId(sessionId: string): Promise<string | undefined> {
     return this.operationScheduler.runSessionIdentity(sessionId, async () =>
       this.stateOwner.sessionProjectId(sessionId)
@@ -966,7 +968,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
-  // Renderer notifications cannot change an authoritative mutation that already committed.
   private notifyFilesChanged(event: ProjectFilesChangedEvent): void {
     try {
       this.onFilesChanged?.(event)
@@ -975,7 +976,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     }
   }
 
-  // A later complete catalog reconciliation repairs post-deletion cleanup failures.
   private async notifySessionsDeleted(sessionIds: string[]): Promise<void> {
     try {
       await this.sessionDeletionHandlers?.commit(sessionIds)

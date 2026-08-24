@@ -60,6 +60,7 @@ const productionFiles = [
   'message-delivery-owner.ts',
   'reconciliation-owner.ts',
   'relay-projection.ts',
+  'session-commit-projection-owner.ts',
   'side-chat-owner.ts',
   'state-owner.ts'
 ] as const
@@ -195,7 +196,7 @@ const calledOwnerMethods = (method: MethodDeclaration): string[] =>
         'sideChatOwner',
         'messageDeliveryOwner',
         'delegatedWorkOwner',
-        'sessionUpdates'
+        'sessionCommitProjection'
       ].includes(node.expression.expression.name.text)
   )
     .map((node) => {
@@ -390,6 +391,10 @@ describe('Session persistence coordinator architecture', () => {
     'reconciliation-owner.ts',
     'SessionPersistenceReconciliationOwner'
   )
+  const sessionCommitProjection = classFrom(
+    'session-commit-projection-owner.ts',
+    'SessionCommitProjectionOwner'
+  )
   const messageDeliveryOwner = classFrom(
     'message-delivery-owner.ts',
     'SessionMessageDeliveryPersistenceOwner'
@@ -494,7 +499,7 @@ describe('Session persistence coordinator architecture', () => {
       'permissionGrants:optional',
       'log:defaulted',
       'computeJobs:optional',
-      'onDelegatedWorkSessionUpdated:optional'
+      'publishSessionUpdate:optional'
     ])
     expect(exportedNames(facadeFile, 'value')).toEqual(
       ['SessionPersistenceCoordinator', 'SessionRuntimeContextRevisionConflictError'].sort()
@@ -531,7 +536,7 @@ describe('Session persistence coordinator architecture', () => {
         'reconciliationOwner',
         'repository',
         'sessionDeletionHandlers',
-        'sessionUpdates',
+        'sessionCommitProjection',
         'sideChatOwner',
         'stateOwner'
       ].sort()
@@ -553,6 +558,7 @@ describe('Session persistence coordinator architecture', () => {
     expect(mutableFields(delegatedWorkOwner)).toEqual([])
     expect(mutableFields(delegatedWorkStore)).toEqual([])
     expect(mutableFields(delegatedQuestionOwner)).toEqual([])
+    expect(mutableFields(sessionCommitProjection)).toEqual([])
     expect(publicNonMethodMembers(stateOwner)).toEqual([])
     expect(publicNonMethodMembers(deletionOwner)).toEqual([])
     expect(publicNonMethodMembers(reconciliationOwner)).toEqual([])
@@ -561,6 +567,7 @@ describe('Session persistence coordinator architecture', () => {
     expect(publicNonMethodMembers(delegatedWorkOwner)).toEqual([])
     expect(publicNonMethodMembers(delegatedWorkStore)).toEqual([])
     expect(publicNonMethodMembers(delegatedQuestionOwner)).toEqual([])
+    expect(publicNonMethodMembers(sessionCommitProjection)).toEqual([])
     expect(fields(stateOwner)).toEqual(
       [
         'isSessionMetadataComplete',
@@ -594,6 +601,9 @@ describe('Session persistence coordinator architecture', () => {
       ].sort()
     )
     expect(fields(sideChatOwner)).toEqual(['options'])
+    expect(fields(sessionCommitProjection)).toEqual(
+      ['activeDelegatedSessions', 'log', 'publishSessionUpdate'].sort()
+    )
     for (const file of productionFiles) {
       expect(statefulTopLevelVariables(file), file).toEqual(
         file === 'deletion-owner.ts' ? ['ARCHIVE_BLOCKING_SESSION_STATUSES'] : []
@@ -625,6 +635,9 @@ describe('Session persistence coordinator architecture', () => {
     ])
     expect(constructionSites('SessionDelegatedQuestionPersistenceOwner')).toEqual([
       'src/main/session-persistence/delegated-work-owner.ts:constructor'
+    ])
+    expect(constructionSites('SessionCommitProjectionOwner')).toEqual([
+      'src/main/session-persistence/coordinator.ts:constructor'
     ])
     expect(constructionSites('SessionPersistenceOperationScheduler')).toEqual([
       'src/main/session-persistence/coordinator.ts:module',
@@ -921,6 +934,10 @@ describe('Session persistence coordinator architecture', () => {
       ].sort()
     )
     expect(methods(messageDeliveryOwner, 'private')).toEqual(['assertWritable'])
+    expect(methods(sessionCommitProjection, 'public')).toEqual(
+      ['getActiveDelegatedSessions', 'observeRepository', 'publish'].sort()
+    )
+    expect(methods(sessionCommitProjection, 'private')).toEqual(['observeCommittedSession'])
 
     const expectedCalls: Record<string, string[]> = {
       acknowledgeUncertainMessage: ['delegatedWorkOwner.acknowledgeUncertainMessage'],
@@ -942,7 +959,7 @@ describe('Session persistence coordinator architecture', () => {
         'deletionOwner.getProjectSessionDeletionState'
       ],
       deleteSession: ['deletionOwner.deleteSession', 'deletionOwner.reconcileSessionDeletion'],
-      getActiveDelegatedSessions: ['sessionUpdates.getActiveDelegatedSessions'],
+      getActiveDelegatedSessions: ['sessionCommitProjection.getActiveDelegatedSessions'],
       getProjectSessionDeletionState: ['deletionOwner.getProjectSessionDeletionState'],
       listLegacyProjectSessionTombstones: ['deletionOwner.listLegacyProjectSessionTombstones'],
       loadPersistedSideChats: ['sideChatOwner.loadCatalog'],
@@ -980,6 +997,7 @@ describe('Session persistence coordinator architecture', () => {
         'deletion-owner.ts',
         'delegated-work-owner.ts',
         'reconciliation-owner.ts',
+        'session-commit-projection-owner.ts',
         'side-chat-owner.ts',
         'state-owner.ts'
       ].sort()
@@ -990,6 +1008,7 @@ describe('Session persistence coordinator architecture', () => {
     )
     expect(sessionDependencies('reconciliation-owner.ts')).toEqual(['legacy-upload.ts'])
     expect(sessionDependencies('side-chat-owner.ts')).toEqual([])
+    expect(sessionDependencies('session-commit-projection-owner.ts')).toEqual([])
     expect(sessionDependencies('message-delivery-owner.ts')).toEqual([])
     expect(sessionDependencies('delegated-question-owner.ts')).toEqual(
       ['delegated-work-store.ts', 'message-delivery-owner.ts'].sort()
@@ -1007,6 +1026,7 @@ describe('Session persistence coordinator architecture', () => {
       'message-delivery-owner.ts',
       'reconciliation-owner.ts',
       'relay-projection.ts',
+      'session-commit-projection-owner.ts',
       'side-chat-owner.ts'
     ] as const) {
       expect(sessionDependencies(file), file).not.toContain('coordinator.ts')
