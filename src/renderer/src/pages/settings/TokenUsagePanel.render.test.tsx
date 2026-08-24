@@ -137,6 +137,48 @@ describe('TokenUsagePanel', () => {
     )
   })
 
+  it('shows a retryable error instead of partial hydrated usage when the projection fails', async () => {
+    const now = localTime(2026, 8, 15, 18)
+    const projection: SessionUsageProjection = {
+      sessionCreatedAt: [now],
+      projectCreatedAt: [now],
+      artifactCreatedAt: [],
+      runsAt: [],
+      usageEvents: [],
+      totalArtifacts: 0
+    }
+    const loadUsage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('projection unavailable'))
+      .mockResolvedValueOnce(projection)
+    window.api = { sessions: { loadUsage } } as unknown as Window['api']
+
+    await act(async () => {
+      root.render(
+        <TokenUsagePanel
+          sessions={[createSession(now)]}
+          projects={[createProject(now)]}
+          now={now}
+        />
+      )
+    })
+
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')).toBeNull()
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not load token usage.'
+    )
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button')?.click()
+    })
+
+    expect(loadUsage).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
+      'Total sessions1'
+    )
+  })
+
   it('refreshes the SQLite usage projection after a durable Session revision changes', async () => {
     const now = localTime(2026, 8, 15, 18)
     const projection = (inputTokens: number): SessionUsageProjection => ({

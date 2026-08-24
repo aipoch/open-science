@@ -503,6 +503,7 @@
   "Could not load project artifacts.": "プロジェクトのアーティファクトをロードできませんでした。",
   "Could not load project files": "プロジェクトファイルをロードできませんでした",
   "Could not load review history.": "レビュー履歴を読み込めませんでした。",
+  "Could not load token usage.": "トークン使用量を読み込めませんでした。",
   "Could not load runtimes.": "ランタイムを読み込めませんでした。",
   "Could not mark as read. Try again.": "既読としてマークできませんでした。もう一度やり直してください。",
   "Could not mark this completed session as read. Try again.": "この完了したセッションを既読としてマークできませんでした。もう一度やり直してください。",

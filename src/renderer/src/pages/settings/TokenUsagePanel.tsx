@@ -30,6 +30,12 @@ type TokenUsagePanelProps = {
   now?: number
 }
 
+type UsageProjectionLoadResult = Readonly<{
+  requestKey: string
+  projection?: SessionUsageProjection
+  failed?: boolean
+}>
+
 const PERIODS: ReadonlyArray<{ value: TokenUsagePeriod; label: string; shortLabel: string }> = [
   { value: 'today', label: 'Today', shortLabel: 'Today' },
   { value: 'week', label: 'This week', shortLabel: 'Week' },
@@ -84,8 +90,9 @@ function TokenUsagePanel({
   const now = providedNow ?? currentTime
   const [period, setPeriod] = useState<TokenUsagePeriod>('30-days')
   const [heatmapMetric, setHeatmapMetric] = useState<TokenUsageHeatmapMetric>('totalTokens')
-  const [usageProjection, setUsageProjection] = useState<SessionUsageProjection>()
-  const [usageProjectionLoadSettled, setUsageProjectionLoadSettled] = useState(false)
+  const [usageProjectionLoadResult, setUsageProjectionLoadResult] =
+    useState<UsageProjectionLoadResult>()
+  const [usageProjectionLoadAttempt, setUsageProjectionLoadAttempt] = useState(0)
   const canLoadUsageProjection = typeof window.api?.sessions?.loadUsage === 'function'
   const usageRevision = sessions
     .map((session) => `${session.id}:${session.revision ?? 0}`)
@@ -94,6 +101,18 @@ function TokenUsagePanel({
     .map((project) => `${project.id}:${project.createdAt}`)
     .sort()
     .join('\u0000')
+  const usageProjectionRequestKey = [
+    usageRevision,
+    projectRevision,
+    usageProjectionLoadAttempt
+  ].join('\u0001')
+  const currentUsageProjectionLoadResult =
+    usageProjectionLoadResult?.requestKey === usageProjectionRequestKey
+      ? usageProjectionLoadResult
+      : undefined
+  const usageProjection = currentUsageProjectionLoadResult?.projection
+  const usageProjectionLoadSettled = currentUsageProjectionLoadResult !== undefined
+  const usageProjectionLoadFailed = currentUsageProjectionLoadResult?.failed === true
 
   useEffect(() => {
     const loadUsage = window.api?.sessions?.loadUsage
@@ -101,16 +120,17 @@ function TokenUsagePanel({
     let active = true
     void loadUsage()
       .then((projection) => {
-        if (active) setUsageProjection(projection)
+        if (active)
+          setUsageProjectionLoadResult({ requestKey: usageProjectionRequestKey, projection })
       })
-      .catch(() => undefined)
-      .finally(() => {
-        if (active) setUsageProjectionLoadSettled(true)
+      .catch(() => {
+        if (active)
+          setUsageProjectionLoadResult({ requestKey: usageProjectionRequestKey, failed: true })
       })
     return () => {
       active = false
     }
-  }, [usageRevision, projectRevision])
+  }, [usageProjectionRequestKey])
 
   useEffect(() => {
     if (providedNow !== undefined) return
@@ -253,6 +273,25 @@ function TokenUsagePanel({
       cache: formatNumber(point.cacheTokens),
       output: formatNumber(point.outputTokens)
     })
+
+  if (canLoadUsageProjection && usageProjectionLoadFailed) {
+    return (
+      <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
+        <div role="alert" data-slot="token-usage-load-error" className="px-4 py-6 sm:px-5">
+          <p className="text-sm text-destructive">{t('Could not load token usage.')}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => setUsageProjectionLoadAttempt((attempt) => attempt + 1)}
+          >
+            {t('Try again')}
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   if (canLoadUsageProjection && usageProjection === undefined && !usageProjectionLoadSettled) {
     return (

@@ -522,6 +522,7 @@
   "Could not load project artifacts.": "프로젝트 아티팩트를 로드할 수 없습니다.",
   "Could not load project files": "프로젝트 파일을 로드할 수 없습니다.",
   "Could not load review history.": "리뷰 기록을 로드할 수 없습니다.",
+  "Could not load token usage.": "토큰 사용량을 불러올 수 없습니다.",
   "Could not load runtimes.": "런타임을 로드할 수 없습니다.",
   "Could not mark as read. Try again.": "읽음으로 표시할 수 없습니다. 다시 시도해 보세요.",
   "Could not mark this completed session as read. Try again.": "완료된 세션을 읽음으로 표시할 수 없습니다. 다시 시도하세요.",

@@ -524,6 +524,7 @@
   "Could not load project artifacts.": "Не удалось загрузить артефакты проекта.",
   "Could not load project files": "Не удалось загрузить файлы проекта",
   "Could not load review history.": "Не удалось загрузить историю обзора.",
+  "Could not load token usage.": "Не удалось загрузить данные об использовании токенов.",
   "Could not load runtimes.": "Не удалось загрузить среды выполнения.",
   "Could not mark as read. Try again.": "Не удалось отметить как прочитанный. Попробуйте снова.",
   "Could not mark this completed session as read. Try again.": "Не удалось отметить завершённую сессию как прочитанную. Попробуйте снова.",

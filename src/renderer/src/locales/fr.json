@@ -536,6 +536,7 @@
   "Could not load project artifacts.": "Impossible de charger les artefacts du projet.",
   "Could not load project files": "Impossible de charger les fichiers du projet",
   "Could not load review history.": "Impossible de charger l'historique des avis.",
+  "Could not load token usage.": "Impossible de charger l’utilisation des jetons.",
   "Could not load runtimes.": "Impossible de charger les environnements d'exécution.",
   "Could not mark as read. Try again.": "Impossible de marquer comme lu. Essayer à nouveau.",
   "Could not mark this completed session as read. Try again.": "Impossible de marquer cette session terminée comme lue. Essayer à nouveau.",
