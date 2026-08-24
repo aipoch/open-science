@@ -204,18 +204,31 @@ describe('PreviewPanel', () => {
     await renderPanel()
 
     const sourceTab = container.querySelector('[role="tab"][title="Genome study"]')
-    const sourceHeader = container.querySelector('header')
+    const sourceHeader = container.querySelector('[data-source-preview-header]')
     const iframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
     expect(sourceTab?.querySelector('[data-source-preview-tab-icon]')).not.toBeNull()
     expect(sourceTab?.textContent).toContain('Genome study')
     expect(sourceHeader?.textContent).toContain('Genome study')
     expect(sourceHeader?.textContent).toContain('https://example.com/paper')
     expect(sourceHeader?.textContent).not.toContain('Cited URL:')
-    const sourceHeaderUrl = sourceHeader?.querySelector<HTMLElement>(
-      '[title="https://example.com/paper"]'
+    expect(sourceHeader?.querySelector('.lucide-link-2')).toBeNull()
+    const sourceHeaderTitle = sourceHeader?.querySelector<HTMLElement>(
+      '[data-source-preview-header-title]'
     )
-    expect(sourceHeaderUrl?.className).toContain('text-text-300')
-    expect(sourceHeaderUrl?.className).not.toContain('text-text-400')
+    expect(sourceHeaderTitle?.className).toContain('text-text-000')
+    const sourceHeaderUrl = sourceHeader?.querySelector<HTMLElement>(
+      '[data-source-preview-header-url]'
+    )
+    expect(sourceHeaderUrl?.className).toContain('text-text-000/70')
+    const sourceHeaderExternal = sourceHeader?.querySelector<HTMLButtonElement>(
+      '[data-source-preview-header-external]'
+    )
+    expect(sourceHeaderExternal?.dataset.size).toBe('icon')
+    expect(
+      sourceHeaderExternal
+        ?.querySelector('[data-source-preview-header-external-icon]')
+        ?.getAttribute('class')
+    ).toContain('size-4')
     expect(iframe?.getAttribute('src')).toBe('https://example.com/paper')
     expect(iframe?.getAttribute('sandbox')).toBe('allow-same-origin allow-scripts')
     expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')

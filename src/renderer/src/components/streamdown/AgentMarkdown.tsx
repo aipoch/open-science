@@ -314,7 +314,7 @@ const SessionMessageLink = ({
           collisionPadding={8}
           data-source-preview-hover-card=""
           aria-labelledby={sourcePreviewTitleId}
-          className="w-[min(20rem,calc(100vw-1rem))] border border-border-300 bg-bg-000 p-3 text-text-100 shadow-card"
+          className="w-fit min-w-56 max-w-[min(24rem,calc(100vw-1rem))] border border-border-300 bg-bg-000 p-3 text-text-000 shadow-card"
           onOpenAutoFocus={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => event.preventDefault()}
           onEscapeKeyDown={() => dismissSourcePreview(true)}
@@ -345,7 +345,7 @@ const SessionMessageLink = ({
             }
           }}
         >
-          <div className="flex min-w-0 items-start gap-2.5">
+          <div data-source-preview-hover-summary="" className="flex min-w-0 items-start gap-2.5">
             {faviconUrl ? (
               <SessionLinkFavicon className="mt-0.5 me-0 size-5 shrink-0" src={faviconUrl} />
             ) : null}
@@ -359,24 +359,29 @@ const SessionMessageLink = ({
               </div>
               <div
                 data-source-preview-hover-hostname=""
-                className="truncate text-xs leading-4 text-text-000"
+                className="truncate text-xs leading-4 text-text-000/70"
               >
                 {hostname}
               </div>
-              <a
-                href={sourceItem.url}
-                data-source-preview-hover-url=""
-                title={sourceItem.url}
-                className="mt-1 block break-all text-xs leading-4 text-text-000 underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
-                onClick={(event) => {
-                  event.preventDefault()
-                  dismissSourcePreview(true)
-                  upsertAndActivateItem(sourceItem)
-                }}
-              >
-                {sourceItem.url}
-              </a>
             </div>
+          </div>
+          <div
+            data-source-preview-hover-actions=""
+            className="mt-3 flex min-w-0 items-center gap-2"
+          >
+            <a
+              href={sourceItem.url}
+              data-source-preview-hover-url=""
+              title={sourceItem.url}
+              className="min-w-0 flex-1 break-all text-xs leading-4 text-text-000 underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+              onClick={(event) => {
+                event.preventDefault()
+                dismissSourcePreview(true)
+                upsertAndActivateItem(sourceItem)
+              }}
+            >
+              {sourceItem.url}
+            </a>
             <TooltipProvider delayDuration={200}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -386,7 +391,7 @@ const SessionMessageLink = ({
                     size="icon-xs"
                     data-source-preview-hover-external=""
                     aria-label={t('Open source in browser')}
-                    className="mt-0.5 text-text-100 hover:text-text-000"
+                    className="text-text-100 hover:text-text-000"
                     onClick={(event) => {
                       event.stopPropagation()
                       dismissSourcePreview(true)

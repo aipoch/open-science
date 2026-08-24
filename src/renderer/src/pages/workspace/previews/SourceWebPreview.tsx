@@ -1,4 +1,4 @@
-import { ExternalLink, Link2 } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -59,11 +59,22 @@ const SourceWebPreviewContent = ({
 
   return (
     <div className="flex size-full min-h-0 flex-col bg-bg-000">
-      <header className="relative flex h-10 shrink-0 items-center gap-2 border-b border-border-300/50 px-3">
-        <Link2 className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+      <header
+        data-source-preview-header=""
+        className="relative flex h-10 shrink-0 items-center gap-2 border-b border-border-300/50 px-3"
+      >
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[12px] font-medium text-text-100">{item.title}</div>
-          <div className="truncate text-[10px] text-text-300" title={sourceUrl.href}>
+          <div
+            data-source-preview-header-title=""
+            className="truncate text-[12px] font-medium text-text-000"
+          >
+            {item.title}
+          </div>
+          <div
+            data-source-preview-header-url=""
+            className="truncate text-[10px] text-text-000/70"
+            title={sourceUrl.href}
+          >
             {sourceUrl.href}
           </div>
         </div>
@@ -73,11 +84,16 @@ const SourceWebPreviewContent = ({
               <Button
                 type="button"
                 variant="ghost"
-                size="icon-sm"
+                size="icon"
+                data-source-preview-header-external=""
                 aria-label={t('Open source in browser')}
                 onClick={() => window.open(sourceUrl.href, '_blank', 'noreferrer')}
               >
-                <ExternalLink className="size-3.5" aria-hidden="true" />
+                <ExternalLink
+                  data-source-preview-header-external-icon=""
+                  className="size-4"
+                  aria-hidden="true"
+                />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{t('Open source in browser')}</TooltipContent>

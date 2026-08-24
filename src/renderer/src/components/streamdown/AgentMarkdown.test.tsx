@@ -417,6 +417,13 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(hoverCard?.textContent).toContain('Genome study')
     expect(hoverCard?.textContent).toContain('example.com')
     expect(hoverCard?.textContent).toContain('https://example.com/paper#results')
+    expect(hoverCard?.className).toContain('w-fit')
+    const hoverSummary = hoverCard?.querySelector<HTMLElement>(
+      '[data-source-preview-hover-summary]'
+    )
+    const hoverActions = hoverCard?.querySelector<HTMLElement>(
+      '[data-source-preview-hover-actions]'
+    )
     const hoverTitle = hoverCard?.querySelector<HTMLElement>('[data-source-preview-hover-title]')
     expect(hoverTitle?.textContent).toBe('Genome study')
     expect(hoverTitle?.className).toContain('text-text-000')
@@ -426,7 +433,7 @@ describe('AgentMarkdown renderer recovery', () => {
       '[data-source-preview-hover-hostname]'
     )
     expect(hoverHostname?.textContent).toBe('example.com')
-    expect(hoverHostname?.className).toContain('text-text-000')
+    expect(hoverHostname?.className).toContain('text-text-000/70')
     const hoverFavicon = hoverCard?.querySelector<HTMLElement>('[data-session-link-favicon]')
     expect(hoverFavicon).not.toBeNull()
     expect(hoverFavicon?.querySelector('[data-session-link-favicon-skeleton]')).toBeNull()
@@ -443,6 +450,18 @@ describe('AgentMarkdown renderer recovery', () => {
       '[data-source-preview-hover-external]'
     )
     expect(externalButton?.getAttribute('aria-label')).toBe('Open source in browser')
+    expect(hoverSummary?.contains(hoverTitle ?? null)).toBe(true)
+    expect(hoverSummary?.contains(hoverHostname ?? null)).toBe(true)
+    expect(hoverSummary?.contains(hoverFavicon ?? null)).toBe(true)
+    expect(hoverActions?.contains(hoverCardUrl ?? null)).toBe(true)
+    expect(hoverActions?.contains(externalButton ?? null)).toBe(true)
+    expect(
+      Boolean(
+        hoverSummary &&
+        hoverActions &&
+        hoverSummary.compareDocumentPosition(hoverActions) & Node.DOCUMENT_POSITION_FOLLOWING
+      )
+    ).toBe(true)
     const previewStateBeforeExternalOpen = usePreviewWorkbenchStore.getState()
 
     await act(async () => {

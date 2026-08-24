@@ -228,11 +228,45 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(hoverCard.locator('[data-source-preview-hover-hostname]')).toHaveText(
     'citation.example'
   )
+  const hoverSummary = hoverCard.locator('[data-source-preview-hover-summary]')
+  const hoverActions = hoverCard.locator('[data-source-preview-hover-actions]')
   const hoverUrl = hoverCard.locator('[data-source-preview-hover-url]')
   await expect(hoverUrl).toHaveText('https://citation.example/paper')
   await expect(hoverUrl).toHaveClass(/text-text-000/)
   const externalButton = hoverCard.locator('[data-source-preview-hover-external]')
   await expect(externalButton).toHaveAttribute('aria-label', 'Open source in browser')
+  await expect(hoverSummary).toContainText('Fixture study')
+  await expect(hoverActions.locator('[data-source-preview-hover-url]')).toBeVisible()
+  await expect(hoverActions.locator('[data-source-preview-hover-external]')).toBeVisible()
+  const hoverLayout = await hoverCard.evaluate((card) => {
+    const summary = card.querySelector<HTMLElement>('[data-source-preview-hover-summary]')
+    const actions = card.querySelector<HTMLElement>('[data-source-preview-hover-actions]')
+    const title = card.querySelector<HTMLElement>('[data-source-preview-hover-title]')
+    const hostname = card.querySelector<HTMLElement>('[data-source-preview-hover-hostname]')
+    const url = card.querySelector<HTMLElement>('[data-source-preview-hover-url]')
+    const external = card.querySelector<HTMLElement>('[data-source-preview-hover-external]')
+    if (!summary || !actions || !title || !hostname || !url || !external) {
+      throw new Error('Source hover layout is incomplete')
+    }
+    const cardRect = card.getBoundingClientRect()
+    const hostnameRect = hostname.getBoundingClientRect()
+    const actionsRect = actions.getBoundingClientRect()
+    const urlRect = url.getBoundingClientRect()
+    const externalRect = external.getBoundingClientRect()
+    return {
+      width: cardRect.width,
+      titleColor: getComputedStyle(title).color,
+      descriptionColor: getComputedStyle(hostname).color,
+      actionGap: actionsRect.top - hostnameRect.bottom,
+      actionCenterDelta: Math.abs(
+        urlRect.top + urlRect.height / 2 - (externalRect.top + externalRect.height / 2)
+      )
+    }
+  })
+  expect(hoverLayout.width).toBeLessThan(320)
+  expect(hoverLayout.titleColor).not.toBe(hoverLayout.descriptionColor)
+  expect(hoverLayout.actionGap).toBeGreaterThanOrEqual(8)
+  expect(hoverLayout.actionCenterDelta).toBeLessThanOrEqual(1)
   await expect(hoverCard.locator('[data-session-link-favicon-skeleton]')).toHaveCount(0)
   expect(sourceDocumentRequestCount).toBe(0)
   await expect(page.locator('[data-source-preview-frame]')).toHaveCount(0)
@@ -277,11 +311,29 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(sourceFrame).toHaveAttribute('referrerpolicy', 'no-referrer')
   await expect(sourceFrame).toHaveAttribute('name', 'open-science-source-preview')
   const sourcePreview = sourceFrame.locator('..')
-  const sourceHeader = sourcePreview.locator('header')
-  await expect(sourceHeader.getByText('Fixture study', { exact: true })).toBeVisible()
+  const sourceHeader = sourcePreview.locator('[data-source-preview-header]')
+  const sourceHeaderTitle = sourceHeader.locator('[data-source-preview-header-title]')
+  const sourceHeaderUrl = sourceHeader.locator('[data-source-preview-header-url]')
+  await expect(sourceHeader.locator('.lucide-link-2')).toHaveCount(0)
+  await expect(sourceHeaderTitle).toHaveText('Fixture study')
   await expect(
-    sourceHeader.getByText('https://citation.example/paper', { exact: true })
+    sourceHeaderUrl.getByText('https://citation.example/paper', { exact: true })
   ).toBeVisible()
+  const sourceHeaderVisuals = await sourceHeader.evaluate((header) => {
+    const title = header.querySelector<HTMLElement>('[data-source-preview-header-title]')
+    const url = header.querySelector<HTMLElement>('[data-source-preview-header-url]')
+    const externalIcon = header.querySelector<SVGElement>(
+      '[data-source-preview-header-external-icon]'
+    )
+    if (!title || !url || !externalIcon) throw new Error('Source header layout is incomplete')
+    return {
+      titleColor: getComputedStyle(title).color,
+      urlColor: getComputedStyle(url).color,
+      externalIconWidth: externalIcon.getBoundingClientRect().width
+    }
+  })
+  expect(sourceHeaderVisuals.titleColor).not.toBe(sourceHeaderVisuals.urlColor)
+  expect(sourceHeaderVisuals.externalIconWidth).toBeGreaterThanOrEqual(16)
   releaseSourceDocument?.()
   await expect(
     page.frameLocator('[data-source-preview-frame]').getByRole('heading', {
