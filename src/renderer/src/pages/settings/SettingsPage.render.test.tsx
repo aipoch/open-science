@@ -773,20 +773,21 @@ describe('SettingsPage layout', () => {
       'button'
     )
 
-    // The Model panel splits Active model, Reasoning effort, the Scenario models accordion card
-    // (Subagent / Reviewer / Vision), and provider management; agent framework moved to the Agent sub-panel.
-    expect(document.body.textContent).toContain('Active model')
+    // The Model panel splits the Main model section (model + reasoning effort on one row),
+    // the Scenario models accordion card (Subagent / Reviewer / Vision), and provider management;
+    // agent framework moved to the Agent sub-panel.
+    expect(document.body.textContent).toContain('Main model')
     expect(document.body.textContent).toContain('Reasoning effort')
     expect(document.body.textContent).toContain('preserve relative strength when models change')
     expect(document.body.textContent).toContain('may approximate unsupported levels')
     expect(document.body.textContent).toContain('Providers')
     expect(document.body.textContent).not.toContain('Agent framework')
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4)
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
     expect(
       Array.from(document.body.querySelectorAll('[data-slot="settings-section"]')).map((section) =>
         section.getAttribute('aria-label')
       )
-    ).toEqual(['Active model', 'Reasoning effort', 'Scenario models', 'Providers'])
+    ).toEqual(['Main model', 'Scenario models', 'Providers'])
     expect(document.body.textContent).toContain(
       'Models for subagents, review, and image understanding.'
     )

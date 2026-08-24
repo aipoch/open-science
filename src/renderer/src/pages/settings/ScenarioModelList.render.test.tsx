@@ -64,7 +64,7 @@ describe('ScenarioModelList', () => {
     expect(visionRow?.getAttribute('aria-expanded')).toBe('false')
 
     expect(subagentRow?.textContent).toContain('Same as main model')
-    expect(reviewerRow?.textContent).toContain('Follow Active model')
+    expect(reviewerRow?.textContent).toContain('Follow main model')
     expect(visionRow?.textContent).toContain('Not configured')
     // Inherited and unconfigured rows state their routing and nothing more — no effort badge.
     expect(subagentRow?.querySelector('[data-slot="badge"]')).toBeNull()

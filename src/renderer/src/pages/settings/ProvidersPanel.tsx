@@ -16,7 +16,7 @@ import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
 import { ScenarioModelList } from './ScenarioModelList'
-import { SettingsSection } from './SettingsLayout'
+import { SettingsField, SettingsRow, SettingsSection } from './SettingsLayout'
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
 import { XaiOAuthSignInDialog } from './XaiOAuthSignInDialog'
 
@@ -396,32 +396,34 @@ const ProvidersPanel = ({
 
   return (
     <div className="space-y-5 p-5">
-      {/* Active model is its own section so the current selection reads separately from provider
-          management. */}
-      {visibleProviders.length > 0 ? (
-        <SettingsSection
-          title={t('Active model')}
-          aria-label={t('Active model')}
-          description={t('The model that drives new agent sessions.')}
-        >
-          <div className="max-w-md">
-            <ActiveModelSelect />
-          </div>
-        </SettingsSection>
-      ) : null}
-
-      {/* Model-level generation tuning; always visible, unlike the Active model section above
-          which needs at least one provider. */}
+      {/* Main model selection and reasoning effort share one section and one row, mirroring the
+          scenario model selectors below. The Model field needs at least one provider; the effort
+          control is always visible. */}
       <SettingsSection
-        title={t('Reasoning effort')}
-        aria-label={t('Reasoning effort')}
-        description={t(
-          'Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests.'
-        )}
+        title={t('Main model')}
+        aria-label={t('Main model')}
+        description={
+          <>
+            {t('The model that drives new agent sessions.')}{' '}
+            {t(
+              'Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests.'
+            )}
+          </>
+        }
       >
-        <div className="max-w-md">
-          <ReasoningEffortSelect />
-        </div>
+        <SettingsRow layout="model-effort" className="py-0 lg:grid-cols-[minmax(0,1fr)_auto]">
+          {visibleProviders.length > 0 ? (
+            <SettingsField label={t('Model')}>
+              <ActiveModelSelect />
+            </SettingsField>
+          ) : null}
+          {/* Not a SettingsField: a <label> would forward clicks to the segmented control's first
+              radio option. The styling matches SettingsField's. */}
+          <div className="grid min-w-0 gap-1.5 text-sm font-medium">
+            <span>{t('Reasoning effort')}</span>
+            <ReasoningEffortSelect />
+          </div>
+        </SettingsRow>
       </SettingsSection>
 
       {/* Subagent / Reviewer / Vision routing collapsed into a single accordion card. */}

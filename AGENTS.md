@@ -132,6 +132,7 @@ for a known set of script-specific characters and will fail on cross-script cont
 | Marketplace          | **Place de marché** | **市场**     | **市集**     | **マーケットプレイス** | **마켓플레이스**  | **Маркетплейс**          | Generic surface; retain third-party product names |
 | Connector            | **Connecteur**      | **连接器**   | **連接器**   | **コネクタ**           | **커넥터**        | **Коннектор**            | Generic noun; retain exact directory names        |
 | Main Agent           | **Agent principal** | **主智能体** | **主智能體** | **メインエージェント** | **메인 에이전트** | **Главный агент**        | Translate as a complete compound                  |
+| Main model           | **Modèle principal** | **主模型** | **主模型** | **メインモデル** | **메인 모델** | **Основная модель** | Settings main-model label; not a Main Agent role  |
 | Subagent / Subagents | **Sous-agent(s)**   | **子智能体** | **子智能體** | **サブエージェント**   | **서브에이전트**  | **Субагент / Субагенты** | Translate as a complete compound                  |
 | Shell                | **Terminal**        | **命令行**   | **命令列**   | **シェル**             | **셸**            | **Командная строка**     | User-facing label; `Notebook` remains English     |
 

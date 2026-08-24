@@ -276,7 +276,7 @@ const ScenarioModelList = (): React.JSX.Element => {
       description: t('Reviews plans and code changes before they land.'),
       summary:
         reviewerModel.mode === 'inherit'
-          ? { kind: 'inherit', label: t('Follow Active model') }
+          ? { kind: 'inherit', label: t('Follow main model') }
           : resolveFixedSummary(reviewerModel, catalog, providers, t),
       selector: <ReviewerModelSelect />
     },
