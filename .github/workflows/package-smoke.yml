@@ -43,27 +43,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  setup:
+    name: Resolve smoke matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        shell: bash
+        env:
+          PLATFORM_NAME: ${{ inputs.platform_name }}
+        run: |
+          include='[
+            {"name":"macos-arm64","os":"macos-26","platform":"mac"},
+            {"name":"macos-x64","os":"macos-26-intel","platform":"mac"},
+            {"name":"linux-x64","os":"ubuntu-latest","platform":"linux"},
+            {"name":"windows-x64","os":"windows-latest","platform":"win"}
+          ]'
+          if [ -n "$PLATFORM_NAME" ] && [ "$PLATFORM_NAME" != "all" ]; then
+            include=$(jq -c --arg name "$PLATFORM_NAME" '[.[] | select(.name == $name)]' <<<"$include")
+            if [ "$include" = "[]" ]; then
+              echo "::error::unknown platform_name '$PLATFORM_NAME'"
+              exit 1
+            fi
+          fi
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+
   smoke:
     name: Smoke ${{ matrix.name }}
+    needs: setup
+    if: ${{ needs.setup.result == 'success' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-    if: ${{ inputs.platform_name == '' || inputs.platform_name == 'all' || matrix.name == inputs.platform_name }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: macos-arm64
-            os: macos-26
-            platform: mac
-          - name: macos-x64
-            os: macos-26-intel
-            platform: mac
-          - name: linux-x64
-            os: ubuntu-latest
-            platform: linux
-          - name: windows-x64
-            os: windows-latest
-            platform: win
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
     steps:
       - name: Checkout certification tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

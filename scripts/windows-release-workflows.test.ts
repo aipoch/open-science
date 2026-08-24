@@ -21,10 +21,11 @@ type WorkflowJob = {
   env?: Record<string, string>
   if?: string
   needs?: string | string[]
+  outputs?: Record<string, string>
   permissions?: Record<string, string>
   'runs-on'?: string
   steps?: WorkflowStep[]
-  strategy?: { matrix?: Record<string, unknown> }
+  strategy?: { matrix?: unknown }
   'timeout-minutes'?: number
   uses?: string
   with?: Record<string, unknown>
@@ -129,9 +130,19 @@ describe('post-merge Windows validation', () => {
         "package-smoke-${{ github.workflow }}-${{ github.ref }}-${{ inputs.platform_name || 'all' }}",
       'cancel-in-progress': true
     })
-    expect(job.if).toBe(
-      "${{ inputs.platform_name == '' || inputs.platform_name == 'all' || matrix.name == inputs.platform_name }}"
+    const setup = smokeWorkflow.jobs.setup
+    expect(setup).toMatchObject({
+      'runs-on': 'ubuntu-latest',
+      outputs: { matrix: '${{ steps.set.outputs.matrix }}' }
+    })
+    expect(setup.steps?.[0]?.run).toContain('"name":"macos-x64","os":"macos-26-intel"')
+    expect(setup.steps?.[0]?.run).toContain(
+      'include=$(jq -c --arg name "$PLATFORM_NAME" \'[.[] | select(.name == $name)]\' <<<"$include")'
     )
+    expect(setup.steps?.[0]?.run).toContain("unknown platform_name '$PLATFORM_NAME'")
+    expect(job.needs).toBe('setup')
+    expect(job.if).toBe("${{ needs.setup.result == 'success' }}")
+    expect(job.strategy?.matrix).toBe('${{ fromJson(needs.setup.outputs.matrix) }}')
     expect(install.run).toBe('node scripts/ci/npm-ci.mjs')
     expect(download.if).toBe('${{ !inputs.install_only }}')
     expect(linux.if).toBe("${{ !inputs.install_only && matrix.platform == 'linux' }}")
@@ -285,14 +296,8 @@ describe('post-merge Windows validation', () => {
     )
     expect(upload.if).toBeUndefined()
     expect(upload.with?.['retention-days']).toBe(7)
-    expect(smoke.strategy?.matrix).toEqual({
-      include: [
-        { name: 'macos-arm64', os: 'macos-26', platform: 'mac' },
-        { name: 'macos-x64', os: 'macos-26-intel', platform: 'mac' },
-        { name: 'linux-x64', os: 'ubuntu-latest', platform: 'linux' },
-        { name: 'windows-x64', os: 'windows-latest', platform: 'win' }
-      ]
-    })
+    expect(smoke.needs).toBe('setup')
+    expect(smoke.strategy?.matrix).toBe('${{ fromJson(needs.setup.outputs.matrix) }}')
     expect(downloadPackage.with?.name).toBe('${{ matrix.name }}')
     expect(downloadPackage.with?.path).toBe('dist')
     expect(macos.if).toBe("${{ !inputs.install_only && matrix.platform == 'mac' }}")
