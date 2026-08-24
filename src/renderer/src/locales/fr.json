@@ -3530,11 +3530,7 @@
   "{{count}} lines of output_other": "{{count}} lignes de sortie",
   "done": "terminé",
   "Esc to close": "Échap pour fermer",
-  "Source {{number}}: {{title}}": "Source {{number}} : {{title}}",
   "Source preview: {{title}}": "Aperçu de la source : {{title}}",
-  "Citation-{{number}}": "Citation-{{number}}",
   "Open source in browser": "Ouvrir la source dans le navigateur",
-  "Only HTTPS sources can be previewed": "Seules les sources HTTPS peuvent être prévisualisées",
-  "Open source preview": "Ouvrir l’aperçu de la source",
-  "You are about to preview an external website.": "Vous êtes sur le point de prévisualiser un site web externe."
+  "Only HTTPS sources can be previewed": "Seules les sources HTTPS peuvent être prévisualisées"
 }

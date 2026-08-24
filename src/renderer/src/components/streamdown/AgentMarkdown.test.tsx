@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, type PropsWithChildren } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -359,11 +360,11 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(container.querySelector('[data-session-link-favicon]')).toBeNull()
   })
 
-  it('keeps the external-link safety confirmation before opening a session link', async () => {
+  it('keeps the external-link safety confirmation for a non-HTTPS session link', async () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
 
     await act(async () => {
-      root.render(<SessionMessageLink href="https://example.com/paper">Paper</SessionMessageLink>)
+      root.render(<SessionMessageLink href="http://example.com/paper">Paper</SessionMessageLink>)
     })
 
     const link = container.querySelector<HTMLButtonElement>('[data-session-message-link]')
@@ -384,74 +385,51 @@ describe('AgentMarkdown renderer recovery', () => {
       openLink?.click()
     })
 
-    expect(open).toHaveBeenCalledWith('https://example.com/paper', '_blank', 'noreferrer')
+    expect(open).toHaveBeenCalledWith('http://example.com/paper', '_blank', 'noreferrer')
   })
 
-  it('renders a numeric HTTPS link as a citation marker and opens a reusable source preview', async () => {
+  it('previews any HTTPS Agent link on hover and opens it directly in the source panel', async () => {
+    vi.useFakeTimers()
+
     await act(async () => {
       root.render(
         <SessionMessageLink
           href="https://example.com/paper#results"
           title="Genome study"
-          className="size-8 bg-primary/10 text-primary underline hover:underline focus:underline active:underline"
+          className="underline"
         >
-          1
+          Torre et al. 2026
         </SessionMessageLink>
       )
     })
 
-    const citation = container.querySelector<HTMLAnchorElement>('[data-citation-marker]')
-    expect(citation?.tagName).toBe('A')
-    expect(citation?.getAttribute('href')).toBe('https://example.com/paper#results')
-    expect(citation?.getAttribute('role')).toBe('doc-noteref')
-    expect(citation?.getAttribute('aria-label')).toBe('Source 1: Genome study')
-    expect(citation?.className).toContain('rounded-full')
-    expect(citation?.className).toContain('bg-primary')
-    expect(citation?.className).toContain('text-white')
-    expect(citation?.className).not.toContain('bg-primary/10')
-    expect(citation?.className).not.toContain('text-primary')
-    expect(citation?.className).toContain('size-[1em]')
-    expect(citation?.className).not.toContain('size-5')
-    const citationClasses = citation?.className.split(/\s+/) ?? []
-    expect(citationClasses).not.toContain('size-8')
-    expect(citationClasses).toEqual(
-      expect.arrayContaining([
-        'no-underline',
-        'hover:no-underline',
-        'focus:no-underline',
-        'active:no-underline'
-      ])
+    const sourceLink = container.querySelector<HTMLAnchorElement>('[data-source-preview-link]')
+    expect(sourceLink?.tagName).toBe('A')
+    expect(sourceLink?.getAttribute('href')).toBe('https://example.com/paper#results')
+    expect(sourceLink?.textContent).toContain('Torre et al. 2026')
+    expect(container.querySelector('[data-citation-marker]')).toBeNull()
+
+    fireEvent.pointerEnter(sourceLink!)
+    await act(async () => vi.runAllTimersAsync())
+
+    const hoverCard = document.body.querySelector<HTMLElement>('[data-source-preview-hover-card]')
+    expect(hoverCard?.textContent).toContain('Genome study')
+    expect(hoverCard?.textContent).toContain('example.com')
+    expect(hoverCard?.textContent).toContain('https://example.com/paper#results')
+    expect(hoverCard?.querySelector('[data-session-link-favicon]')).not.toBeNull()
+    const hoverCardUrl = hoverCard?.querySelector<HTMLElement>(
+      '[title="https://example.com/paper#results"]'
     )
-    expect(citationClasses).not.toEqual(
-      expect.arrayContaining([
-        'underline',
-        'hover:underline',
-        'focus:underline',
-        'active:underline'
-      ])
-    )
-    expect(citation?.querySelector<HTMLElement>('[data-citation-number]')?.style.fontSize).toBe(
-      '0.625em'
-    )
+    expect(hoverCardUrl?.className).toContain('text-text-300')
+    expect(hoverCardUrl?.className).not.toContain('text-text-400')
 
     await act(async () => {
-      citation?.click()
+      sourceLink?.click()
     })
 
-    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
-    const dialog = document.body.querySelector<HTMLElement>(
-      '[role="dialog"][aria-label="Open external link?"]'
-    )
-    expect(dialog).not.toBeNull()
-    expect(dialog?.textContent).toContain('You are about to preview an external website.')
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-
-    const openPreview = Array.from(
-      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
-    ).find((button) => button.textContent?.trim() === 'Open source preview')
-    await act(async () => {
-      openPreview?.click()
-    })
+    expect(
+      document.body.querySelector('[role="dialog"][aria-label="Open external link?"]')
+    ).toBeNull()
 
     expect(usePreviewWorkbenchStore.getState()).toMatchObject({
       panelState: 'open',
@@ -460,7 +438,6 @@ describe('AgentMarkdown renderer recovery', () => {
         expect.objectContaining({
           id: 'source:https://example.com/paper#results',
           type: 'source',
-          citationNumber: '1',
           title: 'Genome study',
           url: 'https://example.com/paper#results'
         })
@@ -468,26 +445,25 @@ describe('AgentMarkdown renderer recovery', () => {
     })
   })
 
-  it('shrinks longer citation numbers to fit the fixed circular marker', async () => {
-    const renderedScales: number[] = []
+  it('uses the visible HTTPS link label as the source title when Markdown has no title', async () => {
+    await act(async () => {
+      root.render(
+        <SessionMessageLink href="https://example.com/source">
+          <strong>
+            Torre et al. <em>2026</em>
+          </strong>
+        </SessionMessageLink>
+      )
+    })
 
-    for (const citationNumber of ['1', '12', '123', '1234', '12345']) {
-      await act(async () => {
-        root.render(
-          <SessionMessageLink href={`https://example.com/source-${citationNumber}`}>
-            {citationNumber}
-          </SessionMessageLink>
-        )
-      })
+    await act(async () => {
+      container.querySelector<HTMLAnchorElement>('[data-source-preview-link]')?.click()
+    })
 
-      const number = container.querySelector<HTMLElement>('[data-citation-number]')
-      const scale = Number.parseFloat(number?.style.fontSize ?? '')
-      renderedScales.push(scale)
-      expect(scale).toBeGreaterThan(0)
-      expect(scale * citationNumber.length).toBeLessThanOrEqual(1.35)
-    }
-
-    expect(renderedScales).toEqual([0.625, 0.625, 0.45, 0.3375, 0.27])
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      title: 'Torre et al. 2026',
+      url: 'https://example.com/source'
+    })
   })
 
   it('keeps a numeric non-HTTPS link on the external-link safety path', async () => {
@@ -499,26 +475,27 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(container.querySelector('[data-session-message-link]')).not.toBeNull()
   })
 
-  it('routes middle-click citation activation through the safety confirmation', async () => {
+  it('routes middle-click HTTPS activation directly to the source panel', async () => {
     await act(async () => {
       root.render(
         <SessionMessageLink href="https://example.com/paper" title="Genome study">
-          1
+          Genome study
         </SessionMessageLink>
       )
     })
 
-    const citation = container.querySelector<HTMLAnchorElement>('[data-citation-marker]')
+    const sourceLink = container.querySelector<HTMLAnchorElement>('[data-source-preview-link]')
     const auxClick = new MouseEvent('auxclick', { bubbles: true, button: 1, cancelable: true })
     await act(async () => {
-      citation?.dispatchEvent(auxClick)
+      sourceLink?.dispatchEvent(auxClick)
     })
-    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
 
     expect(auxClick.defaultPrevented).toBe(true)
     expect(
       document.body.querySelector('[role="dialog"][aria-label="Open external link?"]')
-    ).not.toBeNull()
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    ).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
+      'source:https://example.com/paper'
+    )
   })
 })

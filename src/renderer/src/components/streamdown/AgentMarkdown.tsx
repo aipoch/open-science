@@ -2,6 +2,7 @@
 import {
   Component,
   Children,
+  isValidElement,
   memo,
   useMemo,
   useState,
@@ -26,7 +27,7 @@ import { useSmoothStreamingContent } from './use-smooth-streaming-content'
 import { cn } from '@/lib/utils'
 import { createSourcePreviewItem } from '@/lib/source-preview'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 
 type AgentMarkdownProps = {
   content: string
@@ -60,20 +61,47 @@ const getSessionLinkFaviconUrl = (href: string | undefined): string | undefined 
   }
 }
 
-const getCitationNumber = (children: ReactNode): string | undefined => {
-  const parts = Children.toArray(children)
-  if (!parts.every((part) => typeof part === 'string' || typeof part === 'number')) return undefined
-
-  const label = parts.join('').trim()
-  return /^\d+$/u.test(label) ? label : undefined
+const getSessionLinkText = (children: ReactNode): string | undefined => {
+  const label = Children.toArray(children)
+    .map((part) => {
+      if (typeof part === 'string' || typeof part === 'number') return String(part)
+      if (isValidElement<{ children?: ReactNode }>(part)) {
+        return getSessionLinkText(part.props.children) ?? ''
+      }
+      return ''
+    })
+    .join('')
+    .replace(/\s+/gu, ' ')
+    .trim()
+  return label || undefined
 }
 
-const SessionLinkFavicon = ({ src }: { src: string }): React.JSX.Element => {
+const SessionLinkFavicon = ({
+  src,
+  className
+}: {
+  src: string
+  className?: string
+}): React.JSX.Element => {
   const [state, setState] = useState<FaviconState>('loading')
 
   return (
-    <span data-session-link-favicon="" data-state={state} aria-hidden="true">
-      <Globe2 data-session-link-favicon-fallback="" />
+    <span
+      data-session-link-favicon=""
+      data-state={state}
+      aria-hidden="true"
+      className={cn(
+        'relative me-[0.3em] inline-grid size-[1em] place-items-center align-[-0.125em] text-sd-muted',
+        className
+      )}
+    >
+      <Globe2
+        data-session-link-favicon-fallback=""
+        className={cn(
+          'absolute inset-0 m-0! size-full! max-w-none! border-0! bg-transparent! p-0! transition-opacity duration-150',
+          state === 'success' ? 'opacity-0' : state === 'loading' ? 'opacity-50' : 'opacity-75'
+        )}
+      />
       {state !== 'error' ? (
         <img
           src={src}
@@ -84,6 +112,10 @@ const SessionLinkFavicon = ({ src }: { src: string }): React.JSX.Element => {
           decoding="async"
           referrerPolicy="no-referrer"
           draggable={false}
+          className={cn(
+            'absolute inset-0 m-0! size-full! max-w-none! rounded-none! border-0! bg-transparent! p-0! transition-opacity duration-150',
+            state === 'success' ? 'opacity-100' : 'opacity-0'
+          )}
           onLoad={() => setState('success')}
           onError={() => setState('error')}
         />
@@ -99,81 +131,64 @@ const SessionMessageLink = ({
   title,
   'data-incomplete': dataIncomplete
 }: SessionMessageLinkProps): React.JSX.Element => {
-  const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
   const upsertAndActivateItem = usePreviewWorkbenchStore((state) => state.upsertAndActivateItem)
   const faviconUrl = getSessionLinkFaviconUrl(href)
-  const citationNumber = getCitationNumber(children)
-  const sourceItem =
-    href && citationNumber
-      ? createSourcePreviewItem({
-          href,
-          citationNumber,
-          title: typeof title === 'string' ? title : undefined
-        })
-      : undefined
+  const sourceItem = href
+    ? createSourcePreviewItem({
+        href,
+        title:
+          typeof title === 'string' && title.trim() ? title.trim() : getSessionLinkText(children)
+      })
+    : undefined
 
-  if (citationNumber && sourceItem) {
-    const accessibleLabel = t('Source {{number}}: {{title}}', {
-      number: citationNumber,
-      title: sourceItem.title
-    })
+  if (sourceItem) {
     const hostname = new URL(sourceItem.url).hostname
-    const citationNumberFontScale = Math.min(0.625, 1.35 / citationNumber.length)
 
     return (
-      <>
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <a
-                href={sourceItem.url}
-                role="doc-noteref"
-                aria-label={accessibleLabel}
-                data-citation-marker=""
-                data-incomplete={dataIncomplete}
-                className={cn(
-                  'mx-0.5 inline-flex shrink-0 align-text-bottom items-center justify-center rounded-full font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-                  className,
-                  'size-[1em] bg-primary text-white no-underline hover:bg-primary/90 hover:no-underline focus:no-underline active:no-underline'
-                )}
-                onFocus={(event) => {
-                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
-                }}
-                onClick={(event) => {
-                  event.preventDefault()
-                  setIsOpen(true)
-                }}
-                onAuxClick={(event) => {
-                  if (event.button !== 1) return
-                  event.preventDefault()
-                  setIsOpen(true)
-                }}
-              >
-                <span
-                  data-citation-number=""
-                  className="leading-none tabular-nums"
-                  style={{ fontSize: `${citationNumberFontScale}em` }}
-                >
-                  {citationNumber}
-                </span>
-              </a>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              <span className="block font-medium">{accessibleLabel}</span>
-              <span className="block opacity-75">{hostname}</span>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-        <LinkSafetyModal
-          url={sourceItem.url}
-          isOpen={isOpen}
-          onClose={() => setIsOpen(false)}
-          onConfirm={() => upsertAndActivateItem(sourceItem)}
-          description={t('You are about to preview an external website.')}
-          confirmLabel={t('Open source preview')}
-        />
-      </>
+      <HoverCard openDelay={350} closeDelay={150}>
+        <HoverCardTrigger asChild>
+          <a
+            href={sourceItem.url}
+            data-source-preview-link=""
+            data-incomplete={dataIncomplete}
+            data-session-message-link=""
+            data-streamdown="link"
+            className={className}
+            onClick={(event) => {
+              event.preventDefault()
+              upsertAndActivateItem(sourceItem)
+            }}
+            onAuxClick={(event) => {
+              if (event.button !== 1) return
+              event.preventDefault()
+              upsertAndActivateItem(sourceItem)
+            }}
+          >
+            {faviconUrl ? <SessionLinkFavicon key={faviconUrl} src={faviconUrl} /> : null}
+            {children}
+          </a>
+        </HoverCardTrigger>
+        <HoverCardContent side="top" data-source-preview-hover-card="">
+          <div className="flex min-w-0 items-start gap-2.5">
+            {faviconUrl ? (
+              <SessionLinkFavicon className="mt-0.5 me-0 size-5 shrink-0" src={faviconUrl} />
+            ) : null}
+            <div className="min-w-0 flex-1">
+              <div className="break-words text-sm font-medium leading-5 text-text-100">
+                {sourceItem.title}
+              </div>
+              <div className="truncate text-xs leading-4 text-text-300">{hostname}</div>
+            </div>
+          </div>
+          <div
+            className="mt-2 break-all text-[11px] leading-4 text-text-300"
+            title={sourceItem.url}
+          >
+            {sourceItem.url}
+          </div>
+        </HoverCardContent>
+      </HoverCard>
     )
   }
 

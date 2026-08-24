@@ -26,11 +26,13 @@ describe('SessionMessageMarkdown integration', () => {
     container.remove()
   })
 
-  it('preserves a citation title through the message artifact link renderer', async () => {
+  it('preserves an HTTPS source title through the message artifact link renderer', async () => {
     await act(async () => {
       root.render(
         <SessionMessageMarkdown
-          content={'The evidence supports this claim.[1](https://example.com/paper "Genome study")'}
+          content={
+            'The evidence supports this claim ([Torre et al. 2026](https://example.com/paper "Genome study")).'
+          }
           artifacts={[]}
           onPreviewArtifact={vi.fn()}
           onPreviewArtifactModal={vi.fn()}
@@ -38,7 +40,16 @@ describe('SessionMessageMarkdown integration', () => {
       )
     })
 
-    const citation = container.querySelector<HTMLAnchorElement>('[data-citation-marker]')
-    expect(citation?.getAttribute('aria-label')).toBe('Source 1: Genome study')
+    const sourceLink = container.querySelector<HTMLAnchorElement>('[data-source-preview-link]')
+    expect(sourceLink?.textContent).toContain('Torre et al. 2026')
+
+    await act(async () => {
+      sourceLink?.click()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      title: 'Genome study',
+      url: 'https://example.com/paper'
+    })
   })
 })

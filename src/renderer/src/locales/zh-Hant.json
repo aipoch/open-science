@@ -3256,11 +3256,7 @@
   "{{count}} lines of output_other": "{{count}} 行輸出",
   "done": "完成",
   "Esc to close": "按 Esc 關閉",
-  "Source {{number}}: {{title}}": "來源 {{number}}：{{title}}",
   "Source preview: {{title}}": "來源預覽：{{title}}",
-  "Citation-{{number}}": "引用-{{number}}",
   "Open source in browser": "在瀏覽器中開啟來源",
-  "Only HTTPS sources can be previewed": "僅支援預覽 HTTPS 來源",
-  "Open source preview": "開啟來源預覽",
-  "You are about to preview an external website.": "你即將預覽一個外部網站。"
+  "Only HTTPS sources can be previewed": "僅支援預覽 HTTPS 來源"
 }

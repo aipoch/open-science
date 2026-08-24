@@ -72,7 +72,6 @@ export type PreviewToolItem = PreviewItemBase & {
 
 export type PreviewSourceItem = PreviewItemBase & {
   type: 'source'
-  citationNumber: string
   url: string
 }
 

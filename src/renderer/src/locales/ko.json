@@ -3254,11 +3254,7 @@
   "{{count}} lines of output_other": "출력 {{count}}줄",
   "done": "완료",
   "Esc to close": "Esc로 닫기",
-  "Source {{number}}: {{title}}": "출처 {{number}}: {{title}}",
   "Source preview: {{title}}": "출처 미리보기: {{title}}",
-  "Citation-{{number}}": "인용-{{number}}",
   "Open source in browser": "브라우저에서 출처 열기",
-  "Only HTTPS sources can be previewed": "HTTPS 출처만 미리 볼 수 있습니다",
-  "Open source preview": "출처 미리보기 열기",
-  "You are about to preview an external website.": "외부 웹사이트 미리보기를 열려고 합니다."
+  "Only HTTPS sources can be previewed": "HTTPS 출처만 미리 볼 수 있습니다"
 }

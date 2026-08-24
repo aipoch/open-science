@@ -27,7 +27,7 @@ const SourceWebPreview = ({ item }: { item: PreviewSourceItem }): React.JSX.Elem
         <Link2 className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[12px] font-medium text-text-100">{item.title}</div>
-          <div className="truncate text-[10px] text-text-400" title={sourceUrl.href}>
+          <div className="truncate text-[10px] text-text-300" title={sourceUrl.href}>
             {sourceUrl.href}
           </div>
         </div>

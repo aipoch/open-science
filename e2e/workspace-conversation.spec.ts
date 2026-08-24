@@ -166,12 +166,14 @@ test('shows context compaction loading and completion inside the Session transcr
   }
 })
 
-test('opens a claim citation in the isolated HTTPS source preview tab', async ({
+test('previews and opens an Agent HTTPS source link in the isolated preview tab', async ({
   app
 }, testInfo) => {
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
+  let sourceDocumentRequestCount = 0
   await page.route('https://citation.example/paper', async (route) => {
+    sourceDocumentRequestCount += 1
     await route.fulfill({
       contentType: 'text/html',
       body: '<!doctype html><html><body><main><h1>Fixture source</h1><p>Peer-reviewed evidence.</p></main></body></html>'
@@ -182,26 +184,10 @@ test('opens a claim citation in the isolated HTTPS source preview tab', async ({
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(CITATION_PREVIEW_PROMPT)
   await page.getByRole('button', { name: 'Send message' }).click()
 
-  const citation = page.getByRole('link', { name: 'Source 1: Fixture study' })
-  await expect(citation).toBeVisible()
-  const citationMetrics = await citation.evaluate((element) => {
-    const style = getComputedStyle(element)
-    const parentStyle = getComputedStyle(element.parentElement as HTMLElement)
-
-    return {
-      backgroundColor: style.backgroundColor,
-      color: style.color,
-      height: element.getBoundingClientRect().height,
-      parentFontSize: Number.parseFloat(parentStyle.fontSize),
-      textDecorationLine: style.textDecorationLine
-    }
-  })
-  expect(citationMetrics.height).toBeLessThanOrEqual(citationMetrics.parentFontSize + 0.5)
-  expect(citationMetrics.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
-  expect(citationMetrics.color).toBe('rgb(255, 255, 255)')
-  expect(citationMetrics.textDecorationLine).toBe('none')
+  const sourceLink = page.getByRole('link', { name: 'Torre et al. 2026' })
+  await expect(sourceLink).toBeVisible()
   await page.evaluate(await readFile(AXE_PATH, 'utf8'))
-  const citationAccessibility = (await citation.evaluate(async (element) => {
+  const citationAccessibility = (await sourceLink.evaluate(async (element) => {
     const axe = (
       globalThis as unknown as {
         axe: { run: (context: Element, options: unknown) => Promise<unknown> }
@@ -217,24 +203,33 @@ test('opens a claim citation in the isolated HTTPS source preview tab', async ({
       ({ impact }) => impact === 'critical' || impact === 'serious'
     )
   ).toEqual([])
-  await citation.hover()
-  await expect(page.getByRole('tooltip')).toContainText('citation.example')
-  await citation.click()
-  const safetyDialog = page.getByRole('dialog', { name: 'Open external link?' })
-  await expect(safetyDialog).toContainText('You are about to preview an external website.')
-  await safetyDialog.getByRole('button', { name: 'Open source preview' }).click()
+  await sourceLink.hover()
+  const hoverCard = page.locator('[data-source-preview-hover-card]')
+  await expect(hoverCard).toContainText('Fixture study')
+  await expect(hoverCard).toContainText('citation.example')
+  await expect(hoverCard).toContainText('https://citation.example/paper')
+  expect(sourceDocumentRequestCount).toBe(0)
+  await expect(page.locator('[data-source-preview-frame]')).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('source-link-hover-card.png') })
+  await sourceLink.click()
+  await expect(page.getByRole('dialog', { name: 'Open external link?' })).toHaveCount(0)
 
-  await expect(page.getByRole('tab', { name: 'Citation-1' })).toHaveAttribute(
+  await expect(page.getByRole('tab', { name: 'Fixture study' })).toHaveAttribute(
     'aria-selected',
     'true'
   )
   const sourceFrame = page.locator('[data-source-preview-frame]')
   await expect(sourceFrame).toHaveAttribute('src', 'https://citation.example/paper')
+  await expect.poll(() => sourceDocumentRequestCount).toBe(1)
   await expect(sourceFrame).toHaveAttribute('sandbox', 'allow-same-origin allow-scripts')
   await expect(sourceFrame).toHaveAttribute('referrerpolicy', 'no-referrer')
   await expect(sourceFrame).toHaveAttribute('name', 'open-science-source-preview')
-  await expect(page.getByText('Fixture study', { exact: true })).toBeVisible()
-  await expect(page.getByText('https://citation.example/paper', { exact: true })).toBeVisible()
+  const sourcePreview = sourceFrame.locator('..')
+  const sourceHeader = sourcePreview.locator('header')
+  await expect(sourceHeader.getByText('Fixture study', { exact: true })).toBeVisible()
+  await expect(
+    sourceHeader.getByText('https://citation.example/paper', { exact: true })
+  ).toBeVisible()
   await expect(
     page.frameLocator('[data-source-preview-frame]').getByRole('heading', {
       name: 'Fixture source'

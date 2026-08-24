@@ -3256,11 +3256,7 @@
   "{{count}} lines of output_other": "{{count}} 行の出力",
   "done": "完了",
   "Esc to close": "Esc で閉じる",
-  "Source {{number}}: {{title}}": "出典 {{number}}：{{title}}",
   "Source preview: {{title}}": "出典のプレビュー：{{title}}",
-  "Citation-{{number}}": "引用-{{number}}",
   "Open source in browser": "ブラウザーで出典を開く",
-  "Only HTTPS sources can be previewed": "HTTPS の出典のみプレビューできます",
-  "Open source preview": "出典のプレビューを開く",
-  "You are about to preview an external website.": "外部ウェブサイトをプレビューしようとしています。"
+  "Only HTTPS sources can be previewed": "HTTPS の出典のみプレビューできます"
 }

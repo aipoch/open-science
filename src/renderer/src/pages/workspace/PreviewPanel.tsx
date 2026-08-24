@@ -111,8 +111,7 @@ const PreviewTab = ({
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const tabTitle =
-    tab.type === 'source' ? t('Citation-{{number}}', { number: tab.citationNumber }) : tab.title
+  const tabTitle = tab.title
 
   return (
     <div
