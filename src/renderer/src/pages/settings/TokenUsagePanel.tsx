@@ -48,10 +48,14 @@ const readCachedUsageProjection = (
 ): UsageProjectionLoadResult | undefined => {
   if (!loadUsage) return undefined
   const cached = usageProjectionCache.get(loadUsage)
-  return cached?.lastRefreshedAt !== undefined &&
+  if (
+    cached?.lastRefreshedAt !== undefined &&
     Date.now() - cached.lastRefreshedAt < USAGE_PROJECTION_CACHE_TTL_MS
-    ? cached
-    : undefined
+  ) {
+    return cached
+  }
+  usageProjectionCache.delete(loadUsage)
+  return undefined
 }
 
 const PERIODS: ReadonlyArray<{ value: TokenUsagePeriod; label: string; shortLabel: string }> = [
