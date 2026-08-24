@@ -3558,5 +3558,7 @@
   "Removed packages": "Paquets supprimés",
   "Removed {{count}} packages_one": "{{count}} paquet supprimé",
   "Removed {{count}} packages_many": "{{count}} paquets supprimés",
-  "Removed {{count}} packages_other": "{{count}} paquets supprimés"
+  "Removed {{count}} packages_other": "{{count}} paquets supprimés",
+  "Bioconductor": "Bioconductor",
+  "Related changes": "Modifications associées"
 }

@@ -3674,5 +3674,7 @@
   "Removed {{count}} packages_one": "Удалён {{count}} пакет",
   "Removed {{count}} packages_few": "Удалено {{count}} пакета",
   "Removed {{count}} packages_many": "Удалено {{count}} пакетов",
-  "Removed {{count}} packages_other": "Удалено {{count}} пакета"
+  "Removed {{count}} packages_other": "Удалено {{count}} пакета",
+  "Bioconductor": "Bioconductor",
+  "Related changes": "Связанные изменения"
 }

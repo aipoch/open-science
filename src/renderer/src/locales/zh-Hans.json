@@ -3276,5 +3276,7 @@
   "Installed packages": "已安装软件包",
   "Installed {{count}} packages_other": "已安装 {{count}} 个软件包",
   "Removed packages": "已移除软件包",
-  "Removed {{count}} packages_other": "已移除 {{count}} 个软件包"
+  "Removed {{count}} packages_other": "已移除 {{count}} 个软件包",
+  "Bioconductor": "Bioconductor",
+  "Related changes": "相关变更"
 }

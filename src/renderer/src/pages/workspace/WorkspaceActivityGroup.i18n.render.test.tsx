@@ -265,6 +265,82 @@ describe('WorkspaceActivityGroup i18n', () => {
     )
   })
 
+  it('shows a verified GitHub package and keeps related changes collapsed', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-github',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-github',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: {
+                  language: 'r',
+                  packages: ['tidyverse/ggplot2@main'],
+                  installer: 'github'
+                },
+                rawOutput: {
+                  structuredContent: {
+                    ok: true,
+                    needsRestart: true,
+                    method: 'github',
+                    environmentName: 'analysis-r',
+                    packageChanges: [
+                      {
+                        name: 'ggplot2',
+                        relationship: 'requested',
+                        change: 'installed',
+                        afterVersion: '4.0.0.9000',
+                        source: {
+                          type: 'github',
+                          repository: 'tidyverse/ggplot2',
+                          ref: 'main',
+                          commit: 'a7b92f1'
+                        }
+                      },
+                      {
+                        name: 'S7',
+                        relationship: 'unattributed',
+                        change: 'updated',
+                        beforeVersion: '0.1.0',
+                        afterVersion: '0.2.0'
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{}}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const progress = container.querySelector('[data-testid="manage-packages-progress"]')
+    expect(progress?.textContent).toContain('R · analysis-r · GitHub')
+    expect(progress?.textContent).toContain('ggplot2')
+    expect(progress?.textContent).toContain('4.0.0.9000')
+    expect(progress?.textContent).toContain('tidyverse/ggplot2@main')
+    expect(progress?.textContent).toContain('Related changes')
+    expect(progress?.querySelector('details')?.hasAttribute('open')).toBe(false)
+    expect(
+      progress?.querySelector('[data-testid="manage-packages-related-row"]')?.textContent
+    ).toContain('S7')
+  })
+
   it('renders a completed tool with ok false as a package failure', () => {
     act(() => {
       root.render(

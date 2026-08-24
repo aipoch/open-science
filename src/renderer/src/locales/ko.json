@@ -3274,5 +3274,7 @@
   "Installed packages": "패키지 설치 완료",
   "Installed {{count}} packages_other": "패키지 {{count}}개 설치 완료",
   "Removed packages": "패키지 제거 완료",
-  "Removed {{count}} packages_other": "패키지 {{count}}개 제거 완료"
+  "Removed {{count}} packages_other": "패키지 {{count}}개 제거 완료",
+  "Bioconductor": "Bioconductor",
+  "Related changes": "관련 변경 사항"
 }

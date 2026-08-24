@@ -3276,5 +3276,7 @@
   "Installed packages": "パッケージをインストールしました",
   "Installed {{count}} packages_other": "{{count}} 個のパッケージをインストールしました",
   "Removed packages": "パッケージを削除しました",
-  "Removed {{count}} packages_other": "{{count}} 個のパッケージを削除しました"
+  "Removed {{count}} packages_other": "{{count}} 個のパッケージを削除しました",
+  "Bioconductor": "Bioconductor",
+  "Related changes": "関連する変更"
 }

@@ -48,6 +48,7 @@ type PackageDetail = {
   name: string
   change?: string
   version?: string
+  source?: string
 }
 
 // A renderer-only projection for the long-running package tool. It deliberately derives everything
@@ -80,11 +81,20 @@ const WorkspaceManagePackagesActivityRow = ({
           typeof change === 'object' && change !== null && !Array.isArray(change)
       )
     : []
-  const packageDetails: PackageDetail[] = requestedPackages.map((name) => {
-    const change = packageChanges.find(
-      (candidate) =>
-        typeof candidate.name === 'string' && candidate.name.toLowerCase() === name.toLowerCase()
-    )
+  const detailFromChange = (change: Record<string, unknown>): PackageDetail => {
+    const name = typeof change.name === 'string' ? change.name : ''
+    const source =
+      change.source && typeof change.source === 'object' && !Array.isArray(change.source)
+        ? (change.source as Record<string, unknown>)
+        : undefined
+    const sourceLabel =
+      source?.type === 'github' && typeof source.repository === 'string'
+        ? `${source.repository}${typeof source.ref === 'string' ? `@${source.ref}` : ''}`
+        : source?.type === 'bioconductor'
+          ? [t('Bioconductor'), typeof source.version === 'string' ? source.version : null]
+              .filter(Boolean)
+              .join(' ')
+          : undefined
     const beforeVersion =
       typeof change?.beforeVersion === 'string' ? change.beforeVersion.trim() : undefined
     const afterVersion =
@@ -99,17 +109,42 @@ const WorkspaceManagePackagesActivityRow = ({
     return {
       name,
       change: typeof change?.change === 'string' ? change.change : undefined,
-      version: version || undefined
+      version: version || undefined,
+      source: sourceLabel
     }
-  })
+  }
+  const requestedChanges = packageChanges.filter((change) => change.relationship === 'requested')
+  const packageDetails: PackageDetail[] =
+    requestedChanges.length > 0
+      ? requestedChanges.map(detailFromChange).filter((detail) => detail.name)
+      : requestedPackages.map((name) => {
+          const change = packageChanges.find(
+            (candidate) =>
+              typeof candidate.name === 'string' &&
+              candidate.name.toLowerCase() === name.toLowerCase()
+          )
+          return change ? detailFromChange(change) : { name }
+        })
+  const relatedPackageDetails = packageChanges
+    .filter((change) => change.relationship !== 'requested' && change.change !== 'unchanged')
+    .map(detailFromChange)
+    .filter((detail) => detail.name)
   const languageLabel =
     input?.language === 'r' ? 'R' : input?.language === 'python' ? 'Python' : null
   const installer =
     typeof result?.method === 'string' && result.method.trim()
-      ? result.method.trim()
-      : input?.usePip === true
-        ? 'pip'
-        : 'conda'
+      ? result.method === 'biocmanager'
+        ? t('Bioconductor')
+        : result.method === 'github'
+          ? 'GitHub'
+          : result.method.trim()
+      : input?.installer === 'biocmanager'
+        ? t('Bioconductor')
+        : input?.installer === 'github'
+          ? 'GitHub'
+          : input?.usePip === true
+            ? 'pip'
+            : 'conda'
   const environmentName =
     typeof result?.environmentName === 'string' && result.environmentName.trim()
       ? result.environmentName.trim()
@@ -215,6 +250,11 @@ const WorkspaceManagePackagesActivityRow = ({
                 >
                   <span className="min-w-0" title={detail.name}>
                     <span className="block truncate font-medium text-text-000">{detail.name}</span>
+                    {detail.source ? (
+                      <span className="block truncate text-[11px] text-text-200">
+                        {detail.source}
+                      </span>
+                    ) : null}
                     <span
                       className={cn(
                         'mt-0.5 block text-[11px] sm:hidden',
@@ -257,6 +297,43 @@ const WorkspaceManagePackagesActivityRow = ({
             })}
           </div>
         </div>
+      ) : null}
+      {relatedPackageDetails.length > 0 ? (
+        <details className="group ml-[26px] border-b border-border-200 text-[12px]">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 py-2 text-text-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
+            <span className="inline-flex items-center gap-1.5 font-medium text-text-000">
+              <span
+                aria-hidden="true"
+                className="inline-block transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none"
+              >
+                ›
+              </span>
+              {t('Related changes')}
+            </span>
+            <span className="tabular-nums">{relatedPackageDetails.length}</span>
+          </summary>
+          <div className="divide-y divide-border-200 border-t border-border-200">
+            {relatedPackageDetails.map((detail, index) => (
+              <div
+                key={`${detail.name}-${index}`}
+                className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-2.5 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(76px,auto)_minmax(88px,auto)]"
+                data-testid="manage-packages-related-row"
+              >
+                <span className="min-w-0 truncate font-medium text-text-000">{detail.name}</span>
+                <span className="hidden text-text-100 sm:block">
+                  {detail.change === 'updated'
+                    ? t('Updated')
+                    : detail.change === 'removed'
+                      ? t('Removed')
+                      : t('Installed')}
+                </span>
+                <span className="truncate text-right font-mono tabular-nums text-text-100">
+                  {detail.version ?? '—'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
       ) : null}
       <div className="ml-[26px] mt-2">
         {isActive ? (
