@@ -315,6 +315,8 @@ describe('ComposerEditor', () => {
     ).toBe(true)
     expect(document.activeElement).toBe(root)
     expect(window.getSelection()?.anchorNode?.nodeType).toBe(Node.TEXT_NODE)
+    expect(window.getSelection()?.anchorNode?.textContent).toBe('\u2060')
+    expect(window.getSelection()?.anchorOffset).toBe(0)
   })
 
   it('preserves the caret after a pasted-text anchor when upload metadata changes', () => {

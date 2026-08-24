@@ -16,11 +16,13 @@ import { ArtifactMentionPopup, type PickedArtifact } from './ArtifactMentionPopu
 import {
   applyDocToDom,
   createPastedTextAnchor,
+  createPastedTextCaretHost,
   docArtifactCount,
   docSessionCount,
   domToDoc,
   MAX_COMPOSER_ARTIFACT_MENTIONS,
   MAX_COMPOSER_SESSION_MENTIONS,
+  PASTED_TEXT_CARET_MARKER,
   shouldAttachPastedText,
   syncPastedTextAnchors,
   type ComposerCaretPosition,
@@ -127,9 +129,11 @@ const insertPastedTextAtCaret = (node: ComposerPastedTextNode): void => {
   const inserted = createPastedTextAnchor(node)
   range.insertNode(inserted)
   let caretHost = inserted.nextSibling
-  if (caretHost?.nodeType !== Node.TEXT_NODE) {
-    caretHost = document.createTextNode('')
-    inserted.after(caretHost)
+  if (caretHost?.nodeType !== Node.TEXT_NODE || caretHost.textContent === '') {
+    const drawableHost = createPastedTextCaretHost()
+    if (caretHost?.nodeType === Node.TEXT_NODE) caretHost.replaceWith(drawableHost)
+    else inserted.after(drawableHost)
+    caretHost = drawableHost
   }
   range.setStart(caretHost, 0)
   range.collapse(true)
@@ -189,8 +193,9 @@ const moveCaretToEnd = (root: HTMLElement): void => {
   root.focus()
   const range = document.createRange()
   const last = root.lastChild
-  if (last?.nodeType === Node.TEXT_NODE && last.textContent === '') range.setStart(last, 0)
-  else {
+  if (last?.nodeType === Node.TEXT_NODE && last.textContent?.endsWith(PASTED_TEXT_CARET_MARKER)) {
+    range.setStart(last, last.textContent.length - PASTED_TEXT_CARET_MARKER.length)
+  } else {
     range.selectNodeContents(root)
     range.collapse(false)
   }

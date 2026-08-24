@@ -1789,7 +1789,7 @@ describe('ConversationPanel composer intake', () => {
               {
                 type: 'pasted-text',
                 id: 'paste-1',
-                text: 'payload',
+                text: '<div class="contents">long payload',
                 attachmentId: attachment.id
               },
               { type: 'text', text: ' after' }
@@ -1810,7 +1810,10 @@ describe('ConversationPanel composer intake', () => {
     )
 
     expect(card?.getAttribute('data-state')).toBe('success')
-    expect(card?.textContent).toContain('Pasted text.txt')
+    expect(card?.className).toContain('h-9')
+    expect(card?.className).not.toContain('h-12')
+    expect(card?.textContent).toContain('<div class="contents...')
+    expect(card?.textContent).not.toContain('Pasted text.txt')
     expect(restore?.querySelector('span')?.className).toContain('whitespace-nowrap')
     act(() => restore?.click())
     expect(restorePastedText).toHaveBeenCalledWith('paste-1')

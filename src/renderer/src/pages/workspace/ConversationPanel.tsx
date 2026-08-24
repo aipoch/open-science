@@ -167,6 +167,8 @@ const composerCancelButtonClassName = cn(
 const composerContentClassName = 'mx-auto w-full max-w-4xl'
 const attachmentChipClassName =
   'flex h-9 min-w-0 max-w-[220px] items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-2 text-text-000'
+const pastedTextPreviewName = (text: string): string =>
+  `${Array.from(text.trim().replace(/\s+/gu, ' ')).slice(0, 20).join('')}...`
 const attachmentRemoveButtonClassName = cn(
   "relative flex size-6 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-2 [@media(pointer:coarse)]:before:content-['']",
   composerInteractiveTransitionClassName
@@ -1350,7 +1352,7 @@ const ConversationPanel = ({
                                 key={attachment.id}
                                 data-pasted-text-attachment={pastedText ? 'true' : undefined}
                                 data-state={pastedText ? 'success' : undefined}
-                                className={cn(attachmentChipClassName, pastedText && 'h-12')}
+                                className={attachmentChipClassName}
                               >
                                 <AttachmentIcon
                                   className="size-4 shrink-0 text-text-300"
@@ -1364,10 +1366,9 @@ const ConversationPanel = ({
                                     disabled={!canEditDraft}
                                     onClick={() => onRestorePastedText(pastedText.id)}
                                   >
-                                    <ExtensionPreservingFileName
-                                      name={attachmentName}
-                                      className="w-full text-[12px] leading-4"
-                                    />
+                                    <span className="w-full truncate whitespace-nowrap text-[12px] leading-4">
+                                      {pastedTextPreviewName(pastedText.text)}
+                                    </span>
                                     <span className="flex items-center gap-0.5 whitespace-nowrap text-[11px] leading-3 text-text-300">
                                       {t('Show in text field')}
                                       <ChevronRight

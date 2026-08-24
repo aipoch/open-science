@@ -292,7 +292,9 @@ const SKILL_MENTION_TYPE = 'skill'
 const ARTIFACT_MENTION_TYPE = 'artifact'
 const SESSION_MENTION_TYPE = 'session'
 const PASTED_TEXT_NODE_TYPE = 'pasted-text'
+export const PASTED_TEXT_CARET_MARKER = '\u2060'
 const pastedTextByAnchor = new WeakMap<HTMLElement, ComposerPastedTextNode>()
+const pastedTextCaretHosts = new WeakSet<Text>()
 
 // Read one artifact chip element back into a node; returns null when required attributes are missing.
 const artifactNodeFromEl = (el: HTMLElement): ComposerArtifactNode | null => {
@@ -321,7 +323,10 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
   const nodes: ComposerNode[] = []
   for (const child of Array.from(root.childNodes)) {
     if (child.nodeType === Node.TEXT_NODE) {
-      const text = child.textContent ?? ''
+      const rawText = child.textContent ?? ''
+      const text = pastedTextCaretHosts.has(child as Text)
+        ? rawText.replace(PASTED_TEXT_CARET_MARKER, '')
+        : rawText
       if (text === '') continue
       const last = nodes[nodes.length - 1]
       // Merge into a preceding text node so adjacent text collapses.
@@ -464,6 +469,12 @@ export const createPastedTextAnchor = (node: ComposerPastedTextNode): HTMLSpanEl
   return span
 }
 
+export const createPastedTextCaretHost = (): Text => {
+  const host = document.createTextNode(PASTED_TEXT_CARET_MARKER)
+  pastedTextCaretHosts.add(host)
+  return host
+}
+
 // Refresh renderer-only upload metadata without replacing anchor elements, which would discard the
 // browser selection when an upload finishes binding while the user keeps typing after the paste.
 export const syncPastedTextAnchors = (root: HTMLElement, doc: ComposerDoc): void => {
@@ -491,5 +502,5 @@ export const applyDocToDom = (root: HTMLElement, doc: ComposerDoc): void => {
     else if (node.type === 'session') root.appendChild(createSessionChip(node))
     else root.appendChild(createPastedTextAnchor(node))
   }
-  if (doc.nodes.at(-1)?.type === 'pasted-text') root.appendChild(document.createTextNode(''))
+  if (doc.nodes.at(-1)?.type === 'pasted-text') root.appendChild(createPastedTextCaretHost())
 }

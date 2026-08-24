@@ -424,6 +424,22 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(domToDoc(root)).toEqual(doc)
   })
 
+  it('renders a drawable caret host after a trailing pasted-text anchor without serializing it', () => {
+    const doc: ComposerDoc = {
+      nodes: [{ type: 'pasted-text', id: 'paste-1', text: 'private payload' }]
+    }
+    const root = document.createElement('div')
+
+    applyDocToDom(root, doc)
+
+    expect(root.lastChild?.nodeType).toBe(Node.TEXT_NODE)
+    expect(root.lastChild?.textContent).toBe('\u2060')
+    expect(domToDoc(root)).toEqual(doc)
+
+    root.lastChild!.textContent = 'after\u2060'
+    expect(domToDoc(root)).toEqual({ nodes: [...doc.nodes, { type: 'text', text: 'after' }] })
+  })
+
   it('clears prior content before rendering', () => {
     const root = document.createElement('div')
     root.textContent = 'stale'
