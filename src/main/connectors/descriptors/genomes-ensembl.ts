@@ -13,6 +13,11 @@ const STABLE_ID_RE = /^(ENS([A-Z]{3,4})?[EGTP]\d{6,}(\.\d+)?|LRG_\d+)$/
 
 const isStableId = (query: string): boolean => STABLE_ID_RE.test(query.trim())
 
+// Ensembl records expose versioned ids, but its lookup/xref/sequence routes accept only the stable
+// base. Keep echoing the caller's exact query while normalizing only the upstream path segment.
+const upstreamStableId = (query: string): string =>
+  isStableId(query) ? query.replace(/\.\d+$/, '') : query
+
 // Reads an integer arg, applying a default when unset and clamping into [lo, hi].
 function clampInt(v: unknown, def: number, lo: number, hi: number): number {
   const n = typeof v === 'number' ? v : Number(v)
@@ -186,7 +191,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
       const species = String(a.species ?? DEFAULT_SPECIES)
       const expand = a.expand === true ? 1 : 0
       const url = isStableId(query)
-        ? `${ENSEMBL}/lookup/id/${encodeURIComponent(query)}?expand=${expand}`
+        ? `${ENSEMBL}/lookup/id/${encodeURIComponent(upstreamStableId(query))}?expand=${expand}`
         : `${ENSEMBL}/lookup/symbol/${encodeURIComponent(species)}/${encodeURIComponent(query)}?expand=${expand}`
       try {
         const record = await ctx.fetchJson(url)
@@ -201,7 +206,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     id: 'ensembl_xrefs',
     connector: 'genomes',
     description:
-      'External cross-references of an Ensembl stable ID — the bridge from Ensembl gene/transcript IDs to HGNC, NCBI (EntrezGene), UniProt, OMIM, RefSeq, Expression Atlas and others. Args: stable_id (ENSG.../ENST...); external_db (optional exact upstream database-name filter, e.g. HGNC, EntrezGene, Uniprot_gn, MIM_GENE, RefSeq_mRNA; omit for all). Returns {stable_id, external_db, n_xrefs, xrefs} — the COMPLETE list (never truncated), sorted by (dbname, primary_id); each row {dbname, db_display_name, primary_id, display_id, description, synonyms, info_type}. Unknown IDs return n_xrefs:0.',
+      'External cross-references of an Ensembl stable ID — the bridge from Ensembl gene/transcript IDs to HGNC, NCBI (EntrezGene), UniProt, OMIM, RefSeq, Expression Atlas and others. Args: stable_id (ENSG.../ENST..., versioned accepted); external_db (optional exact upstream database-name filter, e.g. HGNC, EntrezGene, Uniprot_gn, MIM_GENE, RefSeq_mRNA; omit for all). Returns {stable_id, external_db, n_xrefs, xrefs} — the COMPLETE list (never truncated), sorted by (dbname, primary_id); each row {dbname, db_display_name, primary_id, display_id, description, synonyms, info_type}. Unknown IDs return n_xrefs:0.',
     input: {
       type: 'object',
       properties: {
@@ -218,7 +223,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     run: async (ctx, a) => {
       const stableId = String(a.stable_id).trim()
       const externalDb = strArg(a.external_db) ?? ''
-      const url = `${ENSEMBL}/xrefs/id/${encodeURIComponent(stableId)}?external_db=${encodeURIComponent(externalDb)}`
+      const url = `${ENSEMBL}/xrefs/id/${encodeURIComponent(upstreamStableId(stableId))}?external_db=${encodeURIComponent(externalDb)}`
       let rows: Dict[]
       try {
         rows = ((await ctx.fetchJson(url)) as Dict[] | undefined) ?? []
@@ -352,7 +357,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     id: 'ensembl_sequence',
     connector: 'genomes',
     description:
-      'Fetch sequence from Ensembl — by stable ID (gene/transcript/protein) or by genomic region. Pass EITHER stable_id OR region. Args: stable_id (ENSG.../ENST.../ENSP...); region (1-based inclusive chrom:start..end or chrom:start-end, GRCh38 for human, max 10Mb); species (for region route, default homo_sapiens; ignored for stable IDs); seq_type (ID route: genomic default/cdna/cds/protein — protein only for ENST/ENSP; ignored for regions which always return genomic); max_bytes (payload guard default 400000 — larger sequences have `seq` omitted; length/sha256/metadata always returned; re-call with larger max_bytes for full text). Returns {found, query, seq_type, id, description, molecule, length, sha256, seq} — length in the unit implied by molecule (bases for dna, residues for protein); seq replaced by seq_omitted when capped; found:false with null fields for unknown stable IDs; malformed/oversized regions raise with the upstream message.',
+      'Fetch sequence from Ensembl — by stable ID (gene/transcript/protein) or by genomic region. Pass EITHER stable_id OR region. Args: stable_id (ENSG.../ENST.../ENSP..., versioned accepted); region (1-based inclusive chrom:start..end or chrom:start-end, GRCh38 for human, max 10Mb); species (for region route, default homo_sapiens; ignored for stable IDs); seq_type (ID route: genomic default/cdna/cds/protein — protein only for ENST/ENSP; ignored for regions which always return genomic); max_bytes (payload guard default 400000 — larger sequences have `seq` omitted; length/sha256/metadata always returned; re-call with larger max_bytes for full text). Returns {found, query, seq_type, id, description, molecule, length, sha256, seq} — length in the unit implied by molecule (bases for dna, residues for protein); seq replaced by seq_omitted when capped; found:false with null fields for unknown stable IDs; malformed/oversized regions raise with the upstream message.',
     input: {
       type: 'object',
       properties: {
@@ -386,7 +391,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
       if (stableId) {
         try {
           resp = (await ctx.fetchJson(
-            `${ENSEMBL}/sequence/id/${encodeURIComponent(stableId)}?type=${encodeURIComponent(seqType)}`
+            `${ENSEMBL}/sequence/id/${encodeURIComponent(upstreamStableId(stableId))}?type=${encodeURIComponent(seqType)}`
           )) as Dict
         } catch (err) {
           if (isNotFound(err)) {

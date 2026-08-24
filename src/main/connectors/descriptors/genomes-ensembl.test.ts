@@ -60,12 +60,20 @@ describe('ensembl_lookup', () => {
     expect(String(fetchImpl.mock.calls[0][0])).toContain('/lookup/symbol/homo_sapiens/BRAF')
   })
 
-  it('accepts a versioned stable ID and LRG id on the ID route', async () => {
-    for (const q of ['ENSG00000157764.16', 'LRG_299']) {
-      const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ id: q }))
-      await run('ensembl_lookup', { query: q }, fetchImpl)
-      expect(String(fetchImpl.mock.calls[0][0])).toContain(`/lookup/id/${encodeURIComponent(q)}`)
-    }
+  it('removes an Ensembl version suffix before calling the stable-ID endpoint', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ id: 'ENST00000422447' }))
+
+    await run('ensembl_lookup', { query: 'ENST00000422447.8' }, fetchImpl)
+
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/lookup/id/ENST00000422447?expand=0')
+  })
+
+  it('keeps an LRG id unchanged on the stable-ID route', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ id: 'LRG_299' }))
+
+    await run('ensembl_lookup', { query: 'LRG_299' }, fetchImpl)
+
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/lookup/id/LRG_299?expand=0')
   })
 
   it('maps an upstream 400 to found:false, record:null', async () => {
@@ -80,6 +88,17 @@ describe('ensembl_lookup', () => {
 })
 
 describe('ensembl_xrefs', () => {
+  it('removes an Ensembl version suffix before calling the stable-ID endpoint', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes([]))
+
+    const out = (await run('ensembl_xrefs', { stable_id: 'ENST00000422447.8' }, fetchImpl)) as {
+      stable_id: string
+    }
+
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/xrefs/id/ENST00000422447?')
+    expect(out.stable_id).toBe('ENST00000422447.8')
+  })
+
   it('sorts by (dbname, primary_id) and passes external_db through', async () => {
     const rows = [
       { dbname: 'HGNC', primary_id: 'HGNC:1097', display_id: 'BRAF' },
@@ -237,6 +256,21 @@ describe('ensembl_homology', () => {
 })
 
 describe('ensembl_sequence', () => {
+  it('removes an Ensembl version suffix before calling the stable-ID endpoint', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes({ id: 'ENST00000422447', molecule: 'dna', seq: 'ACGT' }))
+
+    const out = (await run(
+      'ensembl_sequence',
+      { stable_id: 'ENST00000422447.8', seq_type: 'cdna' },
+      fetchImpl
+    )) as { query: string }
+
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/sequence/id/ENST00000422447?type=cdna')
+    expect(out.query).toBe('ENST00000422447.8')
+  })
+
   it('computes length + sha256 for a stable-ID sequence', async () => {
     const seq = 'ACGTACGTAC'
     const fetchImpl = vi
