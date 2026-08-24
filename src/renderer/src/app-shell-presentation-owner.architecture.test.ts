@@ -16,6 +16,8 @@ import { describe, expect, it } from 'vitest'
 
 const rendererRoot = __dirname
 const appPath = resolve(rendererRoot, 'App.tsx')
+const hostPath = resolve(rendererRoot, 'ApplicationPresentationHost.tsx')
+const eventBindingsPath = resolve(rendererRoot, 'hooks/useApplicationEventBindings.ts')
 const ownerPath = resolve(rendererRoot, 'app-shell-presentation-owner.ts')
 const readSource = (path: string): string => readFileSync(path, 'utf8')
 const modulePath = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, '')
@@ -69,12 +71,18 @@ const rootGateIdentifiers = new Set([
   'isPreviewModalOpen',
   'isSettingsOpen',
   'isUpdateDialogOpen',
-  'legacyMove',
-  'missingDataRoot'
+  'hasLegacyDataMove',
+  'hasDataRootRecovery'
 ])
 
-const repeatedRootGateLists = (source: string): readonly string[] => {
-  const sourceFile = createSourceFile(appPath, source, ScriptTarget.Latest, true, ScriptKind.TSX)
+const repeatedRootGateLists = (sourcePath: string, source: string): readonly string[] => {
+  const sourceFile = createSourceFile(
+    sourcePath,
+    source,
+    ScriptTarget.Latest,
+    true,
+    extname(sourcePath) === '.tsx' ? ScriptKind.TSX : ScriptKind.TS
+  )
   const violations = new Set<string>()
   const insideOwnerProjection = (node: Node): boolean => {
     for (let current: Node | undefined = node; current; current = current.parent) {
@@ -111,33 +119,49 @@ const repeatedRootGateLists = (source: string): readonly string[] => {
 }
 
 describe('App Shell presentation owner architecture', () => {
-  it('keeps the root App as the only production composition consumer', () => {
+  it('keeps application event bindings as the only production composition consumer', () => {
     const importers = productionSources()
       .filter((path) => importsTarget(path, ownerPath))
       .map((path) => relative(rendererRoot, path).replaceAll('\\', '/'))
 
-    expect(importers).toEqual(['App.tsx'])
+    expect(importers).toEqual(['hooks/useApplicationEventBindings.ts'])
+  })
+
+  it('keeps application orchestration out of the App facade and presentation host', () => {
+    const appSource = readSource(appPath)
+    const hostSource = readSource(hostPath)
+
+    expect(appSource).toContain('<ApplicationPresentationHost />')
+    expect(appSource).not.toContain('useEffect')
+    expect(appSource).not.toContain('@/stores/')
+    expect(hostSource).toContain('useApplicationStartup()')
+    expect(hostSource).toContain('useApplicationEventBindings({')
+    expect(hostSource).not.toContain('useEffect')
+    expect(hostSource).not.toContain('@/stores/')
   })
 
   it('routes visibility, root shortcuts, and close commands through the owner projection', () => {
-    const appSource = readSource(appPath)
+    const bindingsSource = readSource(eventBindingsPath)
 
-    expect(appSource.match(/resolveAppShellPresentation\(/g)).toHaveLength(1)
-    expect(appSource).toContain(
-      'isSessionContentVisible: appShellPresentation.isSessionContentVisible'
+    expect(bindingsSource.match(/resolveAppShellPresentation\(/g)).toHaveLength(1)
+    expect(bindingsSource).toContain(
+      'isSessionContentVisible: presentation.isSessionContentVisible'
     )
-    expect(appSource).toContain("!appShellPresentation.allowsShortcut('settings')")
-    expect(appSource).toContain("!appShellPresentation.allowsShortcut('globalSearch')")
-    expect(appSource).toContain("appShellPresentation.allowsShortcut('archiveUndo')")
-    expect(appSource).toContain('const action = appShellPresentation.resolveCloseAction()')
-    expect(appSource).not.toContain('STREAMDOWN_FULLSCREEN_SELECTOR')
-    expect(appSource).not.toContain('document.querySelector')
-    expect(repeatedRootGateLists(appSource)).toEqual([])
+    expect(bindingsSource).toContain("!presentation.allowsShortcut('settings')")
+    expect(bindingsSource).toContain("!presentation.allowsShortcut('globalSearch')")
+    expect(bindingsSource).toContain("presentation.allowsShortcut('archiveUndo')")
+    expect(bindingsSource).toContain('const action = presentation.resolveCloseAction()')
+    expect(bindingsSource).not.toContain('STREAMDOWN_FULLSCREEN_SELECTOR')
+    expect(bindingsSource).not.toContain('document.querySelector')
+    expect(repeatedRootGateLists(eventBindingsPath, bindingsSource)).toEqual([])
   })
 
   it('rejects a recreated multi-store gate list outside the owner projection', () => {
     expect(
-      repeatedRootGateLists('const eligible = !isSettingsOpen && !hasComputeApproval')
+      repeatedRootGateLists(
+        eventBindingsPath,
+        'const eligible = !isSettingsOpen && !hasComputeApproval'
+      )
     ).toEqual(['hasComputeApproval,isSettingsOpen'])
   })
 })
