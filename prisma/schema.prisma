@@ -226,6 +226,9 @@ model Review {
   findings      Finding[]
   causedDispositions ReviewFindingDisposition[]
   scopeSnapshot       ReviewScopeSnapshot?
+
+  @@index([projectId, sessionId, createdAt])
+  @@index([sessionId])
 }
 
 // A unified check row — replaces both the old warn/fail-only Finding and the pass-only ReviewCheck
@@ -246,6 +249,8 @@ model Finding {
   reflagCount       Int     @default(0)
   review            Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   dispositions      ReviewFindingDisposition[]
+
+  @@index([reviewId])
 }
 
 model ProjectDeletionIntent {

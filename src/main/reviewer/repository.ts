@@ -21,7 +21,7 @@ import type {
   TurnScope,
   UpdateReviewPatch
 } from '../../shared/reviewer'
-import { loadReviewSubmissionProjection, toReviewCheck } from './review-submission-read-model'
+import { loadReviewSubmissionProjections, toReviewCheck } from './review-submission-read-model'
 import { assertReviewSubmissionWithinLimits } from './submission-limits'
 
 const REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE =
@@ -565,20 +565,22 @@ class ReviewRepository {
       orderBy: { createdAt: 'desc' }
     })
 
-    return Promise.all(
-      rows.map(async (row) => {
-        const { checks, submittedChecks } = await loadReviewSubmissionProjection(client, row.id)
-        return {
-          ...toReview(row),
-          checks,
-          submittedChecks,
-          // Legacy: expose findings as alias for checks (same data).
-          get findings() {
-            return checks
-          }
-        } as ReviewWithChecks
-      })
+    const projections = await loadReviewSubmissionProjections(
+      client,
+      rows.map((row) => row.id)
     )
+    return rows.map((row) => {
+      const { checks, submittedChecks } = projections.get(row.id)!
+      return {
+        ...toReview(row),
+        checks,
+        submittedChecks,
+        // Legacy: expose findings as alias for checks (same data).
+        get findings() {
+          return checks
+        }
+      } as ReviewWithChecks
+    })
   }
 
   // Removes a session's reviews and their checks. Checks are deleted explicitly (not relying on the
