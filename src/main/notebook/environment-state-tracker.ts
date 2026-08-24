@@ -1049,9 +1049,6 @@ class EnvironmentStateTracker {
       const cache = await this.readBinding(target)
       const operation = await this.readOperation(target, outcome.operationId)
       const beforeInventoryChecksum = operation?.beforeInventoryChecksum ?? cache.inventoryChecksum
-      const beforeInventory = beforeInventoryChecksum
-        ? await this.readInventory(target, beforeInventoryChecksum).catch(() => undefined)
-        : undefined
       const baseLogEntry: NotebookEnvironmentOperation = {
         operationId: outcome.operationId,
         timestamp: this.now().toISOString(),
@@ -1063,6 +1060,28 @@ class EnvironmentStateTracker {
         inventoryRefresh: 'failed',
         inventoryRefreshAttempts: operation?.inventoryRefreshAttempts ?? []
       }
+      const terminalOperation: PendingEnvironmentOperationRecord = {
+        ...(operation ?? {
+          schemaVersion: 1,
+          operationId: outcome.operationId,
+          runtimeLocalKey: this.targetKey(target),
+          generation: cache.generation,
+          operation: outcome.operation,
+          packages: [...outcome.packages],
+          inventoryRefreshAttempts: []
+        }),
+        lifecycle: 'terminal-refresh-pending',
+        terminalResult: outcome.result,
+        ...(outcome.source ? { source: outcome.source } : {}),
+        attempts: baseLogEntry.attempts,
+        fallbackUsed: baseLogEntry.fallbackUsed
+      }
+      // Persist the completed installer outcome before any inventory I/O so recovery retains source
+      // evidence if the app exits between the installer and terminal refresh.
+      await this.writeOperation(target, terminalOperation)
+      const beforeInventory = beforeInventoryChecksum
+        ? await this.readInventory(target, beforeInventoryChecksum).catch(() => undefined)
+        : undefined
       let verification: PackageMutationVerification = { result: outcome.result }
       try {
         const previousInventoryChecksum = cache.inventoryChecksum
@@ -1140,22 +1159,7 @@ class EnvironmentStateTracker {
         cache.dirtyOperationId = outcome.operationId
         cache.dirtyReason = 'recovery'
         await this.writeOperation(target, {
-          ...(operation ?? {
-            schemaVersion: 1,
-            operationId: outcome.operationId,
-            runtimeLocalKey: this.targetKey(target),
-            generation: cache.generation,
-            operation: outcome.operation,
-            packages: [...outcome.packages],
-            attempts: outcome.attempts ?? [],
-            fallbackUsed: outcome.fallbackUsed ?? false,
-            inventoryRefreshAttempts: []
-          }),
-          lifecycle: 'terminal-refresh-pending',
-          terminalResult: outcome.result,
-          ...(outcome.source ? { source: outcome.source } : {}),
-          attempts: baseLogEntry.attempts,
-          fallbackUsed: baseLogEntry.fallbackUsed,
+          ...terminalOperation,
           inventoryRefreshAttempts: pendingEntry.inventoryRefreshAttempts
         })
       }

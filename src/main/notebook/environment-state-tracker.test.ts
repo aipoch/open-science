@@ -1,6 +1,6 @@
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -1165,12 +1165,27 @@ describe('EnvironmentStateTracker', () => {
       command: '/runtime/default-r/bin/Rscript',
       args: []
     }
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [] })
+      .mockImplementationOnce(async () => {
+        const operations = await readdir(join(dirname(await bindingPath(dataRoot!)), 'operations'))
+        const persisted = JSON.parse(
+          await readFile(
+            join(dirname(await bindingPath(dataRoot!)), 'operations', operations[0]),
+            'utf8'
+          )
+        )
+        expect(persisted).toMatchObject({
+          lifecycle: 'terminal-refresh-pending',
+          terminalResult: 'success',
+          source: { type: 'bioconductor', version: '3.21' }
+        })
+        throw new Error('inventory unavailable')
+      })
     const initial = new EnvironmentStateTracker({
       dataRoot,
-      inspectInstalled: vi
-        .fn()
-        .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [] })
-        .mockRejectedValueOnce(new Error('inventory unavailable')),
+      inspectInstalled,
       captureFingerprint: vi.fn().mockResolvedValue('before-install')
     })
     await initial.markPackageMutationDirty(rTarget, {
