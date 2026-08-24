@@ -1,6 +1,6 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -66,33 +66,52 @@ const LocationStep = ({
   const { chosenParent, chosenDataRoot, chosenKind } = locationDraft
   const [locationError, setLocationError] = useState<string | undefined>(undefined)
   const [confirmRestart, setConfirmRestart] = useState(false)
+  const requestInFlightRef = useRef(false)
+  const [requestInFlight, setRequestInFlight] = useState(false)
 
-  const handleBrowseLocation = async (): Promise<void> => {
-    setLocationError(undefined)
+  const runExclusive = async (request: () => Promise<void>): Promise<void> => {
+    if (requestInFlightRef.current) return
+
+    requestInFlightRef.current = true
+    setRequestInFlight(true)
     try {
-      const picked = await window.api.storage.pickDirectory()
-      if (!picked) return
-
-      const result = await window.api.storage.inspectDataRoot(picked)
-      if (result.kind !== 'move' && result.kind !== 'adopt') {
-        setLocationError(result.error ?? t('The selected folder is not usable.'))
-        return
-      }
-
-      onLocationDraftChange({
-        chosenParent: picked,
-        chosenDataRoot: result.dataRoot,
-        chosenKind: result.kind
-      })
-      onRelaunchErrorChange(undefined)
-    } catch (error) {
-      setLocationError(
-        onboardingErrorMessage(error, t('Could not choose the data location. Try again.'))
-      )
+      await request()
+    } finally {
+      requestInFlightRef.current = false
+      setRequestInFlight(false)
     }
   }
 
+  const handleBrowseLocation = async (): Promise<void> => {
+    await runExclusive(async () => {
+      setLocationError(undefined)
+      try {
+        const picked = await window.api.storage.pickDirectory()
+        if (!picked) return
+
+        const result = await window.api.storage.inspectDataRoot(picked)
+        if (result.kind !== 'move' && result.kind !== 'adopt') {
+          setLocationError(result.error ?? t('The selected folder is not usable.'))
+          return
+        }
+
+        onLocationDraftChange({
+          chosenParent: picked,
+          chosenDataRoot: result.dataRoot,
+          chosenKind: result.kind
+        })
+        onRelaunchErrorChange(undefined)
+      } catch (error) {
+        setLocationError(
+          onboardingErrorMessage(error, t('Could not choose the data location. Try again.'))
+        )
+      }
+    })
+  }
+
   const handleResetLocation = (): void => {
+    if (requestInFlightRef.current) return
+
     onLocationDraftChange({ chosenParent: '', chosenDataRoot: '', chosenKind: null })
     onRelaunchErrorChange(undefined)
     setLocationError(undefined)
@@ -110,6 +129,8 @@ const LocationStep = ({
   }
 
   const handleFinishLocation = async (): Promise<void> => {
+    if (requestInFlightRef.current) return
+
     if (chosenParent) {
       // A custom location was chosen: gate completeOnboarding behind the user's confirmation.
       // Calling completeOnboarding immediately would flip the App-level startup gate to 'app'
@@ -117,40 +138,44 @@ const LocationStep = ({
       setConfirmRestart(true)
     } else {
       // Default kept: nothing more to do, the App gate takes it from here — no relaunch.
-      await completeWithDefaultLocation()
+      await runExclusive(completeWithDefaultLocation)
     }
   }
 
   const handleKeepDefault = async (): Promise<void> => {
-    setConfirmRestart(false)
-    await completeWithDefaultLocation()
+    await runExclusive(async () => {
+      setConfirmRestart(false)
+      await completeWithDefaultLocation()
+    })
   }
 
   const handleRestart = async (): Promise<void> => {
-    setConfirmRestart(false)
-    onRelaunchErrorChange(undefined)
-    setIsRelaunching(true)
+    await runExclusive(async () => {
+      setConfirmRestart(false)
+      onRelaunchErrorChange(undefined)
+      setIsRelaunching(true)
 
-    // Deliberately NOT calling the renderer completeOnboarding() here: it flips
-    // onboardingCompletedAt immediately, which would make App.tsx's startup gate swap this
-    // wizard for Home (showing the OLD data root) before setDataRootAndRelaunch even runs, and
-    // would turn the failure branch below into dead code. Instead the main-process handler marks
-    // onboarding complete itself, in the same step as setDataRoot, right before it relaunches -
-    // so the gate only flips once the new location is actually persisted.
-    try {
-      const result = await window.api.storage.setDataRootAndRelaunch(chosenParent, true)
-      if (result.ok) return
+      // Deliberately NOT calling the renderer completeOnboarding() here: it flips
+      // onboardingCompletedAt immediately, which would make App.tsx's startup gate swap this
+      // wizard for Home (showing the OLD data root) before setDataRootAndRelaunch even runs, and
+      // would turn the failure branch below into dead code. Instead the main-process handler marks
+      // onboarding complete itself, in the same step as setDataRoot, right before it relaunches -
+      // so the gate only flips once the new location is actually persisted.
+      try {
+        const result = await window.api.storage.setDataRootAndRelaunch(chosenParent, true)
+        if (result.ok) return
 
-      // The app is not relaunching; the gate was never flipped, so we're still on the wizard -
-      // surface the error here and let the user retry or fall back to Keep default.
-      setIsRelaunching(false)
-      onRelaunchErrorChange(result.error ?? 'Could not restart to apply the new location.')
-    } catch (error) {
-      setIsRelaunching(false)
-      onRelaunchErrorChange(
-        onboardingErrorMessage(error, 'Could not restart to apply the new location.')
-      )
-    }
+        // The app is not relaunching; the gate was never flipped, so we're still on the wizard -
+        // surface the error here and let the user retry or fall back to Keep default.
+        setIsRelaunching(false)
+        onRelaunchErrorChange(result.error ?? 'Could not restart to apply the new location.')
+      } catch (error) {
+        setIsRelaunching(false)
+        onRelaunchErrorChange(
+          onboardingErrorMessage(error, 'Could not restart to apply the new location.')
+        )
+      }
+    })
   }
 
   return (
@@ -168,7 +193,11 @@ const LocationStep = ({
       <Separator className="bg-border-200" />
 
       <CardContent className="flex-1 px-4 py-5 sm:px-6">
-        <section aria-label={t('Choose data location')} className="space-y-5">
+        <section
+          aria-label={t('Choose data location')}
+          aria-busy={requestInFlight}
+          className="space-y-5"
+        >
           {dataRootError ? (
             <div
               className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive sm:flex-row sm:items-center sm:justify-between"
@@ -182,6 +211,7 @@ const LocationStep = ({
                 variant="link"
                 size="xs"
                 onClick={onRetryDataRootInfo}
+                disabled={requestInFlight}
                 className="h-auto self-start p-0 text-destructive hover:text-text-000 sm:self-auto"
               >
                 {t('Retry')}
@@ -211,6 +241,7 @@ const LocationStep = ({
               <button
                 type="button"
                 onClick={() => void handleBrowseLocation()}
+                disabled={requestInFlight}
                 className="inline-flex shrink-0 items-center justify-center rounded-lg border border-border-200 px-3 py-1.5 text-sm font-medium text-text-000 transition-colors hover:bg-bg-10"
               >
                 {t('Browse…')}
@@ -230,6 +261,7 @@ const LocationStep = ({
                       <button
                         type="button"
                         onClick={handleResetLocation}
+                        disabled={requestInFlight}
                         className="underline underline-offset-2 hover:text-text-000"
                       />
                     )
@@ -257,10 +289,15 @@ const LocationStep = ({
         </section>
       </CardContent>
       <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-4 py-3 sm:px-6">
-        <Button type="button" variant="outline" onClick={onBack}>
+        <Button type="button" variant="outline" onClick={onBack} disabled={requestInFlight}>
           {t('Back', { context: 'step' })}
         </Button>
-        <Button type="button" onClick={() => void handleFinishLocation()} className="px-4">
+        <Button
+          type="button"
+          onClick={() => void handleFinishLocation()}
+          disabled={requestInFlight}
+          className="px-4"
+        >
           {t('Finish')}
         </Button>
       </CardFooter>
@@ -283,6 +320,7 @@ const LocationStep = ({
                   variant="ghost"
                   size="icon-sm"
                   aria-label={t('Close')}
+                  disabled={requestInFlight}
                   className={dialogCloseButtonClassName}
                 >
                   <X className="size-4" aria-hidden="true" />
@@ -302,12 +340,21 @@ const LocationStep = ({
 
             <div className={dialogFooterClassName}>
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline" onClick={() => void handleKeepDefault()}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleKeepDefault()}
+                  disabled={requestInFlight}
+                >
                   {t('Keep default')}
                 </Button>
               </AlertDialog.Cancel>
               <AlertDialog.Action asChild>
-                <Button type="button" onClick={() => void handleRestart()}>
+                <Button
+                  type="button"
+                  onClick={() => void handleRestart()}
+                  disabled={requestInFlight}
+                >
                   {t('Restart')}
                 </Button>
               </AlertDialog.Action>
