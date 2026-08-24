@@ -5617,8 +5617,8 @@ describe('notebook runtime service', () => {
       const runtimeRoot = getRuntimeRoot(root)
       const envName = 'shared-analysis'
       const prefix = envPrefix(runtimeRoot, envName)
-      const namedPython = join(prefix, 'bin', 'python')
-      const namedR = join(prefix, 'bin', 'R')
+      const namedPython = pythonBin(prefix)
+      const namedR = rBin(prefix)
       const terminate = vi.fn(async () => undefined)
       const execute = vi.fn(async (): Promise<NotebookExecutionResult> => {
         throw new Error('a repair-blocked shared prefix must not execute')
@@ -6308,7 +6308,7 @@ describe('notebook runtime service', () => {
       let releaseInstall: (() => void) | undefined
       // v4: a session runs ONE env per language, so "different envs" now means different SESSIONS —
       // an installer session bound to a named env vs a runner session on the app-managed default.
-      const namedPy = join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python')
+      const namedPy = pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis'))
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
@@ -6554,8 +6554,8 @@ describe('notebook runtime service', () => {
                 {
                   language: 'python',
                   provenance: 'agent-created',
-                  envId: join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python'),
-                  interpreterPath: join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python'),
+                  envId: pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis')),
+                  interpreterPath: pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis')),
                   label: 'my-analysis',
                   condaEnv: 'my-analysis',
                   version: '3.12',
@@ -6595,7 +6595,7 @@ describe('notebook runtime service', () => {
         sessionId: 's',
         workspaceCwd: root,
         language: 'python',
-        runtimeId: join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python')
+        runtimeId: pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis'))
       })
       await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'python' })
 
@@ -7057,7 +7057,7 @@ describe('v4 runtime bindings & agent tools', () => {
     // gate must not fire.
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
-    const namedPyId = join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python')
+    const namedPyId = pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis'))
     const defaultPyId = pythonBin(envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV))
     const namedEnv: DiscoveredInterpreter = {
       language: 'python',
@@ -7742,8 +7742,8 @@ describe('v4 runtime bindings & agent tools', () => {
     const namedRuntime = (name: string): DiscoveredInterpreter => ({
       language: 'python',
       provenance: 'agent-created',
-      envId: join(runtimeRoot, 'envs', name, 'bin', 'python'),
-      interpreterPath: join(runtimeRoot, 'envs', name, 'bin', 'python'),
+      envId: pythonBin(envPrefix(runtimeRoot, name)),
+      interpreterPath: pythonBin(envPrefix(runtimeRoot, name)),
       label: name,
       condaEnv: name,
       version: '3.12',
@@ -7967,7 +7967,7 @@ describe('v4 runtime bindings & agent tools', () => {
     // external branch, so it never covered the managed gate).
     const root = await createStorageRoot()
     let installRan = false
-    const namedPyId = join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python')
+    const namedPyId = pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis'))
     const namedEnv: DiscoveredInterpreter = {
       language: 'python',
       provenance: 'agent-created',
@@ -8812,8 +8812,8 @@ describe('v4 runtime bindings & agent tools', () => {
     const namedPython: DiscoveredInterpreter = {
       language: 'python',
       provenance: 'agent-created',
-      envId: join(prefix, 'bin', 'python'),
-      interpreterPath: join(prefix, 'bin', 'python'),
+      envId: pythonBin(prefix),
+      interpreterPath: pythonBin(prefix),
       label: envName,
       condaEnv: envName,
       version: '3.12',
@@ -8822,8 +8822,8 @@ describe('v4 runtime bindings & agent tools', () => {
     const namedR: DiscoveredInterpreter = {
       language: 'r',
       provenance: 'agent-created',
-      envId: join(prefix, 'bin', 'R'),
-      interpreterPath: join(prefix, 'bin', 'R'),
+      envId: rBin(prefix),
+      interpreterPath: rBin(prefix),
       label: envName,
       condaEnv: envName,
       version: '4.4.3',
@@ -8995,8 +8995,8 @@ describe('v4 runtime bindings & agent tools', () => {
     const namedR: DiscoveredInterpreter = {
       language: 'r',
       provenance: 'agent-created',
-      envId: join(prefix, 'bin', 'R'),
-      interpreterPath: join(prefix, 'bin', 'R'),
+      envId: rBin(prefix),
+      interpreterPath: rBin(prefix),
       label: envName,
       condaEnv: envName,
       version: '4.4.3',

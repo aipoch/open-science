@@ -6,7 +6,7 @@ import {
   NotebookEnvironmentManagementOwner,
   type NotebookEnvironmentManager
 } from './environment-management'
-import { envPrefix } from './runtime-paths'
+import { envPrefix, pythonBin } from './runtime-paths'
 
 type OwnerOptions = ConstructorParameters<typeof NotebookEnvironmentManagementOwner>[0]
 type EnvironmentSession =
@@ -33,15 +33,17 @@ const session = (
   runtimeBindingEntries: () => bindings
 })
 
+const managedPythonRuntimeId = (name: string): string => pythonBin(envPrefix('/runtime', name))
+
 const runtimeBinding = (
   name: string,
   overrides: Partial<NotebookSessionRuntimeBinding> = {}
 ): NotebookSessionRuntimeBinding => ({
   language: 'python',
-  runtimeId: `/runtime/envs/${name}/bin/python`,
+  runtimeId: managedPythonRuntimeId(name),
   source: 'managed',
   provenance: 'agent-created',
-  interpreterPath: `/runtime/envs/${name}/bin/python`,
+  interpreterPath: managedPythonRuntimeId(name),
   label: name,
   envName: name,
   ...overrides
@@ -139,7 +141,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
       created: {
         name: 'analysis',
         language: 'python',
-        runtimeId: '/runtime/envs/analysis/bin/python',
+        runtimeId: managedPythonRuntimeId('analysis'),
         runnable: true
       }
     })
