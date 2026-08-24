@@ -1001,6 +1001,7 @@
   "Installation network unavailable": "安裝所需網路不可用",
   "Installed": "已安裝",
   "Removed": "已移除",
+  "Removed R packages need a kernel restart to unload.": "已移除的 R 套件需要重新啟動核心才能卸載。",
   "Unchanged": "未變更",
   "Updated": "已更新",
   "Installed R packages need a kernel restart to load.": "已安裝的 R 套件需要重新啟動核心才能載入。",

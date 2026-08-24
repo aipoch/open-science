@@ -932,6 +932,7 @@
   "Installation network unavailable": "インストールネットワークが利用できない",
   "Installed": "インストール済み",
   "Removed": "削除済み",
+  "Removed R packages need a kernel restart to unload.": "削除した R パッケージをアンロードするには、カーネルの再起動が必要です。",
   "Unchanged": "変更なし",
   "Updated": "更新済み",
   "Installed R packages need a kernel restart to load.": "インストールされた R パッケージをロードするにはカーネルを再起動する必要があります。",

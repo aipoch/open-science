@@ -984,6 +984,7 @@
   "Installation network unavailable": "Réseau d'installation indisponible",
   "Installed": "Installé",
   "Removed": "Supprimé",
+  "Removed R packages need a kernel restart to unload.": "Les paquets R supprimés nécessitent un redémarrage du noyau pour être déchargés.",
   "Unchanged": "Inchangé",
   "Updated": "Mis à jour",
   "Installed R packages need a kernel restart to load.": "Les paquets R installés nécessitent un redémarrage du noyau pour être chargés.",

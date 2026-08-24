@@ -975,6 +975,7 @@
   "Installation network unavailable": "Сеть установки недоступна",
   "Installed": "Установлено",
   "Removed": "Удалено",
+  "Removed R packages need a kernel restart to unload.": "Для выгрузки удалённых пакетов R необходимо перезапустить ядро.",
   "Unchanged": "Без изменений",
   "Updated": "Обновлено",
   "Installed R packages need a kernel restart to load.": "Чтобы загрузить установленные пакеты R, перезапустите ядро.",

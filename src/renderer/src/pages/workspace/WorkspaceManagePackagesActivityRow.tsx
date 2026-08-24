@@ -185,7 +185,9 @@ const WorkspaceManagePackagesActivityRow = ({
           <div className="divide-y divide-border-200">
             {packageDetails.map((detail, index) => {
               const changeLabel = isActive
-                ? t('Installing…')
+                ? isRemoving
+                  ? t('Removing…')
+                  : t('Installing…')
                 : detail.change === 'updated'
                   ? t('Updated')
                   : detail.change === 'removed'
@@ -255,7 +257,7 @@ const WorkspaceManagePackagesActivityRow = ({
             <div className="flex items-center justify-between gap-3 text-[11px] text-text-100">
               <span>{t('This can take several minutes')}</span>
               <span className="shrink-0 text-status-info-foreground dark:text-status-info-dark-foreground">
-                {t('Installing…')}
+                {isRemoving ? t('Removing…') : t('Installing…')}
               </span>
             </div>
             <div
@@ -274,7 +276,9 @@ const WorkspaceManagePackagesActivityRow = ({
           </p>
         ) : needsRestart ? (
           <p className="text-[12px] text-status-warning-foreground dark:text-status-warning-dark-foreground">
-            {t('Installed R packages need a kernel restart to load.')}
+            {isRemoving
+              ? t('Removed R packages need a kernel restart to unload.')
+              : t('Installed R packages need a kernel restart to load.')}
           </p>
         ) : null}
       </div>

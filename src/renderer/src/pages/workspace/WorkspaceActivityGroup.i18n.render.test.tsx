@@ -78,6 +78,8 @@ describe('WorkspaceActivityGroup i18n', () => {
     const progress = container.querySelector('[data-testid="manage-packages-progress"]')
     expect(container.querySelector('[data-testid="tool-group"]')?.contains(progress)).toBe(true)
     expect(progress?.textContent).toContain('Removing 2 packages')
+    expect(progress?.textContent).toContain('Removing…')
+    expect(progress?.textContent).not.toContain('Installing…')
     expect(progress?.textContent).toContain('Python · conda')
     expect(progress?.textContent).toContain('This can take several minutes')
     expect(progress?.textContent).toContain('1:05')
@@ -208,6 +210,59 @@ describe('WorkspaceActivityGroup i18n', () => {
       container.querySelector('[data-testid="manage-packages-package-version"]')?.textContent
     ).toBe('2.2.2 → 2.3.1')
     expect(container.querySelector('.install-progress-indeterminate')).toBeNull()
+  })
+
+  it('uses removal-specific restart guidance after an R uninstall', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-removed',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-removed',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'r', packages: ['ggplot2'], operation: 'uninstall' },
+                rawOutput: {
+                  structuredContent: {
+                    ok: true,
+                    needsRestart: true,
+                    method: 'conda',
+                    environmentName: 'analysis-r',
+                    packageChanges: [
+                      {
+                        name: 'ggplot2',
+                        change: 'removed',
+                        beforeVersion: '4.0.3'
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{}}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Removed 1 package')
+    expect(container.textContent).toContain('Removed R packages need a kernel restart to unload.')
+    expect(container.textContent).not.toContain(
+      'Installed R packages need a kernel restart to load.'
+    )
   })
 
   it('renders a completed tool with ok false as a package failure', () => {
