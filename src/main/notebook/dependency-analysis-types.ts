@@ -75,6 +75,7 @@ type NotebookRunDependencyFacts =
   | {
       state: 'available'
       definedNames: string[]
+      conditionallyDefinedNames?: string[]
       usedNames: string[]
       priorUsedNames?: string[]
       possiblyUsedNames?: string[]
@@ -96,6 +97,7 @@ type NotebookRunDependencyFacts =
       state: 'unknown'
       reasons: string[]
       definedNames?: string[]
+      conditionallyDefinedNames?: string[]
       usedNames?: string[]
       priorUsedNames?: string[]
       possiblyUsedNames?: string[]

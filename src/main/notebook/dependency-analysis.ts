@@ -28,7 +28,7 @@ import { getNotebookSessionRoot, getRuntimeRoot, type NotebookRunRepository } fr
 import { envPrefix, pythonBin, resolveEnvName, rScriptBin } from './runtime-paths'
 
 const ANALYZER_VERSION = 1 as const
-const ANALYZER_REVISION = 'tree-sitter-in-process-1'
+const ANALYZER_REVISION = 'tree-sitter-in-process-2'
 const SIDECAR_FILE = 'dependency-analysis.json'
 const MAX_NAMES_PER_RUN = 512
 const RETRYABLE_ANALYSIS_FAILURES = new Set([
@@ -610,6 +610,9 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
       ...(stringArray(record.definedNames)
         ? { definedNames: stringArray(record.definedNames) }
         : {}),
+      ...(stringArray(record.conditionallyDefinedNames)
+        ? { conditionallyDefinedNames: stringArray(record.conditionallyDefinedNames) }
+        : {}),
       ...(stringArray(record.usedNames) ? { usedNames: stringArray(record.usedNames) } : {}),
       priorUsedNames,
       possiblyUsedNames,
@@ -640,6 +643,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
   }
   if (record.state !== 'available') return unknownFacts('invalid-parser-result')
   const definedNames = stringArray(record.definedNames)
+  const conditionallyDefinedNames = stringArray(record.conditionallyDefinedNames ?? [])
   const usedNames = stringArray(record.usedNames)
   const priorUsedNames = stringArray(record.priorUsedNames ?? record.usedNames)
   const possiblyUsedNames = stringArray(record.possiblyUsedNames ?? [])
@@ -657,6 +661,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
   const receiverCalls = receiverCallArray(record.receiverCalls ?? [])
   const memberWrites = memberWriteArray(record.memberWrites ?? [])
   return definedNames &&
+    conditionallyDefinedNames &&
     usedNames &&
     priorUsedNames &&
     possiblyUsedNames &&
@@ -672,6 +677,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
     ? {
         state: 'available',
         definedNames,
+        ...(conditionallyDefinedNames.length ? { conditionallyDefinedNames } : {}),
         usedNames,
         priorUsedNames,
         possiblyUsedNames,
@@ -911,6 +917,8 @@ class NotebookDependencyAnalyzer {
         const validFacts =
           factsRecord.state === 'available'
             ? stringArray(factsRecord.definedNames) !== undefined &&
+              (factsRecord.conditionallyDefinedNames === undefined ||
+                stringArray(factsRecord.conditionallyDefinedNames) !== undefined) &&
               stringArray(factsRecord.usedNames) !== undefined &&
               stringArray(factsRecord.priorUsedNames) !== undefined &&
               stringArray(factsRecord.possiblyUsedNames) !== undefined &&
@@ -936,6 +944,8 @@ class NotebookDependencyAnalyzer {
               Boolean(stringArray(factsRecord.reasons)?.length) &&
               (factsRecord.definedNames === undefined ||
                 stringArray(factsRecord.definedNames) !== undefined) &&
+              (factsRecord.conditionallyDefinedNames === undefined ||
+                stringArray(factsRecord.conditionallyDefinedNames) !== undefined) &&
               (factsRecord.usedNames === undefined ||
                 stringArray(factsRecord.usedNames) !== undefined) &&
               stringArray(factsRecord.priorUsedNames) !== undefined &&

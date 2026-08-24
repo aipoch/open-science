@@ -222,6 +222,7 @@ const projectNotebookDependencies = (
     const incompleteRun = isIncompleteRun(run)
     const incomplete = incompleteRun ? incompleteRunFacts(analyzedFacts) : undefined
     const facts = incomplete?.facts ?? analyzedFacts
+    const conditionallyDefinedNames = new Set(facts.conditionallyDefinedNames ?? [])
     const namespace = namespaceKey(run)
     if (!namespace) {
       if (run.status === 'completed' && (run.kernelKind === 'python' || run.kernelKind === 'r')) {
@@ -851,6 +852,9 @@ const projectNotebookDependencies = (
       if (method?.effect === 'unknown' && method.unknownScope === 'namespace') {
         typeAwareReasons.push('opaque-call', 'dynamic-namespace')
       }
+      if (!method && typeSummary?.name.startsWith('python-callable:unknown.')) {
+        typeAwareReasons.push('scoped-opaque-call')
+      }
       if (method?.effect === 'read' && call.kind !== 'mutating') continue
       if (method?.effect === 'mutate' || call.kind === 'mutating') {
         if (call.receiverChain?.length) {
@@ -864,8 +868,19 @@ const projectNotebookDependencies = (
         typeAwarePossiblyMutatedNames.push(call.receiver, ...(call.argumentNames ?? []))
         typeAwareReasons.push('opaque-mutation', 'opaque-call', 'dynamic-namespace')
       } else if (method?.effect === 'unknown') {
-        typeAwarePossiblyMutatedNames.push(...mutationReceiverNames, ...(call.argumentNames ?? []))
+        const safeCallNames = new Set(method.safeCallNames ?? [])
+        typeAwarePossiblyMutatedNames.push(
+          ...mutationReceiverNames,
+          ...(call.argumentNames ?? []),
+          ...(method.usedNames ?? []).filter((name) => !safeCallNames.has(name))
+        )
         typeAwareReasons.push('opaque-mutation')
+        if (
+          typeSummary?.name.startsWith('python-callable:unknown.') ||
+          typeSummary?.name.startsWith('python-function:')
+        ) {
+          typeAwareReasons.push('scoped-opaque-call')
+        }
       } else if (call.kind === 'generic') {
         const argumentNames = call.argumentNames?.length
           ? [...mutationReceiverNames, ...call.argumentNames]
@@ -958,7 +973,6 @@ const projectNotebookDependencies = (
           'dynamic-assignment',
           'wildcard-import',
           'alias-rebind',
-          'control-flow',
           'class-scope',
           'comprehension-scope',
           'analysis-unavailable',
@@ -1132,11 +1146,22 @@ const projectNotebookDependencies = (
       }
     }
 
-    const definedNames = [...new Set(facts.definedNames ?? [])]
+    const definedNames = [...new Set(facts.definedNames ?? [])].filter(
+      (name) => !conditionallyDefinedNames.has(name)
+    )
     for (const name of definedNames) {
       invalidateName(name, 'stale')
       uncertainBindings.delete(name)
       referenceTokens.set(name, `${run.runId}\0${name}`)
+      detachPossibleAlias(name, possibleAliases)
+      detachPossibleAlias(name, rCopyAliases)
+      builtinContainers.delete(name)
+      copyOnModifyNames.delete(name)
+      objectTypes.delete(name)
+    }
+    for (const name of conditionallyDefinedNames) {
+      invalidateName(name, 'unknown', ['control-flow'], false)
+      uncertainBindings.set(name, ['control-flow'])
       detachPossibleAlias(name, possibleAliases)
       detachPossibleAlias(name, rCopyAliases)
       builtinContainers.delete(name)
@@ -1156,10 +1181,15 @@ const projectNotebookDependencies = (
       consumers.add(run.runId)
       possibleConsumers.set(name, consumers)
     }
-    for (const name of facts.builtinContainerNames ?? []) builtinContainers.add(name)
-    for (const name of facts.copyOnModifyNames ?? []) copyOnModifyNames.add(name)
+    for (const name of facts.builtinContainerNames ?? []) {
+      if (!conditionallyDefinedNames.has(name)) builtinContainers.add(name)
+    }
+    for (const name of facts.copyOnModifyNames ?? []) {
+      if (!conditionallyDefinedNames.has(name)) copyOnModifyNames.add(name)
+    }
     if (!incompleteRun) {
       for (const [name, typeSummary] of pendingTypeBindings) {
+        if (conditionallyDefinedNames.has(name)) continue
         objectTypes.set(name, typeSummary)
         if (typeSummary.kind === 'r-r6') copyOnModifyNames.delete(name)
       }

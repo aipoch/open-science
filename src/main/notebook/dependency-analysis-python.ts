@@ -43,15 +43,20 @@ const SAFE_CALLS = new Set([
   'any',
   'bool',
   'bytes',
+  'callable',
   'complex',
   'dict',
   'enumerate',
   'filter',
   'float',
   'frozenset',
+  'getattr',
   'hash',
+  'hasattr',
   'id',
   'int',
+  'isinstance',
+  'issubclass',
   'len',
   'list',
   'map',
@@ -1375,6 +1380,73 @@ class MethodEffectVisitor extends NodeVisitor {
   }
 }
 
+class FunctionEffectVisitor extends NodeVisitor {
+  effect: 'read' | 'unknown' = 'read'
+  namespaceUnknown = false
+
+  unknown(namespace = false): void {
+    this.effect = 'unknown'
+    if (namespace) this.namespaceUnknown = true
+  }
+
+  visit_FunctionDef(): void {
+    this.unknown()
+  }
+  visit_AsyncFunctionDef = this.visit_FunctionDef
+  visit_Lambda(): void {
+    this.unknown()
+  }
+  visit_Global(): void {
+    this.unknown(true)
+  }
+  visit_Nonlocal(): void {
+    this.unknown(true)
+  }
+  visit_ListComp(): void {
+    this.unknown()
+  }
+  visit_SetComp = this.visit_ListComp
+  visit_DictComp = this.visit_ListComp
+  visit_GeneratorExp = this.visit_ListComp
+
+  visit_Assign(node: PyNode): void {
+    if (
+      (node.targets ?? []).some(
+        (target) => target.type === 'Attribute' || target.type === 'Subscript'
+      )
+    ) {
+      this.unknown()
+    }
+    this.genericVisit(node)
+  }
+
+  visit_AnnAssign(node: PyNode): void {
+    if (node.target?.type === 'Attribute' || node.target?.type === 'Subscript') this.unknown()
+    this.genericVisit(node)
+  }
+
+  visit_AugAssign = this.visit_AnnAssign
+
+  visit_Delete(node: PyNode): void {
+    if (
+      (node.targets ?? []).some(
+        (target) => target.type === 'Attribute' || target.type === 'Subscript'
+      )
+    ) {
+      this.unknown()
+    }
+    this.genericVisit(node)
+  }
+
+  visit_Call(node: PyNode): void {
+    if (isPyNode(node.func) && node.func.type === 'Name') {
+      if (DYNAMIC_CALLS.has(node.func.id ?? '')) this.unknown(true)
+      else if (!SAFE_CALLS.has(node.func.id ?? '')) this.unknown()
+    } else this.unknown()
+    this.genericVisit(node)
+  }
+}
+
 class FieldVisitor extends NodeVisitor {
   constructor(
     private readonly receiver: string,
@@ -1525,8 +1597,48 @@ const summarizeClass = (node: PyNode): NotebookDependencyTypeSummary | undefined
   }
 }
 
+const summarizeFunction = (node: PyNode): NotebookDependencyTypeSummary | undefined => {
+  if ((node.decorator_list ?? []).length || !node.name) return undefined
+  const fnArgs = node.args as PyArguments | undefined
+  const names = new MethodNameVisitor()
+  for (const argument of [
+    ...(fnArgs?.posonlyargs ?? []),
+    ...(fnArgs?.args ?? []),
+    ...(fnArgs?.kwonlyargs ?? [])
+  ]) {
+    names.locals.add(argument.arg)
+  }
+  if (fnArgs?.vararg) names.locals.add(fnArgs.vararg.arg)
+  if (fnArgs?.kwarg) names.locals.add(fnArgs.kwarg.arg)
+  const visitor = new FunctionEffectVisitor()
+  const body = Array.isArray(node.body) ? node.body : []
+  for (const statement of body) visitor.visit(statement)
+  for (const statement of body) names.visit(statement)
+  const shadowedSafeCalls = new Set(
+    [...names.safeCalls].filter((name) => names.locals.has(name) && !names.globals.has(name))
+  )
+  if (shadowedSafeCalls.size) visitor.unknown(true)
+  return {
+    name: `python-function:${node.name}`,
+    kind: 'python-class',
+    fields: [],
+    methods: [
+      {
+        name: '__call__',
+        effect: visitor.effect,
+        usedNames: [...names.loaded]
+          .filter((name) => !(names.locals.has(name) && !names.globals.has(name)))
+          .sort(),
+        safeCallNames: [...names.safeCalls].filter((name) => !shadowedSafeCalls.has(name)).sort(),
+        unknownScope: visitor.namespaceUnknown ? 'namespace' : 'receiver'
+      }
+    ]
+  }
+}
+
 class Analyzer extends NodeVisitor {
   defined = new Set<string>()
+  conditionallyDefined = new Set<string>()
   used = new Map<string, number>()
   priorUsed = new Map<string, number>()
   mutated = new Set<string>()
@@ -1885,7 +1997,7 @@ class Analyzer extends NodeVisitor {
         name: callableType,
         kind: 'python-class',
         fields: [],
-        methods: [{ name: '__call__', effect: 'unknown', unknownScope: 'namespace' }]
+        methods: [{ name: '__call__', effect: 'unknown', unknownScope: 'receiver' }]
       })
     }
     this.typeBindings.push({ target, typeName: callableType, argumentNames: [] })
@@ -1926,7 +2038,10 @@ class Analyzer extends NodeVisitor {
 
   prepareAssignment(targetNames: string[]): void {
     const conditional = this.controlDepth > 0
-    if (conditional) this.unknown.add('control-flow')
+    if (conditional) {
+      this.unknown.add('control-flow')
+      for (const name of targetNames) this.conditionallyDefined.add(name)
+    }
     for (const name of targetNames) {
       this.importedModules.delete(name)
       this.importedFunctions.delete(name)
@@ -1954,8 +2069,10 @@ class Analyzer extends NodeVisitor {
   visit_Name(node: PyNode): void {
     if (!node.id || this.localScopes.some((scope) => node.id! in scope)) return
     if (node.ctx === 'Load') this.addUsed(node.id)
-    else if (node.ctx === 'Store') this.defined.add(node.id)
-    else if (node.ctx === 'Del') {
+    else if (node.ctx === 'Store') {
+      this.defined.add(node.id)
+      if (this.controlDepth > 0) this.conditionallyDefined.add(node.id)
+    } else if (node.ctx === 'Del') {
       this.prepareAssignment([node.id])
       this.mutated.add(node.id)
     }
@@ -2015,6 +2132,7 @@ class Analyzer extends NodeVisitor {
         : undefined
     const memberAccess = value?.type === 'Subscript' ? 'subscript' : 'attribute'
     const member = memberSource ? memberName(value) : undefined
+    const importedMemberModule = memberSource ? this.importedModules.get(memberSource) : undefined
     const conditionalSources =
       value?.type === 'IfExp'
         ? new Set(
@@ -2061,6 +2179,9 @@ class Analyzer extends NodeVisitor {
       (value.type === 'Attribute' || value.type === 'Subscript')
     ) {
       if (memberSource) this.addPossibleAlias(target.id, memberSource, memberAccess, member)
+      if (value.type === 'Attribute' && importedMemberModule && member) {
+        this.bindUnknownImport(target.id, importedMemberModule, member)
+      }
     } else if (
       constructor &&
       target?.type === 'Name' &&
@@ -2132,8 +2253,10 @@ class Analyzer extends NodeVisitor {
       this.prepareAssignment(targetNames)
       for (const name of targetNames) this.defined.add(name)
     }
-    const source = this.visibleRootName(node.iter)
-    this.localScopes.push(Object.fromEntries(targetNames.map((name) => [name, source])))
+    const sources = this.expressionVisibleRoots(node.iter)
+    this.localScopes.push(
+      Object.fromEntries(targetNames.map((name, index) => [name, sources[index] ?? sources[0]]))
+    )
     for (const statement of body) this.visit(statement)
     this.localScopes.pop()
     for (const statement of node.orelse ?? []) this.visit(statement)
@@ -2155,7 +2278,11 @@ class Analyzer extends NodeVisitor {
       this.prepareAssignment([node.name])
       this.defined.add(node.name)
     }
-    this.unknown.add('function-scope')
+    const summary = summarizeFunction(node)
+    if (node.name && summary) {
+      this.typeSummaries.push(summary)
+      this.typeBindings.push({ target: node.name, typeName: summary.name, argumentNames: [] })
+    } else this.unknown.add('function-scope')
     const fnArgs = node.args as PyArguments | undefined
     for (const value of [
       ...(node.decorator_list ?? []),
@@ -2193,8 +2320,10 @@ class Analyzer extends NodeVisitor {
     this.localScopes.push(scope)
     for (const generator of node.generators ?? []) {
       this.visit(generator.iter)
-      const source = this.visibleRootName(generator.iter)
-      for (const name of this.assignedNames(generator.target)) scope[name] = source
+      const sources = this.expressionVisibleRoots(generator.iter)
+      for (const [index, name] of this.assignedNames(generator.target).entries()) {
+        scope[name] = sources[index] ?? sources[0]
+      }
       for (const condition of generator.ifs) this.visit(condition)
     }
     for (const value of values) this.visit(value)
@@ -2584,6 +2713,7 @@ const factsFromAnalyzer = (
   ]
   return {
     definedNames: [...analyzer.defined].sort(),
+    conditionallyDefinedNames: [...analyzer.conditionallyDefined].sort(),
     usedNames: [...analyzer.used.keys()].sort(),
     priorUsedNames: [...analyzer.priorUsed.keys()].sort(),
     possiblyUsedNames: [...analyzer.possiblyUsed].sort(),

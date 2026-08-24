@@ -46,6 +46,12 @@ type PythonLibraryEffects = Record<string, PythonLibraryObjectSummary>
 // Static effects are deliberately limited to stable, documented behavior used by ordinary
 // scientific Notebook code. Unknown methods continue through the conservative receiver-call path.
 const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
+  importlib: {
+    kind: 'module',
+    methods: {
+      import_module: { effect: 'read' }
+    }
+  },
   pickle: {
     kind: 'module',
     methods: {
