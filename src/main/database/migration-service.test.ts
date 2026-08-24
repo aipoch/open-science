@@ -291,6 +291,71 @@ describe('application database migrations', () => {
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })
 
+  it('upgrades the pre-release agent memory ledger without losing saved memories', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-pre-release-memory-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.memoryEntry.createMany({
+      data: [
+        {
+          id: 'memory-1',
+          categoryId: 'memory-category-about-you',
+          content: 'Prefers concise answers',
+          contentKey: 'prefers concise answers',
+          origin: 'user'
+        },
+        {
+          id: 'memory-2',
+          categoryId: 'memory-category-about-you',
+          content: 'Uses temporary storage for migration tests',
+          contentKey: 'uses temporary storage for migration tests',
+          origin: 'user'
+        }
+      ]
+    })
+
+    for (const table of [
+      'SessionArtifactRef',
+      'SessionRun',
+      'SessionTurnUsage',
+      'PendingSessionReconciliation',
+      'SessionProjectionState',
+      'Session',
+      'SessionNumberSequence'
+    ]) {
+      await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
+    }
+    await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "deletedAt"')
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0013_session_projection', '0014_agent_memory')`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "_open_science_migrations" ("id", "checksum") VALUES (?, ?)`,
+      '0013_agent_memory',
+      'e398804209d9fc699a966bed07186717062e0516fbd43bb5f46ef7d9668986fc'
+    )
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: false,
+      applied: ['0013_session_projection', '0014_agent_memory'],
+      to: '0014_agent_memory'
+    })
+    await expect(
+      client.memoryEntry.findMany({ orderBy: { id: 'asc' }, select: { id: true, content: true } })
+    ).resolves.toEqual([
+      { id: 'memory-1', content: 'Prefers concise answers' },
+      { id: 'memory-2', content: 'Uses temporary storage for migration tests' }
+    ])
+    await expect(
+      client.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "_open_science_migrations"
+        WHERE "id" IN ('0013_session_projection', '0014_agent_memory')
+        ORDER BY "id"
+      `
+    ).resolves.toEqual([{ id: '0013_session_projection' }, { id: '0014_agent_memory' }])
+    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+  })
+
   it('upgrades a pre-ledger ComputeJob table while preserving historical rows', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-3a-to-current-'))
     client = createProjectDbClient(storageRoot)
