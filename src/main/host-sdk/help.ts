@@ -41,7 +41,7 @@ type HostSdkHelpOperationDescriptor = Readonly<{
   path: string
   aliases: readonly string[]
   summary: string
-  call_forms: readonly Readonly<{ signature: string; accepts: string }>[]
+  callForms: readonly Readonly<{ signature: string; accepts: string }>[]
   request: Readonly<Record<string, unknown>>
   options: Readonly<Record<string, unknown>>
   returns: Readonly<Record<string, unknown>>
@@ -155,7 +155,7 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.delegate',
   aliases: ['delegate'],
   summary: 'Dispatch one child or an atomic fan-out; optionally observe it.',
-  call_forms: [
+  callForms: [
     {
       signature: 'await host.delegate(request | requests, options?)',
       accepts: 'object_or_non_empty_array'
@@ -230,7 +230,7 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         statuses: ['completed', 'cancelled', 'error']
       }
     ],
-    child_fields: DELEGATION_CHILD_FIELDS
+    childFields: DELEGATION_CHILD_FIELDS
   },
   constraints: [
     'Main/root only; no nested delegation.',
@@ -276,7 +276,7 @@ const CHILDREN_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.children',
   aliases: ['children'],
   summary: 'List current direct-child Attempts on the active Message Branch.',
-  call_forms: [{ signature: 'await host.children(frameIds?)', accepts: 'optional_frame_id_array' }],
+  callForms: [{ signature: 'await host.children(frameIds?)', accepts: 'optional_frame_id_array' }],
   request: {
     fields: [
       {
@@ -288,7 +288,7 @@ const CHILDREN_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
     ]
   },
   options: NO_OPTIONS,
-  returns: { type: 'array', item_fields: INVENTORY_FIELDS },
+  returns: { type: 'array', itemFields: INVENTORY_FIELDS },
   constraints: [
     'Main/root only; results cover current direct-child Attempts on the active branch.',
     'Results preserve durable admission order; historical Attempt handles are not recovered.'
@@ -306,7 +306,7 @@ const COLLECT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.collect',
   aliases: ['collect'],
   summary: 'Observe pinned Attempts until any/all settle or time expires.',
-  call_forms: [
+  callForms: [
     { signature: 'await host.collect(selectors, options?)', accepts: 'non_empty_selector_array' }
   ],
   request: {
@@ -338,7 +338,7 @@ const COLLECT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
       }
     ]
   },
-  returns: { type: 'array', item_fields: DELEGATION_CHILD_FIELDS },
+  returns: { type: 'array', itemFields: DELEGATION_CHILD_FIELDS },
   constraints: [
     'Main/root only; only direct children on the active branch are collectible.',
     'Expiry returns every latest observation and never stops a child.',
@@ -359,9 +359,7 @@ const STOP_CHILD_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.stopChild',
   aliases: ['stopChild'],
   summary: 'Stop one or more direct-child Frames.',
-  call_forms: [
-    { signature: 'await host.stopChild(frameIds)', accepts: 'non_empty_frame_id_array' }
-  ],
+  callForms: [{ signature: 'await host.stopChild(frameIds)', accepts: 'non_empty_frame_id_array' }],
   request: {
     fields: [
       {
@@ -375,7 +373,7 @@ const STOP_CHILD_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   options: NO_OPTIONS,
   returns: {
     type: 'array',
-    item_fields: [
+    itemFields: [
       { name: 'frameId', type: 'string', required: true, description: 'Requested Frame.' },
       {
         name: 'status',
@@ -407,7 +405,7 @@ const SUBMIT_OUTPUT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.submitOutput',
   aliases: ['submitOutput'],
   summary: 'Submit the authenticated child Attempt structured JSON value.',
-  call_forms: [{ signature: 'await host.submitOutput(value)', accepts: 'json_value' }],
+  callForms: [{ signature: 'await host.submitOutput(value)', accepts: 'json_value' }],
   request: {
     fields: [
       {
@@ -546,7 +544,7 @@ const SEND_FRAME_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.sendFrameMessage',
   aliases: ['sendFrameMessage'],
   summary: 'Queue a running coordination message to a child or parent.',
-  call_forms: [
+  callForms: [
     {
       signature: 'await host.sendFrameMessage(target, message, options?)',
       accepts: 'positional_arguments'
@@ -599,7 +597,7 @@ const MESSAGE_RECEIPT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.messageReceipt',
   aliases: ['messageReceipt'],
   summary: 'Observe an owned delivery receipt for a bounded time.',
-  call_forms: [
+  callForms: [
     { signature: 'await host.messageReceipt(selector, options?)', accepts: 'selector_options' }
   ],
   request: {
@@ -648,7 +646,7 @@ const RESOLVE_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.resolveMessage',
   aliases: ['resolveMessage'],
   summary: 'Acknowledge uncertain delivery risk and release its lane fence.',
-  call_forms: [
+  callForms: [
     {
       signature: "await host.resolveMessage(messageId, { action: 'acknowledge_uncertain' })",
       accepts: 'message_resolution'
@@ -698,7 +696,7 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.viewImage',
   aliases: ['viewImage'],
   summary: 'Attach an authorized existing image to the current repl_execute result.',
-  call_forms: [{ signature: 'await host.viewImage(source, options?)', accepts: 'source_options' }],
+  callForms: [{ signature: 'await host.viewImage(source, options?)', accepts: 'source_options' }],
   request: {
     fields: [
       {
@@ -766,7 +764,7 @@ const CURRENT_MODEL_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.currentModel',
   aliases: ['currentModel'],
   summary: "Return the calling Session's exact current model id.",
-  call_forms: [{ signature: 'await host.currentModel()', accepts: 'no_arguments' }],
+  callForms: [{ signature: 'await host.currentModel()', accepts: 'no_arguments' }],
   request: NO_OPTIONS,
   options: NO_OPTIONS,
   returns: { type: 'string', description: 'Exact model id for the token-bound Session.' },
@@ -787,7 +785,7 @@ const LLM_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.llm',
   aliases: ['llm'],
   summary: 'Run bounded, one-shot, tool-less inference through the active Host LLM backend.',
-  call_forms: [{ signature: 'await host.llm(request, options?)', accepts: 'request_options' }],
+  callForms: [{ signature: 'await host.llm(request, options?)', accepts: 'request_options' }],
   request: {
     accepts: ['prompt_string', 'exact_prompt_object', 'request_array'],
     fields: [
@@ -813,7 +811,7 @@ const LLM_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   },
   returns: {
     mirrorsInput: true,
-    success_fields: [
+    successFields: [
       { name: 'text', type: 'string', required: true, description: 'Generated text.' },
       { name: 'model', type: 'string', required: true, description: 'Observed model id.' },
       {
@@ -829,7 +827,7 @@ const LLM_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         description: 'Provider-neutral camelCase token usage when available.'
       }
     ],
-    usage_fields: [
+    usageFields: [
       {
         name: 'inputTokens',
         type: 'integer',
@@ -867,7 +865,7 @@ const LLM_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         description: 'Positive provider-turn count when available.'
       }
     ],
-    batch_error_fields: [
+    batchErrorFields: [
       { name: 'error', type: 'string', required: true, description: 'Public per-item failure.' }
     ]
   },
@@ -895,7 +893,7 @@ const LIST_MODELS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.listModels',
   aliases: ['listModels'],
   summary: 'List configured models for the current Host LLM Provider and framework.',
-  call_forms: [{ signature: 'await host.listModels()', accepts: 'no_arguments' }],
+  callForms: [{ signature: 'await host.listModels()', accepts: 'no_arguments' }],
   request: NO_OPTIONS,
   options: NO_OPTIONS,
   returns: {
@@ -919,7 +917,7 @@ const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.sessions',
   aliases: ['sessions'],
   summary: 'List or inspect read-only Session diagnostics in the current Project.',
-  call_forms: [
+  callForms: [
     { signature: 'await host.sessions.list(options?)', accepts: 'optional_list_options' },
     { signature: 'await host.sessions.inspect(sessionId)', accepts: 'exact_session_id' }
   ],
@@ -967,12 +965,12 @@ const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   },
   returns: {
     type: 'SessionDiagnostic | SessionDiagnosticPage',
-    list_fields: [
+    listFields: [
       { name: 'totalCount', type: 'integer', required: true, description: 'Total matches.' },
       { name: 'nextCursor', type: 'string', required: false, description: 'Next page.' },
       { name: 'sessions', type: 'SessionDiagnostic[]', required: true, description: 'Page.' }
     ],
-    session_fields: [
+    sessionFields: [
       { name: 'sessionId', type: 'string', required: true, description: 'Exact Session id.' },
       { name: 'title', type: 'string', required: true, description: 'Durable title.' },
       { name: 'status', type: 'string', required: true, description: 'Durable Session status.' },
@@ -1133,7 +1131,7 @@ const hostSdkHelp: HostSdkHelpRegistry = Object.freeze({
       {
         kind: descriptor.kind,
         id: descriptor.id,
-        call_forms: descriptor.call_forms,
+        callForms: descriptor.callForms,
         request: descriptor.request,
         options: descriptor.options,
         returns: descriptor.returns,

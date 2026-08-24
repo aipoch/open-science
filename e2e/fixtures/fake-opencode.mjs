@@ -763,7 +763,7 @@ if (process.argv.includes('--version')) {
             dispatched.children.length !== 2 ||
             dispatched.children[0].status !== 'completed' ||
             dispatched.children[1].status !== 'running' ||
-            Object.hasOwn(dispatched.children[1], 'artifacts_created')
+            Object.hasOwn(dispatched.children[1], 'artifactsCreated')
           ) {
             throw new Error(`Timed delegate observation failed: ${JSON.stringify(dispatched)}`)
           }
@@ -1033,8 +1033,8 @@ if (process.argv.includes('--version')) {
             delegated.kind !== 'results' ||
             child?.status !== 'completed' ||
             child.response !== 'Structured child completed.' ||
-            child.structured_output?.count !== 3 ||
-            child.structured_output_unsatisfied !== false ||
+            child.structuredOutput?.count !== 3 ||
+            child.structuredOutputUnsatisfied !== false ||
             child.artifactsCreated?.length !== 1
           ) {
             throw new Error(`Structured delegation failed: ${JSON.stringify(delegated)}`)
