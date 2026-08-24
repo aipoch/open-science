@@ -464,6 +464,23 @@ export const createPastedTextAnchor = (node: ComposerPastedTextNode): HTMLSpanEl
   return span
 }
 
+// Refresh renderer-only upload metadata without replacing anchor elements, which would discard the
+// browser selection when an upload finishes binding while the user keeps typing after the paste.
+export const syncPastedTextAnchors = (root: HTMLElement, doc: ComposerDoc): void => {
+  const nodesById = new Map(
+    doc.nodes
+      .filter((node): node is ComposerPastedTextNode => node.type === 'pasted-text')
+      .map((node) => [node.id, node])
+  )
+  for (const anchor of root.querySelectorAll<HTMLElement>(
+    `[data-composer-node-type="${PASTED_TEXT_NODE_TYPE}"]`
+  )) {
+    const id = anchor.getAttribute('data-pasted-text-id')
+    const node = id === null ? undefined : nodesById.get(id)
+    if (node) pastedTextByAnchor.set(anchor, { ...node })
+  }
+}
+
 // Replace the root's content with the doc rendered as text nodes and chip spans.
 export const applyDocToDom = (root: HTMLElement, doc: ComposerDoc): void => {
   root.textContent = ''

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ComposerEditor } from './ComposerEditor'
 import {
+  domToDoc,
   emptyDoc,
   LONG_PASTE_CHARACTER_THRESHOLD,
   type ComposerDoc,
@@ -314,6 +315,35 @@ describe('ComposerEditor', () => {
     ).toBe(true)
     expect(document.activeElement).toBe(root)
     expect(window.getSelection()?.anchorNode?.nodeType).toBe(Node.TEXT_NODE)
+  })
+
+  it('preserves the caret after a pasted-text anchor when upload metadata changes', () => {
+    const pastedText = { type: 'pasted-text' as const, id: 'paste-1', text: 'payload' }
+    renderEditor({
+      doc: {
+        nodes: [{ type: 'text', text: 'before ' }, pastedText, { type: 'text', text: ' after' }]
+      },
+      focusRequest: 'session-a'
+    })
+    const root = editor()
+    const textAfterAnchor = root.childNodes[2]
+    root.focus()
+    setCaret(textAfterAnchor, 0)
+
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'text', text: 'before ' },
+          { ...pastedText, attachmentId: 'upload-1' },
+          { type: 'text', text: ' after' }
+        ]
+      },
+      focusRequest: 'session-a'
+    })
+
+    expect(window.getSelection()?.anchorNode).toBe(root.childNodes[2])
+    expect(window.getSelection()?.anchorOffset).toBe(0)
+    expect(domToDoc(root).nodes[1]).toEqual({ ...pastedText, attachmentId: 'upload-1' })
   })
 
   it('refreshes an artifact chip when only its MIME type changes', () => {

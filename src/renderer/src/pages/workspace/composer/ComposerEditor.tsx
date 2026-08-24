@@ -22,6 +22,7 @@ import {
   MAX_COMPOSER_ARTIFACT_MENTIONS,
   MAX_COMPOSER_SESSION_MENTIONS,
   shouldAttachPastedText,
+  syncPastedTextAnchors,
   type ComposerCaretPosition,
   type ComposerDoc,
   type ComposerNode,
@@ -80,12 +81,7 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
       return node.sessionId === other.sessionId && node.title === other.title
     }
     if (node.type === 'pasted-text' && other.type === 'pasted-text') {
-      return (
-        node.id === other.id &&
-        node.text === other.text &&
-        node.transferId === other.transferId &&
-        node.attachmentId === other.attachmentId
-      )
+      return node.id === other.id && node.text === other.text
     }
     if (node.type === 'artifact' && other.type === 'artifact') {
       if (
@@ -293,6 +289,7 @@ export const ComposerEditor = ({
       focusRequest !== undefined && canReceiveFocus(root) && document.activeElement === root
     const docChanged = !nodesEqual(domToDoc(root).nodes, doc.nodes)
     if (docChanged) applyDocToDom(root, doc)
+    else syncPastedTextAnchors(root, doc)
     const hasCaretRequest =
       caretRequest !== undefined && handledCaretRequestRef.current !== caretRequest.key
     if (hasCaretRequest) {
