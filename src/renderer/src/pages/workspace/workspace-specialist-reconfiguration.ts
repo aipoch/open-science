@@ -50,7 +50,7 @@ const useWorkspaceSpecialistReconfiguration = (
   error: WorkspaceSpecialistReconfigureError | null
   setError: Dispatch<SetStateAction<WorkspaceSpecialistReconfigureError | null>>
   idleErrorFor: (sessionId: string | undefined) => WorkspaceSpecialistReconfigureError | null
-  clearIdleRetry: (sessionId: string) => void
+  clearIdleRetry: (sessionId: string) => boolean
   beginIdleAttempt: (sessionId: string, specialistId: string | undefined) => IdleSpecialistAttempt
   retryIdle: (
     activeSessionId: string | undefined,
@@ -75,9 +75,10 @@ const useWorkspaceSpecialistReconfiguration = (
     })
   }, [])
   const clearIdleRetry = useCallback(
-    (sessionId: string): void => {
-      idleAttemptGenerations.current.delete(sessionId)
+    (sessionId: string): boolean => {
+      const invalidated = idleAttemptGenerations.current.delete(sessionId)
       removeIdleFailure(sessionId)
+      return invalidated
     },
     [removeIdleFailure]
   )

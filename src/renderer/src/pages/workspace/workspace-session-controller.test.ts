@@ -691,6 +691,62 @@ describe('workspace session controller', () => {
     expect(setSessionSpecialist).toHaveBeenCalledOnce()
   })
 
+  it('clears an in-flight idle selection after an authoritative handoff supersedes it', async () => {
+    const active = session({ specialistId: 'specialist-a' })
+    const authoritative = specialist('specialist-c', 'Specialist C')
+    const switchRequest = deferred<{ status: 'applied'; contextReset: boolean }>()
+    let handoffListener: ((event: CompletionHandoffLifecycleEvent) => void) | undefined
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    window.api = {
+      specialist: {
+        setSessionSpecialist: vi.fn(() => switchRequest.promise),
+        resolveSessionSpecialist: vi.fn().mockResolvedValue({
+          kind: 'bound',
+          profile: authoritative
+        }),
+        onHandoffLifecycleEvent: vi.fn((listener) => {
+          handoffListener = listener
+          return () => undefined
+        })
+      }
+    } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [specialist('specialist-b', 'Specialist B'), authoritative]
+    })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.selectSpecialist('specialist-b'))
+    await act(async () => {
+      handoffListener?.({
+        id: 'handoff-1',
+        sessionId: active.id,
+        sequence: 1,
+        observedAt: 1,
+        phase: 'continuation-start',
+        target: 'Specialist C',
+        provenance: { originatingTurnId: 'turn-1', attachmentIds: [], artifactIds: [] }
+      })
+      await Promise.resolve()
+    })
+    hook.rerender(useSessionStore.getState().sessions[0])
+
+    expect(hook.result.current.view.specialist.historyId).toBe('specialist-c')
+    expect(hook.result.current.lifecycle.captureSendIntent(false)).toMatchObject({
+      hasPendingSwitch: false,
+      pendingSpecialistId: 'specialist-c'
+    })
+
+    await act(async () => {
+      switchRequest.resolve({ status: 'applied', contextReset: false })
+      await switchRequest.promise
+    })
+    hook.rerender(useSessionStore.getState().sessions[0])
+
+    expect(useSessionStore.getState().sessions[0].specialistId).toBe('specialist-c')
+    expect(hook.result.current.view.specialist.historyId).toBe('specialist-c')
+  })
+
   it('discards an idle Specialist failure after a newer pending-switch update', async () => {
     const active = session({ specialistId: 'specialist-a' })
     let pendingSwitchListener:

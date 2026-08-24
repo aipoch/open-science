@@ -230,6 +230,12 @@ const useWorkspaceSessionController = ({
       return next
     })
   }, [])
+  const invalidateIdleAttempt = useCallback(
+    (sessionId: string): void => {
+      if (clearIdleRetry(sessionId)) clearPending(sessionId)
+    },
+    [clearIdleRetry, clearPending]
+  )
   const canArchive = (session: ChatSession): boolean =>
     isPersistenceReady &&
     !session.isPending &&
@@ -264,7 +270,7 @@ const useWorkspaceSessionController = ({
       expectedArchivedAt: null
     })
       .then((archived) => {
-        clearIdleRetry(session.id)
+        invalidateIdleAttempt(session.id)
         enqueueSessionArchive(archived)
         if (selectedSessionId === session.id) clearSelection()
       })
@@ -302,7 +308,7 @@ const useWorkspaceSessionController = ({
         const deleted = result.status === 'deleted'
         settleSessionDeletion(sessionId, deleted)
         if (deleted) {
-          clearIdleRetry(sessionId)
+          invalidateIdleAttempt(sessionId)
           setDeleteDialog((current) => (current?.session.id === sessionId ? null : current))
           return
         }
@@ -341,7 +347,7 @@ const useWorkspaceSessionController = ({
     }
     const sessionId = activeSession.id
     if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return
-    clearIdleRetry(sessionId)
+    invalidateIdleAttempt(sessionId)
     const running = projectSessionActionability(activeSession).activity !== 'inactive'
     if (running) {
       setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
@@ -548,7 +554,7 @@ const useWorkspaceSessionController = ({
     const specialistApi = window.api?.specialist
     if (!specialistApi?.onPendingSwitch) return
     return specialistApi.onPendingSwitch((pending) => {
-      clearIdleRetry(pending.sessionId)
+      invalidateIdleAttempt(pending.sessionId)
       if (pending.targetName === null) {
         setPendingSpecialists((current) => ({
           ...current,
@@ -580,7 +586,7 @@ const useWorkspaceSessionController = ({
         })
         .catch(() => undefined)
     })
-  }, [clearIdleRetry])
+  }, [invalidateIdleAttempt])
   const applyHandoffLifecycleEvent = useCallback(
     (event: CompletionHandoffLifecycleEvent): void => {
       if (event.phase !== 'continuation-start' && event.phase !== 'continued') return
@@ -595,11 +601,11 @@ const useWorkspaceSessionController = ({
           } else if (resolution.kind === 'main') {
             setSessionSpecialistId(event.sessionId, undefined)
           } else return
-          clearIdleRetry(event.sessionId)
+          invalidateIdleAttempt(event.sessionId)
         })
         .catch(() => undefined)
     },
-    [clearIdleRetry, setSessionSpecialistId]
+    [invalidateIdleAttempt, setSessionSpecialistId]
   )
   useEffect(() => {
     const specialistApi = window.api?.specialist
