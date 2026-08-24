@@ -167,7 +167,8 @@ class NotebookPackageMutationOwner {
                 ...mutation,
                 result: installResult?.ok ? 'success' : 'failure',
                 attempts: installResult?.attempts ?? [],
-                fallbackUsed: installResult?.fallbackUsed ?? false
+                fallbackUsed: installResult?.fallbackUsed ?? false,
+                ...(installResult?.source ? { source: installResult.source } : {})
               })
               .catch((error: unknown) => {
                 inventoryRefreshError = error

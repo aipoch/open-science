@@ -727,6 +727,7 @@ describe('EnvironmentStateTracker', () => {
       operation: 'install',
       packages: ['ggplot2'],
       result: 'success',
+      source: { type: 'bioconductor', version: '3.21' },
       fallbackUsed: true,
       attempts: [
         {
@@ -755,7 +756,8 @@ describe('EnvironmentStateTracker', () => {
           name: 'ggplot2',
           relationship: 'requested',
           change: 'installed',
-          afterVersion: '3.5.2'
+          afterVersion: '3.5.2',
+          source: { type: 'bioconductor', version: '3.21' }
         }),
         expect.objectContaining({
           name: 'rlang',
@@ -781,7 +783,8 @@ describe('EnvironmentStateTracker', () => {
             name: 'ggplot2',
             relationship: 'requested',
             change: 'installed',
-            afterVersion: '3.5.2'
+            afterVersion: '3.5.2',
+            source: { type: 'bioconductor', version: '3.21' }
           }),
           expect.objectContaining({
             name: 'rlang',
@@ -1025,6 +1028,75 @@ describe('EnvironmentStateTracker', () => {
         result: 'success'
       })
     ).resolves.toEqual({ result: 'failure', reason: 'inventory-refresh-failed' })
+  })
+
+  it('retains installer source when a failed refresh is completed during recovery', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-source-recovery-'))
+    const rTarget = {
+      language: 'r' as const,
+      environmentName: 'default-r',
+      runtimeSource: 'managed' as const,
+      command: '/runtime/default-r/bin/Rscript',
+      args: []
+    }
+    const initial = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi
+        .fn()
+        .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [] })
+        .mockRejectedValueOnce(new Error('inventory unavailable')),
+      captureFingerprint: vi.fn().mockResolvedValue('before-install')
+    })
+    await initial.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-bioc-recovery',
+      operation: 'install',
+      packages: ['DESeq2']
+    })
+    await expect(
+      initial.refreshAfterPackageMutation(rTarget, {
+        operationId: 'operation-bioc-recovery',
+        operation: 'install',
+        packages: ['DESeq2'],
+        result: 'success',
+        source: { type: 'bioconductor', version: '3.21' }
+      })
+    ).resolves.toEqual({ result: 'failure', reason: 'inventory-refresh-failed' })
+
+    const recovered = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockResolvedValue({
+        runtimeVersion: '4.5.1',
+        packages: [
+          {
+            name: 'DESeq2',
+            version: '1.48.1',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            evidenceSources: ['r-installed-packages']
+          }
+        ]
+      }),
+      captureFingerprint: vi.fn().mockResolvedValue('after-install')
+    })
+    const start = await recovered.prepareRun(rTarget)
+    const capture = await recovered.captureCompletedRun(
+      rTarget,
+      { runtimeVersion: '4.5.1', packages: [] },
+      start
+    )
+
+    expect(capture.manifest.operationLog).toEqual([
+      expect.objectContaining({
+        operationId: 'operation-bioc-recovery',
+        packageChanges: [
+          expect.objectContaining({
+            name: 'DESeq2',
+            relationship: 'requested',
+            source: { type: 'bioconductor', version: '3.21' }
+          })
+        ]
+      })
+    ])
   })
 
   it('forces a terminal rescan and marks evidence partial when package state changes during a run', async () => {

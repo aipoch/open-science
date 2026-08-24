@@ -14,6 +14,7 @@ import {
   type NotebookInventoryRefreshAttempt,
   type NotebookLiveEnvironmentOverlay,
   type NotebookLanguage,
+  type NotebookPackageSource,
   type NotebookPackageInstallerAttempt
 } from '../../shared/notebook'
 import { condaActivatedPath } from './runtime-paths'
@@ -61,6 +62,7 @@ type PackageMutationOutcome = PackageMutationIntent & {
   result: NotebookEnvironmentOperation['result']
   attempts?: NotebookPackageInstallerAttempt[]
   fallbackUsed?: boolean
+  source?: NotebookPackageSource
 }
 
 type PackageMutationVerification = {
@@ -119,6 +121,7 @@ type PendingEnvironmentOperationRecord = {
   fallbackUsed: boolean
   inventoryRefreshAttempts: NotebookInventoryRefreshAttempt[]
   beforeInventoryChecksum?: string
+  source?: NotebookPackageSource
 }
 
 type StoredInventory = InstalledEnvironmentInventory & {
@@ -453,6 +456,16 @@ const packageChangesForOperation = ({
   }
   return changes
 }
+
+const packageChangesWithSource = (
+  changes: NotebookEnvironmentPackageChange[],
+  source: NotebookPackageSource | undefined
+): NotebookEnvironmentPackageChange[] =>
+  source
+    ? changes.map((change) =>
+        change.relationship === 'requested' && !change.source ? { ...change, source } : change
+      )
+    : changes
 
 const normalizePackage = (pkg: NotebookEnvironmentPackage): NotebookEnvironmentPackage => ({
   ...pkg,
@@ -1006,12 +1019,15 @@ class EnvironmentStateTracker {
           timestamp: this.now().toISOString(),
           result: inventoryRefresh
         }
-        const packageChanges = packageChangesForOperation({
-          language: target.language,
-          before: beforeInventory?.packages,
-          after: inventory.packages,
-          requestedPackages: outcome.packages
-        })
+        const packageChanges = packageChangesWithSource(
+          packageChangesForOperation({
+            language: target.language,
+            before: beforeInventory?.packages,
+            after: inventory.packages,
+            requestedPackages: outcome.packages
+          }),
+          outcome.source
+        )
         verification = {
           ...verifyPackageMutation(target, outcome, inventory.packages),
           ...(packageChanges.length > 0 ? { packageChanges } : {})
@@ -1080,6 +1096,7 @@ class EnvironmentStateTracker {
           }),
           lifecycle: 'terminal-refresh-pending',
           terminalResult: outcome.result,
+          ...(outcome.source ? { source: outcome.source } : {}),
           attempts: baseLogEntry.attempts,
           fallbackUsed: baseLogEntry.fallbackUsed,
           inventoryRefreshAttempts: pendingEntry.inventoryRefreshAttempts
@@ -1237,18 +1254,21 @@ class EnvironmentStateTracker {
           result: 'published'
         }
       ],
-      packageChanges: packageChangesForOperation({
-        language: target.language,
-        before: pending.beforeInventoryChecksum
-          ? (
-              await this.readInventory(target, pending.beforeInventoryChecksum).catch(
-                () => undefined
-              )
-            )?.packages
-          : undefined,
-        after: inventory.packages,
-        requestedPackages: pending.packages
-      })
+      packageChanges: packageChangesWithSource(
+        packageChangesForOperation({
+          language: target.language,
+          before: pending.beforeInventoryChecksum
+            ? (
+                await this.readInventory(target, pending.beforeInventoryChecksum).catch(
+                  () => undefined
+                )
+              )?.packages
+            : undefined,
+          after: inventory.packages,
+          requestedPackages: pending.packages
+        }),
+        pending.source
+      )
     }
     cache.currentManifestChecksum = await this.publishOperationManifest(
       target,
