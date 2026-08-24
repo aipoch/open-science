@@ -797,7 +797,12 @@ class SessionRepository {
     const revisionKey = `${safeProjectId}:${safeSessionId}`
     if (diagnostic.status === 'missing') {
       this.sessionRevisions.delete(revisionKey)
-      if (!this.projectionWritesSuspended) {
+      if (this.projectionWritesSuspended) {
+        this.suspendedProjectionSessionWrites.set(revisionKey, {
+          projectId: safeProjectId,
+          sessionId: safeSessionId
+        })
+      } else {
         await this.projection?.commitDelete(safeProjectId, safeSessionId)
       }
       return

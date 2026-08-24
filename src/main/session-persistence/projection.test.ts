@@ -611,4 +611,36 @@ describe('Session projection', () => {
       ])
     )
   })
+
+  it('does not restore a missing Session deleted while projection publication is suspended', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-backfill-missing-delete-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const files = new SessionRepository(storageRoot)
+    await files.saveSession(session('deleted', 100))
+    const stale = await files.loadAll()
+    await files.deleteSession('project-1', 'deleted')
+
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const authorityStarted = createDeferred<void>()
+    const authorityReleased = createDeferred<void>()
+    const initializing = repository.ensureSessionProjection(async () => {
+      authorityStarted.resolve()
+      await authorityReleased.promise
+      return stale
+    })
+
+    await authorityStarted.promise
+    await repository.deleteSession('project-1', 'deleted')
+    authorityReleased.resolve()
+
+    const initialized = await initializing
+    expect(initialized.sessions).toEqual([])
+    await expect(projection.usage()).resolves.toMatchObject({
+      sessionCreatedAt: [],
+      usageEvents: []
+    })
+  })
 })
