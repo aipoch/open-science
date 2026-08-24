@@ -445,6 +445,7 @@ describe('Session persistence coordinator architecture', () => {
         'readChildren',
         'readSessionRuntimeContext',
         'recoverInterruptedDelegatedWork',
+        'replaceSessionMetadata',
         'repairProjectFiles',
         'runSessionMutation',
         'saveManifest',
@@ -641,6 +642,7 @@ describe('Session persistence coordinator architecture', () => {
         'loadPersistedSideChats',
         'pruneSessionEnabledComputeHosts',
         'repairProjectFiles',
+        'replaceSessionMetadata',
         'sessionMetadataSnapshot'
       ],
       runManifest: ['saveManifest'],
@@ -722,7 +724,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(32)
+    expect(expectedSchedulerRoute.size).toBe(33)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -942,6 +944,7 @@ describe('Session persistence coordinator architecture', () => {
       patchSessionRuntimeContext: ['stateOwner.patchRuntimeContext'],
       pruneSessionEnabledComputeHosts: ['stateOwner.pruneEnabledComputeHosts'],
       readSessionRuntimeContext: ['stateOwner.readRuntimeContext'],
+      replaceSessionMetadata: ['stateOwner.replaceMetadata'],
       saveSession: ['stateOwner.saveSession'],
       saveSessionSpecialistBinding: ['stateOwner.saveSessionSpecialistBinding'],
       saveSideChatProjection: ['sideChatOwner.saveProjection'],

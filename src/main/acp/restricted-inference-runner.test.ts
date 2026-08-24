@@ -263,6 +263,7 @@ describe('RestrictedInferenceRunner', () => {
     })
     expect(resolveTarget).toHaveBeenCalledWith(target('codex'), {
       systemPromptAppends: ['Do not use tools.'],
+      includeSkillAndConnectorContext: false,
       forceCodexNativeResponsesCompatibility: true
     })
     expect(registerToolLessSession).toHaveBeenCalledWith('provider-session-1')

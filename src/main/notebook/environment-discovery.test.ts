@@ -88,10 +88,29 @@ const makeDeps = (
   probeVersion: async (p) => opts.versions?.[p],
   rRunnable: async (p) => opts.rRunnable?.[p] ?? false,
   realpath: (p) => opts.realpath?.[p] ?? p,
-  runtimeRoot: '/rt'
+  runtimeRoot: '/rt',
+  platform: 'linux'
 })
 
 describe('discoverInterpreters', () => {
+  it('does not probe the macOS developer-tools Python stub and keeps other interpreters', async () => {
+    const probeVersion = vi.fn(async (path: string) =>
+      path === '/opt/homebrew/bin/python3' ? '3.12.4' : '3.9.6'
+    )
+    const deps = {
+      ...makeDeps(['/usr/bin/python3', '/opt/homebrew/bin/python3']),
+      platform: 'darwin' as const,
+      probeVersion
+    }
+
+    const found = await discoverInterpreters('python', deps)
+
+    expect(probeVersion).not.toHaveBeenCalledWith('/usr/bin/python3', 'python')
+    expect(found.map((interpreter) => interpreter.interpreterPath)).toEqual([
+      '/opt/homebrew/bin/python3'
+    ])
+  })
+
   it('classifies provenance and dedupes python interpreters by real path', async () => {
     const deps = makeDeps(
       ['/usr/bin/python3', '/rt/envs/default-python/bin/python', '/a/python', '/b/python'],

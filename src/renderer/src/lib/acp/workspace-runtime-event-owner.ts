@@ -9,12 +9,14 @@ import {
   type AcpContextUsage,
   type AcpPermissionRequest,
   type AcpRuntimeEvent,
+  type AcpSessionAgentTarget,
   type AcpStateSnapshot,
   type PendingElicitationRequest
 } from '../../../../shared/acp'
 import { useCallback, useEffect, useRef } from 'react'
 import type { HistoryReplayDescriptor } from '../../../../shared/history-preamble'
 import { useSessionStore } from '../../stores/session-store'
+import { loadPersistedSession } from '../session-persistence/session-persistence'
 import {
   acceptAcpRuntimeSnapshotRevision,
   resetAcpRuntimeSnapshotRevisionForTests
@@ -502,7 +504,9 @@ type WorkspaceRuntimeEventIngestRuntime = {
   ) => () => void
 }
 type WorkspaceRuntimeEventLifecycleOptions = {
-  supportsImageInput?: boolean
+  supportsImageRelay?: boolean
+  getAgentTarget: (sessionId: string) => AcpSessionAgentTarget | undefined
+  getSupportsImageInput: (sessionId: string) => boolean | undefined
   getHistoryReplayDescriptor: (sessionId: string) => HistoryReplayDescriptor
 }
 const EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS: string[] = []
@@ -516,19 +520,37 @@ const useWorkspaceRuntimeEventIngest = <Runtime extends WorkspaceRuntimeEventIng
     events: AcpRuntimeEvent[],
     options: WorkspaceRuntimeEventLifecycleOptions
   ) => void,
-  supportsImageInput: boolean | undefined,
+  supportsImageRelay: boolean | undefined,
+  getAgentTarget: (sessionId: string) => AcpSessionAgentTarget | undefined,
+  getSupportsImageInput: (sessionId: string) => boolean | undefined,
   getHistoryReplayDescriptor: (sessionId: string) => HistoryReplayDescriptor
 ): boolean => {
   const subscribeRuntimeEvents = runtime.subscribeRuntimeEvents
   const runtimeRef = useRef(runtime)
-  const optionsRef = useRef({ supportsImageInput, getHistoryReplayDescriptor })
+  const optionsRef = useRef({
+    supportsImageRelay,
+    getAgentTarget,
+    getSupportsImageInput,
+    getHistoryReplayDescriptor
+  })
   const agentPromptInFlightSessionIds =
     runtime.state.agentPromptInFlightSessionIds ?? EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS
 
   useEffect(() => {
     runtimeRef.current = runtime
-    optionsRef.current = { supportsImageInput, getHistoryReplayDescriptor }
-  }, [getHistoryReplayDescriptor, runtime, supportsImageInput])
+    optionsRef.current = {
+      supportsImageRelay,
+      getAgentTarget,
+      getSupportsImageInput,
+      getHistoryReplayDescriptor
+    }
+  }, [
+    getAgentTarget,
+    getHistoryReplayDescriptor,
+    getSupportsImageInput,
+    runtime,
+    supportsImageRelay
+  ])
 
   useEffect(() => {
     if (!subscribeRuntimeEvents) return
@@ -606,9 +628,7 @@ const refreshDelegatedWorkSessions = async (
     .getState()
     .sessions.filter((session) => liveSessionIds.has(session.id))
     .map(({ id: sessionId, projectId }) => ({ projectId, sessionId }))
-  const sessions = await Promise.all(
-    requests.map((request) => window.api.sessions.loadOne(request))
-  )
+  const sessions = await Promise.all(requests.map((request) => loadPersistedSession(request)))
   if (isCancelled()) return
   for (const session of sessions) {
     if (session?.runtimeContext?.delegatedWork) {

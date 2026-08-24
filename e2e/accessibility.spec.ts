@@ -276,8 +276,7 @@ test('reports accessibility violations across representative state combinations'
   await settings.getByRole('button', { name: 'Close settings' }).click()
   await expect(settings).toBeHidden()
 
-  await app.writeCorruptSessionFile(projectId)
-  page = await app.restart()
+  page = await app.restartWithCorruptHistoricalSessionFile(projectId)
   const recoveryAlert = page
     .getByRole('alert')
     .filter({ hasText: 'Project archive needs attention' })

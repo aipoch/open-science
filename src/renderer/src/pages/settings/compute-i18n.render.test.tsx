@@ -142,6 +142,23 @@ describe('ComputePanel i18n', () => {
     expect(container.textContent).not.toContain('{{')
   })
 
+  it('localizes a host-list failure and keeps backend details out of the primary error', () => {
+    useComputeStore.setState({
+      loadError: 'SQLITE_BUSY while reading /private/data/compute.db',
+      isLoaded: true
+    })
+    act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
+
+    switchTo('zh-Hans')
+
+    const primary = container.querySelector('.text-destructive')
+    expect(primary?.textContent).toBe('无法加载主机。')
+    expect(primary?.textContent).not.toContain('/private/data/compute.db')
+    const details = container.querySelector('details')
+    expect(details?.open).toBe(false)
+    expect(details?.textContent).toContain('/private/data/compute.db')
+  })
+
   it('re-renders the removal toast in the language active at render time', async () => {
     const deleteHost = vi.fn(() => Promise.resolve())
     useComputeStore.setState({ hosts: [host()], isLoaded: true, deleteHost })

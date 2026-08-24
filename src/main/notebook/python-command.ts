@@ -1,4 +1,7 @@
 import { execFile } from 'node:child_process'
+import { constants } from 'node:fs'
+import { access, realpath } from 'node:fs/promises'
+import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -11,6 +14,11 @@ export type PythonCommand = {
   command: string
   baseArgs: string[]
 }
+
+export const isMacOSDeveloperToolsPythonStub = (
+  interpreterPath: string,
+  platform: NodeJS.Platform = process.platform
+): boolean => platform === 'darwin' && interpreterPath === '/usr/bin/python3'
 
 // Ordered interpreter candidates by platform. Windows prefers the `py -3` launcher (the reliable way
 // to reach a real CPython, and it sidesteps the Microsoft Store `python3` execution-alias stub), then
@@ -31,6 +39,26 @@ export type ResolvePythonDeps = {
   platform: NodeJS.Platform
   // Returns true when `<command> <baseArgs...> --version` runs successfully.
   probe: (candidate: PythonCommand) => Promise<boolean>
+  resolveExecutables: (command: string) => Promise<string[]>
+}
+
+const defaultResolveExecutables = async (command: string): Promise<string[]> => {
+  const matches: string[] = []
+  const seen = new Set<string>()
+  for (const directory of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
+    const candidate = join(directory, command)
+    try {
+      await access(candidate, constants.X_OK)
+      const resolved = await realpath(candidate)
+      if (!seen.has(resolved)) {
+        seen.add(resolved)
+        matches.push(resolved)
+      }
+    } catch {
+      // Keep searching PATH when this entry is missing, inaccessible, or a broken symlink.
+    }
+  }
+  return matches
 }
 
 // Real `<command> --version` probe. On Windows the check runs through a shell so a shimmed launcher
@@ -58,9 +86,19 @@ export const findPythonCommand = async (
 ): Promise<PythonCommand | undefined> => {
   const platform = deps.platform ?? process.platform
   const probe = deps.probe ?? defaultProbe(platform)
+  const resolveExecutables = deps.resolveExecutables ?? defaultResolveExecutables
   const candidates = pythonCandidates(platform)
 
   for (const candidate of candidates) {
+    if (platform === 'darwin' && candidate.command === 'python3') {
+      const executables = await resolveExecutables(candidate.command).catch(() => [])
+      for (const executable of executables) {
+        if (isMacOSDeveloperToolsPythonStub(executable, platform)) continue
+        const resolvedCandidate = { ...candidate, command: executable }
+        if (await probe(resolvedCandidate)) return resolvedCandidate
+      }
+      continue
+    }
     if (await probe(candidate)) return candidate
   }
 

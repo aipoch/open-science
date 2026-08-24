@@ -1,9 +1,12 @@
 import type {
   AcpContinueInterruptedTurnRequest,
   AcpCreateSessionResponse,
+  AcpSessionAgentTarget,
   ElicitationResponse,
   AcpPermissionResponse,
   AcpPromptRequest,
+  AcpSteerFollowUpRequest,
+  AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
   AcpRuntimeEvent,
@@ -59,7 +62,8 @@ const useAcpRuntime = (): {
     cwd?: string,
     projectId?: string,
     permissionProfile?: PermissionProfileId,
-    specialistId?: string
+    specialistId?: string,
+    agentTarget?: AcpSessionAgentTarget
   ) => Promise<AcpCreateSessionResponse>
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -71,7 +75,8 @@ const useAcpRuntime = (): {
     specialistId?: AcpResumeSessionRequest['specialistId'],
     providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
     providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
-    specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending']
+    specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending'],
+    agentTarget?: AcpSessionAgentTarget
   ) => Promise<AcpCreateSessionResponse>
   continueInterruptedTurn: (request: AcpContinueInterruptedTurnRequest) => Promise<AcpStateSnapshot>
   resetSessionContext: (
@@ -86,6 +91,7 @@ const useAcpRuntime = (): {
   ) => Promise<AcpStateSnapshot | undefined>
   deleteSession: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
   cancel: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
+  steerFollowUp: (request: AcpSteerFollowUpRequest) => Promise<AcpSteerFollowUpResult>
   sendPrompt: (
     sessionId: string,
     text: string,
@@ -173,9 +179,9 @@ const useAcpRuntime = (): {
       hasPushedSnapshot = true
       applyMountedSnapshot(snapshot)
     })
-    const removeEventListener = onRuntimeEvent?.((event: AcpRuntimeEvent) => {
+    const removeEventListener = onRuntimeEvent?.((events: readonly AcpRuntimeEvent[]) => {
       if (!isMounted) return
-      runtimeEventOwner.observeEvent(event)
+      runtimeEventOwner.observeEvents(events)
     })
 
     void loadInitialState()
@@ -271,10 +277,17 @@ const useAcpRuntime = (): {
       cwd?: string,
       projectId?: string,
       permissionProfile?: PermissionProfileId,
-      specialistId?: string
+      specialistId?: string,
+      agentTarget?: AcpSessionAgentTarget
     ) =>
       runValueAction(setIsConnecting, () =>
-        window.api.acp.createSession({ cwd, projectId, permissionProfile, specialistId })
+        window.api.acp.createSession({
+          cwd,
+          projectId,
+          permissionProfile,
+          specialistId,
+          ...(agentTarget ? { agentTarget } : {})
+        })
       ),
     [runValueAction]
   )
@@ -291,7 +304,8 @@ const useAcpRuntime = (): {
       specialistId?: AcpResumeSessionRequest['specialistId'],
       providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
       providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
-      specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending']
+      specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending'],
+      agentTarget?: AcpSessionAgentTarget
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.resumeSession({
@@ -304,7 +318,8 @@ const useAcpRuntime = (): {
           specialistId,
           providerSessionId,
           providerContinuityToken,
-          specialistBindingPending
+          specialistBindingPending,
+          ...(agentTarget ? { agentTarget } : {})
         })
       ),
     [runValueAction]
@@ -351,6 +366,11 @@ const useAcpRuntime = (): {
   const cancel = useCallback(
     (sessionId: string) => runSnapshotAction(undefined, () => window.api.acp.cancel({ sessionId })),
     [runSnapshotAction]
+  )
+
+  const steerFollowUp = useCallback(
+    (request: AcpSteerFollowUpRequest) => window.api.acp.steerFollowUp(request),
+    []
   )
 
   // Sends a prompt turn plus any finalized upload references to one runtime session.
@@ -470,6 +490,7 @@ const useAcpRuntime = (): {
     compactSession,
     deleteSession,
     cancel,
+    steerFollowUp,
     sendPrompt,
     respondToPermission,
     respondToElicitation,

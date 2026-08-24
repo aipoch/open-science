@@ -43,6 +43,12 @@ import { SideChatRelayOwner } from './acp/side-chat-relay-owner'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
+import {
+  resolveValidatedSessionAgentTarget,
+  shouldPersistSessionAgentConfiguration,
+  toSessionAgentConfiguration,
+  type SessionAgentTargetResolver
+} from './acp/session-agent-target'
 import { ArtifactCodeReconstructionRunner } from './acp/artifact-code-reconstruction-runner'
 import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
 import { ImageInputCompatibilityOwner } from './acp/image-input-compatibility-owner'
@@ -98,7 +104,7 @@ import {
   buildTaskNotificationShow
 } from './notifications/electron-wiring'
 import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
-import { startDiagnosticOperation } from './diagnostics/operation'
+import { startDiagnosticOperation, type DiagnosticOperation } from './diagnostics/operation'
 import { broadcastNotebookEnvProgress, registerNotebookEnvIpcHandlers } from './notebook/env-ipc'
 import {
   createNotebookApplicationModule,
@@ -168,6 +174,7 @@ import {
   createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
+  recoverProjectDeletionsForSessionRead,
   registerSessionPersistenceIpcHandlers
 } from './session-persistence/ipc'
 import {
@@ -226,6 +233,7 @@ import { SpecialistPackageService } from './specialist/package/service'
 import { OFFICIAL_MARKETPLACE_SOURCE } from './specialist/marketplace/official-source'
 import { MarketplaceRepository } from './specialist/marketplace/repository'
 import { MarketplaceService } from './specialist/marketplace/service'
+import { MarketplaceOperationCoordinator } from './specialist/marketplace/operation-coordinator'
 import {
   saveSpecialistExport,
   saveSpecialistPackageReport,
@@ -274,8 +282,15 @@ import {
   CONNECTOR_TEMPLATE_MAX_BYTES,
   type AppIconPreview,
   type AppIconVariant,
-  type RespondApprovalRequest
+  type RespondApprovalRequest,
+  type SessionAgentConfiguration
 } from '../shared/settings'
+import type { AcpSessionAgentTarget } from '../shared/acp'
+import type {
+  LoadAllSessionsResult,
+  PersistedChatSession,
+  SessionSummary
+} from '../shared/session-persistence'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import { withDataRootWrite } from './storage/migration-state'
@@ -291,7 +306,7 @@ import {
 } from './storage-root'
 import { createUpdateCommandOwner, registerUpdateIpcHandlers } from './update/ipc'
 import { createUpdateStrategy } from './update/create-strategy'
-import { createActiveResearchSafeInstallGate } from './update/strategy'
+import { createActiveResearchSafeInstallGate, createDurableInstallGate } from './update/strategy'
 import type { UpdateBlocker } from '../shared/update'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
@@ -326,6 +341,9 @@ type IpcRegistrationOptions = {
   onAppIconVariantChanged?: (variant: AppIconVariant) => void
   // Renders the built-in icon variants to preview data URLs for the Appearance picker.
   listAppIconPreviews?: () => AppIconPreview[]
+  // Flushes renderer-owned Session/Preview state after backend teardown and before an in-place
+  // updater can close the renderer. Desktop startup supplies the late-bound window implementation.
+  confirmUpdateRendererDurability?: () => Promise<boolean>
   // Retained as an explicit startup marker while the app owns the only handoff composition.
   handoffRuntime?: 'production'
 }
@@ -371,9 +389,11 @@ const createApplicationModules = async (
     headless = false,
     translate = englishNativeTranslator,
     onAppIconVariantChanged,
-    listAppIconPreviews
+    listAppIconPreviews,
+    confirmUpdateRendererDurability = () => Promise.resolve(true)
   }: IpcRegistrationOptions,
-  modules: ApplicationModuleBuilder
+  modules: ApplicationModuleBuilder,
+  composition: DiagnosticOperation
 ): Promise<ApplicationModuleInterfaces> => {
   const beforeComputeAdapters: NamedElectronSurfaceAdapter[] = []
   const beforeAcpAdapters: NamedElectronSurfaceAdapter[] = []
@@ -416,6 +436,17 @@ const createApplicationModules = async (
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
   }))
+  const resolveSessionAgentTarget: SessionAgentTargetResolver = async (source) =>
+    resolveValidatedSessionAgentTarget(source, await settingsService.getSettingsView())
+  const resolveDefaultSessionAgentTarget = async (): Promise<AcpSessionAgentTarget> => {
+    const target = await settingsService.captureActiveExplicitAgentBackendTarget()
+    return {
+      frameworkId: target.frameworkId,
+      providerId: target.providerId,
+      ...(target.model.kind === 'required' ? { model: target.model.id } : {}),
+      reasoningEffort: target.reasoningEffort
+    }
+  }
   const storedSettings = await settingsService.getStoredSettings()
   const storageLog = createLogger('storage')
   await networkProxyRuntime.apply(storedSettings.networkProxy)
@@ -435,6 +466,7 @@ const createApplicationModules = async (
   storageLog.info('data root resolved', {
     location: samePath(resolveDataRoot(), computeDefaultDataRoot()) ? 'default' : 'custom'
   })
+  composition.phase('data-root')
 
   // Constructed once here (rather than left to each register*IpcHandlers' own default) so the
   // one-time legacy-path normalization pass below can share the exact instances the IPC surface uses.
@@ -610,6 +642,7 @@ const createApplicationModules = async (
       })
   })
   await seedDefaultPermissionGrants(permissionGrantRegistry, await getProjectDbClient(configRoot))
+  composition.phase('permission-grants')
   const projectFilesRepository = createManagedFileIndexRepository(
     getProjectDbClient,
     configRoot,
@@ -847,26 +880,96 @@ const createApplicationModules = async (
   // flushed to disk on the session's first save so an approved switch survives an app restart before
   // the next message. Shared by persistSessionSpecialist (stash) and saveSession (flush).
   const pendingSpecialistBindings = new PendingSessionSpecialistBindings()
+  const loadAllSessions = async (): Promise<LoadAllSessionsResult> => {
+    const result = await loadSessionsAfterProjectRecovery(
+      projectDeletionCoordinator,
+      sessionPersistenceCoordinator
+    )
+    if (!sessionEnabledComputeHostsOwnerRef.current) {
+      throw new Error('Session enabled Compute Host ownership is not initialized.')
+    }
+    return {
+      ...result,
+      sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
+        result.sessions,
+        canReconcileSessionAbsences(result)
+      )
+    }
+  }
+  const ensureSessionProjection = async (): Promise<{
+    result?: LoadAllSessionsResult
+    sessions: SessionSummary[]
+  }> => {
+    // Reconcile a JSON write from a committed Project tombstone before deletion recovery removes
+    // that temporary authority. Its SQLite facts remain part of retained Project history.
+    await sessionRepository.reconcilePendingSessionProjection()
+    const recovery = await recoverProjectDeletionsForSessionRead(
+      projectDeletionCoordinator,
+      sessionPersistenceCoordinator
+    )
+    let readOnlyResult: Promise<LoadAllSessionsResult> | undefined
+    const loadReadOnlyResult = (): Promise<LoadAllSessionsResult> => {
+      readOnlyResult ??= (async () => {
+        if (recovery.isComplete) throw new Error('Read-only Session recovery is unavailable.')
+        if (!sessionEnabledComputeHostsOwnerRef.current) {
+          throw new Error('Session enabled Compute Host ownership is not initialized.')
+        }
+        return {
+          ...recovery.result,
+          sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
+            recovery.result.sessions,
+            false
+          )
+        }
+      })()
+      return readOnlyResult
+    }
+    if (!recovery.isComplete) {
+      const result = await loadReadOnlyResult()
+      const sessions = await sessionRepository.summarizeReadOnlyAuthority(result)
+      await sessionPersistenceCoordinator.replaceSessionMetadata(sessions, false)
+      return { result, sessions }
+    }
+    const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
+    const result = projection.result
+    await sessionPersistenceCoordinator.replaceSessionMetadata(
+      projection.sessions,
+      result ? canReconcileSessionAbsences(result) : true
+    )
+    return { ...projection, result }
+  }
   const sessionPersistenceBackend: SessionPersistenceBackend = {
-    loadAll: async () => {
-      const result = await loadSessionsAfterProjectRecovery(
+    loadAll: loadAllSessions,
+    list: async () => {
+      const projection = await ensureSessionProjection()
+      return {
+        sessions: projection.sessions,
+        manifest: projection.result?.manifest ?? (await sessionRepository.loadManifest()),
+        diagnostics: projection.result?.diagnostics ?? {
+          isComplete: true,
+          warnings: [],
+          isProjectDeletionRecoveryComplete: true
+        }
+      }
+    },
+    loadUsage: async () => {
+      await ensureSessionProjection()
+      return sessionRepository.loadSessionUsageProjection()
+    },
+    loadOne: async ({ projectId, sessionId }) => {
+      const recovery = await recoverProjectDeletionsForSessionRead(
         projectDeletionCoordinator,
         sessionPersistenceCoordinator
       )
-      if (!sessionEnabledComputeHostsOwnerRef.current) {
-        throw new Error('Session enabled Compute Host ownership is not initialized.')
-      }
-      return {
-        ...result,
-        sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
-          result.sessions,
-          canReconcileSessionAbsences(result)
+      if (!recovery.isComplete) {
+        return recovery.result.sessions.find(
+          (session) => session.projectId === projectId && session.id === sessionId
         )
       }
-    },
-    loadOne: async ({ projectId, sessionId }) => {
-      await projectDeletionCoordinator.recoverPendingDeletions()
-      return sessionRepository.loadSession(projectId, sessionId)
+      const session = await sessionRepository.loadSession(projectId, sessionId)
+      return session && sessionEnabledComputeHostsOwnerRef.current
+        ? sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)
+        : session
     },
     saveSession: async (session, options) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
@@ -966,6 +1069,7 @@ const createApplicationModules = async (
     localRpc: notebookLocalRpc
   } = notebookApplication
   notebookActivityRef.current = notebookService
+  composition.phase('notebook-runtime')
 
   // Builtins are validated once at startup from read-only repository resources. Package imports use
   // the same repository while keeping their dynamic Connector/custom-Skill catalog separate.
@@ -973,6 +1077,7 @@ const createApplicationModules = async (
   const appVersion = app.getVersion()
   const specialistSkills = await settingsService.listSpecialistSkillCatalog()
   const packageSkills = await specialistPackageSkillAdapter.snapshot()
+  composition.phase('specialist-catalog')
   const builtinRegistry = new BuiltinSpecialistRegistry({
     appVersion,
     builtinSkills: composeBuiltinSkillCatalog(appVersion, specialistSkills),
@@ -993,7 +1098,10 @@ const createApplicationModules = async (
     protectedSpecialistNames: ['Reviewer']
   })
   const profileService = new ProfileService(specialistRepository, builtinRegistry)
+  const marketplaceRepository = new MarketplaceRepository(resolveStorageRoot())
+  const marketplaceOperationCoordinator = new MarketplaceOperationCoordinator()
   await profileService.ensureBuiltinCatalogReady()
+  composition.phase('builtin-specialists')
   const tagService = new TagService(
     new TagRepository(() => getProjectDbClient(configRoot)),
     new TagResourceCatalog({
@@ -1072,6 +1180,9 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
+    marketplaceOperationCoordinator,
+    onSpecialistDeleted: (specialistId) =>
+      marketplaceRepository.removeInstallationsForSpecialist(specialistId),
     onSkillsDeleted: async (skillIds) => {
       if (skillIds.length > 0) {
         // User Skills are default-on. Remove disabled-ID tombstones so reinstalling the same
@@ -1093,7 +1204,8 @@ const createApplicationModules = async (
     }
   })
   const marketplaceService = new MarketplaceService({
-    repository: new MarketplaceRepository(resolveStorageRoot()),
+    repository: marketplaceRepository,
+    operationCoordinator: marketplaceOperationCoordinator,
     packages: specialistPackageService,
     fetch: netFetchStandard,
     officialSource: OFFICIAL_MARKETPLACE_SOURCE,
@@ -1102,11 +1214,18 @@ const createApplicationModules = async (
     getInstalledSpecialists: async () =>
       (await profileService.list()).map((profile) => ({
         id: profile.id,
+        revision: profile.revision,
+        ...(profile.modifiedSinceImport === undefined
+          ? {}
+          : { modifiedSinceImport: profile.modifiedSinceImport }),
         ...(profile.origin ? { origin: profile.origin } : {}),
         ...(profile.importBaseline?.archiveDigest
           ? { archiveDigest: profile.importBaseline.archiveDigest }
           : {})
       })),
+    markMarketplaceManaged: async (id, expectedRevision) => {
+      await profileService.markMarketplaceManaged(id, expectedRevision)
+    },
     setSkillsMainEnabled: async (ids, enabled) => {
       await settingsRepository.setSkillsEnabled([...new Set(ids)], enabled)
       // Startup recovery runs before the ACP runtime exists, so its initial catalog reads the
@@ -1122,6 +1241,7 @@ const createApplicationModules = async (
       diagnosticErrorFields(error)
     )
   }
+  composition.phase('marketplace-recover')
   settingsService.setSkillDeletionGuard((skillId) =>
     specialistPackageService.assertSkillDeletionAllowed(skillId)
   )
@@ -1319,6 +1439,7 @@ const createApplicationModules = async (
     connectorApprovals: approvalBroker,
     skillImportApprovals: skillImportApprovalBroker
   } = connectorApplication
+  composition.phase('connectors')
   // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
   // The approval broker in compute/ipc.ts broadcasts via BrowserWindow.getAllWindows(), which requires
   // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
@@ -1377,6 +1498,7 @@ const createApplicationModules = async (
   computeJobDeletionRef.current = jobDeletionOwner
   await projectDeletionCoordinator.restorePendingDeletionBarriers()
   await jobDeletionOwner.restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)
+  composition.phase('deletion-barriers')
   const dataRoot = resolveDataRoot()
   // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
   // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3). The dispatcher
@@ -1629,7 +1751,7 @@ const createApplicationModules = async (
                 }
               },
               async () => {
-                const latest = await sessionRepository.loadSession(
+                let latest = await sessionRepository.loadSession(
                   delivery.session.projectId,
                   delivery.session.sessionId
                 )
@@ -1649,13 +1771,23 @@ const createApplicationModules = async (
                     'Parent message root Branch changed before dispatch.'
                   )
                 }
+                const agentTarget = await resolveSessionAgentTarget(latest)
+                if (
+                  agentTarget &&
+                  shouldPersistSessionAgentConfiguration(latest.agentConfiguration, agentTarget)
+                ) {
+                  latest = await sessionPersistenceCoordinator.saveSession({
+                    ...latest,
+                    agentConfiguration: toSessionAgentConfiguration(agentTarget)
+                  })
+                }
                 const started = await delivery.startDispatch()
                 if (started !== 'started') {
                   throw new DelegateMessageParkedError(
                     'Parent message dispatch fence was not acquired.'
                   )
                 }
-                if (!runtime.hasLiveSession(latest.projectId, latest.id)) {
+                if (!runtime.hasLiveSession(latest.projectId, latest.id) || agentTarget) {
                   await runtime.resumeSession({
                     sessionId: latest.id,
                     cwd: latest.cwd,
@@ -1676,7 +1808,8 @@ const createApplicationModules = async (
                       : {}),
                     ...(latest.providerContinuityToken
                       ? { providerContinuityToken: latest.providerContinuityToken }
-                      : {})
+                      : {}),
+                    ...(agentTarget ? { agentTarget } : {})
                   })
                 }
               }
@@ -1863,6 +1996,7 @@ const createApplicationModules = async (
     })
   )
   notebookRpcServerRef.current = notebookRpcServer
+  composition.phase('notebook-rpc')
   // Register ownership before ACP construction. Reverse disposal therefore drains ACP + Notebook
   // through the coordinator first, then releases the local bridge without creating a second runtime
   // shutdown owner; rollback also closes a server started during partial composition.
@@ -2024,6 +2158,7 @@ const createApplicationModules = async (
   )
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
+  composition.phase('acp-runtime')
   runtime.setSessionResumeObserver(async (request) => {
     if (request.specialistBindingPending !== true) return
     await sessionSpecialistReconfiguration.completeResume(request.sessionId, request.specialistId)
@@ -2049,6 +2184,7 @@ const createApplicationModules = async (
     }
   )
   userSkillCatalogObserverRef.current = userSkillCatalogObserver
+  composition.phase('skills')
   const sideChatLog = createLogger('side-chat')
   const sideChatRuntime = await modules.add(
     {
@@ -2126,6 +2262,7 @@ const createApplicationModules = async (
   } catch (error) {
     sideChatLog.error('durable Side chat hydration failed', diagnosticErrorFields(error))
   }
+  composition.phase('side-chat')
   // Recovery quiesces every runtime owner, so do not start its first attempt until ACP, Delegation,
   // Notebook, Side Chat, and the composed quiescence boundary are all initialized. The bounded
   // durable barrier restoration above still runs early enough to block admission during startup.
@@ -2133,6 +2270,9 @@ const createApplicationModules = async (
     async () => {
       // A retained child Session plan must finish before its parent Project intent can prepare.
       await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)
+      // Replay a pending Session JSON write from the tombstone before Project recovery removes that
+      // temporary authority. The retained SQLite facts then remain available to historical Usage.
+      await sessionRepository.reconcilePendingSessionProjection()
       await projectDeletionCoordinator.recoverPendingDeletions()
     },
     {
@@ -2223,7 +2363,9 @@ const createApplicationModules = async (
     runtime,
     createSessionWorkflow,
     taskNotifications,
-    archiveCoordinator
+    archiveCoordinator,
+    resolveSessionAgentTarget,
+    resolveDefaultSessionAgentTarget
   )
   {
     // Framework-specific adapters declare their own session selector. The registry resolves those
@@ -2363,7 +2505,10 @@ const createApplicationModules = async (
         if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
         return blockers
       },
-      () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+      createDurableInstallGate(
+        () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
+        confirmUpdateRendererDurability
+      )
     )
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
@@ -2412,31 +2557,18 @@ const createApplicationModules = async (
       }
     }
   )
-  // Spawn-config changes rotate the coordinator's runtime for future sessions. Existing sessions retain
-  // their owning runtime, so a framework/provider switch cannot interrupt an in-flight turn.
+  // Framework changes rotate future runtime ownership; provider edits and authentication changes
+  // reconnect generations that use the affected provider. Active provider/model/effort selections are
+  // persisted defaults only and never flow through this effects port to mutate existing Sessions.
   const settingsWorkflows = createSettingsWorkflows(settingsService, {
     runtime: {
-      requestProviderReconnect: () => {
-        void runtime.requestProviderReconnect()
+      requestProviderReconnect: (providerIds, includeDefault = true) => {
+        void runtime.requestProviderReconnect(providerIds, includeDefault)
+        if (includeDefault) void sideChatRuntime.requestProviderReconnect()
+      },
+      requestAgentFrameworkSwitch: (frameworkId) => {
+        void runtime.requestAgentFrameworkSwitch(frameworkId)
         void sideChatRuntime.requestProviderReconnect()
-      },
-      requestAgentFrameworkSwitch: () => {
-        void runtime.requestAgentFrameworkSwitch()
-        void sideChatRuntime.requestProviderReconnect()
-      },
-      applyReasoningEffort: async (effort) => {
-        const [mainApplied, sideChatApplied] = await Promise.all([
-          runtime.applyReasoningEffortChange(effort),
-          sideChatRuntime.applyReasoningEffortChange(effort)
-        ])
-        return mainApplied && sideChatApplied
-      },
-      applyModelChange: async (target) => {
-        const [mainApplied, sideChatApplied] = await Promise.all([
-          runtime.applyModelChange(target),
-          sideChatRuntime.applyModelChange(target)
-        ])
-        return mainApplied && sideChatApplied
       }
     },
     skills: {
@@ -2754,6 +2886,7 @@ const createApplicationModules = async (
     // a redundant named env.
     notebookService.setDefaultEnvProvisioner(serialized, broadcastNotebookEnvProgress)
   }
+  composition.phase('notebook-provisioner')
 
   // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
   const storageCommandOwner = createStorageCommandOwner({
@@ -2909,6 +3042,15 @@ const createApplicationModules = async (
     projectRuntime: reviewerProjectRuntime,
     mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
+    resolveSessionAgentTarget,
+    saveSessionAgentConfiguration: (
+      session: PersistedChatSession,
+      configuration: SessionAgentConfiguration
+    ) =>
+      sessionPersistenceCoordinator.saveSession({
+        ...session,
+        agentConfiguration: configuration
+      }),
     withSessionMutation: <Result>(
       projectId: string,
       sessionId: string,
@@ -3001,7 +3143,8 @@ const createApplicationModules = async (
       managedPreview: managedPreviewOwners,
       preview: {
         load: (request) => previewStateRepository.get(request.projectId),
-        save: (request) => previewStateRepository.save(request.projectId, request.state),
+        save: (request) =>
+          previewStateRepository.save(request.projectId, request.state, request.expectedRevision),
         delete: (request) => previewStateRepository.delete(request.projectId)
       },
       projectFiles: projectFilesHandlers,
@@ -3057,6 +3200,7 @@ const createApplicationModules = async (
   declareElectronAdapter('application-projects', () =>
     registerApplicationCommandElectronAdapter(applicationCommandComposition.electron)
   )
+  composition.phase('commands')
 
   return {
     applicationCommands: {
@@ -3113,13 +3257,24 @@ const createApplicationModules = async (
 }
 
 const registerIpcHandlers = async (options: IpcRegistrationOptions): Promise<IpcRegistration> => {
-  const applicationRuntime = await composeApplicationRuntimeWithAdapters(
-    (modules) => createApplicationModules(options, modules),
-    installElectronRuntimeAdapters
-  )
-  return {
-    ...applicationRuntime.interfaces,
-    dispose: applicationRuntime.dispose
+  const composition = startDiagnosticOperation(createLogger('startup'), {
+    operation: 'application-composition',
+    cpuUsage: process.cpuUsage
+  })
+  try {
+    const applicationRuntime = await composeApplicationRuntimeWithAdapters(
+      (modules) => createApplicationModules(options, modules, composition),
+      installElectronRuntimeAdapters
+    )
+    composition.phase('ipc-adapters')
+    composition.complete()
+    return {
+      ...applicationRuntime.interfaces,
+      dispose: applicationRuntime.dispose
+    }
+  } catch (error) {
+    composition.fail(error)
+    throw error
   }
 }
 

@@ -36,6 +36,7 @@ import {
   type MarketplaceInstallProvenance,
   type StoredMarketplaceSource
 } from './repository'
+import { MarketplaceOperationCoordinator } from './operation-coordinator'
 
 const CANDIDATE_TTL_MS = 10 * 60 * 1_000
 // How long a verified cached root stays the primary answer for automatic refreshes. Kept short so
@@ -69,6 +70,7 @@ export type OfficialMarketplaceSourceConfig = {
 
 type MarketplaceServiceOptions = {
   repository: MarketplaceRepository
+  operationCoordinator?: MarketplaceOperationCoordinator
   packages: Pick<
     SpecialistPackageService,
     'preview' | 'install' | 'candidateNewSkillIds' | 'cancel' | 'dispose'
@@ -82,10 +84,13 @@ type MarketplaceServiceOptions = {
   getInstalledSpecialists: () => Promise<
     readonly {
       id: string
-      origin?: 'local' | 'imported'
+      revision?: number
+      origin?: 'local' | 'imported' | 'marketplace'
       archiveDigest?: string
+      modifiedSinceImport?: boolean
     }[]
   >
+  markMarketplaceManaged?: (id: string, expectedRevision: number) => Promise<void>
   setSkillsMainEnabled: (ids: readonly string[], enabled: boolean) => Promise<void>
 }
 
@@ -219,7 +224,7 @@ const matchesInstalledProvenance = (
   specialist: InstalledSpecialistIdentity
 ): boolean =>
   specialist.id === provenance.specialistId &&
-  specialist.origin === 'imported' &&
+  (specialist.origin === 'imported' || specialist.origin === 'marketplace') &&
   provenance.installedArchiveDigest !== undefined &&
   specialist.archiveDigest === provenance.installedArchiveDigest
 
@@ -283,11 +288,13 @@ export class MarketplaceService {
   private readonly sourceCandidates = new Map<string, SourceCandidateState>()
   private readonly installCandidates = new Map<string, InstallCandidateState>()
   private packageRecovery?: Promise<void>
-  private operationQueue: Promise<void> = Promise.resolve()
+  private readonly operationCoordinator: MarketplaceOperationCoordinator
 
   constructor(private readonly options: MarketplaceServiceOptions) {
     this.now = options.now ?? (() => new Date())
     this.token = options.token ?? randomUUID
+    this.operationCoordinator =
+      options.operationCoordinator ?? new MarketplaceOperationCoordinator()
   }
 
   async recover(): Promise<void> {
@@ -306,7 +313,7 @@ export class MarketplaceService {
       const installed = installedSpecialists.some(
         (specialist) =>
           specialist.id === provenance.specialistId &&
-          specialist.origin === 'imported' &&
+          (specialist.origin === 'imported' || specialist.origin === 'marketplace') &&
           provenance.installedArchiveDigest !== undefined &&
           specialist.archiveDigest === provenance.installedArchiveDigest
       )
@@ -321,6 +328,19 @@ export class MarketplaceService {
         provenance.sourceId,
         provenance.specialistId
       )
+    }
+    for (const specialist of installedSpecialists) {
+      if (
+        specialist.origin === 'imported' &&
+        specialist.modifiedSinceImport === false &&
+        specialist.revision !== undefined &&
+        this.options.markMarketplaceManaged &&
+        document.installations.some((provenance) =>
+          matchesInstalledProvenance(provenance, specialist)
+        )
+      ) {
+        await this.options.markMarketplaceManaged(specialist.id, specialist.revision)
+      }
     }
   }
 
@@ -402,7 +422,9 @@ export class MarketplaceService {
         continue
       }
       provenanceBySpecialistId.set(provenance.specialistId, {
-        publisher: provenance.publisher
+        sourceId: provenance.sourceId,
+        publisher: provenance.publisher,
+        version: provenance.version
       })
     }
     return provenanceBySpecialistId
@@ -544,7 +566,9 @@ export class MarketplaceService {
       requestedSkillNames,
       requestedConnectors
     )
-    const preview = await this.options.packages.preview(filteredArchive, ownerId)
+    const preview = await this.options.packages.preview(filteredArchive, ownerId, {
+      origin: 'marketplace'
+    })
     try {
       if (
         (preview.summary &&
@@ -647,7 +671,8 @@ export class MarketplaceService {
         await this.options.setSkillsMainEnabled(candidate.newSkillIds, false)
       }
       result = await this.options.packages.install(request, ownerId, {
-        activateAfterInstall: true
+        activateAfterInstall: true,
+        origin: 'marketplace'
       })
     } catch (error) {
       await this.rollbackPendingInstallation(candidate.provenance, newlyDisabled)
@@ -685,12 +710,7 @@ export class MarketplaceService {
   }
 
   private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.operationQueue.then(operation)
-    this.operationQueue = run.then(
-      () => undefined,
-      () => undefined
-    )
-    return run
+    return this.operationCoordinator.runExclusive(operation)
   }
 
   cancel(candidateToken: unknown, ownerId?: number): void {
@@ -841,8 +861,10 @@ export class MarketplaceService {
     installations: readonly MarketplaceInstallProvenance[],
     installedSpecialists: readonly {
       id: string
-      origin?: 'local' | 'imported'
+      revision?: number
+      origin?: 'local' | 'imported' | 'marketplace'
       archiveDigest?: string
+      modifiedSinceImport?: boolean
     }[]
   ): MarketplaceSpecialistListing[] {
     return root.specialists.map((item) => {

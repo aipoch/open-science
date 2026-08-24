@@ -389,6 +389,7 @@ const createPanelDefaults = (): PanelProps => ({
     }
   },
   conversation: {
+    optimisticMessage: undefined,
     availability: {
       submit: false,
       submitMode: undefined,
@@ -442,6 +443,7 @@ const createPanelDefaults = (): PanelProps => ({
     },
     actions: {
       selectSpecialist: vi.fn(),
+      retrySpecialistSelection: vi.fn(() => false),
       chooseOtherSpecialist: vi.fn(),
       useMainAgent: vi.fn()
     }
@@ -632,6 +634,80 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
   container.remove()
+})
+
+describe('ConversationPanel Specialist reconfigure recovery', () => {
+  const activeSession: ChatSession = {
+    id: 'session-specialist-retry',
+    projectId: 'project-a',
+    title: 'Specialist retry',
+    cwd: '/workspace',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+
+  const clickRetry = (): void => {
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    const retryButton = Array.from(banner?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent === 'Retry'
+    )
+    act(() => retryButton?.click())
+  }
+
+  const errorView = {
+    sessionId: activeSession.id,
+    specialistName: 'Specialist B',
+    message: 'switch rejected',
+    committed: false
+  }
+
+  it('retries an idle Specialist selection without submitting the draft', () => {
+    const retrySpecialistSelection = vi.fn(() => true)
+    const retryDraftReconfigure = vi.fn()
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: { specialist: { reconfigureError: errorView } },
+        actions: { retrySpecialistSelection }
+      },
+      conversation: {
+        actions: {
+          submit: { draft: routeDraftSubmit({ reconfigure: retryDraftReconfigure }) }
+        }
+      }
+    })
+
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    expect(banner?.textContent).toContain('Could not switch to Specialist B')
+    clickRetry()
+
+    expect(retrySpecialistSelection).toHaveBeenCalledOnce()
+    expect(retryDraftReconfigure).not.toHaveBeenCalled()
+  })
+
+  it('keeps send-barrier Retry routed through draft submission', () => {
+    const retrySpecialistSelection = vi.fn(() => false)
+    const retryDraftReconfigure = vi.fn()
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: { specialist: { reconfigureError: errorView } },
+        actions: { retrySpecialistSelection }
+      },
+      conversation: {
+        actions: {
+          submit: { draft: routeDraftSubmit({ reconfigure: retryDraftReconfigure }) }
+        }
+      }
+    })
+
+    clickRetry()
+
+    expect(retrySpecialistSelection).toHaveBeenCalledOnce()
+    expect(retryDraftReconfigure).toHaveBeenCalledOnce()
+  })
 })
 
 describe('ConversationPanel composer intake', () => {
@@ -2207,7 +2283,7 @@ describe('ConversationPanel composer intake', () => {
     expect(agentControls?.getAttribute('data-grants-read-only')).toBe('true')
     expect(agentControls?.getAttribute('data-auto-review-disabled')).toBe('true')
     expect(agentControls?.getAttribute('data-specialist-read-only')).toBe('true')
-    expect((modelPicker as HTMLButtonElement).disabled).toBe(false)
+    expect(modelPicker).toBeNull()
     const followUp = container.querySelector('textarea[placeholder="Follow up…"]')
     expect(followUp).not.toBeNull()
     expect(document.activeElement).toBe(followUp)
@@ -4701,6 +4777,30 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(openSettingsToPanel).toHaveBeenCalledWith('model')
   })
 
+  it('opens Agent settings instead of reporting an unsupported Codex ACP version', () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({ openSettingsToPanel })
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          error:
+            'Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.',
+          errorReportable: true
+        }
+      }
+    })
+
+    expect(errorBoxText()).toContain('Codex ACP adapter 1.1.4 is no longer supported.')
+    expect(reportButton()).toBeNull()
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent === 'Agent settings'
+    )
+    expect(button).toBeDefined()
+    act(() => button?.click())
+    expect(openSettingsToPanel).toHaveBeenCalledWith('agent')
+  })
+
   it('shows both a transient actionError and the run failure, keeping the Report button', () => {
     // Both present: each error gets its own row, and the run failure keeps its report entry — a
     // transient error must not suppress the ability to report the actual failure.
@@ -4714,6 +4814,23 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(text).toContain('Could not send message')
     expect(text).toContain('Run failed: connection reset')
     expect(reportButton()).not.toBeNull()
+  })
+
+  it('keeps a reportable run action beside unsupported Codex action guidance', () => {
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, errorReportable: true },
+        actionError:
+          'Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
+      }
+    })
+
+    expect(reportButton()).not.toBeNull()
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (candidate) => candidate.textContent === 'Agent settings'
+      )
+    ).toBe(true)
   })
 
   it('opens the report dialog when the Report button is clicked', () => {
@@ -4827,5 +4944,19 @@ describe('ConversationPanel error box + report affordance', () => {
       }
     })
     expect(reportButton()).not.toBeNull()
+  })
+
+  it('hides the Report button for a persisted Claude API connection failure without the reportable flag', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          error: 'Internal error: API Error: Unable to connect to API (ConnectionRefused)',
+          errorReportable: undefined
+        }
+      }
+    })
+    expect(errorBoxText()).toContain('Unable to connect to API (ConnectionRefused)')
+    expect(reportButton()).toBeNull()
   })
 })

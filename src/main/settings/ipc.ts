@@ -253,6 +253,10 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:logout-isolated-claude', () => workflows.runtime.logoutIsolatedClaude())
   ipcMainHandle('settings:login-isolated-codex', () => workflows.runtime.loginIsolatedCodex())
   ipcMainHandle('settings:logout-isolated-codex', () => workflows.runtime.logoutIsolatedCodex())
+  ipcMainHandle('settings:begin-xai-oauth-login', () => workflows.runtime.beginXaiOAuthLogin())
+  ipcMainHandle('settings:wait-xai-oauth-login', () => workflows.runtime.waitXaiOAuthLogin())
+  ipcMainHandle('settings:cancel-xai-oauth-login', () => workflows.runtime.cancelXaiOAuthLogin())
+  ipcMainHandle('settings:logout-xai-oauth', () => workflows.runtime.logoutXaiOAuth())
   ipcMainHandle(
     'settings:refresh-provider-models',
     (_event, request: RefreshProviderModelsRequest) => service.refreshProviderModels(request)

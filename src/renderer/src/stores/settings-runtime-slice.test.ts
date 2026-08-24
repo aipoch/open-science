@@ -15,6 +15,7 @@ import type {
 import {
   createRuntimeSetupLoadPatch,
   createRuntimeSetupSlice,
+  INSTALL_UI_LOG_CHAR_LIMIT,
   type RuntimeSetupSlice,
   selectAnyInstalling
 } from './settings-runtime-slice'
@@ -215,6 +216,65 @@ describe('runtime setup slice: install lifecycle', () => {
       installProgress: null,
       installError: undefined
     })
+  })
+
+  it('commits a 10,000-chunk log burst in two store updates and keeps the tail', async () => {
+    const install = deferred<ClaudeInstallResult>()
+    let emit: (event: ClaudeInstallEvent) => void = () => undefined
+    commands.onInstallLog.mockImplementation((listener) => {
+      emit = listener
+      return vi.fn()
+    })
+    commands.installCodex.mockReturnValue(install.promise)
+
+    const pending = store.getState().installCodex()
+    let logCommits = 0
+    const unsubscribe = store.subscribe((state, previous) => {
+      if (state.installStates.codex.installLogs !== previous.installStates.codex.installLogs) {
+        logCommits += 1
+      }
+    })
+
+    for (let index = 0; index < 10_000; index += 1) {
+      emit({ kind: 'log', installId: 'codex-1', stream: 'stdout', chunk: 'x' })
+    }
+
+    expect(logCommits).toBe(1)
+    expect(store.getState().installStates.codex.installLogs).toEqual(['x'])
+
+    await Promise.resolve()
+
+    expect(logCommits).toBe(2)
+    expect(store.getState().installStates.codex.installLogs).toEqual(['x'.repeat(10_000)])
+
+    unsubscribe()
+    install.resolve({ installId: 'codex-1', ok: true })
+    await pending
+  })
+
+  it('keeps only the last 256 KiB of install log text', async () => {
+    const install = deferred<ClaudeInstallResult>()
+    let emit: (event: ClaudeInstallEvent) => void = () => undefined
+    commands.onInstallLog.mockImplementation((listener) => {
+      emit = listener
+      return vi.fn()
+    })
+    commands.installCodex.mockReturnValue(install.promise)
+
+    const pending = store.getState().installCodex()
+    emit({
+      kind: 'log',
+      installId: 'codex-1',
+      stream: 'stdout',
+      chunk: `head${'t'.repeat(INSTALL_UI_LOG_CHAR_LIMIT)}`
+    })
+
+    expect(store.getState().installStates.codex.installLogs).toEqual([
+      't'.repeat(INSTALL_UI_LOG_CHAR_LIMIT)
+    ])
+
+    install.resolve({ installId: 'codex-1', ok: true })
+    await pending
   })
 
   it('keeps the global guard while logs are cleared and silently refuses a second install', async () => {

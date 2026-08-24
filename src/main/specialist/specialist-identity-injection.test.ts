@@ -682,6 +682,9 @@ describe('specialist hot-switch — Codex', () => {
 
     await runtime.sendPrompt({ sessionId: 'session-codex', text: 'Again' })
     expect(fakeAgent.prompts[1].text).toContain('Specialist B')
+    expect(fakeAgent.prompts[1].text).toContain(
+      'supersedes and revokes every earlier Specialist identity'
+    )
     expect(fakeAgent.prompts[1].text).not.toContain('Specialist A')
     expect(registerSessionSpecialist).toHaveBeenLastCalledWith('session-codex', 'sp-b')
   })

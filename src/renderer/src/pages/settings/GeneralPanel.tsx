@@ -1,13 +1,16 @@
 import { ExternalLink, FolderOpen, Globe, Terminal } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import { useEffect, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { LanguageSelect } from '@/components/LanguageControls'
 import { ThemeSegmentedControl } from '@/components/ThemeControls'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import { errorDetail } from '@/lib/error-detail'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
 import type { CliLauncherStatus } from '../../../../shared/cli'
@@ -20,6 +23,22 @@ import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 // set of "connect with the project" actions.
 const socialLinkClassName =
   'inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-2 text-xs font-medium text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground'
+
+type GeneralActionError = {
+  action: 'cli' | 'open-log' | 'reveal-log'
+  detail?: string
+}
+
+const generalActionErrorCopy = (error: GeneralActionError, t: TFunction): string => {
+  switch (error.action) {
+    case 'cli':
+      return t('Could not update the command-line tool.')
+    case 'open-log':
+      return t('Could not open the log file.')
+    case 'reveal-log':
+      return t('Could not reveal the log file.')
+  }
+}
 
 // Discord and X are brand marks that lucide-react dropped in v1, so we inline the official SVGs.
 // currentColor lets them inherit the link's text color like the other icons.
@@ -41,11 +60,11 @@ const GeneralPanel = (): React.JSX.Element => {
   const { t } = useTranslation()
   const isMac = window.api.platform === 'darwin'
   const [logPath, setLogPath] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | undefined>(undefined)
+  const [message, setMessage] = useState<GeneralActionError | undefined>(undefined)
   const [isOpening, setIsOpening] = useState(false)
   const [cli, setCli] = useState<CliLauncherStatus | null>(null)
   const [isUpdatingCli, setIsUpdatingCli] = useState(false)
-  const [cliError, setCliError] = useState<string | undefined>(undefined)
+  const [cliError, setCliError] = useState<GeneralActionError | undefined>(undefined)
   const notificationsEnabled = useSettingsStore((state) => state.notificationsEnabled)
   const setNotificationsEnabled = useSettingsStore((state) => state.setNotificationsEnabled)
   const closePreference = useSettingsStore((state) => state.closePreference)
@@ -65,9 +84,7 @@ const GeneralPanel = (): React.JSX.Element => {
         action === 'install' ? await window.api.cli.install() : await window.api.cli.uninstall()
       )
     } catch (error) {
-      setCliError(
-        error instanceof Error ? error.message : 'Could not update the command-line tool.'
-      )
+      setCliError({ action: 'cli', detail: errorDetail(error) })
     } finally {
       setIsUpdatingCli(false)
     }
@@ -81,10 +98,10 @@ const GeneralPanel = (): React.JSX.Element => {
       const result = await window.api.logs.openFile()
 
       if (!result.opened) {
-        setMessage(result.error ?? 'Could not open the log file.')
+        setMessage({ action: 'open-log', detail: result.error })
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not open the log file.')
+      setMessage({ action: 'open-log', detail: errorDetail(error) })
     } finally {
       setIsOpening(false)
     }
@@ -97,10 +114,10 @@ const GeneralPanel = (): React.JSX.Element => {
       const result = await window.api.logs.revealInFolder()
 
       if (!result.revealed) {
-        setMessage(result.error ?? 'Could not reveal the log file.')
+        setMessage({ action: 'reveal-log', detail: result.error })
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not reveal the log file.')
+      setMessage({ action: 'reveal-log', detail: errorDetail(error) })
     }
   }
 
@@ -267,9 +284,12 @@ const GeneralPanel = (): React.JSX.Element => {
         </pre>
 
         {message ? (
-          <p className="mt-2 text-xs text-destructive" role="alert">
-            {t(message)}
-          </p>
+          <div className="mt-2">
+            <p className="text-xs text-destructive" role="alert">
+              {generalActionErrorCopy(message, t)}
+            </p>
+            <DiagnosticDetails detail={message.detail} />
+          </div>
         ) : null}
 
         <p className="mt-3 text-xs text-muted-foreground">
@@ -331,9 +351,12 @@ const GeneralPanel = (): React.JSX.Element => {
         ) : null}
 
         {cliError ? (
-          <p className="mt-2 text-xs text-destructive" role="alert">
-            {t(cliError)}
-          </p>
+          <div className="mt-2">
+            <p className="text-xs text-destructive" role="alert">
+              {generalActionErrorCopy(cliError, t)}
+            </p>
+            <DiagnosticDetails detail={cliError.detail} />
+          </div>
         ) : null}
 
         <p className="mt-3 text-xs text-muted-foreground">

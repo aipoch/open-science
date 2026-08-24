@@ -6,6 +6,7 @@ import type {
   CreateElicitationResponse,
   InitializeRequest,
   InitializeResponse,
+  ListProvidersResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
   SetProviderRequest,
@@ -90,6 +91,7 @@ type AcpTransferredAgentConnection = Readonly<{
   backendAttempt: AcpBackendGenerationAttempt
   initialize: (request: InitializeRequest) => Promise<InitializeResponse>
   authenticate: (request: AuthenticateRequest) => Promise<void>
+  listProviders: () => Promise<ListProvidersResponse>
   setProvider: (request: SetProviderRequest) => Promise<void>
 }>
 
@@ -251,6 +253,7 @@ class AcpAgentConnectionAdapter {
           authenticate: async (request) => {
             await openedConnection.agent.request(acp.methods.agent.authenticate, request)
           },
+          listProviders: () => openedConnection.agent.request(acp.methods.agent.providers.list, {}),
           setProvider: async (request) => {
             await openedConnection.agent.request(acp.methods.agent.providers.set, request)
           }

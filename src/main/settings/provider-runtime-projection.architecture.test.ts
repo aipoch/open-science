@@ -135,7 +135,11 @@ describe('Provider runtime projection ownership', () => {
     expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
       'src/main/settings/provider-accounts.ts',
       'src/main/settings/provider-auth-lifecycle.ts',
-      'src/main/settings/provider-runtime-projection.ts'
+      'src/main/settings/provider-draft-projection.ts',
+      'src/main/settings/provider-model-catalog-owner.ts',
+      'src/main/settings/provider-runtime-projection.ts',
+      'src/main/settings/xai-oauth.ts',
+      'src/main/settings/xai-provider-account-owner.ts'
     ])
     expect(manifest.modules.settings_provider_accounts.testFiles.owner).toEqual(
       expect.arrayContaining([

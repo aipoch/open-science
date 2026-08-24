@@ -12,7 +12,7 @@ import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persist
 import { deleteSession } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
-import { selectVisionRelayAvailable, useSettingsStore } from '@/stores/settings-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
@@ -33,6 +33,7 @@ import {
   clearSuppressNextAutoReview
 } from '@/lib/acp/workspace-events'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
+import { revealNotebookWhenProjectActive } from './notebook-preview-availability'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import {
@@ -67,6 +68,7 @@ import { useWorkspaceBranchSwitchGuard } from './use-workspace-branch-switch-gua
 import { useSideChatController } from './use-side-chat-controller'
 import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 import { createWorkspaceComputeHostAccessController } from './workspace-compute-host-access-controller'
+import { useWorkspaceSessionAgentConfiguration } from './workspace-session-agent-configuration-controller'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -108,11 +110,6 @@ const WorkspacePage = ({
   const defaultPermissionProfile = useSettingsStore((state) => state.defaultPermissionProfile)
   const catalogSkills = useSettingsStore((state) => state.skills)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
-  const supportsImageInput = useSettingsStore(
-    (state) =>
-      state.providers.find((provider) => provider.id === activeProviderId)?.supportsImageInput ===
-        true || selectVisionRelayAvailable(state)
-  )
   const scopedProjectId = activeProjectId ?? ''
   const activeProject = useProjectStore((state) =>
     state.projects.find((project) => project.id === scopedProjectId)
@@ -135,10 +132,6 @@ const WorkspacePage = ({
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
   const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
-  const upsertPreviewItem = usePreviewWorkbenchStore((state) => state.upsertItem)
-  const upsertAndActivatePreviewItem = usePreviewWorkbenchStore(
-    (state) => state.upsertAndActivateItem
-  )
   const togglePreviewPanel = usePreviewWorkbenchStore((state) => state.togglePanel)
   const projectFormDialog = useProjectFormDialog()
   // Drives the sidebar project menu's Download artifacts… disabled state. An incomplete index
@@ -220,7 +213,7 @@ const WorkspacePage = ({
     setPermissionProfile,
     revokePermissionGrant
   } = runtime
-  const { respondToElicitation } = useWorkspaceElicitation()
+  const { respondToElicitation } = useWorkspaceElicitation(runtime.resolveSessionRuntimeSelection)
 
   // Auto-trigger an analysis turn when a remote job finishes (design §11).
   useJobAnalysisEffect({ enabled: isSessionPersistenceReady, sendMessage: runtime.sendMessage })
@@ -253,6 +246,13 @@ const WorkspacePage = ({
     }
     return selected
   })
+  const {
+    activeAgentConfiguration,
+    agentConfigurationUnavailable,
+    supportsImageInput,
+    changeAgentConfiguration,
+    resetNewConversationConfiguration
+  } = useWorkspaceSessionAgentConfiguration(activeSession)
   // Starter history is only consumed when no session is active, so this subscription collapses to
   // a stable empty list while a session is selected — background session updates then never
   // re-render the page through it.
@@ -485,6 +485,8 @@ const WorkspacePage = ({
     currentDraftKey,
     isPersistenceReady: isSessionPersistenceReady,
     supportsImageInput,
+    agentConfiguration: activeAgentConfiguration,
+    agentConfigurationReady: !agentConfigurationUnavailable,
     permissionProfile: activePermissionProfile,
     isReviewing,
     promptInFlightSessionIds,
@@ -506,6 +508,7 @@ const WorkspacePage = ({
       setNewConversationAutoReviewEnabled(false)
       setNewConversationEnabledComputeHosts([])
       setNewConversationSelectedComputeHosts([])
+      resetNewConversationConfiguration()
     },
     abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
     getSession: (sessionId) =>
@@ -665,20 +668,24 @@ const WorkspacePage = ({
     if (pendingCustomizePrefill !== undefined) consumeCustomizePrefill()
   }, [pendingCustomizePrefill, consumeCustomizePrefill])
 
-  // The first agent-side notebook call promotes a notebook entry into the composer status bar.
+  // The first agent-side notebook call reveals the new notebook entry and its preview together.
   useEffect(() => {
+    let cancelPendingOpen = (): void => undefined
     const removeNotebookAvailableListener = window.api.notebook.onAvailable((notebook) => {
       setNotebookReferences((references) => ({
         ...references,
         [notebook.sessionId]: notebook
       }))
-      upsertPreviewItem(createNotebookPreviewItem(notebook))
+      if (notebook.projectId !== scopedProjectId || notebook.sessionId !== activeSessionId) return
+      cancelPendingOpen()
+      cancelPendingOpen = revealNotebookWhenProjectActive(notebook)
     })
 
     return () => {
       removeNotebookAvailableListener()
+      cancelPendingOpen()
     }
-  }, [upsertPreviewItem])
+  }, [activeSessionId, scopedProjectId])
 
   // Subscribe to reviewer lifecycle updates so the card and Reviewing indicator stay live.
   useEffect(() => {
@@ -773,6 +780,7 @@ const WorkspacePage = ({
     setNewConversationAutoReviewEnabled(false)
     setNewConversationEnabledComputeHosts([])
     setNewConversationSelectedComputeHosts([])
+    resetNewConversationConfiguration()
     useNavigationStore.getState().recordUserNavigation()
     sessionController.actions.resetNewConversationSpecialist()
     clearSelection()
@@ -780,6 +788,7 @@ const WorkspacePage = ({
     clearSelection,
     defaultPermissionProfile,
     isSessionPersistenceReady,
+    resetNewConversationConfiguration,
     sessionController.actions,
     setAttachmentError
   ])
@@ -903,16 +912,16 @@ const WorkspacePage = ({
     })()
   }
 
-  // Opens the right preview on demand instead of stealing focus when the agent first uses notebook.
+  // Opens the right preview when the user explicitly selects the notebook entry.
   const openNotebookPreview = (notebook: NotebookSessionReference): void => {
-    upsertAndActivatePreviewItem(createNotebookPreviewItem(notebook))
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createNotebookPreviewItem(notebook))
   }
 
   // Opens the project file library as a stable preview workbench tool tab.
   const openFilesPreview = (): void => {
     if (!isSessionPersistenceReady) return
 
-    upsertAndActivatePreviewItem(createProjectFilesPreviewItem())
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectFilesPreviewItem())
   }
 
   return (
@@ -1103,6 +1112,9 @@ const WorkspacePage = ({
             }}
             agentControls={{
               canChange: canChangeAgentControls,
+              modelConfiguration: activeAgentConfiguration,
+              modelUnavailable: agentConfigurationUnavailable,
+              changeModelConfiguration: changeAgentConfiguration,
               autoReviewEnabled: activeAutoReviewEnabled,
               enabledComputeHosts: computeHostAccess.enabledProviderIds,
               selectedComputeHosts: computeHostAccess.selectedProviderIds,

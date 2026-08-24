@@ -20,6 +20,7 @@ import type {
   AcpSessionPresentationPolicy,
   AcpSessionToolingAvailability
 } from './session-presentation-policy'
+import type { SessionCapabilityPolicy } from './session-capability-owner'
 import type { TurnSkillHandle } from './turn-skill-owner'
 
 const log = createLogger('acp-prompt-preparation-owner')
@@ -66,6 +67,7 @@ type AcpPromptPreparationInput = Readonly<{
   connectionGeneration?: number
   backend: AcpBackendGenerationView
   tooling: AcpSessionToolingAvailability
+  role?: SessionCapabilityPolicy['role']
   specialistPrefix?: string
   sessionSetupPromptPrefix?: string
   projectId: string
@@ -166,15 +168,14 @@ class AcpPromptPreparationOwner {
       const promptPrefix = this.options.presentation.buildTurnPromptPrefix({
         framework: input.backend.framework,
         tooling: input.tooling,
+        role: input.role,
         backendSystemPromptAppends: input.backend.prompt.systemPromptAppends,
         persistentSystemPrompt: input.backend.prompt.persistentSystemPrompt,
         sessionOptions: input.backend.session.options,
         specialistPrefix: input.specialistPrefix,
         sessionSetupPromptPrefix: input.sessionSetupPromptPrefix,
         turnPromptReminders: [
-          ...(skillPreparation.specialistSkillGuidance
-            ? [skillPreparation.specialistSkillGuidance]
-            : []),
+          ...(skillPreparation.skillScopeGuidance ? [skillPreparation.skillScopeGuidance] : []),
           ...(computeExecutionTargetReminder ? [computeExecutionTargetReminder] : []),
           ...(input.turnPromptReminders ?? [])
         ]

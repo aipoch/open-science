@@ -5,6 +5,7 @@ import type {
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookRunRecord,
+  NotebookRunStaleness,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
@@ -22,12 +23,34 @@ import type { NotebookSessionSnapshot } from './session-aggregate'
 import type { NotebookLaneIdentity } from './lane-identity'
 import { resolveProjectId } from '../../shared/project-scope'
 import { NOTEBOOK_RENDERER_RUN_LIMIT } from './content-limits'
-import { DEFAULT_PY_ENV } from './runtime-paths'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from './runtime-paths'
+import {
+  unavailableNotebookDependencyProjection,
+  type NotebookDependencyAnalyzer,
+  type NotebookDependencyProjection
+} from './dependency-analysis'
 
 const DEFAULT_KERNEL_PROCESS_KEY = `python:${DEFAULT_PY_ENV}`
 
 const kernelInstanceProcessKey = (instance: NotebookKernelInstanceIdentity): string =>
   instance.kind === 'repl' ? 'repl' : `${instance.kind}:${instance.environment}`
+
+const projectVisibleRunStaleness = (
+  projection: NotebookDependencyProjection,
+  runs: readonly NotebookRunRecord[]
+): Record<string, NotebookRunStaleness> => {
+  const visibleRunIds = new Set(runs.map((run) => run.runId))
+  const result: Record<string, NotebookRunStaleness> = {}
+  for (const run of runs) {
+    const staleness = projection.stalenessByRunId[run.runId]
+    if (!staleness) continue
+    result[run.runId] =
+      staleness.state === 'stale'
+        ? { ...staleness, path: staleness.path.filter((runId) => visibleRunIds.has(runId)) }
+        : staleness
+  }
+  return result
+}
 
 type NotebookHandoffContext = {
   activeRunId?: string
@@ -73,8 +96,10 @@ type NotebookSessionReadModelOptions<Session extends NotebookSessionReadSource> 
   storageRoot: string
   defaultProjectId: string
   repository: NotebookRunRepository
+  dependencyAnalyzer: Pick<NotebookDependencyAnalyzer, 'project'>
   findSession: (sessionId: string) => Session | undefined
   runtimeBindings: (session: Session) => NotebookRuntimeBindings
+  runtimeEnvironment?: (session: Session, language: NotebookLanguage) => string
   isRestartRecommended: (processKey: string) => boolean
 }
 
@@ -156,6 +181,9 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       includeRunIds,
       historySummaryFrameId
     )
+    const dependencyProjection = await this.options.dependencyAnalyzer
+      .project({ projectId: session.projectId, sessionId: session.sessionId })
+      .catch(() => unavailableNotebookDependencyProjection(runWindow.runs))
     const terminatedKernelInstances = document.kernel.terminatedKernelInstances
     const defaultKernelTerminated = terminatedKernelInstances?.some(
       (instance) => kernelInstanceProcessKey(instance) === DEFAULT_KERNEL_PROCESS_KEY
@@ -194,11 +222,16 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       activeRunId: snapshot.activeRunId,
       runCount: runWindow.total,
       latestRunEnvironments: runWindow.latestRunEnvironments,
+      executionEnvironments: {
+        python: this.options.runtimeEnvironment?.(session, 'python') ?? DEFAULT_PY_ENV,
+        r: this.options.runtimeEnvironment?.(session, 'r') ?? DEFAULT_R_ENV
+      },
       ...(runWindow.historySummary ? { historySummary: runWindow.historySummary } : {}),
       runs: runWindow.runs.map((run) => this.toPublicRunRecord(run)),
       recentRuns: sparseRunRead
         ? []
         : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
+      runStaleness: projectVisibleRunStaleness(dependencyProjection, runWindow.runs),
       environments: this.environmentStatuses(session, terminatedKernelInstances),
       runtimeBindings: this.options.runtimeBindings(session)
     }
@@ -244,7 +277,11 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     }
   }
 
-  toRunSummary(session: Session, run: NotebookRunRecord): NotebookRunSummary {
+  toRunSummary(
+    session: Session,
+    run: NotebookRunRecord,
+    dependencyProjection?: NotebookDependencyProjection
+  ): NotebookRunSummary {
     const inputFiles = (run.inputFiles ?? []).map((input) => {
       const publicInput = { ...input } as Partial<typeof input>
       delete publicInput.storageKey
@@ -256,7 +293,13 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
       runtimeRoot: getRuntimeRoot(this.options.storageRoot),
-      kernelName: 'python3'
+      kernelName: 'python3',
+      ...(dependencyProjection?.stalenessByRunId[run.runId]
+        ? { staleness: dependencyProjection.stalenessByRunId[run.runId] }
+        : {}),
+      ...(dependencyProjection?.invalidatedByRunId[run.runId]?.length
+        ? { invalidatedRuns: dependencyProjection.invalidatedByRunId[run.runId] }
+        : {})
     }
   }
 
@@ -283,12 +326,15 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
   }
 
   private toPublicRunRecord(run: NotebookRunRecord): NotebookRunRecord {
+    const publicRun = { ...run } as Partial<NotebookRunRecord>
+    delete publicRun.kernelDispatched
+    delete publicRun.runtimeId
     const inputFiles = (run.inputFiles ?? []).map((input) => {
       const publicInput = { ...input } as Partial<typeof input>
       delete publicInput.storageKey
       return publicInput
     })
-    return { ...run, inputFiles } as NotebookRunRecord
+    return { ...publicRun, inputFiles } as NotebookRunRecord
   }
 }
 

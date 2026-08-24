@@ -555,6 +555,43 @@ describe('GlobalSearchDialog', () => {
     expect(artifactRow?.textContent).toContain('Python 绘制 sin 函数图 · 4 days ago')
   })
 
+  it('uses indexed artifact time when legacy Session messages are not loaded', async () => {
+    const createdAt = Date.now() - 4 * 24 * 60 * 60 * 1_000
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-a'
+          ? { ...session, contentLoaded: false, messages: [], conversationGraph: undefined }
+          : session
+      )
+    }))
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValueOnce({
+      primary: {
+        items: [
+          {
+            ...artifact,
+            sourceVersionId: undefined,
+            messageId: 'message-a',
+            path: '/workspace/sin.png',
+            sortAtMs: createdAt
+          }
+        ],
+        totalCount: 1
+      },
+      other: [],
+      isIndexComplete: true
+    })
+
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const artifactRow = [...document.body.querySelectorAll('[role="option"]')].find((element) =>
+      element.textContent?.includes('sin.png')
+    )
+    expect(artifactRow?.textContent).toContain('Python 绘制 sin 函数图 · 4 days ago')
+  })
+
   it('disables the current-Project mention action when the composer cannot accept another Artifact', async () => {
     useNavigationStore.setState({
       artifactMentionAvailability: { projectId: 'project-a', canMention: false }

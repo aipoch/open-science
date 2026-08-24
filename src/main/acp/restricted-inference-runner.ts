@@ -58,7 +58,11 @@ type RestrictedInferenceRunnerOptions = Readonly<{
   profileNamespace: string
   resolveTarget: (
     target: ExplicitAgentBackendTarget,
-    context: { systemPromptAppends: string[]; forceCodexNativeResponsesCompatibility: true }
+    context: {
+      systemPromptAppends: string[]
+      includeSkillAndConnectorContext: false
+      forceCodexNativeResponsesCompatibility: true
+    }
   ) => Promise<ResolvedAgentBackend>
   now?: () => number
   createRuntime?: (options: AcpRuntimeOptions) => RestrictedInferenceRuntime
@@ -206,6 +210,7 @@ class RestrictedInferenceRunner {
       await Promise.all([mkdir(cwd), mkdir(profileRoot)])
       backend = await this.options.resolveTarget(input.target, {
         systemPromptAppends: [input.systemPrompt],
+        includeSkillAndConnectorContext: false,
         forceCodexNativeResponsesCompatibility: true
       })
       ensureActive()

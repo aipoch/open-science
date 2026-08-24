@@ -28,6 +28,17 @@ export const createActiveResearchSafeInstallGate =
     return blockedBy.length > 0 ? { completed: false, reaped: false, blockedBy } : runTeardownGate()
   }
 
+// Confirms renderer-owned state is durable only after backend teardown has stopped producing runtime
+// events. A refused durability check leaves the installer untouched, while the non-latching teardown
+// allows the still-open app to reconnect on the next action.
+export const createDurableInstallGate =
+  (runTeardownGate: InstallGate, confirmRendererDurability: () => Promise<boolean>): InstallGate =>
+  async () => {
+    const readiness = await runTeardownGate()
+    if (!readiness.completed || !readiness.reaped) return readiness
+    return (await confirmRendererDurability()) ? readiness : { completed: false, reaped: false }
+  }
+
 // The platform-agnostic update contract the IPC layer and scheduler drive. Two implementations exist:
 // ElectronUpdaterStrategy (win/linux, and signed stable macOS — in-place download/restart) and
 // UpdateService (dev/nightly macOS + any other fallback — manifest download + manual reinstall). Both

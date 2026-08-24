@@ -24,7 +24,7 @@ export type AppShellPresentationInput = Readonly<{
 }>
 
 export type AppShellPresentation = keyof AppShellPresentationState | 'startup' | 'base'
-export type AppShellShortcut = 'settings' | 'globalSearch'
+export type AppShellShortcut = 'settings' | 'globalSearch' | 'archiveUndo'
 
 export type AppShellCloseAction =
   | Readonly<{ kind: 'consume' }>

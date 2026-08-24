@@ -115,11 +115,15 @@ export class SpecialistReadonlyError extends Error {
   readonly code = 'SPECIALIST_READ_ONLY' as const
 
   constructor(
-    readonly targetKind: 'builtin' | 'reviewer',
+    readonly targetKind: 'builtin' | 'reviewer' | 'marketplace',
     readonly specialistId: string
   ) {
     super(
-      `${targetKind === 'reviewer' ? 'Reviewer' : `Builtin Specialist ${specialistId}`} is read-only.`
+      targetKind === 'reviewer'
+        ? 'Reviewer is read-only.'
+        : targetKind === 'marketplace'
+          ? `Marketplace-managed Specialist ${specialistId} content is read-only.`
+          : `Builtin Specialist ${specialistId} is read-only.`
     )
     this.name = 'SpecialistReadonlyError'
   }
@@ -163,6 +167,13 @@ const toView = (s: StoredSpecialist): SpecialistProfileView => ({
       ? specialistContentModifiedSinceImport({ ...s, importBaseline: s.importBaseline })
       : false
 })
+
+const MARKETPLACE_UPDATE_KEYS = new Set<keyof UpdateSpecialistInput>([
+  'id',
+  'revision',
+  'iconKey',
+  'colorKey'
+])
 
 const assertOptionalIdentityFieldShapes = (
   input: Pick<
@@ -242,6 +253,16 @@ export class ProfileService {
     if (id === 'reviewer') throw new SpecialistReadonlyError('reviewer', id)
     if ((await this.builtinEntries()).some((entry) => entry.id === id)) {
       throw new SpecialistReadonlyError('builtin', id)
+    }
+  }
+
+  private async assertContentMutableId(id: string): Promise<void> {
+    await this.assertMutableId(id)
+    const specialist = (await this.repo.getAll()).specialists.find(
+      (candidate) => candidate.id === id
+    )
+    if (specialist?.origin === 'marketplace') {
+      throw new SpecialistReadonlyError('marketplace', id)
     }
   }
 
@@ -439,8 +460,18 @@ export class ProfileService {
       throw new Error(errors.map((e) => e.message).join('; '))
     }
 
-    const patch: Partial<StoredSpecialist> = {}
     const current = doc.specialists.find((s) => s.id === input.id)
+    if (!current) throw new Error(`Specialist ${input.id} not found.`)
+    if (
+      current.origin === 'marketplace' &&
+      (Object.keys(input) as Array<keyof UpdateSpecialistInput>).some(
+        (key) => !MARKETPLACE_UPDATE_KEYS.has(key)
+      )
+    ) {
+      throw new SpecialistReadonlyError('marketplace', input.id)
+    }
+
+    const patch: Partial<StoredSpecialist> = {}
     if (input.completeSetup && !current?.setupPending) {
       throw new Error('Specialist setup is not pending.')
     }
@@ -473,6 +504,25 @@ export class ProfileService {
     const updated = updatedDoc.specialists.find((s) => s.id === input.id)
     if (!updated) throw new Error(`Specialist ${input.id} not found after update.`)
     return toView(updated)
+  }
+
+  async markMarketplaceManaged(
+    id: string,
+    expectedRevision: number
+  ): Promise<SpecialistProfileView> {
+    const current = await this.getById(id)
+    if (current.revision !== expectedRevision) {
+      throw new Error(`Revision conflict: expected ${expectedRevision}, found ${current.revision}.`)
+    }
+    if (current.origin === 'marketplace') return current
+    if (current.origin !== 'imported' || !current.importBaseline) {
+      throw new Error('Only an exact imported package can become Marketplace-managed.')
+    }
+    const updated = await this.repo.update(id, { origin: 'marketplace' }, expectedRevision)
+    this.notify()
+    const managed = updated.specialists.find((specialist) => specialist.id === id)
+    if (!managed) throw new Error(`Specialist ${id} not found after Marketplace migration.`)
+    return toView(managed)
   }
 
   async delete(id: string, expectedRevision?: number): Promise<void> {
@@ -524,7 +574,7 @@ export class ProfileService {
     value: string,
     attach: boolean
   ): Promise<SpecialistProfileView> {
-    await this.assertMutableId(id)
+    await this.assertContentMutableId(id)
     const current = await this.getById(id)
     if (mode === 'full') {
       const config = structuredClone(current.fullAccess)

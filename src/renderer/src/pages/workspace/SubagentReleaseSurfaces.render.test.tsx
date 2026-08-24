@@ -269,6 +269,23 @@ describe('release-gate Subagent surfaces', () => {
     expect(bar.getAttribute('aria-expanded')).toBe('false')
   })
 
+  it('marks imported Subagent history when its origin Message is unavailable', () => {
+    const session = createSession()
+    const importedFrame = session.conversationGraph?.frames.find(({ id }) => id === 'child-a')
+    if (!importedFrame) throw new Error('Expected child-a fixture')
+    importedFrame.originBindingState = 'legacy-unavailable'
+    delete importedFrame.originMessageId
+
+    renderSurface(<SubagentsBar session={session} permissions={[]} />)
+    fireEvent.click(screen.getByRole('button', { name: '2 subagents, 1 running' }))
+
+    const importedRow = screen.getByRole('button', {
+      name: 'Evidence landscape, running',
+      description: 'Imported history may be incomplete'
+    })
+    expect(within(importedRow).getByText('Imported history may be incomplete')).toBeTruthy()
+  })
+
   it('shows a terminal child continuation as running before its first Agent response', () => {
     const completed = structuredClone(createSession())
     const completedFrame = completed.conversationGraph?.frames.find(({ id }) => id === 'child-a')

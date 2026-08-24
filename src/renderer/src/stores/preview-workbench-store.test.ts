@@ -576,6 +576,36 @@ describe('preview workbench store', () => {
     })
   })
 
+  it('replaces durable tabs without dropping active runtime-only tabs', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-a')
+    store.upsertAndActivateItem(createProjectFilesPreviewItem())
+    store.setToolItemExpanded(PROJECT_FILES_PREVIEW_ID)
+
+    store.activateProject('project-a', {
+      panelState: 'open',
+      activeItemId: 'file:session-2:/workspace/results.csv',
+      items: [
+        {
+          id: 'file:session-2:/workspace/results.csv',
+          sessionId: 'session-2',
+          type: 'file',
+          title: 'results.csv',
+          path: '/workspace/results.csv',
+          format: 'csv',
+          name: 'results.csv'
+        }
+      ]
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeProjectId: 'project-a',
+      activeItemId: PROJECT_FILES_PREVIEW_ID,
+      expandedToolItemId: PROJECT_FILES_PREVIEW_ID,
+      items: [{ id: 'file:session-2:/workspace/results.csv' }, { id: PROJECT_FILES_PREVIEW_ID }]
+    })
+  })
+
   it('repairs a dangling restored active item to the first surviving tab', () => {
     usePreviewWorkbenchStore.getState().activateProject('project-a', {
       panelState: 'open',

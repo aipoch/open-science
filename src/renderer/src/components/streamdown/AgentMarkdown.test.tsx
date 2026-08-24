@@ -130,6 +130,25 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(streamdownHarness.components?.a).toBe(SessionMessageLink)
   })
 
+  it('lets a session surface override one renderer while retaining its other custom components', async () => {
+    streamdownHarness.shouldThrow = false
+    const ArtifactLink = (): React.JSX.Element => <span>Artifact link</span>
+    const ArtifactImage = (): React.JSX.Element => <span>Artifact image</span>
+
+    await act(async () => {
+      root.render(
+        <AgentMarkdown
+          content="Session artifact"
+          sessionLinks
+          components={{ a: ArtifactLink, 'session-artifact-image': ArtifactImage }}
+        />
+      )
+    })
+
+    expect(streamdownHarness.components?.a).toBe(ArtifactLink)
+    expect(streamdownHarness.components?.['session-artifact-image']).toBe(ArtifactImage)
+  })
+
   it('defers highlighting of the trailing unclosed code fence via the streaming block', async () => {
     streamdownHarness.shouldThrow = false
 

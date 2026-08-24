@@ -111,6 +111,74 @@ describe('tag store', () => {
     })
   })
 
+  it('does not let an older mutation response overwrite a newer revision', async () => {
+    let resolveOlder: ((snapshot: TagSnapshot) => void) | undefined
+    const olderResponse = new Promise<TagSnapshot>((resolve) => {
+      resolveOlder = resolve
+    })
+    const initialTags: TagSnapshot['tags'] = [
+      ...favoriteSnapshot().tags,
+      {
+        id: 'tag-a',
+        name: 'A',
+        iconKey: 'tag',
+        colorKey: 'blue',
+        createdAt: 2,
+        updatedAt: 2
+      },
+      {
+        id: 'tag-b',
+        name: 'B',
+        iconKey: 'tag',
+        colorKey: 'blue',
+        createdAt: 3,
+        updatedAt: 3
+      }
+    ]
+    const olderSnapshot: TagSnapshot = {
+      revision: 2,
+      tags: initialTags.map((tag) =>
+        tag.id === 'tag-a' ? { ...tag, name: 'Updated A', updatedAt: 4 } : tag
+      ),
+      assignments: []
+    }
+    const newerSnapshot: TagSnapshot = {
+      revision: 3,
+      tags: olderSnapshot.tags.map((tag) =>
+        tag.id === 'tag-b' ? { ...tag, name: 'Updated B', updatedAt: 5 } : tag
+      ),
+      assignments: []
+    }
+    setTagsApi({
+      update: vi.fn().mockReturnValueOnce(olderResponse).mockResolvedValueOnce(newerSnapshot)
+    })
+    useTagStore.setState({ ...favoriteSnapshot(1), tags: initialTags, status: 'ready' })
+
+    const older = useTagStore.getState().update({
+      id: 'tag-a',
+      name: 'Updated A',
+      iconKey: 'tag',
+      colorKey: 'blue',
+      expectedUpdatedAt: 2
+    })
+    await useTagStore.getState().update({
+      id: 'tag-b',
+      name: 'Updated B',
+      iconKey: 'tag',
+      colorKey: 'blue',
+      expectedUpdatedAt: 3
+    })
+    resolveOlder?.(olderSnapshot)
+    await older
+
+    const state = useTagStore.getState()
+    const tagB = state.tags.find((tag) => tag.id === 'tag-b')
+    expect({
+      revision: state.revision,
+      tagBName: tagB && 'name' in tagB ? tagB.name : undefined
+    }).toEqual({ revision: 3, tagBName: 'Updated B' })
+  })
+
   it('ignores a load snapshot older than the current store revision', async () => {
     setTagsApi({ snapshot: vi.fn().mockResolvedValue(favoriteSnapshot(1)) })
     useTagStore.setState({ ...favoriteSnapshot(2), status: 'ready' })

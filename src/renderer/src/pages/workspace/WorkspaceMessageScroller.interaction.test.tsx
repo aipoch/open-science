@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, forwardRef, useCallback, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { waitFor } from '@testing-library/react'
 import type { PropsWithChildren } from 'react'
 import {
   useSessionStore,
@@ -22,6 +23,11 @@ import type {
   HandoffLifecycleEventSource
 } from '../../../../shared/handoff-lifecycle'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
+import type {
+  NotebookRunRecord,
+  NotebookSessionReference,
+  NotebookSessionState
+} from '../../../../shared/notebook'
 import {
   createLinearConversationGraph,
   projectConversationMessage,
@@ -83,6 +89,44 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   )
 }))
 
+vi.mock('./SessionMessageMarkdown', () => ({
+  SessionMessageMarkdown: ({
+    content,
+    isAnimating,
+    artifacts,
+    onPreviewArtifact,
+    onPreviewArtifactModal
+  }: {
+    content: string
+    isAnimating?: boolean
+    artifacts: NonNullable<ChatSession['artifacts']>
+    onPreviewArtifact: (artifact: NonNullable<ChatSession['artifacts']>[number]) => void
+    onPreviewArtifactModal: (artifact: NonNullable<ChatSession['artifacts']>[number]) => void
+  }) => (
+    <div data-testid="presented-agent-markdown" data-animating={isAnimating || undefined}>
+      {content}
+      {content === 'Markdown artifact controls' && artifacts[0] ? (
+        <>
+          <button
+            type="button"
+            data-testid="markdown-artifact-link"
+            onClick={() => onPreviewArtifact(artifacts[0]!)}
+          >
+            Open in panel
+          </button>
+          <button
+            type="button"
+            data-testid="markdown-artifact-image"
+            onClick={() => onPreviewArtifactModal(artifacts[0]!)}
+          >
+            Open in modal
+          </button>
+        </>
+      ) : null}
+    </div>
+  )
+}))
+
 vi.mock('@/components/ui/message-scroller', () => {
   const Wrapper = ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>
   const Viewport = forwardRef<
@@ -121,11 +165,14 @@ vi.mock('@/components/ui/message-scroller', () => {
   const Button = forwardRef<
     HTMLButtonElement,
     PropsWithChildren<
-      React.ButtonHTMLAttributes<HTMLButtonElement> & { direction?: 'start' | 'end' }
+      React.ButtonHTMLAttributes<HTMLButtonElement> & {
+        direction?: 'start' | 'end'
+        size?: string
+      }
     >
-  >(function MockMessageScrollerButton({ children, direction = 'end', ...props }, ref) {
+  >(function MockMessageScrollerButton({ children, direction = 'end', size, ...props }, ref) {
     return (
-      <button ref={ref} type="button" data-direction={direction} {...props}>
+      <button ref={ref} type="button" data-direction={direction} data-size={size} {...props}>
         {children ?? `Scroll to ${direction}`}
       </button>
     )
@@ -137,7 +184,12 @@ vi.mock('@/components/ui/message-scroller', () => {
     MessageScrollerViewport: Viewport,
     MessageScrollerContent: Content,
     MessageScrollerItem: Item,
-    MessageScrollerButton: Button
+    MessageScrollerButton: Button,
+    useMessageScroller: () => ({
+      scrollToEnd: vi.fn(),
+      scrollToMessage: vi.fn(),
+      scrollToStart: vi.fn()
+    })
   }
 })
 
@@ -148,6 +200,7 @@ vi.mock('@/lib/utils', () => ({
 }))
 
 const upsertAndActivateItem = vi.fn()
+const openFileDialog = vi.fn()
 const listGrantedRoots = vi.fn()
 const createSessionPlanPreviewItem = vi.fn((sessionId: string, projectId: string) => ({
   id: `tool:${sessionId}:plan`,
@@ -172,7 +225,7 @@ const announceWindowFindReady = vi.fn(() => () => undefined)
 
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
-    getState: () => ({ upsertAndActivateItem })
+    getState: () => ({ openFileDialog, upsertAndActivateItem })
   },
   createSessionPlanPreviewItem,
   createSessionSubagentsPreviewItem
@@ -280,6 +333,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
   beforeEach(() => {
     upsertAndActivateItem.mockClear()
+    openFileDialog.mockClear()
     listGrantedRoots.mockReset().mockResolvedValue([])
     useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
     createSessionSubagentsPreviewItem.mockClear()
@@ -375,6 +429,97 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(userRow?.getAttribute('data-scroll-anchor')).toBe('true')
     const agentRow = content?.querySelector('[data-message-id="reply-structure"]')
     expect(agentRow?.getAttribute('data-scroll-anchor')).toBeNull()
+  })
+
+  it('keeps more than one targeted batch of near-viewport historical figures stable while rows stay collapsed', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const notebookReference: NotebookSessionReference = {
+      sessionId: 'session-1',
+      projectId: 'default',
+      workspaceCwd: '/workspace',
+      notebookSessionRoot: '/workspace/.notebook',
+      dataRoot: '/workspace/data',
+      runtimeRoot: '/workspace/runtime',
+      runJsonPath: '/workspace/run.json'
+    }
+    const historicalRuns: NotebookRunRecord[] = Array.from({ length: 21 }, (_, index) => ({
+      runId: `historical-run-${index + 1}`,
+      executionInvocationId: `invocation-${index + 1}`,
+      cellId: `cell-${index + 1}`,
+      source: 'agent',
+      kernelKind: 'r',
+      script: `plot(${index + 1})`,
+      status: 'completed',
+      startedAt: index + 1,
+      endedAt: index + 2,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }],
+      artifacts: [],
+      workingFiles: []
+    }))
+    const makeNotebookState = (runs: NotebookRunRecord[]): NotebookSessionState => ({
+      id: 'notebook-1',
+      sessionId: notebookReference.sessionId,
+      cwd: notebookReference.workspaceCwd,
+      notebookSessionRoot: notebookReference.notebookSessionRoot,
+      dataRoot: notebookReference.dataRoot,
+      runtimeRoot: notebookReference.runtimeRoot,
+      kernelStatus: 'idle',
+      runJsonPath: notebookReference.runJsonPath,
+      cells: [],
+      runCount: 101,
+      latestRunEnvironments: {},
+      runs,
+      recentRuns: runs,
+      environments: []
+    })
+    const loadNotebookState = vi.fn(
+      async (request: { runIds?: string[] }): Promise<NotebookSessionState> =>
+        makeNotebookState(
+          historicalRuns.filter((run) => request.runIds?.includes(run.runId) === true)
+        )
+    )
+    window.api = {
+      ...window.api,
+      notebook: {
+        state: loadNotebookState,
+        onChanged: vi.fn(() => vi.fn())
+      }
+    } as unknown as Window['api']
+    const activities = historicalRuns.map((run, index) =>
+      createActivity({
+        id: `notebook-tool-${index + 1}`,
+        status: 'completed',
+        providerToolName: 'mcp__open-science-notebook__notebook_execute',
+        executionInvocationId: run.executionInvocationId,
+        rawInput: { code: run.script, kernelKind: run.kernelKind },
+        rawOutput: { runId: run.runId, status: run.status }
+      })
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', activities })}
+          notebookReference={notebookReference}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    await waitFor(() => {
+      const targetedRunIds = loadNotebookState.mock.calls.flatMap(
+        ([request]) => request.runIds ?? []
+      )
+      expect(new Set(targetedRunIds)).toEqual(new Set(historicalRuns.map((run) => run.runId)))
+    })
+    await waitFor(() =>
+      expect(
+        container.querySelectorAll('[data-testid="notebook-tool-figure-button"]')
+      ).toHaveLength(21)
+    )
+    expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
   })
 
   it('renders later tools in real time while the assistant reply is still pacing', async () => {
@@ -1875,7 +2020,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(lifecycle?.textContent).toContain('Continued with Data analyst')
   })
 
-  it('upserts and activates the clicked artifact in the preview store, scoped to the active session', async () => {
+  it('opens a generated artifact from both its card and hover icon', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({
       id: 'session-42',
@@ -1933,6 +2078,69 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       size: 2048,
       mtimeMs: 1710000000100
     })
+
+    upsertAndActivateItem.mockClear()
+    const openIcon = card?.querySelector<HTMLElement>('[data-slot="generated-artifact-open-icon"]')
+    expect(openIcon).not.toBeNull()
+
+    await act(async () => {
+      openIcon?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(upsertAndActivateItem).toHaveBeenCalledTimes(1)
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'artifact-1', sessionId: 'session-42' })
+    )
+  })
+
+  it('routes Markdown artifact links to the panel and Markdown artifact images to the dialog', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'prompt-1' }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Markdown artifact controls',
+          artifactIds: ['artifact-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'artifact-1',
+          kind: 'managed-file',
+          path: '/workspace/report.png',
+          name: 'report.png',
+          mimeType: 'image/png',
+          size: 2048,
+          mtimeMs: 1710000000100
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="markdown-artifact-link"]')?.click()
+    })
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'artifact-1', sessionId: 'session-42' })
+    )
+    expect(openFileDialog).not.toHaveBeenCalled()
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="markdown-artifact-image"]')?.click()
+    })
+    expect(openFileDialog).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'artifact-1', sessionId: 'session-42' })
+    )
   })
 
   it('resolves copied generated Version metadata and previews the source Version owner', async () => {
@@ -2895,7 +3103,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(firstMessageButton?.getAttribute('aria-hidden')).toBe('true')
     expect(firstMessageButton?.getAttribute('tabindex')).toBe('-1')
     expect(firstMessageButton?.classList.contains('gap-1')).toBe(true)
+    expect(firstMessageButton?.classList.contains('px-3')).toBe(true)
+    expect(firstMessageButton?.classList.contains('min-h-11')).toBe(false)
     expect(lastMessageButton).not.toBeNull()
+    expect(lastMessageButton?.getAttribute('data-size')).toBe('icon-lg')
+    expect(lastMessageButton?.classList.contains('rounded-full')).toBe(true)
     for (const button of [firstMessageButton, lastMessageButton]) {
       expect(button?.classList.contains('border-transparent')).toBe(true)
       expect(button?.classList.contains('shadow-card')).toBe(true)

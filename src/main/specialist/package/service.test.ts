@@ -16,8 +16,10 @@ import type { FetchLike } from '../../skills/github-import'
 import { SettingsRepository } from '../../settings/repository'
 import { SpecialistRepository } from '../repository'
 import { ProfileService } from '../service'
+import { MarketplaceOperationCoordinator } from '../marketplace/operation-coordinator'
 import { SpecialistPackageService, specialistExportFileName } from './service'
 import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT, type SpecialistPackageSkillPort } from './skill-port'
+import { specialistLegacyPayloadContentHash } from './validator'
 import { validateSpecialistZip } from './zip-adapter'
 
 const encoder = new TextEncoder()
@@ -1270,13 +1272,115 @@ describe('SpecialistPackageService', () => {
     expect(changedWithoutBump.diagnostics.map((item) => item.code)).toContain(
       'specialist.overwrite-content-without-version-bump'
     )
+    expect(changedWithoutBump.installable).toBe(false)
+    await expect(
+      initial.install({ candidateToken: changedWithoutBump.candidateToken, confirmOverwrite: true })
+    ).resolves.toMatchObject({ status: 'failed', code: 'candidate-not-installable' })
     const downgrade = await initial.preview(validZip({ version: '1.2.0' }))
     expect(downgrade.diagnostics.map((item) => item.code)).toContain(
       'specialist.overwrite-downgrade'
     )
   })
 
-  it('reports local presentation and capability setup as modified before overwrite', async () => {
+  it('blocks same-version payload changes for legacy import baselines', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const legacyPayload = {
+      name: 'Research Synthesizer',
+      description: 'Synthesizes research.',
+      systemPrompt: 'Private imported instructions.',
+      skillIds: [],
+      connectorIds: []
+    }
+    await repository.insert({
+      id: 'research-synth',
+      ...legacyPayload,
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.3.0',
+      origin: 'imported',
+      ownedSkillIds: [],
+      importBaseline: {
+        importedAt: '2026-08-03T00:00:00.000Z',
+        archiveDigest: 'legacy-archive-digest',
+        contentDigest: specialistLegacyPayloadContentHash(legacyPayload),
+        packageVersion: '1.3.0'
+      }
+    })
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog
+    })
+
+    const unchanged = await service.preview(validZip())
+    expect(unchanged.installable).toBe(true)
+    expect(unchanged.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-content-without-version-bump' })
+    )
+
+    const changed = await service.preview(validZip({ description: 'Changed package content.' }))
+    expect(changed.installable).toBe(false)
+    expect(changed.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-content-without-version-bump' })
+    )
+  })
+
+  it('protects Marketplace packages while preserving local presentation across updates', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog
+    })
+    const initial = await service.preview(validZip(), undefined, { origin: 'marketplace' })
+    await expect(
+      service.install({ candidateToken: initial.candidateToken }, undefined, {
+        activateAfterInstall: true,
+        origin: 'marketplace'
+      })
+    ).resolves.toMatchObject({
+      status: 'installed',
+      specialist: { origin: 'marketplace', enabled: true }
+    })
+    await new ProfileService(repository).update({
+      id: 'research-synth',
+      revision: 1,
+      iconKey: 'dna',
+      colorKey: 'blue'
+    })
+
+    const update = await service.preview(
+      validZip({ version: '1.4.0', description: 'Publisher update.' }),
+      undefined,
+      { origin: 'marketplace' }
+    )
+    expect(update.installable).toBe(true)
+    await service.install(
+      { candidateToken: update.candidateToken, confirmOverwrite: true },
+      undefined,
+      { activateAfterInstall: true, origin: 'marketplace' }
+    )
+    await expect(new ProfileService(repository).getById('research-synth')).resolves.toMatchObject({
+      origin: 'marketplace',
+      packageVersion: '1.4.0',
+      description: 'Publisher update.',
+      iconKey: 'dna',
+      colorKey: 'blue'
+    })
+
+    const manualOverwrite = await service.preview(
+      validZip({ version: '1.5.0', description: 'Manual replacement.' })
+    )
+    expect(manualOverwrite.installable).toBe(false)
+    expect(manualOverwrite.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-marketplace-managed' })
+    )
+  })
+
+  it('ignores local presentation but reports capability setup as modified before overwrite', async () => {
     const repository = new SpecialistRepository(storageDir)
     const service = new SpecialistPackageService({
       storageDir,
@@ -1290,7 +1394,17 @@ describe('SpecialistPackageService', () => {
       id: 'research-synth',
       revision: 1,
       iconKey: 'dna',
-      colorKey: 'blue',
+      colorKey: 'blue'
+    })
+    const appearanceOnly = await service.preview(validZip())
+    expect(appearanceOnly.overwrite).toMatchObject({ modifiedSinceImport: false })
+    expect(appearanceOnly.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: 'specialist.overwrite-local-modifications' })
+    )
+
+    await new ProfileService(repository).update({
+      id: 'research-synth',
+      revision: 2,
       capabilityMode: 'full',
       fullAccess: {
         excludedSkillIds: ['excluded-locally'],
@@ -1945,6 +2059,65 @@ describe('SpecialistPackageService', () => {
     await expect(skillPort.snapshot()).resolves.toEqual([
       expect.objectContaining({ id: 'retained', standalone: true, ownerIds: [] })
     ])
+  })
+
+  it('waits for an in-flight Marketplace operation before deleting a Specialist', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    await repository.insert({
+      id: 'managed-specialist',
+      name: 'MANAGED_SPECIALIST',
+      description: 'Publisher description.',
+      systemPrompt: 'Publisher instructions.',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'marketplace',
+      ownedSkillIds: []
+    })
+    const coordinator = new MarketplaceOperationCoordinator()
+    let releaseOperation: (() => void) | undefined
+    let operationStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      operationStarted = resolve
+    })
+    const inFlight = coordinator.runExclusive(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseOperation = resolve
+          operationStarted?.()
+        })
+    )
+    await started
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      catalog: async () => catalog,
+      marketplaceOperationCoordinator: coordinator
+    })
+
+    let deletionSettled = false
+    const deletion = service
+      .deleteSpecialist({
+        id: 'managed-specialist',
+        expectedRevision: 1,
+        deleteSkillIds: []
+      })
+      .finally(() => {
+        deletionSettled = true
+      })
+    await Promise.resolve()
+
+    expect(deletionSettled).toBe(false)
+    await expect(
+      new ProfileService(repository).getById('managed-specialist')
+    ).resolves.toBeDefined()
+
+    releaseOperation?.()
+    await inFlight
+    await expect(deletion).resolves.toEqual({ status: 'deleted' })
   })
 
   it('atomically deletes a standalone Skill used only by the deleted Specialist', async () => {

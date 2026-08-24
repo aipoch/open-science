@@ -113,7 +113,8 @@ describe('application database (integration)', () => {
         '0009_vision_evidence',
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
-        '0012_tag_ordering'
+        '0012_tag_ordering',
+        '0013_session_projection'
       ]
     })
 
@@ -1035,7 +1036,8 @@ describe('application database (integration)', () => {
         '0009_vision_evidence',
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
-        '0012_tag_ordering'
+        '0012_tag_ordering',
+        '0013_session_projection'
       ]
     })
 

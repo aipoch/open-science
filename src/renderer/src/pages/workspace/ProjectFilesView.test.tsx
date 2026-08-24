@@ -2052,10 +2052,11 @@ describe('ProjectFilesView', () => {
     ).toBe('true')
   })
 
-  it('refreshes the count for a collapsed selected session outside the catalog group page', async () => {
+  it('refreshes a collapsed selected session outside the catalog group page', async () => {
     const sessions = createArtifactSessions(12)
     await renderView(sessions)
     let selectedSessionCount = 1
+    let selectedOriginState: 'active' | 'deleting' = 'active'
     const catalogListener = vi.mocked(window.api.projectFiles.onChanged).mock.calls[0]?.[0]
 
     vi.mocked(window.api.projectFiles.listArtifactGroups).mockImplementation(async (request) => ({
@@ -2084,7 +2085,8 @@ describe('ProjectFilesView', () => {
           name: `file-12-${index}.txt`,
           path: `/workspace/file-12-${index}.txt`,
           size: 1,
-          sortAtMs: 12 - index
+          sortAtMs: 12 - index,
+          originSession: { state: selectedOriginState, title: 'Session 12' }
         })),
         totalCount: selectedSessionCount
       }
@@ -2136,6 +2138,7 @@ describe('ProjectFilesView', () => {
     })
 
     selectedSessionCount = 2
+    selectedOriginState = 'deleting'
     await act(async () => {
       catalogListener?.({
         projectId: 'default',
@@ -2150,24 +2153,35 @@ describe('ProjectFilesView', () => {
       '[aria-label="Search project files"]'
     )?.parentElement?.nextElementSibling
     expect(countLabel?.textContent).toBe('2 files')
+    expect(filterButton?.textContent).toContain('Session 12 · Source session is being deleted')
   })
 
-  it('preserves a deleted source session title in a scoped search group', async () => {
+  it.each([
+    {
+      state: 'deleted' as const,
+      expectedTitle: 'Retained analysis · Source session deleted'
+    },
+    {
+      state: 'deleting' as const,
+      expectedTitle: 'Retained analysis · Source session is being deleted'
+    }
+  ])('preserves a $state source session title in a scoped search group', async (testCase) => {
     await renderView([])
     const catalogListener = vi.mocked(window.api.projectFiles.onChanged).mock.calls[0]?.[0]
     const originSession = {
-      state: 'deleted' as const,
+      state: testCase.state,
       title: 'Retained analysis',
-      deletedAt: '2026-07-27T12:00:00.000Z'
+      ...(testCase.state === 'deleted' ? { deletedAt: '2026-07-27T12:00:00.000Z' } : {})
     }
+    const sessionId = `${testCase.state}-session`
     const retainedFile: ProjectFileItem = {
       id: 'retained-artifact',
       source: 'artifact',
       sourceFileId: 'retained-artifact',
       projectId: 'default',
-      sessionId: 'deleted-session',
+      sessionId,
       name: 'result.csv',
-      path: 'artifact-version:default/deleted-session/retained-artifact/version-1',
+      path: `artifact-version:default/${sessionId}/retained-artifact/version-1`,
       size: 12,
       sortAtMs: 1,
       originSession
@@ -2181,7 +2195,7 @@ describe('ProjectFilesView', () => {
       isIndexComplete: true
     })
     vi.mocked(window.api.projectFiles.listArtifactGroups).mockResolvedValue({
-      items: [{ sessionId: 'deleted-session', artifactCount: 1, originSession }],
+      items: [{ sessionId, artifactCount: 1, originSession }],
       totalCount: 1
     })
     vi.mocked(window.api.projectFiles.listFiles).mockResolvedValue({
@@ -2204,7 +2218,7 @@ describe('ProjectFilesView', () => {
     })
     await act(async () => {
       document.body
-        .querySelector<HTMLElement>('[data-filter-id="session:deleted-session"]')
+        .querySelector<HTMLElement>(`[data-filter-id="session:${sessionId}"]`)
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
@@ -2222,7 +2236,7 @@ describe('ProjectFilesView', () => {
       '[data-testid="project-file-section-header"]'
     )
     expect(selectedHeader).not.toBeNull()
-    expect(selectedHeader?.textContent).toContain('Retained analysis · Source session deleted')
+    expect(selectedHeader?.textContent).toContain(testCase.expectedTitle)
   })
 
   it('keeps filtered content and trigger icon synchronized with the selected category', async () => {

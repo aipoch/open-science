@@ -1,8 +1,13 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
+import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
-import type { ChatSession, SessionActionabilityProjection } from '@/stores/session-store'
+import type {
+  ChatMessage,
+  ChatSession,
+  SessionActionabilityProjection
+} from '@/stores/session-store'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
 import {
@@ -72,6 +77,8 @@ type WorkspaceConversationControllerOptions = {
   currentDraftKey: string
   isPersistenceReady: boolean
   supportsImageInput: boolean | undefined
+  agentConfiguration: SessionAgentConfiguration | undefined
+  agentConfigurationReady: boolean
   permissionProfile: PermissionProfileId
   isReviewing: boolean
   promptInFlightSessionIds: string[]
@@ -95,6 +102,7 @@ type WorkspaceConversationControllerOptions = {
 }
 
 type WorkspaceConversationController = {
+  optimisticMessage: ChatMessage | undefined
   availability: {
     submit: boolean
     submitMode: 'send' | 'queue' | undefined
@@ -134,6 +142,7 @@ const canSubmitImmediately = (options: WorkspaceConversationControllerOptions): 
   const { activeSession, composer, session } = options
   return (
     options.isPersistenceReady &&
+    options.agentConfigurationReady &&
     !options.sideChatOpen &&
     composer.view.transfers.length === 0 &&
     (!docIsEmpty(composer.view.doc) || composer.view.attachments.length > 0) &&
@@ -150,6 +159,7 @@ const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean
   const { activeSession, composer, session } = options
   return Boolean(
     options.isPersistenceReady &&
+    options.agentConfigurationReady &&
     !options.sideChatOpen &&
     activeSession?.status === 'running' &&
     composer.view.transfers.length === 0 &&
@@ -167,6 +177,7 @@ const canRevise = (options: WorkspaceConversationControllerOptions): boolean => 
   const { activeSession, composer, session } = options
   return (
     options.isPersistenceReady &&
+    options.agentConfigurationReady &&
     !options.sideChatOpen &&
     composer.view.transfers.length === 0 &&
     (options.actionability?.actions.revise.allowed ?? true) &&
@@ -182,6 +193,7 @@ const canRevise = (options: WorkspaceConversationControllerOptions): boolean => 
 const canBranch = (options: WorkspaceConversationControllerOptions): boolean =>
   Boolean(
     options.isPersistenceReady &&
+    options.agentConfigurationReady &&
     options.activeSession &&
     !options.activeSession.activeRun &&
     options.actionability?.actions.branchFromMessage.allowed !== false &&
@@ -202,6 +214,7 @@ const canStartSideChat = (options: WorkspaceConversationControllerOptions): bool
     hasMainConversation(options.activeSession) &&
     !options.sideChatOpen &&
     options.isPersistenceReady &&
+    options.agentConfigurationReady &&
     options.actionability?.actions.startSideChat.allowed !== false &&
     options.composer.view.transfers.length === 0 &&
     options.composer.view.attachments.length === 0 &&
@@ -216,6 +229,7 @@ const useWorkspaceConversationController = (
     optionsRef.current = options
   }, [options])
   const inFlightDraftKeysRef = useRef(new Set<string>())
+  const [optimisticMessages, setOptimisticMessages] = useState<Record<string, ChatMessage>>({})
   const messageQueue = useWorkspaceMessageQueueController({
     activeSession: options.activeSession,
     promptInFlightSessionIds: options.promptInFlightSessionIds,
@@ -245,6 +259,7 @@ const useWorkspaceConversationController = (
     const submitDraft = ({ forcedSkillIds, mode = 'continue' }: DraftSubmitIntent): void => {
       const current = optionsRef.current
       const { activeSession, composer, session, runtime } = current
+      if (!current.agentConfiguration) return
       const reconfigureRetry = mode === 'retry-reconfigure'
       if (reconfigureRetry && !session.actions.beginReconfigureRetry()) return
       const queueDraft = mode === 'continue' && canQueueDraft(current)
@@ -276,6 +291,7 @@ const useWorkspaceConversationController = (
             text: docToText(snapshot.doc),
             forcedSkillIds,
             permissionProfile: current.permissionProfile,
+            agentConfiguration: current.agentConfiguration,
             specialistId: activeSession.specialistId
           })
         ) {
@@ -296,6 +312,22 @@ const useWorkspaceConversationController = (
         session.lifecycle.captureSendIntent(branchInNewSession)
 
       const dispatch = (sessionId: string | undefined): void => {
+        const optimisticMessage = sessionId
+          ? {
+              id: `optimistic-${snapshot.draftKey}-${snapshot.version}`,
+              role: 'user' as const,
+              content: docToText(snapshot.doc),
+              status: 'complete' as const,
+              eventIds: [],
+              uploads: snapshot.attachments,
+              parts: snapshot.doc.nodes,
+              createdAt: 0,
+              updatedAt: 0
+            }
+          : undefined
+        if (sessionId && optimisticMessage) {
+          setOptimisticMessages((current) => ({ ...current, [sessionId]: optimisticMessage }))
+        }
         void runtime
           .sendMessage({
             sessionId,
@@ -309,6 +341,7 @@ const useWorkspaceConversationController = (
             cwd: activeSession?.cwd,
             projectId: activeSession?.projectId ?? current.projectId,
             permissionProfile: current.permissionProfile,
+            agentConfiguration: current.agentConfiguration,
             forcedSkillIds,
             ...(mode === 'plan-first' ? { turnIntent: 'plan-first' as const } : {}),
             specialistId: draftSpecialistId,
@@ -334,7 +367,16 @@ const useWorkspaceConversationController = (
             current.resetNewConversationSettings()
             session.actions.resetNewConversationSpecialist()
           })
-          .finally(() => inFlightDraftKeysRef.current.delete(snapshot.draftKey))
+          .finally(() => {
+            inFlightDraftKeysRef.current.delete(snapshot.draftKey)
+            if (!sessionId || !optimisticMessage) return
+            setOptimisticMessages((current) => {
+              if (current[sessionId]?.id !== optimisticMessage.id) return current
+              const next = { ...current }
+              delete next[sessionId]
+              return next
+            })
+          })
       }
 
       if (hasPendingSwitch && activeSession) {
@@ -356,11 +398,14 @@ const useWorkspaceConversationController = (
     }
 
     const submitRestoredPlan = async (response: RestoredPlanResponse): Promise<void> => {
-      const { activeSession, runtime, sideChatOpen } = optionsRef.current
+      const { activeSession, agentConfigurationReady, runtime, sideChatOpen } = optionsRef.current
       const session = activeSession ? optionsRef.current.getSession(activeSession.id) : undefined
       const plan = selectActiveBranchPlan(session)
       if (sideChatOpen || !session || session.activeRun || plan?.approval !== 'pending') {
         throw new Error('The pending Plan is no longer available for a response.')
+      }
+      if (!agentConfigurationReady) {
+        throw new Error('The Session model is unavailable.')
       }
       await runtime.ensureSessionReady(session.id)
       await respondToSessionPlan(
@@ -390,6 +435,7 @@ const useWorkspaceConversationController = (
       },
       branch: (messageId): void => {
         const current = optionsRef.current
+        if (!current.agentConfiguration) return
         const sourceSessionId = current.activeSession?.id
         if (!sourceSessionId || !canBranch(current)) return
         if (current.session.lifecycle.isBarrierInFlight(sourceSessionId)) return
@@ -400,6 +446,7 @@ const useWorkspaceConversationController = (
             branchSourceSessionId: sourceSessionId,
             branchSourceMessageId: messageId,
             text: '',
+            agentConfiguration: current.agentConfiguration,
             specialistId: draftSpecialistId
           })
           .catch((error: unknown) => current.composer.actions.setError(errorMessage(error)))
@@ -447,6 +494,9 @@ const useWorkspaceConversationController = (
   const queueDraft = canQueueDraft(options)
 
   return {
+    optimisticMessage: options.activeSession
+      ? optimisticMessages[options.activeSession.id]
+      : undefined,
     availability: {
       submit: submitImmediately || queueDraft,
       submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,

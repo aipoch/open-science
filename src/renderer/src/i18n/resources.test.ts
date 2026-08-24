@@ -1273,8 +1273,8 @@ describe('Russian catalog quality', () => {
       'Настройте пароль для этого вычислительного узла и повторите попытку.'
     ],
     [
-      'Choose the exact effort levels accepted by this model. Open Science maps five relative strengths onto them, then sends the selected level using the request format below. Disable when the model does not accept an effort parameter.',
-      'Выберите точные уровни глубины рассуждений, поддерживаемые моделью. Open Science сопоставит с ними пять относительных уровней и передаст выбранное значение в указанном ниже формате запроса. Отключите настройку, если модель не поддерживает этот параметр.'
+      'Open Science maps five relative strengths onto the exact levels accepted by this model.',
+      'Open Science сопоставляет пять относительных уровней с точными уровнями, поддерживаемыми этой моделью.'
     ],
     [
       'Installed Skill · v{{version}} · include it to bundle a copy.',
@@ -1295,7 +1295,7 @@ describe('Russian catalog quality', () => {
       '{{fileName}}: неподдерживаемый файл — загрузите файл .md либо пакет .zip или .skill.'
     ],
     ['remote commands on {{host}}', 'удалённые команды на {{host}}'],
-    ['e.g. My gateway', 'например, мой шлюз'],
+    ['Optional display name', 'Необязательное отображаемое имя'],
     ['scheduler', 'планировщик'],
     ['Cache share', 'Доля кэша'],
     ['Signing key fingerprint: {{fingerprint}}', 'Отпечаток ключа подписи: {{fingerprint}}'],

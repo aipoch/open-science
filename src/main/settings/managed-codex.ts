@@ -23,6 +23,7 @@ import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
 import { ACP_MODEL_TURN_COUNT_META_KEY, ACP_TURN_TOKEN_USAGE_META_KEY } from '../../shared/acp'
+import { MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
 import {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
@@ -36,14 +37,14 @@ import { createLogger } from '../logger'
 import { stripCodexCredentialEnv } from './process-tree'
 import { terminateProcessTree } from '../process-tree'
 
-export const CODEX_ACP_VERSION = '1.1.4'
+export const CODEX_ACP_VERSION = MINIMUM_CODEX_ACP_VERSION
 export const CODEX_VERSION = '0.144.6'
 
 const log = createLogger('managed-codex')
 const MAX_INITIALIZE_DIAGNOSTIC_CHARS = 4 * 1024
 
 export const CODEX_ACP_INTEGRITY =
-  'sha512-DzusIpGwlQwMWuHgJhU8FWMsyQvzjenB93IEzQATkdbNulo5Rd9GKOz8+B+/C9iWWxmyXgtgmjzaL+iRFyDryQ=='
+  'sha512-2eF1mbs1gTqkZJSLYOun/pFDx37sYa7W63HOPezC37b/R8AYms5O1nfQu8lrqFSGDrwDZkASVORymLcqjCNqyA=='
 
 export const CODEX_INTEGRITIES: Readonly<Record<string, string>> = {
   'darwin-arm64':
@@ -521,7 +522,7 @@ export const patchCodexAcpContextUsageSource = (source: string): string => {
   return source
 }
 
-// Codex ACP 1.1.4 projects only tokenUsage.last into PromptResponse.usage. Preserve that latest
+// Codex ACP 1.1.4 and 1.6.2 project tokenUsage.last into PromptResponse.usage. Preserve that latest
 // request for context reconciliation while accumulating whole-turn deltas into an app-owned _meta
 // field for the transcript footer. Falling back to `last` for the first update keeps resumed sessions
 // from attributing their historical cumulative total to the first new response.
@@ -598,10 +599,13 @@ export const patchCodexAcpTurnUsageSource = (source: string): string => {
   const metaMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_META_REPLACEMENT).length - 1
   const finishMatches = migratedSource.split(CODEX_ACP_TURN_USAGE_FINISH_SOURCE).length - 1
 
+  // 1.1.4 has three PromptResponse usage sites. 1.6.2 adds a fourth in
+  // terminalFailurePromptResponse; that site spreads quota _meta rather than
+  // assigning `buildQuotaMeta` directly, so the meta count stays three.
   if (
     updateMatches === 1 &&
     startMatches === 1 &&
-    responseMatches === 3 &&
+    (responseMatches === 3 || responseMatches === 4) &&
     metaMatches === 3 &&
     finishMatches === 1
   ) {
@@ -920,6 +924,9 @@ export type InstallManagedCodexOptions = {
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
   dataRoot: string
+  // When Codex CLI is user-owned, update only the app-controlled adapter and verify it against this
+  // existing binary. The caller keeps the user's persisted CLI path/version instead of replacing it.
+  existingCodexPath?: string
   registries?: string[]
   platform?: ManagedCodexPlatform
   fetchJson?: FetchJson
@@ -933,30 +940,46 @@ export type InstallManagedCodexOptions = {
 const parseVersion = (output: string): string | undefined =>
   output.match(/\d+\.\d+\.\d+[\w.-]*/)?.[0]
 
-const runVersion = (
+export type ManagedCodexVersionSpawn = (
+  executable: string,
+  args: readonly string[],
+  options: {
+    encoding: 'utf8'
+    timeout: number
+    windowsHide: true
+    env?: NodeJS.ProcessEnv
+    shell?: boolean
+  }
+) => { status: number | null; stdout: string }
+
+export const runManagedCodexVersion = (
   executable: string,
   args: string[],
-  env?: NodeJS.ProcessEnv
+  env?: NodeJS.ProcessEnv,
+  _platform: NodeJS.Platform = process.platform,
+  spawnVersion: ManagedCodexVersionSpawn = spawnSync as unknown as ManagedCodexVersionSpawn
 ): string | undefined => {
-  const result = spawnSync(executable, args, {
+  const useShell = _platform === 'win32' && /\.(cmd|bat)$/i.test(executable)
+  const result = spawnVersion(useShell ? `"${executable}"` : executable, args, {
     encoding: 'utf8',
     timeout: 10_000,
     windowsHide: true,
-    env
+    env,
+    ...(useShell ? { shell: true } : {})
   })
 
   return result.status === 0 ? parseVersion(result.stdout) : undefined
 }
 
 const defaultVerifyAdapter: VersionVerifier = async (adapterPath) =>
-  runVersion(process.execPath, [adapterPath, '--version'], {
+  runManagedCodexVersion(process.execPath, [adapterPath, '--version'], {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
     NO_BROWSER: '1'
   })
 
 const defaultVerifyCodex: VersionVerifier = async (codexPath) =>
-  runVersion(codexPath, ['--version'], { ...process.env, NO_BROWSER: '1' })
+  runManagedCodexVersion(codexPath, ['--version'], { ...process.env, NO_BROWSER: '1' })
 
 // Keeps adapter stderr useful for troubleshooting while preventing credentials or unbounded child
 // output from entering the app log. The installer never logs the child environment or initialize body.
@@ -1209,23 +1232,27 @@ const replaceDirectory = async (staged: string, destination: string): Promise<vo
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-export const installManagedCodex = async ({
-  installId,
-  onEvent,
-  dataRoot,
-  registries = DEFAULT_REGISTRIES,
-  platform = resolveManagedCodexPlatform(),
-  fetchJson = defaultFetchJson,
-  fetchTarball = defaultFetchTarball,
-  verifyAdapter = defaultVerifyAdapter,
-  verifyCodex = defaultVerifyCodex,
-  verifyPair = verifyManagedCodexPair,
-  integrities = {
-    adapter: CODEX_ACP_INTEGRITY,
-    codex: CODEX_INTEGRITIES[platform.key] ?? ''
-  }
-}: InstallManagedCodexOptions): Promise<ManagedCodexInstallOutcome> => {
-  if (!integrities.codex) {
+export const installManagedCodex = async (
+  options: InstallManagedCodexOptions
+): Promise<ManagedCodexInstallOutcome> => {
+  const {
+    installId,
+    onEvent,
+    dataRoot,
+    registries = DEFAULT_REGISTRIES,
+    platform = resolveManagedCodexPlatform(),
+    fetchJson = defaultFetchJson,
+    fetchTarball = defaultFetchTarball,
+    verifyAdapter = defaultVerifyAdapter,
+    verifyCodex = defaultVerifyCodex,
+    verifyPair = verifyManagedCodexPair,
+    existingCodexPath,
+    integrities = {
+      adapter: CODEX_ACP_INTEGRITY,
+      codex: CODEX_INTEGRITIES[platform.key] ?? ''
+    }
+  } = options
+  if (!existingCodexPath && !integrities.codex) {
     return {
       result: { installId, ok: false, error: `No pinned Codex integrity for ${platform.key}` }
     }
@@ -1254,13 +1281,15 @@ export const installManagedCodex = async ({
         integrities.adapter,
         fetchJson
       )
-      const codex = await resolvePinnedPackage(
-        registry,
-        '@openai%2fcodex',
-        `${CODEX_VERSION}-${platform.key}`,
-        integrities.codex,
-        fetchJson
-      )
+      const codex = existingCodexPath
+        ? undefined
+        : await resolvePinnedPackage(
+            registry,
+            '@openai%2fcodex',
+            `${CODEX_VERSION}-${platform.key}`,
+            integrities.codex,
+            fetchJson
+          )
 
       await downloadAndVerify({
         url: adapter.tarball,
@@ -1270,14 +1299,16 @@ export const installManagedCodex = async ({
         onEvent,
         fetchTarball
       })
-      await downloadAndVerify({
-        url: codex.tarball,
-        integrity: codex.integrity,
-        destPath: codexTgz,
-        installId,
-        onEvent,
-        fetchTarball
-      })
+      if (codex) {
+        await downloadAndVerify({
+          url: codex.tarball,
+          integrity: codex.integrity,
+          destPath: codexTgz,
+          installId,
+          onEvent,
+          fetchTarball
+        })
+      }
 
       onEvent({ kind: 'progress', installId, phase: 'extracting' })
       const stagedAdapter = adapterEntryInRoot(stagedRoot)
@@ -1289,34 +1320,57 @@ export const installManagedCodex = async ({
       if (!foundAdapter) throw new Error('Codex ACP package did not contain dist/index.js')
       await ensureManagedCodexContextUsage(stagedAdapter)
 
-      await extractCodexVendor({
-        tgzPath: codexTgz,
-        target: platform.target,
-        destination: join(stagedRoot, 'codex')
-      })
-      const stagedCodex = codexBinaryInRoot(stagedRoot, platform)
+      if (codex) {
+        await extractCodexVendor({
+          tgzPath: codexTgz,
+          target: platform.target,
+          destination: join(stagedRoot, 'codex')
+        })
+      }
+      const codexPath = existingCodexPath ?? codexBinaryInRoot(stagedRoot, platform)
       if (process.platform !== 'win32') {
         await chmod(stagedAdapter, 0o755)
-        await chmod(stagedCodex, 0o755)
+        if (!existingCodexPath) await chmod(codexPath, 0o755)
       }
 
       onEvent({ kind: 'progress', installId, phase: 'installing' })
       const adapterVersion = await verifyAdapter(stagedAdapter)
       if (!adapterVersion) throw new Error('Installed Codex ACP adapter failed its --version check')
-      const codexVersion = await verifyCodex(stagedCodex)
-      if (!codexVersion) throw new Error('Installed Codex binary failed its --version check')
-      // Smoke home lives in scratch (auto-removed), NEVER inside stagedRoot: stagedRoot is moved to
-      // the final runtime, so anything Codex might write here must not ride along into the install.
-      await verifyPair(stagedAdapter, stagedCodex, join(scratch, 'smoke-home'))
+      let codexVersion: string
+      try {
+        const verifiedVersion = await verifyCodex(codexPath)
+        if (!verifiedVersion) throw new Error('Installed Codex binary failed its --version check')
+        // Smoke home lives in scratch (auto-removed), NEVER inside stagedRoot: stagedRoot is moved to
+        // the final runtime, so anything Codex might write here must not ride along into the install.
+        await verifyPair(stagedAdapter, codexPath, join(scratch, 'smoke-home'))
+        codexVersion = verifiedVersion
+      } catch (error) {
+        if (!existingCodexPath) throw error
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `Existing Codex CLI is incompatible with the managed adapter; falling back to the managed Codex CLI.\n`
+        })
+        return installManagedCodex({ ...options, existingCodexPath: undefined })
+      }
 
       reachedLocalInstall = true
-      await replaceDirectory(stagedRoot, managedCodexRoot(dataRoot))
+      if (existingCodexPath) {
+        await mkdir(managedCodexRoot(dataRoot), { recursive: true })
+        await replaceDirectory(
+          join(stagedRoot, 'adapter'),
+          join(managedCodexRoot(dataRoot), 'adapter')
+        )
+      } else {
+        await replaceDirectory(stagedRoot, managedCodexRoot(dataRoot))
+      }
 
       return {
         result: { installId, ok: true },
         adapterPath: managedCodexAdapterEntry(dataRoot),
         adapterVersion,
-        codexPath: managedCodexBinary(dataRoot, platform),
+        codexPath: existingCodexPath ?? managedCodexBinary(dataRoot, platform),
         codexVersion
       }
     } catch (error) {

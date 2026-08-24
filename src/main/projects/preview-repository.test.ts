@@ -65,10 +65,11 @@ describe('preview state repository (integration)', () => {
     })
 
     const repository = new PreviewStateRepository(() => Promise.resolve(client))
-    await repository.save('project-a', createState())
+    await repository.save('project-a', createState(), 0)
     await repository.save(
       'project-b',
-      createState({ panelState: 'collapsed', activeItemId: undefined, items: [] })
+      createState({ panelState: 'collapsed', activeItemId: undefined, items: [] }),
+      0
     )
     const otherProjectBefore = await client.project.findUniqueOrThrow({
       where: { id: 'project-b' }
@@ -90,7 +91,10 @@ describe('preview state repository (integration)', () => {
     }
     expect(directFailure).toMatchObject({ code: 'P2003' })
 
-    await expect(repository.save('project-a', createState())).resolves.toBeUndefined()
+    await expect(repository.save('project-a', createState(), 0)).resolves.toEqual({
+      status: 'saved',
+      revision: 0
+    })
     await expect(repository.get('project-a')).resolves.toBeNull()
     await expect(client.project.findUniqueOrThrow({ where: { id: 'project-b' } })).resolves.toEqual(
       otherProjectBefore
@@ -101,18 +105,23 @@ describe('preview state repository (integration)', () => {
   })
 
   it('swallows a raw SQLite owner FK failure but propagates unrelated write errors', async () => {
-    const upsert = vi.fn()
+    const create = vi.fn()
     const client = {
-      projectPreviewState: { upsert }
+      $transaction: (operation: (transaction: unknown) => unknown) => operation(client),
+      project: { findFirst: vi.fn().mockResolvedValue({ id: 'project-a' }) },
+      projectPreviewState: { create }
     } as unknown as PreviewStateClient
     const repository = new PreviewStateRepository(() => Promise.resolve(client))
 
-    upsert.mockRejectedValueOnce(new Error('FOREIGN KEY constraint failed'))
-    await expect(repository.save('deleted-project', createState())).resolves.toBeUndefined()
+    create.mockRejectedValueOnce(new Error('FOREIGN KEY constraint failed'))
+    await expect(repository.save('deleted-project', createState(), 0)).resolves.toEqual({
+      status: 'saved',
+      revision: 0
+    })
 
     const writeFailure = new Error('disk I/O error')
-    upsert.mockRejectedValueOnce(writeFailure)
-    await expect(repository.save('project-a', createState())).rejects.toBe(writeFailure)
+    create.mockRejectedValueOnce(writeFailure)
+    await expect(repository.save('project-a', createState(), 0)).rejects.toBe(writeFailure)
   })
 
   it('does not update the owning Project timestamp when saving preview state', async () => {
@@ -128,7 +137,7 @@ describe('preview state repository (integration)', () => {
     })
 
     const repository = new PreviewStateRepository(() => Promise.resolve(client))
-    await repository.save('project-a', createState())
+    await repository.save('project-a', createState(), 0)
 
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'project-a' } })
@@ -150,25 +159,106 @@ describe('preview state repository (integration)', () => {
     await expect(repository.get('project-a')).resolves.toBeNull()
 
     // Save then read back the durable projection.
-    await repository.save('project-a', createState())
+    await repository.save('project-a', createState(), 0)
     const loaded = await repository.get('project-a')
     expect(loaded).toMatchObject({
-      panelState: 'open',
-      activeItemId: 'file:session-1:/workspace/report.md',
-      items: [{ id: 'file:session-1:/workspace/report.md', path: '/workspace/report.md' }]
+      revision: expect.any(Number),
+      state: {
+        panelState: 'open',
+        activeItemId: 'file:session-1:/workspace/report.md',
+        items: [{ id: 'file:session-1:/workspace/report.md', path: '/workspace/report.md' }]
+      }
     })
 
-    // Upsert overwrites the existing row.
-    await repository.save('project-a', createState({ panelState: 'collapsed', items: [] }))
+    // A matching revision replaces the existing row and advances its revision.
+    await repository.save(
+      'project-a',
+      createState({ panelState: 'collapsed', items: [] }),
+      loaded!.revision
+    )
     const updated = await repository.get('project-a')
-    expect(updated).toMatchObject({ panelState: 'collapsed', items: [] })
+    expect(updated).toMatchObject({ state: { panelState: 'collapsed', items: [] } })
+    expect(updated!.revision).toBeGreaterThan(loaded!.revision)
     // A dangling active id (its item was removed) is dropped on read.
-    expect(updated?.activeItemId).toBeUndefined()
+    expect(updated?.state.activeItemId).toBeUndefined()
 
     // Delete removes the row; deleting again is a no-op.
     await repository.delete('project-a')
     await expect(repository.get('project-a')).resolves.toBeNull()
     await expect(repository.delete('project-a')).resolves.toBeUndefined()
+  })
+
+  it('does not recreate preview state for a soft-deleted Project', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-deleted-owner-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+    await client.project.update({
+      where: { id: 'project-a' },
+      data: { deletedAt: new Date() }
+    })
+    const repository = new PreviewStateRepository(() => Promise.resolve(client))
+
+    await expect(repository.save('project-a', createState(), 0)).resolves.toEqual({
+      status: 'saved',
+      revision: 0
+    })
+    await expect(client.projectPreviewState.count()).resolves.toBe(0)
+  })
+
+  it("does not let a stale client snapshot erase another client's newly opened preview", async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+
+    const repository = new PreviewStateRepository(() => Promise.resolve(client))
+    const initial = createState({ activeItemId: undefined, items: [] })
+    await repository.save('project-a', initial, 0)
+    const staleClientSnapshot = (await repository.get('project-a'))!
+    const otherClientSnapshot = (await repository.get('project-a'))!
+
+    const newItem = createState().items[0]!
+    await repository.save(
+      'project-a',
+      { ...otherClientSnapshot.state, activeItemId: newItem.id, items: [newItem] },
+      otherClientSnapshot.revision
+    )
+    await expect(
+      repository.save('project-a', staleClientSnapshot.state, staleClientSnapshot.revision)
+    ).resolves.toMatchObject({ status: 'conflict' })
+
+    expect(await repository.get('project-a')).toMatchObject({
+      state: {
+        activeItemId: newItem.id,
+        items: [expect.objectContaining({ id: newItem.id })]
+      }
+    })
+  })
+
+  it('does not let a second revision-zero save replace the client that created the row', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+
+    const repository = new PreviewStateRepository(() => Promise.resolve(client))
+    const newItem = createState().items[0]!
+    await repository.save('project-a', createState({ items: [newItem] }), 0)
+
+    await expect(
+      repository.save('project-a', createState({ activeItemId: undefined, items: [] }), 0)
+    ).resolves.toMatchObject({ status: 'conflict' })
+    await expect(repository.get('project-a')).resolves.toMatchObject({
+      state: { items: [expect.objectContaining({ id: newItem.id })] }
+    })
   })
 
   it('persists an item path under the data root as a $DATA sentinel and decodes it back on read', async () => {
@@ -198,7 +288,8 @@ describe('preview state repository (integration)', () => {
             name: 'plot.png'
           }
         ]
-      })
+      }),
+      0
     )
 
     // Stored row: the data-root prefix is replaced with the portable $DATA sentinel.
@@ -208,7 +299,7 @@ describe('preview state repository (integration)', () => {
 
     // Read back: the sentinel resolves to an absolute path under the current data root.
     const loaded = await repository.get('project-a')
-    expect(loaded?.items[0].path).toBe(absolutePath)
+    expect(loaded?.state.items[0].path).toBe(absolutePath)
   })
 
   it('rejects an escaping $DATA path from persisted Preview state', async () => {

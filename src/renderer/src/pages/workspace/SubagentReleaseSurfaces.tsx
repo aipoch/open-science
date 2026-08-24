@@ -210,6 +210,11 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
             <button
               key={child.frameId}
               type="button"
+              aria-describedby={
+                child.originUnavailable
+                  ? `subagent-origin-warning-${session.id}-${child.frameId}`
+                  : undefined
+              }
               aria-label={
                 child.awaitingPermission
                   ? t('{{name}}, {{status}}, waiting for permission', {
@@ -233,6 +238,17 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
                 </span>
                 <span className="mt-0.5 block truncate text-[10px] leading-4 text-text-300">
                   {child.agentLabel}
+                  {child.originUnavailable ? (
+                    <>
+                      {' · '}
+                      <span
+                        id={`subagent-origin-warning-${session.id}-${child.frameId}`}
+                        className="text-warning-100"
+                      >
+                        {t('Imported history may be incomplete')}
+                      </span>
+                    </>
+                  ) : null}
                 </span>
               </span>
               <SubagentStatus status={child.status} awaitingPermission={child.awaitingPermission} />
@@ -410,6 +426,12 @@ const SubagentPreview = ({
         <div className="flex min-h-0 flex-1 flex-col" aria-live="off">
           <div className="shrink-0 border-b border-border-100 px-4 py-2 text-[11px] text-text-300">
             <span className="font-medium text-text-100">{detail.agentLabel}</span>
+            {detail.originUnavailable ? (
+              <span className="text-warning-100">
+                {' · '}
+                {t('Imported history may be incomplete')}
+              </span>
+            ) : null}
             {detail.attempt?.cancellationReason ? (
               <span> · {detail.attempt.cancellationReason}</span>
             ) : null}

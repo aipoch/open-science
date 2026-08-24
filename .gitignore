@@ -71,6 +71,7 @@ docs/superpowers/
 
 # Local-only scripts and tooling
 local/
+.dev-isolate/
 
 # Agent and AI assistant local state
 .hallmark/

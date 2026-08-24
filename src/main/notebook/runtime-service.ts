@@ -107,6 +107,7 @@ import {
   type NotebookExecutorLifecycleCallbacks,
   type NotebookSessionLifecycleCallbacks
 } from './session-lifecycle'
+import { NotebookDependencyAnalyzer } from './dependency-analysis'
 import {
   assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit
@@ -219,6 +220,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
     | 'markPackageMutationDirty'
     | 'refreshAfterPackageMutation'
   >
+  dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
 }
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
@@ -315,6 +317,7 @@ class NotebookRuntimeService {
   private readonly exportReader: NotebookExportReader
   private readonly runTerminalization: NotebookRunTerminalizationOwner
   private readonly executionOwner: NotebookExecutionOwner
+  private readonly dependencyAnalyzer: Pick<NotebookDependencyAnalyzer, 'project'>
   private readonly dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   private readonly packageOperations: NotebookPackageOperations
   private readonly repairPolicy: NotebookRuntimeRepairPolicy
@@ -376,6 +379,16 @@ class NotebookRuntimeService {
       discoverRuntimes: options.discoverRuntimes,
       platform: options.platform
     })
+    this.dependencyAnalyzer =
+      options.dependencyAnalyzer ??
+      new NotebookDependencyAnalyzer({
+        storageRoot: options.dataRoot,
+        repository: this.repository,
+        resolveInterpreter: (run) =>
+          run.runtimeId && (run.kernelKind === 'python' || run.kernelKind === 'r')
+            ? this.runtimeBindingOwner.dependencyInterpreter(run.kernelKind, run.runtimeId)
+            : Promise.resolve(undefined)
+      })
     this.runtimeLogger =
       options.logger ?? (getLogFilePath() ? createLogger('notebook:runtime') : undefined)
     this.environmentOperations = new NotebookEnvironmentOperations({
@@ -394,8 +407,10 @@ class NotebookRuntimeService {
       storageRoot: options.dataRoot,
       defaultProjectId,
       repository: this.repository,
+      dependencyAnalyzer: this.dependencyAnalyzer,
       findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
       runtimeBindings: (session) => this.runtimeBindingOwner.snapshot(session),
+      runtimeEnvironment: (session, language) => this.resolveRunEnv(session, language),
       isRestartRecommended: (processKey) =>
         this.environmentOperations.isRestartRecommended(processKey)
     })
@@ -496,6 +511,13 @@ class NotebookRuntimeService {
       getMcpRpcConnectionResolver: () => this.mcpRpcConnectionResolver,
       notifyAvailable: (session, source) =>
         this.sessionLifecycle.notifyAvailable(session as RuntimeSession, source),
+      projectDependencies: (session, run, interpreter) =>
+        this.dependencyAnalyzer.project({
+          projectId: session.projectId,
+          sessionId: session.sessionId,
+          completedRun: run,
+          ...(interpreter ? { interpreter } : {})
+        }),
       platform: options.platform,
       shellProcess: options.shellProcess
     })
@@ -612,7 +634,20 @@ class NotebookRuntimeService {
         notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
         async () => {
           const session = await this.sessionLifecycle.ensure(request)
-          return this.runtimeBindingOwner.bind(session, request.language, request.runtimeId)
+          return this.runtimeBindingOwner.bind(
+            session,
+            request.language,
+            request.runtimeId,
+            async (binding) => {
+              if (binding.source !== 'external') return
+              const oldEnv = this.resolveRunEnv(session, request.language)
+              const processKey = dataProcessKey(request.language, oldEnv)
+              if (session.kernelStatus(processKey) === undefined) return
+              const kind = request.language === 'r' ? 'r' : 'python'
+              await session.terminateExecutor(kind, oldEnv)
+              await this.tearDownLanguageBinding(session, request.language, oldEnv)
+            }
+          )
         }
       )
     )
@@ -778,12 +813,12 @@ class NotebookRuntimeService {
   ): Promise<NotebookRunSummary> {
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       const session = await this.sessionLifecycle.ensure(request)
-      const run = await this.executionOwner.executeDataCell(
+      const { run, dependencyProjection } = await this.executionOwner.executeDataCell(
         session,
         request,
         signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
       )
-      return this.sessionReadModel.toRunSummary(session, run)
+      return this.sessionReadModel.toRunSummary(session, run, dependencyProjection)
     })
   }
 

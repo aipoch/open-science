@@ -25,7 +25,7 @@ import {
 } from '../../../shared/specialist'
 import { parseSkillDocument } from '../../../shared/skill-frontmatter'
 import { createLogger } from '../../logger'
-import type { StoredSpecialist, StoredSpecialists } from '../types'
+import type { SpecialistOrigin, StoredSpecialist, StoredSpecialists } from '../types'
 import { SpecialistRepository } from '../repository'
 import { validateSpecialistZip } from './zip-adapter'
 import { compareSemver } from './semver'
@@ -41,6 +41,7 @@ import {
   SpecialistPackageTransaction
 } from './transaction'
 import type { SpecialistPackageSkillPort, SpecialistPackageSkillSnapshot } from './skill-port'
+import type { MarketplaceOperationCoordinator } from '../marketplace/operation-coordinator'
 
 const CANDIDATE_TTL_MS = 10 * 60 * 1000
 const log = createLogger('specialist.package.service')
@@ -62,6 +63,7 @@ type Candidate = {
   overwrite?: { id: string; expectedRevision: number }
   report: SpecialistPackageReport
   ownerId?: number
+  origin: SpecialistOrigin
 }
 
 type SpecialistPackageServiceOptions = {
@@ -71,8 +73,10 @@ type SpecialistPackageServiceOptions = {
   token?: () => string
   now?: () => Date
   onCommitted?: () => void
+  onSpecialistDeleted?: (specialistId: string) => Promise<void>
   onSkillsDeleted?: (skillIds: readonly string[]) => Promise<void>
   onResourcesDeleted?: (specialistId: string, skillIds: readonly string[]) => Promise<void>
+  marketplaceOperationCoordinator?: MarketplaceOperationCoordinator
   skillPort?: SpecialistPackageSkillPort
 }
 
@@ -325,6 +329,15 @@ export class SpecialistPackageService {
   }
 
   async deleteSpecialist(request: SpecialistDeleteRequest): Promise<SpecialistDeleteResult> {
+    const operation = (): Promise<SpecialistDeleteResult> => this.deleteSpecialistExclusive(request)
+    return this.options.marketplaceOperationCoordinator
+      ? this.options.marketplaceOperationCoordinator.runExclusive(operation)
+      : operation()
+  }
+
+  private async deleteSpecialistExclusive(
+    request: SpecialistDeleteRequest
+  ): Promise<SpecialistDeleteResult> {
     if (
       !request ||
       typeof request.id !== 'string' ||
@@ -399,6 +412,15 @@ export class SpecialistPackageService {
       this.deletePreviews.delete(request.id)
     }
     try {
+      await this.options.onSpecialistDeleted?.(request.id)
+    } catch (error) {
+      log.warn('post-delete Marketplace provenance cleanup failed', {
+        code: 'package-delete-marketplace-provenance-cleanup-failed',
+        specialistId: request.id,
+        error
+      })
+    }
+    try {
       await this.options.onSkillsDeleted?.(selected)
     } catch (error) {
       log.warn('post-delete Skill settings cleanup failed', {
@@ -429,7 +451,8 @@ export class SpecialistPackageService {
 
   async preview(
     archiveBytes: Uint8Array,
-    ownerId?: number
+    ownerId?: number,
+    options?: { origin?: SpecialistOrigin }
   ): Promise<SpecialistPackageCandidatePreview> {
     // One renderer window owns one active preview. Selecting another archive invalidates only that
     // renderer's prior capability so another window can finish its own confirmation flow.
@@ -439,13 +462,26 @@ export class SpecialistPackageService {
     const token = this.token()
     const diagnostics = [...result.preview.diagnostics]
     let overwrite: SpecialistPackageCandidatePreview['overwrite']
-    const installable = result.preview.installable
+    let installable = result.preview.installable
+    let governanceBlocked = false
+    const origin = options?.origin ?? 'imported'
     let overwriteTarget: Candidate['overwrite']
     if (result.plan) {
       const existing = (await this.options.repository.getAll()).specialists.find(
         (specialist) => specialist.id === result.plan?.specialistId
       )
       if (existing) {
+        if (existing.origin === 'marketplace' && origin !== 'marketplace') {
+          diagnostics.push({
+            severity: 'error',
+            code: 'specialist.overwrite-marketplace-managed',
+            message:
+              'Marketplace-managed Specialists can only be updated from their Marketplace source.',
+            relatedId: existing.id
+          })
+          installable = false
+          governanceBlocked = true
+        }
         overwrite = {
           id: existing.id,
           target: 'custom',
@@ -458,7 +494,7 @@ export class SpecialistPackageService {
               ...existing,
               importBaseline: existing.importBaseline
             }),
-          hasImportBaseline: existing.origin === 'imported' && existing.importBaseline !== undefined
+          hasImportBaseline: existing.origin !== 'local' && existing.importBaseline !== undefined
         }
         overwriteTarget = { id: existing.id, expectedRevision: existing.revision }
         const versionOrder = compareSemver(result.plan.packageVersion, existing.packageVersion)
@@ -483,30 +519,44 @@ export class SpecialistPackageService {
             message: 'Local edits differ from the imported baseline and will be replaced.',
             relatedId: existing.id
           })
-        if (
-          versionOrder === 0 &&
-          existing.importBaseline &&
-          (existing.importBaseline.packageContentDigest ??
-            existing.importBaseline.contentDigest) !==
-            (existing.importBaseline.packageContentDigest === undefined
-              ? specialistLegacyPayloadContentHash(result.plan.payload)
-              : result.plan.contentHash)
-        )
+        const baseline = existing.importBaseline
+        const baselineContentDigest = baseline?.packageContentDigest ?? baseline?.contentDigest
+        const incomingContentDigest = baseline?.packageContentDigest
+          ? result.plan.contentHash
+          : specialistLegacyPayloadContentHash(result.plan.payload)
+        const contentChanged =
+          baselineContentDigest !== undefined && baselineContentDigest !== incomingContentDigest
+        if (contentChanged && versionOrder === 0) {
           diagnostics.push({
-            severity: 'warning',
+            severity: 'error',
             code: 'specialist.overwrite-content-without-version-bump',
-            message: 'Package content changed without increasing its version.',
+            message: 'Package content changed without a higher version.',
             relatedId: existing.id
           })
+          installable = false
+          governanceBlocked = true
+        }
+        if (contentChanged && versionOrder !== undefined && versionOrder < 0) {
+          diagnostics.push({
+            severity: 'error',
+            code: 'specialist.overwrite-content-downgrade',
+            message:
+              'Changed package content must use a version higher than the installed version.',
+            relatedId: existing.id
+          })
+          installable = false
+          governanceBlocked = true
+        }
       }
     }
     this.candidates.set(token, {
-      plan: result.plan,
+      plan: governanceBlocked ? undefined : result.plan,
       expiresAt: this.now().getTime() + CANDIDATE_TTL_MS,
       archiveDigest: createHash('sha256').update(archiveBytes).digest('hex'),
       archiveBytes: Uint8Array.from(archiveBytes),
       ...(ownerId === undefined ? {} : { ownerId }),
       ...(overwriteTarget ? { overwrite: overwriteTarget } : {}),
+      origin,
       report: specialistPackageReportFromPreview({ ...result.preview, diagnostics, installable })
     })
     return {
@@ -773,7 +823,8 @@ export class SpecialistPackageService {
       archiveDigest: '',
       archiveBytes: new Uint8Array(),
       ...(ownerId === undefined ? {} : { ownerId }),
-      report: specialistPackageReportFromPreview(preview)
+      report: specialistPackageReportFromPreview(preview),
+      origin: 'imported'
     })
     return { candidateToken: token, ...preview }
   }
@@ -797,7 +848,7 @@ export class SpecialistPackageService {
   async install(
     request: SpecialistPackageInstallRequest,
     ownerId?: number,
-    options?: { activateAfterInstall?: boolean }
+    options?: { activateAfterInstall?: boolean; origin?: SpecialistOrigin }
   ): Promise<SpecialistPackageInstallResult> {
     if (
       !request ||
@@ -896,7 +947,7 @@ export class SpecialistPackageService {
           ? { expectedRevision: candidate.overwrite.expectedRevision }
           : undefined,
         (document) => this.assertApprovedImpact(resolvedPlan, document),
-        options
+        { ...options, origin: candidate.origin }
       )
     } catch (error) {
       return {

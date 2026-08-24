@@ -6,6 +6,42 @@ import { createRootNotebookLane } from './lane-identity'
 import { NotebookSessionAggregate } from './session-aggregate'
 
 describe('NotebookSessionAggregate', () => {
+  it('keeps a stable kernel epoch until that process is terminated', async () => {
+    const terminate = vi.fn(async () => undefined)
+    const session = new NotebookSessionAggregate({
+      sessionId: 'session-1',
+      projectId: 'default-project',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
+      cwd: '/workspace/data',
+      notebookSessionRoot: '/workspace',
+      dataRoot: '/workspace/data',
+      runtimeRoot: '/runtime',
+      runJsonPath: '/workspace/run.json',
+      executionCount: 0,
+      executorGeneration: Symbol('executor-1'),
+      executor: {
+        execute: async () => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: '/workspace/data',
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true }),
+        terminate
+      }
+    })
+
+    const first = session.kernelEpochId('python:default-python')
+    expect(session.kernelEpochId('python:default-python')).toBe(first)
+
+    await session.terminateExecutor('python', 'default-python')
+
+    expect(terminate).toHaveBeenCalledWith('python', 'default-python')
+    expect(session.kernelEpochId('python:default-python')).not.toBe(first)
+  })
+
   it('serializes execution for one process while allowing another process to run', async () => {
     let releaseFirst!: () => void
     const firstGate = new Promise<void>((resolve) => {

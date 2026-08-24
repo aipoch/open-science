@@ -9,6 +9,8 @@ import type {
   AcpPermissionResponse,
   ElicitationResponse,
   AcpPromptRequest,
+  AcpSteerFollowUpRequest,
+  AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
   AcpSaveAsSkillRequest,
   AcpRevokePermissionGrantRequest,
@@ -72,6 +74,11 @@ const acpCommands = Object.freeze({
     readonly [request: AcpPromptRequest],
     AcpStateSnapshot
   >('acp:send-prompt'),
+  steerFollowUp: defineApplicationCommand<
+    'acp:steer-follow-up',
+    readonly [request: AcpSteerFollowUpRequest],
+    AcpSteerFollowUpResult
+  >('acp:steer-follow-up'),
   saveAsSkill: defineApplicationCommand<
     'acp:save-as-skill',
     readonly [request: AcpSaveAsSkillRequest],
@@ -129,6 +136,7 @@ const acpApplicationCommands = defineApplicationCommandGroup('acp', [
   acpCommands.resetSessionContext,
   acpCommands.compactSession,
   acpCommands.sendPrompt,
+  acpCommands.steerFollowUp,
   acpCommands.saveAsSkill,
   acpCommands.cancel,
   acpCommands.deleteSession,
@@ -148,6 +156,7 @@ type AcpApplicationCommandRuntime = Pick<
   | 'resetSessionContext'
   | 'compactSession'
   | 'cancelPrompt'
+  | 'steerFollowUp'
   | 'deleteSession'
   | 'respondToPermission'
   | 'respondToElicitation'
@@ -233,6 +242,8 @@ const registerAcpCommands = (
           suppressUserMessage: undefined
         })
       },
+      'acp:steer-follow-up': (invocation) =>
+        dependencies.runtime.steerFollowUp(invocation.args[0]),
       'acp:save-as-skill': (invocation) => {
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can save a Session as a Skill.')

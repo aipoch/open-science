@@ -28,6 +28,7 @@ import type { AcpProviderPromptExecutor, ProviderPromptOutcome } from './provide
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
 import type { AcpSessionToolingAvailability } from './session-presentation-policy'
+import type { SessionCapabilityPolicy } from './session-capability-owner'
 import type { AcpSessionRegistry } from './session-registry'
 import type { AcpTurnSkillOwner, TurnSkillHandle } from './turn-skill-owner'
 
@@ -62,6 +63,7 @@ type AcpPromptTurnEnvironment = Readonly<{
   connectionGeneration?: () => number
   backend: () => AcpBackendGenerationView
   tooling: () => AcpSessionToolingAvailability
+  role?: () => SessionCapabilityPolicy['role']
   bridgeSkillsAvailable: () => boolean
   skillImportEnabled: () => boolean
   contextEstimateInput: (sessionId: string) => SessionEstimateInput
@@ -133,6 +135,8 @@ type AcpPromptTurnFinalization = Readonly<{
     session: ActiveSession,
     interaction: AcpPromptSessionInteractionScope
   ) => Promise<unknown>
+  compactIfIdle: (sessionId: string) => Promise<unknown>
+  preemptCompaction: (sessionId: string) => Promise<void> | undefined
 }>
 
 type AcpPromptTurnWorkflowOptions = Readonly<{
@@ -180,12 +184,16 @@ class AcpPromptTurnWorkflow {
     if (!activeSession) throw new Error(`ACP session not found: ${request.sessionId}`)
     this.assertSessionIdle(request.sessionId)
 
-    const planPreflight = this.options.plan.preflight(request)
-    let plan = planPreflight instanceof Promise ? await planPreflight : planPreflight
     let reservation = this.reserve(request)
+    let plan: AcpPromptTurnPlanContext
     let skill: TurnSkillHandle
     try {
+      const preemption = this.options.finalization.preemptCompaction(request.sessionId)
+      if (preemption) await preemption
+      const planPreflight = this.options.plan.preflight(request)
+      plan = planPreflight instanceof Promise ? await planPreflight : planPreflight
       const authorization = this.options.skills.authorize({
+        role: this.options.environment.role?.(),
         specialistId: this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
           .specialistId,
         selectedSkillIds: request.forcedSkillIds,
@@ -344,6 +352,7 @@ class AcpPromptTurnWorkflow {
         connectionGeneration: turn.connectionGeneration,
         backend,
         tooling: env.tooling(),
+        role: env.role?.(),
         specialistPrefix: snapshot?.specialistPrefix,
         sessionSetupPromptPrefix: snapshot?.sessionSetupPromptPrefix,
         projectId: this.options.resolveProjectId(sessionId),
@@ -480,7 +489,10 @@ class AcpPromptTurnWorkflow {
         generationActivityChanged: finalization.generationActivityChanged,
         autoCompactIfNeeded: () => finalization.autoCompact(sessionId, session, interaction),
         beforeInteractionRelease: () => plan.beforeRelease(sessionId, interaction),
-        afterInteractionRelease: () => plan.afterRelease(sessionId)
+        afterInteractionRelease: async () => {
+          await plan.afterRelease(sessionId)
+          void finalization.compactIfIdle(sessionId)
+        }
       },
       outcome
     )
@@ -491,7 +503,9 @@ class AcpPromptTurnWorkflow {
   }
 
   private assertSessionIdle(sessionId: string): void {
-    if (this.options.interactions.current(sessionId)) {
+    const current = this.options.interactions.current(sessionId)
+    if (!current) return
+    if (current.kind === 'prompt') {
       throw new Error('An ACP prompt is already running for this session')
     }
   }

@@ -426,6 +426,7 @@ describe('HomePage environment repair notice', () => {
       '[aria-label="Open environment repair"]'
     )
     expect(repairButton?.textContent).toContain('Claude runtime needs attention')
+    expect(repairButton?.className).toContain('cursor-pointer')
     expect(openSettingsToPanel).not.toHaveBeenCalled()
 
     await act(async () => repairButton?.click())

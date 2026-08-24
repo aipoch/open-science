@@ -5,6 +5,7 @@ import { readFile, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { createInterface, type Interface } from 'node:readline'
+import { Transform, type TransformCallback } from 'node:stream'
 
 import { terminateProcessTree, type ProcessTreeKillResult } from '../process-tree'
 import {
@@ -41,6 +42,7 @@ import {
   NOTEBOOK_FIGURE_LIMIT_ENV,
   NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES,
   NOTEBOOK_FIGURE_TOTAL_LIMIT_ENV,
+  NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES,
   NOTEBOOK_TEXT_LIMIT_BYTES,
   NOTEBOOK_TEXT_LIMIT_ENV
 } from './content-limits'
@@ -81,6 +83,40 @@ const defaultScheduleIdleTimer: ScheduleIdleTimer = (fn, ms) => {
 }
 
 const defaultCancelIdleTimer: CancelIdleTimer = (handle) => clearTimeout(handle as NodeJS.Timeout)
+
+// Stops an unframed native/subprocess write from making readline retain an unbounded protocol line.
+const createBoundedKernelOutput = (onLimit: (error: Error) => void): Transform => {
+  let lineBytes = 0
+  let limited = false
+  return new Transform({
+    transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
+      if (limited) {
+        callback()
+        return
+      }
+      let start = 0
+      while (start < chunk.byteLength) {
+        const newline = chunk.indexOf(0x0a, start)
+        const end = newline === -1 ? chunk.byteLength : newline
+        lineBytes += end - start
+        if (lineBytes > NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES) {
+          limited = true
+          onLimit(
+            new Error(
+              `Notebook kernel response exceeded the ${NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES}-byte transport limit.`
+            )
+          )
+          callback()
+          return
+        }
+        if (newline === -1) break
+        lineBytes = 0
+        start = newline + 1
+      }
+      callback(null, chunk)
+    }
+  })
+}
 
 // Resolves the idle window: an explicit option wins, then OPEN_SCIENCE_KERNEL_IDLE_MS (a positive ms
 // value opts INTO idle reclaim), else DEFAULT_IDLE_MS (0 = disabled). A value <= 0 disables idle
@@ -157,6 +193,9 @@ type ProcState = {
   child: ChildProcessWithoutNullStreams
   readline: Interface
   pending?: PendingRequest
+  // Captures why an involuntarily dropped proc became unusable before a request was registered, so
+  // execute() can fail that pre-dispatch run instead of writing to a stale child and waiting forever.
+  terminationError?: Error
   // True until the exit handler observes the process leaving. child.killed is unreliable here: Node
   // sets it once *any* signal is sent, including the soft-timeout SIGINT a loop catches and survives,
   // so it cannot distinguish a still-running loop from a dead one.
@@ -239,11 +278,13 @@ const interpreterIdentity = (request: NotebookExecutionRequest): string => {
 // Converts process, spawn, timeout, and loop errors into normal notebook execution results.
 const errorToExecutionResult = (
   error: unknown,
-  request: NotebookExecutionRequest
+  request: NotebookExecutionRequest,
+  kernelDispatched = false
 ): NotebookExecutionResult => {
   if (error instanceof NotebookExecutionCancelledError) {
     return {
       status: 'cancelled',
+      kernelDispatched,
       stdout: '',
       stderr: '',
       traceback: '',
@@ -257,6 +298,7 @@ const errorToExecutionResult = (
 
   return {
     status: error instanceof NotebookExecutionTimeoutError ? 'timeout' : 'failed',
+    kernelDispatched,
     stdout: '',
     stderr: message,
     traceback: message,
@@ -307,6 +349,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   // Sends one cell to the kind's loop and resolves with the mapped execution result.
   async execute(request: NotebookExecutionRequest): Promise<NotebookExecutionResult> {
     let workingFileObservation: WorkingFileObservation | undefined
+    let kernelDispatched = false
     try {
       if (request.signal?.aborted) throw new NotebookExecutionCancelledError()
       const kind = resolveProcessKind(request)
@@ -315,13 +358,19 @@ class NotebookKernelExecutor implements NotebookExecutor {
       this.checkEnvironmentReady(kind, env, request)
 
       const proc = await this.ensureProc(key, kind, env, request)
-      if (proc.pending) {
-        throw new Error('Notebook execution is already running.')
+      if (proc.pending) throw new Error('Notebook execution is already running.')
+      workingFileObservation = await startWorkingFileObservation(request)
+      // sendRequest installs proc.pending synchronously. Revalidate immediately before that handoff:
+      // an involuntary drop while ensureProc was finishing must settle this execute() locally rather
+      // than dispatching to a stale child whose guarded exit handler can no longer reject the run.
+      if (!proc.alive || this.procs.get(key) !== proc) {
+        throw proc.terminationError ?? new Error('Notebook kernel process exited before execution.')
       }
 
-      workingFileObservation = await startWorkingFileObservation(request)
       const reqId = randomUUID()
-      const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request)
+      const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request, () => {
+        kernelDispatched = true
+      })
       const workingFiles = await workingFileObservation.finish()
       workingFileObservation = undefined
 
@@ -347,6 +396,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       return {
         status,
+        kernelDispatched,
         stdout: mapped.stdout,
         stderr: mapped.stderr,
         traceback: cancelled ? '' : mapped.traceback,
@@ -360,7 +410,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       }
     } catch (error) {
       await workingFileObservation?.finish()
-      return errorToExecutionResult(error, request)
+      return errorToExecutionResult(error, request, kernelDispatched)
     }
   }
 
@@ -487,7 +537,15 @@ class NotebookKernelExecutor implements NotebookExecutor {
     if (pending) await pending
 
     const child = await this.spawnLoop(kind, env, request)
-    const readline = createInterface({ input: child.stdout })
+    const boundedOutput = createBoundedKernelOutput((error) => {
+      if (this.procs.get(key) !== proc) return
+      proc.terminationError = error
+      this.dropProc(proc)
+      this.killChildTracked(proc)
+      this.onTerminated?.(kind, env)
+      this.rejectPending(proc, error)
+    })
+    const readline = createInterface({ input: boundedOutput })
     const proc: ProcState = {
       kind,
       env,
@@ -517,21 +575,24 @@ class NotebookKernelExecutor implements NotebookExecutor {
       this.procs.delete(key)
       proc.readline.close()
       const pending = proc.pending
-      this.rejectPending(
-        proc,
+      const terminationError =
         pending?.timeout?.timedOut && pending.timeoutMs !== undefined
           ? new NotebookExecutionTimeoutError(
               `Notebook execution timed out after ${pending.timeoutMs}ms.`
             )
           : new Error('Notebook kernel process exited.')
-      )
+      proc.terminationError = terminationError
+      this.rejectPending(proc, terminationError)
       // Unexpected exit of a still-live proc is a crash; surface it as a 'terminated' kernel status.
       // Intentional teardown (shutdown/restart) and hard-timeout/idle drops clear the map first, so
       // this only fires for a genuine crash (the stale-proc guard above returns early otherwise).
       this.onTerminated?.(kind, env)
     })
 
+    // Register before piping buffered stdout: pipe() can synchronously flush data that already arrived
+    // after spawn, and the overflow callback must be able to identify and drop this proc.
     this.procs.set(key, proc)
+    child.stdout.pipe(boundedOutput)
     return proc
   }
 
@@ -659,7 +720,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private sendRequest(
     proc: ProcState,
     reqId: string,
-    request: NotebookExecutionRequest
+    request: NotebookExecutionRequest,
+    onDispatch: () => void
   ): Promise<{ response: KernelLoopResponse; timedOut: boolean; cancelled: boolean }> {
     return new Promise((resolve, reject) => {
       if (request.signal?.aborted) {
@@ -745,11 +807,21 @@ class NotebookKernelExecutor implements NotebookExecutor {
         request.signal.addEventListener('abort', pending.abortListener, { once: true })
       }
 
-      if (proc.kind === 'r') {
-        proc.child.stdin.write(frameRRequest(reqId, request.code))
-      } else {
-        // Python and the repl (JS) loop share the same JSON-lines request framing.
-        proc.child.stdin.write(framePythonRequest(reqId, request.code, request.controlInvocationId))
+      try {
+        if (proc.kind === 'r') {
+          proc.child.stdin.write(frameRRequest(reqId, request.code))
+        } else {
+          // Python and the repl (JS) loop share the same JSON-lines request framing.
+          proc.child.stdin.write(
+            framePythonRequest(reqId, request.code, request.controlInvocationId)
+          )
+        }
+        onDispatch()
+      } catch (error) {
+        this.clearPendingResources(pending)
+        if (proc.pending === pending) proc.pending = undefined
+        reject(error)
+        return
       }
       if (timeout && timeoutMs !== undefined) timeout.arm(timeoutMs)
     })

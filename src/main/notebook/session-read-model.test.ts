@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import { NotebookSessionReadModel, type NotebookSessionReadSource } from './session-read-model'
+import type { NotebookDependencyProjection } from './dependency-analysis'
 import type { NotebookSessionSnapshot } from './session-aggregate'
 import { createFrameNotebookLane } from './lane-identity'
 import type { NotebookRunRecord } from '../../shared/notebook'
@@ -94,12 +95,19 @@ const makeSession = (
 const makeReadModel = (
   storageRoot: string,
   session: NotebookSessionReadSource | undefined,
-  repository = new NotebookRunRepository(storageRoot)
+  repository = new NotebookRunRepository(storageRoot),
+  dependencyProjection: NotebookDependencyProjection = {
+    stalenessByRunId: {},
+    invalidatedByRunId: {}
+  }
 ): NotebookSessionReadModel<NotebookSessionReadSource> =>
   new NotebookSessionReadModel({
     storageRoot,
     defaultProjectId: 'default-project',
     repository,
+    dependencyAnalyzer: {
+      project: vi.fn(async () => dependencyProjection)
+    },
     findSession: vi.fn(() => session),
     runtimeBindings: () => ({
       python: {
@@ -112,6 +120,7 @@ const makeReadModel = (
         status: 'active'
       }
     }),
+    runtimeEnvironment: (_session, language) => (language === 'r' ? 'analysis' : 'default-python'),
     isRestartRecommended: (processKey) => processKey === 'r:analysis'
   })
 
@@ -191,6 +200,7 @@ describe('NotebookSessionReadModel', () => {
           restartRecommended: true
         }
       ],
+      executionEnvironments: { python: 'default-python', r: 'analysis' },
       runtimeBindings: { python: { runtimeId: 'managed-python' } }
     })
   })
@@ -274,13 +284,35 @@ describe('NotebookSessionReadModel', () => {
     })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
       runs: Array.from({ length: 100 }, (_, index) =>
-        makeRun({ runId: `run-${index + 25}`, cellId: `cell-${index + 25}`, startedAt: index + 25 })
+        makeRun({
+          runId: `run-${index + 25}`,
+          cellId: `cell-${index + 25}`,
+          startedAt: index + 25,
+          kernelDispatched: true,
+          runtimeId: '/external/python'
+        })
       ),
       total: 125,
       latestRunEnvironments: { python: 'historical-python' }
     })
 
-    const state = await makeReadModel(storageRoot, session, repository).state(session)
+    const allRunIds = Array.from({ length: 125 }, (_, index) => `run-${index}`)
+    const state = await makeReadModel(storageRoot, session, repository, {
+      stalenessByRunId: Object.fromEntries(
+        allRunIds.map((runId) => [
+          runId,
+          runId === 'run-124'
+            ? {
+                state: 'stale' as const,
+                causedByRunId: 'run-0',
+                names: ['x'],
+                path: allRunIds
+              }
+            : { state: 'clear' as const }
+        ])
+      ),
+      invalidatedByRunId: {}
+    }).state(session)
 
     expect(readWindow).toHaveBeenCalledWith(
       session.projectId,
@@ -293,9 +325,20 @@ describe('NotebookSessionReadModel', () => {
     expect(state.latestRunEnvironments).toEqual({ python: 'historical-python' })
     expect(state.runs).toHaveLength(100)
     expect(state.runs[0]?.runId).toBe('run-25')
+    expect(state.runs[0]).not.toHaveProperty('kernelDispatched')
+    expect(state.runs[0]).not.toHaveProperty('runtimeId')
     expect(state.recentRuns).toHaveLength(20)
     expect(state.cells).toHaveLength(100)
     expect(state.cells[0]?.id).toBe('cell-25')
+    expect(Object.keys(state.runStaleness ?? {})).toEqual(
+      Array.from({ length: 100 }, (_, index) => `run-${index + 25}`)
+    )
+    expect(state.runStaleness?.['run-124']).toEqual({
+      state: 'stale',
+      causedByRunId: 'run-0',
+      names: ['x'],
+      path: Array.from({ length: 100 }, (_, index) => `run-${index + 25}`)
+    })
   })
 
   it('returns complete-history discovery metadata without returning the recent run window', async () => {

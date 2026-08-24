@@ -1,18 +1,19 @@
 import { isMediaOverflowError } from './media-overflow'
+import { isUnsupportedCodexAcpVersionError } from './codex-runtime'
 
 // Classifies a failed run into "expected" (keep the message, no report button) vs "unknown/reportable"
 // (an opaque or internal failure worth a GitHub issue). The primary signal is STRUCTURAL, not textual:
 // a model/provider failure is tagged `providerError` on the error event at the ACP layer (runtime.ts,
-// via isProviderPromptError) and persisted as `session.errorReportable = false`. Text is NEVER used to
-// guess whether a failure came from the provider — that was fragile and repeatedly swallowed genuine
-// app errors that merely mentioned a provider word.
+// via isProviderPromptError) and persisted as `session.errorReportable = false`. Arbitrary provider
+// wording is not guessed from text — that was fragile and repeatedly swallowed genuine app errors.
 //
 // This module owns only the SECONDARY, text-based tier: recognizing the app's OWN crafted reminder
 // strings (which we author, so an exact-match set is reliable) so their report button is hidden even
 // on the paths that don't carry the structural flag (a persisted pre-flag session, or a renderer-side
-// failRun call). It is a pure, dependency-light leaf module (like media-overflow.ts) usable from both
-// processes. Anything it does not recognize stays reportable — including opaque provider text — so the
-// structural flag, not this text tier, is what suppresses ordinary provider errors.
+// failRun call). One additional fixed Claude Code wrapper is recognized here (`API Error: Unable to
+// connect to API`) so historical sessions and createSession failRun hide Report without rewriting
+// stored records. Arbitrary provider text is still not guessed. It is a pure, dependency-light leaf
+// module (like media-overflow.ts) usable from both processes.
 
 // App-crafted resume-failure messages (useWorkspaceAgentRuntime.getResumeFailureMessage). Each is the
 // actionable text the app writes when it recognizes a specific resume cause. The generic
@@ -100,6 +101,17 @@ export const buildActiveModelIncompatibleMessage = (frameworkDisplayName: string
 export const PROVIDER_RESOURCE_NOT_FOUND_PREFIX =
   'The model provider could not find the requested resource'
 
+// Claude Code's fixed unreachable-API wrapper. Recognized here so createSession failRun and persisted
+// pre-flag sessions hide Report without a stored-schema migration. Match the distinctive
+// `API Error: Unable to connect to API` phrase only — not a generic "connection" or "connect" word.
+const CLAUDE_API_CONNECTION_FAILURE_PATTERN = /(?:^|:\s*)api error:\s*unable to connect to api\b/i
+
+export const isClaudeApiConnectionFailure = (error: string | null | undefined): boolean => {
+  const message = error?.trim()
+  if (!message) return false
+  return CLAUDE_API_CONNECTION_FAILURE_PATTERN.test(message)
+}
+
 // The exact app-crafted messages an equality check recognizes as expected.
 const EXPECTED_RUN_FAILURE_MESSAGES = new Set<string>([
   RESUME_WORKSPACE_MISSING_MESSAGE,
@@ -114,11 +126,12 @@ const EXPECTED_RUN_FAILURE_MESSAGES = new Set<string>([
 ])
 
 // Whether a run failure is one the app itself already surfaced with a purpose — an app-crafted
-// actionable reminder, the reworded provider not-found, or a request-size overflow the app auto-
-// recovers — so the report button is hidden even without the structural `providerError` flag (an old
-// persisted session, or a renderer-side failRun). Recognition is by EXACT crafted string / known
-// prefix only; it deliberately does NOT try to recognize arbitrary provider error text (that is the
-// structural flag's job), so an unknown/opaque failure it doesn't author stays reportable.
+// actionable reminder, the reworded provider not-found, Claude Code's fixed unreachable-API wrapper,
+// or a request-size overflow the app auto-recovers — so the report button is hidden even without the
+// structural `providerError` flag (an old persisted session, or a renderer-side failRun). Recognition
+// is by EXACT crafted string / known prefix only; it deliberately does NOT try to recognize arbitrary
+// provider error text (that is the structural flag's job), so an unknown/opaque failure it doesn't
+// author stays reportable.
 export const isExpectedRunFailure = (error: string | null | undefined): boolean => {
   const message = error?.trim()
 
@@ -127,6 +140,8 @@ export const isExpectedRunFailure = (error: string | null | undefined): boolean 
 
   if (EXPECTED_RUN_FAILURE_MESSAGES.has(message)) return true
   if (visionRunFailureMessage(message)) return true
+  // An outdated app-managed adapter is an actionable Settings problem, not a reportable app bug.
+  if (isUnsupportedCodexAcpVersionError(message)) return true
   // The reworded provider not-found (a model-config problem the user fixes in Settings, not a bug).
   if (message.startsWith(PROVIDER_RESOURCE_NOT_FOUND_PREFIX)) return true
   // Model↔framework incompatibility raised at spawn/createSession. The main-side message names the
@@ -134,6 +149,8 @@ export const isExpectedRunFailure = (error: string | null | undefined): boolean 
   // share this leading phrase, so one prefix covers the createSession path (which is not reworded) and
   // any framework name. It is app-authored setup guidance ("Open Settings → Model"), not a bug.
   if (message.startsWith(ACTIVE_MODEL_INCOMPATIBLE_PREFIX)) return true
+  // Claude Code's fixed unreachable-API wrapper (createSession / persisted pre-flag sessions).
+  if (isClaudeApiConnectionFailure(message)) return true
   // A request-size overflow the app auto-recovers from — never a reportable bug.
   return isMediaOverflowError(message)
 }

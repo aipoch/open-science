@@ -90,6 +90,7 @@ type WorkspaceMessageScrollerProps = {
   isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
+  optimisticMessage?: ChatMessage
   canBranchInNewSession?: boolean
   onBranchInNewSession?: (messageId: string) => void
   trailingContent?: ReactNode
@@ -122,7 +123,13 @@ type SessionScopedActivityExpansionState = {
   overrides: ActivityExpansionOverrides
 }
 
+type SessionScopedNearViewportNotebookRunState = {
+  sessionId: string | undefined
+  runIds: Set<string>
+}
+
 const EMPTY_ACTIVITY_EXPANSION_OVERRIDES: ActivityExpansionOverrides = {}
+const EMPTY_NOTEBOOK_RUN_IDS: ReadonlySet<string> = new Set()
 
 // Extra hold after the paced reveal drains, so a queued message dispatches into a settled
 // transcript instead of the same moment as the final reveal frame.
@@ -228,6 +235,21 @@ const previewArtifact = (
 
   // Generated files keep their artifact id so repeated clicks refresh the existing preview tab.
   if (previewItem) usePreviewWorkbenchStore.getState().upsertAndActivateItem(previewItem)
+}
+
+// Opens an artifact-backed Markdown image in the existing transient file-preview dialog.
+const previewArtifactModal = (
+  artifact: MessageArtifact,
+  sessionId: string,
+  projectId?: string
+): void => {
+  const previewItem = createPreviewFileItemFromArtifact(
+    artifact,
+    artifact.resolvedSessionId ?? sessionId,
+    artifact.resolvedProjectId ?? projectId
+  )
+
+  if (previewItem) usePreviewWorkbenchStore.getState().openFileDialog(previewItem)
 }
 
 // Sends an app-managed uploaded file to the preview workbench.
@@ -344,6 +366,7 @@ const WorkspaceMessageScrollerImpl = ({
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
+  optimisticMessage,
   canBranchInNewSession = false,
   onBranchInNewSession,
   trailingContent,
@@ -468,6 +491,15 @@ const WorkspaceMessageScrollerImpl = ({
     activityExpansionOverrideState.sessionId === currentSessionId
       ? activityExpansionOverrideState.overrides
       : EMPTY_ACTIVITY_EXPANSION_OVERRIDES
+  const [nearViewportNotebookRunState, setNearViewportNotebookRunState] =
+    useState<SessionScopedNearViewportNotebookRunState>(() => ({
+      sessionId: undefined,
+      runIds: new Set()
+    }))
+  const nearViewportNotebookRunIds =
+    nearViewportNotebookRunState.sessionId === currentSessionId
+      ? nearViewportNotebookRunState.runIds
+      : EMPTY_NOTEBOOK_RUN_IDS
   const rawConversationItems = useMemo(
     () => createConversationItems(activeSession, handoffEvents),
     [activeSession, handoffEvents]
@@ -494,15 +526,36 @@ const WorkspaceMessageScrollerImpl = ({
       ),
     [conversationItems]
   )
-  const requestedNotebookRunIds = useMemo(
-    () =>
-      Object.entries(activityExpansionOverrides).flatMap(([activityId, expanded]) => {
+  const requestedNotebookRunIds = useMemo(() => {
+    const expandedRunIds = Object.entries(activityExpansionOverrides).flatMap(
+      ([activityId, expanded]) => {
         const runId = expanded ? notebookRunIdByActivityId.get(activityId) : undefined
         return runId ? [runId] : []
-      }),
-    [activityExpansionOverrides, notebookRunIdByActivityId]
-  )
+      }
+    )
+    return [...new Set([...expandedRunIds, ...nearViewportNotebookRunIds])]
+  }, [activityExpansionOverrides, nearViewportNotebookRunIds, notebookRunIdByActivityId])
   const notebookRunsById = useNotebookRunsById(notebookReference, requestedNotebookRunIds)
+  const handleNotebookRunNearViewport = useCallback(
+    (runId: string, isNearViewport: boolean): void => {
+      if (!currentSessionId) return
+      setNearViewportNotebookRunState((current) => {
+        const runIds =
+          current.sessionId === currentSessionId ? new Set(current.runIds) : new Set<string>()
+        const hadRunId = runIds.has(runId)
+
+        if (isNearViewport) {
+          runIds.add(runId)
+        } else {
+          runIds.delete(runId)
+        }
+
+        if (current.sessionId === currentSessionId && hadRunId === runIds.has(runId)) return current
+        return { sessionId: currentSessionId, runIds }
+      })
+    },
+    [currentSessionId]
+  )
   const [visibleMessageSnapshot, setVisibleMessageSnapshot] = useState<VisibleMessageSnapshot>(
     () => ({ scopeId: undefined, messageIds: new Set() })
   )
@@ -541,7 +594,8 @@ const WorkspaceMessageScrollerImpl = ({
       : conversationItems
   // Brand-new conversation (nothing presented, no resume in flight): invite the first prompt with
   // a centered placeholder banner over the empty transcript area.
-  const showEmptyConversationBanner = presentedConversationItems.length === 0 && !isResumingSession
+  const showEmptyConversationBanner =
+    presentedConversationItems.length === 0 && !optimisticMessage && !isResumingSession
   const visibleMessageIds = presentedConversationItems.flatMap((item) =>
     item.type === 'message' ? [item.message.id] : []
   )
@@ -849,6 +903,13 @@ const WorkspaceMessageScrollerImpl = ({
     [currentProjectId, currentSessionId]
   )
 
+  const onPreviewArtifactModal = useCallback(
+    (artifact: MessageArtifact): void => {
+      if (currentSessionId) previewArtifactModal(artifact, currentSessionId, currentProjectId)
+    },
+    [currentProjectId, currentSessionId]
+  )
+
   // Routes a sent-message upload click to the preview workbench for the active session.
   const onPreviewUploadAttachment = useCallback(
     (attachment: MessageUploadAttachment): void => {
@@ -1119,6 +1180,7 @@ const WorkspaceMessageScrollerImpl = ({
                   const messageItemProps: EditableWorkspaceMessageItemProps = {
                     message: item.message,
                     onPreviewArtifact,
+                    onPreviewArtifactModal,
                     onPreviewUploadAttachment,
                     onOpenSkillMention,
                     onPreviewMentionArtifact,
@@ -1373,6 +1435,7 @@ const WorkspaceMessageScrollerImpl = ({
                     expansionOverrides={activityExpansionOverrides}
                     onToggleRow={toggleActivityRow}
                     notebookRunsById={notebookRunsById}
+                    onNotebookRunNearViewport={handleNotebookRunNearViewport}
                     permission={activeSession?.runtimeContext?.permission}
                     jobsByActivityId={jobsByActivityId}
                     onOpenJobDetail={handleOpenJobDetail}
@@ -1394,6 +1457,19 @@ const WorkspaceMessageScrollerImpl = ({
                   </div>
                 </MessageScrollerItem>
               ))}
+
+              {optimisticMessage ? (
+                <WorkspaceMessageItem
+                  message={optimisticMessage}
+                  onPreviewArtifact={onPreviewArtifact}
+                  onPreviewArtifactModal={onPreviewArtifactModal}
+                  onPreviewUploadAttachment={onPreviewUploadAttachment}
+                  onOpenSkillMention={onOpenSkillMention}
+                  onPreviewMentionArtifact={onPreviewMentionArtifact}
+                  showUserActions={false}
+                  sending
+                />
+              ) : null}
 
               {presentationBarrierIndex < 0 ? trailingContent : null}
 
@@ -1418,14 +1494,17 @@ const WorkspaceMessageScrollerImpl = ({
               data-revealed="false"
               tabIndex={-1}
               size="default"
-              className="z-20 min-h-11 gap-1 rounded-full border-transparent bg-bg-000 px-4 text-sm shadow-card transition-[translate,scale,opacity] hover:bg-bg-200 data-[direction=start]:top-3 data-[revealed=false]:pointer-events-none data-[revealed=false]:-translate-y-2 data-[revealed=false]:opacity-0 motion-reduce:transition-none"
+              className="z-20 gap-1 rounded-full border-transparent bg-bg-000 px-3 text-sm shadow-card transition-[translate,scale,opacity] hover:bg-bg-200 data-[direction=start]:top-3 data-[revealed=false]:pointer-events-none data-[revealed=false]:-translate-y-2 data-[revealed=false]:opacity-0 motion-reduce:transition-none [&_svg]:size-3.5"
             >
               <ArrowDownIcon aria-hidden="true" />
               <span>{t('First message')}</span>
             </MessageScrollerButton>
           ) : null}
 
-          <MessageScrollerButton className="z-10 border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
+          <MessageScrollerButton
+            size="icon-lg"
+            className="z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
+          />
           <div
             data-testid="message-completion-live-region"
             aria-live="polite"
@@ -1507,6 +1586,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   next: WorkspaceMessageScrollerProps
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  previous.optimisticMessage === next.optimisticMessage &&
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   (previous.reportPresentationRevealing ?? false) === (next.reportPresentationRevealing ?? false) &&
   previous.onBranchInNewSession === next.onBranchInNewSession &&

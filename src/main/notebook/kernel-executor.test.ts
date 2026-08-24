@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { NotebookKernelExecutor } from './kernel-executor'
+import { NotebookKernelExecutor, type KernelProcessKind } from './kernel-executor'
+import { framePythonRequest } from './kernel-protocol'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -15,7 +16,8 @@ import {
   rScriptBin
 } from './runtime-paths'
 import { TimeoutController } from './timeout-controller'
-import { NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
+import { NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES, NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
+import type { NotebookExecutionRequest } from './runtime-service'
 import {
   startWorkingFileObservation,
   toPortableNotebookRelativePath
@@ -175,7 +177,13 @@ const makeDefaultEnvCwd = async (prefix: string): Promise<string> => {
   return dir
 }
 
-type ExecutorInternals = { procs: Map<string, ProcStateLike> }
+type EnsureProc = (
+  key: string,
+  kind: KernelProcessKind,
+  env: string,
+  request: NotebookExecutionRequest
+) => Promise<ProcStateLike>
+type ExecutorInternals = { procs: Map<string, ProcStateLike>; ensureProc: EnsureProc }
 type ProcStateLike = {
   child: ChildProcessWithoutNullStreams
   env: string
@@ -191,6 +199,32 @@ const procFor = (
   env?: string
 ): ProcStateLike | undefined =>
   (executor as unknown as ExecutorInternals).procs.get(procKeyFor(kind, env))
+
+const abortOnNextStdinWrite = (
+  child: ChildProcessWithoutNullStreams,
+  cancellation: AbortController
+): void => {
+  const originalWrite = child.stdin.write.bind(child.stdin)
+  let abortOnWrite = true
+  child.stdin.write = ((
+    chunk: string | Uint8Array,
+    encoding?: BufferEncoding | ((error?: Error | null) => void),
+    cb?: (error?: Error | null) => void
+  ) => {
+    const result =
+      typeof encoding === 'function'
+        ? originalWrite(chunk, encoding)
+        : encoding === undefined
+          ? originalWrite(chunk, cb)
+          : originalWrite(chunk, encoding, cb)
+    if (abortOnWrite) {
+      abortOnWrite = false
+      child.stdin.write = originalWrite
+      cancellation.abort()
+    }
+    return result
+  }) as typeof child.stdin.write
+}
 
 let cwdDir: string | undefined
 
@@ -309,10 +343,118 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     try {
       const result = await executor.execute({ ...baseRequest(cwdDir), code: 'hello' })
       expect(result.status).toBe('completed')
+      expect(result.kernelDispatched).toBe(true)
       expect(result.stdout).toBe('hello')
       // The loop reports its resolved cwd (macOS maps /var -> /private/var).
       expect(result.cwdAfter).toBe(realpathSync(cwdDir))
       expect(result.outputs).toContainEqual({ type: 'stream', name: 'stdout', text: 'hello' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('drops a kernel whose stdout exceeds the bounded protocol line', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-protocol-line-limit-')
+    const terminated: string[] = []
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: FIXTURE,
+      platform: 'linux',
+      onTerminated: (kind) => terminated.push(kind)
+    })
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        code: `__OVERSIZED_LINE__:${NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES + 1}`
+      })
+
+      expect(result.status).toBe('failed')
+      expect(result.stderr).toContain(
+        `exceeded the ${NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES}-byte transport limit`
+      )
+      expect(terminated).toEqual(['python'])
+      expect(procFor(executor, 'python')).toBeUndefined()
+
+      await expect(
+        executor.execute({ ...baseRequest(cwdDir), code: 'after-oversized-line' })
+      ).resolves.toMatchObject({ status: 'completed', stdout: 'after-oversized-line' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('settles execution when protocol overflow drops the kernel before request dispatch', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-pre-dispatch-protocol-overflow-')
+    const executor = makeExecutor()
+    const internals = executor as unknown as ExecutorInternals
+    const ensureProc = internals.ensureProc.bind(executor)
+    let injectOverflow = true
+    internals.ensureProc = async (...args) => {
+      const proc = await ensureProc(...args)
+      if (!injectOverflow) return proc
+
+      injectOverflow = false
+      proc.child.stdin.write(
+        framePythonRequest(
+          'pre-dispatch-overflow',
+          `__OVERSIZED_LINE__:${NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES + 1}`
+        )
+      )
+      await vi.waitFor(() => expect(procFor(executor, 'python')).toBeUndefined())
+      return proc
+    }
+
+    try {
+      await expect(
+        executor.execute({ ...baseRequest(cwdDir), code: 'must-not-dispatch' })
+      ).resolves.toMatchObject({
+        status: 'failed',
+        kernelDispatched: false,
+        stderr: expect.stringContaining(
+          `exceeded the ${NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES}-byte transport limit`
+        )
+      })
+      await expect(
+        executor.execute({ ...baseRequest(cwdDir), code: 'after-pre-dispatch-overflow' })
+      ).resolves.toMatchObject({ status: 'completed', stdout: 'after-pre-dispatch-overflow' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('records cancellation before kernel dispatch', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-pre-dispatch-cancel-')
+    const executor = makeExecutor()
+    const cancellation = new AbortController()
+    cancellation.abort()
+    try {
+      await expect(
+        executor.execute({
+          ...baseRequest(cwdDir),
+          code: 'never-runs',
+          signal: cancellation.signal
+        })
+      ).resolves.toMatchObject({ status: 'cancelled', kernelDispatched: false })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('does not record dispatch when writing the kernel request throws', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-write-failure-')
+    const executor = makeExecutor()
+    try {
+      await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+      const child = procFor(executor, 'python')?.child as ChildProcessWithoutNullStreams
+      vi.spyOn(child.stdin, 'write').mockImplementationOnce(() => {
+        throw new Error('kernel pipe is closed')
+      })
+
+      await expect(
+        executor.execute({ ...baseRequest(cwdDir), code: 'never-runs' })
+      ).resolves.toMatchObject({ status: 'failed', kernelDispatched: false })
+      await expect(
+        executor.execute({ ...baseRequest(cwdDir), code: 'after-failure' })
+      ).resolves.toMatchObject({ status: 'completed', kernelDispatched: true })
     } finally {
       await executor.shutdown()
     }
@@ -1198,42 +1340,150 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
     }
   })
 
-  it('cancels a run without clearing the persistent R namespace', async () => {
-    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-cancel-'))
-    const request = baseRequest(cwdDir)
-    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
-    const executor = new NotebookKernelExecutor({
-      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
-      platform: 'linux'
-    })
-
-    try {
-      await expect(
-        executor.execute({ ...request, code: 'preserved_after_cancel <- 41', language: 'r' })
-      ).resolves.toMatchObject({ status: 'completed' })
-      const child = procFor(executor, 'r')?.child
-      const cancellation = new AbortController()
-      const run = executor.execute({
-        ...request,
-        code: 'Sys.sleep(30)',
-        language: 'r',
-        signal: cancellation.signal
+  // Windows maps SIGINT to process termination, so cancellation cannot keep this namespace.
+  it.skipIf(process.platform === 'win32')(
+    'cancels a run without clearing the persistent R namespace',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-cancel-'))
+      const request = baseRequest(cwdDir)
+      await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+      const executor = new NotebookKernelExecutor({
+        rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+        platform: 'linux'
       })
-      await vi.waitFor(() => expect(procFor(executor, 'r')?.pending).toBeDefined())
-      cancellation.abort()
 
-      await expect(run).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
-      const next = await executor.execute({
-        ...request,
-        code: 'cat(preserved_after_cancel + 1)',
-        language: 'r'
+      try {
+        await expect(
+          executor.execute({ ...request, code: 'preserved_after_cancel <- 41', language: 'r' })
+        ).resolves.toMatchObject({ status: 'completed' })
+        const child = procFor(executor, 'r')?.child as ChildProcessWithoutNullStreams
+        const cancellation = new AbortController()
+        // Abort in the same turn as the request write so SIGINT can land while the loop is still
+        // reading the framed request. Waiting until Sys.sleep starts hides the read-path crash.
+        abortOnNextStdinWrite(child, cancellation)
+        const run = executor.execute({
+          ...request,
+          code: 'Sys.sleep(30)',
+          language: 'r',
+          signal: cancellation.signal
+        })
+
+        await expect(run).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+        const next = await executor.execute({
+          ...request,
+          code: 'cat(preserved_after_cancel + 1)',
+          language: 'r'
+        })
+        expect(next).toMatchObject({ status: 'completed', stdout: '42', traceback: '' })
+        expect(procFor(executor, 'r')?.child).toBe(child)
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'does not let user R code poison cancellation interrupt state',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-interrupt-poison-'))
+      const request = baseRequest(cwdDir)
+      await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+      const executor = new NotebookKernelExecutor({
+        rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+        platform: 'linux'
       })
-      expect(next).toMatchObject({ status: 'completed', stdout: '42' })
-      expect(procFor(executor, 'r')?.child).toBe(child)
-    } finally {
-      await executor.shutdown()
-    }
-  }, 15_000)
+
+      try {
+        await expect(
+          executor.execute({
+            ...request,
+            code:
+              'interrupt_during_read <- TRUE; during_read <- TRUE; ' +
+              'getwd <- function(...) 1; preserved_after_cancel <- 41',
+            language: 'r'
+          })
+        ).resolves.toMatchObject({ status: 'completed' })
+        const child = procFor(executor, 'r')?.child as ChildProcessWithoutNullStreams
+        const cancellation = new AbortController()
+        abortOnNextStdinWrite(child, cancellation)
+        await expect(
+          executor.execute({
+            ...request,
+            code: 'Sys.sleep(30)',
+            language: 'r',
+            signal: cancellation.signal
+          })
+        ).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+        const next = await executor.execute({
+          ...request,
+          code: 'cat(preserved_after_cancel + 1)',
+          language: 'r'
+        })
+        expect(next).toMatchObject({ status: 'completed', stdout: '42', traceback: '' })
+        expect(procFor(executor, 'r')?.child).toBe(child)
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'preserves the R namespace across an in-eval cancel and 50 dispatch cancels',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-cancel-stress-'))
+      const request = baseRequest(cwdDir)
+      await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+      const executor = new NotebookKernelExecutor({
+        rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+        platform: 'linux'
+      })
+
+      try {
+        await expect(
+          executor.execute({ ...request, code: 'preserved_after_cancel <- 41', language: 'r' })
+        ).resolves.toMatchObject({ status: 'completed' })
+        const child = procFor(executor, 'r')?.child as ChildProcessWithoutNullStreams
+
+        const inEval = new AbortController()
+        const sleeping = executor.execute({
+          ...request,
+          code: 'Sys.sleep(30)',
+          language: 'r',
+          signal: inEval.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'r')?.pending).toBeDefined())
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        inEval.abort()
+        await expect(sleeping).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+
+        for (let i = 0; i < 50; i++) {
+          const cancellation = new AbortController()
+          abortOnNextStdinWrite(child, cancellation)
+          await expect(
+            executor.execute({
+              ...request,
+              code: 'Sys.sleep(30)',
+              language: 'r',
+              signal: cancellation.signal
+            })
+          ).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+        }
+
+        const next = await executor.execute({
+          ...request,
+          code: 'cat(preserved_after_cancel + 1)',
+          language: 'r'
+        })
+        expect(next).toMatchObject({ status: 'completed', stdout: '42', traceback: '' })
+        expect(procFor(executor, 'r')?.child).toBe(child)
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    60_000
+  )
 
   it.each([
     {

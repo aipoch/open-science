@@ -125,7 +125,9 @@ const getRunningActivityTimestamp = (session: ChatSession): number => {
     session.status === 'running' ? session.activeRun?.startedAt : undefined,
     earliestCurrentDelegatedAttemptStartedAt(session)
   ].filter((value): value is number => value !== undefined)
-  return candidates.length > 0 ? Math.min(...candidates) : session.updatedAt
+  return candidates.length > 0
+    ? Math.min(...candidates)
+    : (session.presentedActivityAt ?? session.updatedAt)
 }
 
 const sectionHeadingClassName =
@@ -570,7 +572,7 @@ const HomePage = ({
               <button
                 type="button"
                 onClick={() => openSettingsToPanel(environmentRepairPanel)}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-000/35 bg-danger-900 px-2.5 text-xs font-medium text-danger-000 transition-colors duration-150 ease-out hover:border-danger-000/55 hover:bg-danger-900/80"
+                className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-danger-000/35 bg-danger-900 px-2.5 text-xs font-medium text-danger-000 transition-colors duration-150 ease-out hover:border-danger-000/55 hover:bg-danger-900/80"
                 aria-label={t('Open environment repair')}
               >
                 <CircleAlert className="size-3.5" strokeWidth={2} aria-hidden="true" />

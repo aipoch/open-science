@@ -8,6 +8,8 @@ import { promisify } from 'node:util'
 
 import type {
   ClaudeInstallEvent,
+  ClaudeInstallLogEvent,
+  ClaudeInstallProgressEvent,
   ClaudeInstallResult,
   ClaudeInstallSource,
   NpmAvailability
@@ -93,6 +95,80 @@ const getInstallSpawnSpec = (
 
 // Default guard so a hung network install cannot block the wizard forever.
 const DEFAULT_INSTALL_TIMEOUT_MS = 5 * 60 * 1000
+
+// Consecutive stdout/stderr chunks share one onEvent until this frame elapses, the pending payload
+// hits INSTALL_LOG_COALESCE_MAX_CHARS, the stream changes, or the install settles.
+const INSTALL_LOG_COALESCE_INTERVAL_MS = 33
+const INSTALL_LOG_COALESCE_MAX_CHARS = 64 * 1024
+
+type InstallStreamPublisher = {
+  flush: () => void
+  log: (stream: ClaudeInstallLogEvent['stream'], chunk: string) => void
+  progress: (event: ClaudeInstallProgressEvent) => void
+}
+
+// Collapses chatty child-process data events so IPC/Web subscribers see at most one log per stream
+// per presentation frame. System lines and progress ticks flush immediately so the command echo,
+// timeout notice, and progress bar never wait on stdout.
+const createInstallStreamPublisher = (
+  installId: string,
+  onEvent: (event: ClaudeInstallEvent) => void
+): InstallStreamPublisher => {
+  let pendingStream: ClaudeInstallLogEvent['stream'] | undefined
+  let pendingChunk = ''
+  let coalesceTimer: ReturnType<typeof setTimeout> | undefined
+
+  const flush = (): void => {
+    if (coalesceTimer !== undefined) {
+      clearTimeout(coalesceTimer)
+      coalesceTimer = undefined
+    }
+    if (!pendingStream || pendingChunk.length === 0) {
+      pendingStream = undefined
+      pendingChunk = ''
+      return
+    }
+
+    const stream = pendingStream
+    const chunk = pendingChunk
+    pendingStream = undefined
+    pendingChunk = ''
+    onEvent({ kind: 'log', installId, stream, chunk })
+  }
+
+  const schedule = (): void => {
+    if (coalesceTimer !== undefined) return
+    coalesceTimer = setTimeout(() => {
+      coalesceTimer = undefined
+      flush()
+    }, INSTALL_LOG_COALESCE_INTERVAL_MS)
+  }
+
+  return {
+    flush,
+    log(stream, chunk) {
+      if (chunk.length === 0) return
+      if (stream === 'system') {
+        flush()
+        onEvent({ kind: 'log', installId, stream, chunk })
+        return
+      }
+      if (pendingStream === stream) {
+        pendingChunk += chunk
+      } else {
+        flush()
+        pendingStream = stream
+        pendingChunk = chunk
+      }
+      if (pendingChunk.length >= INSTALL_LOG_COALESCE_MAX_CHARS) flush()
+      else schedule()
+    },
+    progress(event) {
+      flush()
+      onEvent(event)
+    }
+  }
+}
 
 // Cap on retained installer output used only for region-block detection (keeps memory bounded on a
 // chatty install while still holding enough tail to spot the HTML signature).
@@ -243,8 +319,8 @@ const defaultInstallSpawn = (
     env: augmentedPathEnv()
   }) as ChildProcessWithoutNullStreams
 
-// Runs an install source to completion, forwarding every stdout/stderr chunk through onLog and
-// enforcing a timeout. Resolves (never rejects) with a structured result the service can act on.
+// Runs an install source to completion, coalescing stdout/stderr through onEvent and enforcing a
+// timeout. Resolves (never rejects) with a structured result the service can act on.
 const runInstall = async ({
   source,
   installId,
@@ -264,13 +340,9 @@ const runInstall = async ({
       : undefined
 
   const spec = getInstallSpawnSpec(source, platform, npmPrefixOverride, installTarget)
+  const publisher = createInstallStreamPublisher(installId, onEvent)
 
-  onEvent({
-    kind: 'log',
-    installId,
-    stream: 'system',
-    chunk: `$ ${spec.command} ${spec.args.join(' ')}\n`
-  })
+  publisher.log('system', `$ ${spec.command} ${spec.args.join(' ')}\n`)
 
   return new Promise<ClaudeInstallResult>((resolve) => {
     let child: ChildProcessWithoutNullStreams
@@ -278,6 +350,7 @@ const runInstall = async ({
     try {
       child = spawnImpl(spec.command, spec.args, { shell: spec.shell })
     } catch (error) {
+      publisher.flush()
       resolve({
         installId,
         ok: false,
@@ -288,7 +361,7 @@ const runInstall = async ({
     }
 
     // No byte total for a shelled installer, so the bar runs indeterminate while it streams output.
-    onEvent({ kind: 'progress', installId, phase: 'installing' })
+    publisher.progress({ kind: 'progress', installId, phase: 'installing' })
 
     let settled = false
     let timedOut = false
@@ -305,30 +378,26 @@ const runInstall = async ({
 
       settled = true
       clearTimeout(timer)
+      publisher.flush()
       resolve(result)
     }
 
     const timer = setTimeout(() => {
       timedOut = true
-      onEvent({
-        kind: 'log',
-        installId,
-        stream: 'system',
-        chunk: 'Install timed out; terminating.\n'
-      })
+      publisher.log('system', 'Install timed out; terminating.\n')
       child.kill()
     }, timeoutMs)
 
     child.stdout.on('data', (data: Buffer) => {
       const chunk = data.toString('utf8')
       capture(chunk)
-      onEvent({ kind: 'log', installId, stream: 'stdout', chunk })
+      publisher.log('stdout', chunk)
     })
 
     child.stderr.on('data', (data: Buffer) => {
       const chunk = data.toString('utf8')
       capture(chunk)
-      onEvent({ kind: 'log', installId, stream: 'stderr', chunk })
+      publisher.log('stderr', chunk)
     })
 
     child.on('error', (error) => {

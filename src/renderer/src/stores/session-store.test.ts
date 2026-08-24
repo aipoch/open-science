@@ -298,6 +298,40 @@ describe('session store', () => {
     ])
   })
 
+  it('persists a routed user Message with uploads when the text is empty', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'seed'
+    })
+    const routed = useSessionStore.getState().appendRoutedUserMessage({
+      sessionId: 'transport-session-1',
+      messageId: 'routed-upload-1',
+      eventId: 'routed-upload-event-1',
+      content: '   ',
+      createdAt: Date.now() + 1,
+      uploads: [
+        {
+          id: 'upload-1',
+          sessionId: 'transport-session-1',
+          name: 'notes.md',
+          originalName: 'notes.md',
+          mimeType: 'text/markdown',
+          size: 12
+        }
+      ]
+    })
+    expect(routed).toEqual({ sessionId: 'transport-session-1', messageId: 'routed-upload-1' })
+    expect(useSessionStore.getState().sessions[0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'routed-upload-1',
+          content: '',
+          uploads: [expect.objectContaining({ id: 'upload-1', name: 'notes.md' })]
+        })
+      ])
+    )
+  })
+
   it('tracks the first Agent output wait as transient session state', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -831,7 +865,7 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
   })
 
-  it('keeps the active Plan projection when Permission advances the runtime revision', () => {
+  it('rebases the active Plan projection when Permission advances the runtime revision', () => {
     useSessionStore.getState().hydrateSessions([
       {
         id: 'session-1',
@@ -887,8 +921,83 @@ describe('session store', () => {
     })
 
     const updated = useSessionStore.getState().sessions[0]
-    expect(updated.activePlanProjection).toBe(projection)
+    expect(updated.activePlanProjection).toEqual({ ...projection, revision: 2 })
     expect(updated.runtimeContext).toMatchObject({ revision: 2, permission: { state: 'pending' } })
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source: updated,
+      session: {
+        ...toPersistedSession(updated),
+        runtimeContext: { ...updated.runtimeContext!, revision: 3 },
+        updatedAt: 4
+      },
+      mode: 'permission-authority'
+    })
+
+    expect(useSessionStore.getState().sessions[0].activePlanProjection).toEqual({
+      ...projection,
+      revision: 3
+    })
+  })
+
+  it('keeps a newer local Plan projection when an older lifecycle echo arrives', () => {
+    const stalePlan = {
+      artifactId: 'artifact-version-1',
+      artifactVersionId: 'version-1',
+      artifactChecksum: 'a'.repeat(64),
+      approval: 'pending' as const,
+      stepStatuses: {}
+    }
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: stalePlan
+        },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const newerProjection = {
+      ...createPlanProjection('version-1'),
+      revision: 2,
+      approval: 'approved' as const,
+      lifecycle: 'approved' as const,
+      requiresExplicitContinuation: true
+    }
+    useSessionStore.getState().setActivePlanProjection('session-1', newerProjection)
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: stalePlan
+        },
+        updatedAt: 3
+      },
+      mode: 'runtime-context-authority'
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      interactionState: { plan: false },
+      activePlanProjection: newerProjection
+    })
+
+    useSessionStore.getState().finishRun('session-1')
+    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
   })
 
   it('does not replace newer local conversation state when a durable Plan authority arrives', () => {
@@ -1023,6 +1132,69 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
   })
 
+  it('preserves pending summary metadata edits when lazy hydration finishes', () => {
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Original title',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 1,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 1,
+          updatedAt: 2,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined
+    )
+    useSessionStore.getState().renameSession('session-1', 'Pending title')
+    useSessionStore.getState().togglePinned('session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1' ? { ...session, archivedAt: 3 } : session
+      )
+    }))
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Original title',
+      cwd: '/workspace',
+      status: 'idle',
+      pinned: false,
+      revision: 1,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Loaded content',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Pending title',
+      unsavedTitle: true,
+      pinned: true,
+      archivedAt: 3,
+      messages: [{ id: 'message-1' }]
+    })
+    expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
+  })
+
   it('applies archive state from an older durable Session update without losing newer local state', () => {
     useSessionStore.getState().hydrateSessions([
       {
@@ -1063,6 +1235,272 @@ describe('session store', () => {
       title: 'Newer local state',
       archivedAt: 10,
       messages: [{ id: 'message-1' }]
+    })
+  })
+
+  it('keeps an unsaved local title when a newer remote Session projection arrives', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Original',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: [
+          {
+            id: 'local-message',
+            role: 'user',
+            content: 'Keep this local message.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+    useSessionStore.getState().renameSession('session-1', 'Local draft')
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Remote title',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 2,
+      pinned: true,
+      permissionProfile: 'full',
+      messages: [
+        {
+          id: 'local-message',
+          role: 'user',
+          content: 'Keep this local message.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'remote-message',
+          role: 'agent',
+          content: 'Saved in another window',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      createdAt: 1,
+      updatedAt: Date.now() + 1
+    })
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session).toMatchObject({
+      title: 'Local draft',
+      unsavedTitle: true,
+      pinned: true,
+      permissionProfile: 'full',
+      revision: 2,
+      messages: [{ id: 'local-message' }, { id: 'remote-message' }]
+    })
+    expect(toPersistedSession(session)).not.toHaveProperty('unsavedTitle')
+  })
+
+  it('applies a newer remote title when the local Session title was not renamed', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Original',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Remote title',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 2,
+      messages: [],
+      createdAt: 1,
+      updatedAt: Date.now() + 1
+    })
+
+    expect(useSessionStore.getState().sessions[0].title).toBe('Remote title')
+  })
+
+  it('does not mark a no-op rename as an unsaved title', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Original',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+    const before = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().renameSession('session-1', '  Original  ')
+    expect(useSessionStore.getState().sessions[0]).toBe(before)
+    expect(useSessionStore.getState().sessions[0].unsavedTitle).toBeUndefined()
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Remote title',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 2,
+      messages: [],
+      createdAt: 1,
+      updatedAt: Date.now() + 1
+    })
+    expect(useSessionStore.getState().sessions[0].title).toBe('Remote title')
+  })
+
+  it('clears an unsaved title when a newer remote projection already has the local title', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Original',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+    useSessionStore.getState().renameSession('session-1', 'Local draft')
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Local draft',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 2,
+      messages: [],
+      createdAt: 1,
+      updatedAt: Date.now() + 1
+    })
+    expect(useSessionStore.getState().sessions[0].title).toBe('Local draft')
+    expect(useSessionStore.getState().sessions[0].unsavedTitle).toBeUndefined()
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Remote later',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 3,
+      messages: [],
+      createdAt: 1,
+      updatedAt: Date.now() + 2
+    })
+    expect(useSessionStore.getState().sessions[0].title).toBe('Remote later')
+  })
+
+  it('clears an unsaved title after a durable save acknowledgement even if the live Session advanced', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Original',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+    useSessionStore.getState().renameSession('session-1', 'Local draft')
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().togglePinned('session-1')
+    const live = useSessionStore.getState().sessions[0]
+    expect(live).not.toBe(source)
+    expect(live.unsavedTitle).toBe(true)
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(live),
+        title: 'Local draft',
+        revision: 2,
+        updatedAt: live.updatedAt + 1
+      },
+      mode: 'replace-persisted-if-current'
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Local draft',
+      pinned: true
+    })
+    expect(useSessionStore.getState().sessions[0].unsavedTitle).toBeUndefined()
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Remote later',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 3,
+      messages: [],
+      createdAt: 1,
+      updatedAt: Date.now() + 2
+    })
+    expect(useSessionStore.getState().sessions[0].title).toBe('Remote later')
+  })
+
+  it('keeps a newer unsaved title when a durable save acknowledgement is for the previous title', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Original',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ])
+    useSessionStore.getState().renameSession('session-1', 'Local draft')
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().renameSession('session-1', 'Even newer')
+    expect(useSessionStore.getState().sessions[0]).not.toBe(source)
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        title: 'Local draft',
+        revision: 2,
+        updatedAt: source.updatedAt + 1
+      },
+      mode: 'replace-persisted-if-current'
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Even newer',
+      unsavedTitle: true
     })
   })
 
@@ -2216,6 +2654,93 @@ describe('session store', () => {
     expect(toPersistedSession(session).agentModel).toBe('model-b')
   })
 
+  it('keeps an existing Session agentConfiguration when a later send snapshot differs', () => {
+    const snapshot = {
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'default' as const
+    }
+    const preferred = {
+      providerId: 'provider-b',
+      model: 'model-b',
+      reasoningEffort: 'high' as const
+    }
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'First run',
+      agentConfiguration: snapshot
+    })
+    useSessionStore.getState().setAgentConfiguration('transport-session-1', preferred)
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Queued snapshot',
+      agentModel: 'model-a',
+      agentConfiguration: snapshot
+    })
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.agentConfiguration).toEqual(preferred)
+    expect(session.agentModel).toBe('model-a')
+    expect(toPersistedSession(session).agentConfiguration).toEqual(preferred)
+  })
+
+  it('preserves Session activity time when reconciling a legacy agent configuration', () => {
+    const updatedAt = Date.now() - 60_000
+    const configuration = {
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'default' as const
+    }
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'legacy-session',
+          projectId: 'default-project',
+          title: 'Legacy Session',
+          cwd: '/workspace/project',
+          status: 'idle',
+          messages: [],
+          filesRevision: 0,
+          createdAt: updatedAt - 60_000,
+          updatedAt
+        } as ChatSession
+      ],
+      selectedSessionId: 'legacy-session'
+    })
+
+    useSessionStore
+      .getState()
+      .setAgentConfiguration('legacy-session', configuration, { preserveUpdatedAt: true })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      agentConfiguration: configuration,
+      updatedAt
+    })
+  })
+
+  it('materializes a missing Session agentConfiguration on a later send', () => {
+    const configuration = {
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'default' as const
+    }
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'First run'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Follow-up',
+      agentConfiguration: configuration
+    })
+
+    expect(useSessionStore.getState().sessions[0].agentConfiguration).toEqual(configuration)
+  })
+
   it('merges streamed agent chunks by stream id and completes them when the run stops', () => {
     const result = useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -2635,6 +3160,16 @@ describe('session store', () => {
     useSessionStore
       .getState()
       .failRun('transport-session-1', 'Session workspace is missing; start a new conversation.')
+    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+
+    // Claude Code's unreachable-API wrapper is recognized without an explicit flag (createSession /
+    // persisted pre-flag sessions).
+    useSessionStore
+      .getState()
+      .failRun(
+        'transport-session-1',
+        'Internal error: API Error: Unable to connect to API (ConnectionRefused)'
+      )
     expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
   })
 
@@ -4612,6 +5147,7 @@ describe('session store public contract', () => {
         'failRun',
         'finishCompaction',
         'finishRun',
+        'hydrateSessionSummaries',
         'hydrateSessions',
         'interruptRun',
         'markDisconnected',
@@ -4628,6 +5164,7 @@ describe('session store public contract', () => {
         'reviseSessionFromElicitation',
         'selectSession',
         'setActivePlanProjection',
+        'setAgentConfiguration',
         'setAgentPromptInFlight',
         'setAgentStatus',
         'setAutoReviewEnabled',
@@ -4671,6 +5208,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
       'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
@@ -4696,6 +5234,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/WorkspaceActivityIcon.tsx',
       'src/renderer/src/pages/workspace/WorkspaceAgentLoadingRow.tsx',
       'src/renderer/src/pages/workspace/WorkspaceArtifactVisibility.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.tsx',
       'src/renderer/src/pages/workspace/WorkspaceMessageItem.tsx',
       'src/renderer/src/pages/workspace/WorkspaceMessageScroller.tsx',
       'src/renderer/src/pages/workspace/WorkspacePage.tsx',
@@ -4717,6 +5256,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-files-library.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
+      'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',
       'src/renderer/src/pages/workspace/session-plan/plan-file-projection.ts',
@@ -4731,8 +5271,11 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-conversation-controller.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-items.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-timeline.ts',
+      'src/renderer/src/pages/workspace/workspace-message-queue-admission.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-controller.ts',
+      'src/renderer/src/pages/workspace/workspace-message-queue-owner.ts',
       'src/renderer/src/pages/workspace/workspace-run-marks.ts',
+      'src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts',
@@ -4810,6 +5353,7 @@ describe('session store public contract', () => {
       sessions: state.sessions.map((session) => ({
         ...session,
         isPending: true,
+        unsavedTitle: true,
         interrupted: true,
         fixLoopActive: true,
         compacting: true,
@@ -4853,6 +5397,7 @@ describe('session store public contract', () => {
     expect(durable.messages[0]).not.toHaveProperty('sortIndex')
     for (const transientKey of [
       'isPending',
+      'unsavedTitle',
       'interrupted',
       'fixLoopActive',
       'compacting',

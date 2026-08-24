@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 
+import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import type { WorkspaceMessageQueueController } from './workspace-message-queue-controller'
 
 type ComposerMessageQueueProps = Omit<WorkspaceMessageQueueController, 'lifecycle'>
@@ -54,17 +55,27 @@ const queueErrorText = (
 }
 
 const queueAnnouncementText = (t: TFunction, announcement: string): string => {
-  if (announcement === 'Queued message sent.') return t('Queued message sent.')
-  if (announcement === 'Message added to queue.') return t('Message added to queue.')
-  if (announcement === 'Queued message moved up.') return t('Queued message moved up.')
-  if (announcement === 'Queued message moved down.') return t('Queued message moved down.')
-  if (announcement === 'Queued messages reordered.') return t('Queued messages reordered.')
-  if (announcement === 'Queued message removed.') return t('Queued message removed.')
-  if (announcement === 'Queued message moved to the composer for editing.') {
+  if (announcement === MESSAGE_QUEUE_ANNOUNCEMENTS.sent) return t('Queued message sent.')
+  if (announcement === MESSAGE_QUEUE_ANNOUNCEMENTS.added) return t('Message added to queue.')
+  if (announcement === MESSAGE_QUEUE_ANNOUNCEMENTS.movedUp) return t('Queued message moved up.')
+  if (announcement === MESSAGE_QUEUE_ANNOUNCEMENTS.movedDown) {
+    return t('Queued message moved down.')
+  }
+  if (announcement === MESSAGE_QUEUE_ANNOUNCEMENTS.reordered) {
+    return t('Queued messages reordered.')
+  }
+  if (announcement === MESSAGE_QUEUE_ANNOUNCEMENTS.removed) return t('Queued message removed.')
+  if (announcement === MESSAGE_QUEUE_ANNOUNCEMENTS.restoredForEdit) {
     return t('Queued message moved to the composer for editing.')
   }
-  if (announcement === 'Stopping the current run before sending the queued message.') {
+  if (announcement === MESSAGE_QUEUE_ANNOUNCEMENTS.interrupting) {
     return t('Stopping the current run before sending the queued message.')
+  }
+  if (announcement === MESSAGE_QUEUE_ANNOUNCEMENTS.steering) {
+    return t('Sending the queued message into the current run.')
+  }
+  if (announcement === MESSAGE_QUEUE_ANNOUNCEMENTS.deferredUntilIdle) {
+    return t('Queued message will send after the current run finishes.')
   }
   return ''
 }
@@ -260,6 +271,10 @@ const ComposerMessageQueueContent = ({
                     {item.error ? (
                       <p className="mt-0.5 text-[11px] leading-4 text-red-400" role="alert">
                         {queueErrorText(t, item.error)}
+                      </p>
+                    ) : item.deferredUntilIdle ? (
+                      <p className="mt-0.5 text-[11px] leading-4 text-text-300">
+                        {t('Queued message will send after the current run finishes.')}
                       </p>
                     ) : null}
                   </div>

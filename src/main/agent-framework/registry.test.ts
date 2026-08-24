@@ -37,8 +37,7 @@ describe('agent framework registry', () => {
     })
     expect(getAgentFramework('opencode').contextCompaction).toEqual({
       kind: 'native-command',
-      command: '/compact',
-      triggerAtPercent: 90
+      command: '/compact'
     })
     expect(getAgentFramework('codex').contextCompaction).toEqual({
       kind: 'native-command',

@@ -145,6 +145,10 @@ export class AcpSessionInteractionOwner {
     return this.activeInteractions.get(sessionId)?.scope
   }
 
+  has(sessionId: string): boolean {
+    return this.activeInteractions.has(sessionId) || this.pendingPromptReservations.has(sessionId)
+  }
+
   snapshot(): readonly AcpSessionInteractionSnapshotEntry[] {
     return Object.freeze(
       Array.from(this.activeInteractions.values(), ({ scope }) =>
@@ -255,8 +259,8 @@ export class AcpSessionInteractionOwner {
     this.pendingCancellations.set(request.sessionId, attempt)
 
     const active =
-      this.activeInteractions.get(request.sessionId) ??
-      this.pendingPromptReservations.get(request.sessionId)
+      this.pendingPromptReservations.get(request.sessionId) ??
+      this.activeInteractions.get(request.sessionId)
     const scope = active?.scope
     active?.abortController.abort()
     this.clearCancellationTimer(request.sessionId)
@@ -323,7 +327,7 @@ export class AcpSessionInteractionOwner {
   }
 
   reservePrompt(request: AcpPromptSessionInteractionRequest): AcpPromptSessionInteractionScope {
-    if (this.activeInteractions.has(request.sessionId)) {
+    if (this.activeInteractions.get(request.sessionId)?.scope.kind === 'prompt') {
       throw new Error('An ACP interaction is already running for this session')
     }
 
@@ -364,7 +368,10 @@ export class AcpSessionInteractionOwner {
   }
 
   claim<Request extends AcpSessionInteractionRequest>(request: Request): ScopeFor<Request> {
-    if (this.activeInteractions.has(request.sessionId)) {
+    if (
+      this.activeInteractions.has(request.sessionId) ||
+      this.pendingPromptReservations.has(request.sessionId)
+    ) {
       throw new Error('An ACP interaction is already running for this session')
     }
 

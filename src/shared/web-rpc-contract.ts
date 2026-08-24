@@ -6,8 +6,8 @@ import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated
 export const WEB_RPC_PROTOCOL_VERSION = 1 as const
 export const WEB_RPC_CAPABILITY_UPDATE_CLI_V1 = 'update-cli-v1' as const
 export const WEB_RPC_CAPABILITIES = [WEB_RPC_CAPABILITY_UPDATE_CLI_V1] as const
-// v3 requires ACP consumers to apply acp:event incrementally. Reject cached v2 pages after a Main
-// upgrade so they request a reload instead of silently waiting for removed per-chunk state frames.
+// v3 requires ACP consumers to apply acp:event incrementally. The payload is an ordered event
+// batch on the same protocol version; Electron and Web clients that ship with this Main consume it.
 export const WEB_EVENT_STREAM_PROTOCOL_VERSION = 3 as const
 export const WEB_RPC_TRANSPORT_ERROR_CODES = [
   'invalid_request',

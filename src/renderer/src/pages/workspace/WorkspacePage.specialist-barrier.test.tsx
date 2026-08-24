@@ -21,6 +21,7 @@ import {
 import { useSpecialistStore } from '@/stores/specialist-store'
 
 import { type ComposerDoc } from './composer/composer-doc'
+import { setDefaultWorkspaceAgentSettings } from './workspace-page-test-fixtures'
 import type { SpecialistListItem } from '../../../../shared/specialist'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -169,6 +170,7 @@ const renderPage = async (r: Root): Promise<void> => {
 }
 
 const setupBase = (): void => {
+  setDefaultWorkspaceAgentSettings()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   useProjectStore.setState({ projects: [] })
   useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })

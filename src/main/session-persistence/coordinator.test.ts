@@ -969,7 +969,29 @@ describe('SessionPersistenceCoordinator', () => {
       revision: 2,
       plan: createRuntimePlan()
     })
-    expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+    expect(durable.updatedAt).toBe(previousUpdatedAt)
+  })
+
+  it('does not turn an unchanged runtime-context merge into Session activity', async () => {
+    const activityAt = Date.now() - 24 * 60 * 60 * 1_000
+    let durable = createSession({
+      updatedAt: activityAt,
+      runtimeContext: { version: 1, revision: 4 }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.saveSession(structuredClone(durable))
+
+    expect(durable.updatedAt).toBe(activityAt)
   })
 
   it('rejects a stale whole-session snapshot before it replaces newer renderer-owned fields', async () => {
@@ -1567,7 +1589,7 @@ describe('SessionPersistenceCoordinator', () => {
     })
     expect(durable.enabledComputeHosts).toEqual(['ssh:authoritative'])
     expect(durable.selectedComputeHosts).toEqual([])
-    expect(durable.updatedAt).toBeGreaterThan(authorityUpdatedAt)
+    expect(durable.updatedAt).toBe(authorityUpdatedAt)
   })
 
   it('prunes missing Compute Hosts across a complete durable Session catalog', async () => {
@@ -1926,6 +1948,23 @@ describe('SessionPersistenceCoordinator', () => {
       isComplete: true
     })
     expect(loadAllWithDiagnostics).toHaveBeenCalledOnce()
+  })
+
+  it('hydrates complete Session metadata from the SQLite projection', async () => {
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository(),
+      createFileIndex()
+    )
+
+    await coordinator.replaceSessionMetadata(
+      [{ id: 'session-1', projectId: 'project-1', title: 'Projected session' }],
+      true
+    )
+
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Projected session' }],
+      isComplete: true
+    })
   })
 
   it('updates cached Session metadata after a durable save', async () => {

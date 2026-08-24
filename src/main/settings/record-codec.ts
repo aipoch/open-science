@@ -7,6 +7,7 @@ import type {
 } from '../../shared/settings'
 import { isCodexSubscriptionProvider } from '../../shared/settings'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
+import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
 import type { PackageMirror } from '../../shared/mirror'
 import { isOfficialVendorId } from '../../shared/provider-registry'
 import {
@@ -14,6 +15,7 @@ import {
   isReasoningEffortPresetSetting
 } from '../../shared/reasoning-effort'
 import { createLogger } from '../logger'
+import { isPositiveWholeTokenLimit } from './provider-token-limits'
 import type {
   StoredComputeGrant,
   StoredConnectors,
@@ -30,7 +32,8 @@ const PROVIDER_TYPES = new Set<ProviderType>([
   'claude-isolated',
   'official',
   'codex-shared',
-  'codex-isolated'
+  'codex-isolated',
+  'xai-subscription'
 ])
 
 const VALIDATION_CATEGORIES = new Set<ValidationCategory>([
@@ -134,11 +137,13 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const provider: StoredProvider = { id, type, name }
   const baseUrl = asString(value.baseUrl)
   const model = asString(value.model)
-  const rawContextWindow = asNumber(value.contextWindow)
-  const contextWindow =
-    rawContextWindow !== undefined && Number.isSafeInteger(rawContextWindow) && rawContextWindow > 0
-      ? rawContextWindow
-      : undefined
+  const positiveWholeNumber = (candidate: unknown): number | undefined => {
+    const number = asNumber(candidate)
+    return isPositiveWholeTokenLimit(number) ? number : undefined
+  }
+  const contextWindow = positiveWholeNumber(value.contextWindow)
+  const maxInputTokens = positiveWholeNumber(value.maxInputTokens)
+  const maxOutputTokens = positiveWholeNumber(value.maxOutputTokens)
   const supportsImageInput = asBoolean(value.supportsImageInput)
   const reasoningEffortPreset = isReasoningEffortPresetSetting(value.reasoningEffortPreset)
     ? value.reasoningEffortPreset
@@ -149,6 +154,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const region = asString(value.region)
   const keyRef = asString(value.keyRef)
   const keyMask = asString(value.keyMask)
+  const accountEmail = asString(value.accountEmail)
   const lastValidatedAt = asNumber(value.lastValidatedAt)
   const lastValidationFailure = sanitizeValidationFailure(value.lastValidationFailure)
   const expiresAt = asNumber(value.expiresAt)
@@ -181,7 +187,11 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
 
   if (baseUrl) provider.baseUrl = baseUrl
   if (model) provider.model = model
-  if (contextWindow !== undefined) provider.contextWindow = contextWindow
+  if (type === 'custom') {
+    if (contextWindow !== undefined) provider.contextWindow = contextWindow
+    if (maxInputTokens !== undefined) provider.maxInputTokens = maxInputTokens
+    if (maxOutputTokens !== undefined) provider.maxOutputTokens = maxOutputTokens
+  }
   if (supportsImageInput !== undefined) provider.supportsImageInput = supportsImageInput
   if (reasoningEffortPreset !== undefined && type === 'custom') {
     provider.reasoningEffortPreset = reasoningEffortPreset
@@ -195,6 +205,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
   if (keyRef) provider.keyRef = keyRef
   if (keyMask) provider.keyMask = keyMask
+  if (accountEmail && type === 'xai-subscription') provider.accountEmail = accountEmail
   if (lastValidatedAt !== undefined) provider.lastValidatedAt = lastValidatedAt
   if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
   if (expiresAt !== undefined) provider.expiresAt = expiresAt
@@ -261,6 +272,7 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
     const clientMetadataUrl = asString(value.oauth.clientMetadataUrl)
     const authorizationServerUrl = asString(value.oauth.authorizationServerUrl)
     const clientId = asString(value.oauth.clientId)
+    const redirectUri = asString(value.oauth.redirectUri)
     const scopes = asStringArray(value.oauth.scopes)
       .map((scope) => scope.trim())
       .filter(Boolean)
@@ -268,6 +280,13 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
     if (authorizationServerUrl) oauth.authorizationServerUrl = authorizationServerUrl
     if (scopes.length) oauth.scopes = [...new Set(scopes)]
     if (clientId) oauth.clientId = clientId
+    if (redirectUri) {
+      try {
+        oauth.redirectUri = normalizeLoopbackOAuthRedirectUri(redirectUri)
+      } catch {
+        // Ignore invalid persisted values at the settings trust boundary.
+      }
+    }
     server.oauth = oauth
   }
   const oauthRef = asString(value.oauthRef)

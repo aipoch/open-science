@@ -28,7 +28,7 @@ import {
   type PersistedSessionManifest,
   type PersistedSessionStatus,
   type PersistedToolActivity,
-  type PersistedUploadedAttachment
+  type SessionSummary
 } from '../../../shared/session-persistence'
 import {
   inferSessionInteractionState,
@@ -37,6 +37,7 @@ import {
 } from './session-store-interaction-state'
 import {
   mergeDelegatedWorkAuthorityProjection,
+  mergeDurableUploadProjection,
   mergeNewerPersistedSessionByIdentity,
   mergePersistedRuntimeIdentityProjection,
   mergeRuntimeConversationAuthority,
@@ -82,6 +83,8 @@ export type ChatSession = Omit<
   activePlanProjection?: ActivePlanProjection
   planHistoryProjections?: ActivePlanProjection[]
   isPending?: boolean
+  // Transient: renameSession wrote a title that disk has not acknowledged.
+  unsavedTitle?: true
   interrupted?: boolean
   fixLoopActive?: boolean
   compacting?: boolean
@@ -101,6 +104,11 @@ export type ChatSession = Omit<
   // Transient independent facts for the blocking lane. Plan remains owned by its durable
   // projection, while Side chat remains an overlay that never settles these facts.
   interactionState?: SessionInteractionState
+  // False only for a SQLite-backed startup row whose transcript JSON has not been opened yet.
+  contentLoaded?: false
+  activeMessageCount?: number
+  artifactCount?: number
+  presentedActivityAt?: number
 }
 
 export type SessionStoreData = {
@@ -127,6 +135,12 @@ export type ApplyDurableSessionProjectionInput = {
 export type SessionPersistenceActions = {
   hydrateSessions: (
     sessions: PersistedChatSession[],
+    manifest?: PersistedSessionManifest,
+    selection?: SessionHydrationSelection
+  ) => void
+  hydrateSessionSummaries: (
+    summaries: SessionSummary[],
+    selected: PersistedChatSession | undefined,
     manifest?: PersistedSessionManifest,
     selection?: SessionHydrationSelection
   ) => void
@@ -159,6 +173,9 @@ export const stripTransientMessageState = (message: ChatMessage): PersistedChatM
 
 // Serializes one in-memory session into the durable per-file projection saved by the main process.
 export const toPersistedSession = (session: ChatSession): PersistedChatSession => {
+  if (session.contentLoaded === false) {
+    throw new Error('Session content must be loaded before persistence.')
+  }
   if (session.conversationGraphSyncBlocked) {
     throw new Error(
       'Session persistence is blocked after conversation graph synchronization failed.'
@@ -169,6 +186,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     activities,
     activityGroups,
     isPending,
+    unsavedTitle,
     interrupted,
     fixLoopActive,
     compacting,
@@ -184,6 +202,10 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     pendingContextReplayMessageId,
     interactionState,
     activePlanProjection,
+    contentLoaded,
+    activeMessageCount,
+    artifactCount,
+    presentedActivityAt,
     planHistoryProjections,
     runtimeContext,
     messages,
@@ -191,6 +213,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
   } = session
 
   void isPending
+  void unsavedTitle
   void interrupted
   void fixLoopActive
   void compacting
@@ -206,6 +229,10 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
   void pendingContextReplayMessageId
   void interactionState
   void activePlanProjection
+  void contentLoaded
+  void activeMessageCount
+  void artifactCount
+  void presentedActivityAt
   void runtimeContext
 
   const persistedPlanHistory = sanitizePlanHistoryProjections(planHistoryProjections)
@@ -251,6 +278,33 @@ export const hydrateSession = (session: PersistedChatSession): ChatSession => {
   }
   return { ...hydrated, interactionState: inferSessionInteractionState(hydrated) }
 }
+
+const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
+  number: summary.number,
+  id: summary.id,
+  projectId: summary.projectId,
+  title: summary.title,
+  cwd: '',
+  status: summary.presentedStatus,
+  pinned: summary.pinned,
+  ...(summary.archivedAt !== undefined ? { archivedAt: summary.archivedAt } : {}),
+  revision: summary.revision,
+  messages: [],
+  filesRevision: summary.filesRevision,
+  createdAt: summary.createdAt,
+  updatedAt: summary.updatedAt,
+  contentLoaded: false,
+  activeMessageCount: summary.activeMessageCount,
+  artifactCount: summary.artifactCount,
+  ...(summary.presentedActivityAt !== undefined
+    ? { presentedActivityAt: summary.presentedActivityAt }
+    : {}),
+  interactionState: {
+    permission: summary.presentedStatus === 'waiting-permission',
+    elicitation: summary.presentedStatus === 'waiting-for-user',
+    plan: summary.presentedStatus === 'waiting-plan-approval'
+  }
+})
 
 const matchesPersistedPlanProjection = (
   projection: ActivePlanProjection | undefined,
@@ -299,53 +353,14 @@ const withTransientSessionState = (
   }
 }
 
-const isSameSubmittedUpload = (
-  current: PersistedUploadedAttachment,
-  submitted: PersistedUploadedAttachment
-): boolean =>
-  current.id === submitted.id &&
-  current.versionId === submitted.versionId &&
-  current.sessionId === submitted.sessionId &&
-  current.name === submitted.name &&
-  current.originalName === submitted.originalName &&
-  current.path === submitted.path &&
-  current.mimeType === submitted.mimeType &&
-  current.size === submitted.size
-
-const mergeDurableUploadProjection = <Message extends PersistedChatMessage>(
-  currentMessages: Message[],
-  submittedMessages: PersistedChatMessage[],
-  durableMessages: PersistedChatMessage[]
-): { messages: Message[]; changed: boolean } => {
-  const submittedById = new Map(submittedMessages.map((message) => [message.id, message]))
-  const durableById = new Map(durableMessages.map((message) => [message.id, message]))
-  let changed = false
-  const messages = currentMessages.map((message) => {
-    const submitted = submittedById.get(message.id)
-    const durable = durableById.get(message.id)
-    if (!message.uploads || !submitted?.uploads || !durable?.uploads) return message
-    const submittedUploads = new Map(submitted.uploads.map((upload) => [upload.id, upload]))
-    const durableUploads = new Map(durable.uploads.map((upload) => [upload.id, upload]))
-    let uploadsChanged = false
-    const uploads = message.uploads.map((upload) => {
-      const submittedUpload = submittedUploads.get(upload.id)
-      const durableUpload = durableUploads.get(upload.id)
-      if (
-        !submittedUpload ||
-        !durableUpload?.versionId ||
-        submittedUpload.versionId ||
-        !isSameSubmittedUpload(upload, submittedUpload)
-      ) {
-        return upload
-      }
-      uploadsChanged = true
-      return durableUpload
-    })
-    if (!uploadsChanged) return message
-    changed = true
-    return { ...message, uploads } as Message
-  })
-  return { messages, changed }
+const withAcknowledgedUnsavedTitle = (
+  projected: ChatSession,
+  durable: PersistedChatSession
+): ChatSession => {
+  if (projected.unsavedTitle !== true || projected.title !== durable.title) return projected
+  const next = { ...projected }
+  delete next.unsavedTitle
+  return next
 }
 
 const projectDurablePlanAuthority = (
@@ -404,9 +419,47 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set({ sessions: hydrated, selectedSessionId } as Partial<State>)
   },
 
+  hydrateSessionSummaries: (summaries, selected, manifest, selection) => {
+    const selectedById = selected ? new Map([[selected.id, selected]]) : new Map()
+    const hydrated = [...summaries]
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map((summary) => {
+        const authority = selectedById.get(summary.id)
+        return authority ? hydrateSession(authority) : hydrateSessionSummary(summary)
+      })
+    const hasExplicitSelection = selection !== undefined
+    const requestedSelection = hasExplicitSelection ? selection.sessionId : manifest?.lastSessionId
+    const selectedSessionId = hydrated.some((session) => session.id === requestedSelection)
+      ? requestedSelection
+      : hasExplicitSelection
+        ? undefined
+        : hydrated[0]?.id
+    set({ sessions: hydrated, selectedSessionId } as Partial<State>)
+  },
+
   upsertPersistedSession: (session) => {
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
+      if (existing?.contentLoaded === false) {
+        const loaded = hydrateSession(session)
+        const hydrated: ChatSession = {
+          ...loaded,
+          number: existing.number ?? loaded.number,
+          title: existing.title,
+          pinned: existing.pinned,
+          archivedAt: existing.archivedAt,
+          revision: Math.max(existing.revision ?? 0, loaded.revision ?? 0),
+          filesRevision: Math.max(existing.filesRevision ?? 0, loaded.filesRevision ?? 0),
+          updatedAt: Math.max(existing.updatedAt, loaded.updatedAt),
+          ...(existing.unsavedTitle ? { unsavedTitle: true } : {})
+        }
+        markExternallyHydratedSession(hydrated, session)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? hydrated : candidate
+          )
+        } as Partial<State>
+      }
       const incomingSessionRevision = sessionRevision(session)
       const existingSessionRevision = existing ? sessionRevision(existing) : -1
       if (
@@ -492,10 +545,15 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         !hydratedSession.planHistoryProjections && existing?.planHistoryProjections
           ? { planHistoryProjections: existing.planHistoryProjections }
           : {}
+      const unsavedLocalTitle =
+        existing?.unsavedTitle === true && existing.title !== session.title
+          ? { title: existing.title, unsavedTitle: true as const }
+          : {}
       const hydratedWithTransientState = {
         ...hydratedSession,
         ...retainedPlanHistory,
-        ...currentPlanProjection
+        ...currentPlanProjection,
+        ...unsavedLocalTitle
       }
       markExternallyHydratedSession(hydratedWithTransientState, session)
       const nextSessions = [
@@ -553,6 +611,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           status,
           interactionState,
           runtimeContext: session.runtimeContext,
+          activePlanProjection: retainRuntimePlanProjection(current, session),
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
         markExternallyHydratedSession(projected, session)
@@ -574,10 +633,22 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           return state
         }
 
+        const activePlanProjection = matchesPersistedPlanProjection(
+          current.activePlanProjection,
+          session
+        )
+          ? current.activePlanProjection
+          : retainRuntimePlanProjection(current, session)
+        const projectionIsNewer =
+          activePlanProjection !== undefined &&
+          incomingRevision !== undefined &&
+          activePlanProjection.revision > incomingRevision
         const interactionState = {
           ...inferSessionInteractionState(current),
           permission: session.runtimeContext?.permission?.state === 'pending',
-          plan: session.runtimeContext?.plan?.approval === 'pending'
+          plan: projectionIsNewer
+            ? activePlanProjection.approval === 'pending'
+            : session.runtimeContext?.plan?.approval === 'pending'
         }
         const status = current.compacting
           ? current.status
@@ -585,12 +656,6 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
               { ...current, runtimeContext: session.runtimeContext },
               interactionState
             )
-        const activePlanProjection = matchesPersistedPlanProjection(
-          current.activePlanProjection,
-          session
-        )
-          ? current.activePlanProjection
-          : retainRuntimePlanProjection(current, session)
         const projected: ChatSession = {
           ...current,
           ...mergeRuntimeConversationAuthority(current, session),
@@ -683,14 +748,25 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           !graph?.changed &&
           projected === merged &&
           sessionRevision(session) <= sessionRevision(current)
-        )
-          return state
+        ) {
+          const acknowledged = withAcknowledgedUnsavedTitle(current, session)
+          if (acknowledged === current) return state
+          markExternallyHydratedSession(acknowledged, session)
+          return {
+            sessions: state.sessions.map((candidate) =>
+              candidate.id === session.id ? acknowledged : candidate
+            )
+          } as Partial<State>
+        }
       }
 
-      projected = {
-        ...projected,
-        revision: Math.max(sessionRevision(projected), sessionRevision(session))
-      }
+      projected = withAcknowledgedUnsavedTitle(
+        {
+          ...projected,
+          revision: Math.max(sessionRevision(projected), sessionRevision(session))
+        },
+        session
+      )
       markExternallyHydratedSession(projected, session)
       return {
         sessions: state.sessions.map((candidate) =>

@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { AgentComputeService } from '../compute/agent-compute-service'
+import { ConnectorService } from '../connectors/service'
 import { NotebookLocalRpcServer } from './local-rpc-server'
+import type { SpecialistProfileView } from '../../shared/specialist'
 
 const fakeConnector = {
   call: async (s: string, m: string, a: Record<string, unknown>) => ({ s, m, a })
@@ -116,6 +118,52 @@ describe('mcpCall RPC', () => {
     })
     expect(await res.json()).toEqual({
       result: { s: 'chemistry', m: 'pubchem_get_properties', a: { cids: [1] } }
+    })
+  })
+
+  it('rejects a tool name passed as the server without reporting a Specialist permission denial', async () => {
+    const specialist: SpecialistProfileView = {
+      id: 'literature-specialist',
+      name: 'Literature Specialist',
+      description: '',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: {
+        skillIds: [],
+        connectorIds: ['literature'],
+        connectorTools: []
+      },
+      revision: 1
+    }
+    const connectorService = new ConnectorService({
+      getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
+      resolveApiKey: () => undefined,
+      resolveSpecialistProfile: async () => specialist
+    })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      connectorService
+    })
+    server.registerSessionSpecialist('s-42', specialist.id)
+    const { endpoint, token } = await sessionConnection(server)
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'mcpCall',
+        params: {
+          server: 'openalex_search_works',
+          method: { query: 'osimertinib EGFR T790M resistance NSCLC' }
+        }
+      })
+    })
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toEqual({
+      error: 'mcpCall requires string server and method names.'
     })
   })
 
@@ -921,6 +969,215 @@ describe('computeCall RPC', () => {
         workspaceCwd: 'workspace/project'
       }
     ])
+  })
+
+  it('reuses the first submit_job result when the same invocation is retried', async () => {
+    const submitJob = vi
+      .fn()
+      .mockResolvedValueOnce({ job_id: 'job-1', status: 'queued' })
+      .mockResolvedValueOnce({ job_id: 'job-2', status: 'queued' })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: { submitJob } as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const submit = (): Promise<Response> =>
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: {
+            op: 'submit_job',
+            invocation_id: 'invocation-1',
+            provider_id: 'ssh:biowulf',
+            intent: 'analyze data',
+            command: 'python analyze.py'
+          }
+        })
+      })
+
+    await expect((await submit()).json()).resolves.toEqual({
+      result: { job_id: 'job-1', status: 'queued' }
+    })
+    await expect((await submit()).json()).resolves.toEqual({
+      result: { job_id: 'job-1', status: 'queued' }
+    })
+    expect(submitJob).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a reused submit_job invocation with a different request', async () => {
+    const submitJob = vi.fn().mockResolvedValue({ job_id: 'job-1', status: 'queued' })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: { submitJob } as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const submit = (command: string): Promise<Response> =>
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: {
+            op: 'submit_job',
+            invocation_id: 'invocation-1',
+            provider_id: 'ssh:biowulf',
+            intent: 'analyze data',
+            command
+          }
+        })
+      })
+
+    expect((await submit('python analyze.py')).status).toBe(200)
+    const conflict = await submit('python different.py')
+
+    expect(conflict.status).toBe(409)
+    await expect(conflict.json()).resolves.toEqual({
+      error: 'invocation_id was already used with a different submit_job request.'
+    })
+    expect(submitJob).toHaveBeenCalledTimes(1)
+  })
+
+  it('bounds completed submit_job invocations for a long-lived session', async () => {
+    const submitJob = vi.fn().mockImplementation(async () => ({
+      job_id: `job-${submitJob.mock.calls.length}`,
+      status: 'queued'
+    }))
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: { submitJob } as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const submit = async (invocationId: string): Promise<{ job_id: string; status: string }> => {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: {
+            op: 'submit_job',
+            invocation_id: invocationId,
+            provider_id: 'ssh:biowulf',
+            intent: 'analyze data',
+            command: 'python analyze.py'
+          }
+        })
+      })
+      const body = (await response.json()) as { result: { job_id: string; status: string } }
+      return body.result
+    }
+
+    for (let index = 0; index <= 100; index += 1) {
+      await submit(`invocation-${index}`)
+    }
+
+    await expect(submit('invocation-0')).resolves.toEqual({
+      job_id: 'job-102',
+      status: 'queued'
+    })
+    await expect(submit('invocation-100')).resolves.toEqual({
+      job_id: 'job-101',
+      status: 'queued'
+    })
+    expect(submitJob).toHaveBeenCalledTimes(102)
+  })
+
+  it('retains in-flight submit_job invocations while bounding completed entries', async () => {
+    let resolvePending!: (value: { job_id: string; status: string }) => void
+    const pending = new Promise<{ job_id: string; status: string }>((resolve) => {
+      resolvePending = resolve
+    })
+    const submitJob = vi.fn().mockImplementation(async () => {
+      if (submitJob.mock.calls.length === 1) return pending
+      return { job_id: `job-${submitJob.mock.calls.length}`, status: 'queued' }
+    })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: { submitJob } as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const submit = async (invocationId: string): Promise<{ job_id: string; status: string }> => {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: {
+            op: 'submit_job',
+            invocation_id: invocationId,
+            provider_id: 'ssh:biowulf',
+            intent: 'analyze data',
+            command: 'python analyze.py'
+          }
+        })
+      })
+      const body = (await response.json()) as { result: { job_id: string; status: string } }
+      return body.result
+    }
+
+    const firstPending = submit('pending-invocation')
+    await vi.waitFor(() => expect(submitJob).toHaveBeenCalledTimes(1))
+    const retriedPending = submit('pending-invocation')
+    for (let index = 0; index <= 100; index += 1) {
+      await submit(`completed-invocation-${index}`)
+    }
+
+    resolvePending({ job_id: 'job-pending', status: 'queued' })
+    await expect(firstPending).resolves.toEqual({ job_id: 'job-pending', status: 'queued' })
+    await expect(retriedPending).resolves.toEqual({ job_id: 'job-pending', status: 'queued' })
+    expect(submitJob).toHaveBeenCalledTimes(102)
+  })
+
+  it('keeps a successor session cache when an old submit_job later fails', async () => {
+    let rejectOldSubmission!: (error: Error) => void
+    const oldSubmission = new Promise<never>((_resolve, reject) => {
+      rejectOldSubmission = reject
+    })
+    const submitJob = vi.fn().mockImplementation(async () => {
+      if (submitJob.mock.calls.length === 1) return oldSubmission
+      return { job_id: `job-${submitJob.mock.calls.length}`, status: 'queued' }
+    })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: { submitJob } as never
+    })
+    const submit = (endpoint: string, token: string, invocationId: string): Promise<Response> =>
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: {
+            op: 'submit_job',
+            invocation_id: invocationId,
+            provider_id: 'ssh:biowulf',
+            intent: 'analyze data',
+            command: 'python analyze.py'
+          }
+        })
+      })
+
+    const oldConnection = await sessionConnection(server)
+    const oldResponse = submit(oldConnection.endpoint, oldConnection.token, 'old-invocation')
+    await vi.waitFor(() => expect(submitJob).toHaveBeenCalledTimes(1))
+    server.releaseSessionCapabilities('s-42')
+
+    const successorConnection = await sessionConnection(server)
+    await expect(
+      (
+        await submit(successorConnection.endpoint, successorConnection.token, 'new-invocation')
+      ).json()
+    ).resolves.toEqual({ result: { job_id: 'job-2', status: 'queued' } })
+
+    rejectOldSubmission(new Error('old submission failed'))
+    expect((await oldResponse).status).toBe(500)
+    await expect(
+      (
+        await submit(successorConnection.endpoint, successorConnection.token, 'new-invocation')
+      ).json()
+    ).resolves.toEqual({ result: { job_id: 'job-2', status: 'queued' } })
+    expect(submitJob).toHaveBeenCalledTimes(2)
   })
 
   it('serializes submit_job compute call errors', async () => {

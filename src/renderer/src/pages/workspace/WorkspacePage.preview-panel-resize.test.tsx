@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
 
 import {
   createInitialPreviewWorkbenchState,
@@ -11,7 +12,11 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
+import {
+  createInitialSessionState,
+  type ChatSession,
+  useSessionStore
+} from '@/stores/session-store'
 
 const workspacePageHarness = vi.hoisted(() => ({
   isMobile: false,
@@ -263,6 +268,7 @@ const { WorkspacePage } = await import('./WorkspacePage')
 describe('WorkspacePage preview panel resize sync', () => {
   let container: HTMLDivElement
   let root: Root
+  let notebookAvailableListener: ((notebook: NotebookSessionReference) => void) | undefined
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
@@ -280,6 +286,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     workspacePageHarness.previewOnResize = undefined
     workspacePageHarness.previewPanelRef = undefined
     filePreviewDialogHarness.item = undefined
+    notebookAvailableListener = undefined
     vi.clearAllMocks()
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       callback(0)
@@ -299,7 +306,10 @@ describe('WorkspacePage preview panel resize sync', () => {
     window.api = {
       platform: 'linux',
       notebook: {
-        onAvailable: vi.fn(() => vi.fn()),
+        onAvailable: vi.fn((listener: (notebook: NotebookSessionReference) => void) => {
+          notebookAvailableListener = listener
+          return vi.fn()
+        }),
         getReference: vi.fn(() => Promise.resolve(null))
       },
       reviewer: {
@@ -347,6 +357,23 @@ describe('WorkspacePage preview panel resize sync', () => {
         />
       )
     })
+  }
+
+  const selectSession = (sessionId: string, projectId: string): void => {
+    const now = Date.now()
+    const session: ChatSession = {
+      id: sessionId,
+      projectId,
+      title: 'Session',
+      cwd: `/workspace/${projectId}`,
+      status: 'idle',
+      messages: [],
+      createdAt: now,
+      updatedAt: now
+    }
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: projectId })
+    useSessionStore.setState({ sessions: [session], selectedSessionId: sessionId })
+    usePreviewWorkbenchStore.getState().activateProject(projectId)
   }
 
   const getPreviewToggle = (): HTMLButtonElement => {
@@ -612,6 +639,147 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(container.querySelector('[data-testid="workspace-preview-toggle"]')).toBeNull()
     expect(workspacePageHarness.previewPanelDefaultSize).toBe('0%')
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
+  })
+
+  it('opens and activates the notebook preview when its entry first becomes available', async () => {
+    selectSession('session-1', 'project-1')
+    await renderPage(false)
+
+    const notebook: NotebookSessionReference = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace/project-1',
+      notebookSessionRoot: '/notebooks/project-1/session-1',
+      dataRoot: '/notebooks/project-1/session-1/data',
+      runtimeRoot: '/notebooks/project-1/session-1/runtime',
+      runJsonPath: '/notebooks/project-1/session-1/run.json'
+    }
+
+    await act(async () => {
+      notebookAvailableListener?.(notebook)
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'tool:session-1:notebook',
+      panelState: 'open',
+      items: [
+        expect.objectContaining({
+          id: 'tool:session-1:notebook',
+          toolKind: 'notebook',
+          notebook
+        })
+      ]
+    })
+  })
+
+  it.each([
+    ['another session', 'project-1', 'session-2'],
+    ['another project', 'project-2', 'session-1']
+  ])('does not open the notebook preview for %s', async (_label, projectId, sessionId) => {
+    selectSession('session-1', 'project-1')
+    await renderPage(false)
+
+    await act(async () => {
+      notebookAvailableListener?.({
+        projectId,
+        sessionId,
+        workspaceCwd: `/workspace/${projectId}`,
+        notebookSessionRoot: `/notebooks/${projectId}/${sessionId}`,
+        dataRoot: `/notebooks/${projectId}/${sessionId}/data`,
+        runtimeRoot: `/notebooks/${projectId}/${sessionId}/runtime`,
+        runJsonPath: `/notebooks/${projectId}/${sessionId}/run.json`
+      })
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: undefined,
+      panelState: 'collapsed',
+      items: []
+    })
+  })
+
+  it('waits for the target project preview slice before opening the notebook', async () => {
+    selectSession('session-1', 'project-1')
+    await renderPage(false)
+    act(() => usePreviewWorkbenchStore.getState().activateProject('previous-project'))
+
+    const notebook: NotebookSessionReference = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace/project-1',
+      notebookSessionRoot: '/notebooks/project-1/session-1',
+      dataRoot: '/notebooks/project-1/session-1/data',
+      runtimeRoot: '/notebooks/project-1/session-1/runtime',
+      runJsonPath: '/notebooks/project-1/session-1/run.json'
+    }
+    await act(async () => notebookAvailableListener?.(notebook))
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeProjectId: 'previous-project',
+      activeItemId: undefined,
+      panelState: 'collapsed',
+      items: []
+    })
+
+    act(() => usePreviewWorkbenchStore.getState().activateProject('project-1'))
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeProjectId: 'project-1',
+      activeItemId: 'tool:session-1:notebook',
+      panelState: 'open',
+      items: [expect.objectContaining({ id: 'tool:session-1:notebook', notebook })]
+    })
+  })
+
+  it('refreshes an existing notebook entry without reopening or activating it', async () => {
+    selectSession('session-1', 'project-1')
+    await renderPage(false)
+
+    const notebook: NotebookSessionReference = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace/project-1',
+      notebookSessionRoot: '/notebooks/project-1/session-1/root',
+      dataRoot: '/notebooks/project-1/session-1/root/data',
+      runtimeRoot: '/notebooks/project-1/session-1/root/runtime',
+      runJsonPath: '/notebooks/project-1/session-1/root/run.json'
+    }
+    await act(async () => notebookAvailableListener?.(notebook))
+
+    const fileItem: PreviewFileItem = {
+      id: 'file:session-1:/workspace/project-1/report.md',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'report.md',
+      path: '/workspace/project-1/report.md',
+      format: 'markdown',
+      name: 'report.md'
+    }
+    act(() => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(fileItem)
+      usePreviewWorkbenchStore.getState().collapsePanel()
+    })
+
+    const delegatedNotebook = {
+      ...notebook,
+      notebookSessionRoot: '/notebooks/project-1/session-1/delegated',
+      dataRoot: '/notebooks/project-1/session-1/delegated/data',
+      runtimeRoot: '/notebooks/project-1/session-1/delegated/runtime',
+      runJsonPath: '/notebooks/project-1/session-1/delegated/run.json'
+    }
+    await act(async () => notebookAvailableListener?.(delegatedNotebook))
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: fileItem.id,
+      panelState: 'collapsed',
+      items: [
+        expect.objectContaining({
+          id: 'tool:session-1:notebook',
+          notebook: delegatedNotebook
+        }),
+        expect.objectContaining({ id: fileItem.id })
+      ]
+    })
   })
 
   it('hosts a cross-Project file dialog without creating or activating a Files tab', async () => {

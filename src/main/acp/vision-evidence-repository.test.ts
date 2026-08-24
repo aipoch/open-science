@@ -122,4 +122,22 @@ describe('VisionEvidenceRepository', () => {
 
     await expect(client.visionEvidence.count()).resolves.toBe(0)
   })
+
+  it('does not recreate evidence for a soft-deleted Project', async () => {
+    await client.project.update({ where: { id: 'project-1' }, data: { deletedAt: new Date() } })
+
+    await repository.save({
+      identityKey: IDENTITY,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      source: { kind: 'message-image', messageId: 'message-1', imageId: 'image-1' },
+      imageChecksum: HASH_A,
+      mimeType: 'image/png',
+      extractorFingerprint: HASH_A,
+      evidenceSchemaVersion: 2,
+      evidenceJson: '{"summary":"chart"}'
+    })
+
+    await expect(client.visionEvidence.count()).resolves.toBe(0)
+  })
 })

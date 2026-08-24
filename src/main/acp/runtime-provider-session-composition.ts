@@ -169,6 +169,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     adopter: providerSessionAdopter,
     clearLivePermissionProfile: (sessionId) =>
       session.permissionContext.clearLivePermissionProfile(sessionId),
+    resolveSpecialistIdentity: options.resolveSpecialistIdentity,
     resolveSpecialistSkills: options.resolveSpecialistSkills,
     resolveProjectAgentContext: options.resolveProjectAgentContext,
     updateCwd,

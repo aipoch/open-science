@@ -21,7 +21,7 @@ import {
   Brain,
   CheckCircle2,
   CircleStop,
-  Scissors,
+  Minimize2,
   X,
   type LucideIcon
 } from 'lucide-react'
@@ -553,7 +553,7 @@ const ContextHistoryChart = ({
                         run: point.runNumber
                       })}
                     >
-                      <Scissors className="size-3" aria-hidden="true" />
+                      <Minimize2 className="size-3" aria-hidden="true" />
                     </span>
                   ) : null}
                 </div>

@@ -11,6 +11,7 @@ type RuntimeEventListener = (
 ) => void
 type RuntimeEventSubscriptionOwner = {
   observeEvent: (event: AcpRuntimeEvent) => void
+  observeEvents: (events: readonly AcpRuntimeEvent[]) => void
   observeInitialSnapshot: (
     events: readonly AcpRuntimeEvent[],
     snapshot?: RuntimeEventSnapshotContext
@@ -127,24 +128,34 @@ const createRuntimeEventSubscriptionOwner = (): RuntimeEventSubscriptionOwner =>
     publish(unseen, snapshot)
   }
 
-  return {
-    observeEvent(event: AcpRuntimeEvent): void {
+  const observeEvents = (events: readonly AcpRuntimeEvent[]): void => {
+    const unseen: AcpRuntimeEvent[] = []
+    for (const event of events) {
       if (
         retainedEventIds.has(event.id) ||
         pendingInitialEvents.has(event.id) ||
         directEventsSinceSnapshot.has(event.id)
       ) {
-        return
+        continue
       }
       arrivalSequence += 1
       directEventsSinceSnapshot.set(event.id, arrivalSequence)
       if (!initialized) {
         pendingInitialEvents.set(event.id, event)
-        return
+        continue
       }
-      retain([event])
-      publish([event])
+      unseen.push(event)
+    }
+    if (unseen.length === 0) return
+    retain(unseen)
+    publish(unseen)
+  }
+
+  return {
+    observeEvent(event: AcpRuntimeEvent): void {
+      observeEvents([event])
     },
+    observeEvents,
     observeInitialSnapshot(
       events: readonly AcpRuntimeEvent[],
       snapshot?: RuntimeEventSnapshotContext

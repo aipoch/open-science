@@ -1,5 +1,4 @@
-/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Copy } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
 import { useMemo, useState } from 'react'
 import { useTranslation, Trans } from 'react-i18next'
@@ -16,12 +15,15 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
+import { localizeConnectorError } from './connector-error-message'
+import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
 import { isCustomConnectorName, toCustomConnectorName } from '../../../../shared/custom-connector'
 import {
   RESOURCE_ID_MAX_LENGTH,
   inferResourceId,
   validateResourceId
 } from '../../../../shared/resource-id'
+import { DEFAULT_LOOPBACK_OAUTH_REDIRECT_URI } from '../../../../shared/oauth-redirect'
 
 // Which kind of custom connector is being added: a local stdio command or a remote HTTP/SSE server.
 type ConnectorMode = 'local' | 'remote'
@@ -242,6 +244,23 @@ export function ConnectorAddForm({
   const [clientId, setClientId] = useState(
     editServer?.oauth?.clientId ?? initialTemplate?.oauth?.clientId ?? ''
   )
+  const [redirectUri, setRedirectUri] = useState(
+    editServer?.oauth?.redirectUri ?? initialTemplate?.oauth?.redirectUri ?? ''
+  )
+  const [usePreRegisteredOAuthClient, setUsePreRegisteredOAuthClient] = useState(
+    Boolean(
+      editServer?.oauth?.clientId ||
+      editServer?.oauth?.hasClientSecret ||
+      initialTemplate?.oauth?.clientId ||
+      initialTemplate?.oauth?.redirectUri ||
+      initialTemplate?.requiredSecrets?.oauthClientSecret
+    )
+  )
+  const [oauthDiscoveryOpen, setOAuthDiscoveryOpen] = useState(
+    Boolean(authorizationServerUrl || clientMetadataUrl)
+  )
+  const [customRedirectUriOpen, setCustomRedirectUriOpen] = useState(Boolean(redirectUri))
+  const [callbackUriCopied, setCallbackUriCopied] = useState(false)
   // Secrets are write-only: an edit starts blank and preserves the encrypted value unless the user
   // enters a replacement or explicitly removes it.
   const [clientSecret, setClientSecret] = useState('')
@@ -265,6 +284,7 @@ export function ConnectorAddForm({
   const [trusted, setTrusted] = useState(isEdit)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [oauthSignInServer, setOAuthSignInServer] = useState<CustomServerView>()
   // A generated-ID collision must remain visible instead of leaving the disabled submit button as
   // the only sign that something needs attention.
   const advancedVisible =
@@ -277,12 +297,19 @@ export function ConnectorAddForm({
   const requiredEnvironment = initialTemplate?.requiredSecrets?.environment ?? []
   const requiredHeaders = initialTemplate?.requiredSecrets?.headers ?? []
   const requiresOAuthClientSecret = initialTemplate?.requiredSecrets?.oauthClientSecret === true
+  const copyDefaultCallbackUri = async (): Promise<void> => {
+    if (!navigator.clipboard?.writeText) return
+    try {
+      await navigator.clipboard.writeText(DEFAULT_LOOPBACK_OAUTH_REDIRECT_URI)
+      setCallbackUriCopied(true)
+    } catch {
+      // Clipboard access may be unavailable in sandboxed renderer contexts.
+    }
+  }
   const oauthRegistrationValid =
     remoteAuth !== 'oauth' ||
-    (!clientSecret.trim() && !clientId.trim()) ||
-    (Boolean(clientId.trim()) &&
-      Boolean(authorizationServerUrl.trim()) &&
-      !clientMetadataUrl.trim())
+    !usePreRegisteredOAuthClient ||
+    (Boolean(clientId.trim()) && Boolean(authorizationServerUrl.trim()))
   const requiredSecretValuesFilled =
     (requiredEnvironment.length === 0 ||
       (mode === 'local' &&
@@ -332,9 +359,16 @@ export function ConnectorAddForm({
               ...(authorizationServerUrl.trim()
                 ? { authorizationServerUrl: authorizationServerUrl.trim() }
                 : {}),
-              ...(clientMetadataUrl.trim() ? { clientMetadataUrl: clientMetadataUrl.trim() } : {}),
+              ...(!usePreRegisteredOAuthClient && clientMetadataUrl.trim()
+                ? { clientMetadataUrl: clientMetadataUrl.trim() }
+                : {}),
               ...(oauthScopes.length ? { scopes: oauthScopes } : {}),
-              ...(clientId.trim() ? { clientId: clientId.trim() } : {})
+              ...(usePreRegisteredOAuthClient && clientId.trim()
+                ? { clientId: clientId.trim() }
+                : {}),
+              ...(usePreRegisteredOAuthClient && clientId.trim() && redirectUri.trim()
+                ? { redirectUri: redirectUri.trim() }
+                : {})
             }
           : null
       const shared = {
@@ -370,12 +404,13 @@ export function ConnectorAddForm({
             ...oauth,
             ...(removeClientSecret
               ? { clientSecret: null }
-              : clientSecret.trim()
+              : usePreRegisteredOAuthClient && clientSecret.trim()
                 ? { clientSecret: clientSecret.trim() }
                 : {})
           }
         }
         await updateCustomServer(request)
+        onDone()
       } else {
         const request: AddCustomServerRequest = {
           ...(submittedId ? { id: submittedId } : {}),
@@ -389,28 +424,18 @@ export function ConnectorAddForm({
         if (mode === 'remote' && oauth) {
           request.oauth = {
             ...oauth,
-            ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {})
+            ...(usePreRegisteredOAuthClient && clientSecret.trim()
+              ? { clientSecret: clientSecret.trim() }
+              : {})
           }
         }
-        await addCustomServer(request)
+        const created = await addCustomServer(request)
+        if (request.oauth) setOAuthSignInServer(created)
+        else onDone()
       }
-      onDone()
     } catch (err) {
       const message = err instanceof Error ? err.message : undefined
-      const localizedMessage =
-        message === 'Authorization server URL is required for a pre-registered client.'
-          ? t('Authorization server URL is required for a pre-registered client.')
-          : message === 'Client metadata URL cannot be combined with a pre-registered client.'
-            ? t('Client metadata URL cannot be combined with a pre-registered client.')
-            : message === 'Client ID is required when a client secret is configured.'
-              ? t('Client ID is required when a client secret is configured.')
-              : message ===
-                  'Secure credential storage is unavailable. Unlock the system keychain and retry.'
-                ? t(
-                    'Secure credential storage is unavailable. Unlock the system keychain and retry.'
-                  )
-                : undefined
-      setError(localizedMessage ?? message ?? t('Failed to save connector.'))
+      setError(message ? localizeConnectorError(message, t) : t('Failed to save connector.'))
     } finally {
       setSubmitting(false)
     }
@@ -725,10 +750,7 @@ export function ConnectorAddForm({
                     <>
                       <div data-slot="settings-editor-field" className={fieldClassName}>
                         <label className={fieldLabelClassName} htmlFor="connector-oauth-scopes">
-                          {t('OAuth scopes')}{' '}
-                          <span className="font-normal text-muted-foreground">
-                            {t('(optional)')}
-                          </span>
+                          {t('OAuth scopes')}
                         </label>
                         <Input
                           id="connector-oauth-scopes"
@@ -737,152 +759,261 @@ export function ConnectorAddForm({
                           placeholder="openid profile"
                           onChange={(event) => setOauthScopesText(event.target.value)}
                         />
+                        <p className={helperClassName}>
+                          {t('Leave blank to use the server defaults.')}
+                        </p>
                       </div>
-                      <div data-slot="settings-editor-field" className={fieldClassName}>
-                        <label className={fieldLabelClassName} htmlFor="connector-oauth-server">
-                          {t('Authorization server URL')}{' '}
-                          <span className="font-normal text-muted-foreground">
-                            {t('(optional)')}
-                          </span>
-                        </label>
-                        <Input
-                          id="connector-oauth-server"
-                          aria-label={t('Authorization server URL')}
-                          value={authorizationServerUrl}
-                          placeholder={t('Auto-discover from MCP server')}
-                          className="font-mono"
-                          onChange={(event) => setAuthorizationServerUrl(event.target.value)}
-                        />
-                        {clientId.trim() && !authorizationServerUrl.trim() ? (
-                          <p className="text-xs leading-5 text-destructive">
-                            {t('Authorization server URL is required for a pre-registered client.')}
-                          </p>
-                        ) : null}
-                      </div>
-                      <div data-slot="settings-editor-field" className={fieldClassName}>
-                        <label
-                          className={fieldLabelClassName}
-                          htmlFor="connector-oauth-client-metadata"
-                        >
-                          {t('Client metadata URL')}{' '}
-                          <span className="font-normal text-muted-foreground">
-                            {t('(optional)')}
-                          </span>
-                        </label>
-                        <Input
-                          id="connector-oauth-client-metadata"
-                          aria-label={t('Client metadata URL')}
-                          value={clientMetadataUrl}
-                          placeholder={t('Use dynamic client registration by default')}
-                          className="font-mono"
-                          disabled={Boolean(clientId.trim()) && !clientMetadataUrl.trim()}
-                          onChange={(event) => setClientMetadataUrl(event.target.value)}
-                        />
-                        {clientId.trim() && clientMetadataUrl.trim() ? (
-                          <p className="text-xs leading-5 text-destructive">
-                            {t(
-                              'Client metadata URL cannot be combined with a pre-registered client.'
-                            )}
-                          </p>
-                        ) : null}
-                      </div>
-                      <div data-slot="settings-editor-field" className={fieldClassName}>
-                        <label className={fieldLabelClassName} htmlFor="connector-oauth-client-id">
-                          {t('Client ID')}{' '}
-                          <span className="font-normal text-muted-foreground">
-                            {t('(optional)')}
-                          </span>
-                        </label>
-                        <Input
-                          id="connector-oauth-client-id"
-                          aria-label={t('Client ID')}
-                          value={clientId}
-                          placeholder={t('Pre-registered client ID')}
-                          className="font-mono"
-                          disabled={Boolean(clientMetadataUrl.trim()) && !clientId.trim()}
+                      <label className="flex items-start gap-2.5 py-1">
+                        <input
+                          id="connector-oauth-pre-registered-client"
+                          type="checkbox"
+                          aria-label={t('Use a pre-registered OAuth client')}
+                          checked={usePreRegisteredOAuthClient}
+                          disabled={requiresOAuthClientSecret}
+                          className="mt-0.5 size-4 shrink-0"
                           onChange={(event) => {
-                            const nextClientId = event.target.value
-                            setClientId(nextClientId)
+                            const checked = event.target.checked
+                            setUsePreRegisteredOAuthClient(checked)
                             if (editServer?.oauth?.hasClientSecret) {
-                              setRemoveClientSecret(
-                                nextClientId.trim() !== (editServer.oauth.clientId ?? '')
-                              )
+                              setRemoveClientSecret(!checked)
                             }
                           }}
                         />
-                        {clientSecret.trim() && !clientId.trim() ? (
-                          <p className="text-xs leading-5 text-destructive">
-                            {t('Client ID is required when a client secret is configured.')}
-                          </p>
-                        ) : null}
-                      </div>
-                      <div data-slot="settings-editor-field" className={fieldClassName}>
-                        <label
-                          className={fieldLabelClassName}
-                          htmlFor="connector-oauth-client-secret"
-                        >
-                          {t('Client secret')}{' '}
-                          <span className="font-normal text-muted-foreground">
-                            {t('(optional)')}
+                        <span>
+                          <span className="block text-sm font-medium text-foreground">
+                            {t('Use a pre-registered OAuth client')}
                           </span>
-                        </label>
-                        <Input
-                          id="connector-oauth-client-secret"
-                          aria-label={t('Client secret')}
-                          type="password"
-                          value={clientSecret}
-                          placeholder={
-                            isEdit && editServer?.oauth?.hasClientSecret
-                              ? t('Leave blank to keep the saved secret')
-                              : t('Pre-registered client secret')
-                          }
-                          className="font-mono"
-                          disabled={
-                            !encryptionAvailable ||
-                            (Boolean(clientMetadataUrl.trim()) && !clientId.trim())
-                          }
-                          onChange={(event) => {
-                            setClientSecret(event.target.value)
-                            if (event.target.value) setRemoveClientSecret(false)
-                          }}
-                        />
-                        {!encryptionAvailable ? (
-                          <p className="text-xs leading-5 text-destructive">
-                            {t(
-                              'Secure credential storage is unavailable. Unlock the system keychain and retry.'
-                            )}
-                          </p>
-                        ) : null}
-                        {isEdit && editServer?.oauth?.hasClientSecret ? (
-                          <div className="flex items-center justify-between gap-3">
-                            <p className={helperClassName}>
-                              {removeClientSecret
-                                ? t('The saved client secret will be removed.')
-                                : t('A client secret is saved securely.')}
+                          <span className={helperClassName}>
+                            {requiresOAuthClientSecret
+                              ? t('Required by this imported Connector.')
+                              : t('Only enable this if your OAuth provider gave you a Client ID.')}
+                          </span>
+                        </span>
+                      </label>
+
+                      {usePreRegisteredOAuthClient || oauthDiscoveryOpen ? (
+                        <div data-slot="settings-editor-field" className={fieldClassName}>
+                          <label className={fieldLabelClassName} htmlFor="connector-oauth-server">
+                            {t('Authorization server URL')}
+                            {usePreRegisteredOAuthClient ? <RequiredMark /> : null}
+                          </label>
+                          <Input
+                            id="connector-oauth-server"
+                            aria-label={t('Authorization server URL')}
+                            value={authorizationServerUrl}
+                            placeholder={t('Auto-discover from MCP server')}
+                            className="font-mono"
+                            onChange={(event) => setAuthorizationServerUrl(event.target.value)}
+                          />
+                          {usePreRegisteredOAuthClient &&
+                          (clientId.trim() || clientSecret.trim()) &&
+                          !authorizationServerUrl.trim() ? (
+                            <p className="text-xs leading-5 text-destructive">
+                              {t(
+                                'Authorization server URL is required for a pre-registered client.'
+                              )}
                             </p>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => {
-                                setRemoveClientSecret((remove) => {
-                                  if (!remove) setClientSecret('')
-                                  return !remove
-                                })
-                              }}
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {!usePreRegisteredOAuthClient ? (
+                        oauthDiscoveryOpen ? (
+                          <div data-slot="settings-editor-field" className={fieldClassName}>
+                            <label
+                              className={fieldLabelClassName}
+                              htmlFor="connector-oauth-client-metadata"
                             >
-                              {removeClientSecret
-                                ? t('Keep saved client secret')
-                                : t('Remove saved client secret')}
-                            </Button>
+                              {t('Client metadata URL')}
+                            </label>
+                            <Input
+                              id="connector-oauth-client-metadata"
+                              aria-label={t('Client metadata URL')}
+                              value={clientMetadataUrl}
+                              placeholder="https://example.com/oauth/client-metadata.json"
+                              className="font-mono"
+                              onChange={(event) => setClientMetadataUrl(event.target.value)}
+                            />
                           </div>
-                        ) : null}
-                        {requiresOAuthClientSecret ? (
-                          <p className={helperClassName}>
-                            {t('This imported Connector requires a client secret entered locally.')}
-                          </p>
-                        ) : null}
-                      </div>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="link"
+                            size="sm"
+                            className="h-auto w-fit self-start justify-self-start p-0 text-xs"
+                            onClick={() => setOAuthDiscoveryOpen(true)}
+                          >
+                            {t('Configure OAuth discovery')}
+                          </Button>
+                        )
+                      ) : (
+                        <>
+                          <div data-slot="settings-editor-field" className={fieldClassName}>
+                            <label
+                              className={fieldLabelClassName}
+                              htmlFor="connector-oauth-client-id"
+                            >
+                              {t('Client ID')}
+                              <RequiredMark />
+                            </label>
+                            <Input
+                              id="connector-oauth-client-id"
+                              aria-label={t('Client ID')}
+                              value={clientId}
+                              placeholder={t('Pre-registered client ID')}
+                              className="font-mono"
+                              onChange={(event) => {
+                                const nextClientId = event.target.value
+                                setClientId(nextClientId)
+                                if (editServer?.oauth?.hasClientSecret) {
+                                  setRemoveClientSecret(
+                                    nextClientId.trim() !== (editServer.oauth.clientId ?? '')
+                                  )
+                                }
+                              }}
+                            />
+                            {clientSecret.trim() && !clientId.trim() ? (
+                              <p className="text-xs leading-5 text-destructive">
+                                {t('Client ID is required when a client secret is configured.')}
+                              </p>
+                            ) : null}
+                          </div>
+                          <div data-slot="settings-editor-field" className={fieldClassName}>
+                            <label
+                              className={fieldLabelClassName}
+                              htmlFor="connector-oauth-default-callback-uri"
+                            >
+                              {t('Default callback URI')}
+                            </label>
+                            <div className="flex min-w-0 items-center gap-2">
+                              <Input
+                                id="connector-oauth-default-callback-uri"
+                                aria-label={t('Default callback URI')}
+                                readOnly
+                                value={DEFAULT_LOOPBACK_OAUTH_REDIRECT_URI}
+                                className="min-w-0 font-mono"
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void copyDefaultCallbackUri()}
+                              >
+                                <Copy aria-hidden="true" />
+                                {callbackUriCopied ? t('Copied!') : t('Copy')}
+                              </Button>
+                            </div>
+                            <p className={helperClassName}>
+                              {t(
+                                'Register this callback URI with your OAuth provider. Open Science adds an available port at runtime.'
+                              )}
+                            </p>
+                            {!customRedirectUriOpen ? (
+                              <Button
+                                type="button"
+                                variant="link"
+                                size="sm"
+                                className="h-auto justify-self-start p-0 text-xs"
+                                onClick={() => setCustomRedirectUriOpen(true)}
+                              >
+                                {t('Already registered a different callback URI?')}
+                              </Button>
+                            ) : null}
+                          </div>
+                          {customRedirectUriOpen ? (
+                            <div data-slot="settings-editor-field" className={fieldClassName}>
+                              <label
+                                className={fieldLabelClassName}
+                                htmlFor="connector-oauth-redirect-uri"
+                              >
+                                {t('Redirect URI')}
+                              </label>
+                              <Input
+                                id="connector-oauth-redirect-uri"
+                                aria-label={t('Redirect URI')}
+                                type="url"
+                                value={redirectUri}
+                                placeholder="http://127.0.0.1:8080/callback"
+                                className="font-mono"
+                                onChange={(event) => setRedirectUri(event.target.value)}
+                              />
+                              <p className={helperClassName}>
+                                {t(
+                                  'Use the exact loopback URI registered for this client. The port may differ at runtime.'
+                                )}
+                              </p>
+                            </div>
+                          ) : null}
+                          <div data-slot="settings-editor-field" className={fieldClassName}>
+                            <label
+                              className={fieldLabelClassName}
+                              htmlFor="connector-oauth-client-secret"
+                            >
+                              {t('Client secret')}
+                              {requiresOAuthClientSecret ? <RequiredMark /> : null}
+                            </label>
+                            <Input
+                              id="connector-oauth-client-secret"
+                              aria-label={t('Client secret')}
+                              type="password"
+                              value={clientSecret}
+                              placeholder={
+                                isEdit && editServer?.oauth?.hasClientSecret
+                                  ? t('Leave blank to keep the saved secret')
+                                  : t('Pre-registered client secret')
+                              }
+                              className="font-mono"
+                              disabled={!encryptionAvailable}
+                              onChange={(event) => {
+                                setClientSecret(event.target.value)
+                                if (event.target.value) setRemoveClientSecret(false)
+                              }}
+                            />
+                            {!encryptionAvailable ? (
+                              <p className="text-xs leading-5 text-destructive">
+                                {t(
+                                  'Secure credential storage is unavailable. Unlock the system keychain and retry.'
+                                )}
+                              </p>
+                            ) : null}
+                            {isEdit && editServer?.oauth?.hasClientSecret ? (
+                              <div className="flex items-center justify-between gap-3">
+                                <p className={helperClassName}>
+                                  {removeClientSecret
+                                    ? t('The saved client secret will be removed.')
+                                    : t('A client secret is saved securely.')}
+                                </p>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setRemoveClientSecret((remove) => {
+                                      if (!remove) setClientSecret('')
+                                      return !remove
+                                    })
+                                  }}
+                                >
+                                  {removeClientSecret
+                                    ? t('Keep saved client secret')
+                                    : t('Remove saved client secret')}
+                                </Button>
+                              </div>
+                            ) : null}
+                            {requiresOAuthClientSecret ? (
+                              <p className={helperClassName}>
+                                {t(
+                                  'This imported Connector requires a client secret entered locally.'
+                                )}
+                              </p>
+                            ) : !isEdit || !editServer?.oauth?.hasClientSecret ? (
+                              <p className={helperClassName}>
+                                {t('Leave blank for public clients.')}
+                              </p>
+                            ) : null}
+                          </div>
+                        </>
+                      )}
                     </>
                   ) : null}
 
@@ -959,10 +1090,25 @@ export function ConnectorAddForm({
                 : t('Adding…')
               : isEdit
                 ? t('Save changes')
-                : t('Add connector')}
+                : mode === 'remote' && remoteAuth === 'oauth'
+                  ? t('Add and sign in')
+                  : t('Add connector')}
           </Button>
         </div>
       </div>
+      {oauthSignInServer ? (
+        <ConnectorOAuthSignInDialog
+          server={oauthSignInServer}
+          onAuthenticated={() => {
+            setOAuthSignInServer(undefined)
+            onDone()
+          }}
+          onFinish={() => {
+            setOAuthSignInServer(undefined)
+            onDone()
+          }}
+        />
+      ) : null}
     </div>
   )
 }

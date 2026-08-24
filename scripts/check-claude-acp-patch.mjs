@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'
 
 const packageName = '@agentclientprotocol/claude-agent-acp'
-const expectedVersion = '0.60.0'
+const expectedVersion = '0.70.0'
 const require = createRequire(import.meta.url)
 const installedPackage = require(`${packageName}/package.json`)
 

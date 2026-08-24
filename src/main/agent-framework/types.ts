@@ -41,8 +41,14 @@ export type AgentAuthentication = {
   _meta?: Record<string, unknown>
 }
 
+// Codex ACP 1.6.2 `providers/list` exposes one configurable slot, `openai`.
+// `providers/set` on that id installs the custom gateway internally
+// (`modelProvider: "custom-gateway"`). Sending `custom-gateway` as the ACP
+// providerId is invalid_params on 1.6.2 (`only "openai" is configurable`).
+export const CODEX_ACP_CONFIGURABLE_PROVIDER_ID = 'openai' as const
+
 export type AgentProviderConfiguration = {
-  providerId: 'custom-gateway'
+  providerId: typeof CODEX_ACP_CONFIGURABLE_PROVIDER_ID
   apiType: 'openai'
   baseUrl: string
   headers: Record<string, string>

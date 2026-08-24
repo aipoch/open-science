@@ -96,8 +96,10 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
 
 // Installs the window listeners and runs the first probe. Called once from the app entry
 // (main.tsx) — deliberately NOT at module scope, so importing the store in tests stays free
-// of side effects. Probing happens on startup, on every link recovery, and on demand (panel
-// mount / Retry); there is no background polling.
+// of side effects. Probing happens on startup, on every link recovery, on window focus /
+// becoming visible while a previous probe is still failing, and on demand (Retry). There is
+// no background polling: a live link with a recovered path out (proxy, DNS) is picked up
+// when the user returns to the window, not on a timer.
 let monitorStarted = false
 
 export const startNetworkMonitor = (): void => {
@@ -111,6 +113,35 @@ export const startNetworkMonitor = (): void => {
   window.addEventListener('offline', () => {
     // A dropped link is a known-unreachable state, so surfaces can show it immediately.
     useNetworkStore.setState({ isOnline: false, connectivity: 'unreachable' })
+  })
+
+  let silentRecheckQueued = false
+  let silentProbeInFlight = false
+  const silentlyRecheckIfStale = (): void => {
+    const { isOnline, connectivity } = useNetworkStore.getState()
+    if (!isOnline) return
+    if (connectivity !== 'unreachable' && connectivity !== 'probe-failed') return
+    if (silentProbeInFlight) return
+    silentProbeInFlight = true
+    void useNetworkStore
+      .getState()
+      .probeConnectivity()
+      .finally(() => {
+        silentProbeInFlight = false
+      })
+  }
+  const scheduleSilentRecheck = (): void => {
+    if (silentRecheckQueued) return
+    silentRecheckQueued = true
+    queueMicrotask(() => {
+      silentRecheckQueued = false
+      silentlyRecheckIfStale()
+    })
+  }
+
+  window.addEventListener('focus', scheduleSilentRecheck)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') scheduleSilentRecheck()
   })
 
   if (navigator.onLine) {

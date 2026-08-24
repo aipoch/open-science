@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-import { MessageScrollerItem } from '@/components/ui/message-scroller'
+import { MessageScrollerItem, useMessageScroller } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
 import { ChevronRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -37,6 +37,7 @@ type WorkspaceActivityGroupProps = {
   onToggleRow: (activityId: string, nextExpanded: boolean) => void
   // Full runs are an ephemeral local projection keyed by the compact transcript runId.
   notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>
+  onNotebookRunNearViewport?: (runId: string, isNearViewport: boolean) => void
   // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
   contentPaddingClassName?: string
   // Map of job_id → JobSummary for jobs bound to activities in this group.
@@ -80,12 +81,14 @@ const WorkspaceActivityGroup = ({
   expansionOverrides,
   onToggleRow,
   notebookRunsById,
+  onNotebookRunNearViewport,
   contentPaddingClassName,
   jobsByActivityId,
   onOpenJobDetail,
   permission
 }: WorkspaceActivityGroupProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const { scrollToMessage } = useMessageScroller()
   // ToolSearch wrapper rows are hidden when concrete search rows are present.
   const renderableActivityEntries = getRenderableActivityEntries(group.activities)
   const visibleActivities = renderableActivityEntries.map(({ activity }) => activity)
@@ -102,7 +105,12 @@ const WorkspaceActivityGroup = ({
             aria-expanded={isExpanded}
             data-testid="tool-group-header"
             className="flex w-full items-center gap-2 rounded-lg py-[5px] pl-1.5 pr-2.5 text-[13px] transition-colors hover:bg-bg-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-            onClick={() => onToggleGroup(group.id)}
+            onClick={() => {
+              // Leave bottom-follow mode before this row changes height. The scroller then keeps the
+              // group in view instead of snapping the expanded content to the transcript bottom.
+              scrollToMessage(group.id, { align: 'nearest', behavior: 'auto' })
+              onToggleGroup(group.id)
+            }}
           >
             <span
               className={cn(
@@ -166,6 +174,7 @@ const WorkspaceActivityGroup = ({
                               : undefined)
                           }
                           isExpanded={isRowExpanded}
+                          onNotebookRunNearViewport={onNotebookRunNearViewport}
                           onToggle={onToggleRow}
                         />
                       ) : (

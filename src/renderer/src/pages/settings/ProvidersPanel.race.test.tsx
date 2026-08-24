@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { ProvidersPanel } from './ProvidersPanel'
 
@@ -11,7 +12,14 @@ import { ProvidersPanel } from './ProvidersPanel'
 let container: HTMLDivElement
 let root: Root
 
+const switchTo = (language: string): void => {
+  act(() => {
+    void i18next.changeLanguage(language)
+  })
+}
+
 beforeEach(() => {
+  switchTo('en')
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -38,6 +46,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  switchTo('en')
   vi.restoreAllMocks()
 })
 
@@ -52,6 +61,33 @@ const render = (): void => {
     )
   })
 }
+
+describe('ProvidersPanel: unexpected command failures', () => {
+  it('localizes a connection-test failure and keeps transport details out of the alert', async () => {
+    useSettingsStore.setState({
+      ...useSettingsStore.getState(),
+      validateProvider: vi
+        .fn()
+        .mockRejectedValue(
+          new Error('provider transport failed at /private/provider.sock')
+        ) as never
+    })
+    render()
+
+    const testConnection = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Test connection"]'
+    )
+    await act(async () => testConnection?.click())
+    switchTo('zh-Hans')
+
+    const alert = container.querySelector('[role="alert"]')
+    expect(alert?.textContent).toBe('无法测试模型服务商连接。')
+    expect(alert?.textContent).not.toContain('/private/provider.sock')
+    const details = container.querySelector('details')
+    expect(details?.open).toBe(false)
+    expect(details?.textContent).toContain('/private/provider.sock')
+  })
+})
 
 describe('ProvidersPanel: claude-isolated browser + paste race', () => {
   it('suppresses the cancel error when the user explicitly cancels the browser sign-in', async () => {

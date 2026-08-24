@@ -24,7 +24,13 @@ export const SETTINGS_FILE_VERSION = 2
 // OAuth login via `claude auth login`); claude-isolated uses an app-owned CLAUDE_CONFIG_DIR
 // (setup-token paste, no ~/.claude touch).
 export type ProviderType =
-  'custom' | 'claude-shared' | 'claude-isolated' | 'official' | 'codex-shared' | 'codex-isolated'
+  | 'custom'
+  | 'claude-shared'
+  | 'claude-isolated'
+  | 'official'
+  | 'codex-shared'
+  | 'codex-isolated'
+  | 'xai-subscription'
 
 // The stored Codex subscription always uses the app-owned runtime type. This discriminator preserves
 // which setup choice produced it so editing an imported profile does not masquerade as an isolated
@@ -48,6 +54,17 @@ export const CODEX_SUBSCRIPTION_PROVIDER_ID = 'builtin-codex-subscription'
 
 export const CLAUDE_SHARED_PROVIDER_ID = 'builtin-claude-shared'
 export const CLAUDE_ISOLATED_PROVIDER_ID = 'builtin-claude-isolated'
+export const XAI_SUBSCRIPTION_PROVIDER_ID = 'builtin-xai-subscription'
+
+export const xaiSubscriptionProviderIdentity = (): { id: string; name: string } => ({
+  id: XAI_SUBSCRIPTION_PROVIDER_ID,
+  name: 'xAI (Grok) OAuth'
+})
+
+export const isXaiSubscriptionProvider = (type: ProviderType): type is 'xai-subscription' =>
+  type === 'xai-subscription'
+export const usesAppProviderTransport = (type: ProviderType): boolean =>
+  type === 'custom' || type === 'xai-subscription'
 export type ClaudeSubscriptionProviderId =
   typeof CLAUDE_SHARED_PROVIDER_ID | typeof CLAUDE_ISOLATED_PROVIDER_ID
 
@@ -64,6 +81,9 @@ export const isCodexSubscriptionProviderId = (id: string): boolean =>
   id === CODEX_SUBSCRIPTION_PROVIDER_ID ||
   id === CODEX_SHARED_PROVIDER_ID ||
   id === CODEX_ISOLATED_PROVIDER_ID
+
+export const canonicalSessionProviderId = (providerId: string): string =>
+  isCodexSubscriptionProviderId(providerId) ? CODEX_SUBSCRIPTION_PROVIDER_ID : providerId
 
 export const isClaudeSubscriptionProvider = (
   type: ProviderType
@@ -119,6 +139,18 @@ export const providerEndpoints = (provider: {
   provider.apiEndpoints && provider.apiEndpoints.length > 0
     ? [...provider.apiEndpoints]
     : ['anthropic']
+
+export const shareProviderTransportFamily = (left: ProviderType, right: ProviderType): boolean =>
+  isXaiSubscriptionProvider(left) === isXaiSubscriptionProvider(right)
+
+export const canUseClaudeProviderTransport = (provider: {
+  type: ProviderType
+  apiEndpoints?: readonly ChatApiEndpoint[]
+  key?: string
+}): boolean =>
+  usesAppProviderTransport(provider.type) &&
+  providerEndpoints(provider).includes('anthropic') &&
+  (provider.type !== 'custom' || Boolean(provider.key))
 
 // A provider's endpoints are compatible with a framework only when they share at least one endpoint.
 // Codex's Responses-compatible bridge is a separate local gateway: it does not change the provider's
@@ -224,7 +256,7 @@ export type ClaudeDetectResult = {
     // When adapter exists but is non-functional (version probe or smoke test failed), this
     // explains why. Environment check uses this to mark the adapter row as failed even when
     // adapterFound is true.
-    adapterFailureReason?: 'version-probe-failed' | 'smoke-test-failed'
+    adapterFailureReason?: 'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed'
   }
 }
 
@@ -248,8 +280,11 @@ export type ProviderView = {
   apiEndpoints?: ChatApiEndpoint[]
   baseUrl?: string
   model?: string
-  // User-configured context-window size for a custom model. Omitted means the runtime uses 200k.
+  // User-configured model token limits. Context is the shared request/response budget; input/output
+  // are independent provider-reported caps. An omitted context window resolves to 200k at runtime.
   contextWindow?: number
+  maxInputTokens?: number
+  maxOutputTokens?: number
   supportsImageInput: boolean
   // Custom-model effort declaration. Absence intentionally means the standard five-level preset.
   reasoningEffortPreset?: ReasoningEffortPresetSetting
@@ -264,6 +299,8 @@ export type ProviderView = {
   models: string[]
   // A short, non-secret hint like "sk-…abcd" for display only.
   maskedKey?: string
+  // Non-secret account label returned by the provider during subscription sign-in.
+  accountEmail?: string
   // True when a key is stored (custom/official providers). Lets the form show "leave blank to keep".
   hasKey: boolean
   // True when a stored key could not be decrypted and must be re-entered before use.
@@ -278,6 +315,14 @@ export type ProviderView = {
   // lifetime — today that is `claude setup-token` (Anthropic documents a one-year lifetime).
   // The Settings card surfaces this as "Expires <date>".
   expiresAt?: number
+}
+
+export type XaiOAuthDeviceAuthorization = {
+  userCode: string
+  verificationUri: string
+  verificationUriComplete?: string
+  expiresAt: number
+  intervalSeconds: number
 }
 
 // True when a provider's most recent validation failed (and no later one succeeded). A failed
@@ -302,6 +347,14 @@ export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex'
 export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
+
+// Durable Composer selection for one Session. The ACP framework remains a global Settings choice;
+// this value is re-evaluated against that framework when the Session is next used.
+export type SessionAgentConfiguration = Readonly<{
+  providerId: string
+  model?: string
+  reasoningEffort: ReasoningEffort
+}>
 
 // Global routing preference for direct Subagents. Inherited mode intentionally carries no latent
 // provider/model/effort fields; selecting a fixed target commits the compound identity and effort
@@ -531,9 +584,11 @@ export type ProviderDraft = {
   name?: string
   baseUrl?: string
   model?: string
-  // Custom model context-window size in tokens. `null` explicitly clears a saved override; omitted
-  // leaves it unchanged on partial edits. A provider with no override resolves to 200k at runtime.
+  // Custom model token limits. `null` explicitly clears a saved override; omitted leaves it unchanged
+  // on partial edits. A provider with no context override resolves to 200k at runtime.
   contextWindow?: number | null
+  maxInputTokens?: number | null
+  maxOutputTokens?: number | null
   supportsImageInput?: boolean
   // Optional custom-model effort declaration. Absence defaults to the standard five-level preset.
   reasoningEffortPreset?: ReasoningEffortPresetSetting
@@ -1250,6 +1305,7 @@ export type CustomServerView = {
     authorizationServerUrl?: string
     scopes?: string[]
     clientId?: string
+    redirectUri?: string
     hasTokens: boolean
     // Optional for compatibility with snapshots from an older main process during development.
     hasClientSecret?: boolean
@@ -1288,6 +1344,7 @@ export type AddCustomServerRequest = {
     authorizationServerUrl?: string
     scopes?: string[]
     clientId?: string
+    redirectUri?: string
     clientSecret?: string
   } | null
 }
@@ -1319,6 +1376,7 @@ export type ConnectorTemplateDefinition = {
     authorizationServerUrl?: string
     scopes?: string[]
     clientId?: string
+    redirectUri?: string
   }
 }
 
@@ -1369,6 +1427,7 @@ export type UpdateCustomServerRequest = {
     authorizationServerUrl?: string
     scopes?: string[]
     clientId?: string
+    redirectUri?: string
     // Omitted keeps the stored secret; null explicitly removes it.
     clientSecret?: string | null
   } | null

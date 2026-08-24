@@ -73,6 +73,11 @@ const emptyDocument = (): MarketplaceDocument => ({
   releaseCaches: []
 })
 
+// Distinct release paths are stored as base64 in the same JSON document every
+// marketplace read parses. Cap the working set; root caches stay 1:1 with sources.
+export const MAX_MARKETPLACE_RELEASE_CACHE_ENTRIES = 16
+export const MAX_MARKETPLACE_RELEASE_CACHE_BYTES = 4 * 1024 * 1024
+
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string')
 
@@ -94,7 +99,9 @@ const isCanonicalBase64 = (value: unknown, maxLength: number): value is string =
     value.length === 0 ||
     value.length > maxLength ||
     value.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+    // A grouped `{4}*` pattern overflows the regex stack on multi-mebibyte
+    // release payloads. Alphabet + canonical round-trip is linear.
+    /[^A-Za-z0-9+/=]/.test(value)
   ) {
     return false
   }
@@ -225,6 +232,44 @@ const sanitizeReleaseCache = (value: unknown): MarketplaceReleaseCache | undefin
   }
 }
 
+const releaseCachePayloadBytes = (item: MarketplaceReleaseCache): number =>
+  Buffer.byteLength(item.bytesBase64, 'base64')
+
+const boundReleaseCaches = (caches: MarketplaceReleaseCache[]): MarketplaceReleaseCache[] => {
+  if (caches.length <= MAX_MARKETPLACE_RELEASE_CACHE_ENTRIES) {
+    let totalBytes = 0
+    let withinBudget = true
+    for (const item of caches) {
+      totalBytes += releaseCachePayloadBytes(item)
+      if (totalBytes > MAX_MARKETPLACE_RELEASE_CACHE_BYTES) {
+        withinBudget = false
+        break
+      }
+    }
+    if (withinBudget) return caches
+  }
+
+  const ranked = caches
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const time = Date.parse(right.item.cachedAt) - Date.parse(left.item.cachedAt)
+      return time !== 0 ? time : right.index - left.index
+    })
+  const kept: { item: MarketplaceReleaseCache; index: number }[] = []
+  let keptBytes = 0
+  for (const entry of ranked) {
+    const size = releaseCachePayloadBytes(entry.item)
+    if (kept.length >= MAX_MARKETPLACE_RELEASE_CACHE_ENTRIES) continue
+    // Fetch allows an 8 MiB release JSON, which can exceed the 4 MiB working-set
+    // budget by itself. Keep that newest row so offline fallback still works;
+    // drop older rows rather than evicting the payload just viewed.
+    if (kept.length > 0 && keptBytes + size > MAX_MARKETPLACE_RELEASE_CACHE_BYTES) continue
+    kept.push(entry)
+    keptBytes += size
+  }
+  return kept.sort((left, right) => left.index - right.index).map((entry) => entry.item)
+}
+
 const sanitizeDocument = (value: unknown): MarketplaceDocument => {
   if (!value || typeof value !== 'object') return emptyDocument()
   const document = value as {
@@ -250,9 +295,11 @@ const sanitizeDocument = (value: unknown): MarketplaceDocument => {
     rootCaches: Array.isArray(document.rootCaches)
       ? document.rootCaches.flatMap((item) => sanitizeRootCache(item) ?? [])
       : [],
-    releaseCaches: Array.isArray(document.releaseCaches)
-      ? document.releaseCaches.flatMap((item) => sanitizeReleaseCache(item) ?? [])
-      : []
+    releaseCaches: boundReleaseCaches(
+      Array.isArray(document.releaseCaches)
+        ? document.releaseCaches.flatMap((item) => sanitizeReleaseCache(item) ?? [])
+        : []
+    )
   }
 }
 
@@ -306,6 +353,16 @@ export class MarketplaceRepository {
         ),
         provenance
       ]
+    }))
+  }
+
+  async removeInstallationsForSpecialist(specialistId: string): Promise<void> {
+    await this.mutate((document) => ({
+      ...document,
+      installations: document.installations.filter((item) => item.specialistId !== specialistId),
+      pendingInstallations: document.pendingInstallations.filter(
+        (item) => item.provenance.specialistId !== specialistId
+      )
     }))
   }
 
@@ -398,12 +455,12 @@ export class MarketplaceRepository {
     }
     await this.mutate((document) => ({
       ...document,
-      releaseCaches: [
+      releaseCaches: boundReleaseCaches([
         ...document.releaseCaches.filter(
           (item) => item.sourceId !== sourceId || item.path !== path
         ),
         cache
-      ]
+      ])
     }))
   }
 

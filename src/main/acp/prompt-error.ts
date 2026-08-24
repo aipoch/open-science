@@ -1,4 +1,7 @@
-import { PROVIDER_RESOURCE_NOT_FOUND_PREFIX } from '../../shared/run-error-classification'
+import {
+  isClaudeApiConnectionFailure,
+  PROVIDER_RESOURCE_NOT_FOUND_PREFIX
+} from '../../shared/run-error-classification'
 
 // Turns an agent prompt failure into user-visible text. Agents (opencode) relay an upstream provider
 // HTTP error wrapped as a JSON-RPC failure like
@@ -24,6 +27,9 @@ type UpstreamDetail = { text: string; type?: string }
 // bare "not found" substring, so a benign message like "rate limit config not found" isn't reworded.
 const NOT_FOUND_PATTERN =
   /resource[\s_-]?not[\s_-]?found|no such (?:model|resource)|not[\s_-]?found\s*:/i
+// Claude Code wraps upstream provider HTTP 4xx as `Internal error: API Error: 4xx …`. Unreachable-API
+// connection failures use the shared `API Error: Unable to connect to API` matcher. 5xx stays excluded:
+// an untagged internal 5xx may still be an adapter defect.
 const CLAUDE_PROVIDER_CLIENT_ERROR_PATTERN = /^\s*internal error:\s*api error:\s*4\d{2}\b/i
 
 // Converts an unknown thrown value into its base message string.
@@ -169,16 +175,18 @@ const isProviderErrorKind = (error: unknown): boolean => {
   }
 }
 
-// claude-agent-acp currently forwards some explicit provider 4xx failures as a generic ACP internal
-// RequestError with `data.errorKind: 'unknown'`. The fixed wrapper and JSON-RPC code are the remaining
-// machine-stable boundary; require both so ordinary app errors containing a status number stay
-// reportable. Do not infer 5xx ownership here: provider-tagged 5xx errors still use the structural
-// APIError/provider-error paths above, while an untagged internal 5xx may be an adapter defect.
-const isClaudeProviderClientError = (error: unknown): boolean =>
+// claude-agent-acp currently forwards some explicit provider 4xx and connect-time failures as a
+// generic ACP internal RequestError with `data.errorKind: 'unknown'`. The fixed wrapper and JSON-RPC
+// code are the remaining machine-stable boundary; require both so ordinary app errors containing a
+// status number or the word "connect" stay reportable. Do not infer 5xx ownership here:
+// provider-tagged 5xx errors still use the structural APIError/provider-error paths above, while an
+// untagged internal 5xx may be an adapter defect.
+const isClaudeProviderApiError = (error: unknown): boolean =>
   error instanceof Error &&
   error.name === 'RequestError' &&
   errorCode(error) === -32603 &&
-  CLAUDE_PROVIDER_CLIENT_ERROR_PATTERN.test(error.message)
+  (CLAUDE_PROVIDER_CLIENT_ERROR_PATTERN.test(error.message) ||
+    isClaudeApiConnectionFailure(error.message))
 
 // Whether a failed prompt originates from the model provider (an upstream LLM/HTTP failure the agent
 // relayed) rather than from the app's own ACP layer. Provider failures are the user's/provider's to
@@ -188,13 +196,14 @@ const isClaudeProviderClientError = (error: unknown): boolean =>
 // broad human-message pattern matching:
 //   - the agent tagged the failure as an upstream `APIError` (covers auth/rate/quota/5xx/etc.), or
 //   - the agent tagged `data.errorKind: 'provider-error'` (the bridges' machine-readable marker), or
-//   - Claude Code emitted its fixed ACP internal wrapper with an explicit provider 4xx status, or
+//   - Claude Code emitted its fixed ACP internal wrapper with an explicit provider 4xx status or
+//     an unreachable-API connection failure, or
 //   - it is a provider "resource not found" (wrong model id / endpoint), which requires the same
 //     upstream signal (see isProviderNotFound) and is never a bare ACP protocol not-found.
 export const isProviderPromptError = (error: unknown): boolean => {
   if (isApiError(error)) return true
   if (isProviderErrorKind(error)) return true
-  if (isClaudeProviderClientError(error)) return true
+  if (isClaudeProviderApiError(error)) return true
 
   const raw = rawErrorMessage(error)
 

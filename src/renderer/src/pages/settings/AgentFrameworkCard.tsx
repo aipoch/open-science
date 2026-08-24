@@ -14,6 +14,11 @@ import { describeInstallProgress } from './claude-install-progress'
 import { AgentInstallSourceMenu } from './AgentInstallSourceMenu'
 import { RuntimeUninstallControl } from './RuntimeUninstallControl'
 
+/* Hallmark · component: incompatible runtime card · genre: modern-minimal · theme: Settings tokens
+ * States: default · hover · focus · active · disabled · loading · error · success.
+ * The amber surface always pairs colour with status copy; keyboard focus stays an immediate ring. */
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V5 · contrast: pass · slop: pass */
+
 type AgentFrameworkCardProps = {
   // Brand mark in the vendor's standard color (lobehub icon component, e.g. <Claude.Color />).
   icon: React.ReactNode
@@ -23,6 +28,10 @@ type AgentFrameworkCardProps = {
   description: React.ReactNode
   // Preflight-passed runtimes are selectable and sit in the Installed group.
   ready: boolean
+  // Installed but below the minimum supported runtime version. It remains in Installed, is not
+  // selectable, and gets an explicit managed-update action instead of generic repair treatment.
+  updateRequired?: boolean
+  minimumVersion?: string
   // The selected runtime failed the full environment check, even if detection found no path.
   needsRepair: boolean
   // Detected version, rendered as a muted `vX.Y.Z` right after the name.
@@ -68,7 +77,12 @@ type AgentFrameworkCardProps = {
   npmAvailable: boolean
   blockedInstallSources: Partial<Record<ClaudeInstallSource, string>>
   onInstall: (source: ClaudeInstallSource) => void
+  // Hallmark development seam for the unmounted eight-state preview.
+  previewState?: AgentFrameworkCardPreviewState
 }
+
+type AgentFrameworkCardPreviewState =
+  'default' | 'hover' | 'focus' | 'active' | 'disabled' | 'loading' | 'error' | 'success'
 
 // Unified agent-framework card for the settings Model panel. The whole card is the radio option
 // that switches the active framework (only ready runtimes are selectable); the action column on
@@ -79,6 +93,8 @@ const AgentFrameworkCard = ({
   name,
   description,
   ready,
+  updateRequired = false,
+  minimumVersion,
   needsRepair,
   version,
   path,
@@ -102,14 +118,15 @@ const AgentFrameworkCard = ({
   installRunning,
   npmAvailable,
   blockedInstallSources,
-  onInstall
+  onInstall,
+  previewState
 }: AgentFrameworkCardProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [showLog, setShowLog] = useState(false)
 
   // A runtime with a resolved path (even a broken one) shows its path/link and the Uninstall control.
   const found = Boolean(path)
-  const repair = needsRepair || found
+  const repair = !updateRequired && (needsRepair || found)
   const canRequestRepair = !ready && repair && Boolean(onRepairRequired)
   const activateCard = selectDisabled
     ? undefined
@@ -119,9 +136,9 @@ const AgentFrameworkCard = ({
         ? onRepairRequired
         : undefined
 
-  const installing = install.isInstalling
+  const installing = install.isInstalling || previewState === 'loading'
   const installLogs = install.installLogs
-  const installError = install.installError
+  const installError = previewState === 'error' ? t('Update failed') : install.installError
   // Any framework's install (or any uninstall) locks this card's Install menu.
   const installLocked = installRunning || isUninstalling
 
@@ -176,11 +193,17 @@ const AgentFrameworkCard = ({
         // Active gets the strongest treatment (primary ring + faint tint); a not-installed card
         // recedes with a dashed "placeholder" outline so the two groups read differently at a glance.
         ready && active && 'bg-primary/[0.04] ring-1 ring-primary',
-        !ready && 'border-dashed bg-muted/40'
+        !ready && !updateRequired && 'border-dashed bg-muted/40',
+        updateRequired &&
+          'border-status-warning-foreground/30 bg-status-warning-surface/40 dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20',
+        previewState === 'hover' && 'bg-status-warning-surface/70',
+        previewState === 'focus' && 'ring-3 ring-ring/50',
+        previewState === 'active' && 'translate-y-px',
+        previewState === 'disabled' && 'pointer-events-none opacity-50'
       )}
     >
       <CardContent className="p-3">
-        <div className="flex items-start gap-3">
+        <div className="flex flex-wrap items-start gap-3">
           {ready ? (
             <span
               aria-hidden="true"
@@ -196,13 +219,13 @@ const AgentFrameworkCard = ({
             aria-hidden="true"
             className={cn(
               'flex size-6 shrink-0 items-center justify-center',
-              !ready && 'opacity-50'
+              !ready && !updateRequired && 'opacity-50'
             )}
           >
             {icon}
           </span>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="truncate text-sm font-medium text-foreground">{name}</span>
               {version ? (
                 <span className="shrink-0 text-xs text-muted-foreground">v{version}</span>
@@ -213,6 +236,13 @@ const AgentFrameworkCard = ({
                 ) : (
                   <Badge variant="secondary">{t('Installed')}</Badge>
                 )
+              ) : updateRequired ? (
+                <Badge
+                  variant="outline"
+                  className="border-status-warning-foreground/40 bg-status-warning-surface text-status-warning-foreground dark:border-status-warning-dark-foreground/40 dark:bg-status-warning-dark-surface/40 dark:text-status-warning-dark-foreground"
+                >
+                  {t('Update required')}
+                </Badge>
               ) : repair ? (
                 // A detected-but-broken runtime (preflight failed) is not "not installed".
                 <Badge
@@ -228,6 +258,11 @@ const AgentFrameworkCard = ({
               )}
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+            {updateRequired && minimumVersion ? (
+              <p className="mt-1 font-mono text-[11px] text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                {t('Requires Codex ACP v{{version}} or later', { version: minimumVersion })}
+              </p>
+            ) : null}
             {found ? (
               <div className="mt-1.5 space-y-1">
                 <code
@@ -250,7 +285,7 @@ const AgentFrameworkCard = ({
               Install when nothing was detected. */}
           {!ready || showUninstall ? (
             <div
-              className="flex shrink-0 items-center gap-2"
+              className="ml-auto flex shrink-0 items-center gap-2"
               onClick={(event) => event.stopPropagation()}
             >
               {ready ? (
@@ -269,7 +304,7 @@ const AgentFrameworkCard = ({
               ) : (
                 <AgentInstallSourceMenu
                   name={name}
-                  intent={repair ? 'repair' : 'install'}
+                  intent={updateRequired ? 'update' : repair ? 'repair' : 'install'}
                   sources={installSources}
                   installing={installing}
                   disabled={installLocked}
@@ -296,7 +331,7 @@ const AgentFrameworkCard = ({
                 </div>
                 <div
                   role="progressbar"
-                  aria-label={t('Install progress')}
+                  aria-label={updateRequired ? t('Update progress') : t('Install progress')}
                   aria-valuemin={0}
                   aria-valuemax={100}
                   aria-valuenow={percent}
@@ -306,10 +341,10 @@ const AgentFrameworkCard = ({
                   <div
                     className={
                       percent != null
-                        ? 'h-full rounded-full bg-primary transition-[width] duration-300'
+                        ? 'h-full w-full origin-left rounded-full bg-primary transition-transform duration-300 motion-reduce:transition-none'
                         : 'install-progress-indeterminate h-full w-1/3 rounded-full bg-primary'
                     }
-                    style={percent != null ? { width: `${percent}%` } : undefined}
+                    style={percent != null ? { transform: `scaleX(${percent / 100})` } : undefined}
                   />
                 </div>
               </div>
@@ -350,3 +385,4 @@ const AgentFrameworkCard = ({
 }
 
 export { AgentFrameworkCard }
+export type { AgentFrameworkCardPreviewState }

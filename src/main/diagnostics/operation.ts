@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { diagnosticErrorFields, type Logger } from '../logger'
+import { classifyStartupDelay } from './startup-delay'
 
 export type DiagnosticValue = string | number | boolean | null | undefined
 export type DiagnosticFields = Record<string, DiagnosticValue>
@@ -150,6 +151,16 @@ export const startDiagnosticOperation = (
       phaseCpuTotalMs: phaseCpuUserMs + phaseCpuSystemMs
     }
   }
+  const delayFields = (
+    durationMs: number,
+    cpu: Record<string, unknown>
+  ): Record<string, unknown> => {
+    const cpuMs = cpu.phaseCpuTotalMs
+    if (typeof cpuMs !== 'number') return {}
+    const classified = classifyStartupDelay(durationMs, cpuMs)
+    if (!classified) return {}
+    return { phaseWaitMs: classified.waitMs, delayKind: classified.delayKind }
+  }
   const finish = (
     level: keyof Logger,
     message: string,
@@ -161,15 +172,23 @@ export const startDiagnosticOperation = (
     terminal = true
     const finishedAt = readNow()
     const terminalCpuFields = cpuFields(latestPhase ?? 'operation-start')
+    const phaseDurationMs = Math.max(0, finishedAt - phaseStartedAt)
+    const durationMs = Math.max(0, finishedAt - startedAt)
+    const operationDelay =
+      typeof terminalCpuFields.cpuTotalMs === 'number'
+        ? classifyStartupDelay(durationMs, terminalCpuFields.cpuTotalMs)
+        : undefined
     emitSafely(logger, level, message, {
       ...eventFields(fields),
       ...(latestPhase === undefined ? {} : { phase: latestPhase }),
       outcome,
-      durationMs: Math.max(0, finishedAt - startedAt),
-      ...(Object.keys(terminalCpuFields).length === 0
-        ? {}
-        : { phaseDurationMs: Math.max(0, finishedAt - phaseStartedAt) }),
+      durationMs,
+      ...(Object.keys(terminalCpuFields).length === 0 ? {} : { phaseDurationMs }),
       ...terminalCpuFields,
+      ...delayFields(phaseDurationMs, terminalCpuFields),
+      ...(operationDelay
+        ? { waitMs: operationDelay.waitMs, operationDelayKind: operationDelay.delayKind }
+        : {}),
       ...extraFields
     })
   }
@@ -187,12 +206,15 @@ export const startDiagnosticOperation = (
       const phaseAt = readNow()
       const cpuIntervalPhase = latestPhase ?? 'operation-start'
       latestPhase = name
+      const phaseDurationMs = Math.max(0, phaseAt - phaseStartedAt)
+      const cpu = cpuFields(cpuIntervalPhase)
       emitSafely(logger, 'info', 'operation phase', {
         ...eventFields(fields),
         phase: name,
         elapsedMs: Math.max(0, phaseAt - startedAt),
-        phaseDurationMs: Math.max(0, phaseAt - phaseStartedAt),
-        ...cpuFields(cpuIntervalPhase)
+        phaseDurationMs,
+        ...cpu,
+        ...delayFields(phaseDurationMs, cpu)
       })
       phaseStartedAt = phaseAt
     },

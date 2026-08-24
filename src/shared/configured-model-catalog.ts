@@ -4,6 +4,7 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
+  isXaiSubscriptionProvider,
   providerValidationFailed,
   selectClaudeSubscriptionProvider,
   type AgentFrameworkId,
@@ -53,6 +54,7 @@ export const buildConfiguredModelInventory = (
     providers: readonly ProviderView[]
     activeProviderId?: string
     claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
+    includeAllClaudeSubscriptions?: boolean
   }>
 ): readonly ConfiguredModelInventoryEntry[] => {
   const selectedClaudeProvider = selectClaudeSubscriptionProvider(
@@ -65,6 +67,7 @@ export const buildConfiguredModelInventory = (
     if (isClaudeSubscriptionProvider(provider.type) || isCodexSubscriptionProvider(provider.type)) {
       return true
     }
+    if (isXaiSubscriptionProvider(provider.type)) return isVendorModelMultimodal('xai', model)
     if (provider.type === 'custom') return provider.supportsImageInput === true
     return provider.vendorId ? isVendorModelMultimodal(provider.vendorId, model) : false
   }
@@ -73,21 +76,23 @@ export const buildConfiguredModelInventory = (
     .filter(
       (provider) =>
         (!isClaudeSubscriptionProvider(provider.type) ||
+          input.includeAllClaudeSubscriptions === true ||
           provider.id === selectedClaudeProvider?.id) &&
         !providerValidationFailed(provider)
     )
     .flatMap((provider) =>
-      (provider.models.length > 0 ? provider.models : ['']).map((model) =>
-        Object.freeze({
-          key: configuredModelKey(provider.id, model),
-          providerId: provider.id,
-          providerName: provider.name,
-          providerType: provider.type,
-          ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
-          model,
-          label: model || provider.name,
-          supportsImageInput: supportsImageInput(provider, model)
-        })
+      (provider.models.length > 0 ? provider.models : provider.model ? [provider.model] : ['']).map(
+        (model) =>
+          Object.freeze({
+            key: configuredModelKey(provider.id, model),
+            providerId: provider.id,
+            providerName: provider.name,
+            providerType: provider.type,
+            ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
+            model,
+            label: model || provider.name,
+            supportsImageInput: supportsImageInput(provider, model)
+          })
       )
     )
 }
@@ -97,6 +102,7 @@ export const buildConfiguredModelCatalog = (
     providers: readonly ProviderView[]
     activeProviderId?: string
     claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
+    includeAllClaudeSubscriptions?: boolean
     frameworkId: AgentFrameworkId
     frameworkEndpoints: readonly ChatApiEndpoint[]
   }>

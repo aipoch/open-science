@@ -11,6 +11,7 @@ import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
+import { ConnectorAuthToast } from '@/components/ConnectorAuthToast'
 import { NotificationLiveToast } from '@/components/NotificationLiveToast'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
@@ -260,6 +261,10 @@ const AppContent = (): React.JSX.Element | null => {
     return 'handled'
   }, [appShellPresentation])
   useCloseActivePaneShortcut(resolveCloseRequest)
+  const allowsArchiveUndoShortcut = useCallback(
+    () => appShellPresentation.allowsShortcut('archiveUndo'),
+    [appShellPresentation]
+  )
 
   const retrySettingsInitialization = useCallback(async (): Promise<void> => {
     if (await loadSettings({ force: true })) await checkEnvironment()
@@ -661,8 +666,9 @@ const AppContent = (): React.JSX.Element | null => {
           onDismiss={lifecycleSync.dismissNotice}
           onView={lifecycleSync.viewNotice}
         />
+        <ConnectorAuthToast />
         <NotificationLiveToast />
-        <PermissionUndoSnackbar />
+        <PermissionUndoSnackbar allowsArchiveShortcut={allowsArchiveUndoShortcut} />
       </div>
       <WebEventRecoveryDialog
         active={activePresentation === 'webEventRecovery'}

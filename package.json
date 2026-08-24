@@ -42,6 +42,7 @@
     "build:web": "npm run gen:web-api-map && vite build --config vite.web.config.ts",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
+    "dev:native-send-now": "node scripts/dev-native-send-now.cjs",
     "dev:web": "node scripts/dev-app-branding.cjs && node scripts/dev-web.cjs",
     "dev:headless": "node scripts/dev-app-branding.cjs && node scripts/dev-web.cjs --headless",
     "cli": "node cli/index.mjs",
@@ -55,7 +56,7 @@
     "predev": "node scripts/dev-app-branding.cjs"
   },
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "^0.60.0",
+    "@agentclientprotocol/claude-agent-acp": "^0.70.0",
     "@agentclientprotocol/sdk": "^1.2.1",
     "@aipoch/safe-file-publisher-native": "file:packages/safe-file-publisher-native",
     "@anthropic-ai/tokenizer": "^0.0.4",
@@ -78,6 +79,7 @@
     "sharp": "0.35.3",
     "tar": "^7.5.22",
     "tiff": "7.1.3",
+    "web-tree-sitter": "^0.26.12",
     "ws": "^8.21.1",
     "zod": "^4.4.3"
   },

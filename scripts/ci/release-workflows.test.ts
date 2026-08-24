@@ -187,6 +187,12 @@ describe('release and scheduled workflow topology', () => {
       publish.steps?.some(({ run }) => run?.includes('release-certification-evidence.mjs'))
     ).toBe(false)
     expect(reset.if).toBeUndefined()
+    expect(reset.run).toContain('repos/$GITHUB_REPOSITORY/releases/tags/nightly')
+    expect(reset.run).toContain('repos/$GITHUB_REPOSITORY/releases/$release_id')
+    expect(reset.run).toContain('repos/$GITHUB_REPOSITORY/git/refs/tags/nightly')
+    expect(reset.run).toContain("grep -Eq 'HTTP 404'")
+    expect(reset.run).not.toContain('--cleanup-tag')
+    expect(reset.run).not.toMatch(/\|\|\s*true/)
     expect(release.if).toBeUndefined()
   })
 

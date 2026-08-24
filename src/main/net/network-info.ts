@@ -9,10 +9,10 @@ type NetworkInterfaceMap = ReturnType<typeof networkInterfaces>
 
 type RegistryProbe = typeof probeRegistryReachability
 
-// Real end-to-end internet reachability, reusing the onboarding environment check's HTTPS HEAD
-// probe against both package registries (registry root this time — the question here is "is the
-// internet usable", not "can we download a specific runtime package"). Reachable when either
-// registry answers 2xx; each probe carries the probe's own 5s timeout and they run in parallel.
+// Reachability of the package registries used for managed installs. Reuses the onboarding
+// environment check's HTTPS HEAD probe against both registry roots (npmjs and npmmirror) —
+// not a generic "is the internet usable" check. Reachable when either registry answers 2xx;
+// each probe carries the probe's own 5s timeout and they run in parallel.
 const checkInternetReachability = (
   probe: RegistryProbe = probeRegistryReachability
 ): Promise<boolean> => {

@@ -24,6 +24,7 @@ import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { RuntimeEventInput } from './runtime-snapshot-owner'
 import { AcpPermissionContext } from './permission-context'
 import { permissionRequestFingerprint } from './permission-broker'
+import { ACP_STEERING_METHOD } from './native-follow-up'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
 import {
   ACP_PROMPT_FAILED_EVENT_TITLE,
@@ -750,6 +751,8 @@ const startPermissionProbeAgent = (
       kind: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always'
     }>
     onPermissionResponse?: (response: unknown) => void
+    onSteer?: (params: unknown) => void
+    advertiseSteering?: boolean
     resume?: 'ok' | 'notFound'
   }
 ): void => {
@@ -761,6 +764,7 @@ const startPermissionProbeAgent = (
         loadSession: false,
         sessionCapabilities: { close: {}, ...(options.resume ? { resume: {} } : {}) }
       },
+      ...(options.advertiseSteering ? { _meta: { steering: { supported: true } } } : {}),
       authMethods: []
     }))
     .onRequest(acp.methods.agent.session.new, () => ({
@@ -877,6 +881,14 @@ const startPermissionProbeAgent = (
 
       return { stopReason: 'end_turn' }
     })
+    .onRequest(
+      ACP_STEERING_METHOD,
+      (params) => params,
+      (ctx) => {
+        options.onSteer?.(ctx.params)
+        return { outcome: 'injected' }
+      }
+    )
     .onNotification(acp.methods.agent.session.cancel, () => undefined)
     .onRequest(acp.methods.agent.session.close, () => ({}))
     .connect(
@@ -1114,7 +1126,7 @@ describe('ACP runtime migration write-gate', () => {
           _meta: { 'api-key': { apiKey: 'test-only-key' } }
         },
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: { authorization: 'Bearer local-token' }
@@ -1129,7 +1141,7 @@ describe('ACP runtime migration write-gate', () => {
     ])
     expect(fakeAgent.providerConfigurations).toEqual([
       {
-        providerId: 'custom-gateway',
+        providerId: 'openai',
         apiType: 'openai',
         baseUrl: 'http://127.0.0.1:1234/v1',
         headers: { authorization: 'Bearer local-token' }
@@ -1182,7 +1194,7 @@ describe('ACP runtime migration write-gate', () => {
         env: {},
         authentication: { methodId: 'api-key' },
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: {}
@@ -1234,7 +1246,7 @@ describe('ACP runtime migration write-gate', () => {
         env: {},
         authentication: { methodId: 'api-key' },
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: {}
@@ -1386,7 +1398,7 @@ describe('ACP runtime migration write-gate', () => {
             _meta: { 'api-key': { apiKey: 'test-only-key' } }
           },
           providerConfiguration: {
-            providerId: 'custom-gateway',
+            providerId: 'openai',
             apiType: 'openai',
             baseUrl: 'http://127.0.0.1:1234/v1',
             headers: { authorization: 'Bearer test-only-token' }
@@ -7807,11 +7819,17 @@ describe('ACP runtime session management', () => {
       expect(agent.prompts).toContainEqual({ sessionId: 'remote-session-2', text: '/compact' })
     )
     await expect(
-      runtime.sendPrompt({ sessionId: second.sessionId, text: 'blocked prompt' })
-    ).rejects.toThrow(/already running/)
-    await expect(
       runtime.setPermissionProfile({ sessionId: second.sessionId, profile: 'full' })
     ).rejects.toThrow(/compacting/)
+    const promptAfterCompaction = runtime.sendPrompt({
+      sessionId: second.sessionId,
+      text: 'prompt after compaction'
+    })
+    await vi.waitFor(() => expect(agent.cancelledSessions).toContain('remote-session-2'))
+    expect(agent.prompts).not.toContainEqual({
+      sessionId: 'remote-session-2',
+      text: 'prompt after compaction'
+    })
 
     const prompting = runtime.sendPrompt({ sessionId: first.sessionId, text: 'first prompt' })
     await vi.waitFor(() =>
@@ -7831,7 +7849,9 @@ describe('ACP runtime session management', () => {
 
     firstPromptGate.resolve({ stopReason: 'end_turn' })
     secondCompactionGate.resolve({ stopReason: 'end_turn' })
-    await expect(Promise.all([prompting, compacting])).resolves.toHaveLength(2)
+    await expect(Promise.all([prompting, compacting, promptAfterCompaction])).resolves.toHaveLength(
+      3
+    )
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
     expect(runtime.getSnapshot().agentPromptInFlightSessionIds).toEqual([])
   })
@@ -8056,6 +8076,7 @@ describe('ACP runtime session management', () => {
     const session = await runtime.createSession({ cwd: '/workspace' })
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'analyze the results' })
 
+    await vi.waitFor(() => expect(agent.prompts).toHaveLength(2))
     expect(agent.prompts).toEqual([
       { sessionId: 'remote-session-1', text: 'analyze the results' },
       { sessionId: 'remote-session-1', text: '/compact' }
@@ -9417,7 +9438,7 @@ describe('ACP runtime session management', () => {
         executablePath: '/bin/codex-acp',
         env: {},
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: { authorization: 'Bearer bridge-token' }
@@ -9457,7 +9478,7 @@ describe('ACP runtime session management', () => {
         executablePath: '/bin/codex-acp',
         env: {},
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: { authorization: 'Bearer bridge-token' }
@@ -9588,7 +9609,7 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('keeps backend-persistent Codex guidance out of the user prompt', async () => {
+  it('keeps backend-persistent Codex guidance out while adding current turn scope', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['codex-session'], {
       modes: {
@@ -9620,8 +9641,8 @@ describe('ACP runtime session management', () => {
       expect.arrayContaining([expect.stringContaining('open_science_large_file_instructions')])
     )
     expect(fakeAgent.prompts.map(({ text }) => text)).toEqual([
-      'search PubMed',
-      'summarize the results'
+      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+search PubMed$/),
+      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+summarize the results$/)
     ])
     expect(fakeAgent.prompts.every(({ text }) => !text.includes(persistentInstructions))).toBe(true)
   })
@@ -9655,7 +9676,7 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('keeps backend-persistent OpenCode guidance out of the user prompt', async () => {
+  it('keeps backend-persistent OpenCode guidance out while adding current turn scope', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['oc-session'])
     let resolvedContext: { forcedSkillIds: string[]; systemPromptAppends?: string[] } | undefined
@@ -9681,7 +9702,13 @@ describe('ACP runtime session management', () => {
     expect(resolvedContext?.systemPromptAppends).toEqual(
       expect.arrayContaining([expect.stringContaining('open_science_large_file_instructions')])
     )
-    expect(fakeAgent.prompts.map(({ text }) => text)).toEqual(['hello opencode', 'continue'])
+    expect(fakeAgent.prompts.map(({ text }) => text)).toEqual([
+      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+hello opencode$/),
+      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+continue$/)
+    ])
+    expect(
+      fakeAgent.prompts.every(({ text }) => !text.includes('Stable OpenCode instructions.'))
+    ).toBe(true)
   })
 
   it('waits for session-scoped MCP capability readiness before creating the agent session', async () => {
@@ -16807,6 +16834,43 @@ describe('ACP runtime session management', () => {
     expect(sharedAgent.resumedSessions).toEqual([])
   })
 
+  it('refuses native follow-up while a permission request is pending', async () => {
+    const process = new FakeAgentProcess()
+    const steeringRequests: unknown[] = []
+    startPermissionProbeAgent(process, {
+      newSessionId: 's1',
+      toolCallId: 'pending-command',
+      toolTitle: 'Run command',
+      advertiseSteering: true,
+      onSteer: (params) => steeringRequests.push(params),
+      permissionOptions: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+      ]
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'request permission' })
+    await vi.waitFor(() => expect(runtime.getSnapshot().pendingPermissions).toHaveLength(1))
+
+    const result = await runtime.steerFollowUp({
+      sessionId: session.sessionId,
+      text: 'follow up at the permission boundary'
+    })
+
+    const [pendingPermission] = runtime.getSnapshot().pendingPermissions
+    runtime.respondToPermission({ requestId: pendingPermission.requestId, optionId: 'reject' })
+    await prompt
+
+    expect(result.injected).toBe(false)
+    expect(steeringRequests).toEqual([])
+  })
+
   it('returns detached snapshot collections without collapsing hidden event sequence slots', async () => {
     const process = new FakeAgentProcess()
     startPermissionProbeAgent(process, {
@@ -17073,7 +17137,7 @@ describe('ACP runtime session management', () => {
         executablePath: '/bin/codex-acp',
         env: {},
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1234/v1',
           headers: { authorization: 'Bearer bridge' }
@@ -18711,7 +18775,7 @@ describe('ACP runtime session management', () => {
         executablePath: '/bin/codex-acp',
         env: {},
         providerConfiguration: {
-          providerId: 'custom-gateway',
+          providerId: 'openai',
           apiType: 'openai',
           baseUrl: 'http://127.0.0.1:1/v1',
           headers: { authorization: 'Bearer bridge' }
@@ -20909,6 +20973,11 @@ describe('ACP runtime session management', () => {
       'API Error: 400 Authentication Fails, Your api key: ****e52d is invalid'
     ],
     [
+      'Claude Code API connection refused',
+      { errorKind: 'unknown' },
+      'API Error: Unable to connect to API (ConnectionRefused)'
+    ],
+    [
       'provider bridge error kind',
       { errorKind: 'provider-error' },
       '{"error":{"message":"Authentication failed","type":"authentication_error"}}'
@@ -21356,6 +21425,22 @@ describe('ACP runtime session management', () => {
 })
 
 describe('ACP runtime skill force-load + nudge', () => {
+  const resolveForceLoadSpecialistIdentity = async (): Promise<{
+    append: string
+    prefix: string
+  }> => ({ append: '', prefix: '' })
+  const resolveForceLoadSpecialistSkills = async (): Promise<{
+    kind: 'specialist'
+    skillIds: string[]
+    frameworkNames: string[]
+    missingSkillIds: string[]
+  }> => ({
+    kind: 'specialist',
+    skillIds: ['research', 'skill-a', 'skill-b'],
+    frameworkNames: ['research', 'skill-a', 'skill-b'],
+    missingSkillIds: []
+  })
+
   // Builds a spawner that returns a fresh fake agent per connect, so a force-load reconnect can spawn a
   // second working agent. All agent handles are collected so tests can assert prompts across reconnects.
   const createFreshAgentSpawner = (): {
@@ -21434,6 +21519,8 @@ describe('ACP runtime skill force-load + nudge', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       callbacks: { onPromptStarted, onPromptEnded },
+      resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+      resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
       skills: {
         needForceLoad: async () => {
           skillCheckEntered.resolve()
@@ -21443,7 +21530,10 @@ describe('ACP runtime skill force-load + nudge', () => {
         namesForIds: async (ids) => ids
       }
     })
-    const session = await runtime.createSession({ cwd: '/workspace' })
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      specialistId: 'force-load-specialist'
+    })
 
     const delayedPrompt = runtime.sendPrompt({
       sessionId: session.sessionId,
@@ -21497,6 +21587,8 @@ describe('ACP runtime skill force-load + nudge', () => {
             env: {}
           }
         },
+        resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
         skills: {
           needForceLoad: async (ids) => ids,
           namesForIds: async (ids) => ids
@@ -21506,8 +21598,8 @@ describe('ACP runtime skill force-load + nudge', () => {
     const first = createRuntime(firstSpawner, firstContexts)
     const second = createRuntime(secondSpawner, secondContexts)
     await Promise.all([
-      first.createSession({ cwd: '/workspace' }),
-      second.createSession({ cwd: '/workspace' })
+      first.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' }),
+      second.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' })
     ])
     await Promise.all([
       first.sendPrompt({
@@ -21543,10 +21635,12 @@ describe('ACP runtime skill force-load + nudge', () => {
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: spawner.spawn,
+      resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+      resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
       skills: hooks
     })
 
-    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' })
     expect(spawner.spawnCount()).toBe(1)
 
     await runtime.sendPrompt({
@@ -21604,13 +21698,15 @@ describe('ACP runtime skill force-load + nudge', () => {
           env: {}
         }
       },
+      resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+      resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
       skills: {
         needForceLoad: async (ids) => ids,
         namesForIds: async (ids) => ids
       }
     })
 
-    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' })
     await expect(
       runtime.sendPrompt({
         sessionId: 'remote-session-1',
@@ -21620,7 +21716,11 @@ describe('ACP runtime skill force-load + nudge', () => {
     ).rejects.toThrow()
     await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('idle'))
 
-    await runtime.resumeSession({ sessionId: 'remote-session-1', cwd: '/workspace' })
+    await runtime.resumeSession({
+      sessionId: 'remote-session-1',
+      cwd: '/workspace',
+      specialistId: 'force-load-specialist'
+    })
     expect(backendContexts.slice(0, 3)).toEqual([[], ['research'], []])
   })
 
@@ -24684,9 +24784,43 @@ describe('Specialist Skill scoping', () => {
       const session = await runtime.createSession({ cwd: '/workspace', specialistId: 'sp-1' })
       await runtime.sendPrompt({ sessionId: session.sessionId, text: 'work' })
       await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
-      expect(agent.prompts[0]?.text).toContain('Allowed Specialist Skills for this session')
+      expect(agent.prompts[0]?.text).toContain('<open_science_specialist_skill_scope>')
       expect(agent.prompts[0]?.text).toContain('Allowed Skill')
-      expect(agent.prompts[1]?.text).toContain('Allowed Specialist Skills for this session')
+      expect(agent.prompts[1]?.text).toContain('<open_science_specialist_skill_scope>')
+    }
+  )
+
+  it.each([codexFramework, opencodeFramework])(
+    'revokes the previous Specialist identity and scope after switching %s to Main without reset',
+    async (framework) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['specialist-to-main-session'], {
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework,
+        resolveSpecialistIdentity: async () => ({
+          append: '',
+          prefix: 'Previous Specialist identity'
+        }),
+        resolveSpecialistSkills: specialistSkillResolver
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace', specialistId: 'sp-1' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'specialist task' })
+      await expect(runtime.switchSpecialist(session.sessionId, undefined)).resolves.toEqual({
+        contextReset: false
+      })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'main task' })
+
+      expect(agent.prompts[0]?.text).toContain('Previous Specialist identity')
+      expect(agent.prompts[1]?.text).toContain('Current agent: Main Agent.')
+      expect(agent.prompts[1]?.text).toContain('earlier Specialist identity')
+      expect(agent.prompts[1]?.text).not.toContain('Previous Specialist identity')
+      expect(agent.prompts[1]?.text).not.toContain('<open_science_specialist_skill_scope>')
     }
   )
 
@@ -24832,6 +24966,7 @@ describe('Specialist Skill scoping', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       framework: claudeCodeFramework,
+      resolveSpecialistIdentity: async () => ({ append: '', prefix: '' }),
       resolveSpecialistSkills: specialistSkillResolver
     })
     await runtime.resumeSession({ sessionId: 'restored', cwd: '/workspace', specialistId: 'zero' })

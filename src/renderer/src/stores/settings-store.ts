@@ -43,6 +43,7 @@ import {
 } from './settings-connectors-slice'
 import {
   createSettingsPreferencesSlice,
+  omitInFlightOptimisticPreferences,
   type SettingsPreferencesActions
 } from './settings-preferences-slice'
 import {
@@ -425,7 +426,10 @@ const createSettingsStoreState = (
   },
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
-  acceptCommittedSnapshot: (snapshot) => set(applySnapshot(snapshot))
+  acceptCommittedSnapshot: (snapshot) =>
+    set(() =>
+      omitInFlightOptimisticPreferences(applySnapshot(snapshot), writeCoordinator.hasPending)
+    )
 })
 
 export const useSettingsStore = create<SettingsStore>((set, get) =>

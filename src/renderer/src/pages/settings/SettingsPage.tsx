@@ -11,6 +11,7 @@ import {
   LockKeyhole,
   Maximize2,
   Menu,
+  MessageSquare,
   Minimize2,
   MonitorSmartphone,
   ScrollText,
@@ -39,6 +40,7 @@ import {
   type ProviderView,
   type UpsertProviderRequest
 } from '../../../../shared/settings'
+import { APP } from '../../../../shared/app-config'
 import type { SpecialistListItem } from '../../../../shared/specialist'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -76,6 +78,7 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
+  providerFormTokenLimits,
   providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
@@ -212,6 +215,8 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     baseUrl: provider.baseUrl ?? '',
     model: provider.model ?? '',
     contextWindow: provider.contextWindow?.toString() ?? '',
+    maxInputTokens: provider.maxInputTokens?.toString() ?? '',
+    maxOutputTokens: provider.maxOutputTokens?.toString() ?? '',
     apiEndpoint: provider.apiEndpoints?.[0] ?? 'anthropic',
     supportsImageInput: provider.supportsImageInput,
     reasoningEffortPreset: provider.reasoningEffortPreset ?? 'standard-5',
@@ -229,12 +234,7 @@ const toUpsertRequest = (
   name: value.name,
   baseUrl: value.baseUrl,
   model: value.model,
-  contextWindow:
-    value.type === 'custom'
-      ? value.contextWindow.trim()
-        ? Number(value.contextWindow)
-        : null
-      : undefined,
+  ...providerFormTokenLimits(value),
   apiEndpoints: providerFormApiEndpoints(value),
   supportsImageInput: value.supportsImageInput,
   reasoningEffortPreset: value.type === 'custom' ? value.reasoningEffortPreset : undefined,
@@ -933,7 +933,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
                 inert={isMobile && !isMobileNavOpen ? true : undefined}
                 className={cn(
-                  'fixed inset-y-0 left-0 z-[70] flex w-[min(86vw,320px)] shrink-0 flex-col gap-4 border-r border-border bg-background p-3 transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
+                  'fixed inset-y-0 left-0 z-[70] flex w-[min(86vw,320px)] shrink-0 flex-col gap-4 overflow-y-auto overscroll-contain border-r border-border bg-background p-3 transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0 md:overflow-y-visible',
                   isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
                 )}
               >
@@ -948,6 +948,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </div>
                     ) : null}
                     <ul className="flex flex-col gap-0.5">
+                      {group.bottom ? (
+                        <li>
+                          <a
+                            href={APP.links.githubFeedback}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground"
+                          >
+                            <MessageSquare
+                              className="size-4 shrink-0 text-muted-foreground"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 flex-1 truncate">{t('Feedback')}</span>
+                          </a>
+                        </li>
+                      ) : null}
                       {group.panels.map(({ id, labelKey, Icon }) => {
                         const isActive = activePanel === id
                         return (

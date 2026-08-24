@@ -392,11 +392,12 @@ describe('AcpProviderSessionAdopter', () => {
 
     await harness.adopt('specialist-1')
 
-    expect(harness.sessionSetupAppends.at(-1)?.slice(-3)).toEqual([
-      'specialist identity append',
-      'staged handoff continuity',
-      'Always cite DOIs.'
-    ])
+    const appends = harness.sessionSetupAppends.at(-1) ?? []
+    expect(appends.at(-3)).toBe('staged handoff continuity')
+    expect(appends.at(-2)).toContain('<open_science_project_agent_context>')
+    expect(appends.at(-2)).toContain('Always cite DOIs.')
+    expect(appends.at(-2)).toContain('</open_science_project_agent_context>')
+    expect(appends.at(-1)).toBe('specialist identity append')
     expect(
       harness.registry.lookup('stable-app-session')?.aggregate.snapshot().sessionSetupPromptPrefix
     ).toContain('Always cite DOIs.')

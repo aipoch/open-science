@@ -12,6 +12,8 @@ import type {
   AcpPermissionResponse,
   ElicitationResponse,
   AcpPromptRequest,
+  AcpSteerFollowUpRequest,
+  AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
   AcpSaveAsSkillRequest,
   AcpRevokePermissionGrantRequest,
@@ -162,7 +164,8 @@ import type {
 import type {
   DeletePreviewStateRequest,
   LoadPreviewStateRequest,
-  PersistedPreviewState,
+  PreviewStateSnapshot,
+  SavePreviewStateResult,
   SavePreviewStateRequest
 } from '../shared/preview-state'
 import type {
@@ -209,10 +212,12 @@ import type {
   DeleteSessionRequest,
   SessionDeletionResult,
   LoadAllSessionsResult,
+  ListSessionSummariesResult,
   LoadSessionRequest,
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
+  SessionUsageProjection,
   UpdateSessionArchiveRequest
 } from '../shared/session-persistence'
 import type {
@@ -229,6 +234,7 @@ import type {
   ClaudeInstallResult,
   DeleteProviderRequest,
   EnvironmentCheckResult,
+  XaiOAuthDeviceAuthorization,
   InstallClaudeRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
@@ -440,6 +446,7 @@ export interface OpenScienceAPI {
     continueInterruptedTurn(request: AcpContinueInterruptedTurnRequest): Promise<AcpStateSnapshot>
     resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
     sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
+    steerFollowUp(request: AcpSteerFollowUpRequest): Promise<AcpSteerFollowUpResult>
     saveAsSkill(request: AcpSaveAsSkillRequest): Promise<AcpStateSnapshot>
     compactSession(request: AcpCompactSessionRequest): Promise<AcpStateSnapshot>
     cancel(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot>
@@ -450,7 +457,7 @@ export interface OpenScienceAPI {
     revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpStateSnapshot>
     onState(listener: AcpListener<AcpStateSnapshot>): RemoveListener
     onAgentRuntimeUpdate(listener: AcpListener<AcpAgentRuntimeUpdate>): RemoveListener
-    onEvent(listener: AcpListener<AcpRuntimeEvent>): RemoveListener
+    onEvent(listener: AcpListener<readonly AcpRuntimeEvent[]>): RemoveListener
     onPermissionRequest(listener: AcpListener<AcpPermissionRequest>): RemoveListener
   }
   sideChat: {
@@ -472,8 +479,10 @@ export interface OpenScienceAPI {
     onChanged(listener: AcpListener<PermissionGrantsChangedEvent>): RemoveListener
   }
   sessions: {
+    list(): Promise<ListSessionSummariesResult>
     loadAll(): Promise<LoadAllSessionsResult>
     loadOne(request: LoadSessionRequest): Promise<PersistedChatSession | undefined>
+    loadUsage(): Promise<SessionUsageProjection>
     saveSession(
       session: PersistedChatSession,
       options?: SaveSessionOptions
@@ -528,6 +537,10 @@ export interface OpenScienceAPI {
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     cancelCodexLogin(): Promise<void>
     cancelClaudeLogin(): Promise<void>
+    beginXaiOAuthLogin(): Promise<XaiOAuthDeviceAuthorization>
+    waitXaiOAuthLogin(): Promise<{ accountEmail?: string }>
+    cancelXaiOAuthLogin(): Promise<void>
+    logoutXaiOAuth(): Promise<SettingsSnapshot>
     loginIsolatedCodex(): Promise<ValidateProviderResult>
     logoutIsolatedCodex(): Promise<ValidateProviderResult>
     loginSharedClaude(): Promise<ValidateProviderResult>
@@ -808,8 +821,8 @@ export interface OpenScienceAPI {
     ): Promise<PersistedChatSession>
   }
   preview: {
-    load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>
-    save(request: SavePreviewStateRequest): Promise<void>
+    load(request: LoadPreviewStateRequest): Promise<PreviewStateSnapshot | null>
+    save(request: SavePreviewStateRequest): Promise<SavePreviewStateResult>
     delete(request: DeletePreviewStateRequest): Promise<void>
   }
   previewResources: {

@@ -28,6 +28,8 @@ import {
   type NativeResponsesCompatibilityTarget
 } from './native-responses-compatibility'
 import { loopbackProxyBypassEnvironment } from './system-proxy'
+import { xaiNativeResponsesTargetFields } from './xai-protocol'
+import { claudeCodeLoopbackEnv, createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
 
 type ResponsesBridgePort = Pick<
   ResponsesBridge,
@@ -103,6 +105,7 @@ type ProviderTransportGeneration = Readonly<{
 }>
 
 type ProviderTransportOwnerOptions = {
+  getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
   createResponsesBridge?: (target: ResponsesBridgeTarget) => ResponsesBridgePort
   createNativeResponsesProxy?: (target: NativeResponsesProxyTarget) => NativeResponsesProxyPort
   createAnthropicProviderBridge?: (
@@ -130,6 +133,7 @@ class ProviderTransportOwner {
     initialTargetId: string
   ) => OpenAiProviderBridgePort
   private readonly nextGenerationId: () => string
+  private readonly getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
   private readonly responsesBridges = new Map<string, ResponsesBridgeEntry>()
   private readonly nativeResponsesCompatibilityProxies = new Map<
     string,
@@ -151,6 +155,7 @@ class ProviderTransportOwner {
       ((targets, initialTargetId) =>
         new OpenAiProviderBridge(targets, initialTargetId, netFetchStandard))
     this.nextGenerationId = options.nextGenerationId ?? randomUUID
+    this.getXaiOAuthAccessToken = options.getXaiOAuthAccessToken
   }
 
   async acquire(input: ProviderTransportRequest): Promise<ProviderTransportGeneration> {
@@ -266,30 +271,37 @@ class ProviderTransportOwner {
         if (!model) continue
         const targetId = planned.id
         const bridge =
-          transport.kind === 'opencode-openai'
-            ? this.createOpenAiProviderBridge(
-                [
-                  {
-                    id: targetId,
-                    wire: 'chat-completions',
-                    endpoint: openAiChatCompletionsUrl(candidate.provider)!,
-                    ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                    model
-                  }
-                ],
-                targetId
+          candidate.provider.type === 'xai-subscription'
+            ? createXaiOAuthProviderBridge(
+                [{ id: targetId, model }],
+                targetId,
+                'openai',
+                this.getXaiOAuthAccessToken
               )
-            : this.createAnthropicProviderBridge(
-                [
-                  {
-                    id: targetId,
-                    baseUrl: normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? ''),
-                    ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                    model
-                  }
-                ],
-                targetId
-              )
+            : transport.kind === 'opencode-openai'
+              ? this.createOpenAiProviderBridge(
+                  [
+                    {
+                      id: targetId,
+                      wire: 'chat-completions',
+                      endpoint: openAiChatCompletionsUrl(candidate.provider)!,
+                      ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                      model
+                    }
+                  ],
+                  targetId
+                )
+              : this.createAnthropicProviderBridge(
+                  [
+                    {
+                      id: targetId,
+                      baseUrl: normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? ''),
+                      ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                      model
+                    }
+                  ],
+                  targetId
+                )
         bridges.push(bridge)
         const connection = await bridge.start()
         const apiEndpoints = [
@@ -360,7 +372,15 @@ class ProviderTransportOwner {
     if (transport.kind !== 'claude-anthropic') {
       throw new Error('Claude Anthropic transport is unavailable.')
     }
-    const bridge = this.createAnthropicProviderBridge(transport.targets, transport.initialTargetId)
+    const bridge =
+      input.activeTarget.provider.type === 'xai-subscription'
+        ? createXaiOAuthProviderBridge(
+            transport.targets.map(({ id, model }) => ({ id, model })),
+            transport.initialTargetId,
+            'anthropic',
+            this.getXaiOAuthAccessToken
+          )
+        : this.createAnthropicProviderBridge(transport.targets, transport.initialTargetId)
     try {
       const connection = await bridge.start()
       let released = false
@@ -371,9 +391,10 @@ class ProviderTransportOwner {
       }
       return Object.freeze({
         environment: {
-          ANTHROPIC_BASE_URL: connection.baseUrl,
-          ANTHROPIC_AUTH_TOKEN: connection.token,
-          ANTHROPIC_API_KEY: connection.token,
+          ...claudeCodeLoopbackEnv(
+            connection,
+            input.activeTarget.provider.type === 'xai-subscription'
+          ),
           ...loopbackProxyBypassEnvironment(process.env)
         },
         anthropicBridgeLease: {
@@ -403,6 +424,7 @@ class ProviderTransportOwner {
       return {
         baseUrl: targetBaseUrl,
         key: candidate.provider.key,
+        ...xaiNativeResponsesTargetFields(candidate.provider.type, this.getXaiOAuthAccessToken),
         model: candidate.effectiveModel ?? candidate.provider.model,
         reviewerScope: { namespacedTools: [...(input.plan.reviewerBridgeTools ?? [])] }
       }

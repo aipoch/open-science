@@ -9,7 +9,8 @@ const adapterPaths = [
   resolve(__dirname, 'anthropic-provider-bridge.ts'),
   resolve(__dirname, 'native-responses-compatibility.ts'),
   resolve(__dirname, 'openai-provider-bridge.ts'),
-  resolve(__dirname, 'responses-bridge.ts')
+  resolve(__dirname, 'responses-bridge.ts'),
+  resolve(__dirname, 'xai-oauth-provider-bridge.ts')
 ]
 const readSource = (path: string): string => readFileSync(path, 'utf8')
 const portablePath = (path: string): string => relative(projectRoot, path).replaceAll('\\', '/')
@@ -51,7 +52,7 @@ describe('Provider loopback HTTP ownership', () => {
     }
   })
 
-  it('keeps the internal host seam limited to the four Provider adapters', () => {
+  it('keeps the internal host seam limited to the declared Provider adapters', () => {
     expect(
       productionSources()
         .filter((path) => path !== hostPath)

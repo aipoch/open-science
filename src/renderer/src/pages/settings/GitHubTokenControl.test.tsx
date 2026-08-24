@@ -120,6 +120,30 @@ describe('GitHubTokenControl', () => {
     expect(document.body.querySelector('[role="alert"]')).not.toBeNull()
   })
 
+  it('localizes a token verification failure instead of displaying backend error details', async () => {
+    settingsApi.getGitHubTokenStatus.mockResolvedValue({ configured: true, mask: 'old…oken' })
+    settingsApi.saveGitHubToken.mockRejectedValue(
+      new Error('GitHub rejected this token. Check that it is valid and try again.')
+    )
+    await act(async () => root.render(<GitHubTokenControl />))
+    await flush()
+
+    await click('GitHub token')
+    enterToken('bad-token')
+    await click('Verify and save')
+    await flush()
+
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    const alert = document.body.querySelector('[role="alert"]')?.textContent
+    const details = document.body.querySelector('details')
+    await act(async () => i18next.changeLanguage('en'))
+
+    expect(alert).toContain('令牌验证失败。')
+    expect(alert).not.toContain('GitHub rejected this token.')
+    expect(details?.open).toBe(false)
+    expect(details?.textContent).toContain('GitHub rejected this token.')
+  })
+
   it('removes a configured token and exposes the success state', async () => {
     settingsApi.getGitHubTokenStatus.mockResolvedValue({ configured: true, mask: 'old…oken' })
     settingsApi.removeGitHubToken.mockResolvedValue({ configured: false })

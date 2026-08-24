@@ -37,6 +37,7 @@
         "src/renderer/src/lib/acp/workspace-runtime-attachment-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts",
         "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts"
       ],
@@ -112,13 +113,16 @@
     "workspace_page": {
       "ownerPaths": [
         "src/renderer/src/pages/workspace/WorkspacePage.tsx",
+        "src/renderer/src/pages/workspace/notebook-preview-availability.ts",
         "src/renderer/src/pages/workspace/workspace-panel-layout.tsx",
         "src/renderer/src/pages/workspace/workspace-composer-controller.ts",
         "src/renderer/src/pages/workspace/workspace-conversation-controller.ts",
         "src/renderer/src/pages/workspace/workspace-message-queue-controller.ts",
+        "src/renderer/src/pages/workspace/workspace-message-queue-owner.ts",
         "src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts",
         "src/renderer/src/pages/workspace/use-side-chat-controller.ts",
         "src/renderer/src/pages/workspace/workspace-session-controller.ts",
+        "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.ts",
         "src/renderer/src/pages/workspace/composer-attachment-intake.ts",
         "src/renderer/src/pages/workspace/composer-upload-transfer.ts",
         "src/renderer/src/pages/workspace/composer/composer-history.ts"
@@ -330,6 +334,7 @@
       "ownerPaths": [
         "src/main/settings/repository.ts",
         "src/main/settings/record-codec.ts",
+        "src/main/settings/provider-token-limits.ts",
         "src/main/settings/document-codec.ts",
         "src/main/settings/document-store.ts",
         "src/main/settings/compute-grant-port.ts",
@@ -338,7 +343,8 @@
       "interfacePaths": [
         "src/main/settings/repository.ts",
         "src/shared/network-proxy.ts",
-        "src/main/settings/compute-grant-port.ts"
+        "src/main/settings/compute-grant-port.ts",
+        "src/main/settings/provider-token-limits.ts"
       ],
       "consumerModules": [
         "settings_provider_accounts",
@@ -351,6 +357,7 @@
           "src/main/settings/document-store.test.ts",
           "src/main/settings/document-codec.test.ts",
           "src/main/settings/record-codec.test.ts",
+          "src/main/settings/provider-token-limits.test.ts",
           "src/main/settings/repository.test.ts",
           "src/main/settings/compute-grants.test.ts",
           "src/main/settings/connectors-settings.test.ts",
@@ -377,7 +384,11 @@
       "ownerPaths": [
         "src/main/settings/provider-accounts.ts",
         "src/main/settings/provider-auth-lifecycle.ts",
-        "src/main/settings/provider-runtime-projection.ts"
+        "src/main/settings/provider-draft-projection.ts",
+        "src/main/settings/provider-model-catalog-owner.ts",
+        "src/main/settings/provider-runtime-projection.ts",
+        "src/main/settings/xai-oauth.ts",
+        "src/main/settings/xai-provider-account-owner.ts"
       ],
       "interfacePaths": ["src/main/settings/provider-accounts.ts"],
       "consumerModules": ["settings_backend_resolution", "settings_service_facade"],
@@ -389,6 +400,7 @@
           "src/main/settings/provider-auth-lifecycle.architecture.test.ts",
           "src/main/settings/provider-runtime-projection.test.ts",
           "src/main/settings/provider-runtime-projection.architecture.test.ts",
+          "src/main/settings/xai-oauth.test.ts",
           "src/main/settings/codex-auth.test.ts",
           "src/main/settings/claude-isolated-auth.test.ts",
           "src/main/settings/claude-shared-auth.test.ts",
@@ -423,6 +435,8 @@
         "src/main/settings/native-responses-compatibility.ts",
         "src/main/settings/anthropic-provider-bridge.ts",
         "src/main/settings/openai-provider-bridge.ts",
+        "src/main/settings/xai-oauth-provider-bridge.ts",
+        "src/main/settings/xai-protocol.ts",
         "src/main/settings/provider-error-replay.ts",
         "src/main/settings/provider-loopback-http-host.ts",
         "src/main/settings/provider-transport-owner.ts",
@@ -461,6 +475,8 @@
           "src/main/settings/native-responses-compatibility.test.ts",
           "src/main/settings/anthropic-provider-bridge.test.ts",
           "src/main/settings/openai-provider-bridge.test.ts",
+          "src/main/settings/xai-oauth-provider-bridge.test.ts",
+          "src/main/settings/xai-protocol.test.ts",
           "src/main/settings/provider-error-replay.test.ts",
           "src/main/settings/system-proxy.test.ts",
           "src/main/settings/network-proxy-runtime.test.ts",

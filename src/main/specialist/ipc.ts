@@ -261,6 +261,7 @@ export const registerSpecialistIpcHandlers = (
             ? [
                 {
                   id: item.id,
+                  revision: item.revision,
                   ...(item.origin ? { origin: item.origin } : {}),
                   ...(item.importBaseline?.archiveDigest
                     ? { archiveDigest: item.importBaseline.archiveDigest }

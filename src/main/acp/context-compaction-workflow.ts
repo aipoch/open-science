@@ -8,6 +8,7 @@ import type { ContextUsageTracker, SessionEstimateInput } from './context-usage-
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { RuntimeEventInput } from './runtime-snapshot-owner'
 import type {
+  AcpCompactionSessionInteractionScope,
   AcpPromptSessionInteractionScope,
   AcpSessionInteractionOwner
 } from './session-interaction-owner'
@@ -19,7 +20,10 @@ type AcpContextCompactionSessions = Readonly<{
 
 type AcpContextCompactionWorkflowOptions = Readonly<{
   sessions: AcpContextCompactionSessions
-  interactions: Pick<AcpSessionInteractionOwner, 'claim' | 'current' | 'release' | 'supersede'>
+  interactions: Pick<
+    AcpSessionInteractionOwner,
+    'claim' | 'current' | 'has' | 'release' | 'supersede'
+  >
   context: Pick<
     ContextUsageTracker,
     'checkpointSession' | 'resetAfterCompaction' | 'restoreSession' | 'usage'
@@ -31,6 +35,7 @@ type AcpContextCompactionWorkflowOptions = Readonly<{
   pushEvent: (event: RuntimeEventInput) => void
   emitState: () => void
   errorMessage: (error: unknown) => string
+  cancelCompaction: (sessionId: string) => Promise<void>
 }>
 
 type AcpAutomaticCompactionRequest = Readonly<{
@@ -44,6 +49,15 @@ type CompactionReason = NonNullable<AcpRuntimeEvent['compactionReason']>
 const log = createLogger('acp-context-compaction-workflow')
 
 class AcpContextCompactionWorkflow {
+  private readonly activeCompactions = new Map<
+    string,
+    {
+      interaction: AcpCompactionSessionInteractionScope
+      promise: Promise<PromptResponse>
+      cancellation?: Promise<void>
+    }
+  >()
+
   constructor(private readonly options: AcpContextCompactionWorkflowOptions) {}
 
   async compact(request: AcpCompactSessionRequest): Promise<PromptResponse> {
@@ -62,13 +76,12 @@ class AcpContextCompactionWorkflow {
     }
 
     const interaction = interactions.claim({ sessionId: request.sessionId, kind: 'compaction' })
-    try {
-      this.safeProjection('compaction state callback failed', this.options.emitState)
-      return await this.runNative(session, request.sessionId, request.reason ?? 'manual')
-    } finally {
-      interactions.release(interaction)
-      this.safeProjection('compaction state callback failed', this.options.emitState)
-    }
+    return this.runOwnedCompaction(
+      session,
+      request.sessionId,
+      request.reason ?? 'manual',
+      interaction
+    )
   }
 
   async compactAutomatic(
@@ -82,6 +95,75 @@ class AcpContextCompactionWorkflow {
       return undefined
     }
     return this.runNative(request.session, request.sessionId, 'automatic')
+  }
+
+  async compactIfIdle(sessionId: string): Promise<PromptResponse | undefined> {
+    if (this.options.interactions.has(sessionId)) return undefined
+    if (!this.shouldCompactAutomatically(sessionId)) return undefined
+    const session = this.options.sessions.activeSession(sessionId)
+    if (!session) return undefined
+    const { interactions } = this.options
+    const interaction = interactions.claim({ sessionId, kind: 'compaction' })
+    try {
+      return await this.runOwnedCompaction(session, sessionId, 'automatic', interaction)
+    } catch {
+      return undefined
+    }
+  }
+
+  preemptForPrompt(sessionId: string): Promise<void> | undefined {
+    const current = this.options.interactions.current(sessionId)
+    if (current?.kind !== 'compaction') return
+
+    const active = this.activeCompactions.get(sessionId)
+    if (!active || active.interaction !== current) {
+      throw new Error('ACP context compaction lifecycle is unavailable')
+    }
+    return this.cancelAndDrain(sessionId, active)
+  }
+
+  private async cancelAndDrain(
+    sessionId: string,
+    active: {
+      interaction: AcpCompactionSessionInteractionScope
+      promise: Promise<PromptResponse>
+      cancellation?: Promise<void>
+    }
+  ): Promise<void> {
+    active.cancellation ??= this.options.cancelCompaction(sessionId)
+    await active.cancellation
+    try {
+      await active.promise
+    } catch {
+      // The compaction lifecycle already publishes its failure. Provider settlement is the gate.
+    }
+  }
+
+  private runOwnedCompaction(
+    session: ActiveSession,
+    sessionId: string,
+    reason: CompactionReason,
+    interaction: AcpCompactionSessionInteractionScope
+  ): Promise<PromptResponse> {
+    const promise = (async (): Promise<PromptResponse> => {
+      try {
+        this.safeProjection('compaction state callback failed', this.options.emitState)
+        return await this.runNative(session, sessionId, reason)
+      } finally {
+        this.options.interactions.release(interaction)
+        this.safeProjection('compaction state callback failed', this.options.emitState)
+      }
+    })()
+    const active = { interaction, promise }
+    this.activeCompactions.set(sessionId, active)
+    void promise
+      .finally(() => {
+        if (this.activeCompactions.get(sessionId) === active) {
+          this.activeCompactions.delete(sessionId)
+        }
+      })
+      .catch(() => undefined)
+    return promise
   }
 
   private shouldCompactAutomatically(sessionId: string): boolean {

@@ -19,3 +19,14 @@ export const MoleculeIcon = createLucideIcon('Molecule', [
   ['polygon', { points: '12 3 19.8 7.5 19.8 16.5 12 21 4.2 16.5 4.2 7.5' }],
   ['circle', { cx: '12', cy: '12', r: '4' }]
 ])
+
+// Owl wearing a mortarboard, reserved for the built-in Reviewer identity.
+export const OwlScholarIcon = createLucideIcon('OwlScholar', [
+  ['path', { d: 'm6 6 6-3 6 3-6 3zM18 6v3' }],
+  ['path', { d: 'M5 10v7a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-7' }],
+  ['path', { d: 'm5 10-1-2 4 2m11 0 1-2-4 2' }],
+  ['circle', { cx: '9', cy: '13.5', r: '2' }],
+  ['circle', { cx: '15', cy: '13.5', r: '2' }],
+  ['path', { d: 'M9 13.5h.01M15 13.5h.01' }],
+  ['path', { d: 'm11.2 16 .8 1 .8-1' }]
+])

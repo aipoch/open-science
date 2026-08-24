@@ -20,6 +20,18 @@ export type RuntimeInstallState = {
   installError: string | undefined
 }
 
+// Retained UI log is a diagnostic tail, not a transcript. 256 KiB is far more than the max-h-48
+// pane can show; dropping the head keeps store copies and <pre> joins bounded during a 5-minute run.
+export const INSTALL_UI_LOG_CHAR_LIMIT = 256 * 1024
+
+const appendCappedInstallLogs = (existing: string[], chunks: readonly string[]): string[] => {
+  if (chunks.length === 0) return existing
+
+  const merged = existing.length === 0 ? chunks.join('') : `${existing.join('')}${chunks.join('')}`
+  if (merged.length <= INSTALL_UI_LOG_CHAR_LIMIT) return merged.length === 0 ? existing : [merged]
+  return [merged.slice(-INSTALL_UI_LOG_CHAR_LIMIT)]
+}
+
 export type RuntimeSetupState = {
   preflight: Preflight
   npmAvailable: boolean
@@ -181,19 +193,47 @@ const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
   })
 
   const commands = getCommands()
-  const unsubscribe = commands.onInstallLog((event) => {
-    if (event.kind === 'progress') {
-      patchInstallState(set, runtime, { installProgress: event })
-      return
-    }
+  let pendingLogChunks: string[] = []
+  let flushScheduled = false
+  let acceptingEvents = true
 
+  const applyLogChunks = (chunks: readonly string[]): void => {
+    if (!acceptingEvents || chunks.length === 0) return
     updateInstallStates(set, (installStates) => ({
       ...installStates,
       [runtime]: {
         ...installStates[runtime],
-        installLogs: [...installStates[runtime].installLogs, event.chunk]
+        installLogs: appendCappedInstallLogs(installStates[runtime].installLogs, chunks)
       }
     }))
+  }
+
+  const flushPendingLogChunks = (): void => {
+    flushScheduled = false
+    if (pendingLogChunks.length === 0) return
+    const chunks = pendingLogChunks
+    pendingLogChunks = []
+    applyLogChunks(chunks)
+  }
+
+  const unsubscribe = commands.onInstallLog((event) => {
+    if (!acceptingEvents) return
+    if (event.kind === 'progress') {
+      flushPendingLogChunks()
+      patchInstallState(set, runtime, { installProgress: event })
+      return
+    }
+
+    // First chunk in a turn commits immediately so a single log stays synchronous for existing
+    // callers; the rest of the same turn collapses into one follow-up store update.
+    if (!flushScheduled && pendingLogChunks.length === 0) {
+      applyLogChunks([event.chunk])
+      flushScheduled = true
+      queueMicrotask(flushPendingLogChunks)
+      return
+    }
+
+    pendingLogChunks.push(event.chunk)
   })
 
   try {
@@ -221,6 +261,8 @@ const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
 
     return result
   } finally {
+    flushPendingLogChunks()
+    acceptingEvents = false
     unsubscribe()
     patchInstallState(set, runtime, { isInstalling: false, installProgress: null })
   }

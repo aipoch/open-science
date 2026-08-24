@@ -14,6 +14,7 @@ import {
   sessionRevision,
   type DeleteSessionRequest,
   type LoadAllSessionsResult,
+  type ListSessionSummariesResult,
   type LoadSessionRequest,
   type PersistedChatSession,
   type SaveSessionOptions,
@@ -33,6 +34,7 @@ import type { ChatSession, SessionHydrationSelection } from '../../stores/sessio
 import { projectRendererFailure } from '../../renderer-diagnostics'
 
 type SessionPersistenceApi = {
+  list?: () => Promise<ListSessionSummariesResult>
   loadAll: () => Promise<LoadAllSessionsResult>
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
@@ -41,6 +43,36 @@ type SessionPersistenceApi = {
   ) => Promise<PersistedChatSession>
   deleteSession: (request: DeleteSessionRequest) => Promise<SessionDeletionResult>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
+}
+
+type SessionReadApi = Pick<SessionPersistenceApi, 'loadAll'> &
+  Partial<Pick<SessionPersistenceApi, 'loadOne'>>
+
+const loadPersistedSession = async (
+  request: LoadSessionRequest,
+  api: SessionReadApi = window.api.sessions
+): Promise<PersistedChatSession | undefined> => {
+  if (typeof api.loadOne === 'function') return api.loadOne(request)
+  const result = await api.loadAll()
+  return result.sessions.find(
+    (session) => session.id === request.sessionId && session.projectId === request.projectId
+  )
+}
+
+const hydratePersistedSessionIfPresent = (
+  persisted: PersistedChatSession
+): ChatSession | undefined => {
+  const store = useSessionStore.getState()
+  const current = store.sessions.find(
+    (session) => session.id === persisted.id && session.projectId === persisted.projectId
+  )
+  if (!current || current.contentLoaded !== false) return current
+  store.upsertPersistedSession(persisted)
+  return useSessionStore
+    .getState()
+    .sessions.find(
+      (session) => session.id === persisted.id && session.projectId === persisted.projectId
+    )
 }
 
 const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionResult> =>
@@ -73,6 +105,7 @@ const SESSION_CONFLICT_REBASE_FIELDS = [
   'title',
   'permissionProfile',
   'autoReviewEnabled',
+  'agentConfiguration',
   'pinned'
 ] as const satisfies readonly SessionConflictRebaseField[]
 
@@ -81,6 +114,9 @@ const conflictRebaseFieldChanged = (
   next: ChatSession,
   field: SessionConflictRebaseField
 ): boolean => {
+  if (field === 'agentConfiguration') {
+    return JSON.stringify(previous.agentConfiguration) !== JSON.stringify(next.agentConfiguration)
+  }
   return previous[field] !== next[field]
 }
 
@@ -601,9 +637,7 @@ const unresolvedSessionRevisionConflictTargets = new Set<string>()
 const saveSessionInOrder = async (
   session: PersistedChatSession,
   persistence: OrderedSessionPersistence = liveSessionPersistence,
-  api: Pick<SessionPersistenceApi, 'loadOne'> = {
-    loadOne: (request) => window.api.sessions.loadOne(request)
-  }
+  api: SessionReadApi = window.api.sessions
 ): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
   try {
@@ -617,10 +651,13 @@ const saveSessionInOrder = async (
 
         let latest: PersistedChatSession | undefined
         try {
-          latest = await api.loadOne({
-            projectId: submitted.projectId,
-            sessionId: submitted.id
-          })
+          latest = await loadPersistedSession(
+            {
+              projectId: submitted.projectId,
+              sessionId: submitted.id
+            },
+            api
+          )
         } catch {
           throw error
         }
@@ -679,7 +716,8 @@ const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<voi
       (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
     )
 
-    for (const message of session.messages) {
+    const messages = session.conversationGraph?.messages ?? session.messages
+    for (const message of messages) {
       const pendingPaths = (message.artifactIds ?? [])
         .map((id) => artifactsById.get(id)?.path)
         .filter(isPendingArtifactPath)
@@ -892,7 +930,51 @@ const loadPersistedSessions = async (
   api: SessionPersistenceApi,
   shouldHydrate: () => boolean = () => true,
   preferredSelection?: SessionHydrationSelection
-): Promise<LoadAllSessionsResult | undefined> => {
+): Promise<LoadAllSessionsResult | ListSessionSummariesResult | undefined> => {
+  if (api.list) {
+    const result = await api.list()
+    if (!shouldHydrate()) return undefined
+    const requestedSelection =
+      preferredSelection !== undefined
+        ? preferredSelection.sessionId
+        : (result.manifest.lastSessionId ?? result.sessions[0]?.id)
+    const selectedSummary = result.sessions.find((session) => session.id === requestedSelection)
+    const summariesToHydrate = result.sessions.filter(
+      (session) => session.id === selectedSummary?.id || session.needsStartupRecovery
+    )
+    const hydratedSessions = new Map(
+      await Promise.all(
+        summariesToHydrate.map(
+          async (summary) =>
+            [
+              summary.id,
+              await loadPersistedSession(
+                { projectId: summary.projectId, sessionId: summary.id },
+                api
+              )
+            ] as const
+        )
+      )
+    )
+    const selected = selectedSummary ? hydratedSessions.get(selectedSummary.id) : undefined
+    if (!shouldHydrate()) return undefined
+    const missing = summariesToHydrate.find((summary) => !hydratedSessions.get(summary.id))
+    if (missing) {
+      throw new Error(
+        'Session JSON requiring startup hydration is missing from the SQLite projection.'
+      )
+    }
+    useSessionStore
+      .getState()
+      .hydrateSessionSummaries(result.sessions, selected, result.manifest, preferredSelection)
+    for (const hydrated of hydratedSessions.values()) {
+      if (hydrated && hydrated.id !== selected?.id) {
+        useSessionStore.getState().upsertPersistedSession(hydrated)
+      }
+    }
+    return result
+  }
+
   const result = await api.loadAll()
   if (!shouldHydrate()) return undefined
 
@@ -929,10 +1011,14 @@ const createStoreSaver = (
   let previousSessions = initial.sessions
   let previousSelection = initial.selectedSessionId
   const acknowledgedRevisions = new Map(
-    initial.sessions.map((session) => [session.id, sessionRevision(session)])
+    initial.sessions
+      .filter((session) => session.contentLoaded !== false)
+      .map((session) => [session.id, sessionRevision(session)])
   )
   const acknowledgedSessions = new Map(
-    initial.sessions.map((session) => [session.id, toPersistedSession(session)])
+    initial.sessions
+      .filter((session) => session.contentLoaded !== false)
+      .map((session) => [session.id, toPersistedSession(session)])
   )
   persistence.seedAcknowledgedSessions([...acknowledgedSessions.values()])
 
@@ -947,10 +1033,13 @@ const createStoreSaver = (
     if (!base) throw error
     let latest: PersistedChatSession | undefined
     try {
-      latest = await api.loadOne({
-        projectId: submitted.projectId,
-        sessionId: submitted.id
-      })
+      latest = await loadPersistedSession(
+        {
+          projectId: submitted.projectId,
+          sessionId: submitted.id
+        },
+        api
+      )
     } catch {
       throw error
     }
@@ -978,32 +1067,84 @@ const createStoreSaver = (
 
       const target = `session:${session.id}`
       const isForced = options?.forceTargets?.has(target) === true
-      if (isExternallyHydratedSession(session)) {
-        const authority = getExternallyHydratedSessionAuthority(session)
-        if (authority) {
-          const previousAuthority = acknowledgedSessions.get(session.id)
-          const authorityIsNewer =
-            !previousAuthority ||
-            sessionRevision(authority) > sessionRevision(previousAuthority) ||
-            (sessionRevision(authority) === sessionRevision(previousAuthority) &&
-              authority.updatedAt >= previousAuthority.updatedAt)
-          acknowledgedRevisions.set(
-            session.id,
-            Math.max(acknowledgedRevisions.get(session.id) ?? 0, sessionRevision(authority))
-          )
-          if (authorityIsNewer) acknowledgedSessions.set(session.id, authority)
-        }
+      const previousSession = previousById.get(session.id)
+      if (session.contentLoaded === false) {
+        if (previousSession === session && !isForced) continue
+        const conflictRebaseFields = [
+          ...new Set([
+            ...(previousSession
+              ? (['title', 'pinned'] as const).filter((field) =>
+                  conflictRebaseFieldChanged(previousSession, session, field)
+                )
+              : []),
+            ...(options?.conflictRebaseFieldsByTarget?.get(target) ?? [])
+          ])
+        ].filter((field): field is 'title' | 'pinned' => field === 'title' || field === 'pinned')
+        const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        tasks.push({
+          target,
+          failureContext: { conflictRebaseFields },
+          run: () =>
+            persistence.saveLatestSession(
+              target,
+              async (coalescedOptions) => {
+                const authority = await loadPersistedSession(
+                  {
+                    projectId: session.projectId,
+                    sessionId: session.id
+                  },
+                  api
+                )
+                if (!authority) throw new Error('Session JSON is missing for metadata persistence.')
+                const fields = new Set(coalescedOptions?.conflictRebaseFields ?? [])
+                const candidate: PersistedChatSession = {
+                  ...authority,
+                  ...(fields.has('title') ? { title: session.title } : {}),
+                  ...(fields.has('pinned') ? { pinned: session.pinned } : {}),
+                  ...(fields.size > 0
+                    ? { updatedAt: Math.max(authority.updatedAt, session.updatedAt) }
+                    : {})
+                }
+                const durable = coalescedOptions
+                  ? await api.saveSession(candidate, coalescedOptions)
+                  : await api.saveSession(candidate)
+                acknowledgedRevisions.set(session.id, sessionRevision(durable))
+                acknowledgedSessions.set(session.id, durable)
+                useSessionStore.getState().upsertPersistedSession(durable)
+                return durable
+              },
+              saveOptions
+            )
+        })
+        continue
+      }
+      const authority = isExternallyHydratedSession(session)
+        ? getExternallyHydratedSessionAuthority(session)
+        : undefined
+      if (authority) {
+        const previousAuthority = acknowledgedSessions.get(session.id)
+        const authorityIsNewer =
+          !previousAuthority ||
+          sessionRevision(authority) > sessionRevision(previousAuthority) ||
+          (sessionRevision(authority) === sessionRevision(previousAuthority) &&
+            authority.updatedAt >= previousAuthority.updatedAt)
+        acknowledgedRevisions.set(
+          session.id,
+          Math.max(acknowledgedRevisions.get(session.id) ?? 0, sessionRevision(authority))
+        )
+        if (authorityIsNewer) acknowledgedSessions.set(session.id, authority)
       }
 
+      const hasUnsavedLocalTitle =
+        session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
       if (
         (previousById.get(session.id) !== session || isForced) &&
-        (isForced || !isExternallyHydratedSession(session)) &&
+        (isForced || !isExternallyHydratedSession(session) || hasUnsavedLocalTitle) &&
         !hasStagedUploads(session) &&
         // A terminal graph-integrity failure keeps the renderer responsive, but the flat projection
         // is no longer proven to match the immutable Branch graph. Preserve the last durable copy.
         !session.conversationGraphSyncBlocked
       ) {
-        const previousSession = previousById.get(session.id)
         const changedConflictRebaseFields = previousSession
           ? SESSION_CONFLICT_REBASE_FIELDS.filter((field) =>
               conflictRebaseFieldChanged(previousSession, session, field)
@@ -1012,6 +1153,7 @@ const createStoreSaver = (
         const conflictRebaseFields = [
           ...new Set([
             ...changedConflictRebaseFields,
+            ...(hasUnsavedLocalTitle ? (['title'] as const) : []),
             ...(options?.conflictRebaseFieldsByTarget?.get(target) ?? [])
           ])
         ]
@@ -1393,6 +1535,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       )
       activeSaver = save
       saverRef.current = save
+      const loadingSessionContent = new Set<string>()
 
       unsubscribe = useSessionStore.subscribe((state) => {
         pruneRemovedSessionWriteTargets(
@@ -1403,6 +1546,22 @@ const useSessionPersistence = (): SessionPersistenceState => {
           unresolvedSessionRevisionConflictTargets
         )
         if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+        const selected = state.sessions.find(
+          (session) => session.id === state.selectedSessionId && session.contentLoaded === false
+        )
+        if (selected && !loadingSessionContent.has(selected.id)) {
+          loadingSessionContent.add(selected.id)
+          void loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
+            .then((session) => {
+              if (!session) throw new Error('Selected Session JSON is missing.')
+              if (isMounted) hydratePersistedSessionIfPresent(session)
+            })
+            .catch((error) => {
+              reportPersistenceError(error, 'session-load')
+              if (isMounted) setLoadError(SAFE_SESSION_LOAD_ERROR)
+            })
+            .finally(() => loadingSessionContent.delete(selected.id))
+        }
         void save(state).catch(reportPersistenceError)
       })
 
@@ -1457,6 +1616,8 @@ export {
   createOrderedSessionPersistence,
   createStoreSaver,
   flushSessionPersistence,
+  hydratePersistedSessionIfPresent,
+  loadPersistedSession,
   loadPersistedSessions,
   reconcilePendingArtifacts,
   deriveSessionCatalogRecovery,

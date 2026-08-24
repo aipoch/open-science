@@ -174,7 +174,7 @@ describe('AgentRuntimeManager', () => {
     const opencodePath = posix.join('/detected', 'opencode')
     inventory.claude.set(claudePath, '2.1.0')
     inventory.opencode.set(opencodePath, '1.19.0')
-    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
     inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
     manager = createManager({
       detectDeps: { ...createClaudeDeps(inventory), env: { PATH: posix.dirname(claudePath) } },
@@ -194,7 +194,7 @@ describe('AgentRuntimeManager', () => {
       opencodeVersion: '1.19.0',
       codex: {
         resolvedPath: managedAdapterPath,
-        version: '1.1.4',
+        version: '1.6.2',
         nativePath: managedCodexPath,
         nativeVersion: '0.144.6'
       }
@@ -265,18 +265,53 @@ describe('AgentRuntimeManager', () => {
     expect(providers.isProviderKeyUsable).toHaveBeenCalledWith(storedProvider)
   })
 
+  it('fails Codex preflight when the installed ACP adapter is below the supported version', async () => {
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
+    inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.1.4',
+      nativePath: managedCodexPath,
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('codex')
+    const providers: ProviderPreflightAccess = {
+      resolveProviderApiEndpoints: vi.fn().mockReturnValue(undefined),
+      resolveActiveModel: vi.fn().mockReturnValue(undefined),
+      isProviderKeyUsable: vi.fn().mockResolvedValue(false)
+    }
+
+    await expect(manager.getPreflight(providers)).resolves.toMatchObject({
+      codexReady: false,
+      agentReady: false
+    })
+  })
+
+  it('refuses to launch an installed Codex ACP adapter below the supported version', async () => {
+    await mkdir(dirname(managedAdapterPath), { recursive: true })
+    await writeFile(managedAdapterPath, '#!/usr/bin/env node\n')
+    await chmod(managedAdapterPath, 0o755)
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
+
+    await expect(
+      manager.resolveCodexExecutable(managedAdapterPath, managedCodexPath)
+    ).rejects.toThrow(
+      'Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
+    )
+  })
+
   it('reuses one configured-runtime probe pass across the startup inspection chain', async () => {
     const claudePath = join(storageRoot, 'bin', 'claude')
     const opencodePath = join(storageRoot, 'bin', 'opencode')
     inventory.claude.set(claudePath, '2.1.0')
     inventory.opencode.set(opencodePath, '1.19.0')
-    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
     inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
     await repository.setClaudeInfo({ resolvedPath: claudePath, version: '2.1.0' })
     await repository.setOpencodeInfo(opencodePath, '1.19.0')
     await repository.setCodexInfo({
       resolvedPath: managedAdapterPath,
-      version: '1.1.4',
+      version: '1.6.2',
       nativePath: managedCodexPath,
       nativeVersion: '0.144.6'
     })
@@ -383,7 +418,7 @@ describe('AgentRuntimeManager', () => {
   })
 
   it('reuses partial Codex probes through fallback detection and component diagnostics', async () => {
-    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
     await repository.setCodexInfo({
       resolvedPath: managedAdapterPath,
       version: 'stale-adapter',
@@ -462,7 +497,7 @@ describe('AgentRuntimeManager', () => {
         return {
           result: { installId: options.installId, ok: true },
           adapterPath: managedAdapterPath,
-          adapterVersion: '1.1.4',
+          adapterVersion: '1.6.2',
           codexPath: managedCodexPath,
           codexVersion: '0.144.6'
         }
@@ -501,6 +536,69 @@ describe('AgentRuntimeManager', () => {
       'install-opencode-123-12',
       'install-codex-123-13'
     ])
+  })
+
+  it('updates only the managed adapter when Codex CLI is user-owned', async () => {
+    const externalCodexPath = join(storageRoot, 'user-bin', 'codex')
+    inventory.codexNative.set(externalCodexPath, 'codex-cli 0.144.6')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.1.4',
+      nativePath: externalCodexPath,
+      nativeVersion: '0.144.6'
+    })
+    const installManagedCodexImpl: NonNullable<ManagerOptions['installManagedCodexImpl']> = vi.fn(
+      async ({ installId }) => ({
+        result: { installId, ok: true },
+        adapterPath: managedAdapterPath,
+        adapterVersion: '1.6.2',
+        codexPath: externalCodexPath,
+        codexVersion: '0.144.6'
+      })
+    )
+    manager = createManager({ installManagedCodexImpl })
+
+    await manager.installCodex({ source: 'managed' }, vi.fn())
+
+    expect(installManagedCodexImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ existingCodexPath: externalCodexPath })
+    )
+    expect((await repository.getSettings()).codex).toMatchObject({
+      resolvedPath: managedAdapterPath,
+      version: '1.6.2',
+      nativePath: externalCodexPath,
+      nativeVersion: '0.144.6'
+    })
+  })
+
+  it('falls back to the managed Codex CLI when the stored user-owned path is stale', async () => {
+    const staleCodexPath = join(storageRoot, 'missing-user-bin', 'codex')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.1.4',
+      nativePath: staleCodexPath,
+      nativeVersion: '0.144.6'
+    })
+    const installManagedCodexImpl: NonNullable<ManagerOptions['installManagedCodexImpl']> = vi.fn(
+      async ({ installId }) => ({
+        result: { installId, ok: true },
+        adapterPath: managedAdapterPath,
+        adapterVersion: '1.6.2',
+        codexPath: managedCodexPath,
+        codexVersion: '0.144.6'
+      })
+    )
+    manager = createManager({ installManagedCodexImpl })
+
+    await manager.installCodex({ source: 'managed' }, vi.fn())
+
+    expect(installManagedCodexImpl).toHaveBeenCalledWith(
+      expect.not.objectContaining({ existingCodexPath: expect.anything() })
+    )
+    expect((await repository.getSettings()).codex).toMatchObject({
+      nativePath: managedCodexPath,
+      nativeVersion: '0.144.6'
+    })
   })
 
   it('fails a managed Claude install whose installed executable cannot report a version', async () => {
@@ -547,12 +645,13 @@ describe('AgentRuntimeManager', () => {
     await repository.setOpencodeInfo(opencodePath, '1.19.0')
     await repository.setCodexInfo({
       resolvedPath: managedAdapterPath,
-      version: '1.1.4',
+      version: '1.6.2',
       nativePath: managedCodexPath,
       nativeVersion: '0.144.6'
     })
     await repository.setAgentFramework('opencode')
-    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
+    inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
     // The stored Claude path exists as a candidate but cannot report a version, so it is not ready.
     inventory.claude.set(unmanagedClaude, undefined)
 
@@ -564,6 +663,47 @@ describe('AgentRuntimeManager', () => {
       codex: { resolvedPath: managedAdapterPath }
     })
     expect((await repository.getSettings()).opencodePath).toBeUndefined()
+  })
+
+  it('does not select an unsupported Codex adapter after uninstalling the active runtime', async () => {
+    const opencodePath = join(managedOpencodeDir(storageRoot), 'opencode')
+    await mkdir(dirname(opencodePath), { recursive: true })
+    await writeFile(opencodePath, '#!/bin/sh\n')
+    await chmod(opencodePath, 0o755)
+    await repository.setOpencodeInfo(opencodePath, '1.19.0')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.1.4',
+      nativePath: managedCodexPath,
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('opencode')
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
+    inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
+
+    await manager.uninstallOpencode()
+
+    expect((await repository.getSettings()).agentFrameworkId).toBe('opencode')
+  })
+
+  it('does not select Codex after uninstalling the active runtime when its native CLI is unusable', async () => {
+    const opencodePath = join(managedOpencodeDir(storageRoot), 'opencode')
+    await mkdir(dirname(opencodePath), { recursive: true })
+    await writeFile(opencodePath, '#!/bin/sh\n')
+    await chmod(opencodePath, 0o755)
+    await repository.setOpencodeInfo(opencodePath, '1.19.0')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.6.2',
+      nativePath: managedCodexPath,
+      nativeVersion: '0.144.6'
+    })
+    await repository.setAgentFramework('opencode')
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
+
+    await manager.uninstallOpencode()
+
+    expect((await repository.getSettings()).agentFrameworkId).toBe('opencode')
   })
 
   it('mounts the Skill projection for shared, isolated, and custom Claude probes', async () => {

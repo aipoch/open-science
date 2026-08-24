@@ -9,10 +9,29 @@ import { describe, expect, it, vi } from 'vitest'
 import { sha256 } from './protocol'
 import { MarketplaceRepository, type MarketplaceInstallProvenance } from './repository'
 import { MarketplaceService } from './service'
+import { MarketplaceOperationCoordinator } from './operation-coordinator'
 
 const encoder = new TextEncoder()
 
 describe('MarketplaceService', () => {
+  it('uses the supplied coordinator for Marketplace operations', async () => {
+    const coordinator = new MarketplaceOperationCoordinator()
+    const runExclusive = vi.spyOn(coordinator, 'runExclusive')
+    const service = new MarketplaceService({
+      repository: new MarketplaceRepository(await mkdtemp(join(tmpdir(), 'marketplace-queue-'))),
+      operationCoordinator: coordinator,
+      packages: { recover: vi.fn().mockResolvedValue(undefined) } as never,
+      fetch: vi.fn() as never,
+      getDisabledSkillIds: async () => [],
+      getInstalledSpecialists: async () => [],
+      setSkillsMainEnabled: async () => undefined
+    })
+
+    await service.recover()
+
+    expect(runExclusive).toHaveBeenCalledOnce()
+  })
+
   it('trusts a reviewed GitHub source and disables installed Skills for Main before commit', async () => {
     const storage = await mkdtemp(join(tmpdir(), 'marketplace-service-'))
     const { publicKey, privateKey } = generateKeyPairSync('ed25519')
@@ -313,7 +332,7 @@ describe('MarketplaceService', () => {
     expect(packages.install).toHaveBeenCalledWith(
       { candidateToken: preview.package.candidateToken },
       17,
-      { activateAfterInstall: true }
+      { activateAfterInstall: true, origin: 'marketplace' }
     )
     expect(downloadProgress[0]).toMatchObject({
       transferred: 0,
@@ -612,7 +631,78 @@ describe('MarketplaceService', () => {
           archiveDigest: exactDigest
         }
       ])
-    ).resolves.toEqual(new Map([['installed-specialist', { publisher: 'Current Publisher' }]]))
+    ).resolves.toEqual(
+      new Map([
+        [
+          'installed-specialist',
+          { sourceId: 'newer-source', publisher: 'Current Publisher', version: '1.0.0' }
+        ]
+      ])
+    )
+  })
+
+  it('backfills Marketplace origin only for exact unmodified historical provenance', async () => {
+    const repository = new MarketplaceRepository(
+      await mkdtemp(join(tmpdir(), 'marketplace-origin-backfill-'))
+    )
+    await repository.recordInstallation({
+      sourceId: 'official',
+      specialistId: 'installed-specialist',
+      publisher: 'Open Science',
+      version: '1.0.0',
+      releasePath: 'releases/installed-specialist/1.0.0.json',
+      releaseDigest: 'a'.repeat(64),
+      artifactDigest: 'b'.repeat(64),
+      installedArchiveDigest: 'c'.repeat(64),
+      upstreamCommit: 'd'.repeat(40),
+      selectedSkillIds: [],
+      selectedConnectorIds: [],
+      installedAt: '2026-08-23T00:00:00.000Z'
+    })
+    await repository.recordInstallation({
+      sourceId: 'official',
+      specialistId: 'edited-specialist',
+      publisher: 'Open Science',
+      version: '1.0.0',
+      releasePath: 'releases/edited-specialist/1.0.0.json',
+      releaseDigest: 'e'.repeat(64),
+      artifactDigest: 'f'.repeat(64),
+      installedArchiveDigest: '9'.repeat(64),
+      upstreamCommit: '8'.repeat(40),
+      selectedSkillIds: [],
+      selectedConnectorIds: [],
+      installedAt: '2026-08-23T00:00:00.000Z'
+    })
+    const markMarketplaceManaged = vi.fn().mockResolvedValue(undefined)
+    const service = new MarketplaceService({
+      repository,
+      packages: { recover: vi.fn() } as never,
+      fetch: vi.fn<typeof fetch>(),
+      getDisabledSkillIds: async () => [],
+      getInstalledSpecialists: async () => [
+        {
+          id: 'installed-specialist',
+          revision: 7,
+          origin: 'imported' as const,
+          archiveDigest: 'c'.repeat(64),
+          modifiedSinceImport: false
+        },
+        {
+          id: 'edited-specialist',
+          revision: 2,
+          origin: 'imported' as const,
+          archiveDigest: '9'.repeat(64),
+          modifiedSinceImport: true
+        }
+      ],
+      markMarketplaceManaged,
+      setSkillsMainEnabled: vi.fn()
+    })
+
+    await service.recover()
+
+    expect(markMarketplaceManaged).toHaveBeenCalledOnce()
+    expect(markMarketplaceManaged).toHaveBeenCalledWith('installed-specialist', 7)
   })
 
   it('serializes recovery behind an active Marketplace installation', async () => {

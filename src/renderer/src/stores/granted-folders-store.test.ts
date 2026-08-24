@@ -79,4 +79,26 @@ describe('granted-folders-store', () => {
     expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
     expect(useGrantedFoldersStore.getState().roots).toEqual([])
   })
+
+  it('does not let a stale refresh overwrite a newer grant result', async () => {
+    let resolveRefresh: ((roots: GrantedLocalRoot[]) => void) | undefined
+    const staleRefresh = new Promise<GrantedLocalRoot[]>((resolve) => {
+      resolveRefresh = resolve
+    })
+    const granted = [
+      createRoot(),
+      createRoot({ id: 'root-2', path: '/data/shared', name: 'shared' })
+    ]
+    setLocalFsApi({
+      listGrantedRoots: vi.fn(() => staleRefresh),
+      grantRoot: vi.fn().mockResolvedValue(granted)
+    })
+
+    const refresh = useGrantedFoldersStore.getState().refresh()
+    await useGrantedFoldersStore.getState().grant('/data/shared', 'rw')
+    resolveRefresh?.([createRoot()])
+    await refresh
+
+    expect(useGrantedFoldersStore.getState().roots).toEqual(granted)
+  })
 })

@@ -94,8 +94,9 @@ export class AcpProviderSessionCreator {
           notebook: capability.descriptor.capabilities.includes('notebook'),
           skillImport: capability.descriptor.capabilities.includes('skill-import')
         },
+        role: capability.descriptor.role,
         backendSystemPromptAppends: startupBackend.prompt.systemPromptAppends,
-        extraSystemPromptAppends: [specialist.append, projectContextAppend].filter(
+        extraSystemPromptAppends: [projectContextAppend, specialist.append].filter(
           (append): append is string => Boolean(append)
         ),
         persistentSystemPrompt: startupBackend.prompt.persistentSystemPrompt,
@@ -205,8 +206,7 @@ export class AcpProviderSessionCreator {
     if (!this.deps.resolveProjectAgentContext) return undefined
     try {
       const context = await this.deps.resolveProjectAgentContext(projectId)
-      const trimmed = context?.trim()
-      return trimmed ? trimmed : undefined
+      return this.presentation.projectAgentContext(context)
     } catch (error) {
       this.safeLogError('project Agent Context resolution failed', error, undefined, false)
       return undefined

@@ -89,6 +89,10 @@ export const ProviderKindIcon = ({
     return <img src={openaiLogo} alt="" className={cn('size-5 shrink-0', className)} />
   }
 
+  if (kindKey === 'xai-subscription') {
+    return <img src={grokLogo} alt="" className={cn('size-5 shrink-0', className)} />
+  }
+
   if (
     kindKey === 'claude-subscription' ||
     kindKey === 'claude-shared' ||

@@ -575,6 +575,46 @@
     }
   }
 
+  /* Hallmark · component interaction: artifact image · native zoom affordance · existing dialog */
+  [data-session-artifact-image] {
+    @apply my-4 max-w-full cursor-zoom-in appearance-none rounded-lg border-0 bg-transparent p-0 align-top outline-none;
+    display: block;
+
+    & > img {
+      @apply m-0! max-w-full rounded-lg;
+      display: block;
+    }
+
+    & > [data-session-artifact-tiff-preview] {
+      @apply block overflow-hidden rounded-lg bg-sd-surface-subtle;
+      width: min(100%, 32rem);
+      aspect-ratio: 4 / 3;
+    }
+
+    &:focus-visible,
+    &.is-focus {
+      @apply outline-2 outline-offset-2 outline-ring;
+    }
+
+    &:active,
+    &.is-active {
+      @apply opacity-90;
+    }
+
+    &:disabled,
+    &.is-disabled {
+      @apply cursor-not-allowed opacity-50;
+    }
+  }
+
+  [data-session-artifact-image-status] {
+    @apply my-4 block rounded-lg bg-sd-surface-subtle px-3 py-8 text-center text-sm text-sd-muted;
+
+    &[data-state='loading'] {
+      @apply animate-pulse;
+    }
+  }
+
   [data-session-link-favicon] {
     @apply relative me-[0.3em] inline-grid size-[1em] place-items-center align-[-0.125em] text-sd-muted;
 
@@ -982,7 +1022,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   .agent-markdown [data-session-message-link],
-  .agent-markdown [data-session-link-favicon] > img {
+  .agent-markdown [data-session-link-favicon] > img,
+  .agent-markdown [data-session-artifact-image-status] {
     transition: none;
+  }
+
+  .agent-markdown [data-session-artifact-image-status] {
+    animation: none;
   }
 }

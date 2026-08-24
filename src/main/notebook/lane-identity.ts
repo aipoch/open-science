@@ -63,6 +63,15 @@ export const notebookLaneScope = (lane: NotebookLaneIdentity): NotebookLaneScope
 }
 
 export const notebookLaneKey = (lane: NotebookLaneIdentity): string => {
-  const { projectId, sessionId, agentFrameId, attemptId } = notebookLaneScope(lane)
-  return JSON.stringify([projectId, sessionId, agentFrameId, attemptId ?? null])
+  const { projectId, sessionId, agentFrameId, kind, attemptId } = notebookLaneScope(lane)
+  // A root Notebook is durable per Session even when the Agent runtime adopted a provisional root
+  // Frame id before the final Session id existed. Keep that provenance on Run records, but do not
+  // let its alternate presentation create a second in-memory owner for the same root run.json.
+  return JSON.stringify([
+    projectId,
+    sessionId,
+    kind,
+    kind === 'root' ? null : agentFrameId,
+    kind === 'root' ? null : (attemptId ?? null)
+  ])
 }

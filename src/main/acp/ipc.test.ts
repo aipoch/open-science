@@ -7,7 +7,11 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { AcpCompactSessionRequest, AcpResumeSessionRequest } from '../../shared/acp'
+import type {
+  AcpCompactSessionRequest,
+  AcpResumeSessionRequest,
+  AcpSteerFollowUpRequest
+} from '../../shared/acp'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import {
@@ -600,7 +604,8 @@ describe('ACP module transport seam', () => {
       'acp:revoke-permission-grant',
       'acp:save-as-skill',
       'acp:send-prompt',
-      'acp:set-permission-profile'
+      'acp:set-permission-profile',
+      'acp:steer-follow-up'
     ])
     expect(invokeChannels).toEqual([...handlers.keys()].sort())
     expect(eventChannels).toEqual([
@@ -1119,6 +1124,43 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
 
     expect(withSessionAvailableById).toHaveBeenCalledWith('s-1', expect.any(Function))
     expect(resetSessionContext).not.toHaveBeenCalled()
+  })
+
+  it('does not nest Session admission around the coordinator follow-up guard', async () => {
+    let archiveQueue: Promise<void> = Promise.resolve()
+    const enqueueArchive = <Result>(operation: () => Promise<Result>): Promise<Result> => {
+      const result = archiveQueue.then(operation, operation)
+      archiveQueue = result.then(
+        () => undefined,
+        () => undefined
+      )
+      return result
+    }
+    const archiveAvailability = {
+      withSessionAvailableById: <Result>(
+        _sessionId: string,
+        operation: () => Promise<Result>
+      ): Promise<Result> => enqueueArchive(operation)
+    }
+    const withSessionAvailableById = vi.spyOn(archiveAvailability, 'withSessionAvailableById')
+    const steerFollowUp = vi.fn(() =>
+      archiveAvailability.withSessionAvailableById('s-1', async () => ({
+        injected: false as const,
+        reason: 'prompt-required' as const
+      }))
+    )
+    installAcpIpcHandlers({ steerFollowUp } as never, {} as never, undefined, archiveAvailability)
+    const request: AcpSteerFollowUpRequest = { sessionId: 's-1', text: 'focus on tests' }
+
+    const outcome = await Promise.race([
+      Promise.resolve(handlers.get('acp:steer-follow-up')?.({}, request)),
+      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 50))
+    ])
+
+    expect(outcome).toEqual({ injected: false, reason: 'prompt-required' })
+    expect(withSessionAvailableById).toHaveBeenCalledWith('s-1', expect.any(Function))
+    expect(withSessionAvailableById).toHaveBeenCalledOnce()
+    expect(steerFollowUp).toHaveBeenCalledWith(request)
   })
 })
 

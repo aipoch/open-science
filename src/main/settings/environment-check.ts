@@ -9,6 +9,7 @@ import type {
   EnvironmentCheckResult,
   ManagedClaudeRegistry
 } from '../../shared/settings'
+import { MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
 import { findPythonCommand, type PythonCommand } from '../notebook/python-command'
 import { netFetchStandard } from '../skills/net-fetch'
 import { getManagedPlatform } from './managed-claude'
@@ -323,7 +324,9 @@ const runEnvironmentCheck = async ({
           : adapterFound && adapterFailureReason
             ? adapterFailureReason === 'smoke-test-failed'
               ? `Codex ACP adapter ${adapterVersion} failed to initialize.`
-              : `Codex ACP adapter exists but version detection failed.`
+              : adapterFailureReason === 'unsupported-version'
+                ? `Codex ACP adapter ${adapterVersion} must be updated to ${MINIMUM_CODEX_ACP_VERSION} or later.`
+                : `Codex ACP adapter exists but version detection failed.`
             : isSelected
               ? 'Codex ACP adapter is not installed.'
               : 'Codex ACP adapter is not installed (optional — only needed if you switch to Codex).',

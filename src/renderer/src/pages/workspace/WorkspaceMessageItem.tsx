@@ -1,4 +1,3 @@
-import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -9,6 +8,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
 import {
+  ArrowUpRight,
   Bot,
   Brain,
   Check,
@@ -22,6 +22,7 @@ import {
   GitBranch,
   Image as ImageIcon,
   MessageCircleMore,
+  Loader2,
   Pencil
 } from 'lucide-react'
 import {
@@ -69,6 +70,7 @@ import { FILE_MISSING_TAG_KEY, isUnavailableFileError } from './previews/preview
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 import { resolveSessionProviderId } from './error-report'
+import { SessionMessageMarkdown } from './SessionMessageMarkdown'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
@@ -87,6 +89,7 @@ type WorkspaceAssistantTurnCompletionProps = {
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   onPreviewArtifact: (artifact: MessageArtifact) => void
+  onPreviewArtifactModal?: (artifact: MessageArtifact) => void
   onPreviewUploadAttachment: (attachment: MessageUploadAttachment) => void
   onOpenSkillMention: (skillId: string, name: string) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
@@ -96,6 +99,8 @@ type WorkspaceMessageItemProps = {
   canEditMessage?: boolean
   // Immutable transcript surfaces can reuse the normal message renderer without live actions.
   showUserActions?: boolean
+  // Renderer-only optimistic Composer submission; never persisted in the Session graph.
+  sending?: boolean
   // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
   contentPaddingClassName?: string
   onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
@@ -447,7 +452,7 @@ const TurnTokenUsage = ({
 }
 
 const artifactCardClassName =
-  'h-[82px] w-[128px] shrink-0 overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left text-text-000 shadow-none transition-colors hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
+  'h-[82px] w-[128px] shrink-0 cursor-pointer overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left text-text-000 shadow-none transition-colors hover:bg-bg-200 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60 disabled:cursor-not-allowed disabled:opacity-50'
 const artifactPreviewClassName = 'h-[56px] w-full overflow-hidden bg-bg-200'
 const artifactGalleryClassName = 'grid max-w-full grid-cols-[repeat(auto-fill,128px)] gap-2 pb-1'
 
@@ -880,6 +885,13 @@ const ArtifactCard = ({
             {t(FILE_MISSING_TAG_KEY)}
           </span>
         ) : null}
+        <span
+          data-slot="generated-artifact-open-icon"
+          className="absolute right-1 top-1 flex size-7 items-center justify-center rounded-md bg-bg-000/90 text-text-100 opacity-0 shadow-sm transition-[opacity,background-color,color] duration-150 hover:bg-bg-300 hover:text-text-000 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
+          aria-hidden="true"
+        >
+          <ArrowUpRight className="size-4" strokeWidth={1.75} />
+        </span>
       </div>
       <div className="flex min-w-0 flex-1 items-center px-1.5">
         <ExtensionPreservingFileName
@@ -1105,11 +1117,13 @@ const MessagePartsContent = ({
 const WorkspaceMessageItemImpl = ({
   message,
   onPreviewArtifact,
+  onPreviewArtifactModal = onPreviewArtifact,
   onPreviewUploadAttachment,
   onOpenSkillMention,
   onPreviewMentionArtifact,
   canEditMessage = false,
   showUserActions = true,
+  sending = false,
   contentPaddingClassName,
   onSendEditedMessage,
   canBranchInNewSession = false,
@@ -1152,7 +1166,7 @@ const WorkspaceMessageItemImpl = ({
   }, [isAssistantPresenting, message.id, onPresentationChange, presentsAssistantMessage])
 
   const uploads = message.uploads ?? []
-  const sentDate = toMessageDate(message.createdAt)
+  const sentDate = sending ? undefined : toMessageDate(message.createdAt)
   const showRevisionNavigation =
     showUserActions && isHumanUser && revisionNavigation && revisionNavigation.total > 1
   const [copied, setCopied] = useState(false)
@@ -1392,11 +1406,20 @@ const WorkspaceMessageItemImpl = ({
                   )}
                 </div>
               </div>
-              {sentDate || message.interrupted || showRevisionNavigation ? (
+              {sending || sentDate || message.interrupted || showRevisionNavigation ? (
                 <div
                   data-slot="user-message-footer"
                   className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
                 >
+                  {sending ? (
+                    <span className="flex items-center gap-1" role="status" aria-live="polite">
+                      <Loader2
+                        className="size-3 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                      {t('Sending…')}
+                    </span>
+                  ) : null}
                   {message.interrupted ? (
                     <span
                       data-slot="user-message-interrupted"
@@ -1460,10 +1483,12 @@ const WorkspaceMessageItemImpl = ({
             )}
           >
             {message.content ? (
-              <PresentedAgentMarkdown
+              <SessionMessageMarkdown
                 content={assistantPresentation.content}
                 isAnimating={isAssistantPresenting}
-                sessionLinks
+                artifacts={artifacts}
+                onPreviewArtifact={onPreviewArtifact}
+                onPreviewArtifactModal={onPreviewArtifactModal}
               />
             ) : null}
             <MessageImageList images={message.images ?? []} />
@@ -1541,6 +1566,7 @@ const areWorkspaceMessageItemPropsEqual = (
 ): boolean =>
   previous.message === next.message &&
   previous.onPreviewArtifact === next.onPreviewArtifact &&
+  previous.onPreviewArtifactModal === next.onPreviewArtifactModal &&
   previous.onPreviewUploadAttachment === next.onPreviewUploadAttachment &&
   previous.onOpenSkillMention === next.onOpenSkillMention &&
   previous.onPreviewMentionArtifact === next.onPreviewMentionArtifact &&
@@ -1549,6 +1575,7 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.onBranchInNewSession === next.onBranchInNewSession &&
   (previous.canEditMessage ?? false) === (next.canEditMessage ?? false) &&
   (previous.showUserActions ?? true) === (next.showUserActions ?? true) &&
+  (previous.sending ?? false) === (next.sending ?? false) &&
   previous.contentPaddingClassName === next.contentPaddingClassName &&
   previous.turnStartedAt === next.turnStartedAt &&
   (previous.showAssistantFooter ?? true) === (next.showAssistantFooter ?? true) &&

@@ -28,7 +28,11 @@ type ArtifactCodeReconstructionRunnerOptions = {
   captureTarget: () => Promise<ExplicitAgentBackendTarget>
   resolveTarget: (
     target: ExplicitAgentBackendTarget,
-    context: { systemPromptAppends: string[]; forceCodexNativeResponsesCompatibility: true }
+    context: {
+      systemPromptAppends: string[]
+      includeSkillAndConnectorContext: false
+      forceCodexNativeResponsesCompatibility: true
+    }
   ) => Promise<ResolvedAgentBackend>
   now?: () => number
 }

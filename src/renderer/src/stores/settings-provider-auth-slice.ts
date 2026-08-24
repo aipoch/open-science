@@ -4,6 +4,7 @@ import {
   claudeIsolatedProviderIdentity,
   claudeSharedProviderIdentity,
   codexSubscriptionProviderIdentity,
+  xaiSubscriptionProviderIdentity,
   isCodexSubscriptionProvider
 } from '../../../shared/settings'
 import type {
@@ -13,7 +14,8 @@ import type {
   SettingsSnapshot,
   UpsertProviderRequest,
   ValidateProviderRequest,
-  ValidateProviderResult
+  ValidateProviderResult,
+  XaiOAuthDeviceAuthorization
 } from '../../../shared/settings'
 import type { SettingsWriteCoordinator } from './settings-write-coordinator'
 
@@ -37,6 +39,10 @@ export type ProviderAuthActions = {
   loginIsolatedClaudeBrowser: () => Promise<ValidateProviderResult>
   cancelIsolatedClaudeLogin: () => Promise<void>
   logoutIsolatedClaude: () => Promise<ValidateProviderResult>
+  beginXaiOAuthLogin: () => Promise<XaiOAuthDeviceAuthorization>
+  waitXaiOAuthLogin: () => Promise<{ accountEmail?: string }>
+  cancelXaiOAuthLogin: () => Promise<void>
+  logoutXaiOAuth: () => Promise<void>
   refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
   setActiveProvider: (providerId: string, model?: string) => Promise<void>
   setAgentFramework: (id: AgentFrameworkId) => Promise<void>
@@ -67,6 +73,10 @@ type ProviderAuthCommands = Pick<
   | 'cancelIsolatedClaudeLogin'
   | 'logoutIsolatedClaude'
   | 'refreshProviderModels'
+  | 'beginXaiOAuthLogin'
+  | 'waitXaiOAuthLogin'
+  | 'cancelXaiOAuthLogin'
+  | 'logoutXaiOAuth'
 >
 
 type ProviderAuthSliceOptions<Store extends ProviderAuthHost> = {
@@ -88,6 +98,7 @@ const resolveUpsertedProviderId = (
   }
   if (request.type === 'claude-shared') return claudeSharedProviderIdentity().id
   if (request.type === 'claude-isolated') return claudeIsolatedProviderIdentity().id
+  if (request.type === 'xai-subscription') return xaiSubscriptionProviderIdentity().id
   if (request.id) return request.id
 
   const beforeIds = new Set(before.map((provider) => provider.id))
@@ -209,6 +220,23 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     reconcileSnapshot(await commands.getSettings())
     await refreshPreflight()
     return result
+  },
+
+  beginXaiOAuthLogin: () => getCommands().beginXaiOAuthLogin(),
+
+  waitXaiOAuthLogin: async () => {
+    const result = await getCommands().waitXaiOAuthLogin()
+    reconcileSnapshot(await getCommands().getSettings())
+    await refreshPreflight()
+    return result
+  },
+
+  cancelXaiOAuthLogin: () => getCommands().cancelXaiOAuthLogin(),
+
+  logoutXaiOAuth: async () => {
+    const snapshot = await getCommands().logoutXaiOAuth()
+    reconcileSnapshot(snapshot)
+    await refreshPreflight()
   },
 
   refreshProviderModels: async (providerId) => {

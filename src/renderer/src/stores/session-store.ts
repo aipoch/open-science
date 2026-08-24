@@ -3,6 +3,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import type { AcpContextUsage } from '../../../shared/acp'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
+import type { SessionAgentConfiguration } from '../../../shared/settings'
 import type { UpdateSessionArchiveRequest } from '../../../shared/session-persistence'
 import { createSessionMessageGraphOwner } from './session-store-message-graph-owner'
 import type { SessionMessageGraphActions } from './session-store-message-graph-helpers'
@@ -64,6 +65,11 @@ type SessionStore = SessionStoreData &
     clearSpecialistSwitchResetRequired: (sessionId: string) => void
     setContextUsage: (sessionId: string, contextUsage: AcpContextUsage | undefined) => void
     setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
+    setAgentConfiguration: (
+      sessionId: string,
+      configuration: SessionAgentConfiguration,
+      options?: { preserveUpdatedAt?: boolean }
+    ) => void
     // Persists the per-session auto-review toggle. true = on; false = off (default).
     setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
     // Mirrors Main's desired Specialist binding and its durable pending marker. Passing undefined
@@ -177,6 +183,20 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
     }))
   },
 
+  setAgentConfiguration: (sessionId, configuration, options) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              agentConfiguration: configuration,
+              ...(options?.preserveUpdatedAt ? {} : { updatedAt: Date.now() })
+            }
+          : session
+      )
+    }))
+  },
+
   // Persists the per-session auto-review toggle so finishRun can skip a review when disabled.
   setAutoReviewEnabled: (sessionId, enabled) => {
     set((state) => ({
@@ -281,17 +301,20 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
 
     if (!trimmedTitle) return
 
-    set((state) => ({
-      sessions: state.sessions.map((session) =>
-        session.id === sessionId
-          ? {
-              ...session,
-              title: trimmedTitle,
-              updatedAt: Date.now()
-            }
-          : session
-      )
-    }))
+    set((state) => {
+      let changed = false
+      const sessions = state.sessions.map((session) => {
+        if (session.id !== sessionId || session.title === trimmedTitle) return session
+        changed = true
+        return {
+          ...session,
+          title: trimmedTitle,
+          unsavedTitle: true as const,
+          updatedAt: Date.now()
+        }
+      })
+      return changed ? { sessions } : state
+    })
   },
 
   // Removes a session and falls selection back to the next session within the same project.

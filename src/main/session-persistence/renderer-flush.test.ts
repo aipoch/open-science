@@ -9,6 +9,7 @@ import type { SessionPersistenceFlushResponse } from '../../shared/session-persi
 import {
   createElectronSessionPersistenceFlush,
   notifyRendererSessionPersistenceFlushAborted,
+  rendererSessionPersistenceFlushBlocksShutdown,
   requestRendererSessionPersistenceFlush
 } from './renderer-flush'
 import type { RendererSessionPersistenceFlushOutcome } from './renderer-flush'
@@ -136,6 +137,19 @@ describe('requestRendererSessionPersistenceFlush', () => {
 
     await expect(harness.request()).resolves.toBe('send-failed')
   })
+})
+
+describe('rendererSessionPersistenceFlushBlocksShutdown', () => {
+  it.each(['conflict', 'renderer-failed'] as const)('blocks shutdown for %s', (outcome) => {
+    expect(rendererSessionPersistenceFlushBlocksShutdown(outcome)).toBe(true)
+  })
+
+  it.each(['completed', 'unavailable', 'renderer-gone', 'send-failed', 'timeout'] as const)(
+    'allows shutdown for %s',
+    (outcome) => {
+      expect(rendererSessionPersistenceFlushBlocksShutdown(outcome)).toBe(false)
+    }
+  )
 })
 
 describe('createElectronSessionPersistenceFlush', () => {

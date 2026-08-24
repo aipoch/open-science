@@ -38,6 +38,7 @@ export type AppendUserMessageInput = {
   agentFrameworkId?: PersistedChatSession['agentFrameworkId']
   agentBackendId?: PersistedChatSession['agentBackendId']
   agentModel?: string
+  agentConfiguration?: PersistedChatSession['agentConfiguration']
   isPending?: boolean
   specialistId?: string
   enabledComputeHosts?: string[]
@@ -57,6 +58,7 @@ export type BranchInNewSessionInput = {
   agentFrameworkId?: PersistedChatSession['agentFrameworkId']
   agentBackendId?: PersistedChatSession['agentBackendId']
   agentModel?: string
+  agentConfiguration?: PersistedChatSession['agentConfiguration']
   specialistId?: string | null
 }
 
@@ -89,6 +91,8 @@ export type AppendRoutedUserMessageInput = {
   createdAt: number
   responseToMessageId?: string
   relayedFrom?: PersistedChatMessage['relayedFrom']
+  uploads?: PersistedUploadedAttachment[]
+  parts?: MessagePart[]
 }
 
 export type SessionMessageGraphActions = {

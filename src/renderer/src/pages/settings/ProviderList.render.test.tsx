@@ -56,6 +56,10 @@ const renderList = (
     onCancelIsolatedClaudeLogin?: () => void
     onLoginIsolatedClaudePaste?: () => void
     onLogoutIsolatedClaude?: () => void
+    isXaiLoginPending?: boolean
+    onLoginXai?: () => void
+    onCancelXaiLogin?: () => void
+    onLogoutXai?: () => void
     claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
   } = {}
 ): void => {
@@ -82,6 +86,10 @@ const renderList = (
         onCancelIsolatedClaudeLogin={callbacks.onCancelIsolatedClaudeLogin}
         onLoginIsolatedClaudePaste={callbacks.onLoginIsolatedClaudePaste}
         onLogoutIsolatedClaude={callbacks.onLogoutIsolatedClaude}
+        isXaiLoginPending={callbacks.isXaiLoginPending}
+        onLoginXai={callbacks.onLoginXai}
+        onCancelXaiLogin={callbacks.onCancelXaiLogin}
+        onLogoutXai={callbacks.onLogoutXai}
         claudeSubscriptionProviderId={callbacks.claudeSubscriptionProviderId}
       />
     )
@@ -404,6 +412,44 @@ describe('ProviderList', () => {
     act(() => buttonByLabel('Disconnect from Open Science')?.click())
     expect(onLogoutSharedClaude).toHaveBeenCalledOnce()
     expect(buttonByLabel('Sign in with browser')).toBeUndefined()
+  })
+
+  it('shows the xAI account and device sign-in lifecycle actions', () => {
+    const onLoginXai = vi.fn()
+    const onCancelXaiLogin = vi.fn()
+    const onLogoutXai = vi.fn()
+    const xai = provider({
+      id: 'builtin-xai-subscription',
+      type: 'xai-subscription',
+      name: 'xAI (Grok) OAuth',
+      model: 'grok-4.6',
+      models: ['grok-4.6', 'grok-4.5'],
+      accountEmail: undefined,
+      maskedKey: undefined,
+      hasKey: false,
+      lastValidatedAt: undefined
+    })
+
+    renderList([xai], undefined, undefined, { onLoginXai })
+    expect(container.textContent).toContain('Not signed in')
+    expect(container.textContent).toContain('2 models')
+    act(() => buttonByLabel('Sign in')?.click())
+    expect(onLoginXai).toHaveBeenCalledOnce()
+
+    renderList([xai], undefined, undefined, { isXaiLoginPending: true, onCancelXaiLogin })
+    act(() => buttonByLabel('Cancel sign-in')?.click())
+    expect(onCancelXaiLogin).toHaveBeenCalledOnce()
+    expect(buttonByLabel('Sign in')).toBeUndefined()
+
+    renderList(
+      [{ ...xai, accountEmail: 'researcher@example.com', hasKey: true }],
+      undefined,
+      undefined,
+      { onLogoutXai }
+    )
+    expect(container.textContent).toContain('researcher@example.com')
+    act(() => buttonByLabel('Sign out')?.click())
+    expect(onLogoutXai).toHaveBeenCalledOnce()
   })
 
   it('keeps the preferred Claude mode visible while a custom provider is active', () => {

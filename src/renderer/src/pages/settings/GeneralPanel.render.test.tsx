@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useUpdateStore } from '@/stores/update-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useThemeStore } from '@/stores/theme-store'
+import { i18next } from '@/i18n'
 import { GeneralPanel } from './GeneralPanel'
 
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
@@ -46,7 +47,14 @@ const flush = async (): Promise<void> => {
   })
 }
 
+const switchTo = (language: string): void => {
+  act(() => {
+    void i18next.changeLanguage(language)
+  })
+}
+
 beforeEach(() => {
+  switchTo('en')
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -120,6 +128,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  switchTo('en')
   vi.restoreAllMocks()
 })
 
@@ -168,6 +177,37 @@ describe('GeneralPanel command line tool', () => {
 
     expect(cliApi.uninstall).toHaveBeenCalledTimes(1)
     expect(findButton(/install command/i)).toBeDefined()
+  })
+
+  it('localizes a CLI failure and keeps the backend message in collapsed details', async () => {
+    cliApi.install.mockRejectedValue(
+      new Error('spawn /private/bin/open-science failed with EACCES')
+    )
+
+    await act(async () => root.render(<GeneralPanel />))
+    await flush()
+    await act(async () => findButton(/install command/i)?.click())
+    await flush()
+    switchTo('zh-Hans')
+
+    const alert = container.querySelector('[role="alert"]')
+    expect(alert?.textContent).toBe('无法更新命令行工具。')
+    expect(alert?.textContent).not.toContain('/private/bin/open-science')
+    const details = container.querySelector('details')
+    expect(details?.open).toBe(false)
+    expect(details?.textContent).toContain('/private/bin/open-science')
+  })
+})
+
+describe('GeneralPanel About', () => {
+  it('keeps app identity and resources at the top of General settings', async () => {
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const sections = Array.from(container.querySelectorAll('[data-slot="settings-section"]'))
+    expect(sections.at(0)?.querySelector('h3')?.textContent).toBe('About')
   })
 })
 

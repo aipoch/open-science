@@ -1,8 +1,55 @@
 import { describe, expect, it, vi } from 'vitest'
+import { redirectUriMatches } from '@modelcontextprotocol/sdk/server/auth/handlers/authorize.js'
 
 import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-client'
 
 describe('OAuthCallbackServer', () => {
+  it('keeps the existing callback URI compatible across loopback ports', async () => {
+    const server = new OAuthCallbackServer()
+
+    try {
+      const redirectUrl = await server.ensureStarted()
+
+      expect(redirectUriMatches(redirectUrl, 'http://127.0.0.1:8080/oauth/callback')).toBe(true)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('uses a pre-registered callback URI with the runtime loopback port', async () => {
+    const server = new OAuthCallbackServer()
+
+    try {
+      const registeredRedirectUrl = 'http://127.0.0.1:1/callback'
+      const redirectUrl = await server.ensureStarted(registeredRedirectUrl)
+
+      expect(new URL(redirectUrl).port).not.toBe('1')
+      expect(redirectUriMatches(redirectUrl, registeredRedirectUrl)).toBe(true)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('accepts authorization responses on the pre-registered callback path', async () => {
+    const server = new OAuthCallbackServer()
+    const redirectUrl = await server.ensureStarted('http://127.0.0.1:8080/callback')
+    const pending = server.waitFor('state-registered')
+
+    try {
+      const response = await fetch(`${redirectUrl}?code=code-registered&state=state-registered`)
+
+      expect(response.status).toBe(200)
+      await expect(pending.promise).resolves.toEqual({
+        code: 'code-registered',
+        error: undefined,
+        state: 'state-registered'
+      })
+    } finally {
+      pending.cancel()
+      await server.close()
+    }
+  })
+
   it('reuses one listener for concurrent startup', async () => {
     const server = new OAuthCallbackServer()
 

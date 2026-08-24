@@ -335,6 +335,22 @@ const verifyProviderBridge = () => {
   return 'Provider bridge verified through the Agent process.'
 }
 
+const assertValidModelLimits = () => {
+  const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '{}')
+  for (const [providerId, provider] of Object.entries(config.provider ?? {})) {
+    for (const [modelId, model] of Object.entries(provider?.models ?? {})) {
+      if (model?.limit === undefined) continue
+      const { context, input, output } = model.limit
+      const valid = (value) => Number.isSafeInteger(value) && value > 0
+      if (!valid(context) || !valid(output) || (input !== undefined && !valid(input))) {
+        throw new Error(
+          `Invalid OpenCode model limits for ${providerId}/${modelId}: ${JSON.stringify(model.limit)}`
+        )
+      }
+    }
+  }
+}
+
 const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     const initial = toolResult(
@@ -418,6 +434,7 @@ const createProvenanceArtifact = async (sessionId) => {
 if (process.argv.includes('--version')) {
   process.stdout.write(`${VERSION}\n`)
 } else {
+  assertValidModelLimits()
   let nextMessageId = 1
   let nextSessionId = 1
 

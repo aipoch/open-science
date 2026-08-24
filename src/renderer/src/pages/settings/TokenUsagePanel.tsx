@@ -2,7 +2,10 @@ import { ChartNoAxesCombined, Info } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import type {
+  PersistedChatSession,
+  SessionUsageProjection
+} from '../../../../shared/session-persistence'
 import type { Project } from '../../../../shared/projects'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
@@ -10,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import {
   buildTokenUsageAnalytics,
+  buildTokenUsageAnalyticsFromProjection,
   selectTokenUsageSummary,
   tokenUsageMetricValue,
   type TokenUsageDailyPoint,
@@ -80,6 +84,33 @@ function TokenUsagePanel({
   const now = providedNow ?? currentTime
   const [period, setPeriod] = useState<TokenUsagePeriod>('30-days')
   const [heatmapMetric, setHeatmapMetric] = useState<TokenUsageHeatmapMetric>('totalTokens')
+  const [usageProjection, setUsageProjection] = useState<SessionUsageProjection>()
+  const [usageProjectionLoadSettled, setUsageProjectionLoadSettled] = useState(false)
+  const canLoadUsageProjection = typeof window.api?.sessions?.loadUsage === 'function'
+  const usageRevision = sessions
+    .map((session) => `${session.id}:${session.revision ?? 0}`)
+    .join('\u0000')
+  const projectRevision = projects
+    .map((project) => `${project.id}:${project.createdAt}`)
+    .sort()
+    .join('\u0000')
+
+  useEffect(() => {
+    const loadUsage = window.api?.sessions?.loadUsage
+    if (typeof loadUsage !== 'function') return
+    let active = true
+    void loadUsage()
+      .then((projection) => {
+        if (active) setUsageProjection(projection)
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setUsageProjectionLoadSettled(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [usageRevision, projectRevision])
 
   useEffect(() => {
     if (providedNow !== undefined) return
@@ -103,8 +134,11 @@ function TokenUsagePanel({
   }, [providedNow])
 
   const analytics = useMemo(
-    () => buildTokenUsageAnalytics(sessions, now, projects),
-    [sessions, now, projects]
+    () =>
+      usageProjection
+        ? buildTokenUsageAnalyticsFromProjection(usageProjection, now)
+        : buildTokenUsageAnalytics(sessions, now, projects),
+    [sessions, usageProjection, now, projects]
   )
   const summary = useMemo(() => selectTokenUsageSummary(analytics, period), [analytics, period])
   const numberFormatter = useMemo(
@@ -219,6 +253,20 @@ function TokenUsagePanel({
       cache: formatNumber(point.cacheTokens),
       output: formatNumber(point.outputTokens)
     })
+
+  if (canLoadUsageProjection && usageProjection === undefined && !usageProjectionLoadSettled) {
+    return (
+      <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
+        <p
+          role="status"
+          data-slot="token-usage-loading"
+          className="px-4 py-6 text-sm text-muted-foreground sm:px-5"
+        >
+          {t('Loading…')}
+        </p>
+      </div>
+    )
+  }
 
   return (
     <TooltipProvider delayDuration={200}>

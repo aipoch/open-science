@@ -129,6 +129,10 @@ const notebookRunCandidate = (value: unknown): boolean => {
     ) ||
     typeof value.startedAt !== 'number' ||
     !Number.isFinite(value.startedAt) ||
+    (value.kernelEpochId !== undefined &&
+      (typeof value.kernelEpochId !== 'string' || value.kernelEpochId.length === 0)) ||
+    (value.kernelDispatched !== undefined && typeof value.kernelDispatched !== 'boolean') ||
+    (value.runtimeId !== undefined && typeof value.runtimeId !== 'string') ||
     (value.kernelKind !== undefined &&
       value.kernelKind !== 'python' &&
       value.kernelKind !== 'r' &&
@@ -359,8 +363,13 @@ const withoutTerminatedKernelInstances = (
 }
 
 const ownRun = (lane: NotebookLaneIdentity, run: NotebookRunRecord): NotebookRunRecord => {
-  const { agentFrameId } = notebookLaneScope(lane)
-  if (run.agentFrameId && run.agentFrameId !== agentFrameId) {
+  const scope = notebookLaneScope(lane)
+  const agentFrameId = run.agentFrameId ?? scope.agentFrameId
+  // Root lanes share one durable document across their provisional and conversation Frame ids. Keep
+  // the Run's self-consistent root provenance; child lanes must still match their exact Frame owner.
+  const matchesRootRunProvenance =
+    scope.kind === 'root' && run.rootFrameId !== undefined && agentFrameId === run.rootFrameId
+  if (agentFrameId !== scope.agentFrameId && !matchesRootRunProvenance) {
     throw new Error('Notebook Run Frame owner does not match its lane.')
   }
   return { ...run, agentFrameId }

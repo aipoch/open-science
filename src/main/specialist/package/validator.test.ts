@@ -274,6 +274,21 @@ describe('validateSpecialistPackage', () => {
     )
   })
 
+  it('excludes package version from the package content identity', () => {
+    const first = validateSpecialistPackage(
+      packageFiles(validManifest, validSpecialistJson),
+      catalog,
+      'zip'
+    )
+    const bumped = validateSpecialistPackage(
+      packageFiles({ ...validManifest, version: '1.2.4' }, validSpecialistJson),
+      catalog,
+      'zip'
+    )
+
+    expect(first.plan?.contentHash).toBe(bumped.plan?.contentHash)
+  })
+
   it('rejects malformed capability arrays', () => {
     const result = validateSpecialistPackage(
       packageFiles(validManifest, {

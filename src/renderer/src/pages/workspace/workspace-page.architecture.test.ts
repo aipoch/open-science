@@ -31,9 +31,23 @@ const ownerPaths = {
   composer: resolve(workspaceDirectory, 'workspace-composer-controller.ts'),
   conversation: resolve(workspaceDirectory, 'workspace-conversation-controller.ts'),
   messageQueue: resolve(workspaceDirectory, 'workspace-message-queue-controller.ts'),
+  messageQueueOwner: resolve(workspaceDirectory, 'workspace-message-queue-owner.ts'),
   branchSwitchGuard: resolve(workspaceDirectory, 'use-workspace-branch-switch-guard.ts'),
   sideChat: resolve(workspaceDirectory, 'use-side-chat-controller.ts'),
-  session: resolve(workspaceDirectory, 'workspace-session-controller.ts')
+  session: resolve(workspaceDirectory, 'workspace-session-controller.ts'),
+  sessionAgentConfiguration: resolve(
+    workspaceDirectory,
+    'workspace-session-agent-configuration-controller.ts'
+  )
+} as const
+
+// Private to the queue facade. Keep these out of module-impact ownerPaths so a split
+// does not trip the global full-suite gate; controller and owner remain the registered boundary.
+const queueInternalPaths = {
+  admission: resolve(workspaceDirectory, 'workspace-message-queue-admission.ts'),
+  drain: resolve(workspaceDirectory, 'workspace-message-queue-drain.ts'),
+  projection: resolve(workspaceDirectory, 'workspace-message-queue-projection.ts'),
+  announcement: resolve(workspaceDirectory, 'workspace-message-queue-announcement.ts')
 } as const
 
 const readSource = (path: string): string => readFileSync(path, 'utf8')
@@ -140,16 +154,22 @@ const conversationPanelPropNames = (): string[] => {
 
 describe('workspace page architecture', () => {
   it('keeps the page and extracted owners within their completion gates', () => {
-    // History-replay follow-on gates add wiring without adding a page-owned behavior.
-    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_214)
+    // Session-model fallback adds page wiring for the extracted configuration owner.
+    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_230)
     for (const ownerPath of [
       ownerPaths.layout,
       ownerPaths.composer,
       ownerPaths.conversation,
       ownerPaths.messageQueue,
+      ownerPaths.messageQueueOwner,
+      queueInternalPaths.admission,
+      queueInternalPaths.drain,
+      queueInternalPaths.projection,
+      queueInternalPaths.announcement,
       ownerPaths.branchSwitchGuard,
       ownerPaths.sideChat,
-      ownerPaths.session
+      ownerPaths.session,
+      ownerPaths.sessionAgentConfiguration
     ]) {
       expect(rawLineCount(readSource(ownerPath)), basename(ownerPath)).toBeLessThanOrEqual(700)
     }
@@ -160,18 +180,44 @@ describe('workspace page architecture', () => {
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',
       'pages/workspace/workspace-conversation-controller.ts',
-      'pages/workspace/workspace-message-queue-controller.ts'
+      'pages/workspace/workspace-message-queue-owner.ts'
     ])
     expect(importersOf(ownerPaths.messageQueue)).toEqual([
       'App.tsx',
       'pages/workspace/ComposerMessageQueue.tsx',
       'pages/workspace/workspace-conversation-controller.ts'
     ])
+    expect(importersOf(ownerPaths.messageQueueOwner)).toEqual([
+      'pages/workspace/workspace-message-queue-admission.ts',
+      'pages/workspace/workspace-message-queue-controller.ts',
+      'pages/workspace/workspace-message-queue-drain.ts',
+      'pages/workspace/workspace-message-queue-projection.ts'
+    ])
+    expect(importersOf(queueInternalPaths.admission)).toEqual([
+      'pages/workspace/workspace-message-queue-controller.ts',
+      'pages/workspace/workspace-message-queue-drain.ts',
+      'pages/workspace/workspace-message-queue-projection.ts'
+    ])
+    expect(importersOf(queueInternalPaths.drain)).toEqual([
+      'pages/workspace/workspace-message-queue-controller.ts'
+    ])
+    expect(importersOf(queueInternalPaths.projection)).toEqual([
+      'pages/workspace/workspace-message-queue-controller.ts'
+    ])
+    expect(importersOf(queueInternalPaths.announcement)).toEqual([
+      'pages/workspace/ComposerMessageQueue.tsx',
+      'pages/workspace/workspace-message-queue-admission.ts',
+      'pages/workspace/workspace-message-queue-drain.ts',
+      'pages/workspace/workspace-message-queue-projection.ts'
+    ])
     expect(importersOf(ownerPaths.branchSwitchGuard)).toEqual(['pages/workspace/WorkspacePage.tsx'])
     expect(importersOf(ownerPaths.session)).toEqual([
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',
       'pages/workspace/workspace-conversation-controller.ts'
+    ])
+    expect(importersOf(ownerPaths.sessionAgentConfiguration)).toEqual([
+      'pages/workspace/WorkspacePage.tsx'
     ])
     expect(importersOf(ownerPaths.conversation)).toEqual([
       'pages/workspace/ConversationPanel.tsx',

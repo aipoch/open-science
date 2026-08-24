@@ -6,30 +6,25 @@ import type {
   RefreshProviderModelsResult,
   UpsertProviderRequest,
   ValidateProviderRequest,
-  ValidateProviderResult
+  ValidateProviderResult,
+  XaiOAuthDeviceAuthorization
 } from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
+  XAI_SUBSCRIPTION_PROVIDER_ID,
   claudeIsolatedProviderIdentity,
   claudeSharedProviderIdentity,
   codexSubscriptionProviderIdentity,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
+  isXaiSubscriptionProvider,
   providerEndpoints,
-  requiresChatCompletionsBridge
+  requiresChatCompletionsBridge,
+  xaiSubscriptionProviderIdentity
 } from '../../shared/settings'
-import {
-  defaultVendorModel,
-  isOfficialVendorId,
-  isVendorModelResponsesSupported,
-  resolveCustomModelContextWindow,
-  resolveVendorApiEndpoints,
-  resolveVendorBaseUrl,
-  resolveVendorModelsUrl,
-  resolveVendorOpenAiBaseUrl
-} from '../../shared/provider-registry'
+import { defaultVendorModel, isOfficialVendorId } from '../../shared/provider-registry'
 import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
@@ -41,9 +36,10 @@ import { type CodexAuthControllerPort } from './codex-auth'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import { encryptKey, maskKey, tryDecryptKey } from './crypto'
-import { classifyStatus, validateProvider as validateProviderTarget } from './validate'
-import { listProviderModels } from './list-models'
+import { validateProvider as validateProviderTarget } from './validate'
 import type { ResolvedProvider } from './provider-env'
+import { resolveCustomTokenLimits } from './provider-token-limits'
+import { resolveProviderDraft } from './provider-draft-projection'
 import {
   CLAUDE_SHARED_DISCONNECTED_MESSAGE,
   ProviderAuthLifecycleOwner
@@ -57,6 +53,9 @@ import {
 import type { SettingsRepository } from './repository'
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { StoredProvider, StoredSettings } from './types'
+import type { XaiOAuthControllerPort } from './xai-oauth'
+import { XaiProviderAccountOwner } from './xai-provider-account-owner'
+import { ProviderModelCatalogOwner } from './provider-model-catalog-owner'
 
 type ProviderAccountsModuleOptions = {
   repository: SettingsRepository
@@ -76,6 +75,7 @@ type ProviderAccountsModuleOptions = {
   codexAuth?: CodexAuthControllerPort
   claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
   claudeSharedAuth?: ClaudeSharedAuthControllerPort
+  xaiOAuth?: XaiOAuthControllerPort
 }
 
 // Owns durable provider records and every provider-specific validation/authentication lifecycle;
@@ -84,6 +84,8 @@ class ProviderAccountsModule {
   private readonly repository: SettingsRepository
   private readonly runtimeProjection = new ProviderRuntimeProjectionOwner()
   private readonly auth: ProviderAuthLifecycleOwner
+  private readonly xai: XaiProviderAccountOwner
+  private readonly modelCatalog: ProviderModelCatalogOwner
   private readonly providerValidationGenerations = new Map<string, number>()
 
   constructor(private readonly options: ProviderAccountsModuleOptions) {
@@ -92,6 +94,16 @@ class ProviderAccountsModule {
       ...options,
       resolveProvider: (provider, model) => this.runtimeProjection.resolveProvider(provider, model)
     })
+    this.xai = new XaiProviderAccountOwner(
+      this.repository,
+      (operation) => this.auth.serializeAccountMutation(operation),
+      options.xaiOAuth
+    )
+    this.modelCatalog = new ProviderModelCatalogOwner(
+      this.repository,
+      (provider) => this.resolveProvider(provider),
+      () => this.xai.getAccessToken()
+    )
   }
 
   // Keeps provider-before-Connector ordering in SettingsService's whole-settings migration path.
@@ -124,7 +136,9 @@ class ProviderAccountsModule {
         ? claudeIsolatedProviderIdentity()
         : request.type === 'claude-shared'
           ? claudeSharedProviderIdentity()
-          : undefined
+          : request.type === 'xai-subscription'
+            ? xaiSubscriptionProviderIdentity()
+            : undefined
     const requestedId = subscriptionIdentity?.id ?? request.id
     const existing = requestedId
       ? settings.providers.find((provider) => provider.id === requestedId)
@@ -165,6 +179,13 @@ class ProviderAccountsModule {
       credentialsChanged =
         existing !== undefined &&
         (existing.codexAuthMode !== provider.codexAuthMode || reimportCodexAuthentication)
+    } else if (request.type === 'xai-subscription') {
+      provider.apiEndpoints = ['anthropic', 'openai', 'responses']
+      provider.model = request.model?.trim() || existing?.model || defaultVendorModel('xai')
+      if (existing?.fetchedModels) provider.fetchedModels = existing.fetchedModels
+      if (existing?.keyRef) provider.keyRef = existing.keyRef
+      if (existing?.accountEmail) provider.accountEmail = existing.accountEmail
+      credentialsChanged = provider.model !== existing?.model
     } else if (request.type === 'claude-isolated') {
       provider.apiEndpoints = ['anthropic']
       if (existing?.keyRef) {
@@ -200,22 +221,13 @@ class ProviderAccountsModule {
     } else if (request.type === 'custom') {
       const baseUrl = request.baseUrl?.trim() || existing?.baseUrl
       const model = request.model?.trim() || existing?.model
-      const contextWindow =
-        request.contextWindow === null
-          ? undefined
-          : (request.contextWindow ?? existing?.contextWindow)
+      const tokenLimits = resolveCustomTokenLimits(request, existing)
       if (!baseUrl) throw new Error('Base URL is required for a custom provider.')
       if (!model) throw new Error('Model is required for a custom provider.')
       if (!carryKey()) throw new Error('API key is required for a custom provider.')
-      if (
-        contextWindow !== undefined &&
-        (!Number.isSafeInteger(contextWindow) || contextWindow <= 0)
-      ) {
-        throw new Error('Context window must be a positive whole number of tokens.')
-      }
       provider.baseUrl = baseUrl
       provider.model = model
-      if (contextWindow !== undefined) provider.contextWindow = contextWindow
+      Object.assign(provider, tokenLimits)
       provider.supportsImageInput =
         request.supportsImageInput ?? existing?.supportsImageInput ?? false
       provider.reasoningEffortPreset =
@@ -254,11 +266,37 @@ class ProviderAccountsModule {
     await this.repository.upsertProvider(provider, editId)
   }
 
-  deleteProvider(id: string): Promise<void> {
-    return this.auth.serializeAccountMutation(async () => {
+  async deleteProvider(id: string): Promise<void> {
+    const settings = await this.repository.getSettings()
+    if (settings.providers.some((provider) => provider.id === id && isXaiRecord(provider))) {
+      await this.xai.logout()
+    }
+
+    await this.auth.serializeAccountMutation(async () => {
       await this.auth.cleanupProviderBeforeDelete(id)
       await this.repository.deleteProvider(id)
     })
+  }
+
+  beginXaiOAuthLogin(): Promise<XaiOAuthDeviceAuthorization> {
+    return this.xai.beginLogin()
+  }
+
+  waitXaiOAuthLogin(): Promise<{ accountEmail?: string }> {
+    return this.xai.waitForLogin()
+  }
+
+  cancelXaiOAuthLogin(): void {
+    this.xai.cancelLogin()
+  }
+
+  async logoutXaiOAuth(): Promise<void> {
+    this.advanceProviderValidationGeneration(XAI_SUBSCRIPTION_PROVIDER_ID)
+    await this.xai.logout()
+  }
+
+  getXaiOAuthAccessToken(forceRefresh = false): Promise<string> {
+    return this.xai.getAccessToken(forceRefresh)
   }
 
   cancelCodexLogin(): void {
@@ -335,20 +373,42 @@ class ProviderAccountsModule {
         ? undefined
         : this.frameworkIncompatibilityResult(resolved.provider, framework)
 
-    const authResult = incompatibility
-      ? undefined
-      : await this.auth.validateProviderAuth(resolved.provider, settings, storedValidationTarget)
+    let xaiAuthResult: ValidateProviderResult | undefined
+    let validationProvider = resolved.provider
+    if (storedValidationTarget && isXaiSubscriptionProvider(storedValidationTarget.type)) {
+      try {
+        validationProvider = {
+          ...resolved.provider,
+          key: await this.xai.getAccessToken(),
+          apiEndpoints: ['responses']
+        }
+      } catch (error) {
+        xaiAuthResult = {
+          ok: false,
+          category: 'auth',
+          message: error instanceof Error ? error.message : 'xAI sign-in is unavailable.'
+        }
+      }
+    }
+    const authResult =
+      incompatibility || xaiAuthResult
+        ? undefined
+        : await this.auth.validateProviderAuth(resolved.provider, settings, storedValidationTarget)
     const result =
       incompatibility ??
+      xaiAuthResult ??
       authResult ??
-      (await validateProviderTarget(resolved.provider, {
+      (await validateProviderTarget(validationProvider, {
         fetchImpl: netFetchStandard,
         requireBridgeToolCall: requiresChatCompletionsBridge(resolved.provider, framework),
-        requireNativeResponsesCompatibility: requiresNativeResponsesCompatibility(
-          resolved.provider,
-          framework
-        ),
-        frameworkEndpoints: framework.id === 'codex' ? undefined : framework.supportedApiTypes
+        requireNativeResponsesCompatibility:
+          !isXaiSubscriptionProvider(resolved.provider.type) &&
+          requiresNativeResponsesCompatibility(resolved.provider, framework),
+        frameworkEndpoints: isXaiSubscriptionProvider(resolved.provider.type)
+          ? ['responses']
+          : framework.id === 'codex'
+            ? undefined
+            : framework.supportedApiTypes
       }))
 
     if (!resolved.storedId) return result
@@ -402,39 +462,7 @@ class ProviderAccountsModule {
   async refreshProviderModels(
     request: RefreshProviderModelsRequest
   ): Promise<RefreshProviderModelsResult> {
-    const settings = await this.repository.getSettings()
-    const stored = settings.providers.find((provider) => provider.id === request.providerId)
-    if (!stored) return { ok: false, category: 'unknown', message: 'Provider not found.' }
-
-    const modelsUrl =
-      stored.type === 'official' && stored.vendorId
-        ? resolveVendorModelsUrl(stored.vendorId, stored.region)
-        : undefined
-    if (!modelsUrl) {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'This provider has no model-list endpoint.'
-      }
-    }
-
-    const result = await listProviderModels(
-      {
-        url: modelsUrl,
-        key: this.resolveProvider(stored).key
-      },
-      { fetchImpl: netFetchStandard }
-    )
-    if (!result.ok || !result.models) {
-      return {
-        ok: false,
-        category: result.status ? classifyStatus(result.status) : 'network',
-        message: result.message
-      }
-    }
-
-    await this.repository.upsertProvider({ ...stored, fetchedModels: result.models })
-    return { ok: true, category: 'ok', models: result.models }
+    return this.modelCatalog.refresh(request)
   }
 
   resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ChatApiEndpoint[] {
@@ -446,6 +474,7 @@ class ProviderAccountsModule {
   }
 
   async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
+    if (isXaiSubscriptionProvider(provider.type)) return this.xai.isUsable()
     return this.auth.isProviderKeyUsable(provider)
   }
 
@@ -485,38 +514,7 @@ class ProviderAccountsModule {
   }
 
   private resolveDraft(draft: ProviderDraft): ResolvedProvider {
-    if (draft.type === 'official' && isOfficialVendorId(draft.vendorId)) {
-      const draftModel = draft.model ?? defaultVendorModel(draft.vendorId)
-      const vendorEndpoints = resolveVendorApiEndpoints(draft.vendorId)
-      const draftEndpoints: ChatApiEndpoint[] =
-        !vendorEndpoints.includes('responses') &&
-        isVendorModelResponsesSupported(draft.vendorId, draftModel)
-          ? [...vendorEndpoints, 'responses']
-          : vendorEndpoints
-      return {
-        type: 'custom',
-        vendorId: draft.vendorId,
-        baseUrl: resolveVendorBaseUrl(draft.vendorId, draft.region),
-        openaiBaseUrl: resolveVendorOpenAiBaseUrl(draft.vendorId, draft.region),
-        model: draftModel,
-        key: draft.key,
-        apiEndpoints: draftEndpoints
-      }
-    }
-
-    return {
-      type: draft.type,
-      baseUrl: draft.baseUrl,
-      model: draft.model,
-      ...(draft.type === 'custom'
-        ? { contextWindow: resolveCustomModelContextWindow(draft.contextWindow ?? undefined) }
-        : {}),
-      key: draft.key,
-      apiEndpoints: draft.apiEndpoints ?? ['anthropic'],
-      ...(draft.type === 'custom'
-        ? { reasoningEffortTransport: draft.reasoningEffortTransport }
-        : {})
-    }
+    return resolveProviderDraft(draft)
   }
 
   private frameworkIncompatibilityResult(
@@ -591,6 +589,8 @@ class ProviderAccountsModule {
     return `p_${Date.now()}_${this.options.allocateSettingsIdSequence()}`
   }
 }
+
+const isXaiRecord = (provider: StoredProvider): boolean => isXaiSubscriptionProvider(provider.type)
 
 export {
   CLAUDE_SHARED_DISCONNECTED_MESSAGE,

@@ -45,6 +45,11 @@ export type PersistedPreviewState = {
   subagents?: PersistedSubagentsPreviewItem
 }
 
+export type PreviewStateSnapshot = {
+  state: PersistedPreviewState
+  revision: number
+}
+
 export type LoadPreviewStateRequest = {
   projectId: string
 }
@@ -52,7 +57,12 @@ export type LoadPreviewStateRequest = {
 export type SavePreviewStateRequest = {
   projectId: string
   state: PersistedPreviewState
+  expectedRevision: number
 }
+
+export type SavePreviewStateResult =
+  | { status: 'saved'; revision: number }
+  | { status: 'conflict'; snapshot: PreviewStateSnapshot | null }
 
 export type DeletePreviewStateRequest = {
   projectId: string

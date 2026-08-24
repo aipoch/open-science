@@ -66,7 +66,9 @@ const frameworkManaged = {
 const createHarness = (input?: {
   framework?: AgentFramework
   session?: FakeSession
+  cancelCompaction?: (sessionId: string) => Promise<void>
 }): {
+  cancelCompaction: ReturnType<typeof vi.fn>
   context: ContextUsageTracker
   emitState: ReturnType<typeof vi.fn>
   events: Array<Partial<AcpRuntimeEvent>>
@@ -91,6 +93,7 @@ const createHarness = (input?: {
   const pushEvent = vi.fn((event: Partial<AcpRuntimeEvent>) => events.push(event))
   const routeHiddenNotification = vi.fn()
   const emitState = vi.fn()
+  const cancelCompaction = vi.fn(input?.cancelCompaction ?? (async () => undefined))
   const workflow = new AcpContextCompactionWorkflow({
     sessions: {
       activeSession: (sessionId) => (sessionId === 'app-session' ? activeSession : undefined),
@@ -104,10 +107,12 @@ const createHarness = (input?: {
     routeHiddenNotification,
     pushEvent,
     emitState,
-    errorMessage: (error) => (error instanceof Error ? error.message : String(error))
+    errorMessage: (error) => (error instanceof Error ? error.message : String(error)),
+    cancelCompaction
   })
 
   return {
+    cancelCompaction,
     context,
     emitState,
     events,
@@ -221,6 +226,90 @@ describe('AcpContextCompactionWorkflow', () => {
 
     completion.resolve(stop('end_turn'))
     await recovering
+    expect(harness.interactions.current('app-session')).toBeUndefined()
+  })
+
+  it('starts automatic compaction after idle when the native threshold is reached', async () => {
+    const session = fakeSession([stop('end_turn')])
+    const harness = createHarness({ session })
+    harness.context.reconcileProviderUsage('app-session', { used: 180_000, size: 200_000 })
+
+    await expect(harness.workflow.compactIfIdle('app-session')).resolves.toEqual({
+      stopReason: 'end_turn'
+    })
+    expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: '/compact' }])
+    expect(
+      harness.events.map(({ compactionReason, status }) => ({ compactionReason, status }))
+    ).toEqual([
+      { compactionReason: 'automatic', status: 'in_progress' },
+      { compactionReason: 'automatic', status: 'completed' }
+    ])
+    expect(harness.interactions.current('app-session')).toBeUndefined()
+  })
+
+  it('does not compact while idle when no native threshold is declared', async () => {
+    const session = fakeSession([stop('end_turn')])
+    const harness = createHarness({
+      session,
+      framework: {
+        ...claudeCodeFramework,
+        id: 'codex',
+        displayName: 'Codex',
+        contextCompaction: { kind: 'native-command', command: '/compact' }
+      }
+    })
+    harness.context.reconcileProviderUsage('app-session', { used: 180_000, size: 200_000 })
+
+    await expect(harness.workflow.compactIfIdle('app-session')).resolves.toBeUndefined()
+    expect(session.prompt).not.toHaveBeenCalled()
+  })
+
+  it('does not compact while another interaction is current', async () => {
+    const session = fakeSession([stop('end_turn')])
+    const harness = createHarness({ session })
+    harness.context.reconcileProviderUsage('app-session', { used: 180_000, size: 200_000 })
+    const prompt = harness.interactions.claim({ sessionId: 'app-session', kind: 'prompt' })
+
+    await expect(harness.workflow.compactIfIdle('app-session')).resolves.toBeUndefined()
+    expect(session.prompt).not.toHaveBeenCalled()
+    harness.interactions.release(prompt)
+  })
+
+  it('does not compact while a prompt is reserved for preflight', async () => {
+    const session = fakeSession([stop('end_turn')])
+    const harness = createHarness({ session })
+    harness.context.reconcileProviderUsage('app-session', { used: 180_000, size: 200_000 })
+    const prompt = harness.interactions.reservePrompt({
+      sessionId: 'app-session',
+      kind: 'prompt'
+    })
+
+    await expect(harness.workflow.compactIfIdle('app-session')).resolves.toBeUndefined()
+    expect(session.prompt).not.toHaveBeenCalled()
+    harness.interactions.release(prompt)
+  })
+
+  it('cancels and drains an owned compaction before admitting a prompt', async () => {
+    const completion = deferred<NextUpdate>()
+    const session = fakeSession([completion.promise])
+    const harness = createHarness({ session })
+    harness.context.reconcileProviderUsage('app-session', { used: 180_000, size: 200_000 })
+
+    const compaction = harness.workflow.compactIfIdle('app-session')
+    const preemption = harness.workflow.preemptForPrompt('app-session')
+    if (!preemption) throw new Error('Expected active compaction preemption')
+    let preemptionSettled = false
+    void preemption.finally(() => {
+      preemptionSettled = true
+    })
+
+    expect(harness.cancelCompaction).toHaveBeenCalledWith('app-session')
+    await Promise.resolve()
+    expect(preemptionSettled).toBe(false)
+
+    completion.resolve(stop('cancelled'))
+    await expect(preemption).resolves.toBeUndefined()
+    await expect(compaction).resolves.toEqual({ stopReason: 'cancelled' })
     expect(harness.interactions.current('app-session')).toBeUndefined()
   })
 

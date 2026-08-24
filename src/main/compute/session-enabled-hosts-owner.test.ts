@@ -243,6 +243,47 @@ describe('SessionEnabledComputeHostsOwner', () => {
     expect(owner.get('unseen-session')).toEqual(['ssh:cluster'])
   })
 
+  it('durably repairs missing hosts when one lazy Session is opened', async () => {
+    const registry = new EnabledComputeHostsRegistry()
+    registry.set('unseen-session', ['ssh:cluster'])
+    const repaired = createSession({
+      enabledComputeHosts: ['ssh:cluster'],
+      selectedComputeHosts: ['ssh:cluster'],
+      updatedAt: 3
+    })
+    const mutateSessionComputeHostAccess = vi.fn().mockResolvedValue(repaired)
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry,
+      hostExists: async () => true,
+      listHostIds: async () => ['ssh:cluster'],
+      sessionAuthority: {
+        sessionProjectId: async () => 'project-1',
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        },
+        mutateSessionComputeHostAccess,
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
+      },
+      withDataRootWrite: passthroughDataRootWrite
+    })
+
+    await expect(
+      owner.reconcileSession(
+        createSession({
+          enabledComputeHosts: ['ssh:cluster', 'ssh:deleted'],
+          selectedComputeHosts: ['ssh:deleted']
+        })
+      )
+    ).resolves.toEqual(repaired)
+
+    expect(mutateSessionComputeHostAccess).toHaveBeenCalledWith('project-1', 'session-1', {
+      kind: 'replace-access',
+      access: { enabledProviderIds: ['ssh:cluster'], selectedProviderIds: [] }
+    })
+    expect(owner.get('session-1')).toEqual(['ssh:cluster'])
+    expect(owner.get('unseen-session')).toEqual(['ssh:cluster'])
+  })
+
   it('clears deleted Sessions from the cache', async () => {
     const registry = new EnabledComputeHostsRegistry()
     registry.set('session-1', ['ssh:cluster'])

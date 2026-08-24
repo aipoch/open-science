@@ -40,7 +40,7 @@ import type { TagsChangedEvent } from '../shared/tags'
 // them deliberately.
 export type ApplicationEventMap = {
   'acp:state': AcpStateSnapshot
-  'acp:event': AcpRuntimeEvent
+  'acp:event': readonly AcpRuntimeEvent[]
   'acp:agent-runtime-update': AcpAgentRuntimeUpdate
   'acp:permission-request': AcpPermissionRequest
   'side-chat:event': SideChatRuntimeEvent

@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { Tiktoken } from 'js-tiktoken/lite'
 import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 
-import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
+import {
+  BASH_EXECUTE_DOC,
+  buildShellExecuteDoc,
+  NOTEBOOK_SYSTEM_PROMPT_APPEND
+} from '../notebook/mcp-server'
+import type { AgentFrameworkId } from '../agent-framework/types'
 import { contextUsageMcpSections } from './context-usage-static-context'
 
 describe('contextUsageMcpSections', () => {
@@ -38,17 +43,40 @@ describe('contextUsageMcpSections', () => {
   })
 
   it('keeps the notebook schema plus scoped guidance within the static context budget', () => {
-    const [{ text: schema }] = contextUsageMcpSections('codex', {
-      artifacts: false,
-      notebook: true,
-      skillImport: false
-    })
     const tokenizer = new Tiktoken(cl100kBase)
+    const tokenCount = (text: string): number => tokenizer.encode(text).length
+    // bash_execute embeds a platform-specific shell contract. Windows PowerShell docs are the
+    // largest variant, so a POSIX host must still count that extra or Windows full-suite CI
+    // is the first place the budget regresses.
+    const bashHeadroom = Math.max(
+      0,
+      ...(['win32', 'linux', 'darwin'] as const).map(
+        (platform) => tokenCount(buildShellExecuteDoc(platform)) - tokenCount(BASH_EXECUTE_DOC)
+      )
+    )
+    const frameworks: Array<{
+      frameworkId: AgentFrameworkId
+      codexBridgeAliases?: boolean
+    }> = [
+      { frameworkId: 'codex' },
+      { frameworkId: 'codex', codexBridgeAliases: true },
+      { frameworkId: 'claude-code' },
+      { frameworkId: 'opencode' }
+    ]
 
     // Baseline before deduplication was about 5.2k cl100k tokens (3.6k schema + 1.6k prompt).
-    expect(
-      tokenizer.encode(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${schema}`).length
-    ).toBeLessThanOrEqual(3_500)
+    for (const { frameworkId, codexBridgeAliases } of frameworks) {
+      const [{ text: schema }] = contextUsageMcpSections(frameworkId, {
+        artifacts: false,
+        notebook: true,
+        skillImport: false,
+        ...(codexBridgeAliases ? { codexBridgeAliases } : {})
+      })
+      expect(
+        tokenCount(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${schema}`) + bashHeadroom,
+        `${frameworkId}${codexBridgeAliases ? ' (bridge aliases)' : ''}`
+      ).toBeLessThanOrEqual(3_500)
+    }
   })
 
   it('uses bridge aliases for Codex MCP tools delivered through a compatibility proxy', () => {

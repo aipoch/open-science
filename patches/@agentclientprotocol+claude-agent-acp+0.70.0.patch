@@ -1,8 +1,8 @@
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
-index f247a7e..266f90d 100644
+index 243386d..f0a16da 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
-@@ -13,6 +13,7 @@ export interface Logger {
+@@ -16,6 +16,7 @@ export interface Logger {
      log: (...args: any[]) => void;
      error: (...args: any[]) => void;
  }
@@ -11,10 +11,10 @@ index f247a7e..266f90d 100644
      inputTokens: number;
      outputTokens: number;
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-index 361d032..69371ea 100644
+index f11169b..cca061f 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-@@ -438,6 +438,62 @@ class ClientConnection {
+@@ -570,6 +570,62 @@ class ClientConnection {
          return this.ctx.notify(method, params);
      }
  }
@@ -77,7 +77,7 @@ index 361d032..69371ea 100644
  export class ClaudeAcpAgent {
      sessions;
      client;
-@@ -2353,7 +2409,7 @@ export class ClaudeAcpAgent {
+@@ -2972,7 +3028,7 @@ export class ClaudeAcpAgent {
                                      cache_creation_input_tokens: usage.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
                                  };
                              }
@@ -86,16 +86,16 @@ index 361d032..69371ea 100644
                              if (nextUsage !== lastAssistantTotalUsage) {
                                  lastAssistantTotalUsage = nextUsage;
                                  await sendUpdate({
-@@ -2465,7 +2521,7 @@ export class ClaudeAcpAgent {
+@@ -3110,7 +3166,7 @@ export class ClaudeAcpAgent {
                          // aligned with what the user's current selection is producing.
                          if (message.type === "assistant" && message.parent_tool_use_id === null) {
                              lastAssistantUsage = snapshotFromUsage(message.message.usage);
 -                            lastAssistantTotalUsage = totalTokens(lastAssistantUsage);
 +                            lastAssistantTotalUsage = contextTokens(lastAssistantUsage);
-                             if (message.message.model && message.message.model !== "<synthetic>") {
-                                 lastAssistantModel = message.message.model;
-                             }
-@@ -4067,6 +4123,7 @@ export class ClaudeAcpAgent {
+                             lastAssistantWasUsageLimit = isSyntheticUsageLimitMessage(message.message);
+                             if (message.error || lastAssistantWasUsageLimit) {
+                                 lastAssistantFailureTitle = assistantMessageText(message.message);
+@@ -4995,6 +5051,7 @@ export class ClaudeAcpAgent {
          let initializationResult;
          try {
              initializationResult = await q.initializationResult();
@@ -103,7 +103,7 @@ index 361d032..69371ea 100644
          }
          catch (error) {
              if (creationOpts.resume &&
-@@ -4282,15 +4339,10 @@ function sessionUsage(session) {
+@@ -5259,15 +5316,10 @@ function sessionUsage(session) {
              session.accumulatedUsage.cachedWriteTokens,
      };
  }
@@ -123,7 +123,7 @@ index 361d032..69371ea 100644
  }
  /**
   * Build the `data` payload attached to a `RequestError.internalError` when we
-@@ -4307,7 +4359,7 @@ function errorKindData(errorKind) {
+@@ -5284,7 +5336,7 @@ function errorKindData(errorKind) {
  }
  /** Project a nullable API usage object into our non-null snapshot shape.
   *  Both SDK message_start and assistant message `usage` have `number | null`

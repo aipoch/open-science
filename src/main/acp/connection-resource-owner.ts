@@ -23,6 +23,7 @@ export type AcpConnectionCapabilities = Readonly<{
   close: boolean
   delete: boolean
   resume: boolean
+  steering: boolean
 }>
 
 export type AcpAttachedConnectionResource = {
@@ -74,7 +75,8 @@ type CurrentResource = AcpAttachedConnectionResource & {
 const EMPTY_CAPABILITIES: AcpConnectionCapabilities = Object.freeze({
   close: false,
   delete: false,
-  resume: false
+  resume: false,
+  steering: false
 })
 
 // Owns connection publication, physical resource teardown, process-exit identity, and exclusive

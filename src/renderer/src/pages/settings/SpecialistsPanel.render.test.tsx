@@ -10,6 +10,7 @@ import { i18next } from '@/i18n'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { resetMarketplaceStoreForTests, useMarketplaceStore } from '@/stores/marketplace-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import type { SpecialistListItem } from '../../../../shared/specialist'
 import type { SpecialistExportPreview } from '../../../../shared/specialist-package'
@@ -92,6 +93,7 @@ const specialistItems: SpecialistListItem[] = [
 ]
 
 beforeEach(() => {
+  resetMarketplaceStoreForTests()
   window.api = {
     specialist: {
       list: vi.fn().mockResolvedValue({ items: specialistItems, integrity: { status: 'ok' } }),
@@ -304,7 +306,8 @@ describe('SpecialistsPanel', () => {
     const actions = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Actions for RNA Reviewer"]'
     )
-    openRadixMenu(actions)
+    expect(actions).not.toBeNull()
+    openRadixMenu(actions!)
     const exportItem = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
     ).find((item) => item.textContent?.includes('Export ZIP'))
@@ -1001,10 +1004,14 @@ describe('SpecialistsPanel', () => {
       ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
       kind: 'custom',
       id: 'marketplace-specialist',
-      origin: 'imported',
+      origin: 'marketplace',
       packageVersion: '1.0.1',
       modifiedSinceImport: false,
-      marketplaceProvenance: { publisher: 'Open Science' },
+      marketplaceProvenance: {
+        sourceId: 'official',
+        publisher: 'Open Science',
+        version: '1.0.1'
+      },
       importBaseline: {
         importedAt: '2026-08-18T10:00:00.000Z',
         archiveDigest: 'c'.repeat(64),
@@ -1012,6 +1019,17 @@ describe('SpecialistsPanel', () => {
       }
     }
     useSpecialistStore.setState({ items: [installed, { kind: 'reviewer', id: 'reviewer' }] })
+    useTagStore.setState({
+      assignments: [
+        ...useTagStore.getState().assignments,
+        {
+          tagId: 'tag-research',
+          resourceType: 'catalog.specialist',
+          resourceId: installed.id,
+          createdAt: 1
+        }
+      ]
+    })
     ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
       items: [installed, { kind: 'reviewer', id: 'reviewer' }],
       integrity: { status: 'ok' }
@@ -1021,16 +1039,64 @@ describe('SpecialistsPanel', () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
+    const marketplaceGroup = Array.from(document.body.querySelectorAll('div')).find((element) =>
+      element.firstElementChild?.textContent?.includes('Marketplace')
+    )
+    expect(marketplaceGroup?.textContent).toContain('RNA Reviewer')
+    expect(document.body.textContent).toContain('Marketplace')
+    expect(document.body.textContent).toContain('By Open Science')
+    expect(document.body.textContent).toContain('Version 1.0.1')
+    expect(document.body.textContent).not.toContain('Unchanged locally')
+    expect(document.body.textContent).not.toContain('Imported ZIP')
     const metadata = document.body.querySelector(
       '[data-specialist-metadata-group="marketplace-specialist"]'
     )
-    expect(metadata?.querySelectorAll('[data-specialist-metadata]')).toHaveLength(5)
     expect(metadata?.textContent).toContain('Marketplace')
-    expect(metadata?.textContent).toContain('By Open Science')
-    expect(metadata?.textContent).toContain('Version 1.0.1')
-    expect(metadata?.textContent).toContain('Unchanged locally')
-    expect(metadata?.textContent).not.toContain('Imported ZIP')
-    expect(metadata?.textContent).not.toContain(' · ')
+    expect(metadata?.querySelector('[title="Research"]')).not.toBeNull()
+  })
+
+  it('collapses each Specialist source group independently', async () => {
+    const marketplace: SpecialistListItem = {
+      ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
+      id: 'marketplace-specialist',
+      displayName: 'Marketplace Specialist',
+      origin: 'marketplace',
+      packageVersion: '1.0.0',
+      modifiedSinceImport: false,
+      marketplaceProvenance: {
+        sourceId: 'official',
+        publisher: 'Open Science',
+        version: '1.0.0'
+      }
+    }
+    const items = [...specialistItems, marketplace]
+    useSpecialistStore.setState({ items })
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items,
+      integrity: { status: 'ok' }
+    })
+
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    for (const [source, rowName] of [
+      ['marketplace', 'Marketplace Specialist'],
+      ['custom', 'RNA Reviewer'],
+      ['builtin', 'Builtin Curator']
+    ] as const) {
+      const group = document.body.querySelector<HTMLElement>(
+        `[data-slot="specialists-source-group"][data-source="${source}"]`
+      )
+      const toggle = group?.firstElementChild as HTMLButtonElement | undefined
+      const list = group?.querySelector('ul')
+      expect(toggle?.getAttribute('aria-expanded')).toBe('true')
+      expect(group?.textContent).toContain(rowName)
+      expect(list?.hidden).toBe(false)
+      await act(async () => fireEvent.click(toggle!))
+      expect(toggle?.getAttribute('aria-expanded')).toBe('false')
+      expect(list?.hidden).toBe(true)
+    }
   })
 
   it('filters specialists by a user-entered search term', async () => {
@@ -1048,17 +1114,21 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).not.toContain('RNA Reviewer')
   })
 
-  it('shows item counts in each filter tab', async () => {
+  it('shows item counts in the category filter dropdown', async () => {
     await act(async () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
-    const tabs = document.body.querySelectorAll<HTMLButtonElement>(
-      '[aria-label="Filter specialists by category"] [role="tab"]'
+    const filter = document.body.querySelector<HTMLElement>(
+      '[aria-label="Filter specialists by category"]'
     )
-    const labels = Array.from(tabs).map((tab) => tab.textContent ?? '')
+    expect(filter?.textContent).toContain('All (4)')
+    openRadixMenu(filter)
+    const labels = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).map(
+      (option) => option.textContent ?? ''
+    )
     // 2 custom + 1 runnable builtin + Reviewer = 4 total
-    expect(labels).toEqual(['All(4)', 'Custom(2)', 'Built-in(2)'])
+    expect(labels).toEqual(['All (4)', 'Custom (2)', 'Marketplace (0)', 'Built-in (2)'])
   })
 
   it('aligns the add action right and matches the Skill row action order', async () => {
@@ -1106,6 +1176,22 @@ describe('SpecialistsPanel', () => {
     expect(
       document.body.querySelector('[aria-label="Change appearance for Builtin Curator"]')
     ).toBeNull()
+    const builtinRow = builtin?.closest('[data-slot="settings-list-row"]')
+    expect(builtinRow?.firstElementChild?.tagName).toBe('SPAN')
+    expect(builtinRow?.firstElementChild?.className).toContain('size-11')
+    expect(builtinRow?.children[1]?.className).toContain('flex-1')
+    expect(builtinRow?.querySelectorAll('[aria-label="View Builtin Curator"]')).toHaveLength(2)
+
+    const reviewerLabel = Array.from(document.body.querySelectorAll('span')).find(
+      (element) => element.textContent === 'Reviewer'
+    )
+    const reviewerRow = reviewerLabel?.closest('[data-slot="settings-list-row"]')
+    expect(reviewerRow?.firstElementChild?.className).toContain('size-11')
+    expect(reviewerRow?.children[1]?.className).toContain('flex-1')
+    const reviewerIcon = reviewerRow?.querySelector('[data-specialist-icon="owl-scholar"]')
+    expect(reviewerIcon).not.toBeNull()
+    expect(reviewerIcon?.getAttribute('class')).toContain('size-[18px]')
+
     await act(async () => builtin!.click())
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'builtin', id: 'builtin-curator' })
 
@@ -1125,18 +1211,20 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).not.toMatch(/Duplicate|Export|Delete/)
   })
 
-  it('filters the list to custom specialists when the Custom tab is clicked', async () => {
+  it('filters the list to custom specialists from the category dropdown', async () => {
     await act(async () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
-    const tabs = document.body.querySelectorAll<HTMLButtonElement>(
-      '[aria-label="Filter specialists by category"] [role="tab"]'
+    openRadixMenu(
+      document.body.querySelector<HTMLElement>('[aria-label="Filter specialists by category"]')
     )
-    const custom = Array.from(tabs).find((tab) => tab.textContent?.includes('Custom'))
+    const custom = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (option) => option.textContent?.includes('Custom')
+    )
     expect(custom).toBeDefined()
     await act(async () => {
-      fireEvent.mouseDown(custom!, { button: 0 })
+      clickRadixMenuItem(custom)
     })
 
     expect(document.body.textContent).toContain('RNA Reviewer')
@@ -1667,6 +1755,78 @@ describe('SpecialistsPanel', () => {
       'personal-exclusive',
       'standalone-tool'
     ])
+  })
+
+  it('shows a quiet Marketplace update action and tailored uninstall confirmation', async () => {
+    const managed = {
+      ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
+      id: 'managed-specialist',
+      origin: 'marketplace' as const,
+      packageVersion: '1.0.0',
+      marketplaceProvenance: {
+        sourceId: 'official',
+        publisher: 'Open Science',
+        version: '1.0.0'
+      }
+    }
+    const previewDelete = vi.fn().mockResolvedValue({
+      specialistId: managed.id,
+      specialistName: managed.name,
+      expectedRevision: managed.revision,
+      skills: []
+    })
+    useSpecialistStore.setState({
+      ...useSpecialistStore.getState(),
+      items: [managed, { kind: 'reviewer', id: 'reviewer' }],
+      previewDelete
+    })
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [managed, { kind: 'reviewer', id: 'reviewer' }],
+      integrity: { status: 'ok' }
+    })
+    useMarketplaceStore.setState({
+      snapshot: {
+        sources: [],
+        failures: [],
+        specialists: [
+          {
+            sourceId: 'official',
+            sourceName: 'Open Science Marketplace',
+            sourceTrust: 'official',
+            id: managed.id,
+            displayName: managed.name,
+            summary: managed.description,
+            publisher: { id: 'open-science', name: 'Open Science' },
+            version: '1.1.0',
+            installedVersion: '1.0.0',
+            updateAvailable: true
+          }
+        ]
+      }
+    })
+
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    expect(document.body.textContent).toContain('Update available')
+    expect(document.body.textContent).toContain('Update')
+    const actions = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Actions for RNA Reviewer"]'
+    )
+    openRadixMenu(actions)
+    await act(async () => undefined)
+    const uninstall = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('Uninstall'))
+    expect(uninstall).not.toBeNull()
+    await act(async () => clickRadixMenuItem(uninstall!))
+
+    expect(previewDelete).toHaveBeenCalledWith(managed.id)
+    expect(document.body.textContent).toContain('Uninstall “RNA Reviewer”?')
+    expect(document.body.textContent).toContain(
+      'This removes the Marketplace Specialist from this device.'
+    )
   })
 })
 

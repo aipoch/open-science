@@ -16,6 +16,7 @@ import type { ArtifactVersionContentResolver } from './host-sdk'
 import { buildHistoryPreamble } from '../../shared/history-preamble'
 import { runReviewAssessment } from './review-assessment-owner'
 import { runReviewerFixLoop } from './reviewer-fix-loop-owner'
+import type { AcpSessionAgentTarget } from '../../shared/acp'
 
 export { buildReviewerPrompt } from './review-assessment-owner'
 export { driveReviewerToStop } from './reviewer-session-driver'
@@ -61,6 +62,8 @@ export type RunReviewOptions = {
   runSessionMutation?: ReviewMutationRunner
   // The ACP runtime that owns the main Agent connection and correction turns.
   acpRuntime: ReviewerAcpRuntime
+  // Concrete target for lazily resuming the main Session during Reviewer corrections.
+  agentTarget?: AcpSessionAgentTarget
   // Optional fixed-model runtime used only for Reviewer sessions. When absent, Reviewer sessions
   // use the scoped main runtime selected at Review-chain start.
   reviewerAcpRuntime?: ReviewerAcpRuntime
@@ -287,6 +290,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
               specialistBindingPending: session.specialistBindingPending,
               providerSessionId: session.providerSessionId,
               providerContinuityToken: session.providerContinuityToken,
+              ...(options.agentTarget ? { agentTarget: options.agentTarget } : {}),
               historyPreamble: buildHistoryPreamble(session.messages)
             }
           }

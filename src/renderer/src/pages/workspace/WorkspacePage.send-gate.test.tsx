@@ -23,6 +23,7 @@ import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 
 import { type ComposerDoc } from './composer/composer-doc'
+import { setDefaultWorkspaceAgentSettings } from './workspace-page-test-fixtures'
 
 // Capture the ConversationPanel props the page computes, notably canSendMessage and the draft callback.
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
@@ -154,6 +155,7 @@ describe('WorkspacePage send gate while compacting', () => {
   let root: Root
 
   beforeEach(() => {
+    setDefaultWorkspaceAgentSettings()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({ projects: [] })
     useReviewStore.setState(createInitialReviewState())

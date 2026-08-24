@@ -144,17 +144,21 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
   if (state.phase !== 'blocked') {
     return (
       <main
-        className="flex min-h-screen items-center justify-center bg-background px-6"
-        aria-live="polite"
+        role="status"
+        className="flex min-h-svh items-center justify-center bg-background px-6 text-foreground"
       >
         <section className="flex w-full max-w-md flex-col items-center text-center">
           <div className="flex flex-col items-center gap-14">
             <OpenScienceLogoLoader />
             <div className="flex flex-col items-center gap-4">
-              <h1 className="text-base font-medium text-foreground">
-                {state.phase === 'migrating' ? t('Updating database…') : t('Checking database…')}
-              </h1>
-              {state.phase === 'migrating' ? (
+              <span className="text-sm text-muted-foreground">
+                {state.phase === 'migrating'
+                  ? t('Updating database…')
+                  : state.phase === 'starting'
+                    ? t('Starting Open Science…')
+                    : t('Checking database…')}
+              </span>
+              {state.phase === 'migrating' || state.phase === 'starting' ? (
                 <p className="text-sm text-muted-foreground">
                   {t('Keep Open Science open while this finishes.')}
                 </p>

@@ -159,7 +159,7 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
       ? {
           id: persisted.optionId,
           label: session.title,
-          count: session.artifacts?.length ?? 0,
+          count: session.artifactCount ?? session.artifacts?.length ?? 0,
           kind: 'session'
         }
       : undefined
@@ -265,6 +265,9 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
   const getArtifactGroupTitle = useCallback(
     (group: ArtifactGroupItem): string => {
       const title = group.originSession?.title ?? getSessionTitle(group.sessionId)
+      if (group.originSession?.state === 'deleting') {
+        return t('{{title}} · Source session is being deleted', { title })
+      }
       return group.originSession?.state === 'deleted'
         ? t('{{title}} · Source session deleted', { title })
         : title
@@ -302,10 +305,16 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
       !options.some((option) => option.id === selectedSessionFallback.id)
     ) {
       const sessionId = selectedSessionFallback.id.slice('session:'.length)
+      const sessionPage = catalogIndex.artifactsBySession[sessionId]
+      const originSession = sessionPage?.items.find((item) => item.originSession)?.originSession
+      const count = sessionPage?.totalCount ?? selectedSessionFallback.count
       options.push({
         ...selectedSessionFallback,
-        count:
-          catalogIndex.artifactsBySession[sessionId]?.totalCount ?? selectedSessionFallback.count
+        label: originSession
+          ? getArtifactGroupTitle({ sessionId, artifactCount: count, originSession })
+          : selectedSessionFallback.label,
+        count,
+        ...(originSession ? { originSession } : {})
       })
     }
 

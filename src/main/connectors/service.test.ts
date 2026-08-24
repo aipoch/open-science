@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ConnectorService } from './service'
 import { ParserEngine } from './engine'
-import { McpToolCallError } from './mcp-client-manager'
+import { McpClientManager, McpToolCallError } from './mcp-client-manager'
 import type { SpecialistProfileView } from '../../shared/specialist'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 
@@ -1149,6 +1150,65 @@ describe('ConnectorService', () => {
           expect(error.message).not.toContain('SECRET')
           expect(error.message).not.toContain('private.example')
         })
+    })
+
+    it('backs off before probing a custom MCP server after a transient connection failure', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-08-22T00:00:00.000Z'))
+      const failedClient = {
+        listTools: vi.fn().mockRejectedValue(new Error('Connection closed')),
+        close: vi.fn().mockResolvedValue(undefined)
+      } as unknown as Client
+      const recoveredClient = {
+        listTools: vi.fn().mockResolvedValue({ tools: [{ name: 'lookup' }] }),
+        callTool: vi.fn().mockResolvedValue({
+          content: [{ type: 'text', text: JSON.stringify({ ok: true }) }]
+        }),
+        close: vi.fn().mockResolvedValue(undefined)
+      } as unknown as Client
+      const createClient = vi
+        .fn()
+        .mockResolvedValueOnce(failedClient)
+        .mockResolvedValueOnce(recoveredClient)
+      const mcpClientManager = new McpClientManager({ createClient })
+      try {
+        const svc = new ConnectorService({
+          mcpClientManager,
+          getConnectors: () => ({
+            enabledIds: [],
+            autoAllowIds: [],
+            customMcpServers: [
+              {
+                id: 'srv-transient',
+                name: 'transient-server',
+                displayName: 'Transient server',
+                transport: 'streamable_http',
+                url: 'https://mcp.example.test',
+                enabled: true
+              }
+            ]
+          }),
+          resolveApiKey: () => undefined
+        })
+
+        await expect(svc.call('transient-server', 'lookup', {}, internal)).rejects.toThrow(
+          'connector_unavailable'
+        )
+        await expect(svc.call('transient-server', 'lookup', {}, internal)).rejects.toThrow(
+          'connector_unavailable'
+        )
+        expect(createClient).toHaveBeenCalledOnce()
+
+        await vi.advanceTimersByTimeAsync(1_000)
+
+        await expect(svc.call('transient-server', 'lookup', {}, internal)).resolves.toEqual({
+          ok: true
+        })
+        expect(createClient).toHaveBeenCalledTimes(2)
+      } finally {
+        await mcpClientManager.closeAll()
+        vi.useRealTimers()
+      }
     })
 
     it('does not contact an OAuth connector before it has tokens', async () => {

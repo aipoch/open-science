@@ -5,6 +5,10 @@ import type { SessionPermissionProfileState } from '../../shared/permission-prof
 import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
 import { codexFramework, opencodeFramework } from '../agent-framework'
 import { AcpBackendGenerationOwner } from './backend-generation-owner'
+import {
+  SIDE_CHAT_SESSION_CAPABILITY_POLICY,
+  type SessionCapabilityPolicy
+} from './session-capability-owner'
 import { AcpSessionEnvironmentPolicy } from './session-environment-policy'
 import { AcpSessionRegistry } from './session-registry'
 
@@ -43,7 +47,8 @@ type SessionEnvironmentFixture = Readonly<{
 }>
 
 const createPolicy = (
-  defaultProjectId: string | undefined = 'default-project'
+  defaultProjectId: string | undefined = 'default-project',
+  capabilityPolicy?: SessionCapabilityPolicy
 ): SessionEnvironmentFixture => {
   const backendGeneration = new AcpBackendGenerationOwner(codexFramework)
   const refreshDynamicAvailability = vi.fn(async () => undefined)
@@ -65,6 +70,7 @@ const createPolicy = (
     presentation: { applicationSystemPromptAppends },
     registry,
     ...(defaultProjectId ? { defaultProjectId } : {}),
+    ...(capabilityPolicy ? { capabilityPolicy } : {}),
     planSystemPromptAppend: 'Plan guidance.'
   })
 
@@ -94,6 +100,10 @@ describe('ACP Session environment policy', () => {
       bridgeMcpAliasesEnabled: false,
       policy: { role: 'primary', delegation: 'denied' }
     })
+    expect(fixture.applicationSystemPromptAppends).toHaveBeenCalledWith(
+      expect.any(Object),
+      'primary'
+    )
 
     fixture.backendGeneration
       .prepare(
@@ -114,6 +124,18 @@ describe('ACP Session environment policy', () => {
     ])
     expect(fixture.toolingAvailability).toHaveBeenLastCalledWith(
       expect.objectContaining({ framework: opencodeFramework })
+    )
+  })
+
+  it('omits primary and Plan guidance for a restricted Session role', () => {
+    const fixture = createPolicy('default-project', SIDE_CHAT_SESSION_CAPABILITY_POLICY)
+    fixture.applicationSystemPromptAppends.mockReturnValueOnce(Object.freeze([]))
+
+    expect(fixture.policy.role()).toBe('side-chat')
+    expect(fixture.policy.systemPromptAppends()).toEqual([])
+    expect(fixture.applicationSystemPromptAppends).toHaveBeenCalledWith(
+      expect.any(Object),
+      'side-chat'
     )
   })
 

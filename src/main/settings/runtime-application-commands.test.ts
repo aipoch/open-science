@@ -29,7 +29,11 @@ const expectedChannels = [
   'settings:login-isolated-claude-browser',
   'settings:logout-isolated-claude',
   'settings:login-isolated-codex',
-  'settings:logout-isolated-codex'
+  'settings:logout-isolated-codex',
+  'settings:begin-xai-oauth-login',
+  'settings:wait-xai-oauth-login',
+  'settings:cancel-xai-oauth-login',
+  'settings:logout-xai-oauth'
 ] as const
 
 const callerLease = (): ApplicationCallerLease =>
@@ -78,7 +82,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings runtime application commands', () => {
-  it('installs the exact 15-command inventory and dispatches a remote-safe selection', async () => {
+  it('installs the exact 19-command inventory and dispatches a remote-safe selection', async () => {
     const { dependencies, workflowMethod } = createDependencies()
     const selected = { activeProviderId: 'provider-1' }
     workflowMethod('setActiveProvider').mockResolvedValue(selected)
@@ -141,7 +145,7 @@ describe('Settings runtime application commands', () => {
     expect(workflowMethod('setReasoningEffort')).toHaveBeenCalledWith({ effort: 'high' })
   })
 
-  it('rejects all ten local-only commands before a runtime workflow can run', async () => {
+  it('rejects all fourteen local-only commands before a runtime workflow can run', async () => {
     const { dependencies, workflowMethod } = createDependencies()
     const router = createApplicationCommandRouter()
     registerRuntimeSettingsApplicationCommands(router.registrar, dependencies)
@@ -156,7 +160,11 @@ describe('Settings runtime application commands', () => {
       [settingsRuntimeApplicationCommands.loginIsolatedClaudeBrowser, []],
       [settingsRuntimeApplicationCommands.logoutIsolatedClaude, []],
       [settingsRuntimeApplicationCommands.loginIsolatedCodex, []],
-      [settingsRuntimeApplicationCommands.logoutIsolatedCodex, []]
+      [settingsRuntimeApplicationCommands.logoutIsolatedCodex, []],
+      [settingsRuntimeApplicationCommands.beginXaiOAuthLogin, []],
+      [settingsRuntimeApplicationCommands.waitXaiOAuthLogin, []],
+      [settingsRuntimeApplicationCommands.cancelXaiOAuthLogin, []],
+      [settingsRuntimeApplicationCommands.logoutXaiOAuth, []]
     ] as const
 
     for (const [command, args] of attempts) {
@@ -173,6 +181,10 @@ describe('Settings runtime application commands', () => {
     expect(workflowMethod('logoutIsolatedClaude')).not.toHaveBeenCalled()
     expect(workflowMethod('loginIsolatedCodex')).not.toHaveBeenCalled()
     expect(workflowMethod('logoutIsolatedCodex')).not.toHaveBeenCalled()
+    expect(workflowMethod('beginXaiOAuthLogin')).not.toHaveBeenCalled()
+    expect(workflowMethod('waitXaiOAuthLogin')).not.toHaveBeenCalled()
+    expect(workflowMethod('cancelXaiOAuthLogin')).not.toHaveBeenCalled()
+    expect(workflowMethod('logoutXaiOAuth')).not.toHaveBeenCalled()
   })
 
   it('delegates local runtime and authentication requests without taking effect ownership', async () => {
@@ -220,6 +232,22 @@ describe('Settings runtime application commands', () => {
       settingsRuntimeApplicationCommands.logoutIsolatedCodex,
       invocation([] as const)
     )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.beginXaiOAuthLogin,
+      invocation([] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.waitXaiOAuthLogin,
+      invocation([] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.cancelXaiOAuthLogin,
+      invocation([] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.logoutXaiOAuth,
+      invocation([] as const)
+    )
 
     expect(workflowMethod('uninstallRuntime').mock.calls).toEqual([
       ['uninstallClaude', 'claude-code'],
@@ -233,6 +261,10 @@ describe('Settings runtime application commands', () => {
     expect(workflowMethod('logoutIsolatedClaude')).toHaveBeenCalledOnce()
     expect(workflowMethod('loginIsolatedCodex')).toHaveBeenCalledOnce()
     expect(workflowMethod('logoutIsolatedCodex')).toHaveBeenCalledOnce()
+    expect(workflowMethod('beginXaiOAuthLogin')).toHaveBeenCalledOnce()
+    expect(workflowMethod('waitXaiOAuthLogin')).toHaveBeenCalledOnce()
+    expect(workflowMethod('cancelXaiOAuthLogin')).toHaveBeenCalledOnce()
+    expect(workflowMethod('logoutXaiOAuth')).toHaveBeenCalledOnce()
   })
 
   it('preserves reasoning and isolated-token transport validation before workflow delegation', async () => {

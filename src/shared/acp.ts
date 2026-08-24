@@ -6,10 +6,14 @@ import type {
   Usage
 } from '@agentclientprotocol/sdk'
 import type { ArtifactFile, FileReference } from './artifacts'
-import type { UploadedAttachment } from './uploads'
+import type { PersistedUploadedAttachment, UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
-import type { AgentFrameworkId } from './settings'
-import type { DelegatedQuestionAnswer, MessageAttribution } from './session-persistence'
+import type { AgentFrameworkId, SessionAgentConfiguration } from './settings'
+import type {
+  DelegatedQuestionAnswer,
+  MessageAttribution,
+  MessagePart
+} from './session-persistence'
 import type {
   AgentTurnProvenanceContext,
   ElicitationProjection,
@@ -530,6 +534,9 @@ export type AcpRuntimeEvent = {
   artifactSessionId?: string
   artifactClaimId?: string
   artifacts?: ArtifactFile[]
+  // Mid-turn injected user messages persist composer uploads/parts without opening a new run.
+  uploads?: PersistedUploadedAttachment[]
+  parts?: MessagePart[]
   raw?: unknown
 }
 
@@ -649,6 +656,9 @@ export type AcpStateSnapshot = {
   cwd: string
   sessionId?: string
   sessionIds: string[]
+  // Visible sessions still owned by a retiring runtime generation. The renderer must resume these
+  // before dispatch even though their final turn remains visible while it drains.
+  sessionResumeRequiredIds?: string[]
   error?: string
   events: AcpRuntimeEvent[]
   pendingPermissions: AcpPermissionRequest[]
@@ -678,6 +688,10 @@ export type AcpConnectRequest = {
   cwd?: string
 }
 
+export type AcpSessionAgentTarget = SessionAgentConfiguration & {
+  frameworkId: AgentFrameworkId
+}
+
 export type AcpCreateSessionRequest = {
   cwd?: string
   // Scopes generated artifacts / notebooks to a project's storage subtree. Defaults per runtime.
@@ -687,6 +701,7 @@ export type AcpCreateSessionRequest = {
   // session-creation time — the renderer MUST NOT send systemPrompt or capability data, only the
   // stable ID. Absent or undefined means no specialist; use Main Agent.
   specialistId?: string
+  agentTarget?: AcpSessionAgentTarget
 }
 
 export type AcpCreateSessionResponse = {
@@ -719,6 +734,7 @@ export type AcpResumeSessionRequest = {
   // True when disk holds a desired Specialist that the prior runtime never confirmed. A restored
   // resume must adopt fresh provider context with that target before Main clears the durable marker.
   specialistBindingPending?: true
+  agentTarget?: AcpSessionAgentTarget
 }
 
 export type AcpContinueInterruptedTurnRequest = {
@@ -813,6 +829,40 @@ export type AcpPromptRequest = {
     historyImages?: AcpReplayMessageImage[]
   }
 }
+
+export type AcpSteerFollowUpRequest = {
+  sessionId: string
+  text: string
+  attachments?: UploadedAttachment[]
+  referencedArtifacts?: FileReference[]
+  forcedSkillIds?: string[]
+  parts?: MessagePart[]
+}
+
+export type AcpSteerFollowUpTransport = 'acp-steering' | 'opencode-http'
+
+export type AcpSteerFollowUpRefuseReason =
+  | 'empty-text'
+  | 'attachments'
+  | 'no-live-turn'
+  | 'not-advertised'
+  | 'started-new-turn'
+  | 'prompt-required'
+  | 'unrecognized-success'
+  | 'missing-outcome'
+  | 'unknown-outcome'
+  | 'dispatch-failed'
+
+export type AcpSteerFollowUpResult =
+  | {
+      injected: true
+      transport: AcpSteerFollowUpTransport
+      messageId: string
+    }
+  | {
+      injected: false
+      reason: AcpSteerFollowUpRefuseReason
+    }
 
 export type AcpCancelPromptRequest = {
   sessionId: string

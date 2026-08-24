@@ -73,6 +73,9 @@ const GENERATED_SOURCE_OMISSIONS = [
   'officePreview.onState',
   'officePreview.open',
   'officePreview.reportState',
+  'sessions.list',
+  'sessions.loadOne',
+  'sessions.loadUsage',
   'sessions.onFlushAborted',
   'sessions.onFlushRequest',
   'sessions.sendFlushResponse',
@@ -185,10 +188,12 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   ],
   settings: [
     'authenticate-custom-server',
+    'begin-xai-oauth-login',
     'cancel-claude-login',
     'cancel-codex-login',
     'cancel-custom-server-authentication',
     'cancel-isolated-claude-login',
+    'cancel-xai-oauth-login',
     'get-github-token-status',
     'install-claude',
     'install-codex',
@@ -200,6 +205,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'logout-isolated-claude',
     'logout-isolated-codex',
     'logout-shared-claude',
+    'logout-xai-oauth',
     'remove-github-token',
     'retry-custom-server',
     'save-github-token',
@@ -212,7 +218,8 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-project-files-filter',
     'uninstall-claude',
     'uninstall-codex',
-    'uninstall-opencode'
+    'uninstall-opencode',
+    'wait-xai-oauth-login'
   ],
   storage: [
     'cancel-migrate',

@@ -1044,6 +1044,22 @@ describe('workspace runtime events', () => {
     expect(useSessionStore.getState().sessions[0].messages).toHaveLength(1)
   })
 
+  it('does not project thought events into the transcript', async () => {
+    const sessionBefore = useSessionStore.getState().sessions[0]
+
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-thought-1',
+        kind: 'thought',
+        role: 'assistant',
+        text: 'I will inspect the notebook next.'
+      })
+    )
+
+    expect(applied).toBe(false)
+    expect(useSessionStore.getState().sessions[0]).toBe(sessionBefore)
+  })
+
   it('ignores an info-level system event (only warnings become status)', async () => {
     const applied = await applyWorkspaceRuntimeEvent(
       createEvent({ id: 'event-1', kind: 'system', level: 'info', text: 'Session created' })

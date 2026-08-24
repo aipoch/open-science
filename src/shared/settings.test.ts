@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import { isModelBridgeSupported } from './provider-registry'
 import {
+  canonicalSessionProviderId,
+  CODEX_ISOLATED_PROVIDER_ID,
+  CODEX_SHARED_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
   getCodexInstallSources,
   getOpencodeInstallSources,
   isProviderCompatibleWith,
@@ -103,6 +107,21 @@ describe('provider endpoint compatibility', () => {
         false
       )
     }
+  })
+})
+
+describe('canonicalSessionProviderId', () => {
+  it('maps legacy Codex provider ids onto the stored subscription identity', () => {
+    expect(canonicalSessionProviderId(CODEX_ISOLATED_PROVIDER_ID)).toBe(
+      CODEX_SUBSCRIPTION_PROVIDER_ID
+    )
+    expect(canonicalSessionProviderId(CODEX_SHARED_PROVIDER_ID)).toBe(
+      CODEX_SUBSCRIPTION_PROVIDER_ID
+    )
+    expect(canonicalSessionProviderId(CODEX_SUBSCRIPTION_PROVIDER_ID)).toBe(
+      CODEX_SUBSCRIPTION_PROVIDER_ID
+    )
+    expect(canonicalSessionProviderId('custom-provider')).toBe('custom-provider')
   })
 })
 

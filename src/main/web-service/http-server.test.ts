@@ -517,14 +517,16 @@ describe('startWebHttpServer', () => {
     await new Promise<void>((resolve) => publicSocket.once('open', resolve))
     const publicMessages: unknown[] = []
     publicSocket.on('message', (data) => publicMessages.push(JSON.parse(data.toString())))
-    applicationEvents.publish('acp:event', {
-      id: 'event-1',
-      timestamp: 1,
-      level: 'info',
-      sessionId: 'session-1',
-      kind: 'message',
-      text: 'Hi'
-    })
+    applicationEvents.publish('acp:event', [
+      {
+        id: 'event-1',
+        timestamp: 1,
+        level: 'info',
+        sessionId: 'session-1',
+        kind: 'message',
+        text: 'Hi'
+      }
+    ])
     applicationEvents.publish('acp:permission-request', {
       sessionId: 'session-1',
       requestId: 'permission-1',
@@ -1344,7 +1346,7 @@ describe('startWebHttpServer', () => {
       .filter(([path]) => path.startsWith('acp.'))
       .map(([, channel]) => channel)
       .sort()
-    expect(acpChannels).toHaveLength(18)
+    expect(acpChannels).toHaveLength(19)
     const permissionChannels = [
       'permissions:extend-undo',
       'permissions:list',

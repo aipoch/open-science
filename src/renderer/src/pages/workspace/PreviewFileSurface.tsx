@@ -404,10 +404,11 @@ const PreviewFileSurface = ({
     (state) =>
       state.sessions.find((session) => session.id === previewItem.sessionId)?.filesRevision ?? 0
   )
-  // A GENERATED-card click updates selectedVersionId on the stable preview tab. Refetch even when the
-  // Artifact identity is unchanged; the cached lineage may predate that immutable Version.
-  const lineageRequestKey = `${lineageKey}:${sessionFilesRevision}:${previewItem.selectedVersionId ?? ''}`
-  const lineage = lineageResult?.key === lineageKey ? lineageResult.value : undefined
+  // A GENERATED-card click or origin lifecycle refresh can update the stable preview tab while its
+  // Artifact identity stays unchanged. Refetch and stop consuming the prior snapshot until the
+  // matching lineage resolves.
+  const lineageRequestKey = `${lineageKey}:${sessionFilesRevision}:${previewItem.selectedVersionId ?? ''}:${previewItem.originSession?.state ?? ''}`
+  const lineage = lineageResult?.key === lineageRequestKey ? lineageResult.value : undefined
   const exactSelectedVersion = lineage?.versions.find(
     (version) => version.versionId === previewItem.selectedVersionId
   )
@@ -442,7 +443,7 @@ const PreviewFileSurface = ({
         artifactId: previewItem.artifactId
       })
       .then((value) => {
-        if (active) setLineageResult({ key: lineageKey, value })
+        if (active) setLineageResult({ key: lineageRequestKey, value })
       })
       .catch(() => undefined)
 
@@ -476,15 +477,18 @@ const PreviewFileSurface = ({
   }
 
   // View in context needs the same managed-artifact identity as Provenance, plus a live origin
-  // session. Deletion is terminal, so either signal hides the entry: the refetched lineage or the
-  // item's creation-time originSession snapshot (the lineage may not have refetched yet).
+  // session. Deleted is terminal, so either signal fails closed. Deleting can be compensated;
+  // there, the refetched lineage is authoritative over the item's creation-time snapshot.
   const originSessionDeleted =
     lineage?.originSession.state === 'deleted' || previewItem.originSession?.state === 'deleted'
+  const currentOriginSessionState =
+    lineage?.originSession.state ?? previewItem.originSession?.state ?? 'active'
+  const originSessionUnavailable = originSessionDeleted || currentOriginSessionState === 'deleting'
   const canViewInContext =
     previewItem.source !== 'upload' &&
     previewItem.artifactId !== undefined &&
     projectId !== undefined &&
-    !originSessionDeleted
+    !originSessionUnavailable
   // Archive is reversible, so the entry stays visible but inert rather than disappearing.
   const originSessionArchived = useSessionStore(
     (state) =>

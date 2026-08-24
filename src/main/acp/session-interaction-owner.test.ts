@@ -276,24 +276,20 @@ describe('AcpSessionInteractionOwner', () => {
     owner.release(scope)
   })
 
-  it('keeps a synchronous prompt reservation private until activation', () => {
+  it('keeps a prompt reservation private while compaction drains', () => {
     const owner = new AcpSessionInteractionOwner()
     const active = owner.claim({ sessionId: 'session-1', kind: 'compaction' })
-
-    expect(() => owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })).toThrow(
-      /already running/
-    )
-    owner.release(active)
-
     const reservation = owner.reservePrompt({
       sessionId: 'session-1',
       kind: 'prompt',
       promptMessageId: 'prompt-message-1'
     })
     expect(reservation.signal.aborted).toBe(false)
-    expect(owner.current('session-1')).toBeUndefined()
-    expect(owner.snapshot()).toEqual([])
+    expect(owner.current('session-1')).toBe(active)
+    expect(owner.has('session-1')).toBe(true)
+    expect(() => owner.activatePrompt(reservation)).toThrow(/already running/)
 
+    owner.release(active)
     expect(owner.activatePrompt(reservation)).toBe(reservation)
     expect(owner.current('session-1')).toBe(reservation)
     owner.release(reservation)
@@ -329,8 +325,8 @@ describe('AcpSessionInteractionOwner', () => {
 
   it('supersedes pending and active ownership for one session or all sessions', () => {
     const owner = new AcpSessionInteractionOwner()
-    const pendingReset = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
     const activeReset = owner.claim({ sessionId: 'session-1', kind: 'compaction' })
+    const pendingReset = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
 
     owner.supersedeCurrent('session-1')
     expect(pendingReset.signal.aborted).toBe(true)
@@ -346,6 +342,15 @@ describe('AcpSessionInteractionOwner', () => {
     expect(activeAll.signal.aborted).toBe(true)
     expect(owner.snapshot()).toEqual([])
     expect(() => owner.activatePrompt(pendingAll)).toThrow(/superseded/)
+  })
+
+  it('does not let a new interaction bypass a pending prompt reservation', () => {
+    const owner = new AcpSessionInteractionOwner()
+    owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
+
+    expect(() => owner.claim({ sessionId: 'session-1', kind: 'compaction' })).toThrow(
+      /already running/
+    )
   })
 
   it('supports explicit claim and release while run uses the same lifecycle', async () => {

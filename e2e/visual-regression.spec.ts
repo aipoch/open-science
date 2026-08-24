@@ -10,6 +10,11 @@ const prepareVisualPage = async (page: Page): Promise<void> => {
     content:
       '* { scrollbar-width: none !important; } *::-webkit-scrollbar { display: none !important; }'
   })
+  // The first-message jump chip reveals on upward scroll and auto-hides after idle.
+  await page.addStyleTag({
+    content:
+      '[data-slot="message-scroller-button"][data-direction="start"] { visibility: hidden !important; }'
+  })
 }
 
 const setTheme = async (page: Page, theme: 'Dark' | 'Light'): Promise<void> => {
@@ -68,11 +73,28 @@ const pinConversationToStart = async (page: Page): Promise<void> => {
     .toBe(0)
 }
 
+const pinConversationToEnd = async (page: Page): Promise<void> => {
+  const conversationViewport = page.locator('[data-slot="message-scroller-viewport"]')
+  await expect
+    .poll(async () => {
+      await conversationViewport.evaluate((element) => {
+        element.scrollTo({ top: element.scrollHeight })
+      })
+      return conversationViewport.evaluate(
+        (element) => element.scrollHeight - element.clientHeight - element.scrollTop
+      )
+    })
+    .toBeLessThanOrEqual(1)
+}
+
 const expectStableScreenshot = async (
   page: Page,
   name: string,
   maxDiffPixelRatio = 0.002
 ): Promise<void> => {
+  // Keep the capture independent of the pointer location left by the previous interaction. In
+  // particular, the conversation edge markers expose hover-only navigation labels.
+  await page.mouse.move(0, 0)
   await page.locator('a[aria-label*="GitHub"]').evaluateAll((elements) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
@@ -292,6 +314,8 @@ test('keeps representative conversation, project, and recovery states visually s
     await sendPrompt(page, prompt, 'Deterministic reply: Summarize the deterministic fixture.')
   }
   await setVisualState(page, { theme: 'Dark', width: 1280 })
+  await expect(page.locator('[data-slot="assistant-message-footer"]')).toHaveCount(prompts.length)
+  await pinConversationToEnd(page)
   // Text-heavy conversation surfaces need a slightly wider budget for macOS font rasterization.
   await expectStableScreenshot(page, 'workspace-long-dark.png', 0.008)
 
@@ -339,8 +363,7 @@ test('keeps representative conversation, project, and recovery states visually s
   await settings.getByRole('button', { name: 'Close settings' }).click()
   await expect(settings).toBeHidden()
 
-  await app.writeCorruptSessionFile(projectId)
-  page = await app.restart()
+  page = await app.restartWithCorruptHistoricalSessionFile(projectId)
   await prepareVisualPage(page)
   await setVisualState(page, { theme: 'Light', width: 1280 })
   const recoveryAlert = page

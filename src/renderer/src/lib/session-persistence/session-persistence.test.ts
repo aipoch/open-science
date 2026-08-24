@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   activateConversationBranch,
+  createLinearConversationGraph,
   forkEditedConversationMessage,
   synchronizeActiveConversationMessages
 } from '../../../../shared/conversation-graph'
@@ -10,7 +11,8 @@ import {
   SESSION_MANIFEST_VERSION,
   SessionRevisionConflictError,
   type LoadAllSessionsResult,
-  type PersistedChatSession
+  type PersistedChatSession,
+  type SessionSummary
 } from '../../../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import {
@@ -23,6 +25,7 @@ import {
   createOrderedSessionPersistence,
   createStoreSaver,
   flushSessionPersistence,
+  loadPersistedSession,
   loadPersistedSessions,
   reconcilePendingArtifacts,
   saveSessionInOrder,
@@ -131,9 +134,108 @@ describe('reconcilePendingArtifacts', () => {
 
     expect(api.reconcilePendingArtifacts).not.toHaveBeenCalled()
   })
+
+  it('re-finalizes pending artifacts referenced only by an inactive conversation Branch', async () => {
+    const pendingPath = '/data/artifacts/proj-1/session-1/.pending/run-1/report.md'
+    const originalPrompt = {
+      id: 'original-prompt',
+      role: 'user' as const,
+      content: 'Create a report',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000
+    }
+    const originalAnswer = {
+      id: 'inactive-answer',
+      role: 'agent' as const,
+      content: 'done',
+      status: 'complete' as const,
+      eventIds: [],
+      artifactIds: ['session-1:run-1:report.md'],
+      createdAt: 1710000000001,
+      updatedAt: 1710000000001
+    }
+    const originalGraph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [originalPrompt, originalAnswer],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000001
+    })
+    const revisedPrompt = {
+      ...originalPrompt,
+      id: 'revised-prompt',
+      content: 'Create a chart'
+    }
+    const conversationGraph = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(
+        originalGraph,
+        originalPrompt.id,
+        'revised-branch',
+        1710000000002
+      ),
+      [revisedPrompt],
+      1710000000003
+    )
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        messages: [revisedPrompt],
+        conversationGraph,
+        artifacts: [
+          {
+            id: 'session-1:run-1:report.md',
+            kind: 'managed-file',
+            path: pendingPath,
+            name: 'report.md',
+            mimeType: 'text/markdown'
+          }
+        ]
+      })
+    ])
+    const finalized = {
+      id: 'session-1:inactive-answer:report.md',
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: originalAnswer.id,
+      name: 'report.md',
+      path: '/data/artifacts/proj-1/session-1/inactive-answer/report.md',
+      fileUrl: 'file:///data/artifacts/proj-1/session-1/inactive-answer/report.md',
+      mimeType: 'text/markdown',
+      size: 3,
+      mtimeMs: 1710000000004
+    }
+    const api = { reconcilePendingArtifacts: vi.fn().mockResolvedValue([finalized]) }
+
+    await reconcilePendingArtifacts(api)
+
+    expect(api.reconcilePendingArtifacts).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: originalAnswer.id,
+      pendingPaths: [pendingPath]
+    })
+    const restored = useSessionStore.getState().sessions[0]
+    expect(restored.messages.map(({ id }) => id)).toEqual([revisedPrompt.id])
+    expect(
+      restored.conversationGraph?.messages.find(({ id }) => id === originalAnswer.id)?.artifactIds
+    ).toEqual([finalized.id])
+    expect(restored.artifacts?.map(({ path }) => path)).toEqual([finalized.path])
+  })
 })
 
 describe('renderer session persistence bridge', () => {
+  it('falls back to the existing Web load-all path when load-one is unavailable', async () => {
+    const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
+    const loadAll = vi.fn().mockResolvedValue(createLoadResult([selected]))
+
+    await expect(
+      loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id }, { loadAll })
+    ).resolves.toEqual(selected)
+    expect(loadAll).toHaveBeenCalledOnce()
+  })
+
   it('hydrates the store from the per-session load result', async () => {
     const api = createApi()
 
@@ -143,6 +245,187 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().sessions).toHaveLength(1)
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ id: 'session-1' })
     expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
+  })
+
+  it('loads only the selected Session JSON from the SQLite summary list', async () => {
+    const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
+    const list = vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          number: 1,
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Selected',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 1,
+          updatedAt: 2,
+          needsStartupRecovery: false
+        },
+        {
+          number: 2,
+          id: 'session-2',
+          projectId: 'project-1',
+          title: 'Unopened',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 12,
+          artifactCount: 3,
+          filesRevision: 2,
+          createdAt: 2,
+          updatedAt: 1,
+          needsStartupRecovery: false
+        }
+      ],
+      manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: 'session-1' }
+    })
+    const loadOne = vi.fn().mockResolvedValue(selected)
+    const api = createApi({ list, loadOne })
+
+    await loadPersistedSessions(api)
+
+    expect(api.loadAll).not.toHaveBeenCalled()
+    expect(loadOne).toHaveBeenCalledOnce()
+    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project-1', sessionId: 'session-1' })
+    expect(useSessionStore.getState().sessions).toMatchObject([
+      { id: 'session-1' },
+      { id: 'session-2', contentLoaded: false, activeMessageCount: 12, messages: [] }
+    ])
+    expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
+  })
+
+  it('also hydrates unopened Sessions that require startup recovery', async () => {
+    const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
+    const recovering = createPersistedSession({ id: 'session-2', projectId: 'project-1' })
+    const summary = (
+      session: PersistedChatSession,
+      needsStartupRecovery: boolean
+    ): SessionSummary => ({
+      number: session.id === selected.id ? 1 : 2,
+      id: session.id,
+      projectId: session.projectId,
+      title: session.title,
+      status: session.status,
+      presentedStatus: session.status,
+      pinned: false,
+      revision: 1,
+      activeMessageCount: session.messages.length,
+      artifactCount: session.artifacts?.length ?? 0,
+      filesRevision: 0,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      needsStartupRecovery
+    })
+    const list = vi.fn().mockResolvedValue({
+      sessions: [summary(selected, false), summary(recovering, true)],
+      manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: selected.id }
+    })
+    const loadOne = vi.fn(async ({ sessionId }: { sessionId: string }) =>
+      sessionId === selected.id ? selected : recovering
+    )
+
+    await loadPersistedSessions(createApi({ list, loadOne }))
+
+    expect(loadOne).toHaveBeenCalledTimes(2)
+    expect(useSessionStore.getState().sessions).toMatchObject([
+      { id: selected.id },
+      { id: recovering.id }
+    ])
+    expect(useSessionStore.getState().sessions[1]?.contentLoaded).not.toBe(false)
+  })
+
+  it('does not hydrate a selected Session after its lazy JSON load is cancelled', async () => {
+    const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
+    const lazyLoad = createDeferred<PersistedChatSession | undefined>()
+    const api = createApi({
+      list: vi.fn().mockResolvedValue({
+        sessions: [
+          {
+            number: 1,
+            id: selected.id,
+            projectId: selected.projectId,
+            title: selected.title,
+            status: 'idle',
+            presentedStatus: 'idle',
+            pinned: false,
+            revision: 1,
+            activeMessageCount: 0,
+            artifactCount: 0,
+            filesRevision: 0,
+            createdAt: 1,
+            updatedAt: 2,
+            needsStartupRecovery: false
+          }
+        ],
+        manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: selected.id }
+      }),
+      loadOne: vi.fn(() => lazyLoad.promise)
+    })
+    let active = true
+
+    const loading = loadPersistedSessions(api, () => active)
+    await vi.waitFor(() => expect(api.loadOne).toHaveBeenCalledOnce())
+    active = false
+    lazyLoad.resolve(selected)
+    await loading
+
+    expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
+  it('loads authority before persisting metadata edits to an unopened Session', async () => {
+    const authority = createPersistedSession({
+      id: 'session-2',
+      projectId: 'project-1',
+      pinned: true,
+      updatedAt: 2_000_000_000_000
+    })
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 2,
+          id: authority.id,
+          projectId: authority.projectId,
+          title: authority.title,
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 0,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: authority.createdAt,
+          updatedAt: authority.updatedAt,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined
+    )
+    const loadOne = vi.fn().mockResolvedValue(authority)
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const api = createApi({ loadOne, saveSession })
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().renameSession(authority.id, 'Renamed while unopened')
+    await save(useSessionStore.getState())
+
+    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project-1', sessionId: 'session-2' })
+    expect(saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'session-2',
+        title: 'Renamed while unopened',
+        pinned: true,
+        updatedAt: authority.updatedAt
+      }),
+      { conflictRebaseFields: ['title'] }
+    )
+    expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
   })
 
   it('does not hydrate a session snapshot after its startup effect is cancelled', async () => {
@@ -1562,6 +1845,53 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession.mock.calls[0][0]).toMatchObject({ revision: 2, title: 'Local title' })
     expect(saveSession.mock.calls[1][0]).toMatchObject({ revision: 3, title: 'Local title' })
     expect(saveSession.mock.calls[1][0].messages).toEqual(latest.messages)
+  })
+
+  it('still saves an unsaved local title after a newer remote Session projection', async () => {
+    const persisted = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 1,
+        title: 'Original'
+      })
+    )
+    const remote = materializeSessionConversationGraph({
+      ...persisted,
+      revision: 2,
+      title: 'Remote title',
+      messages: [
+        {
+          id: 'remote-message',
+          role: 'agent',
+          content: 'Saved in another window',
+          status: 'complete',
+          eventIds: [],
+          createdAt: persisted.updatedAt + 1,
+          updatedAt: persisted.updatedAt + 1
+        }
+      ],
+      updatedAt: persisted.updatedAt + 10
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockImplementation(async (submitted) => ({
+        ...submitted,
+        revision: (submitted.revision ?? 0) + 1
+      }))
+    const api = createApi({ saveSession })
+    useSessionStore.getState().hydrateSessions([persisted])
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().renameSession('session-1', 'Local draft')
+    useSessionStore.getState().upsertPersistedSession(remote)
+    await save(useSessionStore.getState())
+
+    expect(useSessionStore.getState().sessions[0].title).toBe('Local draft')
+    expect(useSessionStore.getState().sessions[0].unsavedTitle).toBeUndefined()
+    expect(saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Local draft', revision: 2 }),
+      { conflictRebaseFields: ['title'] }
+    )
   })
 
   it('reports an earlier failed write even when a later queued write succeeds', async () => {

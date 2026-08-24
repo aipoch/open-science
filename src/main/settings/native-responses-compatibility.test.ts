@@ -87,6 +87,34 @@ describe('native Responses compatibility', () => {
     })
   })
 
+  it('returns 400 when a valid JSON request has malformed tool declarations', async () => {
+    const fetchImpl = vi.fn()
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://provider.example.test/v1', key: 'key-a', model: 'model-a' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ input: 'hello', tools: { type: 'function' } })
+      })
+
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toMatchObject({
+        error: { type: 'invalid_request_error' }
+      })
+      expect(fetchImpl).not.toHaveBeenCalled()
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('replays an identical deterministic provider error without a second upstream request', async () => {
     const fetchImpl = vi.fn(async () =>
       Response.json(
@@ -541,7 +569,7 @@ describe('native Responses compatibility', () => {
 
       expect(outcome).toBeInstanceOf(Response)
       const response = outcome as Response
-      expect(response.status).toBe(400)
+      expect(response.status).toBe(502)
       expect(upstreamSignal?.aborted).toBe(true)
       expect(logSpies.warn.mock.calls).toContainEqual([
         'native Responses compatibility request failed',
@@ -592,10 +620,10 @@ describe('native Responses compatibility', () => {
 
       expect(outcome).toBeInstanceOf(Response)
       const response = outcome as Response
-      expect(response.status).toBe(400)
+      expect(response.status).toBe(502)
       expect(await response.json()).toEqual({
         error: {
-          type: 'invalid_request_error',
+          type: 'api_error',
           message: 'Native Responses compatibility request failed'
         }
       })
@@ -1153,11 +1181,11 @@ describe('native Responses compatibility', () => {
         },
         body: JSON.stringify({ model: 'private-model', input: 'private prompt' })
       })
-      expect(response.status).toBe(400)
+      expect(response.status).toBe(502)
       const errorResponse = await response.json()
       expect(errorResponse).toEqual({
         error: {
-          type: 'invalid_request_error',
+          type: 'api_error',
           message: 'Native Responses compatibility request failed'
         }
       })

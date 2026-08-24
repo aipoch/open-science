@@ -176,6 +176,38 @@ const restoredToSlice = (restored: RestoredPreviewSlice, projectId: string): Pre
   }
 }
 
+// Persistence owns file tabs and the Session-scoped Subagents selection. Other tool tabs are
+// reconstructed by their runtime owners and must survive a durable snapshot refresh.
+const isDurablePreviewItem = (item: PreviewItem): boolean =>
+  item.type === 'file' || item.toolKind === 'subagents'
+
+const mergeRestoredPreviewSlice = (
+  current: PreviewSlice,
+  restored: RestoredPreviewSlice,
+  projectId: string
+): PreviewSlice => {
+  const authoritative = restoredToSlice(restored, projectId)
+  const authoritativeIds = new Set(authoritative.items.map((item) => item.id))
+  const runtimeItems = current.items.filter(
+    (item) => !isDurablePreviewItem(item) && !authoritativeIds.has(item.id)
+  )
+  const activeRuntimeItem = runtimeItems.some((item) => item.id === current.activeItemId)
+  const activeItemId = activeRuntimeItem
+    ? current.activeItemId
+    : (authoritative.activeItemId ?? runtimeItems[0]?.id)
+
+  return {
+    ...authoritative,
+    items: [...authoritative.items, ...runtimeItems],
+    activeItemId,
+    panelState:
+      activeRuntimeItem || (!authoritative.activeItemId && runtimeItems.length > 0)
+        ? current.panelState
+        : authoritative.panelState,
+    openRequestVersion: current.openRequestVersion
+  }
+}
+
 // Builds the stable preview tab identity for the notebook attached to one chat session.
 const createNotebookPreviewItem = (notebook: NotebookSessionReference): PreviewToolItem => ({
   id: `tool:${notebook.sessionId}:notebook`,
@@ -295,11 +327,26 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   ...createInitialPreviewWorkbenchState(),
 
   // Switches the visible preview slice to a project's own tabs, stashing the outgoing project's slice
-  // so returning to it restores its tabs. `restored` seeds a project's slice from persistence on first
-  // activation in this session.
+  // so returning to it restores its tabs. `restored` replaces the target's durable subset with
+  // authoritative persistence while retaining runtime-owned tool tabs.
   activateProject: (projectId, restored) => {
     set((state) => {
-      if (state.activeProjectId === projectId) return state
+      if (state.activeProjectId === projectId) {
+        if (!restored) return state
+
+        const targetSlice = mergeRestoredPreviewSlice(state, restored, projectId)
+        const expandedToolItemId = targetSlice.items.some(
+          (item) => item.id === state.expandedToolItemId && !isDurablePreviewItem(item)
+        )
+          ? state.expandedToolItemId
+          : null
+
+        return {
+          ...targetSlice,
+          expandedToolItemId,
+          fileDialogItem: state.fileDialogItem
+        }
+      }
 
       const byProject = { ...state.byProject }
 
@@ -312,9 +359,10 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
         }
       }
 
-      const targetSlice =
-        byProject[projectId] ??
-        (restored ? restoredToSlice(restored, projectId) : createEmptyPreviewSlice())
+      const cachedSlice = byProject[projectId]
+      const targetSlice = restored
+        ? mergeRestoredPreviewSlice(cachedSlice ?? createEmptyPreviewSlice(), restored, projectId)
+        : (cachedSlice ?? createEmptyPreviewSlice())
 
       // The active slice lives at top level, never duplicated in the stash.
       delete byProject[projectId]
