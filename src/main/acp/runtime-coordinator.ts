@@ -833,6 +833,19 @@ class AcpRuntimeCoordinator {
     )
   }
 
+  sendAppContinuationObserved(
+    request: AcpPromptRequest,
+    onProviderPromptAccepted: () => void
+  ): ReturnType<AcpRuntime['sendAppContinuation']> {
+    return this.linearizeRootAdmission(request.sessionId, () =>
+      this.dispatchPrompt(
+        request,
+        observePromptAcceptance(onProviderPromptAccepted),
+        'sendAppContinuation'
+      )
+    )
+  }
+
   private linearizeRootAdmission<Result>(
     sessionId: string,
     operation: () => Promise<Result>
@@ -959,8 +972,10 @@ class AcpRuntimeCoordinator {
     attribution?: MessageAttribution,
     onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
-    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
-      this.dispatchAdmittedPrompt(
+    let dispatchStarted = false
+    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> => {
+      dispatchStarted = true
+      return this.dispatchAdmittedPrompt(
         request,
         acceptance,
         operation,
@@ -969,9 +984,15 @@ class AcpRuntimeCoordinator {
         attribution,
         onApplicationPromptAdmitted
       )
-    return this.promptDispatchAdmissionGuard
-      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
-      : dispatch()
+    }
+    if (!this.promptDispatchAdmissionGuard) return dispatch()
+    return this.promptDispatchAdmissionGuard(request.sessionId, dispatch).catch((error) => {
+      if (dispatchStarted || error instanceof DelegateMessagePreAcceptanceError) throw error
+      throw new DelegateMessagePreAcceptanceError(
+        error instanceof Error ? error.message : String(error),
+        error
+      )
+    })
   }
 
   private dispatchAdmittedPrompt(
@@ -1040,6 +1061,16 @@ class AcpRuntimeCoordinator {
       : undefined
     const prompt = Promise.resolve(settlementStart).then((leaseId) => {
       settlementLeaseId = leaseId
+      if (
+        attempt.globalCancellationGeneration !== this.globalCancellationGeneration ||
+        attempt.sessionCancellationGeneration !==
+          (this.sessionCancellationGenerations.get(request.sessionId) ?? 0) ||
+        this.activePromptRequests.get(request.sessionId) !== activePrompt
+      ) {
+        throw new DelegateMessagePreAcceptanceError(
+          'ACP prompt start was superseded before provider dispatch'
+        )
+      }
       return operation === 'sendApplicationPrompt'
         ? runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
         : runtime[operation](taskRequest, attempt.id)

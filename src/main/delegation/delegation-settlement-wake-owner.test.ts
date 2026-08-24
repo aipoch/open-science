@@ -90,6 +90,183 @@ describe('DelegationSettlementWakeOwner', () => {
     vi.useRealTimers()
   })
 
+  it('wakes for an unobserved detached Attempt that settles before the root turn ends', async () => {
+    vi.useFakeTimers()
+    let current = snapshot([])
+    const dispatch = vi.fn(acceptDispatch)
+    const owner = new DelegationSettlementWakeOwner({
+      readSnapshot: async () => current,
+      dispatch,
+      createPromptId: () => 'wake-early-terminal'
+    })
+    const leaseId = await owner.onRootTurnStarted({
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt'
+    })
+    owner.trackUnobservedAttempts({
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt',
+      attempts: [{ frameId: 'fast', attemptId: 'attempt-fast', name: 'fast' }]
+    })
+    current = snapshot([child('fast', 'completed')])
+
+    await owner.onRootTurnEnded({
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt',
+      clean: true,
+      leaseId
+    })
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(dispatch).toHaveBeenCalledOnce()
+    expect(dispatch.mock.calls[0]?.[0]?.text).toContain('status=completed')
+    vi.useRealTimers()
+  })
+
+  it('does not wake for a detached Attempt whose terminal result was observed in the root turn', async () => {
+    vi.useFakeTimers()
+    let current = snapshot([])
+    const dispatch = vi.fn(acceptDispatch)
+    const owner = new DelegationSettlementWakeOwner({
+      readSnapshot: async () => current,
+      dispatch
+    })
+    const leaseId = await owner.onRootTurnStarted({
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt'
+    })
+    owner.trackUnobservedAttempts({
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt',
+      attempts: [{ frameId: 'collected', attemptId: 'attempt-collected', name: 'collected' }]
+    })
+    owner.markAttemptsObserved({
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt',
+      attempts: [{ frameId: 'collected', attemptId: 'attempt-collected' }]
+    })
+    current = snapshot([child('collected', 'completed')])
+
+    await owner.onRootTurnEnded({
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt',
+      clean: true,
+      leaseId
+    })
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+    vi.useRealTimers()
+  })
+
+  it('wakes only for the unobserved sibling after a partial same-turn collect', async () => {
+    vi.useFakeTimers()
+    let current = snapshot([])
+    const dispatch = vi.fn(acceptDispatch)
+    const owner = new DelegationSettlementWakeOwner({
+      readSnapshot: async () => current,
+      dispatch
+    })
+    const leaseId = await owner.onRootTurnStarted({
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt'
+    })
+    owner.trackUnobservedAttempts({
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt',
+      attempts: [
+        { frameId: 'collected', attemptId: 'attempt-collected', name: 'collected' },
+        { frameId: 'detached', attemptId: 'attempt-detached', name: 'detached' }
+      ]
+    })
+    owner.markAttemptsObserved({
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt',
+      attempts: [{ frameId: 'collected', attemptId: 'attempt-collected' }]
+    })
+    current = snapshot([child('collected', 'completed'), child('detached', 'error')])
+
+    await owner.onRootTurnEnded({
+      sessionId: 'session-1',
+      originatingPromptId: 'root-prompt',
+      clean: true,
+      leaseId
+    })
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(dispatch).toHaveBeenCalledOnce()
+    expect(dispatch.mock.calls[0]?.[0]?.text).toContain('detached')
+    expect(dispatch.mock.calls[0]?.[0]?.text).not.toContain('collected')
+    vi.useRealTimers()
+  })
+
+  it.each(['throw', 'reject'] as const)(
+    'restores a settlement batch when continuation dispatch %s fails before acceptance',
+    async (failure) => {
+      vi.useFakeTimers()
+      let current = snapshot([])
+      let dispatchAttempt = 0
+      const dispatch = vi.fn((request: DelegationSettlementDispatch): Promise<void> | void => {
+        void request
+        dispatchAttempt += 1
+        if (dispatchAttempt !== 1) return Promise.resolve()
+        if (failure === 'throw') throw new Error('runtime unavailable')
+        return Promise.reject(new Error('runtime unavailable'))
+      })
+      const owner = new DelegationSettlementWakeOwner({
+        readSnapshot: async () => current,
+        dispatch,
+        createPromptId: () => `wake-${dispatchAttempt + 1}`
+      })
+      await endRootTurn(
+        owner,
+        { sessionId: 'session-1', originatingPromptId: 'root-prompt', clean: true },
+        () => {
+          current = snapshot([child('retry-me', 'running')])
+        }
+      )
+      current = snapshot([child('retry-me', 'completed')])
+      await owner.onRecordsChanged('session-1')
+
+      await vi.advanceTimersByTimeAsync(100)
+      await Promise.resolve()
+      expect(dispatch).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(dispatch).toHaveBeenCalledTimes(2)
+      expect(dispatch.mock.calls[0]?.[0]?.text).toContain('retry-me')
+      expect(dispatch.mock.calls[1]?.[0]?.text).toContain('retry-me')
+      vi.useRealTimers()
+    }
+  )
+
+  it('backs off repeated pre-accept failures instead of polling the repository at 10Hz', async () => {
+    vi.useFakeTimers()
+    let current = snapshot([])
+    const dispatch = vi.fn(async () => {
+      throw new Error('runtime remains unavailable')
+    })
+    const owner = new DelegationSettlementWakeOwner({
+      readSnapshot: async () => current,
+      dispatch
+    })
+    await endRootTurn(
+      owner,
+      { sessionId: 'session-1', originatingPromptId: 'root-prompt', clean: true },
+      () => {
+        current = snapshot([child('retry-with-backoff', 'running')])
+      }
+    )
+    current = snapshot([child('retry-with-backoff', 'completed')])
+    await owner.onRecordsChanged('session-1')
+
+    await vi.advanceTimersByTimeAsync(1_600)
+
+    expect(dispatch).toHaveBeenCalledTimes(5)
+    vi.useRealTimers()
+  })
+
   it('reconciles the root-end race and ignores terminal, nested, and unrelated Attempts', async () => {
     vi.useFakeTimers()
     const current = snapshot([

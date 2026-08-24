@@ -1370,6 +1370,35 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[0].sendPrompt).not.toHaveBeenCalled()
   })
 
+  it('classifies a continuation dispatch-guard rejection as proven pre-acceptance', async () => {
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    coordinator.setPromptDispatchAdmissionGuard(async () => {
+      throw new Error('dispatch admission unavailable')
+    })
+    const onProviderPromptAccepted = vi.fn()
+
+    await expect(
+      coordinator.sendAppContinuationObserved(
+        { sessionId: session.sessionId, text: 'retry safely' },
+        onProviderPromptAccepted
+      )
+    ).rejects.toMatchObject({
+      name: 'DelegateMessagePreAcceptanceError',
+      message: 'dispatch admission unavailable'
+    })
+    expect(created.sendAppContinuation).not.toHaveBeenCalled()
+    expect(onProviderPromptAccepted).not.toHaveBeenCalled()
+  })
+
   it('reports completed user and application-owned root turns to delegated settlement watching', async () => {
     const rootTurnEnded = vi.fn(async () => undefined)
     let settlementLease = 0
@@ -1449,6 +1478,71 @@ describe('AcpRuntimeCoordinator', () => {
     })
     expect(rootTurnStarted).toHaveBeenCalledTimes(3)
   })
+
+  it.each(['cancel', 'handoff'] as const)(
+    'does not dispatch a root turn superseded by %s while its settlement baseline loads',
+    async (supersede) => {
+      const settlementStart = createDeferred<string | undefined>()
+      const rootTurnStarted = vi.fn(async () => settlementStart.promise)
+      const rootTurnEnded = vi.fn(async () => undefined)
+      const delegatedWork: RootDelegatedWorkControl = {
+        pendingPermissions: () => [],
+        subscribe: () => () => undefined,
+        respondToPermission: async () => false,
+        setPermissionProfile: async () => undefined,
+        stopSession: async () => undefined,
+        stopAll: async () => undefined,
+        deleteSession: async () => undefined,
+        deleteProject: async () => undefined,
+        rootTurnStarted,
+        rootTurnEnded
+      }
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) => {
+          created = createFakeRuntime({
+            frameworkId: 'codex',
+            sessionIds: ['session-1'],
+            callbacks
+          })
+          return created.runtime
+        },
+        {},
+        '',
+        undefined,
+        undefined,
+        undefined,
+        {},
+        undefined,
+        delegatedWork
+      )
+      const session = await coordinator.createSession()
+      const prompt = coordinator.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'do not revive this prompt',
+        provenanceContext: { promptMessageId: 'superseded-root-prompt' }
+      })
+      await vi.waitFor(() => expect(rootTurnStarted).toHaveBeenCalledOnce())
+
+      if (supersede === 'cancel') {
+        await coordinator.cancelPrompt({ sessionId: session.sessionId })
+      } else {
+        await coordinator.stopPromptForHandoff(session.sessionId)
+      }
+      await coordinator.waitForSessionInteractionRelease(session.sessionId)
+      settlementStart.resolve('settlement-lease-1')
+
+      await expect(prompt).rejects.toThrow('superseded before provider dispatch')
+      expect(created.sendPrompt).not.toHaveBeenCalled()
+      expect(rootTurnEnded).toHaveBeenCalledOnce()
+      expect(rootTurnEnded).toHaveBeenCalledWith({
+        sessionId: session.sessionId,
+        originatingPromptId: 'superseded-root-prompt',
+        clean: false,
+        leaseId: 'settlement-lease-1'
+      })
+    }
+  )
 
   it('acknowledges prompt ownership release only after the owning runtime publishes drain', async () => {
     const promptResult = createDeferred<{ stopReason: 'end_turn' }>()
@@ -1723,6 +1817,7 @@ describe('AcpRuntimeCoordinator', () => {
       sessionId: session.sessionId,
       text: 'first turn'
     })
+    await vi.waitFor(() => expect(promptAttempt).toBe(1))
     await coordinator.cancelPrompt({ sessionId: session.sessionId })
     firstPromptStart.resolve()
     await cancelledBeforeStart
@@ -2135,8 +2230,7 @@ describe('AcpRuntimeCoordinator', () => {
     const activity = coordinator.withActivity({}, (runtime) =>
       runtime.sendPrompt({ sessionId: session.sessionId, text: '[Auditor] correction' })
     )
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.waitFor(() => expect(beforePromptStart).toHaveBeenCalledOnce())
 
     let prepared = false
     const preparing = coordinator.prepareForQuit().then(() => {
@@ -2393,6 +2487,7 @@ describe('AcpRuntimeCoordinator', () => {
       sessionId: session.sessionId,
       text: 'cancelled before start'
     })
+    await vi.waitFor(() => expect(promptAttempt).toBe(1))
     await coordinator.cancelPrompt({ sessionId: session.sessionId })
 
     await coordinator.sendPrompt({ sessionId: session.sessionId, text: 'new turn starts first' })
@@ -2423,6 +2518,7 @@ describe('AcpRuntimeCoordinator', () => {
       sessionId: session.sessionId,
       text: 'active predecessor'
     })
+    await vi.waitFor(() => expect(promptAttempt).toBe(1))
     const upward = coordinator.startContinuationWhen(
       { sessionId: session.sessionId, text: 'queued child message' },
       async () => undefined
@@ -2461,6 +2557,7 @@ describe('AcpRuntimeCoordinator', () => {
     })
     const session = await coordinator.createSession({ cwd: '/workspace' })
     const active = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'active prompt' })
+    await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
     const upward = coordinator.startContinuationWhen(
       { sessionId: session.sessionId, text: 'queued child message' },
       async () => undefined

@@ -354,6 +354,21 @@ const createProductionDelegatedWorkComposition = (
         const result = await (
           await workFor(caller.session)
         ).work.delegate(caller, request, delegateOptions)
+        const unobserved =
+          result.kind === 'receipts'
+            ? result.children
+            : result.kind === 'observations'
+              ? result.children.filter(
+                  ({ status }) => status === 'running' || status === 'awaiting_user'
+                )
+              : []
+        if (unobserved.length > 0) {
+          settlementWake?.trackUnobservedAttempts({
+            sessionId: caller.session.sessionId,
+            originatingPromptId: caller.originMessageId,
+            attempts: unobserved
+          })
+        }
         unavailableReasons.delete(caller.session.sessionId)
         return result
       } catch (error) {
@@ -378,7 +393,20 @@ const createProductionDelegatedWorkComposition = (
       return (await workFor(caller.session)).work.children(caller, frameIds)
     },
     async collect(caller, selectors, collectOptions) {
-      return (await workFor(caller.session)).work.collect(caller, selectors, collectOptions)
+      const observations = await (
+        await workFor(caller.session)
+      ).work.collect(caller, selectors, collectOptions)
+      const observed = observations.filter(
+        ({ status }) => status !== 'running' && status !== 'awaiting_user'
+      )
+      if (observed.length > 0) {
+        settlementWake?.markAttemptsObserved({
+          sessionId: caller.session.sessionId,
+          originatingPromptId: caller.originMessageId,
+          attempts: observed
+        })
+      }
+      return observations
     },
     async submitOutput(caller, value) {
       return (await workFor(caller.session)).work.submitOutput(caller, value)

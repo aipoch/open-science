@@ -6,6 +6,8 @@ import {
 
 type SettledStatus = DurableSettledAttemptStatus
 
+const MAX_RETRY_DELAY_MS = 5_000
+
 type DelegationSettlementAttempt = Readonly<{
   frameId: string
   attemptId: string
@@ -63,10 +65,19 @@ type SessionWakeState = {
   watches: Map<string, Watch>
   turnLeases: Map<
     string,
-    Readonly<{ originatingPromptId: string; baselineAttemptKeys: ReadonlySet<string> }>
+    {
+      originatingPromptId: string
+      baselineAttemptKeys: ReadonlySet<string>
+      unobserved: Map<string, WatchedAttempt>
+    }
   >
-  flight?: Readonly<{ promptId: string; originatingPromptId: string }>
+  flight?: Readonly<{
+    promptId: string
+    originatingPromptId: string
+    items: readonly SettlementItem[]
+  }>
   timer?: ReturnType<typeof setTimeout>
+  retryDelayMs?: number
 }
 
 const handleKey = (frameId: string, attemptId: string): string => `${frameId}\u0000${attemptId}`
@@ -119,7 +130,8 @@ class DelegationSettlementWakeOwner {
     const leaseId = randomUUID()
     state.turnLeases.set(leaseId, {
       originatingPromptId: input.originatingPromptId,
-      baselineAttemptKeys: new Set()
+      baselineAttemptKeys: new Set(),
+      unobserved: new Map()
     })
     let snapshot: DelegationSettlementSnapshot | undefined
     try {
@@ -140,9 +152,44 @@ class DelegationSettlementWakeOwner {
       originatingPromptId: input.originatingPromptId,
       baselineAttemptKeys: new Set(
         snapshot?.attempts.map((attempt) => handleKey(attempt.frameId, attempt.attemptId)) ?? []
-      )
+      ),
+      unobserved: state.turnLeases.get(leaseId)?.unobserved ?? new Map()
     })
     return leaseId
+  }
+
+  trackUnobservedAttempts(
+    input: Readonly<{
+      sessionId: string
+      originatingPromptId: string
+      attempts: readonly WatchedAttempt[]
+    }>
+  ): void {
+    const state = this.sessions.get(input.sessionId)
+    if (!state) return
+    for (const lease of state.turnLeases.values()) {
+      if (lease.originatingPromptId !== input.originatingPromptId) continue
+      for (const attempt of input.attempts) {
+        lease.unobserved.set(handleKey(attempt.frameId, attempt.attemptId), attempt)
+      }
+    }
+  }
+
+  markAttemptsObserved(
+    input: Readonly<{
+      sessionId: string
+      originatingPromptId: string
+      attempts: readonly Readonly<{ frameId: string; attemptId: string }>[]
+    }>
+  ): void {
+    const state = this.sessions.get(input.sessionId)
+    if (!state) return
+    for (const lease of state.turnLeases.values()) {
+      if (lease.originatingPromptId !== input.originatingPromptId) continue
+      for (const attempt of input.attempts) {
+        lease.unobserved.delete(handleKey(attempt.frameId, attempt.attemptId))
+      }
+    }
   }
 
   onRootTurnEnded(
@@ -169,22 +216,28 @@ class DelegationSettlementWakeOwner {
         return
       }
       const remaining = new Map<string, WatchedAttempt>()
+      const pending = new Map<string, SettlementItem>()
       for (const attempt of snapshot.attempts) {
+        const key = handleKey(attempt.frameId, attempt.attemptId)
         if (
-          attempt.status !== 'running' ||
           attempt.parentFrameId !== snapshot.rootFrameId ||
           attempt.originatingPromptId !== input.originatingPromptId ||
-          lease.baselineAttemptKeys.has(handleKey(attempt.frameId, attempt.attemptId))
+          (lease.baselineAttemptKeys.has(key) && !lease.unobserved.has(key))
         ) {
           continue
         }
-        remaining.set(handleKey(attempt.frameId, attempt.attemptId), {
+        const watched = lease.unobserved.get(key) ?? {
           frameId: attempt.frameId,
           attemptId: attempt.attemptId,
           name: attempt.name
-        })
+        }
+        if (isDelegatedAttemptSettled(attempt.status)) {
+          if (lease.unobserved.has(key)) pending.set(key, { ...watched, status: attempt.status })
+        } else {
+          remaining.set(key, watched)
+        }
       }
-      if (remaining.size === 0) {
+      if (remaining.size === 0 && pending.size === 0) {
         this.deleteIfIdle(input.sessionId, state)
         return
       }
@@ -198,6 +251,10 @@ class DelegationSettlementWakeOwner {
         for (const [key, watched] of remaining) {
           if (!existing.pending.has(key)) existing.remaining.set(key, watched)
         }
+        for (const [key, settled] of pending) {
+          existing.remaining.delete(key)
+          existing.pending.set(key, settled)
+        }
       } else {
         state.watches.set(input.originatingPromptId, {
           projectId: snapshot.projectId,
@@ -205,7 +262,7 @@ class DelegationSettlementWakeOwner {
           rootFrameId: snapshot.rootFrameId,
           ...(snapshot.rootBranchId ? { rootBranchId: snapshot.rootBranchId } : {}),
           remaining,
-          pending: new Map()
+          pending
         })
       }
       await this.reconcile(input.sessionId, state)
@@ -224,6 +281,7 @@ class DelegationSettlementWakeOwner {
     return this.enqueueExisting(sessionId, state, async () => {
       if (state.flight?.promptId !== promptId) return
       state.flight = undefined
+      state.retryDelayMs = undefined
       this.cleanupWatches(state)
       if (this.hasPending(state)) this.schedule(sessionId, state)
       else this.deleteIfIdle(sessionId, state)
@@ -338,6 +396,7 @@ class DelegationSettlementWakeOwner {
 
   private schedule(sessionId: string, state: SessionWakeState): void {
     if (state.timer || state.flight) return
+    const delayMs = state.retryDelayMs ?? this.debounceMs
     state.timer = setTimeout(() => {
       state.timer = undefined
       void this.enqueueExisting(sessionId, state, async () => {
@@ -348,7 +407,11 @@ class DelegationSettlementWakeOwner {
         const items = stableItems(selected.pending.values())
         selected.pending.clear()
         const promptId = this.createPromptId()
-        state.flight = { promptId, originatingPromptId: selected.originatingPromptId }
+        state.flight = {
+          promptId,
+          originatingPromptId: selected.originatingPromptId,
+          items
+        }
         const request: DelegationSettlementDispatch = {
           projectId: selected.projectId,
           sessionId,
@@ -367,7 +430,7 @@ class DelegationSettlementWakeOwner {
           this.clearFailedFlight(sessionId, state, promptId)
         }
       })
-    }, this.debounceMs)
+    }, delayMs)
   }
 
   private onDispatchFailed(sessionId: string, promptId: string): Promise<void> {
@@ -379,8 +442,19 @@ class DelegationSettlementWakeOwner {
   }
 
   private clearFailedFlight(sessionId: string, state: SessionWakeState, promptId: string): void {
-    if (state.flight?.promptId !== promptId) return
+    const flight = state.flight
+    if (flight?.promptId !== promptId) return
+    const watch = state.watches.get(flight.originatingPromptId)
+    if (watch) {
+      for (const item of flight.items) {
+        watch.pending.set(handleKey(item.frameId, item.attemptId), item)
+      }
+    }
     state.flight = undefined
+    state.retryDelayMs = Math.min(
+      state.retryDelayMs === undefined ? Math.max(this.debounceMs, 1) : state.retryDelayMs * 2,
+      MAX_RETRY_DELAY_MS
+    )
     this.cleanupWatches(state)
     if (this.hasPending(state)) this.schedule(sessionId, state)
     else this.deleteIfIdle(sessionId, state)

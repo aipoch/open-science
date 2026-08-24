@@ -222,7 +222,10 @@ import type { WindowSettingsCapabilities } from './settings/service-capabilities
 import { createProductionDelegatedWorkComposition } from './delegation/production-composition'
 import { createProductionDelegatedFrameworkRuntime } from './delegation/production-framework-runtime'
 import { finalizeDelegatedArtifactPublication } from './delegation/delegated-artifact-publication'
-import { DelegateMessageParkedError } from './delegation/execution-port'
+import {
+  DelegateMessageParkedError,
+  DelegateMessagePreAcceptanceError
+} from './delegation/execution-port'
 import { createDelegationSettlementContinuationDispatch } from './delegation/settlement-continuation-dispatch'
 import { createSettingsWorkflows } from './settings/workflows'
 import { showSettingsSaveDialog } from './settings/save-dialog'
@@ -1640,10 +1643,12 @@ const createApplicationModules = async (
     onAgentRuntimeUpdate: (update) => broadcastToRenderers('acp:agent-runtime-update', update),
     settlementContinuations: {
       dispatch: createDelegationSettlementContinuationDispatch({
-        sendAppContinuation: (request) => {
+        sendAppContinuationObserved: (request, onProviderPromptAccepted) => {
           const activeRuntime = runtimeRef.current
-          if (!activeRuntime) throw new Error('The Main Agent runtime is unavailable.')
-          return activeRuntime.sendAppContinuation(request)
+          if (!activeRuntime) {
+            throw new DelegateMessagePreAcceptanceError('The Main Agent runtime is unavailable.')
+          }
+          return activeRuntime.sendAppContinuationObserved(request, onProviderPromptAccepted)
         },
         onPromptEnded: (sessionId, promptId) =>
           delegatedWorkRef.current?.root.settlementPromptEnded?.(sessionId, promptId)
