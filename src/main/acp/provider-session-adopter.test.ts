@@ -1,5 +1,19 @@
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const loggerSpies = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }))
+vi.mock('../logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../logger')>()
+  return {
+    ...actual,
+    createLogger: () => ({
+      debug: vi.fn(),
+      info: loggerSpies.info,
+      warn: vi.fn(),
+      error: loggerSpies.error
+    })
+  }
+})
 
 import type { AcpCreateSessionResponse } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
@@ -199,6 +213,57 @@ const createHarness = (
 }
 
 describe('AcpProviderSessionAdopter', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('records phase timings while adopting a provider Session', async () => {
+    const harness = createHarness({
+      projectAgentContext: 'Always cite DOIs.',
+      specialistIdentity: {
+        append: 'specialist identity append',
+        prefix: 'specialist turn prefix'
+      },
+      specialistSkills: {
+        kind: 'specialist',
+        skillIds: ['skill-1'],
+        frameworkNames: ['literature-review'],
+        missingSkillIds: []
+      }
+    })
+
+    await harness.adopt('specialist-1')
+
+    const events = loggerSpies.info.mock.calls.filter(
+      ([, data]) => data?.operation === 'acp-provider-session-adoption'
+    )
+    expect(
+      events.map(([message, data]) => ({
+        message,
+        phase: data?.phase,
+        outcome: data?.outcome
+      }))
+    ).toEqual([
+      { message: 'operation started', phase: undefined, outcome: 'started' },
+      { message: 'operation phase', phase: 'provision-capabilities', outcome: undefined },
+      { message: 'operation phase', phase: 'resolve-specialist', outcome: undefined },
+      { message: 'operation phase', phase: 'resolve-project-context', outcome: undefined },
+      { message: 'operation phase', phase: 'start-provider-session', outcome: undefined },
+      { message: 'operation phase', phase: 'configure-provider-session', outcome: undefined },
+      { message: 'operation phase', phase: 'publish-provider-session', outcome: undefined },
+      {
+        message: 'operation completed',
+        phase: 'publish-provider-session',
+        outcome: 'completed'
+      }
+    ])
+    expect(events.slice(1, -1).every(([, data]) => typeof data?.elapsedMs === 'number')).toBe(true)
+    expect(events.at(-1)?.[1]).toMatchObject({
+      frameworkId: 'claude-code',
+      durationMs: expect.any(Number)
+    })
+  })
+
   it('preserves the runtime capability policy while adopting a fresh provider Session', async () => {
     const harness = createHarness({ capabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY })
 
@@ -253,6 +318,15 @@ describe('AcpProviderSessionAdopter', () => {
     expect(harness.registry.lookup('stable-app-session')).toBeUndefined()
     expect(harness.commitClaudeReplay).not.toHaveBeenCalled()
     expect(harness.registry.isIdentityClaimed('stable-app-session')).toBe(false)
+    expect(loggerSpies.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'acp-provider-session-adoption',
+        phase: 'configure-provider-session',
+        outcome: 'failed',
+        durationMs: expect.any(Number)
+      })
+    )
   })
 
   it('cleans provisional ownership when the provider Session id collides', async () => {

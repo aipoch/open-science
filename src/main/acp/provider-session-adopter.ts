@@ -6,6 +6,7 @@ import {
   type PermissionProfileId
 } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
+import { startDiagnosticOperation } from '../diagnostics/operation'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import {
@@ -71,12 +72,22 @@ export class AcpProviderSessionAdopter {
     stableAppSessionId: string,
     request: AcpProviderSessionAdoptionRequest
   ): Promise<AcpCreateSessionResponse> {
+    const diagnostics = startDiagnosticOperation(log, {
+      operation: 'acp-provider-session-adoption',
+      fields: {
+        sessionId: stableAppSessionId,
+        target: request.specialistId === undefined ? 'main-agent' : 'specialist'
+      }
+    })
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
     let adoptedProviderSessionId: string | undefined
     let identity = request.identity
     try {
       const startupBackend = this.deps.currentBackend()
+      diagnostics.phase('provision-capabilities', {
+        frameworkId: startupBackend.framework.id
+      })
       capability = await this.deps.capabilities.provision({
         stableAppSessionId,
         framework: startupBackend.framework,
@@ -91,11 +102,13 @@ export class AcpProviderSessionAdopter {
       const specialistId = hasAuthoritativeSpecialistBinding
         ? request.specialistId
         : this.deps.registry.lookup(stableAppSessionId)?.aggregate.snapshot().specialistId
+      diagnostics.phase('resolve-specialist')
       const [specialistIdentity, specialistSkills] = await Promise.all([
         this.resolveSpecialistIdentity(specialistId, startupBackend),
         this.resolveSpecialistSkills(specialistId)
       ])
       const handoffAppend = this.deps.peekClaudeReplay(stableAppSessionId)
+      diagnostics.phase('resolve-project-context')
       const projectContextAppend = await this.resolveProjectAgentContext(request.projectId)
       const setup = this.presentation.buildSessionSetup({
         framework: startupBackend.framework,
@@ -115,6 +128,7 @@ export class AcpProviderSessionAdopter {
         sessionOptions: startupBackend.session.options,
         specialistSkills
       })
+      diagnostics.phase('start-provider-session')
       provisionalSession = await request.connection.agent
         .buildSession({ cwd: request.cwd, mcpServers: capability.mcpServers, ...setup.metaArg })
         .start()
@@ -133,6 +147,7 @@ export class AcpProviderSessionAdopter {
 
       const permissionProfile = normalizePermissionProfile(request.permissionProfile)
       let backend = this.deps.currentBackend()
+      diagnostics.phase('configure-provider-session')
       let configuration = await this.deps.configurator.configure({
         backend,
         connection: request.connection,
@@ -153,6 +168,7 @@ export class AcpProviderSessionAdopter {
           })
           continue
         }
+        diagnostics.phase('publish-provider-session')
         identity.assertCurrent()
         const { aggregate } = this.deps.registry.publish(identity, stableAppSessionId, {
           session: provisionalSession,
@@ -185,6 +201,7 @@ export class AcpProviderSessionAdopter {
       } catch (error) {
         this.safeLogError('adopted session state callback failed', error, stableAppSessionId)
       }
+      diagnostics.complete({ frameworkId: backend.framework.id })
       return {
         sessionId: stableAppSessionId,
         ...(adoptedProviderSessionId ? { providerSessionId: adoptedProviderSessionId } : {}),
@@ -213,6 +230,7 @@ export class AcpProviderSessionAdopter {
         }
       }
       this.disposeProvisional(provisionalSession, 'adopted startup session disposal failed')
+      diagnostics.fail(startupError)
       throw startupError
     } finally {
       identity.release()
