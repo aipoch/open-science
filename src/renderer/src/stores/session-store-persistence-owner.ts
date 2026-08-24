@@ -441,7 +441,18 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
       if (existing?.contentLoaded === false) {
-        const hydrated = hydrateSession(session)
+        const loaded = hydrateSession(session)
+        const hydrated: ChatSession = {
+          ...loaded,
+          number: existing.number ?? loaded.number,
+          title: existing.title,
+          pinned: existing.pinned,
+          archivedAt: existing.archivedAt,
+          revision: Math.max(existing.revision ?? 0, loaded.revision ?? 0),
+          filesRevision: Math.max(existing.filesRevision ?? 0, loaded.filesRevision ?? 0),
+          updatedAt: Math.max(existing.updatedAt, loaded.updatedAt),
+          ...(existing.unsavedTitle ? { unsavedTitle: true } : {})
+        }
         markExternallyHydratedSession(hydrated, session)
         return {
           sessions: state.sessions.map((candidate) =>
