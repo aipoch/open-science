@@ -161,8 +161,7 @@ const useWorkspaceSessionController = ({
     {}
   )
   const reconfiguration = useWorkspaceSpecialistReconfiguration(specialistItems)
-  const { error: reconfigureError, setError: setReconfigureError } = reconfiguration
-  const { clearIdleRetry } = reconfiguration
+  const { error: reconfigureError, setError: setReconfigureError, clearIdleRetry } = reconfiguration
   const activeReconfigureError =
     reconfiguration.idleErrorFor(activeSession?.id) ??
     (reconfigureError?.sessionId === activeSession?.id ? reconfigureError : null)
@@ -185,7 +184,6 @@ const useWorkspaceSessionController = ({
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
   const deletingIdsRef = useRef(new Set<string>())
   const [archivingIds, setArchivingIds] = useState<ReadonlySet<string>>(new Set())
-
   const activeHasPending = Boolean(
     activeSession &&
     (activeSession.specialistBindingPending === true ||
@@ -230,12 +228,6 @@ const useWorkspaceSessionController = ({
       return next
     })
   }, [])
-  const invalidateIdleAttempt = useCallback(
-    (sessionId: string): void => {
-      if (clearIdleRetry(sessionId)) clearPending(sessionId)
-    },
-    [clearIdleRetry, clearPending]
-  )
   const canArchive = (session: ChatSession): boolean =>
     isPersistenceReady &&
     !session.isPending &&
@@ -270,7 +262,7 @@ const useWorkspaceSessionController = ({
       expectedArchivedAt: null
     })
       .then((archived) => {
-        invalidateIdleAttempt(session.id)
+        if (clearIdleRetry(session.id)) clearPending(session.id)
         enqueueSessionArchive(archived)
         if (selectedSessionId === session.id) clearSelection()
       })
@@ -308,7 +300,7 @@ const useWorkspaceSessionController = ({
         const deleted = result.status === 'deleted'
         settleSessionDeletion(sessionId, deleted)
         if (deleted) {
-          invalidateIdleAttempt(sessionId)
+          if (clearIdleRetry(sessionId)) clearPending(sessionId)
           setDeleteDialog((current) => (current?.session.id === sessionId ? null : current))
           return
         }
@@ -347,7 +339,7 @@ const useWorkspaceSessionController = ({
     }
     const sessionId = activeSession.id
     if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return
-    invalidateIdleAttempt(sessionId)
+    if (clearIdleRetry(sessionId)) clearPending(sessionId)
     const running = projectSessionActionability(activeSession).activity !== 'inactive'
     if (running) {
       setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
@@ -554,7 +546,7 @@ const useWorkspaceSessionController = ({
     const specialistApi = window.api?.specialist
     if (!specialistApi?.onPendingSwitch) return
     return specialistApi.onPendingSwitch((pending) => {
-      invalidateIdleAttempt(pending.sessionId)
+      if (clearIdleRetry(pending.sessionId)) clearPending(pending.sessionId)
       if (pending.targetName === null) {
         setPendingSpecialists((current) => ({
           ...current,
@@ -586,7 +578,7 @@ const useWorkspaceSessionController = ({
         })
         .catch(() => undefined)
     })
-  }, [invalidateIdleAttempt])
+  }, [clearIdleRetry, clearPending])
   const applyHandoffLifecycleEvent = useCallback(
     (event: CompletionHandoffLifecycleEvent): void => {
       if (event.phase !== 'continuation-start' && event.phase !== 'continued') return
@@ -601,11 +593,11 @@ const useWorkspaceSessionController = ({
           } else if (resolution.kind === 'main') {
             setSessionSpecialistId(event.sessionId, undefined)
           } else return
-          invalidateIdleAttempt(event.sessionId)
+          if (clearIdleRetry(event.sessionId)) clearPending(event.sessionId)
         })
         .catch(() => undefined)
     },
-    [invalidateIdleAttempt, setSessionSpecialistId]
+    [clearIdleRetry, clearPending, setSessionSpecialistId]
   )
   useEffect(() => {
     const specialistApi = window.api?.specialist
