@@ -10,6 +10,8 @@ const workspaceSidebarContainerPath = resolve(__dirname, 'WorkspaceSidebarContai
 const conversationPanelPath = resolve(__dirname, 'ConversationPanel.tsx')
 const permissionApprovalControlsPath = resolve(__dirname, 'PermissionApprovalControls.tsx')
 const appPath = resolve(__dirname, '../../App.tsx')
+const presentationHostPath = resolve(__dirname, '../../ApplicationPresentationHost.tsx')
+const applicationStartupPath = resolve(__dirname, '../../hooks/useApplicationStartup.ts')
 const workspaceMessageScrollerPath = resolve(__dirname, 'WorkspaceMessageScroller.tsx')
 const workspaceConversationTimelinePath = resolve(__dirname, 'workspace-conversation-timeline.ts')
 const workspaceActivityGroupPath = resolve(__dirname, 'WorkspaceActivityGroup.tsx')
@@ -102,17 +104,18 @@ describe('workspace page component boundaries', () => {
 
   it('starts session persistence from the app shell and passes readiness into the workspace', () => {
     const appSource = readFileSync(appPath, 'utf8')
+    const hostSource = readFileSync(presentationHostPath, 'utf8')
+    const startupSource = readFileSync(applicationStartupPath, 'utf8')
     const workspacePageSource = readFileSync(workspacePagePath, 'utf8')
     const workspaceSidebarSource = readFileSync(workspaceSidebarPath, 'utf8')
     const conversationPanelSource = readFileSync(conversationPanelPath, 'utf8')
 
-    // Persistence is hoisted to App so sessions stay loaded across Home <-> Workspace navigation.
-    expect(appSource).toContain(
-      "import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'"
-    )
-    expect(appSource).toContain('const sessionPersistence = useSessionPersistence()')
-    expect(appSource).toContain('const isSessionPersistenceReady = sessionPersistence.isReady')
-    expect(appSource).toContain('isSessionPersistenceReady={isSessionPersistenceReady}')
+    // Persistence is hoisted to the app-shell startup owner so sessions stay loaded across Home <-> Workspace navigation.
+    expect(startupSource).toContain("from '@/lib/session-persistence/session-persistence'")
+    expect(startupSource).toContain('const sessions = useSessionPersistence()')
+    expect(hostSource).toContain('useApplicationStartup()')
+    expect(hostSource).toContain('isSessionPersistenceReady={sessions.isReady}')
+    expect(appSource).not.toContain('useSessionPersistence')
 
     expect(workspacePageSource).toContain('isSessionPersistenceReady')
     expect(workspacePageSource).toContain('isSessionPersistenceReady &&')
