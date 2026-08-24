@@ -101,9 +101,7 @@ const registerAcpIpcHandlerSet = (
       ...(Array.isArray(request.referencedArtifacts)
         ? { referencedArtifacts: request.referencedArtifacts }
         : {}),
-      ...(Array.isArray(request.forcedSkillIds)
-        ? { forcedSkillIds: request.forcedSkillIds }
-        : {}),
+      ...(Array.isArray(request.forcedSkillIds) ? { forcedSkillIds: request.forcedSkillIds } : {}),
       ...(Array.isArray(request.parts) ? { parts: request.parts } : {})
     })
   )
