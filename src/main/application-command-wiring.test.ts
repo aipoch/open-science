@@ -47,6 +47,13 @@ const dependencyBlock = compact(
     '// The shared coordinator remains the sole ACP + Notebook teardown owner.'
   )
 )
+const sessionPersistenceAdapterBlock = compact(
+  between(
+    ipcSource,
+    "declareElectronAdapter('session-persistence'",
+    'const conversationExportService'
+  )
+)
 
 describe('production application command wiring', () => {
   it('injects each stateful owner into its Electron adapter and command composition', () => {
@@ -134,6 +141,18 @@ describe('production application command wiring', () => {
     expect(ipcSource).toContain(
       'const githubCommandOwner = createGithubCommandOwner({ fetch: netFetchStandard })'
     )
+  })
+
+  it('reconciles delegated quit blockers from durable renderer saves before wake work', () => {
+    const reconcile = sessionPersistenceAdapterBlock.indexOf(
+      'delegatedActivity.recordSession(session)'
+    )
+    const wake = sessionPersistenceAdapterBlock.indexOf(
+      'await delegatedWork.root.wakeMessages?.(session.id)'
+    )
+
+    expect(reconcile).toBeGreaterThan(-1)
+    expect(wake).toBeGreaterThan(reconcile)
   })
 
   it('keeps native-only commands inside the Electron owner adapter and exposes only narrow views', () => {

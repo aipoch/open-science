@@ -2962,6 +2962,11 @@ const createApplicationModules = async (
       reviewRepository,
       sessionPersistenceHandlers,
       async (session) => {
+        // Renderer saves can carry the terminal delegated-work snapshot after the delegated owner
+        // previously projected the Session as running. Keep the synchronous quit/migration gate in
+        // step with that durable save before doing any asynchronous wake work; otherwise an ended
+        // Session can remain a false "Subagents are still running" blocker for this app process.
+        delegatedActivity.recordSession(session)
         try {
           await delegatedWork.root.wakeMessages?.(session.id)
         } catch (error) {
