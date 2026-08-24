@@ -18,6 +18,7 @@ import {
   type SessionDeletionResult
 } from '../shared/session-persistence'
 import { ApplicationCommandError } from '../shared/application-command-contract'
+import { ApplicationEventHub } from './application-events'
 
 const callerContext = createCallerContext({
   clientId: 'renderer-1',
@@ -935,14 +936,20 @@ describe('Data and content application commands', () => {
     })
   })
 
-  it('preserves standalone upload publication failures after the upload commits', async () => {
+  it('returns a committed standalone upload when one event subscriber fails', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
+    const events = new ApplicationEventHub()
     const publicationFailure = new Error('renderer broadcast failed')
-    deps.events.publish.mockImplementationOnce(() => {
+    const laterSubscriber = vi.fn()
+    events.subscribe(() => {
       throw publicationFailure
     })
-    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    events.subscribe(laterSubscriber)
+    registerDataContentApplicationCommands(router.registrar, {
+      ...deps.dependencies,
+      events
+    })
     const request = {
       transferId: 'transfer-standalone',
       sourcePath: '/tmp/report.txt',
@@ -955,8 +962,16 @@ describe('Data and content application commands', () => {
         dataContentApplicationCommands.uploadStageLocalPath,
         invocation([request] as const)
       )
-    ).rejects.toBe(publicationFailure)
+    ).resolves.toBe(deps.attachment)
     expect(deps.uploads.stageLocalPath).toHaveBeenCalledOnce()
-    expect(deps.events.publish).toHaveBeenCalledOnce()
+    expect(laterSubscriber).toHaveBeenCalledWith({
+      channel: 'project-files:changed',
+      payload: {
+        projectId: 'project-1',
+        sessionId: 'standalone-uploads',
+        sources: ['upload'],
+        kind: 'upsert'
+      }
+    })
   })
 })

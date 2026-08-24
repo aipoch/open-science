@@ -61,7 +61,7 @@ describe('ApplicationEventHub', () => {
     expect(second).toHaveBeenCalledWith({ channel: 'acp:event', payload: [event] })
   })
 
-  it('preserves live Set cancellation and failure propagation semantics', () => {
+  it('preserves live Set cancellation while isolating subscriber failures', () => {
     const hub = new ApplicationEventHub()
     const skipped = vi.fn()
     const removeSkipped = hub.subscribe(skipped)
@@ -77,9 +77,12 @@ describe('ApplicationEventHub', () => {
     removeSkipped()
     hub.subscribe(skipped)
 
-    expect(() => hub.publish('specialist:catalog-changed', undefined)).toThrow(failure)
+    expect(() => hub.publish('specialist:catalog-changed', undefined)).not.toThrow()
     expect(skipped).not.toHaveBeenCalled()
-    expect(afterFailure).not.toHaveBeenCalled()
+    expect(afterFailure).toHaveBeenCalledWith({
+      channel: 'specialist:catalog-changed',
+      payload: undefined
+    })
   })
 
   it('clears subscriptions and ignores late work after disposal', () => {
