@@ -178,6 +178,37 @@ describe('AcpNativeFollowUpWorkflow', () => {
     expect(published).toEqual([])
   })
 
+  it('refuses an advisory when steering starts a new Main turn', async () => {
+    const { workflow } = createWorkflow({
+      request: vi.fn(async () => ({ outcome: 'startedNewTurn' }))
+    })
+
+    await expect(
+      workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'Context-only advisory' })
+    ).resolves.toEqual({ injected: false })
+    expect(published).toEqual([])
+  })
+
+  it('refuses an advisory when Main changes turns during steering', async () => {
+    let liveTurnToken = 'turn-1'
+    const { workflow } = createWorkflow({
+      request: vi.fn(async () => {
+        liveTurnToken = 'turn-2'
+        return { outcome: 'injected' }
+      }),
+      livePromptTurn: () => ({
+        turnToken: liveTurnToken,
+        signal: new AbortController().signal,
+        promptMessageId: liveTurnToken === 'turn-1' ? 'prompt-1' : 'prompt-2'
+      })
+    })
+
+    await expect(
+      workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'Context-only advisory' })
+    ).resolves.toEqual({ injected: false })
+    expect(published).toEqual([])
+  })
+
   it('treats startedNewTurn as injected because the adapter consumed the prompt', async () => {
     const { workflow } = createWorkflow({
       request: vi.fn(async () => ({ outcome: 'startedNewTurn' }))

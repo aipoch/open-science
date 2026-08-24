@@ -297,7 +297,16 @@ class AcpNativeFollowUpWorkflow {
         })
         return refused('dispatch-failed')
       }
-      const dispatched = interpretSteerOutcome(parseSteerOutcome(result))
+      const outcome = parseSteerOutcome(result)
+      if (expectedTurnToken && outcome.kind === 'started-new-turn') {
+        log.info('native follow-up refused', {
+          sessionId: request.sessionId,
+          reason: 'started-new-turn',
+          transport: route.transport
+        })
+        return refused('started-new-turn')
+      }
+      const dispatched = interpretSteerOutcome(outcome)
       if (dispatched.kind !== 'injected') {
         log.info('native follow-up refused', {
           sessionId: request.sessionId,
@@ -342,7 +351,16 @@ class AcpNativeFollowUpWorkflow {
       }
     }
 
-    if (this.sameLivePrompt(request.sessionId, live)) {
+    const sameLivePrompt = this.sameLivePrompt(request.sessionId, live)
+    if (expectedTurnToken && !sameLivePrompt) {
+      log.info('native follow-up refused', {
+        sessionId: request.sessionId,
+        reason: 'no-live-turn',
+        transport: route.transport
+      })
+      return refused('no-live-turn')
+    }
+    if (sameLivePrompt) {
       await this.commitNotebookTurnInputs(notebookTurnInputs)
     } else {
       log.info('native follow-up skipped notebook registration', {
