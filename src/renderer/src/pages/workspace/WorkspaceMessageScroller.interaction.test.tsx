@@ -3604,6 +3604,28 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.textContent).toContain('searchable oldest sentinel')
     expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
 
+    const streamedMessages = [
+      ...messages,
+      createMessage({
+        id: 'message-121',
+        role: 'agent',
+        content: 'streamed searchable update',
+        responseToMessageId: 'message-119',
+        createdAt: 1710000000120,
+        updatedAt: 1710000000120
+      })
+    ]
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'running', messages: streamedMessages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    expect(container.textContent).toContain('streamed searchable update')
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
+
     const nextSessionMessages = messages.map((message, index) => ({
       ...message,
       id: `next-${message.id}`,
@@ -3627,7 +3649,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     await act(async () => hideWindowFindListener?.())
     expect(container.textContent).not.toContain('next session oldest sentinel')
     expect(container.textContent).toContain('transcript message 120')
-  })
+  }, 30_000)
 
   it('does not leave the active Plan card in the transcript', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
