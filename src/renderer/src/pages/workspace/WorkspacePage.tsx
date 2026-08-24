@@ -34,6 +34,7 @@ import {
 } from '@/lib/acp/workspace-events'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import { revealNotebookWhenProjectActive } from './notebook-preview-availability'
+import { invalidateSessionNotebookCache } from './session-notebook-data'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import {
@@ -686,6 +687,10 @@ const WorkspacePage = ({
       cancelPendingOpen()
     }
   }, [activeSessionId, scopedProjectId])
+
+  useEffect(() => {
+    return window.api.notebook.onChanged?.(invalidateSessionNotebookCache) ?? (() => undefined)
+  }, [])
 
   // Subscribe to reviewer lifecycle updates so the card and Reviewing indicator stay live.
   useEffect(() => {

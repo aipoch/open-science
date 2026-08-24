@@ -38,6 +38,7 @@ import type {
 import type { EnvironmentInfo } from '../../shared/notebook-env'
 import {
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
+  NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT,
   type NotebookEnvironmentManifest,
   type NotebookEnvironmentStatus
@@ -733,6 +734,41 @@ describe('notebook runtime service', () => {
         historySummaryFrameId: 'x'.repeat(NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES + 1)
       })
     ).rejects.toThrow(/history summary Frame ID must not exceed 1024 UTF-8 bytes/u)
+    expect(service.peekHandoffContext('session-1')).toBeUndefined()
+  })
+
+  it('rejects invalid history page limits and cursors before creating a session', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+
+    await expect(
+      service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        historyLimit: NOTEBOOK_STATE_HISTORY_PAGE_LIMIT + 1
+      })
+    ).rejects.toThrow(/history limit must be 1-100/u)
+    await expect(
+      service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        historyBefore: { startedAt: Number.NaN, runId: '' }
+      })
+    ).rejects.toThrow(/history cursor is invalid/u)
+    await expect(
+      service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        historyBefore: { startedAt: 1, runId: 42 } as never
+      })
+    ).rejects.toThrow(/history cursor is invalid/u)
+    await expect(
+      service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        historyBefore: { startedAt: 1, runId: 'x'.repeat(1_025) }
+      })
+    ).rejects.toThrow(/history cursor is invalid/u)
     expect(service.peekHandoffContext('session-1')).toBeUndefined()
   })
 

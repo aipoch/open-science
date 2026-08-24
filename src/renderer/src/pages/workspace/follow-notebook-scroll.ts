@@ -12,6 +12,11 @@ export const isAtFollowScrollBottom = (
 export const followScrollBottomTop = (viewport: FollowScrollViewport): number =>
   Math.max(0, viewport.scrollHeight - viewport.clientHeight)
 
+export const prependAnchoredScrollTop = (
+  previous: Pick<FollowScrollViewport, 'scrollHeight' | 'scrollTop'>,
+  nextScrollHeight: number
+): number => Math.max(0, previous.scrollTop + nextScrollHeight - previous.scrollHeight)
+
 // Follow only while the visible preview is this Session's Notebook. Isolated mounts that are not
 // yet in the workbench still follow when the selected Session matches.
 export const isCurrentSessionNotebookView = ({

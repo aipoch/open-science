@@ -24,7 +24,9 @@ import type {
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import {
+  isNotebookRunCursor,
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
+  NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT
 } from '../../shared/notebook'
 import type {
@@ -899,9 +901,20 @@ class NotebookRuntimeService {
         )
       }
       const runIds = [...new Set(requestedRunIds)]
+      const historyLimit = request.historyLimit ?? NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
+      if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 100)
+        throw new Error('Notebook history limit must be 1-100.')
+      if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
+        throw new Error('Notebook state history cursor is invalid.')
       const session = await this.sessionLifecycle.ensure(request)
       await this.runTerminalization.reconcilePending(session)
-      return this.sessionReadModel.state(session, runIds, request.historySummaryFrameId)
+      return this.sessionReadModel.state(
+        session,
+        runIds,
+        request.historySummaryFrameId,
+        request.historyBefore,
+        historyLimit
+      )
     })
   }
 

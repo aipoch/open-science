@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Download, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
@@ -19,6 +19,7 @@ import type { ChatSession } from '@/stores/session-store'
 import { resolveDataKernelForTab } from '../../../../shared/notebook'
 import type {
   NotebookKernelKind,
+  NotebookRunPage,
   NotebookRunHistorySummary,
   NotebookRunRecord
 } from '../../../../shared/notebook'
@@ -41,6 +42,7 @@ import {
   projectNotebookRunsForFrame,
   type NotebookFrameFilterValue
 } from './session-notebook-projection'
+import { followScrollBottomTop, prependAnchoredScrollTop } from './follow-notebook-scroll'
 
 type SessionNotebookStatus = 'loading' | 'error' | 'ready'
 
@@ -122,8 +124,14 @@ type SessionNotebookContentProps = {
   loadedRunCount?: number
   status: SessionNotebookStatus
   error?: string
+  historyPage?: NotebookRunPage
+  loadingEarlier?: boolean
+  earlierError?: string
+  viewportRef?: RefObject<HTMLDivElement | null>
+  topSentinelRef?: RefObject<HTMLDivElement | null>
   frameLabels?: Readonly<Record<string, string>>
   onLoadHistorySummary?: (agentFrameId: string) => Promise<NotebookRunHistorySummary | undefined>
+  onLoadEarlier?: () => void
   onClose: () => void
   onExport: (kernel: NotebookKernelKind, agentFrameFilter?: string | null) => Promise<void>
   onExportAll: (agentFrameFilter?: string | null) => Promise<string | undefined>
@@ -140,8 +148,14 @@ const SessionNotebookContent = ({
   loadedRunCount = runs.length,
   status,
   error,
+  historyPage,
+  loadingEarlier = false,
+  earlierError,
+  viewportRef,
+  topSentinelRef,
   frameLabels = {},
   onLoadHistorySummary,
+  onLoadEarlier,
   onClose,
   onExport,
   onExportAll
@@ -242,6 +256,42 @@ const SessionNotebookContent = ({
     (run) => resolveRunKernelKind(run) === effectiveActiveKind
   )
   const busy = exporting || exportingAll
+  const supportsAutomaticHistoryLoading = typeof IntersectionObserver !== 'undefined'
+
+  useEffect(() => {
+    const viewport = viewportRef?.current
+    const sentinel = topSentinelRef?.current
+    if (
+      status !== 'ready' ||
+      !viewport ||
+      !sentinel ||
+      !historyPage?.hasEarlierRuns ||
+      loadingEarlier ||
+      earlierError ||
+      !onLoadEarlier ||
+      !supportsAutomaticHistoryLoading
+    ) {
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) onLoadEarlier()
+      },
+      { root: viewport, rootMargin: '400px 0px 0px 0px' }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [
+    earlierError,
+    historyPage?.hasEarlierRuns,
+    loadingEarlier,
+    onLoadEarlier,
+    status,
+    supportsAutomaticHistoryLoading,
+    topSentinelRef,
+    viewportRef
+  ])
 
   // The main button's "current tab" = the kernel whose .ipynb will be saved. repl/bash tabs fold
   // into the most recent data kernel so the file still has a real kernelspec; sessions that never
@@ -320,7 +370,12 @@ const SessionNotebookContent = ({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div
+        ref={viewportRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        aria-busy={status === 'loading' || loadingEarlier}
+        data-testid="session-notebook-scroll-viewport"
+      >
         {status === 'loading' ? (
           <p className="px-5 py-16 text-center text-sm text-muted-foreground">
             {t('Loading notebook…')}
@@ -339,15 +394,50 @@ const SessionNotebookContent = ({
           </p>
         ) : (
           <>
+            <div ref={topSentinelRef} className="h-px [overflow-anchor:none]" aria-hidden="true" />
+            {loadingEarlier ? (
+              <div
+                className="border-b border-border bg-muted px-4 py-2 text-center text-xs text-muted-foreground"
+                role="status"
+              >
+                {t('Loading earlier runs…')}
+              </div>
+            ) : earlierError ? (
+              <div
+                className="flex items-center justify-between gap-3 border-b border-border bg-muted px-4 py-2 text-xs text-danger-000"
+                role="alert"
+              >
+                <span>{t('Failed to load earlier runs.')}</span>
+                <button
+                  type="button"
+                  className="h-8 shrink-0 rounded-md px-2.5 text-xs text-foreground hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px"
+                  onClick={onLoadEarlier}
+                >
+                  {t('Retry')}
+                </button>
+              </div>
+            ) : historyPage?.hasEarlierRuns && !supportsAutomaticHistoryLoading ? (
+              <button
+                type="button"
+                className="flex h-9 w-full items-center justify-center border-b border-border bg-muted px-4 text-xs text-foreground hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 active:translate-y-px"
+                onClick={onLoadEarlier}
+              >
+                {t('Load earlier runs')}
+              </button>
+            ) : historyPage && !historyPage.hasEarlierRuns ? (
+              <div className="border-b border-border px-4 py-2 text-center text-xs text-muted-foreground">
+                {t('Beginning of notebook history')}
+              </div>
+            ) : null}
             {runCount > loadedRunCount ? (
               <p
                 className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground"
                 role="status"
               >
-                {t(
-                  'This session has {{total}} runs. This view loads the latest {{loaded}}; downloads include the complete history.',
-                  { loaded: loadedRunCount, total: runCount }
-                )}
+                {t('Loaded {{loaded}} of {{total}} runs. Scroll up to load earlier history.', {
+                  loaded: loadedRunCount,
+                  total: runCount
+                })}
               </p>
             ) : null}
             <div className="flex max-w-full items-center gap-2 overflow-hidden border-b border-border bg-muted px-3 py-2">
@@ -430,12 +520,13 @@ const SessionNotebookContent = ({
                 </p>
               ) : (
                 visibleRuns.map((run, index) => (
-                  <NotebookDialogCell
-                    key={run.runId}
-                    run={run}
-                    index={index}
-                    showInputData={Boolean(projectId)}
-                  />
+                  <div key={run.runId} data-notebook-run-id={run.runId}>
+                    <NotebookDialogCell
+                      run={run}
+                      index={index}
+                      showInputData={Boolean(projectId)}
+                    />
+                  </div>
                 ))
               )}
             </div>
@@ -549,13 +640,92 @@ const SessionNotebookDialog = ({
   const { t } = useTranslation()
   const [runs, setRuns] = useState<NotebookRunRecord[]>([])
   const [runCount, setRunCount] = useState(0)
+  const [historyPage, setHistoryPage] = useState<NotebookRunPage>()
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
+  const [earlierError, setEarlierError] = useState<string>()
   const [status, setStatus] = useState<SessionNotebookStatus>('loading')
   const [error, setError] = useState<string | undefined>(undefined)
   const dialogSession = useRetainedDialogValue(session)
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  const topSentinelRef = useRef<HTMLDivElement | null>(null)
+  const initialBottomPending = useRef(true)
+  const prependScrollSnapshot = useRef<{ scrollHeight: number; scrollTop: number } | undefined>(
+    undefined
+  )
 
   const sessionId = session?.id
   const projectId = session?.projectId
   const cwd = session?.cwd
+  const activeSessionRef = useRef<{ id: string | undefined; generation: number }>({
+    id: sessionId,
+    generation: 0
+  })
+  useLayoutEffect(() => {
+    if (activeSessionRef.current.id === sessionId) return
+    activeSessionRef.current = {
+      id: sessionId,
+      generation: activeSessionRef.current.generation + 1
+    }
+  }, [sessionId])
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport || status !== 'ready') return
+    const snapshot = prependScrollSnapshot.current
+    if (snapshot) {
+      prependScrollSnapshot.current = undefined
+      viewport.scrollTop = prependAnchoredScrollTop(snapshot, viewport.scrollHeight)
+      return
+    }
+    if (initialBottomPending.current) {
+      initialBottomPending.current = false
+      viewport.scrollTop = followScrollBottomTop(viewport)
+    }
+  }, [runs, status])
+
+  const loadEarlier = useCallback((): void => {
+    if (
+      !dialogSession ||
+      loadingEarlier ||
+      !historyPage?.hasEarlierRuns ||
+      !historyPage.oldestCursor
+    )
+      return
+    const request = {
+      sessionId: dialogSession.id,
+      projectId: dialogSession.projectId,
+      workspaceCwd: dialogSession.cwd ?? ''
+    }
+    const requestGeneration = activeSessionRef.current.generation
+    const requestIsCurrent = (): boolean =>
+      activeSessionRef.current.id === request.sessionId &&
+      activeSessionRef.current.generation === requestGeneration
+    const viewport = viewportRef.current
+    if (viewport) {
+      prependScrollSnapshot.current = {
+        scrollHeight: viewport.scrollHeight,
+        scrollTop: viewport.scrollTop
+      }
+    }
+    setLoadingEarlier(true)
+    setEarlierError(undefined)
+    void loadSessionNotebookData(window.api.notebook, request, historyPage.oldestCursor)
+      .then((loaded) => {
+        if (!requestIsCurrent()) return
+        const existingIds = new Set(runs.map((run) => run.runId))
+        const earlierRuns = loaded.runs.filter((run) => !existingIds.has(run.runId))
+        setRuns([...earlierRuns, ...runs])
+        setHistoryPage(loaded.historyPage)
+      })
+      .catch((loadError: unknown) => {
+        if (!requestIsCurrent()) return
+        prependScrollSnapshot.current = undefined
+        setEarlierError(getErrorMessage(loadError))
+      })
+      .finally(() => {
+        if (requestIsCurrent()) setLoadingEarlier(false)
+      })
+  }, [dialogSession, historyPage, loadingEarlier, runs])
 
   const loadHistorySummary = useCallback(
     async (agentFrameId: string): Promise<NotebookRunHistorySummary | undefined> => {
@@ -582,6 +752,11 @@ const SessionNotebookDialog = ({
       setError(undefined)
       setRuns([])
       setRunCount(0)
+      setHistoryPage(undefined)
+      setEarlierError(undefined)
+      setLoadingEarlier(false)
+      initialBottomPending.current = true
+      prependScrollSnapshot.current = undefined
 
       void loadSessionNotebookData(window.api.notebook, {
         sessionId,
@@ -593,6 +768,7 @@ const SessionNotebookDialog = ({
 
           setRuns(loaded.runs)
           setRunCount(loaded.runCount)
+          setHistoryPage(loaded.historyPage)
           setStatus('ready')
         })
         .catch((loadError: unknown) => {
@@ -637,8 +813,14 @@ const SessionNotebookDialog = ({
               runs={runs}
               runCount={runCount}
               loadedRunCount={runs.length}
+              historyPage={historyPage}
+              loadingEarlier={loadingEarlier}
+              earlierError={earlierError}
+              viewportRef={viewportRef}
+              topSentinelRef={topSentinelRef}
               frameLabels={notebookFrameLabels(dialogSession, t)}
               onLoadHistorySummary={loadHistorySummary}
+              onLoadEarlier={loadEarlier}
               status={status}
               error={error}
               onClose={onClose}

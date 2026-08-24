@@ -267,7 +267,11 @@ describe('notebook run repository', () => {
     ).resolves.toEqual({
       runs: [expect.objectContaining({ runId: 'child' })],
       total: 3,
-      latestRunEnvironments: { python: 'historical-python' }
+      latestRunEnvironments: { python: 'historical-python' },
+      historyPage: {
+        hasEarlierRuns: true,
+        oldestCursor: { startedAt: 2, runId: 'child' }
+      }
     })
     await expect(
       repository.readSessionRunWindow('default-project', 'session-1', 1, ['legacy'])
@@ -277,7 +281,11 @@ describe('notebook run repository', () => {
         expect.objectContaining({ runId: 'child' })
       ],
       total: 3,
-      latestRunEnvironments: { python: 'historical-python' }
+      latestRunEnvironments: { python: 'historical-python' },
+      historyPage: {
+        hasEarlierRuns: true,
+        oldestCursor: { startedAt: 2, runId: 'child' }
+      }
     })
     await expect(
       repository.readSessionRunWindow('default-project', 'session-1', 1, [], 'child-frame-1')
@@ -285,11 +293,29 @@ describe('notebook run repository', () => {
       runs: [expect.objectContaining({ runId: 'child' })],
       total: 3,
       latestRunEnvironments: { python: 'historical-python' },
+      historyPage: {
+        hasEarlierRuns: true,
+        oldestCursor: { startedAt: 2, runId: 'child' }
+      },
       historySummary: {
         agentFrameId: 'child-frame-1',
         runCount: 2,
         kernelCounts: { python: 1, r: 1, repl: 0, bash: 0 },
         latestDataKernel: 'python'
+      }
+    })
+    await expect(
+      repository.readSessionRunWindow('default-project', 'session-1', 1, [], undefined, {
+        startedAt: 2,
+        runId: 'child'
+      })
+    ).resolves.toEqual({
+      runs: [expect.objectContaining({ runId: 'legacy' })],
+      total: 3,
+      latestRunEnvironments: { python: 'historical-python' },
+      historyPage: {
+        hasEarlierRuns: true,
+        oldestCursor: { startedAt: 1, runId: 'legacy' }
       }
     })
   })

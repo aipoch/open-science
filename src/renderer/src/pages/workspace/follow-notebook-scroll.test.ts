@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   FOLLOW_SCROLL_EDGE_PX,
   followScrollBottomTop,
+  prependAnchoredScrollTop,
   isAtFollowScrollBottom,
   isCurrentSessionNotebookView
 } from './follow-notebook-scroll'
@@ -26,6 +27,12 @@ describe('followScrollBottomTop', () => {
   it('pins to the last visible line without going negative', () => {
     expect(followScrollBottomTop({ scrollTop: 0, clientHeight: 400, scrollHeight: 1000 })).toBe(600)
     expect(followScrollBottomTop({ scrollTop: 0, clientHeight: 400, scrollHeight: 200 })).toBe(0)
+  })
+})
+
+describe('prependAnchoredScrollTop', () => {
+  it('preserves the visible content offset after earlier rows increase scroll height', () => {
+    expect(prependAnchoredScrollTop({ scrollTop: 40, scrollHeight: 800 }, 1200)).toBe(440)
   })
 })
 
