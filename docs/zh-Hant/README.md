@@ -22,7 +22,7 @@ Open Science 是為科學家與研究人員打造的開源、本機優先且與�
 
 Open Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
-> 💡 **[Open Science v0.18.2 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 8 月）_。Open Science v0.18.2 引入了俄文本地化、對話匯出的輪次選擇，以及自訂連接器的預先註冊 OAuth 用戶端；同時收窄智慧代理清單摘要、限制增量事件許可以保持高吞吐串流期間轉譯器的回應能力、串流匯出專案產物 ZIP、帶 UTF-8 筆記本原始碼解碼的 MCP 進度心跳、訊息編輯時保留附件、復原不透明 Codex 會話、冪等的任務 API 建立，以及大量工作區、筆記本、更新與持久化修復。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[Open Science v0.18.2 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 8 月）_。Open Science v0.18.2 新增俄文本地化、Markdown 與 PDF 對話匯出的輪次選擇，以及支援加密密鑰儲存與發行者固定的自訂連接器預先註冊 OAuth 用戶端。受限事件准入與專案產物 ZIP 串流匯出可在高負載時維持工作區回應，Notebook 執行則新增進度心跳與 UTF-8 原始碼解碼。訊息編輯現會保留附件，不透明的 Codex 恢復失敗可自動復原，Task API 重試具備冪等性，並修正多項工作區、更新與持久化問題。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science 開源 AI 研究工作台桌面應用程式工作區，顯示含有生成產物的智能體會話" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
