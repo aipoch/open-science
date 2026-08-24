@@ -40,7 +40,9 @@ describe('ConnectorService', () => {
       getConnectors: () => ({ enabledIds: ['chemistry'], autoAllowIds: [] }),
       resolveApiKey: () => undefined
     })
-    await expect(svc.call('chemistry', 'nope', {}, internal)).rejects.toThrow(/unknown tool/)
+    await expect(svc.call('chemistry', 'nope', {}, internal)).rejects.toThrow(
+      'unknown tool: chemistry/nope. Do not retry with guessed method names. Use only methods documented by a loaded mcp-* Skill, then retry with a documented method.'
+    )
   })
   it('routes an enabled call through the engine with resolved credentials', async () => {
     const fetchImpl = vi
@@ -1025,7 +1027,9 @@ describe('ConnectorService', () => {
       guard.commit(replacement)
       approve?.('global')
 
-      await expect(pendingCall).rejects.toThrow('connector_configuration_changed')
+      await expect(pendingCall).rejects.toThrow(
+        'connector call rejected: connector_configuration_changed. The Connector configuration changed before the external tool was called. Retry the exact same call once.'
+      )
       expect(listTools).not.toHaveBeenCalled()
       expect(remember).not.toHaveBeenCalled()
       expect(call).not.toHaveBeenCalled()
@@ -1241,7 +1245,7 @@ describe('ConnectorService', () => {
       })
 
       await expect(svc.call('oauth-server', 'lookup', {}, internal)).rejects.toThrow(
-        'connector_unauthenticated'
+        'connector call rejected: connector_unauthenticated. Connector authentication is required. Do not retry until the user signs in from Settings > Connectors, then retry the same call.'
       )
       expect(mcpClientManager.listTools).not.toHaveBeenCalled()
       expect(call).not.toHaveBeenCalled()
@@ -1604,7 +1608,9 @@ describe('ConnectorService specialist capability gate', () => {
           specialistId: current.id
         }
       )
-    ).rejects.toThrow('specialist_capability_denied')
+    ).rejects.toThrow(
+      "connector call rejected: specialist_capability_denied. The current Specialist is not allowed to use this Connector. Do not retry from this Specialist. Use an allowed Connector, or ask the user to update this Specialist's Connector access in Settings > Specialists, then retry the same call."
+    )
 
     current = specialist({
       capabilityMode: 'selected',
@@ -1706,7 +1712,9 @@ describe('ConnectorService specialist capability gate', () => {
     })
     await expect(
       svc.call('molecule', 'preview_molecule', { token: 'SECRET_ARGS' }, { origin: 'agent' })
-    ).rejects.toThrow('missing_session')
+    ).rejects.toThrow(
+      'connector call rejected: missing_session. The Connector call could not be associated with the current Session. Do not retry this call. Ask the user to start a new Session before retrying.'
+    )
     await expect(
       svc.call(
         'not-installed',
@@ -1749,5 +1757,36 @@ describe('ConnectorService specialist capability gate', () => {
       svc.call('molecule', 'preview_molecule', {}, { origin: 'internal' })
     ).resolves.toEqual({ ok: true })
     await expect(svc.call('molecule', 'preview_molecule', {})).rejects.toThrow('missing_session')
+  })
+
+  it('gives actionable guidance when the Specialist or Connector runtime is unavailable', async () => {
+    const customMcpServers = [
+      {
+        id: 'server-1',
+        name: 'custom-server',
+        displayName: 'Custom server',
+        transport: 'stdio' as const,
+        command: 'custom-server',
+        enabled: true
+      }
+    ]
+    const svc = new ConnectorService({
+      getConnectors: () => ({ enabledIds: [], autoAllowIds: [], customMcpServers }),
+      resolveApiKey: () => undefined
+    })
+
+    await expect(
+      svc.call(
+        'custom-server',
+        'lookup',
+        {},
+        { origin: 'agent', sessionId: 'session-1', specialistId: 'missing-specialist' }
+      )
+    ).rejects.toThrow(
+      'connector call rejected: specialist_unavailable. The current Specialist is unavailable. Do not retry from this Specialist. Ask the user to switch to Main Agent or an available Specialist, then retry the same call.'
+    )
+    await expect(svc.call('custom-server', 'lookup', {}, internal)).rejects.toThrow(
+      'connector call rejected: connector_runtime_unavailable. The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open Science before retrying.'
+    )
   })
 })

@@ -199,4 +199,57 @@ gate('repl kernel host.mcp', () => {
     expect(result.traceback).toContain('mcp-* Skill')
     expect(result.traceback).toContain('Settings > Connectors')
   })
+
+  it('tells the agent to wait for sign-in when a Connector requires authentication', async () => {
+    const connectorService = new ConnectorService({
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [
+          {
+            id: 'oauth-server-id',
+            name: 'oauth-server',
+            displayName: 'OAuth server',
+            transport: 'streamable_http',
+            url: 'https://mcp.example.test',
+            oauth: {},
+            enabled: true
+          }
+        ]
+      }),
+      resolveApiKey: () => undefined
+    })
+    const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      connectorService
+    })
+    const connection = await rpcServer.issueControlConnection(
+      'session-42',
+      'project-1',
+      'root-frame-session-42'
+    )
+    const exec = makeExecutor()
+
+    try {
+      const result = await exec.execute(
+        baseRequest({
+          code: "await host.mcp('oauth-server','lookup',{})",
+          mcpRpcEndpoint: connection.endpoint,
+          mcpRpcSocketPath: connection.socketPath,
+          mcpRpcToken: connection.token,
+          sessionId: 'session-42',
+          projectId: 'project-1'
+        })
+      )
+
+      expect(result.status).toBe('failed')
+      expect(result.traceback).toContain('connector_unauthenticated')
+      expect(result.traceback).toContain('Do not retry until the user signs in')
+      expect(result.traceback).toContain('Settings > Connectors')
+      expect(result.traceback).toContain('retry the same call')
+    } finally {
+      await exec.shutdown()
+      connection.release()
+      await rpcServer.close()
+    }
+  })
 })
