@@ -1445,9 +1445,9 @@ const InstalledSpecialistsPanel = ({
       </div>
       {/* Toolbar */}
       {items.length > 0 ? (
-        <div data-slot="specialists-toolbar" className="mb-4 flex items-center gap-2">
+        <div data-slot="specialists-toolbar" className="mb-4 flex flex-wrap items-center gap-2">
           <SettingsSearchInput
-            containerClassName="min-w-0"
+            containerClassName="min-w-56"
             aria-label={t('Search specialists')}
             placeholder={t('Search specialists…')}
             value={query}

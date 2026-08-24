@@ -1180,6 +1180,8 @@ describe('SpecialistsPanel', () => {
     expect(search?.parentElement?.parentElement).toBe(toolbar)
     expect(sourceFilter?.parentElement).toBe(toolbar)
     expect(tagFilter?.parentElement).toBe(toolbar)
+    expect(toolbar?.className).toContain('flex-wrap')
+    expect(search?.parentElement?.className).toContain('min-w-56')
     expect(toolbar?.textContent).not.toContain('Add specialist')
 
     const browseButton = Array.from(
