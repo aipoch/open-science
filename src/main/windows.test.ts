@@ -5,6 +5,7 @@ import {
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
   WINDOW_FIND_READY_CHANNEL,
+  WINDOW_FIND_SHOW_CHANNEL,
   WINDOW_FIND_UNREADY_CHANNEL,
   WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL,
   type KeyChordInput
@@ -416,8 +417,10 @@ describe('close chord interception', () => {
 
     expect(preventDefault).toHaveBeenCalled()
     expect(findOverlayMock.open).toHaveBeenCalledTimes(1)
-    // The overlay is opened directly in main now; no OPEN message is sent to the renderer.
-    expect(window.sendMock).not.toHaveBeenCalled()
+    expect(window.sendMock).toHaveBeenCalledWith(WINDOW_FIND_SHOW_CHANNEL, {
+      theme: 'light',
+      followsSystem: true
+    })
     expect(window.closeMock).not.toHaveBeenCalled()
   })
 

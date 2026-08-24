@@ -84,6 +84,7 @@ import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
 import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
 import { setWorkspacePresentationRevealing } from './workspace-presentation-revealing'
+import { useTranscriptWindow } from './use-transcript-window'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
@@ -405,8 +406,8 @@ const WorkspaceMessageScrollerImpl = ({
     : undefined
   const artifactVisibility = useWorkspaceArtifactVisibility(activeSession)
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
-  // The whole-window find bar is an Electron overlay owned by main; the Workspace only needs to tell
-  // main it is mounted and searchable so Cmd/Ctrl+F is intercepted (and re-arm UNREADY on unmount).
+  // The whole-window find bar is an Electron overlay owned by main. Announce that this transcript is
+  // searchable, and expand a bounded transcript before native find scans the main renderer document.
   useEffect(() => {
     const stop = window.api?.window?.announceWindowFindReady?.()
     return () => stop?.()
@@ -592,6 +593,16 @@ const WorkspaceMessageScrollerImpl = ({
     presentationBarrierIndex >= 0
       ? conversationItems.slice(0, presentationBarrierIndex + 1)
       : conversationItems
+  const transcriptWindow = useTranscriptWindow(
+    currentPresentationScopeId,
+    conversationItems,
+    presentationBarrierIndex,
+    messageScrollerViewportRef
+  )
+  const revealFullTranscript = transcriptWindow.revealAll
+  useEffect(() => {
+    return window.api?.window?.onShowWindowFind?.(revealFullTranscript)
+  }, [revealFullTranscript])
   // Brand-new conversation (nothing presented, no resume in flight): invite the first prompt with
   // a centered placeholder banner over the empty transcript area.
   const showEmptyConversationBanner =
@@ -668,16 +679,17 @@ const WorkspaceMessageScrollerImpl = ({
       setScrollToFirstMessageRevealed(false)
     }, SCROLL_TO_FIRST_MESSAGE_IDLE_TIMEOUT_MS)
   }, [clearScrollToFirstMessageHideTimeout, setScrollToFirstMessageRevealed])
-  const handleMessageScrollerScroll = useCallback((): void => {
+  const handleMessageScrollerScroll = (): void => {
     const viewport = messageScrollerViewportRef.current
     if (!viewport) return
 
     const previousScrollTop = previousMessageScrollerScrollTopRef.current
     previousMessageScrollerScrollTopRef.current = viewport.scrollTop
     const eligible = updateScrollToFirstMessageEligibility()
+    transcriptWindow.expandAtScrollEdge(previousScrollTop)
     if (viewport.scrollTop < previousScrollTop && eligible) revealScrollToFirstMessage()
     else if (viewport.scrollTop > previousScrollTop) hideScrollToFirstMessage()
-  }, [hideScrollToFirstMessage, revealScrollToFirstMessage, updateScrollToFirstMessageEligibility])
+  }
   useLayoutEffect(() => {
     updateScrollToFirstMessageEligibility()
   }, [currentSessionId, updateScrollToFirstMessageEligibility, visibleMessageIdsKey])
@@ -1069,6 +1081,7 @@ const WorkspaceMessageScrollerImpl = ({
           <WorkspaceRunMarks
             items={presentedConversationItems}
             viewport={messageScrollerViewport}
+            onRevealMessage={transcriptWindow.revealMessage}
           />
           <div
             aria-hidden="true"
@@ -1116,7 +1129,7 @@ const WorkspaceMessageScrollerImpl = ({
                 onCommit={handleVisibleMessageSnapshotCommit}
               />
               {/* Messages and tool activities share one sorted transcript timeline. */}
-              {conversationItems.map((item, itemIndex) => {
+              {transcriptWindow.entries.map(({ item, itemIndex }) => {
                 // Only later text messages stay behind the presentation barrier; tool,
                 // activity, and other non-message rows render in real time so their
                 // running state stays visible while the reply paces above them.
@@ -1444,19 +1457,21 @@ const WorkspaceMessageScrollerImpl = ({
               })}
 
               {/* Render any remaining unbound completed jobs after all conversation items */}
-              {trailingJobs.map((job) => (
-                <MessageScrollerItem
-                  key={`completed-job-${job.job_id}`}
-                  messageId={`completed-job-${job.job_id}`}
-                  className="min-w-0"
-                >
-                  <div className="px-4 py-1 md:px-6">
-                    <div className="mx-auto w-full max-w-4xl">
-                      <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
-                    </div>
-                  </div>
-                </MessageScrollerItem>
-              ))}
+              {transcriptWindow.end === conversationItems.length
+                ? trailingJobs.map((job) => (
+                    <MessageScrollerItem
+                      key={`completed-job-${job.job_id}`}
+                      messageId={`completed-job-${job.job_id}`}
+                      className="min-w-0"
+                    >
+                      <div className="px-4 py-1 md:px-6">
+                        <div className="mx-auto w-full max-w-4xl">
+                          <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
+                        </div>
+                      </div>
+                    </MessageScrollerItem>
+                  ))
+                : null}
 
               {optimisticMessage ? (
                 <WorkspaceMessageItem
@@ -1489,6 +1504,12 @@ const WorkspaceMessageScrollerImpl = ({
             <MessageScrollerButton
               ref={scrollToFirstMessageButtonRef}
               direction="start"
+              onClick={() => {
+                const firstMessage = conversationItems.find((item) => item.type === 'message')
+                if (firstMessage?.type === 'message') {
+                  transcriptWindow.revealMessage(firstMessage.message.id)
+                }
+              }}
               aria-label={t('Scroll to first message')}
               aria-hidden="true"
               data-revealed="false"

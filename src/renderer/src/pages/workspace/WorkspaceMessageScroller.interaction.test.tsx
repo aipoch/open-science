@@ -222,6 +222,13 @@ const createSessionSubagentsPreviewItem = vi.fn(
   })
 )
 const announceWindowFindReady = vi.fn(() => () => undefined)
+let showWindowFindListener: (() => void) | undefined
+const onShowWindowFind = vi.fn((listener: () => void) => {
+  showWindowFindListener = listener
+  return () => {
+    if (showWindowFindListener === listener) showWindowFindListener = undefined
+  }
+})
 
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
@@ -338,6 +345,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
     createSessionSubagentsPreviewItem.mockClear()
     announceWindowFindReady.mockClear()
+    onShowWindowFind.mockClear()
+    showWindowFindListener = undefined
     flushSessionPersistenceMock.mockReset().mockResolvedValue(undefined)
     useReviewStore.setState(createInitialReviewState())
     container = document.createElement('div')
@@ -376,7 +385,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         getForSession: vi.fn().mockResolvedValue([])
       },
       window: {
-        announceWindowFindReady
+        announceWindowFindReady,
+        onShowWindowFind
       }
     } as unknown as Window['api']
   })
@@ -3044,8 +3054,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       )
     })
 
-    // The find bar is an Electron overlay owned by main; the Workspace's only job is to announce it is
-    // mounted and searchable so main intercepts Cmd/Ctrl+F.
+    // The find bar is an Electron overlay owned by main; the Workspace announces that its transcript
+    // is mounted and searchable so main intercepts Cmd/Ctrl+F.
     expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
   })
 
@@ -3512,6 +3522,73 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         indicator.classList.contains('scale-x-[0.4]')
       )
     ).toBe(true)
+  })
+
+  it('mounts a bounded long transcript and reveals an older run on demand', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `message-${index + 1}`,
+        role: index % 2 === 0 ? 'user' : 'agent',
+        content:
+          index === 0
+            ? 'oldest transcript sentinel'
+            : index === 239
+              ? 'newest transcript sentinel'
+              : `transcript message ${index + 1}`,
+        responseToMessageId: index % 2 === 0 ? undefined : `message-${index}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('newest transcript sentinel')
+    expect(container.textContent).not.toContain('oldest transcript sentinel')
+    expect(agentMarkdownRenderMock.mock.calls.length).toBeLessThan(80)
+
+    const firstRun = document.body.querySelector<HTMLButtonElement>('[aria-label^="Go to run 1:"]')
+    expect(firstRun).not.toBeNull()
+    await act(async () => firstRun?.click())
+
+    expect(container.textContent).toContain('oldest transcript sentinel')
+  })
+
+  it('reveals the full transcript while whole-window find is open', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `message-${index + 1}`,
+        role: index % 2 === 0 ? 'user' : 'agent',
+        content: index === 0 ? 'searchable oldest sentinel' : `transcript message ${index + 1}`,
+        responseToMessageId: index % 2 === 0 ? undefined : `message-${index}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).not.toContain('searchable oldest sentinel')
+    await act(async () => showWindowFindListener?.())
+    expect(container.textContent).toContain('searchable oldest sentinel')
   })
 
   it('does not leave the active Plan card in the transcript', async () => {

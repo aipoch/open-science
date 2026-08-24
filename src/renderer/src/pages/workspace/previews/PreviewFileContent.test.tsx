@@ -198,6 +198,39 @@ describe('PreviewFileContent', () => {
     })
   }
 
+  it('reuses a loaded image when its preview is unmounted and mounted again', async () => {
+    const fetchImage = vi
+      .fn()
+      .mockResolvedValue(new Response(new Blob(['image bytes'], { type: 'image/png' })))
+    vi.stubGlobal('fetch', fetchImage)
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL = vi.fn(() => 'blob:cached-chart')
+        static revokeObjectURL = vi.fn()
+      }
+    )
+    const image = createFileItem({
+      format: 'image',
+      name: 'chart.png',
+      path: '/workspace/chart.png',
+      mimeType: 'image/png',
+      size: 2048,
+      mtimeMs: 1710000000100
+    })
+
+    await renderFile(image)
+    await vi.waitFor(() => expect(container.querySelector('img')).not.toBeNull())
+
+    await act(async () => root.render(<div />))
+    await act(async () => root.render(<PreviewFileContent item={image} />))
+    await vi.waitFor(() => expect(container.querySelector('img')).not.toBeNull())
+
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+    expect(fetchImage).toHaveBeenCalledTimes(1)
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+  })
+
   it('shows the format-aware quiet progress state while a file is loading', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockReturnValue(new Promise(() => undefined))
 

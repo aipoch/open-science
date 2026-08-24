@@ -23,6 +23,7 @@ import {
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
   WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL,
   WINDOW_FIND_READY_CHANNEL,
+  WINDOW_FIND_SHOW_CHANNEL,
   WINDOW_FIND_UNREADY_CHANNEL,
   isCloseWindowChord,
   isFindInPageChord,
@@ -142,6 +143,7 @@ const createMainWindow = (
   // When either fails, main closes the window itself so the chord always does something.
   let rendererListenerReady = false
   let windowFindListenerReady = false
+  let windowFindAppearance: WindowFindAppearance = { theme: 'light', followsSystem: true }
   let rendererResponsive = true
   let rendererUnresponsiveAt: number | undefined
   let rendererRecoveryTimes: number[] = []
@@ -174,6 +176,7 @@ const createMainWindow = (
   }
   const onWindowFindAppearanceChanged = (event: IpcMainEvent, appearance: unknown): void => {
     if (event.sender !== window.webContents || !isWindowFindAppearance(appearance)) return
+    windowFindAppearance = appearance
     findOverlay.updateAppearance(appearance)
     mainWindowCloseOptions.get(window)?.onAppearanceChanged?.(appearance)
   }
@@ -330,6 +333,7 @@ const createMainWindow = (
     if (isFindInPageChord(input, process.platform)) {
       if (windowFindListenerReady && rendererResponsive) {
         event.preventDefault()
+        window.webContents.send(WINDOW_FIND_SHOW_CHANNEL, windowFindAppearance)
         findOverlay.open()
       }
       return
