@@ -118,6 +118,11 @@ describe('post-merge Windows validation', () => {
       type: 'boolean',
       default: false
     })
+    expect(smokeWorkflow.on?.workflow_call?.inputs?.setup_only).toMatchObject({
+      type: 'boolean',
+      default: false
+    })
+    expect(dispatch?.inputs?.setup_only).toMatchObject({ type: 'boolean', default: false })
     expect(dispatch?.inputs?.install_only).toMatchObject({ type: 'boolean', default: true })
     expect(dispatch?.inputs?.platform_name).toMatchObject({
       type: 'choice',
@@ -135,13 +140,15 @@ describe('post-merge Windows validation', () => {
       'runs-on': 'ubuntu-latest',
       outputs: { matrix: '${{ steps.set.outputs.matrix }}' }
     })
-    expect(setup.steps?.[0]?.run).toContain('"name":"macos-x64","os":"macos-26-intel"')
-    expect(setup.steps?.[0]?.run).toContain(
-      'include=$(jq -c --arg name "$PLATFORM_NAME" \'[.[] | select(.name == $name)]\' <<<"$include")'
+    expect(findStep(setup, 'Checkout').uses).toBe(
+      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
     )
-    expect(setup.steps?.[0]?.run).toContain("unknown platform_name '$PLATFORM_NAME'")
+    expect(findStep(setup, 'Resolve platform include list')).toMatchObject({
+      id: 'set',
+      run: 'echo "matrix=$(node scripts/ci/resolve-package-smoke-matrix.mjs)" >> "$GITHUB_OUTPUT"'
+    })
     expect(job.needs).toBe('setup')
-    expect(job.if).toBe("${{ needs.setup.result == 'success' }}")
+    expect(job.if).toBe("${{ needs.setup.result == 'success' && !inputs.setup_only }}")
     expect(job.strategy?.matrix).toBe('${{ fromJson(needs.setup.outputs.matrix) }}')
     expect(install.run).toBe('node scripts/ci/npm-ci.mjs')
     expect(download.if).toBe('${{ !inputs.install_only }}')

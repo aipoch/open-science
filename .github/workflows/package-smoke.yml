@@ -3,13 +3,19 @@ name: Package Smoke
 # Blocking native-package certification. Each matrix leg downloads the exact artifact produced by
 # build.yml, so a failed smoke can be retried without rebuilding or re-signing any package.
 #
-# A manual dispatch with install_only reuses this exact job, runner, and npm ci path without
-# downloading artifacts or publishing anything. Use that to certify Electron mirror resolution.
+# Manual dispatch dry-runs reuse this exact workflow:
+# - setup_only=true, platform_name=all: matrix resolution only (the Nightly unfiltered path)
+# - install_only=true, platform_name=macos-x64: matrix resolution plus npm ci, no artifacts
 on:
   workflow_call:
     inputs:
       install_only:
         description: Skip artifact download and package execution; only install dependencies
+        type: boolean
+        required: false
+        default: false
+      setup_only:
+        description: Resolve the smoke matrix and skip every smoke job
         type: boolean
         required: false
         default: false
@@ -20,6 +26,10 @@ on:
         default: ''
   workflow_dispatch:
     inputs:
+      setup_only:
+        description: Resolve the smoke matrix and skip every smoke job
+        type: boolean
+        default: false
       install_only:
         description: Skip artifact download and package execution; only install dependencies
         type: boolean
@@ -49,30 +59,20 @@ jobs:
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - id: set
+        name: Resolve platform include list
         shell: bash
         env:
           PLATFORM_NAME: ${{ inputs.platform_name }}
-        run: |
-          include='[
-            {"name":"macos-arm64","os":"macos-26","platform":"mac"},
-            {"name":"macos-x64","os":"macos-26-intel","platform":"mac"},
-            {"name":"linux-x64","os":"ubuntu-latest","platform":"linux"},
-            {"name":"windows-x64","os":"windows-latest","platform":"win"}
-          ]'
-          if [ -n "$PLATFORM_NAME" ] && [ "$PLATFORM_NAME" != "all" ]; then
-            include=$(jq -c --arg name "$PLATFORM_NAME" '[.[] | select(.name == $name)]' <<<"$include")
-            if [ "$include" = "[]" ]; then
-              echo "::error::unknown platform_name '$PLATFORM_NAME'"
-              exit 1
-            fi
-          fi
-          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+        run: echo "matrix=$(node scripts/ci/resolve-package-smoke-matrix.mjs)" >> "$GITHUB_OUTPUT"
 
   smoke:
     name: Smoke ${{ matrix.name }}
     needs: setup
-    if: ${{ needs.setup.result == 'success' }}
+    if: ${{ needs.setup.result == 'success' && !inputs.setup_only }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
