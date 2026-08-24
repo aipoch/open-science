@@ -8,7 +8,7 @@ import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
-import { ReviewerModelSelect, SubagentModelSelect, VisionModelSelect } from './SubagentModelSelect'
+import { ScenarioModelList } from './ScenarioModelList'
 import { SettingsSection } from './SettingsLayout'
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
 
@@ -325,51 +325,16 @@ const ProvidersPanel = ({
         description={t(
           'Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests.'
         )}
-        separated={visibleProviders.length > 0}
       >
         <div className="max-w-md">
           <ReasoningEffortSelect />
         </div>
       </SettingsSection>
 
-      <SettingsSection
-        title={t('Subagent model')}
-        aria-label={t('Subagent model')}
-        description={t('Model used by subagents when Delegation is on.')}
-        separated
-      >
-        <div className="max-w-2xl">
-          <SubagentModelSelect />
-        </div>
-      </SettingsSection>
+      {/* Subagent / Reviewer / Vision routing collapsed into a single accordion card. */}
+      <ScenarioModelList />
 
-      <SettingsSection
-        title={t('Reviewer model')}
-        aria-label={t('Reviewer model')}
-        description={t(
-          'Model used for manual, automatic, and re-run Reviews. Follow Active model keeps the current behavior; a fixed selection runs in an isolated Reviewer runtime.'
-        )}
-        separated
-      >
-        <div className="max-w-2xl">
-          <ReviewerModelSelect />
-        </div>
-      </SettingsSection>
-
-      <SettingsSection
-        title={t('Vision model')}
-        aria-label={t('Vision model')}
-        description={t(
-          'Reads attached images when the active model cannot. The selected provider receives only the image; the active model receives text evidence.'
-        )}
-        separated
-      >
-        <div className="max-w-2xl">
-          <VisionModelSelect />
-        </div>
-      </SettingsSection>
-
-      <SettingsSection title={t('Providers')} aria-label={t('Providers')} separated>
+      <SettingsSection title={t('Providers')} aria-label={t('Providers')}>
         <ProviderList
           providers={visibleProviders}
           activeProviderId={activeProviderId}

@@ -877,7 +877,7 @@ describe('production delegated-work composition', () => {
       })
     ).rejects.toMatchObject({
       code: 'admission_rejection',
-      userFacingUnavailableReason: expect.stringContaining('Settings → Model → Subagent model')
+      userFacingUnavailableReason: expect.stringContaining('Settings → Model → Scenario models')
     })
     expect(execution.reservationCounts()).toEqual([])
     expect(harness.durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])
@@ -906,7 +906,7 @@ describe('production delegated-work composition', () => {
       })
     ).rejects.toMatchObject({
       code: 'admission_rejection',
-      userFacingUnavailableReason: expect.stringContaining('Settings → Model → Subagent model')
+      userFacingUnavailableReason: expect.stringContaining('Settings → Model → Scenario models')
     })
     expect(execution.reservationCounts()).toEqual([])
     expect(harness.durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])
