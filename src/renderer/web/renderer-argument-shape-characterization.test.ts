@@ -311,6 +311,23 @@ describe('renderer argument-shape characterization', () => {
     })
   })
 
+  it('installs summary-first Session reads on Web', async () => {
+    const request = { projectId: 'project-1', sessionId: 'session-1' }
+
+    await expect(invokeWeb(webApi, 'sessions.list', [])).resolves.toEqual({
+      channel: 'sessions:list',
+      args: []
+    })
+    await expect(invokeWeb(webApi, 'sessions.loadOne', [request])).resolves.toEqual({
+      channel: 'sessions:load-one',
+      args: [request]
+    })
+    await expect(invokeWeb(webApi, 'sessions.loadUsage', [])).resolves.toEqual({
+      channel: 'sessions:load-usage',
+      args: []
+    })
+  })
+
   it('records ACP optional requests by call absence instead of normalizing explicit undefined', async () => {
     for (const { path, channel } of [
       { path: 'acp.connect', channel: 'acp:connect' },

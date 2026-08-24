@@ -178,7 +178,7 @@ describe('renderer contract catalog', () => {
     ])
   })
 
-  it('keeps SQLite-only Session projection reads on Electron', () => {
+  it('publishes Session projection reads on every renderer surface', () => {
     const projectionReads = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       ['sessions.list', 'sessions.loadOne', 'sessions.loadUsage'].includes(publicPath)
     )
@@ -188,8 +188,8 @@ describe('renderer contract catalog', () => {
       projectionReads.every(
         ({ surfaceInstallation }) =>
           surfaceInstallation.electron === 'preload' &&
-          surfaceInstallation.localWeb === 'unavailable' &&
-          surfaceInstallation.remoteWeb === 'unavailable'
+          surfaceInstallation.localWeb === 'web-rpc' &&
+          surfaceInstallation.remoteWeb === 'web-rpc'
       )
     ).toBe(true)
   })

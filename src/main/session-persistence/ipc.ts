@@ -52,8 +52,8 @@ type SessionPersistenceBackend = {
 
 type SessionPersistenceHandlers = {
   loadAll: () => Promise<LoadAllSessionsResult>
-  list?: () => Promise<ListSessionSummariesResult>
-  loadUsage?: () => Promise<SessionUsageProjection>
+  list: () => Promise<ListSessionSummariesResult>
+  loadUsage: () => Promise<SessionUsageProjection>
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
     session: PersistedChatSession,
