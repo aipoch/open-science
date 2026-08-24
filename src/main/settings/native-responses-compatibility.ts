@@ -374,6 +374,7 @@ export class NativeResponsesCompatibilityProxy {
     private readonly options: NativeResponsesCompatibilityOptions = {}
   ) {
     this.host = new ProviderLoopbackHttpHost({
+      diagnosticName: 'native-responses-compatibility',
       credentialMode: 'bearer',
       createConnection: (origin, token) => ({
         baseUrl: origin + '/v1',

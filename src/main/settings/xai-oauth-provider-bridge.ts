@@ -78,6 +78,7 @@ export class XaiOAuthProviderBridge {
     )
     for (const target of targets) this.advertisedIds.add(target.model)
     this.host = new ProviderLoopbackHttpHost({
+      diagnosticName: `xai-oauth-${this.wire}`,
       credentialMode: 'bearer-or-api-key',
       createConnection: (origin, token) => ({ baseUrl: origin, token }),
       onUnauthorized: (response) => json(response, 401, { error: { message: 'Unauthorized' } }),
