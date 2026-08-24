@@ -866,6 +866,17 @@ const cleanInstallLog = (log: string): string =>
     .replace(/\n{3,}/gu, '\n\n')
     .trim()
 
+// Keeps a compact actionable failure when an ACP provider returns installer output as plain text
+// instead of the structured manage_packages result envelope.
+const getManagePackagesFallbackText = (activity: ToolActivity): string | undefined => {
+  const contentText = collectToolTexts(activity).join('\n\n').trim()
+  if (contentText) return cleanInstallLog(contentText)
+
+  return typeof activity.rawOutput === 'string'
+    ? trimDetail(cleanInstallLog(activity.rawOutput))
+    : undefined
+}
+
 // Reads the requested package list from tool input for the row subtitle.
 const getManagedPackageList = (activity: ToolActivity): string | undefined => {
   const rawInput = isRecord(activity.rawInput) ? activity.rawInput : undefined
@@ -1115,6 +1126,7 @@ export {
   getLoadedSkillName,
   getToolDisplayName,
   isEditActivity,
+  getManagePackagesFallbackText,
   parseManagePackagesResult,
   isSkillActivity
 }

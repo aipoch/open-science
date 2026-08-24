@@ -9,7 +9,10 @@ import { useTranslation } from 'react-i18next'
 
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
 import type { ToolExecutionPhase } from './tool-execution-phase'
-import { parseManagePackagesResult } from './workspace-tool-activity-details'
+import {
+  getManagePackagesFallbackText,
+  parseManagePackagesResult
+} from './workspace-tool-activity-details'
 
 type WorkspaceManagePackagesActivityRowProps = {
   activity: ToolActivity
@@ -65,7 +68,11 @@ const WorkspaceManagePackagesActivityRow = ({
   const result = parseManagePackagesResult(activity)
   const isFailed = phase === 'failed' || result?.ok === false
   const failureMessage =
-    typeof result?.error === 'string' && result.error.trim() ? result.error.trim() : null
+    typeof result?.error === 'string' && result.error.trim()
+      ? result.error.trim()
+      : result
+        ? null
+        : getManagePackagesFallbackText(activity)
   const needsRestart = result?.needsRestart === true
   const packageChanges = Array.isArray(result?.packageChanges)
     ? result.packageChanges.filter(

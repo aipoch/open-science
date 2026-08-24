@@ -313,6 +313,44 @@ describe('WorkspaceActivityGroup i18n', () => {
     expect(progress?.querySelector('.install-progress-indeterminate')).toBeNull()
   })
 
+  it('preserves a plain-text package failure detail', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-plain-failure',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-plain-failure',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'failed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['numpy'] },
+                rawOutput: 'PackagesNotFoundError: numpy is unavailable for this environment.'
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{}}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const progress = container.querySelector('[data-testid="manage-packages-progress"]')
+    expect(progress?.textContent).toContain(
+      'PackagesNotFoundError: numpy is unavailable for this environment.'
+    )
+  })
+
   it('anchors the group in view before toggling its height', () => {
     const onToggleGroup = vi.fn()
     act(() => {
