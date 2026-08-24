@@ -1291,7 +1291,13 @@ describe('repl_loop local RPC transport', () => {
                 library_rank: 0,
                 library_scope: 'environment',
                 built_for_runtime: '3.13',
-                priority: 'other'
+                priority: 'other',
+                source: {
+                  type: 'github',
+                  repository: 'numpy/numpy',
+                  ref: 'v2.0.0',
+                  commit: 'abc123'
+                }
               }
             ],
             python_version: '3.13.5',
@@ -1336,7 +1342,13 @@ describe('repl_loop local RPC transport', () => {
                     change: 'installed',
                     after_version: '2.0.0',
                     library_rank: 0,
-                    library_scope: 'environment'
+                    library_scope: 'environment',
+                    source: {
+                      type: 'github',
+                      repository: 'numpy/numpy',
+                      ref: 'v2.0.0',
+                      commit: 'abc123'
+                    }
                   }
                 ]
               }
@@ -1425,7 +1437,9 @@ describe('repl_loop local RPC transport', () => {
           'environmentFrozen: Object.isFrozen(core.environment), ' +
           'packagesFrozen: Object.isFrozen(core.environment.packages), ' +
           'packageFrozen: Object.isFrozen(core.environment.packages[0]), ' +
+          'packageSourceFrozen: Object.isFrozen(core.environment.packages[0].source), ' +
           'opLogFrozen: Object.isFrozen(core.environment.opLog), ' +
+          'changeSourceFrozen: Object.isFrozen(core.environment.opLog[0].packageChanges[0].source), ' +
           'attemptFrozen: Object.isFrozen(core.environment.opLog[0].attempts[0]), ' +
           'returnFields: [first.rootVersionId, first.nodes[0].versionId, core.versionId] })'
       )
@@ -1441,7 +1455,9 @@ describe('repl_loop local RPC transport', () => {
         environmentFrozen: true,
         packagesFrozen: true,
         packageFrozen: true,
+        packageSourceFrozen: true,
         opLogFrozen: true,
+        changeSourceFrozen: true,
         attemptFrozen: true,
         returnFields: ['artifact-v1', 'artifact-v1', 'artifact-v1']
       })

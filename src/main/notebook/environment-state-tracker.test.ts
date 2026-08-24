@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { NotebookEnvironmentPackage } from '../../shared/notebook'
 import { environmentCaptureProcessEnv, EnvironmentStateTracker } from './environment-state-tracker'
 
 let dataRoot: string | undefined
@@ -388,6 +389,93 @@ describe('EnvironmentStateTracker', () => {
       result: 'failure',
       unsatisfiedPackages: ['tidyverse/ggplot2@main']
     })
+  })
+
+  it('does not classify a Python path package as a GitHub source request', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-python-path-mutation-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi
+        .fn()
+        .mockResolvedValueOnce({ runtimeVersion: '3.13.2', packages: [] })
+        .mockResolvedValueOnce({
+          runtimeVersion: '3.13.2',
+          packages: [
+            {
+              name: 'localpkg',
+              version: '1.0.0',
+              versionStatus: 'known',
+              ecosystem: 'python',
+              evidenceSources: ['python-importlib-metadata']
+            }
+          ]
+        }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+
+    await tracker.markPackageMutationDirty(target, {
+      operationId: 'operation-python-path-install',
+      operation: 'install',
+      packages: ['./localpkg']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(target, {
+      operationId: 'operation-python-path-install',
+      operation: 'install',
+      packages: ['./localpkg'],
+      result: 'success'
+    })
+
+    expect(verification.result).toBe('success')
+  })
+
+  it('reports a GitHub ref or commit mutation when the package version is unchanged', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-github-source-change-'))
+    const githubPackage = (ref: string, commit: string): NotebookEnvironmentPackage => ({
+      name: 'ggplot2',
+      version: '4.0.0.9000',
+      versionStatus: 'known' as const,
+      ecosystem: 'r' as const,
+      evidenceSources: ['r-installed-packages' as const],
+      source: { type: 'github' as const, repository: 'tidyverse/ggplot2', ref, commit }
+    })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi
+        .fn()
+        .mockResolvedValueOnce({
+          runtimeVersion: '4.5.1',
+          packages: [githubPackage('main', 'abc123')]
+        })
+        .mockResolvedValueOnce({
+          runtimeVersion: '4.5.1',
+          packages: [githubPackage('release', 'def456')]
+        }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = { ...target, language: 'r' as const, command: '/opt/r/bin/Rscript' }
+
+    await tracker.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-github-source-change',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@release']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+      operationId: 'operation-github-source-change',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@release'],
+      result: 'success'
+    })
+
+    expect(verification.packageChanges).toEqual([
+      expect.objectContaining({
+        name: 'ggplot2',
+        relationship: 'requested',
+        change: 'updated',
+        beforeVersion: '4.0.0.9000',
+        afterVersion: '4.0.0.9000',
+        source: expect.objectContaining({ ref: 'release', commit: 'def456' })
+      })
+    ])
   })
 
   it('captures a baseline before the first package mutation so uninstalls have a verified change', async () => {

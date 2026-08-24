@@ -283,6 +283,14 @@ const packageIdentityKey = (pkg: NotebookEnvironmentPackage): string =>
       : [])
   ].join('\0')
 
+const packageSourceKey = (pkg: NotebookEnvironmentPackage): string => {
+  const source = pkg.source
+  if (!source) return ''
+  return source.type === 'github'
+    ? ['github', packageKey(source.repository), source.ref ?? '', source.commit ?? ''].join('\0')
+    : ['bioconductor', source.version ?? ''].join('\0')
+}
+
 const requestedPackageKey = (value: string): string => packageKey(value).replace(/[-_.]+/gu, '-')
 
 const githubSourceFromSpec = (value: string): { repository: string; ref?: string } | undefined => {
@@ -296,7 +304,10 @@ const githubSourceFromSpec = (value: string): { repository: string; ref?: string
 
 const packageNameFromSpec = (value: string, language: NotebookLanguage): string | undefined => {
   const unqualified = value.trim().split('::').at(-1) ?? ''
-  const name = unqualified.match(/^[A-Za-z0-9_.-]+/u)?.[0]
+  const pathName = /^[./\\]/u.test(unqualified)
+    ? unqualified.split(/[/\\]/u).filter(Boolean).at(-1)
+    : undefined
+  const name = (pathName ?? unqualified).match(/^[A-Za-z0-9_.-]+/u)?.[0]
   if (!name) return undefined
   if (language !== 'r') return name
   const lowerName = name.toLocaleLowerCase('und')
@@ -337,7 +348,7 @@ const verifyPackageMutation = (
   )
   const unsatisfiedPackages = outcome.packages.filter((spec) => {
     const name = packageNameFromSpec(spec, target.language)
-    const githubSource = githubSourceFromSpec(spec)
+    const githubSource = target.language === 'r' ? githubSourceFromSpec(spec) : undefined
     if (githubSource) {
       return !packages.some(
         (pkg) =>
@@ -368,14 +379,14 @@ const packageChangesForOperation = ({
 }): NotebookEnvironmentPackageChange[] => {
   const requestedKeys = new Set(
     requestedPackages.flatMap((spec) => {
-      if (githubSourceFromSpec(spec)) return []
+      if (language === 'r' && githubSourceFromSpec(spec)) return []
       const name = packageNameFromSpec(spec, language)
       return name ? [requestedPackageKey(name)] : []
     })
   )
   const requestedGithubRepositories = new Set(
     requestedPackages.flatMap((spec) => {
-      const source = githubSourceFromSpec(spec)
+      const source = language === 'r' ? githubSourceFromSpec(spec) : undefined
       return source ? [source.repository] : []
     })
   )
@@ -431,7 +442,9 @@ const packageChangesForOperation = ({
     }
     if (!previous || !current) continue
     const versionChanged =
-      previous.version !== current.version || previous.versionStatus !== current.versionStatus
+      previous.version !== current.version ||
+      previous.versionStatus !== current.versionStatus ||
+      packageSourceKey(previous) !== packageSourceKey(current)
     if (versionChanged) {
       changes.push(toChange(current, relationship, 'updated', previous.version, current.version))
     } else if (relationship === 'requested') {
