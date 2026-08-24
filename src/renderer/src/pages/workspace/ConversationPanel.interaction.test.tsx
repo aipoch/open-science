@@ -4951,7 +4951,6 @@ describe('ConversationPanel error box + report affordance', () => {
       view: {
         activeSession: {
           ...errorSession,
-          status: 'idle',
           interrupted: true,
           error:
             'Agent session resume failed: Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
@@ -4959,7 +4958,8 @@ describe('ConversationPanel error box + report affordance', () => {
       }
     })
 
-    expect(container.textContent).toContain('Agent session resume failed: Codex ACP adapter 1.1.4')
+    expect(errorBoxText()).toContain('Agent session resume failed: Codex ACP adapter 1.1.4')
+    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
     const button = Array.from(container.querySelectorAll('button')).find(
       (candidate) => candidate.textContent === 'Agent settings'
     )

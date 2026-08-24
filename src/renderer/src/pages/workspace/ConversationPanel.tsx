@@ -899,17 +899,12 @@ const ConversationPanel = ({
               <div className="px-1 md:px-3">
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
-                {!sideChat && activeSession?.interrupted ? (
+                {!sideChat && activeSession?.interrupted && !hasUnsupportedCodexAcpRunError ? (
                   <SessionInterruptedBanner
                     message={activeSession.error ?? t('This session was interrupted.')}
                     isDisabled={!canResumeSession}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
-                    onOpenAgentSettings={
-                      hasUnsupportedCodexAcpRunError
-                        ? () => openSettingsToPanel('agent')
-                        : undefined
-                    }
                   />
                 ) : activeSession?.compacting ? (
                   // Auto-recovery after a request-size overflow: a neutral note, not the red error box,
