@@ -89,6 +89,8 @@ describe('RemoteSessionPairingManager', () => {
     expect(firstResponse.body()).not.toContain('>Beta<')
     expect(firstResponse.body()).not.toContain('class="mark"')
     expect(firstResponse.body()).toContain('Approve this browser')
+    expect(firstResponse.body()).toContain('Open Science → Settings → Remote')
+    expect(firstResponse.body()).not.toContain('Settings → Remote control')
     const pendingCookie = cookiePair(firstResponse.headers.get('set-cookie') as string)
     const [pending] = manager.pendingViews()
     expect(pending).toMatchObject({ browser: 'Safari', platform: 'iOS/iPadOS' })

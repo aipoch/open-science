@@ -27,11 +27,11 @@ This is a one-time account authorization step.
 
 Open Science cannot reuse the desktop application's sign-in token to authorize this Device automatically. After the Device has been added once, Open Science can create and maintain its own services.
 
-## 2. Open Remote Control
+## 2. Open Remote
 
 In Open Science, open:
 
-**Settings → Remote Control**
+**Settings → Remote**
 
 The page offers three modes:
 
@@ -115,7 +115,7 @@ The browser profile is not currently trusted. Complete the six-digit verificatio
 
 ### The remote page loads slowly or stays blank
 
-Keep Open Science and the Remote.It agent running on the host, verify that the host has a stable network connection, then reconnect or refresh. If the problem continues, return to **Settings → Remote Control** and select **Detect again** for the active mode.
+Keep Open Science and the Remote.It agent running on the host, verify that the host has a stable network connection, then reconnect or refresh. If the problem continues, return to **Settings → Remote** and select **Detect again** for the active mode.
 
 ## Security notes
 

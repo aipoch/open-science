@@ -70,7 +70,7 @@ export const renderPairingPage = (params: {
         <div class="brand-name">Open Science</div>
       </div>
       <h1>Approve this browser</h1>
-      <p>On your home computer, open Open Science → Settings → Remote control, then verify and approve the pairing code below.</p>
+      <p>On your home computer, open Open Science → Settings → Remote, then verify and approve the pairing code below.</p>
       <div class="code" aria-label="Pairing code">${code}</div>
       <p>Choose “Allow once” or “Always trust this browser”. Do not share this pairing code with anyone.</p>
       <div class="device">${browser} · ${platform}</div>
