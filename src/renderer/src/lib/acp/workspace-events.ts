@@ -273,6 +273,7 @@ const finalizeArtifactEvent = async (
   if (!attached) return true
 
   const store = useSessionStore.getState()
+  let artifactsFinalized = false
 
   try {
     const persistLatestSession = async (): Promise<void> => {
@@ -309,21 +310,22 @@ const finalizeArtifactEvent = async (
       await persistLatestSession()
       finalizedArtifacts = await finalize(finalizeRequest)
     }
+    artifactsFinalized = true
 
     store.replaceMessageArtifacts({
       sessionId: event.sessionId,
       messageId: attached.messageId,
       artifacts: finalizedArtifacts
     })
+    store.clearArtifactError(event.sessionId)
+    openMoleculePreviews(event.sessionId, finalizedArtifacts)
     // Auto-review and every main-process provenance reader load the durable Session, not renderer
     // memory. Persist the checksum-bearing finalized Version descriptors before the stop handler may
     // trigger a Review, otherwise it can freeze a pre-finalization scope.
     await persistLatestSession()
-    store.clearArtifactError(event.sessionId)
-    openMoleculePreviews(event.sessionId, finalizedArtifacts)
     return true
   } catch (error) {
-    store.recordArtifactError(event.sessionId, getErrorText(error))
+    if (!artifactsFinalized) store.recordArtifactError(event.sessionId, getErrorText(error))
     throw error
   }
 }
