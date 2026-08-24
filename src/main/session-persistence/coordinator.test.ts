@@ -855,6 +855,52 @@ describe('SessionPersistenceCoordinator', () => {
     )
   })
 
+  it('releases delegated activity when a durable runtime-context commit makes it terminal', async () => {
+    let durable = createIdleSessionWithRunningChild()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+        return structuredClone(durable)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const runningDelegatedWork = durable.runtimeContext!.delegatedWork!
+
+    await coordinator.patchSessionRuntimeContext({
+      projectId: durable.projectId,
+      sessionId: durable.id,
+      expectedRevision: 1,
+      patch: { delegatedWork: runningDelegatedWork }
+    })
+    expect(coordinator.getActiveDelegatedSessions()).toEqual([
+      { projectId: durable.projectId, sessionId: durable.id }
+    ])
+
+    const terminalDelegatedWork = {
+      ...runningDelegatedWork,
+      records: runningDelegatedWork.records.map((record) => ({
+        ...record,
+        attempts: record.attempts.map((attempt) => ({
+          ...attempt,
+          status: 'cancelled' as const,
+          endedAt: 3
+        }))
+      }))
+    }
+    await coordinator.patchSessionRuntimeContext({
+      projectId: durable.projectId,
+      sessionId: durable.id,
+      expectedRevision: 2,
+      patch: { delegatedWork: terminalDelegatedWork }
+    })
+
+    expect(coordinator.getActiveDelegatedSessions()).toEqual([])
+  })
+
   it('does not persist a runtime context patch when its commit precondition fails', async () => {
     const durable = createSession({
       runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }

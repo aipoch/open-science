@@ -74,7 +74,7 @@ import {
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
 import { isSessionCatalogAuthoritative } from './catalog-authority'
 import {
-  createSafeSessionUpdatePublisher as safeSessionUpdates,
+  SessionUpdatePublicationOwner,
   type SessionUpdatePublisher
 } from './session-update-publication'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
@@ -179,9 +179,8 @@ const assertSessionIdentityOwnership = async (
   await repository.assertSessionIdentityOwnership(session.id, session.projectId)
 }
 
-// Serializes authoritative Session JSON and derived file-index mutations at their owning Project and
-// Session scopes. Catalog-wide reconciliation uses an exclusive barrier so unrelated Projects overlap
-// without allowing a late save to race or revive durable deletion authority.
+// Serializes authoritative Session and derived-index mutations without allowing late saves to race
+// or revive durable deletion authority.
 class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private readonly deletedSessions = new Set<string>()
@@ -191,6 +190,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   private readonly deletionOwner: SessionPersistenceDeletionOwner
   private readonly reconciliationOwner: SessionPersistenceReconciliationOwner
   private readonly delegatedWorkOwner: SessionDelegatedWorkPersistenceOwner
+  private readonly sessionUpdates: SessionUpdatePublicationOwner
   private destructiveStartupWindowOpen = true
   private delegatedStartupRecoveryComplete = false
   private sessionDeletionHandlers: SessionDeletionHandlers | undefined
@@ -207,7 +207,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     private readonly computeJobs?: ComputeJobDeletionParticipant,
     onDelegatedWorkSessionUpdated?: SessionUpdatePublisher
   ) {
-    const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
+    this.sessionUpdates = new SessionUpdatePublicationOwner(onDelegatedWorkSessionUpdated, log)
     const assertMutable = (
       projectId: string,
       sessionId: string,
@@ -228,8 +228,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       log,
       assertMutable,
       notifyFilesChanged: (event) => this.notifyFilesChanged(event),
+      observeCommittedSession: (session) => this.sessionUpdates.observeCommittedSession(session),
       notifyRuntimeContextSessionUpdated: (session) =>
-        publishSessionUpdate(session, 'runtime-context')
+        this.sessionUpdates.publish(session, 'runtime-context')
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,
@@ -273,8 +274,12 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       markStartupRecoveryComplete: () => {
         this.delegatedStartupRecoveryComplete = true
       },
-      notifySessionUpdated: (session) => publishSessionUpdate(session, 'delegated-work')
+      notifySessionUpdated: (session) => this.sessionUpdates.publish(session, 'delegated-work')
     })
+  }
+
+  getActiveDelegatedSessions(): { projectId: string; sessionId: string }[] {
+    return this.sessionUpdates.getActiveDelegatedSessions()
   }
 
   containsMessageOnActiveBranch(
@@ -710,8 +715,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
-  // Finds a persisted Session's owner for runtime admission. Fresh, unsaved sessions have no durable
-  // archive state and deliberately return undefined.
+  // Fresh, unsaved Sessions have no durable archive owner and return undefined.
   sessionProjectId(sessionId: string): Promise<string | undefined> {
     return this.operationScheduler.runSessionIdentity(sessionId, async () =>
       this.stateOwner.sessionProjectId(sessionId)
@@ -729,9 +733,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
-  // Persists authoritative JSON before updating the derived index. If indexing fails, the save stays
-  // durable, the caller receives the error for its normal retry path, and Files is reset to show its
-  // incomplete state rather than silently presenting stale metadata as complete.
+  // An index failure leaves JSON durable and resets Files instead of presenting stale metadata.
   saveSession(
     session: PersistedChatSession,
     options: SaveSessionOptions = {}
@@ -964,8 +966,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
-  // Renderer notifications are derived state. They must never change the result of an authoritative
-  // JSON/index mutation that has already committed; the next Files request can refresh if delivery fails.
+  // Renderer notifications cannot change an authoritative mutation that already committed.
   private notifyFilesChanged(event: ProjectFilesChangedEvent): void {
     try {
       this.onFilesChanged?.(event)
@@ -974,8 +975,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     }
   }
 
-  // Runs only after authoritative Session deletion commits. Cleanup failures are repaired by the next
-  // complete catalog reconciliation and never roll back the user-visible deletion.
+  // A later complete catalog reconciliation repairs post-deletion cleanup failures.
   private async notifySessionsDeleted(sessionIds: string[]): Promise<void> {
     try {
       await this.sessionDeletionHandlers?.commit(sessionIds)

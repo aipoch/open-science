@@ -194,7 +194,8 @@ const calledOwnerMethods = (method: MethodDeclaration): string[] =>
         'reconciliationOwner',
         'sideChatOwner',
         'messageDeliveryOwner',
-        'delegatedWorkOwner'
+        'delegatedWorkOwner',
+        'sessionUpdates'
       ].includes(node.expression.expression.name.text)
   )
     .map((node) => {
@@ -432,6 +433,7 @@ describe('Session persistence coordinator architecture', () => {
         'createChildren',
         'deleteProjectSessions',
         'deleteSession',
+        'getActiveDelegatedSessions',
         'getProjectSessionDeletionState',
         'listLegacyProjectSessionTombstones',
         'loadAll',
@@ -529,6 +531,7 @@ describe('Session persistence coordinator architecture', () => {
         'reconciliationOwner',
         'repository',
         'sessionDeletionHandlers',
+        'sessionUpdates',
         'sideChatOwner',
         'stateOwner'
       ].sort()
@@ -634,6 +637,9 @@ describe('Session persistence coordinator architecture', () => {
     expect(hasModifier(handlerSetter, SyntaxKind.AsyncKeyword)).toBe(false)
     expect(handlerSetter.type?.kind).toBe(SyntaxKind.VoidKeyword)
     expect(walk(handlerSetter, isAwaitExpression)).toEqual([])
+    const activityGetter = methodFrom(facade, 'getActiveDelegatedSessions')
+    expect(hasModifier(activityGetter, SyntaxKind.AsyncKeyword)).toBe(false)
+    expect(walk(activityGetter, isAwaitExpression)).toEqual([])
     const schedulerRoutes: Record<string, string[]> = {
       runGlobal: [
         'listLegacyProjectSessionTombstones',
@@ -681,7 +687,7 @@ describe('Session persistence coordinator architecture', () => {
       )
     )
     const asynchronousMethods = methods(facade, 'public').filter(
-      (name) => name !== 'setSessionDeletionHandlers'
+      (name) => name !== 'setSessionDeletionHandlers' && name !== 'getActiveDelegatedSessions'
     )
     for (const name of asynchronousMethods) {
       const method = methodFrom(facade, name)
@@ -936,6 +942,7 @@ describe('Session persistence coordinator architecture', () => {
         'deletionOwner.getProjectSessionDeletionState'
       ],
       deleteSession: ['deletionOwner.deleteSession', 'deletionOwner.reconcileSessionDeletion'],
+      getActiveDelegatedSessions: ['sessionUpdates.getActiveDelegatedSessions'],
       getProjectSessionDeletionState: ['deletionOwner.getProjectSessionDeletionState'],
       listLegacyProjectSessionTombstones: ['deletionOwner.listLegacyProjectSessionTombstones'],
       loadPersistedSideChats: ['sideChatOwner.loadCatalog'],
