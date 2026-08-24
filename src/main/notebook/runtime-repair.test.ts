@@ -94,6 +94,17 @@ const admittedTarget = (
     },
     repairRuntimeId: policy.runtimeId(environmentName, candidate),
     repairMarkerKey: policy.markerKey(candidate.language, environmentName, candidate),
+    receipt: {
+      language: candidate.language,
+      selection: 'explicit-binding',
+      runtimeSource: candidate.source,
+      ...(candidate.source === 'managed' ? { environmentName } : {}),
+      runtimeId: candidate.runtimeId,
+      label: candidate.label,
+      ...(candidate.source === 'managed'
+        ? { prefix: join(runtimeRoot, 'envs', environmentName) }
+        : {})
+    },
     ...(candidate.source === 'managed'
       ? { journalTarget: join(runtimeRoot, 'envs', environmentName) }
       : {})

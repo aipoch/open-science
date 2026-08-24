@@ -1724,7 +1724,7 @@ describe('DefaultRuntimeProvisioner.removeEnvironment', () => {
     expect(() => provisioner.removeEnvironment(DEFAULT_R_ENV)).toThrow(/Refusing to remove/)
   })
 
-  it('removes a named env and returns the refreshed list', () => {
+  it('removes a named env without rediscovering the remaining environments', () => {
     const root = makeRoot()
     const namedPrefix = envPrefix(root, 'my-analysis')
     mkdirSync(join(pythonBin(namedPrefix), '..'), { recursive: true })
@@ -1733,9 +1733,11 @@ describe('DefaultRuntimeProvisioner.removeEnvironment', () => {
     const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
     expect(provisioner.listEnvironments()).toHaveLength(1)
 
-    const remaining = provisioner.removeEnvironment('my-analysis')
+    const listEnvironments = vi.spyOn(provisioner, 'listEnvironments')
+    const result = provisioner.removeEnvironment('my-analysis')
 
-    expect(remaining).toEqual([])
+    expect(result).toBeUndefined()
+    expect(listEnvironments).not.toHaveBeenCalled()
     expect(existsSync(namedPrefix)).toBe(false)
   })
 })

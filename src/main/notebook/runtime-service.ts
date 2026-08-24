@@ -68,9 +68,9 @@ import {
 } from './runtime-paths'
 import type {
   DiscoveredInterpreter,
-  NotebookRuntimeBinding,
   NotebookRuntimeBindings,
   NotebookRuntimeListing,
+  RuntimeBindingOperationResult,
   RuntimeEnablement,
   RuntimeUsage
 } from '../../shared/notebook-runtime'
@@ -630,7 +630,7 @@ class NotebookRuntimeService {
   // runtime; refuses re-binding a different runtime (use notebook_switch_runtime to change).
   async bindRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
-  ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
+  ): Promise<RuntimeBindingOperationResult> {
     return this.sessionLifecycle.runProjectOperation(request, () =>
       this.runtimeBindingOwner.runWrite(
         notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
@@ -659,7 +659,7 @@ class NotebookRuntimeService {
   // state, then rebind. Refuses a disabled/unknown runtime (same MAIN-process gate as bind).
   async switchRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
-  ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
+  ): Promise<RuntimeBindingOperationResult> {
     return this.sessionLifecycle.runProjectOperation(request, () =>
       this.runtimeBindingOwner.runWrite(
         notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
@@ -678,7 +678,7 @@ class NotebookRuntimeService {
               await this.tearDownLanguageBinding(session, request.language, oldEnv)
             }
           )
-          this.sessionLifecycle.notifyChanged(session)
+          if ('bound' in result) this.sessionLifecycle.notifyChanged(session)
           return result
         }
       )
@@ -1035,9 +1035,10 @@ class NotebookRuntimeService {
   }
 
   // Named-environment management (design D2), delegating to the injected provisioner-backed manager.
-  // create/list return the full current env set; remove REFUSES if any session currently has a live
+  // Only list returns the full current env set; remove REFUSES if any session currently has a live
   // executor process bound to that env name (locked decision — the on-disk env can't be rm-rf'd out
-  // from under a running kernel). Create returns on completion (progress streaming is out of scope).
+  // from under a running kernel). Mutations return bounded operation receipts, and create returns on
+  // completion (progress streaming is out of scope).
   async manageEnvironments(request: ManageEnvironmentsRequest): Promise<ManageEnvironmentsResult> {
     return this.environmentManagement.manage(request)
   }

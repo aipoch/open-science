@@ -1248,13 +1248,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   }
 
   // rm -rf the env prefix; refuses the two default envs (app baseline, D2). "refuse if live" is
-  // enforced by the service layer, not here. Returns the refreshed list for a one-shot UI update.
-  removeEnvironment(name: string): EnvironmentInfo[] {
+  // enforced by the service layer, not here. Inventory refresh is an explicit list operation.
+  removeEnvironment(name: string): void {
     if (name === DEFAULT_PY_ENV || name === DEFAULT_R_ENV) {
       throw new Error(`Refusing to remove the default environment "${name}"`)
     }
     rmSync(envPrefix(this.deps.root, name), { recursive: true, force: true })
-    return this.listEnvironments()
   }
 
   // Keeps a healthy legacy R prefix additive, but replaces an invalid partial prefix from the lock.

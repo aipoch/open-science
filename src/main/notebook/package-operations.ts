@@ -1,12 +1,13 @@
 import type { NotebookLanguage, NotebookSessionRequest } from '../../shared/notebook'
 import type { PackageMirror } from '../../shared/mirror'
-import type { RuntimeEnablement } from '../../shared/notebook-runtime'
+import type { RuntimeEnablement, RuntimeTargetReceipt } from '../../shared/notebook-runtime'
 import type { NotebookEnvironmentOperations } from './environment-operations'
 import type {
   EnvironmentCaptureTarget,
   EnvironmentStateTracker,
   PackageInspectionResult
 } from './environment-state-tracker'
+import { boundedFailureDiagnostic } from './failure-diagnostic'
 import { effectiveMirrorAsync, type ProbeDeps } from './mirror-probe'
 import { NotebookPackageAdmissionOwner } from './package-admission'
 import type { InstallDeps, InstallRequest, InstallResult } from './package-manager'
@@ -99,6 +100,18 @@ type NotebookPackageOperationsOptions = {
 
 const defaultEnvironment = (language: NotebookLanguage): string =>
   language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+
+const packageOperationFailure = (error: unknown, target: RuntimeTargetReceipt): InstallResult => {
+  return {
+    ok: false,
+    needsRestart: false,
+    log: '',
+    target,
+    error: boundedFailureDiagnostic(error, {
+      fallback: 'Package operation failed with an unreadable error.'
+    })
+  }
+}
 
 /** Composes package inspection and mutation behind two stable operations. */
 class NotebookPackageOperations {
@@ -216,20 +229,25 @@ class NotebookPackageOperations {
   }
 
   async manage(request: InstallRequest): Promise<InstallResult> {
-    await this.options.ensureRecovered()
-    const mirror = await effectiveMirrorAsync(
-      await this.resolvePackageMirror(),
-      this.options.locale,
-      this.options.mirrorProbe
-    )
-    const admission = await this.admission.admit(request)
-    if (admission.status === 'refused') return admission.result
-    const result = await this.mutation.mutate({ target: admission.target, mirror })
-    if (result.ok && result.needsRestart && request.language === 'r') {
-      this.options.environmentOperations.recommendRestart('r', admission.target.environmentName)
-      for (const session of this.options.sessions()) this.options.notifyChanged(session)
+    const resolution = await this.admission.resolveTarget(request)
+    try {
+      await this.options.ensureRecovered()
+      const mirror = await effectiveMirrorAsync(
+        await this.resolvePackageMirror(),
+        this.options.locale,
+        this.options.mirrorProbe
+      )
+      const admission = await this.admission.admit(request, resolution)
+      if (admission.status === 'refused') return admission.result
+      const result = await this.mutation.mutate({ target: admission.target, mirror })
+      if (result.ok && result.needsRestart && request.language === 'r') {
+        this.options.environmentOperations.recommendRestart('r', admission.target.environmentName)
+        for (const session of this.options.sessions()) this.options.notifyChanged(session)
+      }
+      return { ...result, target: admission.target.receipt }
+    } catch (error) {
+      return packageOperationFailure(error, resolution.receipt)
     }
-    return result
   }
 
   private async resolvePackageMirror(): Promise<PackageMirror | undefined> {

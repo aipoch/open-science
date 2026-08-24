@@ -10,12 +10,14 @@ import {
 } from './local-rpc-notebook-adapter'
 
 const createCapability = (): NotebookLocalRpcCapability =>
-  Object.fromEntries(
-    NOTEBOOK_LOCAL_RPC_METHODS.map((method) => [
-      method,
-      vi.fn(async (request: unknown) => ({ method, request }))
-    ])
-  ) as unknown as NotebookLocalRpcCapability
+  ({
+    ...Object.fromEntries(
+      NOTEBOOK_LOCAL_RPC_METHODS.map((method) => [
+        method,
+        vi.fn(async (request: unknown) => ({ method, request }))
+      ])
+    )
+  }) as unknown as NotebookLocalRpcCapability
 
 const request = {
   sessionId: 'session-1',
@@ -91,9 +93,30 @@ describe('notebook local RPC adapter', () => {
         ).not.toHaveBeenCalled()
       }
 
+      if (method === 'bindRuntime' || method === 'switchRuntime') return
       const failure = new Error(`${method} failed`)
       methodMock.mockRejectedValueOnce(failure)
       await expect(handler(request)).rejects.toBe(failure)
+    }
+  )
+
+  it.each(['bindRuntime', 'switchRuntime'] as const)(
+    'forwards the service-owned failure receipt for %s without deriving a target',
+    async (method) => {
+      const capability = createCapability()
+      const failure = {
+        ok: false,
+        bindingChanged: false,
+        error: '"analysis" is not an enabled python runtime.',
+        target: { language: 'python', selection: 'unresolved' }
+      }
+      vi.mocked(capability[method]).mockResolvedValueOnce(failure)
+      const handler = resolveNotebookLocalRpcHandler(capability, method, request)
+
+      await expect(
+        handler({ ...request, language: 'python', runtimeId: 'analysis' })
+      ).resolves.toBe(failure)
+      expect(capability.listRuntimes).not.toHaveBeenCalled()
     }
   )
 

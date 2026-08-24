@@ -14,6 +14,7 @@ import { finished } from 'node:stream/promises'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
 import type { OptionalProjectIdScope } from '../../shared/project-scope'
+import type { RuntimeTargetReceipt } from '../../shared/notebook-runtime'
 import type {
   NotebookEnvironmentPackageChange,
   NotebookLanguage,
@@ -94,6 +95,7 @@ export type InstallResult = {
   // A protected interpreter package changed despite the approved plan. The caller must quarantine
   // this runtime and require Repair before another kernel can execute from it.
   repairRequired?: boolean
+  target?: RuntimeTargetReceipt
   error?: string
 }
 

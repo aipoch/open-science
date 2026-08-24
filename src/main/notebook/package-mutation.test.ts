@@ -37,6 +37,15 @@ const admittedTarget = (
   repairRuntimeId: 'analysis',
   repairMarkerKey: 'analysis::python',
   journalTarget: join(runtimeRoot, 'envs', 'analysis'),
+  receipt: {
+    language: 'python',
+    selection: 'explicit-binding',
+    runtimeSource: 'managed',
+    environmentName: 'analysis',
+    runtimeId: '/runtime/envs/analysis/bin/python',
+    label: 'analysis',
+    prefix: join(runtimeRoot, 'envs', 'analysis')
+  },
   ...overrides
 })
 
