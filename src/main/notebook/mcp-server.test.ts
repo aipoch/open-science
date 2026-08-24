@@ -798,14 +798,23 @@ describe('manage_packages tool', () => {
         runtimeId: '/usr/local/bin/python3',
         label: 'Research Python'
       }
-      const packageChanges = Array.from({ length: 60 }, (_, index) => ({
-        name: `package-${index}-${'x'.repeat(1_000)}`,
-        ecosystem: 'python',
-        relationship: 'dependency',
-        change: result.ok ? _outcome : 'unknown',
-        beforeVersion: `1.${index}.${'y'.repeat(1_000)}`,
-        afterVersion: `2.${index}.${'z'.repeat(1_000)}`
-      }))
+      const packageChanges = [
+        ...Array.from({ length: 60 }, (_, index) => ({
+          name: `package-${index}-${'x'.repeat(1_000)}`,
+          ecosystem: 'python',
+          relationship: 'dependency',
+          change: result.ok ? _outcome : 'unknown',
+          beforeVersion: `1.${index}.${'y'.repeat(1_000)}`,
+          afterVersion: `2.${index}.${'z'.repeat(1_000)}`
+        })),
+        {
+          name: 'requested-package',
+          ecosystem: 'python',
+          relationship: 'requested',
+          change: result.ok ? _outcome : 'unknown',
+          afterVersion: '2.0.0'
+        }
+      ]
 
       const content = buildNotebookToolContent({ ...result, target, packageChanges }, tool!)
       const text = (content[0] as { type: 'text'; text: string }).text
@@ -820,6 +829,9 @@ describe('manage_packages tool', () => {
       expect(parsed.target).toEqual(target)
       expect(parsed.preview).toBeUndefined()
       expect(parsed.packageChanges?.length).toBeLessThan(packageChanges.length)
+      expect(parsed.packageChanges).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'requested-package' })])
+      )
       expect(parsed.omittedPackageChangeCount).toBeGreaterThan(0)
     }
   )

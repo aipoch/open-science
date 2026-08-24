@@ -1180,7 +1180,11 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
   }
   if (!Array.isArray(result.packageChanges)) return base
 
-  const candidates = result.packageChanges.slice(0, MAX_PACKAGE_RESULTS).flatMap((change) => {
+  const orderedChanges = [
+    ...result.packageChanges.filter((change) => asRecord(change)?.relationship === 'requested'),
+    ...result.packageChanges.filter((change) => asRecord(change)?.relationship !== 'requested')
+  ]
+  const candidates = orderedChanges.slice(0, MAX_PACKAGE_RESULTS).flatMap((change) => {
     const item = asRecord(change)
     if (!item) return []
     const compact = pickDefined(item, [
