@@ -18,6 +18,48 @@ export function prismaClientFingerprintMismatchMessage(schemaPath, clientSchemaP
   ].join('\n')
 }
 
+// Prisma generate copies the schema into the Client package after realigning field columns.
+// Compare tokens, not bytes: comments and alignment spaces are not part of the datamodel.
+export function prismaSchemaFingerprint(schema) {
+  let out = ''
+  let index = 0
+  const source = String(schema).replaceAll('\r\n', '\n').replaceAll('\r', '\n')
+  while (index < source.length) {
+    const char = source[index]
+    if (char === '/' && source[index + 1] === '/') {
+      while (index < source.length && source[index] !== '\n') index += 1
+      continue
+    }
+    if (char === '"' || char === "'") {
+      const quote = char
+      out += char
+      index += 1
+      while (index < source.length) {
+        out += source[index]
+        if (source[index] === '\\' && index + 1 < source.length) {
+          out += source[index + 1]
+          index += 2
+          continue
+        }
+        if (source[index] === quote) {
+          index += 1
+          break
+        }
+        index += 1
+      }
+      continue
+    }
+    if (/\s/.test(char)) {
+      if (out.length > 0 && out.at(-1) !== ' ') out += ' '
+      index += 1
+      continue
+    }
+    out += char
+    index += 1
+  }
+  return out.trim()
+}
+
 export function checkPrismaClient({
   root = repositoryRoot,
   schemaPath = resolve(root, PRISMA_SOURCE_SCHEMA_RELATIVE_PATH),
@@ -33,7 +75,7 @@ export function checkPrismaClient({
   }
   const source = readFileSync(schemaPath, 'utf8')
   const generated = readFileSync(clientSchemaPath, 'utf8')
-  if (source !== generated) {
+  if (prismaSchemaFingerprint(source) !== prismaSchemaFingerprint(generated)) {
     throw new Error(prismaClientFingerprintMismatchMessage(schemaPath, clientSchemaPath))
   }
 }

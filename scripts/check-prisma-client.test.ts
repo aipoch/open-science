@@ -8,7 +8,8 @@ import {
   PRISMA_CLIENT_SCHEMA_RELATIVE_PATH,
   PRISMA_SOURCE_SCHEMA_RELATIVE_PATH,
   checkPrismaClient,
-  prismaClientFingerprintMismatchMessage
+  prismaClientFingerprintMismatchMessage,
+  prismaSchemaFingerprint
 } from './check-prisma-client.mjs'
 
 const writeTree = (
@@ -43,6 +44,57 @@ describe('Prisma Client fingerprint', () => {
   it('accepts a generated client that matches the source schema', () => {
     const schema = 'model Probe { id String @id }\n'
     const { root, schemaPath, clientSchemaPath } = writeTree(schema, schema)
+    try {
+      expect(() => checkPrismaClient({ root, schemaPath, clientSchemaPath })).not.toThrow()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // Captured from `prisma generate` 6.19.3: the client copy realigns field columns and does not
+  // copy the source bytes. Byte equality would reject a fresh Client.
+  const unformattedSource = `generator client {
+  provider = "prisma-client-js"
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Probe {
+  id          String   @id @default(cuid())
+  name String
+  description String   @default("")
+  archivedAt  DateTime?
+}
+`
+
+  const generatedFormatted = `generator client {
+  provider = "prisma-client-js"
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Probe {
+  id          String    @id @default(cuid())
+  name        String
+  description String    @default("")
+  archivedAt  DateTime?
+}
+`
+
+  it('accepts a fresh Prisma Client whose generated schema only reformats field alignment', () => {
+    expect(unformattedSource).not.toBe(generatedFormatted)
+    expect(prismaSchemaFingerprint(unformattedSource)).toBe(
+      prismaSchemaFingerprint(generatedFormatted)
+    )
+    const { root, schemaPath, clientSchemaPath } = writeTree(unformattedSource, generatedFormatted)
     try {
       expect(() => checkPrismaClient({ root, schemaPath, clientSchemaPath })).not.toThrow()
     } finally {
