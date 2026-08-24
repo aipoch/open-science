@@ -21247,7 +21247,7 @@ describe('ACP runtime session management', () => {
     expect(permissionResponses).toEqual([{ outcome: { outcome: 'selected', optionId: 'reject' } }])
   })
 
-  it('continues a Claude turn after a rejected permission cancels the provider prompt', async () => {
+  it('continues a Claude turn with an explicit authorization boundary after permission denial', async () => {
     const process = new FakeAgentProcess()
     const continuationGate = createDeferred<PromptResponse>()
     const prompts: string[] = []
@@ -21323,7 +21323,12 @@ describe('ACP runtime session management', () => {
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'inspect the workspace' })
 
     await vi.waitFor(() => expect(prompts).toHaveLength(2))
-    expect(prompts[1]).toContain('permission')
+    expect(prompts[1]).toContain('The user explicitly denied this operation')
+    expect(prompts[1]).toContain('You do not have authorization to perform it')
+    expect(prompts[1]).toContain(
+      'Do not retry or approximate the denied operation with a different command, tool, or route'
+    )
+    expect(prompts[1]).toContain('Continue only with independent work that is already permitted')
     expect(runtime.getSnapshot().events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

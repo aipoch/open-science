@@ -382,6 +382,13 @@ const errorMessage = (error: unknown): string => {
 
 const log = createLogger('acp')
 
+const PERMISSION_DENIED_CONTINUATION_TEXT =
+  'The user explicitly denied this operation. You do not have authorization to perform it. ' +
+  'Do not retry or approximate the denied operation with a different command, tool, or route, ' +
+  'and do not request permission for it again in this turn. Continue only with independent work ' +
+  'that is already permitted. If the denied operation is required, explain the boundary and wait ' +
+  'for the user to explicitly change their decision in a new message.'
+
 const PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS = 3
 const PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS = 25
 
@@ -1375,11 +1382,7 @@ class AcpRuntime {
         condition: 'provider-cancelled',
         request: {
           sessionId: permissionRequest.sessionId,
-          text:
-            'The user denied the requested tool permission. Continue the current task without ' +
-            'that tool call. Use an alternative that does not require the denied permission, or ' +
-            'explain what cannot be completed. Do not request the same permission again unless the ' +
-            'user explicitly asks.',
+          text: PERMISSION_DENIED_CONTINUATION_TEXT,
           suppressUserMessage: true,
           ...(promptInteraction.promptMessageId
             ? { provenanceContext: { promptMessageId: promptInteraction.promptMessageId } }
@@ -1505,9 +1508,7 @@ class AcpRuntime {
 
     const scope = decision.option?.scope
     const text = decision.denied
-      ? 'The user denied the pending tool permission. Continue the current task without that tool ' +
-        'call. Use an alternative that does not require the denied permission, or explain what ' +
-        'cannot be completed. Do not request the same permission again unless the user explicitly asks.'
+      ? PERMISSION_DENIED_CONTINUATION_TEXT
       : `The user approved the pending tool permission${scope ? ` for ${scope}` : ''}. Retry only ` +
         'the exact parked tool call and continue the current task. Do not broaden or reinterpret the approval.'
     this.appContinuations.set(restored.sessionId, {
