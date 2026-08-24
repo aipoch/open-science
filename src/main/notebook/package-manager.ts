@@ -80,6 +80,9 @@ export type InstallResult = {
   ok: boolean
   needsRestart: boolean
   log: string
+  // Stable user-facing target name resolved from the session binding. Unlike prefix, this is safe to
+  // retain in the compact tool result and lets the transcript identify the environment later.
+  environmentName?: string
   // Present when the bounded installer stdout/stderr collectors discarded older bytes. The count is
   // aggregated across every command whose retained output contributes to `log`.
   logTruncation?: { droppedBytes: number }

@@ -574,11 +574,21 @@ describe('workspace tool activity details', () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-notebook__manage_packages',
       rawOutput: {
-        structuredContent: { ok: true, needsRestart: false, method: 'conda', packageChanges }
+        structuredContent: {
+          ok: true,
+          needsRestart: false,
+          method: 'conda',
+          environmentName: 'analysis',
+          packageChanges
+        }
       }
     })
 
-    expect(parseManagePackagesResult(activity)).toMatchObject({ method: 'conda', packageChanges })
+    expect(parseManagePackagesResult(activity)).toMatchObject({
+      method: 'conda',
+      environmentName: 'analysis',
+      packageChanges
+    })
   })
 
   it('unwraps verified package versions from raw MCP text content', () => {

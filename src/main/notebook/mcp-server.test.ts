@@ -976,6 +976,7 @@ describe('compactManagePackagesResult', () => {
       ok: true,
       needsRestart: true,
       method: 'conda',
+      environmentName: 'default-r',
       prefix: '/runtime/envs/default-r',
       fallbackUsed: false,
       target: {
@@ -1018,6 +1019,7 @@ describe('compactManagePackagesResult', () => {
       ok: true,
       needsRestart: true,
       method: 'conda',
+      environmentName: 'default-r',
       fallbackUsed: false,
       target: {
         language: 'r',

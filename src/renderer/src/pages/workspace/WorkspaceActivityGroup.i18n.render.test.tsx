@@ -118,6 +118,7 @@ describe('WorkspaceActivityGroup i18n', () => {
                     ok: true,
                     needsRestart: true,
                     method: 'conda',
+                    environmentName: 'analysis-r',
                     packageChanges: [
                       {
                         name: 'ggplot2',
@@ -140,7 +141,7 @@ describe('WorkspaceActivityGroup i18n', () => {
 
     expect(container.querySelector('[data-testid="manage-packages-progress"]')).not.toBeNull()
     expect(container.textContent).toContain('Installed 1 package')
-    expect(container.textContent).toContain('R · conda')
+    expect(container.textContent).toContain('R · analysis-r · conda')
     expect(
       container.querySelector('[data-testid="manage-packages-package-status"]')?.textContent
     ).toBe('Unchanged')
@@ -178,6 +179,7 @@ describe('WorkspaceActivityGroup i18n', () => {
                   ok: true,
                   needsRestart: false,
                   method: 'pip',
+                  environmentName: 'analysis',
                   packageChanges: [
                     {
                       name: 'pandas',
@@ -198,7 +200,7 @@ describe('WorkspaceActivityGroup i18n', () => {
       )
     })
 
-    expect(container.textContent).toContain('Python · pip')
+    expect(container.textContent).toContain('Python · analysis · pip')
     expect(
       container.querySelector('[data-testid="manage-packages-package-status"]')?.textContent
     ).toBe('Updated')

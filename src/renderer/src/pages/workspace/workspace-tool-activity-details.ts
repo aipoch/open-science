@@ -801,7 +801,9 @@ const isManagePackagesActivity = (activity: ToolActivity): boolean => {
 
 const isManagePackagesResult = (value: unknown): value is Record<string, unknown> =>
   isRecord(value) &&
-  ['ok', 'needsRestart', 'method', 'packageChanges', 'error'].some((key) => key in value)
+  ['ok', 'needsRestart', 'method', 'environmentName', 'packageChanges', 'error'].some(
+    (key) => key in value
+  )
 
 // ACP providers retain MCP results in different envelopes. Unwrap only the known result/content
 // fields so the renderer can use the compact verified package versions without reading installer logs.

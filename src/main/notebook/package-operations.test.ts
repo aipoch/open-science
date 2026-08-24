@@ -214,7 +214,11 @@ describe('NotebookPackageOperations', () => {
 
     const result = await owner.manage({ language: 'r', packages: ['dplyr'] })
 
-    expect(result).toMatchObject({ ok: true, needsRestart: true })
+    expect(result).toMatchObject({
+      ok: true,
+      needsRestart: true,
+      environmentName: 'default-r'
+    })
     expect(options.installPackages).toHaveBeenCalledWith(
       expect.objectContaining({ language: 'r', environment: 'default-r' }),
       expect.objectContaining({ cranMirror: 'https://mirror/cran' })
@@ -465,5 +469,27 @@ describe('NotebookPackageOperations', () => {
     })
     expect(options.loadSession).not.toHaveBeenCalled()
     expect(options.installPackages).not.toHaveBeenCalled()
+  })
+
+  it('uses the runtime label as the environment name for an external binding', async () => {
+    const external = {
+      ...binding('python', '/opt/research/bin/python', 'external'),
+      label: 'Research Python'
+    }
+    const { owner } = harness(session('session-1', external), {
+      resolveRuntimeEnablement: vi.fn().mockResolvedValue({
+        enabled: { [external.runtimeId]: true },
+        installAuthorized: { [external.runtimeId]: true }
+      })
+    })
+
+    const result = await owner.manage({
+      sessionId: 'session-1',
+      language: 'python',
+      packages: ['numpy']
+    })
+
+    expect(result.environmentName).toBe('Research Python')
+    expect(result.target).toMatchObject({ label: 'Research Python' })
   })
 })

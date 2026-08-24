@@ -101,6 +101,10 @@ const WorkspaceManagePackagesActivityRow = ({
       : input?.usePip === true
         ? 'pip'
         : 'conda'
+  const environmentName =
+    typeof result?.environmentName === 'string' && result.environmentName.trim()
+      ? result.environmentName.trim()
+      : null
   const useActionLabel = isActive || isFailed
   const elapsedUntil = isActive ? now : activity.updatedAt
   const actionLabel = isRemoving
@@ -162,7 +166,7 @@ const WorkspaceManagePackagesActivityRow = ({
         <span className="min-w-0 flex-1 text-left">
           <span className="block font-medium leading-5 text-text-000">{actionLabel}</span>
           <span className="mt-0.5 block text-[12px] leading-4 text-text-100">
-            {[languageLabel, installer].filter(Boolean).join(' · ')}
+            {[languageLabel, environmentName, installer].filter(Boolean).join(' · ')}
           </span>
         </span>
         <span className="shrink-0 tabular-nums text-[12px] text-text-100" aria-hidden="true">

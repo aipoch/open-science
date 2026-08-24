@@ -244,7 +244,11 @@ class NotebookPackageOperations {
         this.options.environmentOperations.recommendRestart('r', admission.target.environmentName)
         for (const session of this.options.sessions()) this.options.notifyChanged(session)
       }
-      return { ...result, target: admission.target.receipt }
+      const environmentName =
+        admission.target.binding?.source === 'external'
+          ? (admission.target.binding.label ?? admission.target.environmentName)
+          : admission.target.environmentName
+      return { ...result, environmentName, target: admission.target.receipt }
     } catch (error) {
       return packageOperationFailure(error, resolution.receipt)
     }

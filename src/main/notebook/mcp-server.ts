@@ -1154,6 +1154,7 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
   const base = {
     ok: result.ok,
     needsRestart: result.needsRestart,
+    ...(result.environmentName !== undefined ? { environmentName: result.environmentName } : {}),
     ...(result.method !== undefined ? { method: result.method } : {}),
     ...(result.fallbackUsed !== undefined ? { fallbackUsed: result.fallbackUsed } : {}),
     ...(droppedLogBytes !== undefined ? { logTruncation: { droppedBytes: droppedLogBytes } } : {}),

@@ -5401,6 +5401,7 @@ describe('notebook runtime service', () => {
         runtimeId: expect.any(String),
         label: DEFAULT_PY_ENV
       })
+      expect(result.environmentName).toBe('default-python')
     })
 
     it('quarantines and stops an R runtime after a protected r-base identity violation', async () => {
@@ -5918,6 +5919,7 @@ describe('notebook runtime service', () => {
         runtimeSource: 'managed',
         environmentName: DEFAULT_PY_ENV
       })
+      expect(result.environmentName).toBe('default-python')
       expect(calls).toHaveLength(1)
       // The service forwards the request with the install target PINNED to the binding-resolved env
       // (default-python here), so it is a copy of the original fields plus `environment`, not the same
