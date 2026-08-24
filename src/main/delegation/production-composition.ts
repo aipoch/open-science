@@ -286,7 +286,7 @@ const createProductionDelegatedWorkComposition = (
           throw new DurableDelegatedWorkError(
             'admission_rejection',
             `configured Subagent model is unavailable: ${error instanceof Error ? error.message : String(error)}`,
-            'The configured Subagent model is unavailable. Open Settings → Model → Subagent model and choose an available model.'
+            'The configured Subagent model is unavailable. Open Settings → Model → Scenario models and choose an available model.'
           )
         }
       },

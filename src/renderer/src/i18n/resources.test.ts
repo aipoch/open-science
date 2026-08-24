@@ -835,7 +835,9 @@ describe('mandatory product glossary', () => {
         ru: 'главн'
       }[locale]
       const offenders = Object.entries(catalog(locale))
-        .filter(([key]) => /\bMain(?: Agent)?\b/.test(englishOf(key)))
+        // Main Agent role labels only — a plain "Main model" key is a different concept and
+        // must not be forced to carry the agent spelling.
+        .filter(([key]) => /\bMain Agent\b/.test(englishOf(key)))
         .filter(([, value]) =>
           locale === 'ru'
             ? !value.toLocaleLowerCase('ru').includes(expected) || !/агент/iu.test(value)

@@ -58,7 +58,7 @@ const ModelFrameworkCompatibilityAlert = (): React.JSX.Element | null => {
         <p className="font-medium">
           {modelUnsupportedByBridge
             ? t('Model not supported over the Codex bridge')
-            : t("Active model isn't compatible with {{framework}}", { framework: frameworkName })}
+            : t("Main model isn't compatible with {{framework}}", { framework: frameworkName })}
         </p>
         <p className="text-amber-700/90 dark:text-amber-400/80">
           {reason}{' '}

@@ -243,7 +243,7 @@ describe('ReviewerModelSelect', () => {
     document.body.innerHTML = ''
   })
 
-  it('presents Follow Active as the default Reviewer policy', () => {
+  it('presents Follow main model as the default Reviewer policy', () => {
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
@@ -251,7 +251,7 @@ describe('ReviewerModelSelect', () => {
 
     expect(
       document.body.querySelector('[aria-label="Reviewer model Model"]')?.textContent
-    ).toContain('Follow Active model')
+    ).toContain('Follow main model')
     expect(
       document.body.querySelector<HTMLButtonElement>(
         '[aria-label="Reviewer model Reasoning effort"]'
