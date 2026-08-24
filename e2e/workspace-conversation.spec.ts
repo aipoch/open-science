@@ -208,8 +208,20 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
       ({ impact }) => impact === 'critical' || impact === 'serious'
     )
   ).toEqual([])
-  await sourceLink.hover()
   const hoverCard = page.locator('[data-source-preview-hover-card]')
+
+  await sourceLink.dispatchEvent('pointerdown', { pointerType: 'touch' })
+  await sourceLink.evaluate((element) => (element as HTMLElement).click())
+  await expect(hoverCard).toBeVisible()
+  expect(sourceDocumentRequestCount).toBe(0)
+  await expect(page.locator('[data-source-preview-frame]')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(hoverCard).toHaveCount(0)
+  await expect(sourceLink).toBeFocused()
+  await sourceLink.evaluate((element) => (element as HTMLElement).blur())
+  await expect(sourceLink).not.toBeFocused()
+
+  await sourceLink.hover()
   const hoverTitle = hoverCard.locator('[data-source-preview-hover-title]')
   await expect(hoverTitle).toHaveText('Fixture study')
   await expect(hoverTitle).toHaveClass(/text-text-000/)
@@ -224,11 +236,30 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(hoverCard.locator('[data-session-link-favicon-skeleton]')).toHaveCount(0)
   expect(sourceDocumentRequestCount).toBe(0)
   await expect(page.locator('[data-source-preview-frame]')).toHaveCount(0)
+  const hoverAccessibility = (await hoverCard.evaluate(async (element) => {
+    const axe = (
+      globalThis as unknown as {
+        axe: { run: (context: Element, options: unknown) => Promise<unknown> }
+      }
+    ).axe
+
+    return axe.run(element, {
+      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }
+    })
+  })) as AxeResults
+  expect(
+    hoverAccessibility.violations.filter(
+      ({ impact }) => impact === 'critical' || impact === 'serious'
+    )
+  ).toEqual([])
   await page.screenshot({ path: testInfo.outputPath('source-link-hover-card.png') })
   await externalButton.hover()
   await expect(page.getByRole('tooltip')).toHaveText('Open source in browser')
   expect(sourceDocumentRequestCount).toBe(0)
-  await hoverUrl.click()
+  await sourceLink.focus()
+  await page.keyboard.press('Tab')
+  await expect(hoverUrl).toBeFocused()
+  await page.keyboard.press('Enter')
   await expect(page.getByRole('dialog', { name: 'Open external link?' })).toHaveCount(0)
 
   await expect(page.getByRole('tab', { name: 'Fixture study' })).toHaveAttribute(

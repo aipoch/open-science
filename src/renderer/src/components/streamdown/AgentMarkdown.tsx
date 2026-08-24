@@ -4,7 +4,10 @@ import {
   Children,
   isValidElement,
   memo,
+  useEffect,
+  useId,
   useMemo,
+  useRef,
   useState,
   type ComponentProps,
   type ErrorInfo,
@@ -28,7 +31,7 @@ import { cn } from '@/lib/utils'
 import { createSourcePreviewItem } from '@/lib/source-preview'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { Button } from '@/components/ui/button'
-import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 type AgentMarkdownProps = {
@@ -49,6 +52,10 @@ type SessionMessageLinkProps = ComponentProps<'a'> & {
 }
 
 type FaviconState = 'loading' | 'success' | 'error'
+
+const SOURCE_PREVIEW_OPEN_DELAY_MS = 350
+const SOURCE_PREVIEW_CLOSE_DELAY_MS = 150
+const TOUCH_ACTIVATION_RESET_MS = 1000
 
 const getSessionLinkFaviconUrl = (href: string | undefined): string | undefined => {
   if (!href) return undefined
@@ -134,7 +141,18 @@ const SessionMessageLink = ({
   'data-incomplete': dataIncomplete
 }: SessionMessageLinkProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const [isOpen, setIsOpen] = useState(false)
+  const [isSafetyModalOpen, setIsSafetyModalOpen] = useState(false)
+  const [isSourcePreviewOpen, setIsSourcePreviewOpen] = useState(false)
+  const sourcePreviewTriggerRef = useRef<HTMLAnchorElement>(null)
+  const sourcePreviewContentRef = useRef<HTMLDivElement>(null)
+  const sourcePreviewTitleId = useId()
+  const sourcePreviewOpenTimerRef = useRef<number | undefined>(undefined)
+  const sourcePreviewCloseTimerRef = useRef<number | undefined>(undefined)
+  const touchActivationResetTimerRef = useRef<number | undefined>(undefined)
+  const isTouchActivationRef = useRef(false)
+  const isSourcePreviewFocusWithinRef = useRef(false)
+  const isSourcePreviewPointerWithinRef = useRef(false)
+  const suppressNextFocusOpenRef = useRef(false)
   const upsertAndActivateItem = usePreviewWorkbenchStore((state) => state.upsertAndActivateItem)
   const faviconUrl = getSessionLinkFaviconUrl(href)
   const sourceItem = href
@@ -145,40 +163,195 @@ const SessionMessageLink = ({
       })
     : undefined
 
+  const clearSourcePreviewTimers = (): void => {
+    window.clearTimeout(sourcePreviewOpenTimerRef.current)
+    window.clearTimeout(sourcePreviewCloseTimerRef.current)
+    sourcePreviewOpenTimerRef.current = undefined
+    sourcePreviewCloseTimerRef.current = undefined
+  }
+
+  const openSourcePreview = (delay = 0): void => {
+    clearSourcePreviewTimers()
+    if (delay === 0) {
+      setIsSourcePreviewOpen(true)
+      return
+    }
+    sourcePreviewOpenTimerRef.current = window.setTimeout(() => {
+      setIsSourcePreviewOpen(true)
+      sourcePreviewOpenTimerRef.current = undefined
+    }, delay)
+  }
+
+  const closeSourcePreview = (): void => {
+    clearSourcePreviewTimers()
+    sourcePreviewCloseTimerRef.current = window.setTimeout(() => {
+      if (!isSourcePreviewFocusWithinRef.current && !isSourcePreviewPointerWithinRef.current) {
+        setIsSourcePreviewOpen(false)
+      }
+      sourcePreviewCloseTimerRef.current = undefined
+    }, SOURCE_PREVIEW_CLOSE_DELAY_MS)
+  }
+
+  const dismissSourcePreview = (restoreFocus = false): void => {
+    clearSourcePreviewTimers()
+    isSourcePreviewPointerWithinRef.current = false
+    setIsSourcePreviewOpen(false)
+    if (!restoreFocus) return
+
+    suppressNextFocusOpenRef.current = true
+    window.setTimeout(() => {
+      const trigger = sourcePreviewTriggerRef.current
+      if (trigger && document.activeElement !== trigger) {
+        trigger.focus({ preventScroll: true })
+      }
+      suppressNextFocusOpenRef.current = false
+    }, 0)
+  }
+
+  useEffect(
+    () => () => {
+      clearSourcePreviewTimers()
+      window.clearTimeout(touchActivationResetTimerRef.current)
+    },
+    []
+  )
+
   if (sourceItem) {
     const hostname = new URL(sourceItem.url).hostname
 
     return (
-      <HoverCard openDelay={350} closeDelay={150}>
-        <HoverCardTrigger asChild>
+      <Popover
+        open={isSourcePreviewOpen}
+        onOpenChange={(open) => {
+          clearSourcePreviewTimers()
+          setIsSourcePreviewOpen(open)
+        }}
+      >
+        <PopoverTrigger asChild>
           <a
+            ref={sourcePreviewTriggerRef}
             href={sourceItem.url}
             data-source-preview-link=""
             data-incomplete={dataIncomplete}
             data-session-message-link=""
             data-streamdown="link"
             className={className}
+            onPointerEnter={(event) => {
+              if (event.pointerType !== 'touch') {
+                isSourcePreviewPointerWithinRef.current = true
+                openSourcePreview(SOURCE_PREVIEW_OPEN_DELAY_MS)
+              }
+            }}
+            onPointerLeave={(event) => {
+              if (event.pointerType !== 'touch') {
+                isSourcePreviewPointerWithinRef.current = false
+                closeSourcePreview()
+              }
+            }}
+            onPointerDown={(event) => {
+              window.clearTimeout(touchActivationResetTimerRef.current)
+              isTouchActivationRef.current = event.pointerType === 'touch'
+              if (isTouchActivationRef.current) {
+                touchActivationResetTimerRef.current = window.setTimeout(() => {
+                  isTouchActivationRef.current = false
+                }, TOUCH_ACTIVATION_RESET_MS)
+              }
+            }}
+            onPointerCancel={() => {
+              window.clearTimeout(touchActivationResetTimerRef.current)
+              isTouchActivationRef.current = false
+            }}
+            onFocus={() => {
+              isSourcePreviewFocusWithinRef.current = true
+              if (suppressNextFocusOpenRef.current) {
+                suppressNextFocusOpenRef.current = false
+                return
+              }
+              openSourcePreview()
+            }}
+            onBlur={(event) => {
+              if (!sourcePreviewContentRef.current?.contains(event.relatedTarget as Node | null)) {
+                isSourcePreviewFocusWithinRef.current = false
+                closeSourcePreview()
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Tab' || event.shiftKey || !isSourcePreviewOpen) return
+              const firstAction = sourcePreviewContentRef.current?.querySelector<HTMLElement>(
+                '[data-source-preview-hover-url]'
+              )
+              if (!firstAction) return
+              event.preventDefault()
+              firstAction.focus()
+            }}
             onClick={(event) => {
               event.preventDefault()
+              window.clearTimeout(touchActivationResetTimerRef.current)
+              if (isTouchActivationRef.current) {
+                isTouchActivationRef.current = false
+                openSourcePreview()
+                return
+              }
+              dismissSourcePreview()
               upsertAndActivateItem(sourceItem)
             }}
             onAuxClick={(event) => {
               if (event.button !== 1) return
               event.preventDefault()
+              dismissSourcePreview()
               upsertAndActivateItem(sourceItem)
             }}
           >
             {faviconUrl ? <SessionLinkFavicon key={faviconUrl} src={faviconUrl} /> : null}
             {children}
           </a>
-        </HoverCardTrigger>
-        <HoverCardContent side="top" data-source-preview-hover-card="">
+        </PopoverTrigger>
+        <PopoverContent
+          ref={sourcePreviewContentRef}
+          side="top"
+          align="start"
+          sideOffset={8}
+          collisionPadding={8}
+          data-source-preview-hover-card=""
+          aria-labelledby={sourcePreviewTitleId}
+          className="w-[min(20rem,calc(100vw-1rem))] border border-border-300 bg-bg-000 p-3 text-text-100 shadow-card"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+          onEscapeKeyDown={() => dismissSourcePreview(true)}
+          onPointerEnter={(event) => {
+            if (event.pointerType !== 'touch') {
+              isSourcePreviewPointerWithinRef.current = true
+              clearSourcePreviewTimers()
+            }
+          }}
+          onPointerLeave={(event) => {
+            if (event.pointerType !== 'touch') {
+              isSourcePreviewPointerWithinRef.current = false
+              closeSourcePreview()
+            }
+          }}
+          onFocusCapture={() => {
+            isSourcePreviewFocusWithinRef.current = true
+            clearSourcePreviewTimers()
+          }}
+          onBlurCapture={(event) => {
+            const nextTarget = event.relatedTarget as Node | null
+            if (
+              !event.currentTarget.contains(nextTarget) &&
+              !sourcePreviewTriggerRef.current?.contains(nextTarget)
+            ) {
+              isSourcePreviewFocusWithinRef.current = false
+              closeSourcePreview()
+            }
+          }}
+        >
           <div className="flex min-w-0 items-start gap-2.5">
             {faviconUrl ? (
               <SessionLinkFavicon className="mt-0.5 me-0 size-5 shrink-0" src={faviconUrl} />
             ) : null}
             <div className="min-w-0 flex-1">
               <div
+                id={sourcePreviewTitleId}
                 data-source-preview-hover-title=""
                 className="break-words text-sm font-medium leading-5 text-text-000"
               >
@@ -186,7 +359,7 @@ const SessionMessageLink = ({
               </div>
               <div
                 data-source-preview-hover-hostname=""
-                className="truncate text-xs leading-4 text-text-100"
+                className="truncate text-xs leading-4 text-text-000"
               >
                 {hostname}
               </div>
@@ -197,6 +370,7 @@ const SessionMessageLink = ({
                 className="mt-1 block break-all text-xs leading-4 text-text-000 underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
                 onClick={(event) => {
                   event.preventDefault()
+                  dismissSourcePreview(true)
                   upsertAndActivateItem(sourceItem)
                 }}
               >
@@ -215,6 +389,7 @@ const SessionMessageLink = ({
                     className="mt-0.5 text-text-100 hover:text-text-000"
                     onClick={(event) => {
                       event.stopPropagation()
+                      dismissSourcePreview(true)
                       window.open(sourceItem.url, '_blank', 'noreferrer')
                     }}
                   >
@@ -225,8 +400,8 @@ const SessionMessageLink = ({
               </Tooltip>
             </TooltipProvider>
           </div>
-        </HoverCardContent>
-      </HoverCard>
+        </PopoverContent>
+      </Popover>
     )
   }
 
@@ -240,7 +415,7 @@ const SessionMessageLink = ({
         data-session-message-link=""
         data-streamdown="link"
         disabled={!href}
-        onClick={() => setIsOpen(true)}
+        onClick={() => setIsSafetyModalOpen(true)}
       >
         {faviconUrl ? <SessionLinkFavicon key={faviconUrl} src={faviconUrl} /> : null}
         {children}
@@ -248,8 +423,8 @@ const SessionMessageLink = ({
       {href ? (
         <LinkSafetyModal
           url={href}
-          isOpen={isOpen}
-          onClose={() => setIsOpen(false)}
+          isOpen={isSafetyModalOpen}
+          onClose={() => setIsSafetyModalOpen(false)}
           onConfirm={() => window.open(href, '_blank', 'noreferrer')}
         />
       ) : null}

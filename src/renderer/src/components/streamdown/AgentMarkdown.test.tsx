@@ -420,16 +420,18 @@ describe('AgentMarkdown renderer recovery', () => {
     const hoverTitle = hoverCard?.querySelector<HTMLElement>('[data-source-preview-hover-title]')
     expect(hoverTitle?.textContent).toBe('Genome study')
     expect(hoverTitle?.className).toContain('text-text-000')
+    expect(hoverTitle?.id).not.toBe('')
+    expect(hoverCard?.getAttribute('aria-labelledby')).toBe(hoverTitle?.id)
     const hoverHostname = hoverCard?.querySelector<HTMLElement>(
       '[data-source-preview-hover-hostname]'
     )
     expect(hoverHostname?.textContent).toBe('example.com')
-    expect(hoverHostname?.className).toContain('text-text-100')
+    expect(hoverHostname?.className).toContain('text-text-000')
     const hoverFavicon = hoverCard?.querySelector<HTMLElement>('[data-session-link-favicon]')
     expect(hoverFavicon).not.toBeNull()
     expect(hoverFavicon?.querySelector('[data-session-link-favicon-skeleton]')).toBeNull()
     expect(hoverFavicon?.querySelector('[data-session-link-favicon-fallback]')).not.toBeNull()
-    const hoverCardUrl = hoverCard?.querySelector<HTMLAnchorElement>(
+    let hoverCardUrl = hoverCard?.querySelector<HTMLAnchorElement>(
       '[data-source-preview-hover-url]'
     )
     expect(hoverCardUrl?.tagName).toBe('A')
@@ -444,14 +446,21 @@ describe('AgentMarkdown renderer recovery', () => {
     const previewStateBeforeExternalOpen = usePreviewWorkbenchStore.getState()
 
     await act(async () => {
+      externalButton?.focus()
       externalButton?.click()
+      await vi.runAllTimersAsync()
     })
     expect(open).toHaveBeenCalledWith('https://example.com/paper#results', '_blank', 'noreferrer')
+    expect(document.activeElement).toBe(sourceLink)
     expect(usePreviewWorkbenchStore.getState()).toMatchObject({
       panelState: previewStateBeforeExternalOpen.panelState,
       activeItemId: previewStateBeforeExternalOpen.activeItemId,
       items: []
     })
+
+    fireEvent.pointerEnter(sourceLink!)
+    await act(async () => vi.runAllTimersAsync())
+    hoverCardUrl = document.body.querySelector<HTMLAnchorElement>('[data-source-preview-hover-url]')
 
     await act(async () => {
       hoverCardUrl?.click()
@@ -472,6 +481,101 @@ describe('AgentMarkdown renderer recovery', () => {
           url: 'https://example.com/paper#results'
         })
       ]
+    })
+  })
+
+  it('keeps the interactive source preview actions keyboard reachable', async () => {
+    vi.useFakeTimers()
+
+    await act(async () => {
+      root.render(
+        <SessionMessageLink href="https://example.com/paper" title="Genome study">
+          Genome study
+        </SessionMessageLink>
+      )
+    })
+
+    const sourceLink = container.querySelector<HTMLAnchorElement>('[data-source-preview-link]')
+    await act(async () => {
+      sourceLink?.focus()
+      await vi.runAllTimersAsync()
+    })
+
+    const hoverCard = document.body.querySelector<HTMLElement>('[data-source-preview-hover-card]')
+    const hoverUrl = hoverCard?.querySelector<HTMLAnchorElement>('[data-source-preview-hover-url]')
+    const externalButton = hoverCard?.querySelector<HTMLButtonElement>(
+      '[data-source-preview-hover-external]'
+    )
+    expect(hoverUrl?.tabIndex).toBe(0)
+    expect(externalButton?.tabIndex).toBe(0)
+
+    fireEvent.keyDown(sourceLink!, { key: 'Tab' })
+    expect(document.activeElement).toBe(hoverUrl)
+
+    fireEvent.pointerLeave(sourceLink!)
+    fireEvent.pointerLeave(hoverCard!)
+    await act(async () => vi.runAllTimersAsync())
+    expect(document.body.querySelector('[data-source-preview-hover-card]')).not.toBeNull()
+
+    await act(async () => {
+      hoverUrl?.click()
+      await vi.runAllTimersAsync()
+    })
+    expect(document.activeElement).toBe(sourceLink)
+  })
+
+  it('restores focus on Escape and reopens when the source link is focused again', async () => {
+    vi.useFakeTimers()
+
+    await act(async () => {
+      root.render(
+        <SessionMessageLink href="https://example.com/paper" title="Genome study">
+          Genome study
+        </SessionMessageLink>
+      )
+    })
+
+    const sourceLink = container.querySelector<HTMLAnchorElement>('[data-source-preview-link]')
+    await act(async () => {
+      sourceLink?.focus()
+    })
+    const hoverCard = document.body.querySelector<HTMLElement>('[data-source-preview-hover-card]')
+    const hoverUrl = hoverCard?.querySelector<HTMLAnchorElement>('[data-source-preview-hover-url]')
+    await act(async () => {
+      hoverUrl?.focus()
+      fireEvent.keyDown(hoverUrl!, { key: 'Escape' })
+      await vi.runAllTimersAsync()
+    })
+
+    expect(document.body.querySelector('[data-source-preview-hover-card]')).toBeNull()
+    expect(document.activeElement).toBe(sourceLink)
+
+    await act(async () => {
+      sourceLink?.blur()
+      sourceLink?.focus()
+    })
+    expect(document.body.querySelector('[data-source-preview-hover-card]')).not.toBeNull()
+  })
+
+  it('opens interactive source details on touch without activating the preview panel', async () => {
+    await act(async () => {
+      root.render(
+        <SessionMessageLink href="https://example.com/paper" title="Genome study">
+          Genome study
+        </SessionMessageLink>
+      )
+    })
+
+    const sourceLink = container.querySelector<HTMLAnchorElement>('[data-source-preview-link]')
+    await act(async () => {
+      fireEvent.pointerDown(sourceLink!, { pointerType: 'touch' })
+      sourceLink?.click()
+    })
+
+    expect(document.body.querySelector('[data-source-preview-hover-card]')).not.toBeNull()
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      panelState: 'collapsed',
+      items: []
     })
   })
 
