@@ -905,6 +905,11 @@ const ConversationPanel = ({
                     isDisabled={!canResumeSession}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
+                    onOpenAgentSettings={
+                      hasUnsupportedCodexAcpRunError
+                        ? () => openSettingsToPanel('agent')
+                        : undefined
+                    }
                   />
                 ) : activeSession?.compacting ? (
                   // Auto-recovery after a request-size overflow: a neutral note, not the red error box,

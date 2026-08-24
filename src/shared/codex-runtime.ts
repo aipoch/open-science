@@ -14,8 +14,9 @@ const CODEX_ACP_UNSUPPORTED_VERSION_SUFFIX = ` is no longer supported. Update to
 export const buildUnsupportedCodexAcpVersionMessage = (installedVersion: string): string =>
   `${CODEX_ACP_UNSUPPORTED_VERSION_PREFIX}${installedVersion}${CODEX_ACP_UNSUPPORTED_VERSION_SUFFIX}`
 
-// Recognizes only the app-authored version guidance, either directly or after Electron wraps it.
-// The installed version varies, so validate the fixed prefix/suffix and require one version token.
+// Recognizes only the app-authored version guidance, either directly or after Electron or the
+// Session resume flow wraps it. The installed version varies, so validate the fixed prefix/suffix
+// and require one version token.
 export const isUnsupportedCodexAcpVersionError = (error: string | null | undefined): boolean => {
   const message = error?.trim()
   if (!message?.endsWith(CODEX_ACP_UNSUPPORTED_VERSION_SUFFIX)) return false
@@ -30,5 +31,9 @@ export const isUnsupportedCodexAcpVersionError = (error: string | null | undefin
   if (!version || /\s/.test(version)) return false
 
   const wrapper = message.slice(0, start)
-  return wrapper === '' || wrapper.endsWith('Error: ')
+  return (
+    wrapper === '' ||
+    wrapper.endsWith('Error: ') ||
+    wrapper.endsWith('Agent session resume failed: ')
+  )
 }

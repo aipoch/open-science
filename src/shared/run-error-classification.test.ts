@@ -149,9 +149,11 @@ describe('isReportableRunFailure (text tier)', () => {
   it('does not report an unsupported Codex ACP version', () => {
     const message = buildUnsupportedCodexAcpVersionMessage('1.1.4')
     const wrapped = `Error invoking remote method 'acp:create-session': Error: ${message}`
+    const resumeWrapped = `Agent session resume failed: ${message}`
 
     expect(isReportableRunFailure(message)).toBe(false)
     expect(isReportableRunFailure(wrapped)).toBe(false)
+    expect(isReportableRunFailure(resumeWrapped)).toBe(false)
   })
 
   it('recognizes the framework-specific model-incompat message built by service.ts (prefix)', () => {

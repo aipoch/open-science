@@ -8,29 +8,42 @@ type SessionInterruptedBannerProps = {
   isDisabled: boolean
   isResuming: boolean
   onResume: () => void
+  onOpenAgentSettings?: () => void
 }
 
-const resumeButtonClassName =
+const actionButtonClassName =
   'gap-1.5 rounded-md text-[12px] text-text-000 hover:bg-bg-300 hover:text-text-000'
 
-// Neutral recovery banner for a session interrupted by an app restart. The Resume button re-attaches
-// the ACP runtime; while that request is in flight it is disabled so a second click cannot double-resume.
+// Neutral recovery banner for a session interrupted by an app restart. Resume re-attaches the ACP
+// runtime; recognized setup failures can also link to their Settings recovery surface.
 const SessionInterruptedBanner = ({
   message,
   isDisabled,
   isResuming,
-  onResume
+  onResume,
+  onOpenAgentSettings
 }: SessionInterruptedBannerProps): React.JSX.Element => {
   const { t } = useTranslation()
 
   return (
     <div className="mb-2 flex items-center gap-3 rounded-lg border border-border-200 bg-bg-200 px-3 py-2">
       <p className="min-w-0 flex-1 text-[12px] leading-5 text-text-100">{message}</p>
+      {onOpenAgentSettings ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={actionButtonClassName}
+          onClick={onOpenAgentSettings}
+        >
+          {t('Agent settings')}
+        </Button>
+      ) : null}
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        className={resumeButtonClassName}
+        className={actionButtonClassName}
         onClick={onResume}
         disabled={isDisabled || isResuming}
         aria-label={t('Resume session')}
