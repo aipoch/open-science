@@ -162,6 +162,7 @@ const VisibleMessageSnapshotCommit = ({
 }
 
 type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uploads']>[number]
+type ConversationMessageNode = NonNullable<ChatSession['conversationGraph']>['messages'][number]
 const SCROLL_TO_FIRST_MESSAGE_MIN_USER_TURNS = 2
 const SCROLL_TO_FIRST_MESSAGE_MIN_HEIGHT_VIEWPORTS = 2
 const SCROLL_TO_FIRST_MESSAGE_MIN_PROGRESS = 0.1
@@ -398,8 +399,9 @@ const WorkspaceMessageScrollerImpl = ({
     messageScrollerViewportRef.current = node
     setMessageScrollerViewport(node)
   }, [])
-  const activeConversationFrame = activeSession?.conversationGraph?.frames.find(
-    (frame) => frame.id === activeSession.conversationGraph?.activeFrameId
+  const conversationGraph = activeSession?.conversationGraph
+  const activeConversationFrame = conversationGraph?.frames.find(
+    (frame) => frame.id === conversationGraph.activeFrameId
   )
   const currentPresentationScopeId = currentSessionId
     ? JSON.stringify([currentSessionId, activeConversationFrame?.activeBranchId ?? 'legacy'])
@@ -838,21 +840,47 @@ const WorkspaceMessageScrollerImpl = ({
         : undefined,
     [legacyAgentBackendId, legacyAgentModel]
   )
-  const messageCreatedAtById = new Map(
-    activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
+  const { conversationMessageById, runtimeSegmentById, revisionsByRootMessageId } = useMemo(() => {
+    const messageById = new Map(conversationGraph?.messages.map((message) => [message.id, message]))
+    const segmentById = new Map(
+      conversationGraph?.runtimeSegments.map((segment) => [segment.id, segment])
+    )
+    const revisionsByRoot = new Map<string, ConversationMessageNode[]>()
+    for (const message of conversationGraph?.messages ?? []) {
+      if (message.role !== 'user' || !message.revisionRootMessageId) continue
+      const revisions = revisionsByRoot.get(message.revisionRootMessageId) ?? []
+      revisions.push(message)
+      revisionsByRoot.set(message.revisionRootMessageId, revisions)
+    }
+    for (const revisions of revisionsByRoot.values()) {
+      revisions.sort(
+        (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+      )
+    }
+    return {
+      conversationMessageById: messageById,
+      runtimeSegmentById: segmentById,
+      revisionsByRootMessageId: revisionsByRoot
+    }
+  }, [conversationGraph])
+  const messageCreatedAtById = useMemo(
+    () => new Map(activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []),
+    [activeSession?.messages]
   )
 
   // Counts the user turns after each message; the destructive-resend warning keys off turns, not
   // raw message count, so a single follow-up turn stays warning-free.
-  const subsequentTurnCountByMessageId = new Map<string, number>()
-  if (activeSession) {
+  const subsequentTurnCountByMessageId = useMemo(() => {
+    const counts = new Map<string, number>()
     let subsequentTurns = 0
-    for (let index = activeSession.messages.length - 1; index >= 0; index -= 1) {
-      const message = activeSession.messages[index]
-      subsequentTurnCountByMessageId.set(message.id, subsequentTurns)
+    for (let index = (activeSession?.messages.length ?? 0) - 1; index >= 0; index -= 1) {
+      const message = activeSession?.messages[index]
+      if (!message) continue
+      counts.set(message.id, subsequentTurns)
       if (message.role === 'user') subsequentTurns += 1
     }
-  }
+    return counts
+  }, [activeSession?.messages])
 
   // Build a map from job_id → JobSummary for all session jobs (used in binding)
   const sessionJobs = useMemo((): JobSummary[] => {
@@ -865,18 +893,15 @@ const WorkspaceMessageScrollerImpl = ({
   const { jobsByActivityId, boundJobIds } = useMemo(() => {
     const byActivityId = new Map<string, JobSummary>()
     const bound = new Set<string>()
+    const jobsByJobId = new Map(sessionJobs.map((job) => [job.job_id, job]))
 
-    const allActivities = activeSession?.activities ?? []
-    for (const job of sessionJobs) {
-      // Scan all activities for this job_id
-      for (const activity of allActivities) {
-        const extracted = extractJobIdFromActivity(activity)
-        if (extracted === job.job_id) {
-          byActivityId.set(job.job_id, job)
-          bound.add(job.job_id)
-          break // Found — no need to scan further activities for this job
-        }
-      }
+    for (const activity of activeSession?.activities ?? []) {
+      const jobId = extractJobIdFromActivity(activity)
+      if (!jobId) continue
+      const job = jobsByJobId.get(jobId)
+      if (!job) continue
+      byActivityId.set(jobId, job)
+      bound.add(jobId)
     }
 
     return { jobsByActivityId: byActivityId, boundJobIds: bound }
@@ -1187,14 +1212,9 @@ const WorkspaceMessageScrollerImpl = ({
                   const artifacts = artifactVisibility.artifactsForMessage(item.message)
                   // Jobs pre-assigned to this slot: each job appears in exactly one slot.
                   const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
-                  const graph = activeSession?.conversationGraph
-                  const messageNode = graph?.messages.find(
-                    (message) => message.id === item.message.id
-                  )
+                  const messageNode = conversationMessageById.get(item.message.id)
                   const runtimeSegment = messageNode?.runtimeSegmentId
-                    ? graph?.runtimeSegments.find(
-                        (segment) => segment.id === messageNode.runtimeSegmentId
-                      )
+                    ? runtimeSegmentById.get(messageNode.runtimeSegmentId)
                     : undefined
                   // Legacy sessions synthesize this segment with a fallback framework. Keep only
                   // the session-level values that were actually persisted.
@@ -1209,16 +1229,7 @@ const WorkspaceMessageScrollerImpl = ({
                     ? messageNode?.revisionRootMessageId
                     : undefined
                   const revisions = revisionRootMessageId
-                    ? (graph?.messages
-                        .filter(
-                          (message) =>
-                            message.role === 'user' &&
-                            message.revisionRootMessageId === revisionRootMessageId
-                        )
-                        .sort(
-                          (left, right) =>
-                            left.createdAt - right.createdAt || left.id.localeCompare(right.id)
-                        ) ?? [])
+                    ? (revisionsByRootMessageId.get(revisionRootMessageId) ?? [])
                     : []
                   const revisionIndex = revisions.findIndex(
                     (message) => message.id === item.message.id
@@ -1331,14 +1342,9 @@ const WorkspaceMessageScrollerImpl = ({
                 }
 
                 if (item.type === 'turn-completion') {
-                  const graph = activeSession?.conversationGraph
-                  const messageNode = graph?.messages.find(
-                    (message) => message.id === item.message.id
-                  )
+                  const messageNode = conversationMessageById.get(item.message.id)
                   const runtimeSegment = messageNode?.runtimeSegmentId
-                    ? graph?.runtimeSegments.find(
-                        (segment) => segment.id === messageNode.runtimeSegmentId
-                      )
+                    ? runtimeSegmentById.get(messageNode.runtimeSegmentId)
                     : undefined
                   const synthesizedLegacyRuntime =
                     runtimeSegment?.id === `runtime-segment-${activeSession?.id}` &&
