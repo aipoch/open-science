@@ -4029,6 +4029,48 @@ describe('ConversationPanel fix loop lock', () => {
     ).toContain('Specialist B')
   })
 
+  it('keeps the Specialist control visible while switching back to Main Agent', () => {
+    useSpecialistStore.setState({
+      items: [
+        {
+          kind: 'custom',
+          id: 'specialist-a',
+          name: 'SPECIALIST_A',
+          displayName: 'Specialist A',
+          colorKey: 'blue',
+          description: 'Currently applied.',
+          systemPrompt: 'Help the user.',
+          enabled: true,
+          capabilityMode: 'full',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        }
+      ],
+      isLoaded: true
+    })
+
+    renderPanel({
+      view: {
+        activeSession: { ...idleSession, specialistId: 'specialist-a' }
+      },
+      specialist: {
+        view: {
+          specialist: {
+            historyId: undefined,
+            barrierInFlight: true
+          }
+        }
+      }
+    })
+
+    expect(
+      container
+        .querySelector('[data-testid="composer-specialist-picker-trigger"]')
+        ?.getAttribute('aria-label')
+    ).toContain('Specialist A')
+  })
+
   it('cancel button is visible when session is running and calls onCancelRun', () => {
     const onCancelRun = vi.fn()
     const runningSession: ChatSession = {

@@ -455,7 +455,7 @@ const ConversationPanel = ({
   const { unavailableReason: subagentUnavailableReason, stop: onStopSubagents } = subagents
   const specialistId = activeSession
     ? specialist.view.specialist.barrierInFlight
-      ? specialist.view.specialist.historyId
+      ? (specialist.view.specialist.historyId ?? activeSession.specialistId)
       : activeSession.specialistId
     : specialist.view.specialist.newConversationId
   const specialistUnavailable = specialist.view.specialist.unavailable
