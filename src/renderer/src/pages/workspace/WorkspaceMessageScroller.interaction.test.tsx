@@ -3608,6 +3608,47 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.textContent).toContain('oldest transcript sentinel')
   })
 
+  it('prefetches older transcript items before upward scrolling reaches the top edge', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `prefetch-message-${index + 1}`,
+        role: index % 2 === 0 ? 'user' : 'agent',
+        content:
+          index === 159 ? 'prefetched transcript sentinel' : `prefetch transcript ${index + 1}`,
+        responseToMessageId: index % 2 === 0 ? undefined : `prefetch-message-${index}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).not.toContain('prefetched transcript sentinel')
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, value: 10_000 },
+      scrollTop: { configurable: true, writable: true, value: 900 }
+    })
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+
+    if (viewport) viewport.scrollTop = 700
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+
+    expect(container.textContent).toContain('prefetched transcript sentinel')
+  })
+
   it('reveals the full transcript only while whole-window find is open', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const messages = Array.from({ length: 120 }, (_, index) =>
@@ -3743,6 +3784,19 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     await render([...history, prompt, streamingAnswer, bufferedPrompt, bufferedAnswer])
 
     expect(container.textContent).not.toContain('presentation history oldest sentinel')
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, value: 10_000 },
+      scrollTop: { configurable: true, writable: true, value: 900 }
+    })
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    if (viewport) viewport.scrollTop = 700
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    expect(container.textContent).not.toContain('presentation history oldest sentinel')
+
     const oldestRun = document.body.querySelector<HTMLButtonElement>('[aria-label^="Go to run 1:"]')
     expect(oldestRun).not.toBeNull()
     expect(oldestRun?.disabled).toBe(true)
