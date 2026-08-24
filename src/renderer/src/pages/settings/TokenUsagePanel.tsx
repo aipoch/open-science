@@ -1,4 +1,4 @@
-import { ChartNoAxesCombined, Info } from 'lucide-react'
+import { ChartNoAxesCombined, Info, Loader2, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -10,7 +10,9 @@ import type { Project } from '../../../../shared/projects'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useRelativeTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
+import { SettingsIconAction } from './SettingsLayout'
 import {
   buildTokenUsageAnalytics,
   buildTokenUsageAnalyticsFromProjection,
@@ -31,9 +33,9 @@ type TokenUsagePanelProps = {
 }
 
 type UsageProjectionLoadResult = Readonly<{
-  requestKey: string
   projection?: SessionUsageProjection
   failed?: boolean
+  lastRefreshedAt?: number
 }>
 
 const PERIODS: ReadonlyArray<{ value: TokenUsagePeriod; label: string; shortLabel: string }> = [
@@ -86,6 +88,7 @@ function TokenUsagePanel({
   now: providedNow
 }: TokenUsagePanelProps): React.JSX.Element {
   const { t, i18n } = useTranslation()
+  const formatRelative = useRelativeTimeFormat()
   const [currentTime, setCurrentTime] = useState(() => Date.now())
   const now = providedNow ?? currentTime
   const [period, setPeriod] = useState<TokenUsagePeriod>('30-days')
@@ -94,25 +97,12 @@ function TokenUsagePanel({
     useState<UsageProjectionLoadResult>()
   const [usageProjectionLoadAttempt, setUsageProjectionLoadAttempt] = useState(0)
   const canLoadUsageProjection = typeof window.api?.sessions?.loadUsage === 'function'
-  const usageRevision = sessions
-    .map((session) => `${session.id}:${session.revision ?? 0}`)
-    .join('\u0000')
-  const projectRevision = projects
-    .map((project) => `${project.id}:${project.createdAt}`)
-    .sort()
-    .join('\u0000')
-  const usageProjectionRequestKey = [
-    usageRevision,
-    projectRevision,
-    usageProjectionLoadAttempt
-  ].join('\u0001')
-  const currentUsageProjectionLoadResult =
-    usageProjectionLoadResult?.requestKey === usageProjectionRequestKey
-      ? usageProjectionLoadResult
-      : undefined
-  const usageProjection = currentUsageProjectionLoadResult?.projection
-  const usageProjectionLoadSettled = currentUsageProjectionLoadResult !== undefined
-  const usageProjectionLoadFailed = currentUsageProjectionLoadResult?.failed === true
+  const [isUsageProjectionRefreshing, setIsUsageProjectionRefreshing] =
+    useState(canLoadUsageProjection)
+  const usageProjection = usageProjectionLoadResult?.projection
+  const usageProjectionLoadSettled = usageProjectionLoadResult !== undefined
+  const usageProjectionLoadFailed = usageProjectionLoadResult?.failed === true
+  const lastRefreshedAt = usageProjectionLoadResult?.lastRefreshedAt
 
   useEffect(() => {
     const loadUsage = window.api?.sessions?.loadUsage
@@ -120,17 +110,21 @@ function TokenUsagePanel({
     let active = true
     void loadUsage()
       .then((projection) => {
-        if (active)
-          setUsageProjectionLoadResult({ requestKey: usageProjectionRequestKey, projection })
+        if (!active) return
+        const refreshedAt = Date.now()
+        setUsageProjectionLoadResult({ projection, lastRefreshedAt: refreshedAt })
+        setCurrentTime(refreshedAt)
       })
       .catch(() => {
-        if (active)
-          setUsageProjectionLoadResult({ requestKey: usageProjectionRequestKey, failed: true })
+        if (active) setUsageProjectionLoadResult((current) => ({ ...current, failed: true }))
+      })
+      .finally(() => {
+        if (active) setIsUsageProjectionRefreshing(false)
       })
     return () => {
       active = false
     }
-  }, [usageProjectionRequestKey])
+  }, [usageProjectionLoadAttempt])
 
   useEffect(() => {
     if (providedNow !== undefined) return
@@ -274,7 +268,15 @@ function TokenUsagePanel({
       output: formatNumber(point.outputTokens)
     })
 
-  if (canLoadUsageProjection && usageProjectionLoadFailed) {
+  const refreshUsageProjection = (): void => {
+    setIsUsageProjectionRefreshing(true)
+    setUsageProjectionLoadResult((current) =>
+      current?.projection ? { ...current, failed: false } : undefined
+    )
+    setUsageProjectionLoadAttempt((attempt) => attempt + 1)
+  }
+
+  if (canLoadUsageProjection && usageProjectionLoadFailed && usageProjection === undefined) {
     return (
       <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
         <div role="alert" data-slot="token-usage-load-error" className="px-4 py-6 sm:px-5">
@@ -284,7 +286,7 @@ function TokenUsagePanel({
             variant="outline"
             size="sm"
             className="mt-3"
-            onClick={() => setUsageProjectionLoadAttempt((attempt) => attempt + 1)}
+            onClick={refreshUsageProjection}
           >
             {t('Try again')}
           </Button>
@@ -311,7 +313,7 @@ function TokenUsagePanel({
     <TooltipProvider delayDuration={200}>
       <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
         <section className="flex flex-col gap-5 px-4 pb-5 pt-6 sm:px-5">
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <div className="min-w-0 max-w-xl">
               <h1 className="min-w-0 text-xl font-semibold tracking-tight text-foreground [overflow-wrap:anywhere]">
                 {t('Token usage')}
@@ -323,7 +325,7 @@ function TokenUsagePanel({
             <div
               role="group"
               aria-label={t('Time range')}
-              className="grid w-full grid-cols-4 gap-1 rounded-lg bg-muted p-1 sm:w-auto"
+              className="grid w-full grid-cols-4 gap-1 rounded-lg bg-muted p-1 lg:w-auto"
             >
               {PERIODS.map((item) => (
                 <Button
@@ -347,8 +349,59 @@ function TokenUsagePanel({
             </div>
           </div>
 
+          {canLoadUsageProjection ? (
+            <div className="-mt-2 flex min-h-7 items-center justify-between gap-3">
+              <p
+                role="status"
+                aria-live="polite"
+                className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+              >
+                {isUsageProjectionRefreshing ? (
+                  <>
+                    <Loader2
+                      className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                    <span className="font-medium text-foreground">{t('Refreshing…')}</span>
+                    {lastRefreshedAt ? (
+                      <span className="truncate">
+                        ·{' '}
+                        {t('Updated {{time}}', {
+                          time: formatRelative(lastRefreshedAt, currentTime)
+                        })}
+                      </span>
+                    ) : null}
+                  </>
+                ) : lastRefreshedAt ? (
+                  <span>
+                    {t('Updated {{time}}', {
+                      time: formatRelative(lastRefreshedAt, currentTime)
+                    })}
+                  </span>
+                ) : null}
+              </p>
+              <SettingsIconAction
+                label={t('Refresh')}
+                icon={RefreshCw}
+                disabled={isUsageProjectionRefreshing}
+                className={
+                  isUsageProjectionRefreshing
+                    ? '[&_svg]:animate-spin motion-reduce:[&_svg]:animate-none'
+                    : ''
+                }
+                onClick={refreshUsageProjection}
+              />
+            </div>
+          ) : null}
+
+          {usageProjectionLoadFailed ? (
+            <p role="alert" className="-mt-2 text-xs text-destructive">
+              {t('Could not load token usage.')}
+            </p>
+          ) : null}
+
           <div data-slot="token-usage-summary" className="border-y border-border py-5">
-            <div className="grid grid-cols-2 gap-x-5 gap-y-5 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-x-5 gap-y-5 lg:grid-cols-4">
               {tokenSummaryItems.map((item) => (
                 <div key={item.label} className="min-w-0">
                   <p
@@ -378,7 +431,7 @@ function TokenUsagePanel({
               ))}
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-x-5 gap-y-5 sm:grid-cols-4">
+            <div className="mt-5 grid grid-cols-2 gap-x-5 gap-y-5 lg:grid-cols-4">
               {entitySummaryItems.map((item) => (
                 <div key={item.totalLabel} className="grid min-w-0 gap-5">
                   {item.newLabel && item.newValue ? (
