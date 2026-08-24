@@ -273,7 +273,7 @@ type SettingsGroup = {
   // Absent for the bottom-pinned group, which renders no heading at all. The union rather than `string`
   // is deliberate: a group added later cannot compile until its heading is a known catalog key, so it
   // can never reach the nav as a raw untranslated label.
-  labelKey?: 'Capabilities' | 'Workspace' | 'Remote access'
+  labelKey?: 'Capabilities' | 'Workspace'
   panels: ReadonlyArray<SettingsPanel>
   bottom?: boolean
 }
@@ -298,18 +298,9 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'permissions', labelKey: 'Permissions', Icon: LockKeyhole },
       { id: 'runtimes', labelKey: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', labelKey: 'Storage', Icon: Cloud },
+      { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
       { id: 'usage', labelKey: 'Usage', Icon: ChartNoAxesCombined },
       { id: 'general', labelKey: 'General', Icon: Settings2 }
-    ]
-  },
-  {
-    labelKey: 'Remote access',
-    panels: [
-      {
-        id: 'remote-control',
-        labelKey: 'Remote control',
-        Icon: MonitorSmartphone
-      }
     ]
   },
   {

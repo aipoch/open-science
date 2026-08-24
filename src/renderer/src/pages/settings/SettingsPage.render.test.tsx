@@ -646,14 +646,14 @@ describe('SettingsPage layout', () => {
     const feedback = document.body.querySelector<HTMLAnchorElement>(
       `nav[aria-label="Settings"] a[href="${APP.links.githubFeedback}"]`
     )
-    const remoteControl = navButton('Remote control')
+    const remote = navButton('Remote')
     const navItems = Array.from(document.body.querySelectorAll('nav[aria-label="Settings"] li'))
 
     expect(archived?.parentElement?.parentElement?.parentElement?.className).toContain('mt-auto')
     expect(feedback?.textContent?.trim()).toBe('Feedback')
     expect(feedback?.target).toBe('_blank')
     expect(navItems.indexOf(feedback?.parentElement as HTMLLIElement)).toBeGreaterThan(
-      navItems.indexOf(remoteControl?.parentElement as HTMLLIElement)
+      navItems.indexOf(remote?.parentElement as HTMLLIElement)
     )
     expect(navItems.indexOf(feedback?.parentElement as HTMLLIElement)).toBeLessThan(
       navItems.indexOf(archived?.parentElement as HTMLLIElement)
@@ -722,8 +722,8 @@ describe('SettingsPage layout', () => {
     expect(dialog?.className).toContain('overscroll-contain')
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
-    // and Workspace (Model, Agent, Tags, Permissions, Runtimes, Storage, Usage, General).
-    // Remote access stays isolated; Feedback and Archived are anchored at the navigation bottom.
+    // and Workspace (Model, Agent, Tags, Permissions, Runtimes, Storage, Remote, Usage, General).
+    // Feedback and Archived are anchored at the navigation bottom.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -734,7 +734,7 @@ describe('SettingsPage layout', () => {
     expect(nav?.parentElement?.nextElementSibling?.className).toContain('bg-card')
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
-    expect(nav?.textContent).toContain('Remote access')
+    expect(nav?.textContent).not.toContain('Remote access')
     const navItems = nav?.querySelectorAll('li') ?? []
     expect(navItems).toHaveLength(16)
     expect(navItems[0]?.textContent).toContain('Skills')
@@ -748,9 +748,9 @@ describe('SettingsPage layout', () => {
     expect(navItems[8]?.textContent).toContain('Permissions')
     expect(navItems[9]?.textContent).toContain('Runtimes')
     expect(navItems[10]?.textContent).toContain('Storage')
-    expect(navItems[11]?.textContent).toContain('Usage')
-    expect(navItems[12]?.textContent).toContain('General')
-    expect(navItems[13]?.textContent).toContain('Remote control')
+    expect(navItems[11]?.textContent?.trim()).toBe('Remote')
+    expect(navItems[12]?.textContent).toContain('Usage')
+    expect(navItems[13]?.textContent).toContain('General')
     expect(navItems[14]?.textContent).toContain('Feedback')
     expect(navItems[15]?.textContent).toContain('Archived')
     const modelNavButton = navButton('Model')
@@ -1628,12 +1628,12 @@ describe('SettingsPage layout', () => {
     ).toHaveBeenCalledTimes(1)
   })
 
-  it('opens the isolated Remote control panel with three scenario-based access modes', async () => {
+  it('opens the Remote panel with three scenario-based access modes', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
 
-    const remoteTab = navButton('Remote control')
+    const remoteTab = navButton('Remote')
     expect(remoteTab).not.toBeUndefined()
 
     await act(async () => remoteTab?.click())
@@ -1719,7 +1719,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(document.body.textContent).not.toContain('Loading remote access')
     expect(document.body.textContent).toContain('Remote access is unavailable.')
@@ -1749,7 +1749,7 @@ describe('SettingsPage layout', () => {
     )
   })
 
-  it('does not detect after leaving Remote control during the initial snapshot load', async () => {
+  it('does not detect after leaving the Remote panel during the initial snapshot load', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
@@ -1779,7 +1779,7 @@ describe('SettingsPage layout', () => {
     )
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     expect(document.body.textContent).toContain('Loading remote access')
 
     act(() => navButton('Model')?.click())
@@ -1792,7 +1792,7 @@ describe('SettingsPage layout', () => {
     expect(remoteAccess.detect).not.toHaveBeenCalled()
   })
 
-  it('does not detect after leaving Remote control during an initial-load retry', async () => {
+  it('does not detect after leaving the Remote panel during an initial-load retry', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
@@ -1824,7 +1824,7 @@ describe('SettingsPage layout', () => {
       )
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     const retryButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
       button.textContent?.includes('Try again')
     )
@@ -1840,7 +1840,7 @@ describe('SettingsPage layout', () => {
     expect(remoteAccess.detect).not.toHaveBeenCalled()
   })
 
-  it('reuses the Remote control snapshot when the panel is reopened within 60 seconds', async () => {
+  it('reuses the remote access snapshot when the panel is reopened within 60 seconds', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
@@ -1865,15 +1865,15 @@ describe('SettingsPage layout', () => {
     remoteAccess.detect.mockResolvedValue(manageableSnapshot)
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     await act(async () => navButton('Model')?.click())
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(remoteAccess.getSnapshot).toHaveBeenCalledOnce()
     expect(remoteAccess.detect).toHaveBeenCalledOnce()
   })
 
-  it('invalidates the Remote control cache when a pairing request arrives while the panel is closed', async () => {
+  it('invalidates the remote access cache when a pairing request arrives while the panel is closed', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
@@ -1912,12 +1912,12 @@ describe('SettingsPage layout', () => {
       .mockResolvedValueOnce(updatedSnapshot)
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     await act(async () => navButton('Model')?.click())
 
     const lifecycleListener = remoteAccess.onChanged.mock.calls[0]?.[0] as (() => void) | undefined
     act(() => lifecycleListener?.())
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(remoteAccess.getSnapshot).toHaveBeenCalledTimes(2)
     expect(document.body.textContent).toContain('Safari · macOS')
@@ -1965,7 +1965,7 @@ describe('SettingsPage layout', () => {
     )
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     expect(remoteAccess.detect).toHaveBeenCalledOnce()
 
     const lifecycleListener = remoteAccess.onChanged.mock.calls[0]?.[0] as (() => void) | undefined
@@ -2034,7 +2034,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     const remoteItMode = document.body.querySelector<HTMLInputElement>(
       'input[name="remote-access-mode"][aria-label="App access"]'
     )
@@ -2145,7 +2145,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(document.body.textContent).toContain('The remote access app is not connected')
     expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
@@ -2181,7 +2181,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(
       document.body.querySelector<HTMLInputElement>(
@@ -2256,7 +2256,7 @@ describe('SettingsPage layout', () => {
       await act(async () => {
         root.render(<SettingsPage open onClose={vi.fn()} />)
       })
-      await act(async () => navButton('Remote control')?.click())
+      await act(async () => navButton('Remote')?.click())
 
       expect(document.body.textContent).toContain('Chrome on iOS · iOS/iPadOS')
       expect(document.body.textContent).toContain('Google Chrome · Windows')
@@ -2313,7 +2313,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(document.body.textContent).toContain('Remote App Access')
     expect(document.body.textContent).not.toContain('127.0.0.1:44100')
@@ -2379,7 +2379,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     const readyBadge = Array.from(
       settingsSection('Remote App Access')?.querySelectorAll('[data-slot="badge"]') ?? []
@@ -2431,7 +2431,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(document.body.textContent).toContain('Browser access is on')
     expect(document.body.textContent).toContain('Remote Browser Access')
@@ -2493,7 +2493,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     const copyButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Copy'
     )
@@ -2542,7 +2542,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(document.body.textContent).toContain('Detect again')
     expect(document.body.textContent).toContain('added once')
