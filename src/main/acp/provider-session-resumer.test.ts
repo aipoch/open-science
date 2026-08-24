@@ -71,8 +71,12 @@ type HarnessOptions = {
   invalidateDuringResume?: boolean
   observerError?: Error
   projectAgentContext?: string
+  providerSessionId?: string
   resumeError?: unknown
-  specialistIdentity?: { append: string; prefix: string } | null
+  specialistIdentity?:
+    | { append: string; prefix: string }
+    | ((specialistId: string) => { append: string; prefix: string } | undefined)
+    | null
   specialistSkills?: EffectiveSpecialistSkills
   supportsResume?: boolean
 }
@@ -123,7 +127,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
   }
   let currentBackend = capturingBackend
   const providerSession = {
-    sessionId: 'provider-session',
+    sessionId: options.providerSessionId ?? 'provider-session',
     dispose: vi.fn(() => order.push('session dispose'))
   } as unknown as ActiveSession
   const successorSession = {
@@ -278,7 +282,11 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     clearLivePermissionProfile,
     ...('specialistIdentity' in options
       ? {
-          resolveSpecialistIdentity: vi.fn(async () => options.specialistIdentity ?? undefined)
+          resolveSpecialistIdentity: vi.fn(async (specialistId: string) =>
+            typeof options.specialistIdentity === 'function'
+              ? options.specialistIdentity(specialistId)
+              : (options.specialistIdentity ?? undefined)
+          )
         }
       : {}),
     ...(options.specialistSkills
@@ -905,32 +913,54 @@ describe('AcpProviderSessionResumer', () => {
     })
   })
 
-  it('does not overwrite a newer Specialist binding while compatible resume is in flight', async () => {
-    const harness = createHarness({
-      initialBackend: opencodeBackend,
-      specialistIdentity: { append: '', prefix: 'Old Specialist prefix' }
-    })
-    const aggregate = harness.registry.ensureAffinity('stable-app-session').aggregate
-    aggregate.setSpecialistId('old-specialist')
-    aggregate.setSpecialistPrefix('Old Specialist prefix')
-    const providerResume = Promise.withResolvers<{ sessionId: string }>()
-    harness.request.mockImplementationOnce(() => providerResume.promise)
+  it.each([
+    { name: 'OpenCode', backend: opencodeBackend, providerSessionId: 'provider-session' },
+    {
+      name: 'Codex',
+      backend: codexResponsesBackend,
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    }
+  ])(
+    'reconciles a newer $name Specialist binding without replay or another resume',
+    async ({ backend: turnPrefixBackend, providerSessionId }) => {
+      const harness = createHarness({
+        initialBackend: turnPrefixBackend,
+        providerSessionId,
+        specialistIdentity: (specialistId) => ({
+          append: '',
+          prefix:
+            specialistId === 'new-specialist' ? 'New Specialist prefix' : 'Old Specialist prefix'
+        })
+      })
+      const aggregate = harness.registry.ensureAffinity('stable-app-session').aggregate
+      aggregate.setSpecialistId('old-specialist')
+      aggregate.setSpecialistPrefix('Old Specialist prefix')
+      const providerResume = Promise.withResolvers<{ sessionId: string }>()
+      harness.request.mockImplementationOnce(() => providerResume.promise)
 
-    const resumed = harness.resume({
-      previousFrameworkId: 'opencode',
-      previousBackendId: opencodeBackend.backendId
-    })
-    await vi.waitFor(() => expect(harness.request).toHaveBeenCalledOnce())
-    aggregate.setSpecialistId('new-specialist')
-    aggregate.setSpecialistPrefix('New Specialist prefix')
-    providerResume.resolve({ sessionId: 'provider-session' })
+      const resumed = harness.resume({
+        providerSessionId,
+        previousFrameworkId: turnPrefixBackend.framework.id,
+        previousBackendId: turnPrefixBackend.backendId
+      })
+      await vi.waitFor(() => expect(harness.request).toHaveBeenCalledOnce())
+      aggregate.setSpecialistId('new-specialist')
+      aggregate.setSpecialistPrefix('New Specialist prefix')
+      providerResume.resolve({ sessionId: providerSessionId })
 
-    await expect(resumed).rejects.toThrow('ACP session startup was superseded.')
-    expect(aggregate.snapshot()).toMatchObject({
-      specialistId: 'new-specialist',
-      specialistPrefix: 'New Specialist prefix'
-    })
-  })
+      await expect(resumed).resolves.toMatchObject({
+        sessionId: 'stable-app-session',
+        providerSessionId
+      })
+      expect(aggregate.snapshot()).toMatchObject({
+        specialistId: 'new-specialist',
+        specialistPrefix: 'New Specialist prefix'
+      })
+      expect(harness.request).toHaveBeenCalledOnce()
+      expect(harness.attachSession).toHaveBeenCalledOnce()
+      expect(harness.providerSession.dispose).not.toHaveBeenCalled()
+    }
+  )
 
   it('fails closed before provider resume when a bound Specialist is unavailable', async () => {
     const harness = createHarness({

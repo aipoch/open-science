@@ -21,7 +21,10 @@ import {
   type SessionCapabilityProvision
 } from './session-capability-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
-import { AcpSessionPresentationPolicy } from './session-presentation-policy'
+import {
+  AcpSessionPresentationPolicy,
+  type AcpSessionSetupPresentation
+} from './session-presentation-policy'
 import type {
   AcpPrimarySessionIdentityReservation,
   AcpPrimarySessionIdentityReservationResult,
@@ -303,30 +306,43 @@ export class AcpProviderSessionResumer {
         sessionCwd: cwd,
         projectId
       })
+      const capabilityDescriptor = capability.descriptor
       const existingAggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
-      const specialistBindingRevision = existingAggregate?.specialistBindingRevision() ?? 0
-      const specialistId = request.specialistId ?? existingAggregate?.snapshot().specialistId
-      const [specialistIdentity, specialistSkills] = await Promise.all([
-        this.resolveSpecialistIdentity(specialistId, backend),
-        this.resolveSpecialistSkills(specialistId)
-      ])
+      let specialistBindingRevision = existingAggregate?.specialistBindingRevision() ?? 0
+      let specialistId = request.specialistId ?? existingAggregate?.snapshot().specialistId
       const projectContextAppend = await this.resolveProjectAgentContext(projectId)
-      const setup = this.presentation.buildSessionSetup({
-        framework: backend.framework,
-        tooling: {
-          artifacts: capability.descriptor.capabilities.includes('artifacts'),
-          notebook: capability.descriptor.capabilities.includes('notebook'),
-          skillImport: capability.descriptor.capabilities.includes('skill-import')
-        },
-        role: capability.descriptor.role,
-        backendSystemPromptAppends: backend.prompt.systemPromptAppends,
-        extraSystemPromptAppends: [projectContextAppend, specialistIdentity?.append].filter(
-          (append): append is string => Boolean(append)
-        ),
-        persistentSystemPrompt: backend.prompt.persistentSystemPrompt,
-        sessionOptions: backend.session.options,
-        specialistSkills
-      })
+      const resolveSpecialistProjection = async (
+        currentSpecialistId: string | undefined,
+        currentBackend: AcpBackendGenerationView
+      ): Promise<{
+        identity: { append: string; prefix: string } | undefined
+        setup: AcpSessionSetupPresentation
+      }> => {
+        const [identity, skills] = await Promise.all([
+          this.resolveSpecialistIdentity(currentSpecialistId, currentBackend),
+          this.resolveSpecialistSkills(currentSpecialistId)
+        ])
+        return {
+          identity,
+          setup: this.presentation.buildSessionSetup({
+            framework: currentBackend.framework,
+            tooling: {
+              artifacts: capabilityDescriptor.capabilities.includes('artifacts'),
+              notebook: capabilityDescriptor.capabilities.includes('notebook'),
+              skillImport: capabilityDescriptor.capabilities.includes('skill-import')
+            },
+            role: capabilityDescriptor.role,
+            backendSystemPromptAppends: currentBackend.prompt.systemPromptAppends,
+            extraSystemPromptAppends: [projectContextAppend, identity?.append].filter(
+              (append): append is string => Boolean(append)
+            ),
+            persistentSystemPrompt: currentBackend.prompt.persistentSystemPrompt,
+            sessionOptions: currentBackend.session.options,
+            specialistSkills: skills
+          })
+        }
+      }
+      let specialistProjection = await resolveSpecialistProjection(specialistId, backend)
 
       let resumeResponse: unknown
       try {
@@ -334,7 +350,7 @@ export class AcpProviderSessionResumer {
           sessionId: providerSessionId,
           cwd,
           mcpServers: capability.mcpServers,
-          ...setup.metaArg
+          ...specialistProjection.setup.metaArg
         })
       } catch (error) {
         const failure = this.policy.classifyFailure(error, {
@@ -396,7 +412,17 @@ export class AcpProviderSessionResumer {
         const currentSpecialistBindingRevision =
           this.deps.registry.lookup(request.sessionId)?.aggregate.specialistBindingRevision() ?? 0
         if (currentSpecialistBindingRevision !== specialistBindingRevision) {
-          throw new Error('ACP session startup was superseded.')
+          // These frameworks carry Specialist identity and scope in turn prefixes, so an in-flight
+          // switch can be reconciled locally without disposing, resuming again, or replaying the
+          // persisted provider Session. Session-metadata backends still require replacement.
+          if (backend.framework.id === 'claude-code') {
+            throw new Error('ACP session startup was superseded.')
+          }
+          const currentAggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
+          specialistBindingRevision = currentAggregate?.specialistBindingRevision() ?? 0
+          specialistId = currentAggregate?.snapshot().specialistId
+          specialistProjection = await resolveSpecialistProjection(specialistId, backend)
+          continue
         }
         const { aggregate } = this.deps.registry.publish(identity, request.sessionId, {
           session: provisionalSession,
@@ -408,8 +434,8 @@ export class AcpProviderSessionResumer {
           appliedModel: configuration.appliedModel,
           configOptions: structuredClone(configuration.configOptions)
         })
-        aggregate.setSessionSetupPromptPrefix(setup.promptPrefix)
-        aggregate.setSpecialistPrefix(specialistIdentity?.prefix || undefined)
+        aggregate.setSessionSetupPromptPrefix(specialistProjection.setup.promptPrefix)
+        aggregate.setSpecialistPrefix(specialistProjection.identity?.prefix || undefined)
         aggregate.setSpecialistId(specialistId)
         capability.commit(request.sessionId)
         capability = undefined
