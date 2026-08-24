@@ -8,10 +8,8 @@ import type { StoreApi } from 'zustand'
 
 import type { ElicitationProjection } from '../../../shared/acp'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
-import {
-  DEFAULT_PERMISSION_PROFILE,
-  type PermissionProfileId
-} from '../../../shared/permission-profiles'
+import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
+import type { PermissionProfileId } from '../../../shared/permission-profiles'
 import {
   INTERRUPTED_SESSION_ERROR,
   materializeSessionConversationGraph,
@@ -116,9 +114,7 @@ export type SessionStoreData = {
   selectedSessionId: string | undefined
 }
 
-export type SessionHydrationSelection = {
-  sessionId: string | undefined
-}
+export type SessionHydrationSelection = { sessionId: string | undefined }
 
 export type ApplyDurableSessionProjectionInput = {
   source: ChatSession
@@ -157,7 +153,6 @@ const markExternallyHydratedSession = (
   externallyHydratedSessionAuthorities.set(session, structuredClone(authority))
 }
 
-// Builds the empty in-memory state used by the app and isolated tests.
 export const createInitialSessionState = (): SessionStoreData => ({
   sessions: [],
   selectedSessionId: undefined

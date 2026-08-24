@@ -19,8 +19,8 @@ import type {
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
-import { projectSessionActionability, type ChatSession } from '@/stores/session-store'
-import { useSessionStore } from '@/stores/session-store'
+import { projectSessionActionability, useSessionStore } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store'
 import {
   hydratePersistedSessionIfPresent,
   loadPersistedSession
@@ -126,7 +126,6 @@ type WorkspaceSessionController = {
 }
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
-// Owns Workspace session transactions and Specialist identity without taking over message dispatch.
 const useWorkspaceSessionController = ({
   activeSession,
   selectedSessionId,
