@@ -4968,6 +4968,25 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(openSettingsToPanel).toHaveBeenCalledWith('agent')
   })
 
+  it('keeps an unrelated session resume failure in the Resume banner', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          interrupted: true,
+          error: 'Agent session resume failed: connection reset'
+        }
+      }
+    })
+
+    expect(container.querySelector('[aria-label="Resume session"]')).not.toBeNull()
+    expect(
+      Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent === 'Agent settings'
+      )
+    ).toBeUndefined()
+  })
+
   it('shows both a transient actionError and the run failure, keeping the Report button', () => {
     // Both present: each error gets its own row, and the run failure keeps its report entry — a
     // transient error must not suppress the ability to report the actual failure.
