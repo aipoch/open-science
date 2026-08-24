@@ -27,6 +27,24 @@ const createPruneResult = (
   previousSelections: []
 })
 type PruneResult = ReturnType<typeof createPruneResult>
+const createCatalog = (
+  sessions: PersistedChatSession[],
+  isComplete: boolean
+): {
+  sessions: PersistedChatSession[]
+  diagnostics: {
+    isComplete: boolean
+    warnings: never[]
+    isProjectDeletionRecoveryComplete: true
+  }
+} => ({
+  sessions,
+  diagnostics: {
+    isComplete,
+    warnings: [],
+    isProjectDeletionRecoveryComplete: true
+  }
+})
 
 describe('SessionEnabledComputeHostsOwner', () => {
   it('projects only the enabled hosts committed by Session authority', async () => {
@@ -180,10 +198,48 @@ describe('SessionEnabledComputeHostsOwner', () => {
       withDataRootWrite: passthroughDataRootWrite
     })
 
-    await owner.reconcile([createSession({ enabledComputeHosts: ['ssh:cluster'] })], true)
+    await owner.hydrateFromSessionCatalog(async () =>
+      createCatalog([createSession({ enabledComputeHosts: ['ssh:cluster'] })], true)
+    )
 
     expect(owner.get('session-1')).toEqual(['ssh:cluster'])
     expect(owner.get('stale-session')).toEqual([])
+  })
+
+  it('keeps a concurrently created Session projected after complete catalog hydration', async () => {
+    const registry = new EnabledComputeHostsRegistry()
+    const catalogLoaded = Promise.withResolvers<void>()
+    const releaseCatalog = Promise.withResolvers<void>()
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry,
+      hostExists: async () => true,
+      listHostIds: async () => ['ssh:cluster'],
+      sessionAuthority: {
+        sessionProjectId: async () => undefined,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        },
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
+      },
+      withDataRootWrite: passthroughDataRootWrite
+    })
+
+    const hydration = owner.hydrateFromSessionCatalog(async () => {
+      const catalog = createCatalog([], true)
+      catalogLoaded.resolve()
+      await releaseCatalog.promise
+      return catalog
+    })
+    await catalogLoaded.promise
+    const creation = owner.createSession(
+      createSession({ enabledComputeHosts: ['ssh:cluster'] }),
+      async (session) => session
+    )
+    releaseCatalog.resolve()
+
+    await Promise.all([hydration, creation])
+
+    expect(owner.get('session-1')).toEqual(['ssh:cluster'])
   })
 
   it('durably prunes missing hosts before replacing a complete cache', async () => {
@@ -206,11 +262,13 @@ describe('SessionEnabledComputeHostsOwner', () => {
     })
 
     await expect(
-      owner.reconcile(
-        [createSession({ enabledComputeHosts: ['ssh:cluster', 'ssh:deleted'] })],
-        true
+      owner.hydrateFromSessionCatalog(async () =>
+        createCatalog(
+          [createSession({ enabledComputeHosts: ['ssh:cluster', 'ssh:deleted'] })],
+          true
+        )
       )
-    ).resolves.toEqual([repaired])
+    ).resolves.toMatchObject({ sessions: [repaired] })
 
     expect(pruneSessionEnabledComputeHosts).toHaveBeenCalledWith(['ssh:cluster'])
     expect(owner.get('session-1')).toEqual(['ssh:cluster'])
@@ -236,7 +294,9 @@ describe('SessionEnabledComputeHostsOwner', () => {
     })
 
     const sessions = [createSession({ enabledComputeHosts: ['ssh:cluster', 'ssh:deleted'] })]
-    await expect(owner.reconcile(sessions, false)).resolves.toEqual(sessions)
+    await expect(
+      owner.hydrateFromSessionCatalog(async () => createCatalog(sessions, false))
+    ).resolves.toMatchObject({ sessions })
 
     expect(pruneSessionEnabledComputeHosts).not.toHaveBeenCalled()
     expect(owner.get('session-1')).toEqual(['ssh:cluster'])
@@ -330,9 +390,8 @@ describe('SessionEnabledComputeHostsOwner', () => {
       withDataRootWrite: passthroughDataRootWrite
     })
 
-    const reconciling = owner.reconcile(
-      [createSession({ enabledComputeHosts: ['ssh:cluster'] })],
-      true
+    const reconciling = owner.hydrateFromSessionCatalog(async () =>
+      createCatalog([createSession({ enabledComputeHosts: ['ssh:cluster'] })], true)
     )
     await vi.waitFor(() => expect(listHostIds).toHaveBeenCalledOnce())
     const clearing = owner.clear(['session-1'])
@@ -425,7 +484,9 @@ describe('SessionEnabledComputeHostsOwner', () => {
       withDataRootWrite: passthroughDataRootWrite
     })
 
-    await expect(owner.reconcile(sessions, true)).resolves.toEqual(sessions)
+    await expect(
+      owner.hydrateFromSessionCatalog(async () => createCatalog(sessions, true))
+    ).resolves.toMatchObject({ sessions })
 
     expect(owner.get('cached-session')).toEqual(['ssh:cached'])
     expect(owner.get('session-1')).toEqual([])

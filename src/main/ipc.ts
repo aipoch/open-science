@@ -68,6 +68,7 @@ import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { createComputeIpcModule } from './compute/ipc'
 import type { ComputeJobOwnerLiveness } from './compute/job-deletion-owner'
 import { AgentComputeService } from './compute/agent-compute-service'
+import { createSessionCatalogHydration } from './compute/session-catalog-hydration'
 import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts-owner'
 import { createComputeJobRuntime } from './compute/job-runtime'
 import { waitForInitialConnectorRefresh } from './connector-reload'
@@ -173,7 +174,6 @@ import {
   createDefaultSessionRepository,
   createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
-  loadSessionsAfterProjectRecovery,
   recoverProjectDeletionsForSessionRead,
   registerSessionPersistenceIpcHandlers
 } from './session-persistence/ipc'
@@ -888,22 +888,17 @@ const createApplicationModules = async (
   // flushed to disk on the session's first save so an approved switch survives an app restart before
   // the next message. Shared by persistSessionSpecialist (stash) and saveSession (flush).
   const pendingSpecialistBindings = new PendingSessionSpecialistBindings()
-  const loadAllSessions = async (): Promise<LoadAllSessionsResult> => {
-    const result = await loadSessionsAfterProjectRecovery(
-      projectDeletionCoordinator,
-      sessionPersistenceCoordinator
-    )
-    if (!sessionEnabledComputeHostsOwnerRef.current) {
-      throw new Error('Session enabled Compute Host ownership is not initialized.')
-    }
-    return {
-      ...result,
-      sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
-        result.sessions,
-        canReconcileSessionAbsences(result)
-      )
-    }
-  }
+  const sessionCatalogHydration = createSessionCatalogHydration({
+    owner: () => {
+      if (!sessionEnabledComputeHostsOwnerRef.current) {
+        throw new Error('Session enabled Compute Host ownership is not initialized.')
+      }
+      return sessionEnabledComputeHostsOwnerRef.current
+    },
+    projectRecovery: projectDeletionCoordinator,
+    sessionLoader: sessionPersistenceCoordinator
+  })
+  const loadAllSessions = (): Promise<LoadAllSessionsResult> => sessionCatalogHydration.loadAll()
   const ensureSessionProjection = async (): Promise<{
     result?: LoadAllSessionsResult
     sessions: SessionSummary[]
@@ -911,29 +906,9 @@ const createApplicationModules = async (
     // Reconcile a JSON write from a committed Project tombstone before deletion recovery removes
     // that temporary authority. Its SQLite facts remain part of retained Project history.
     await sessionRepository.reconcilePendingSessionProjection()
-    const recovery = await recoverProjectDeletionsForSessionRead(
-      projectDeletionCoordinator,
-      sessionPersistenceCoordinator
-    )
-    let readOnlyResult: Promise<LoadAllSessionsResult> | undefined
-    const loadReadOnlyResult = (): Promise<LoadAllSessionsResult> => {
-      readOnlyResult ??= (async () => {
-        if (recovery.isComplete) throw new Error('Read-only Session recovery is unavailable.')
-        if (!sessionEnabledComputeHostsOwnerRef.current) {
-          throw new Error('Session enabled Compute Host ownership is not initialized.')
-        }
-        return {
-          ...recovery.result,
-          sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
-            recovery.result.sessions,
-            false
-          )
-        }
-      })()
-      return readOnlyResult
-    }
+    const recovery = await sessionCatalogHydration.recoverProjectDeletions()
     if (!recovery.isComplete) {
-      const result = await loadReadOnlyResult()
+      const result = recovery.result
       const sessions = await sessionRepository.summarizeReadOnlyAuthority(result)
       await sessionPersistenceCoordinator.replaceSessionMetadata(sessions, false)
       return { result, sessions }
