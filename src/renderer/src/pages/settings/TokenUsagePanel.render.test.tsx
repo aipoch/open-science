@@ -85,6 +85,58 @@ afterEach(() => {
 })
 
 describe('TokenUsagePanel', () => {
+  it('waits for the SQLite projection before displaying initial usage totals', async () => {
+    const now = localTime(2026, 8, 15, 18)
+    let resolveUsage: ((projection: SessionUsageProjection) => void) | undefined
+    const loadUsage = vi.fn(
+      () =>
+        new Promise<SessionUsageProjection>((resolve) => {
+          resolveUsage = resolve
+        })
+    )
+    window.api = { sessions: { loadUsage } } as unknown as Window['api']
+
+    act(() => {
+      root.render(
+        <TokenUsagePanel
+          sessions={[createSession(now)]}
+          projects={[createProject(now)]}
+          now={now}
+        />
+      )
+    })
+
+    expect(document.body.querySelector('[data-slot="token-usage-loading"]')?.textContent).toBe(
+      'Loading…'
+    )
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')).toBeNull()
+
+    await act(async () => {
+      resolveUsage?.({
+        sessionCreatedAt: [now],
+        projectCreatedAt: [now],
+        artifactCreatedAt: [],
+        runsAt: [now],
+        usageEvents: [
+          {
+            timestamp: now,
+            inputTokens: 900,
+            cacheTokens: 90,
+            outputTokens: 9,
+            rootRunUsage: true
+          }
+        ],
+        totalArtifacts: 0
+      })
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[data-slot="token-usage-loading"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
+      'Total tokens999'
+    )
+  })
+
   it('refreshes the SQLite usage projection after a durable Session revision changes', async () => {
     const now = localTime(2026, 8, 15, 18)
     const projection = (inputTokens: number): SessionUsageProjection => ({

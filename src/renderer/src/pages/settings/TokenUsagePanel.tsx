@@ -85,6 +85,8 @@ function TokenUsagePanel({
   const [period, setPeriod] = useState<TokenUsagePeriod>('30-days')
   const [heatmapMetric, setHeatmapMetric] = useState<TokenUsageHeatmapMetric>('totalTokens')
   const [usageProjection, setUsageProjection] = useState<SessionUsageProjection>()
+  const [usageProjectionLoadSettled, setUsageProjectionLoadSettled] = useState(false)
+  const canLoadUsageProjection = typeof window.api?.sessions?.loadUsage === 'function'
   const usageRevision = sessions
     .map((session) => `${session.id}:${session.revision ?? 0}`)
     .join('\u0000')
@@ -102,6 +104,9 @@ function TokenUsagePanel({
         if (active) setUsageProjection(projection)
       })
       .catch(() => undefined)
+      .finally(() => {
+        if (active) setUsageProjectionLoadSettled(true)
+      })
     return () => {
       active = false
     }
@@ -248,6 +253,20 @@ function TokenUsagePanel({
       cache: formatNumber(point.cacheTokens),
       output: formatNumber(point.outputTokens)
     })
+
+  if (canLoadUsageProjection && usageProjection === undefined && !usageProjectionLoadSettled) {
+    return (
+      <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
+        <p
+          role="status"
+          data-slot="token-usage-loading"
+          className="px-4 py-6 text-sm text-muted-foreground sm:px-5"
+        >
+          {t('Loading…')}
+        </p>
+      </div>
+    )
+  }
 
   return (
     <TooltipProvider delayDuration={200}>
