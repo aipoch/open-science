@@ -185,12 +185,27 @@ describe('session persistence startup', () => {
     } as unknown as Window['api']
 
     await act(async () => root.render(<Probe />))
+    expect(useSessionStore.getState().selectedSessionId).toBe(selected.id)
+    expect(loadOne).not.toHaveBeenCalled()
+
+    // Entering Workspace selects the summary again. The whole-store subscription observes that
+    // navigation write even when the selected id is unchanged and starts transcript hydration.
+    await act(async () => {
+      useSessionStore.getState().selectSession(selected.id)
+      await Promise.resolve()
+    })
+    expect(loadOne).toHaveBeenCalledOnce()
+    expect(loadOne).toHaveBeenLastCalledWith({
+      projectId: selected.projectId,
+      sessionId: selected.id
+    })
+
     await act(async () => {
       useSessionStore.getState().selectSession(lazy.id)
       await Promise.resolve()
     })
-    expect(loadOne).toHaveBeenCalledOnce()
-    expect(loadOne).toHaveBeenCalledWith({ projectId: lazy.projectId, sessionId: lazy.id })
+    expect(loadOne).toHaveBeenCalledTimes(2)
+    expect(loadOne).toHaveBeenLastCalledWith({ projectId: lazy.projectId, sessionId: lazy.id })
 
     await act(async () => {
       useSessionStore.getState().deleteSession(lazy.id)
