@@ -5,6 +5,7 @@ import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ArtifactPreview } from './artifact-preview'
+import { createCachedImageFetchResponse } from './previews/cached-preview-image.test-support'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -28,10 +29,7 @@ describe('ArtifactPreview image lifecycle', () => {
   beforeEach(() => {
     container = document.createElement('div')
     document.body.appendChild(container)
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(new Response(new Blob(['image bytes'], { type: 'image/png' })))
-    )
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(createCachedImageFetchResponse()))
     vi.stubGlobal(
       'URL',
       class extends URL {

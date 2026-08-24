@@ -3,6 +3,7 @@ import { act, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { createCachedImageFetchResponse } from './previews/cached-preview-image.test-support'
 import { PreviewUnsupportedContent } from './previews/PreviewFallback'
 import { PreviewImageContent as CachedPreviewImageContent } from './previews/renderers/ImagePreview'
 
@@ -78,10 +79,7 @@ describe('PreviewImageContent', () => {
     previewVersion += 1
     container = document.createElement('div')
     document.body.appendChild(container)
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(new Response(new Blob(['image bytes'], { type: 'image/png' })))
-    )
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(createCachedImageFetchResponse()))
     vi.spyOn(URL, 'createObjectURL').mockReturnValue(`blob:cached-image-${previewVersion}`)
     window.api = {
       previewResources: {
@@ -148,9 +146,7 @@ describe('PreviewImageContent', () => {
       mimeType: 'image/png',
       version: 1
     })
-    const fetchImage = vi
-      .fn()
-      .mockResolvedValue(new Response(new Blob(['image bytes'], { type: 'image/png' })))
+    const fetchImage = vi.fn().mockResolvedValue(createCachedImageFetchResponse())
     vi.stubGlobal('fetch', fetchImage)
 
     root = createRoot(container)

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ChatSession } from '@/stores/session-store'
@@ -12,6 +13,7 @@ import { createInitialProjectState, useProjectStore } from '@/stores/project-sto
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 
+import { createCachedImageFetchResponse } from '../../pages/workspace/previews/cached-preview-image.test-support'
 import { GlobalSearchDialog } from './GlobalSearchDialog'
 
 let container: HTMLDivElement
@@ -103,6 +105,7 @@ beforeEach(() => {
     artifactMentionAvailability: { projectId: 'project-a', canMention: true }
   })
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(createCachedImageFetchResponse()))
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
@@ -130,6 +133,7 @@ afterEach(() => {
   container.remove()
   Reflect.deleteProperty(window.HTMLElement.prototype, 'scrollIntoView')
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('GlobalSearchDialog', () => {
@@ -154,9 +158,11 @@ describe('GlobalSearchDialog', () => {
     ) as HTMLElement
     expect(artifactRow.classList).toContain('cursor-pointer')
     expect(artifactRow.classList).toContain('select-none')
-    expect(
-      artifactRow.querySelector<HTMLImageElement>('img[alt="Preview of sin.png"]')
-    ).not.toBeNull()
+    await waitFor(() => {
+      expect(
+        artifactRow.querySelector<HTMLImageElement>('img[alt="Preview of sin.png"]')
+      ).not.toBeNull()
+    })
     expect(artifactRow.textContent).toContain('Python 绘制 sin 函数图 · 3 days ago')
     act(() => artifactRow.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })))
     const mention = document.body.querySelector<HTMLElement>('[aria-label="Mention sin.png"]')

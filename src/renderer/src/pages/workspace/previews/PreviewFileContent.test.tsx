@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import { createCachedImageFetchResponse } from './cached-preview-image.test-support'
 import { PreviewFileContent } from './PreviewFileContent'
 
 const highlightSpy = vi.hoisted(() => vi.fn())
@@ -199,9 +200,7 @@ describe('PreviewFileContent', () => {
   }
 
   it('reuses a loaded image when its preview is unmounted and mounted again', async () => {
-    const fetchImage = vi
-      .fn()
-      .mockResolvedValue(new Response(new Blob(['image bytes'], { type: 'image/png' })))
+    const fetchImage = vi.fn().mockResolvedValue(createCachedImageFetchResponse())
     vi.stubGlobal('fetch', fetchImage)
     vi.stubGlobal(
       'URL',
