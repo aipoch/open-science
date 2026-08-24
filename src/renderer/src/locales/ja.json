@@ -1316,6 +1316,7 @@
   "PHASE {{number}}": "フェーズ {{number}}",
   "PINNED": "固定された",
   "Package": "パッケージ",
+  "Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.": "Open Science は、ユーザー所有の R 環境にはまだパッケージをインストールできません。環境内のパッケージは引き続きご自身で管理できます。",
   "Package mirror": "パッケージミラー",
   "Package provenance": "パッケージの来歴",
   "Package version": "パッケージバージョン",

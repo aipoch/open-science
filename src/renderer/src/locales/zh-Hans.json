@@ -1387,6 +1387,7 @@
   "PHASE {{number}}": "阶段 {{number}}",
   "PINNED": "已固定",
   "Package": "软件包",
+  "Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.": "Open Science 暂时无法在用户自有的 R 环境中安装软件包。您仍然可以自行管理该环境中的软件包。",
   "Package mirror": "软件包镜像",
   "Package provenance": "软件包溯源",
   "Package version": "软件包版本",

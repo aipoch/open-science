@@ -1364,6 +1364,7 @@
   "PHASE {{number}}": "ФАЗА {{number}}",
   "PINNED": "ЗАКРЕПЛЕННЫЙ",
   "Package": "Пакет",
+  "Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.": "Open Science пока не может устанавливать пакеты в принадлежащие пользователю среды R. Вы по-прежнему можете самостоятельно управлять пакетами в этих средах.",
   "Package mirror": "Зеркало репозитория пакетов",
   "Package provenance": "Происхождение пакета",
   "Package version": "Версия пакета",

@@ -1327,6 +1327,7 @@
   "PHASE {{number}}": "단계 {{number}}",
   "PINNED": "고정됨",
   "Package": "패키지",
+  "Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.": "Open Science는 아직 사용자 소유 R 환경에 패키지를 설치할 수 없습니다. 환경의 패키지는 계속 직접 관리할 수 있습니다.",
   "Package mirror": "패키지 미러",
   "Package provenance": "패키지 출처",
   "Package version": "패키지 버전",
