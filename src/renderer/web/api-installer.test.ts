@@ -72,7 +72,7 @@ describe('installWebRendererContracts', () => {
     ])
   })
 
-  it('installs browser-native and inert event adapters without Electron lifecycle dispatch', () => {
+  it('installs Web event subscriptions and omits Electron-only event adapters', () => {
     const api: Record<string, unknown> = {}
     const close = vi.fn()
     const subscribe = vi.fn(() => vi.fn())
@@ -90,9 +90,14 @@ describe('installWebRendererContracts', () => {
     expect(methodAt(api, 'specialist.list')).toBeUndefined()
     expect(methodAt(api, 'uploads.stageLocalFile')).toBeUndefined()
     expect(methodAt(api, 'window.announceWindowFindReady')).toBeUndefined()
+    expect(methodAt(api, 'notifications.onOpenSession')).toBeUndefined()
+    expect(methodAt(api, 'notifications.onViewProbe')).toBeUndefined()
+    expect(methodAt(api, 'uploads.onTransferProgress')).toBeUndefined()
+    expect(methodAt(api, 'window.onCloseActivePane')).toBeUndefined()
 
-    const unsubscribe = methodAt(api, 'window.onCloseActivePane')?.(listener)
-    expect(subscribe).toHaveBeenCalledWith('shortcut:close-active-pane', listener)
+    const unsubscribe = methodAt(api, 'notebookEnv.onProgress')?.(listener)
+    expect(subscribe).toHaveBeenCalledOnce()
+    expect(subscribe).toHaveBeenCalledWith('notebook-env:progress', listener)
     expect(unsubscribe).toBe(subscribe.mock.results[0]?.value)
   })
 

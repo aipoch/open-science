@@ -49,16 +49,12 @@ describe('renderer contract catalog', () => {
     })
 
     expect(
-      paths(({ eventDeliverability }) =>
-        Object.values(eventDeliverability).includes('installed-undelivered')
+      paths(
+        ({ surfaceInstallation, eventDeliverability }) =>
+          surfaceInstallation.localWeb === 'web-event' &&
+          eventDeliverability.localWeb !== 'application-event'
       )
-    ).toEqual([
-      'notebookEnv.onProgress',
-      'notifications.onOpenSession',
-      'notifications.onViewProbe',
-      'uploads.onTransferProgress',
-      'window.onCloseActivePane'
-    ])
+    ).toEqual([])
   })
 
   it('records every intentional and known-deviating argument codec without normalizing it', () => {

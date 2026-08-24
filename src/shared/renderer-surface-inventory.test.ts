@@ -42,13 +42,10 @@ type InstalledButNotDeliveredEventChannel = Exclude<
   ApplicationEventChannel
 >
 
-const INSTALLED_BUT_NOT_DELIVERED_EVENTS = {
-  'notebook-env:progress': true,
-  'notifications:open-session': true,
-  'notifications:probe-unread-view': true,
-  'shortcut:close-active-pane': true,
-  'uploads:transfer-progress': true
-} as const satisfies Record<InstalledButNotDeliveredEventChannel, true>
+const INSTALLED_BUT_NOT_DELIVERED_EVENTS = {} as const satisfies Record<
+  InstalledButNotDeliveredEventChannel,
+  true
+>
 
 // These functions exist on the real Electron preload API but the current AST generator does not
 // recognize their implementation shape or channel constants. T1b must make each omission explicit.
@@ -67,6 +64,8 @@ const GENERATED_SOURCE_OMISSIONS = [
   'locale.setPreference',
   'network.checkConnectivity',
   'network.getInfo',
+  'notifications.onOpenSession',
+  'notifications.onViewProbe',
   'notifications.syncViewState',
   'officePreview.attachFrame',
   'officePreview.close',
@@ -121,11 +120,13 @@ const GENERATED_SOURCE_OMISSIONS = [
   'specialist.setEnabled',
   'specialist.setSessionSpecialist',
   'specialist.update',
+  'uploads.onTransferProgress',
   'window.announceWindowFindAppearance',
   'window.announceWindowFindReady',
   'window.clearFind',
   'window.closeFind',
   'window.findInPage',
+  'window.onCloseActivePane',
   'window.onCloseConfirmRequest',
   'window.onFindInPageResult',
   'window.onShowWindowFind',
@@ -281,14 +282,8 @@ describe('renderer surface inventory', () => {
     )
   })
 
-  it('pins subscriptions installed in Web but not published through ApplicationEventHub', () => {
-    expectSameSet(Object.keys(INSTALLED_BUT_NOT_DELIVERED_EVENTS), [
-      'notebook-env:progress',
-      'notifications:open-session',
-      'notifications:probe-unread-view',
-      'shortcut:close-active-pane',
-      'uploads:transfer-progress'
-    ])
+  it('does not install Web subscriptions that lack ApplicationEventHub delivery', () => {
+    expectSameSet(Object.keys(INSTALLED_BUT_NOT_DELIVERED_EVENTS), [])
   })
 
   it('pins browser-native replacements and Electron-only categories', () => {

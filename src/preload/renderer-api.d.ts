@@ -692,7 +692,7 @@ export interface OpenScienceAPI {
       request: NotificationMarkSessionCompletionsReadRequest
     ): Promise<void>
     onChanged(listener: AcpListener<NotificationInboxChanged>): RemoveListener
-    onOpenSession(listener: () => void): RemoveListener
+    onOpenSession?(listener: () => void): RemoveListener
     peekPendingOpenSession(): Promise<OpenSessionFromNotificationRequest | null>
     takePendingOpenSession(
       expectedToken: number
@@ -881,7 +881,7 @@ export interface OpenScienceAPI {
     getTransferStatus(request: UploadTransferRequest): Promise<UploadTransferStatus | null>
     finishTransfer(request: UploadTransferRequest): Promise<UploadedAttachment>
     abortTransfer(request: UploadTransferRequest): Promise<void>
-    onTransferProgress(listener: AcpListener<UploadTransferProgress>): RemoveListener
+    onTransferProgress?(listener: AcpListener<UploadTransferProgress>): RemoveListener
     // Deletes a staged upload when the composer chip is removed or the draft is abandoned.
     deleteUpload(request: DeleteUploadRequest): Promise<void>
     // Moves pending uploads into the durable session directory once a session id exists.
@@ -1034,7 +1034,7 @@ export interface OpenScienceAPI {
     // Closes the focused window (the Cmd+W / Ctrl+W fallback when no preview panel is open).
     close(): Promise<void>
     // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
-    onCloseActivePane(listener: () => void): RemoveListener
+    onCloseActivePane?(listener: () => void): RemoveListener
     findInPage?(request: WindowFindRequest): void
     clearFind?(): void
     // Announces the Workspace is mounted (READY) and returns a teardown that announces UNREADY.

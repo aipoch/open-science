@@ -35,7 +35,7 @@ export const useCloseActivePaneShortcut = (
 
   useEffect(
     () =>
-      window.api.window.onCloseActivePane(() => {
+      window.api.window.onCloseActivePane?.(() => {
         const request = resolveCloseRequestRef.current?.() ?? 'close-base'
         if (request === 'handled') return
 

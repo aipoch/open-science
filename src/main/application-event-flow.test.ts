@@ -6,11 +6,14 @@ const windows: Array<{
 }> = []
 
 vi.mock('electron', () => ({
-  BrowserWindow: { getAllWindows: () => windows }
+  BrowserWindow: { getAllWindows: () => windows },
+  ipcMain: { handle: vi.fn(), removeHandler: vi.fn() }
 }))
 
 import type { AcpRuntimeEvent } from '../shared/acp'
+import type { ProvisionProgress } from '../shared/notebook-env'
 import { ApplicationEventHub } from './application-events'
+import { broadcastNotebookEnvProgress } from './notebook/env-ipc'
 import { broadcastToRenderers, installRendererBroadcastEventHub } from './renderer-broadcast'
 import {
   projectPublicTaskEvent,
@@ -23,6 +26,46 @@ beforeEach(() => {
 })
 
 describe('application event flow', () => {
+  it('delivers notebook environment progress once to Electron and Web renderers', () => {
+    const progress: ProvisionProgress = {
+      phase: 'download',
+      message: 'Downloading Python runtime',
+      progress: 0.42,
+      operationId: 'operation-1',
+      scope: 'python',
+      language: 'python'
+    }
+    const webEvents: unknown[] = []
+    windows.push({
+      isDestroyed: () => false,
+      webContents: { send: vi.fn() }
+    })
+    const hub = new ApplicationEventHub()
+    const uninstall = installRendererBroadcastEventHub(hub)
+    const removeWeb = hub.subscribe((event) => {
+      const projection = projectWebRendererEvent(event)
+      if (projection) webEvents.push(projection)
+    })
+
+    try {
+      broadcastNotebookEnvProgress(progress)
+
+      expect(windows[0].webContents.send).toHaveBeenCalledOnce()
+      expect(windows[0].webContents.send).toHaveBeenCalledWith('notebook-env:progress', progress)
+      expect(webEvents).toEqual([
+        {
+          protocolVersion: 1,
+          channel: 'notebook-env:progress',
+          payload: progress
+        }
+      ])
+    } finally {
+      removeWeb()
+      uninstall()
+      hub.dispose()
+    }
+  })
+
   it('delivers terminal stop and failure events once in Electron, Task, and Web order', () => {
     const order: string[] = []
     const payloads: AcpRuntimeEvent[] = [

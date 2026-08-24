@@ -455,7 +455,7 @@ const AppContent = (): React.JSX.Element | null => {
   // open during partial recovery; unresolved ones remain pending for the retry path below.
   useEffect(
     () =>
-      window.api.notifications.onOpenSession(() => {
+      window.api.notifications.onOpenSession?.(() => {
         const intent = {
           generation: notificationOpenIntent.current.generation + 1,
           userNavigationRevision: useNavigationStore.getState().userNavigationRevision

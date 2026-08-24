@@ -11,7 +11,6 @@ import { DATABASE_STARTUP_CHANNELS } from './database-startup'
 const WEB = 'web'
 const LOCAL = 'local'
 const EVENT = 'event'
-const DORMANT_EVENT = 'dormant-event'
 const CLOSE_PANE_EVENT = 'close-pane-event'
 const ELECTRON = 'electron'
 const MAPPED_ELECTRON = 'mapped-electron'
@@ -40,7 +39,7 @@ const SESSION_SAVE_JSON = 'session-save-json-undefined'
 const RUNTIME_VALIDATED = 'runtime-validated'
 
 // prettier-ignore
-type ContractProfile = typeof WEB | typeof LOCAL | typeof EVENT | typeof DORMANT_EVENT | typeof CLOSE_PANE_EVENT | typeof ELECTRON | typeof MAPPED_ELECTRON | typeof SEND | typeof WINDOW_FIND_READY | typeof ELECTRON_EVENT | typeof NATIVE | typeof MAPPED_NATIVE | typeof DELEGATED_NATIVE
+type ContractProfile = typeof WEB | typeof LOCAL | typeof EVENT | typeof CLOSE_PANE_EVENT | typeof ELECTRON | typeof MAPPED_ELECTRON | typeof SEND | typeof WINDOW_FIND_READY | typeof ELECTRON_EVENT | typeof NATIVE | typeof MAPPED_NATIVE | typeof DELEGATED_NATIVE
 
 // prettier-ignore
 type ContractEntry = readonly [member: string, channel: string | null, profile?: ContractProfile, electronCodec?: RendererParameterCodec, webCodec?: RendererParameterCodec, applicationCommand?: typeof RUNTIME_VALIDATED]
@@ -61,9 +60,8 @@ const expandEntry = (
   [member, channel, profile = WEB, electronCodec, webCodec, applicationCommand]: ContractEntry
 ): RendererContractSeed => {
   const isWebRequest = profile === WEB || profile === LOCAL
-  const isDormantEvent = profile === DORMANT_EVENT || profile === CLOSE_PANE_EVENT
-  const isWebEvent = profile === EVENT || isDormantEvent
-  const isElectronEvent = profile === ELECTRON_EVENT
+  const isWebEvent = profile === EVENT
+  const isElectronEvent = profile === ELECTRON_EVENT || profile === CLOSE_PANE_EVENT
   const isNative = profile === NATIVE || profile === MAPPED_NATIVE || profile === DELEGATED_NATIVE
   const kind = isWebEvent || isElectronEvent ? 'event' : 'method'
   const defaultElectronCodec =
@@ -114,20 +112,8 @@ const expandEntry = (
     ),
     eventDeliverability: surface(
       kind === 'event' ? 'electron-ipc' : 'not-event',
-      profile === EVENT
-        ? 'application-event'
-        : isDormantEvent
-          ? 'installed-undelivered'
-          : kind === 'event'
-            ? 'unavailable'
-            : 'not-event',
-      profile === EVENT
-        ? 'application-event'
-        : isDormantEvent
-          ? 'installed-undelivered'
-          : kind === 'event'
-            ? 'unavailable'
-            : 'not-event'
+      profile === EVENT ? 'application-event' : kind === 'event' ? 'unavailable' : 'not-event',
+      profile === EVENT ? 'application-event' : kind === 'event' ? 'unavailable' : 'not-event'
     ),
     authorityFlow: surface(
       kind === 'event' || profile === NATIVE ? 'none' : 'electron-sender',
@@ -232,14 +218,14 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['state', 'notebook:state'],
   ]),
   group('notebook-environment', 'notebookEnv', [
-    ['onProgress', 'notebook-env:progress', DORMANT_EVENT], ['cancel', 'notebook-env:cancel', LOCAL, OPTIONAL_ARGUMENT_SLOT, POSITIONAL], ['getStatus', 'notebook-env:status'],
+    ['onProgress', 'notebook-env:progress', EVENT], ['cancel', 'notebook-env:cancel', LOCAL, OPTIONAL_ARGUMENT_SLOT, POSITIONAL], ['getStatus', 'notebook-env:status'],
     ['provision', 'notebook-env:provision', LOCAL], ['repair', 'notebook-env:repair', LOCAL],
   ]),
   group('notifications', 'notifications', [
     ['getSnapshot', 'notifications:get-snapshot'], ['markAllRead', 'notifications:mark-all-read'], ['markRead', 'notifications:mark-read'],
     ['markSessionCompletionsRead', 'notifications:mark-session-completions-read'],
-    ['onChanged', 'notifications:changed', EVENT], ['onOpenSession', 'notifications:open-session', DORMANT_EVENT],
-    ['onViewProbe', 'notifications:probe-unread-view', DORMANT_EVENT], ['peekPendingOpenSession', 'notifications:peek-pending-open-session'],
+    ['onChanged', 'notifications:changed', EVENT], ['onOpenSession', 'notifications:open-session', ELECTRON_EVENT],
+    ['onViewProbe', 'notifications:probe-unread-view', ELECTRON_EVENT], ['peekPendingOpenSession', 'notifications:peek-pending-open-session'],
     ['syncViewState', 'notifications:sync-unread-view', SEND], ['takePendingOpenSession', 'notifications:take-pending-open-session'],
   ]),
   group('office-preview', 'officePreview', [
@@ -391,7 +377,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['abortTransfer', 'uploads:abort-transfer'], ['appendTransfer', 'uploads:append-transfer'], ['beginTransfer', 'uploads:begin-transfer'],
     ['claimLocalFile', 'uploads:claim-local-file'], ['deleteUpload', 'uploads:delete'], ['finalizeSession', 'uploads:finalize-session'],
     ['finishTransfer', 'uploads:finish-transfer'], ['getTransferStatus', 'uploads:transfer-status'],
-    ['onTransferProgress', 'uploads:transfer-progress', DORMANT_EVENT], ['readPreview', 'uploads:read-preview'],
+    ['onTransferProgress', 'uploads:transfer-progress', ELECTRON_EVENT], ['readPreview', 'uploads:read-preview'],
     ['stageLocalFile', 'uploads:stage-local-file', MAPPED_ELECTRON, NATIVE_FILE_UPLOAD], ['stageLocalPath', 'uploads:stage-local-path', LOCAL],
   ]),
   group('window', 'window', [

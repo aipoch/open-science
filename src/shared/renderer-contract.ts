@@ -10,7 +10,7 @@ export type RendererSurfaceInstallation =
 export type RendererDispatchPolicy = 'electron-ipc-request' | 'electron-ipc-send' | 'electron-ipc-subscription' | 'direct-application-request' | 'browser-native-with-direct-application-request' | 'web-event-subscription' | 'surface-native' | 'rejecting-stub' | 'none'
 
 export type RendererEventDeliverability =
-  'not-event' | 'electron-ipc' | 'application-event' | 'installed-undelivered' | 'unavailable'
+  'not-event' | 'electron-ipc' | 'application-event' | 'unavailable'
 
 export type RendererAuthorityFlow = 'electron-sender' | 'caller-context' | 'none'
 export type RendererMapProjection = 'invoke' | 'event' | 'none'

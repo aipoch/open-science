@@ -21,7 +21,7 @@ export type UploadStagingApi = {
   finishTransfer: (request: UploadTransferRequest) => Promise<UploadedAttachment>
   abortTransfer: (request: UploadTransferRequest) => Promise<void>
   deleteUpload: (request: { path: string }) => Promise<void>
-  onTransferProgress: (listener: (progress: UploadTransferProgress) => void) => () => void
+  onTransferProgress?: (listener: (progress: UploadTransferProgress) => void) => () => void
 }
 
 type StageComposerFileOptions = {
@@ -98,9 +98,10 @@ export const stageComposerFile = async (
     totalBytes: request.size
   })
 
-  const removeProgressListener = api.onTransferProgress((progress) => {
-    if (progress.transferId === request.transferId) options.onProgress?.(progress)
-  })
+  const removeProgressListener =
+    api.onTransferProgress?.((progress) => {
+      if (progress.transferId === request.transferId) options.onProgress?.(progress)
+    }) ?? (() => undefined)
 
   try {
     assertNotAborted(options.signal)
