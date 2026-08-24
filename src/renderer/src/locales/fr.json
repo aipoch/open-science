@@ -1078,6 +1078,7 @@
   "Loading...": "Chargement...",
   "Loading…": "Chargement…",
   "Local changes will be permanently replaced": "Les modifications locales seront définitivement remplacées",
+  "Localized release notes are unavailable; showing English.": "Les notes de version localisées ne sont pas disponibles ; affichage de la version anglaise.",
   "Local command": "Commande locale",
   "Local compute": "Calcul local",
   "Local edits will be replaced by this import.": "Les modifications locales seront remplacées par cette importation.",

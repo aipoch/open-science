@@ -6,12 +6,16 @@ const valid = {
   version: '0.3.0',
   releaseDate: '2026-07-13',
   notes: 'n',
+  localizedNotes: { 'zh-Hans': '更新说明', ja: '更新内容' },
   downloads: { 'mac-arm64': { url: 'https://cdn/a.dmg', size: 1, sha256: 'h' } }
 }
 
 describe('parseManifest', () => {
   it('accepts a well-formed manifest', () => {
-    expect(parseManifest(valid).version).toBe('0.3.0')
+    expect(parseManifest(valid)).toMatchObject({
+      version: '0.3.0',
+      localizedNotes: { 'zh-Hans': '更新说明', ja: '更新内容' }
+    })
   })
   it('defaults missing releaseDate/notes to empty strings', () => {
     const m = parseManifest({ version: '1.0.0', downloads: {} })
@@ -23,6 +27,14 @@ describe('parseManifest', () => {
   })
   it('throws on a malformed download entry', () => {
     expect(() => parseManifest({ version: '1.0.0', downloads: { x: { url: 1 } } })).toThrow()
+  })
+  it('throws on unsupported or malformed localized release notes', () => {
+    expect(() =>
+      parseManifest({ version: '1.0.0', downloads: {}, localizedNotes: { de: 'Neu' } })
+    ).toThrow(/de/)
+    expect(() =>
+      parseManifest({ version: '1.0.0', downloads: {}, localizedNotes: { fr: '' } })
+    ).toThrow(/fr/)
   })
 })
 

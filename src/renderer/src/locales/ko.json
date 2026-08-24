@@ -1040,6 +1040,7 @@
   "Loading...": "로드 중...",
   "Loading…": "로드 중…",
   "Local changes will be permanently replaced": "로컬 변경사항이 영구적으로 대체됩니다.",
+  "Localized release notes are unavailable; showing English.": "현지화된 릴리스 노트를 사용할 수 없어 영어로 표시합니다.",
   "Local command": "로컬 명령",
   "Local compute": "로컬 컴퓨팅",
   "Local edits will be replaced by this import.": "로컬 편집사항은 이 가져오기로 대체됩니다.",

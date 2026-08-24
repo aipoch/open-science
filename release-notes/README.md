@@ -1,0 +1,26 @@
+# In-app release notes
+
+Each stable release has one directory named after the version without the leading `v`:
+
+```text
+release-notes/
+  0.19.0/
+    en.md
+    zh-Hans.md
+    zh-Hant.md
+    ja.md
+    ko.md
+    fr.md
+    ru.md
+```
+
+The files contain the concise Markdown shown in the update dialog. Keep the full release notes in the
+GitHub Release body and link to them from the dialog as usual.
+
+`en.md` is required because it is the fallback for missing translations and the compatibility source
+for electron-updater feeds used by older clients. The six translated files are optional; when one is
+missing, current clients identify the fallback and show English.
+
+`Mirror to website` reads `release-notes/<version>/` when it builds `version.json`. Its `dry_run` input
+executes the same local manifest and feed transformations with sparse installer placeholders, while
+skipping AWS credentials, historical blockmap backfill, and every S3 write.

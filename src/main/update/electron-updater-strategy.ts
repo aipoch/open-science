@@ -349,8 +349,16 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private async hydrateNotes(version: string): Promise<void> {
     try {
       const manifest = await fetchManifest(this.manifestUrl, this.fetchImpl)
-      if (manifest.version === version && manifest.notes && this.status.latest === version) {
-        this.setStatus({ ...this.status, notes: manifest.notes })
+      if (
+        manifest.version === version &&
+        (manifest.notes || manifest.localizedNotes) &&
+        this.status.latest === version
+      ) {
+        this.setStatus({
+          ...this.status,
+          notes: manifest.notes || this.status.notes,
+          localizedNotes: manifest.localizedNotes
+        })
       }
     } catch {
       // Keep the fallback that links out to the GitHub release.

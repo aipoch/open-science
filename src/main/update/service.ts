@@ -199,6 +199,7 @@ export class UpdateService implements UpdateStrategy {
           current: this.currentVersion,
           latest: manifest.version,
           notes: manifest.notes,
+          localizedNotes: manifest.localizedNotes,
           download,
           totalBytes: download?.size
         })

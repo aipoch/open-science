@@ -1,0 +1,7 @@
+## ✨ Highlights
+
+- **xAI (Grok) OAuth subscription.** One subscription account works across all three agent protocols — Claude Code (Anthropic Messages), OpenCode (Chat Completions), and Codex (Responses) — through the xAI Responses API. Device-code sign-in is available from Settings and onboarding, with main-process token refresh, local Anthropic token-count approximation, and Grok 4.6 as the default model. (#1554, #1556)
+- **Governed Marketplace Specialists.** Marketplace-installed packages carry an explicit `marketplace` origin. Publisher content is read-only, manual ZIP overwrite is blocked, updates require a higher SemVer against an exact content baseline, and Installed now groups All / Custom / Marketplace / Built-in with a managed detail view. (#1600)
+- **Notebook cross-run dependency tracking.** Completed Python and R runs are analyzed in-process with tree-sitter WASM, so outputs captured from earlier variable states are marked `stale`, `clear`, or `unknown` instead of silently misrepresenting current state. (#1553)
+- **Mid-turn Send now.** Sending a queued message while a turn runs no longer interrupts it. A compatibility layer uses each framework's native follow-up steering where available and degrades gracefully where steering is unavailable. (#1566, #1593, #1592, #1590)
+- **Summary-first session startup.** Session query metadata and per-turn usage are materialized in SQLite. Healthy startup reads summaries and loads a session file only when that session is opened or exported, rather than parsing every session JSON. (#1618, #1631)

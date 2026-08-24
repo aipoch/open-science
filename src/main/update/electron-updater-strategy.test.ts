@@ -332,6 +332,7 @@ describe('ElectronUpdaterStrategy', () => {
           version: '0.3.0',
           releaseDate: '',
           notes: 'cdn notes',
+          localizedNotes: { 'zh-Hans': 'CDN 说明' },
           downloads: {}
         })
       }
@@ -352,7 +353,11 @@ describe('ElectronUpdaterStrategy', () => {
 
     releaseNotes?.()
     expect(await checking).toEqual(
-      expect.objectContaining({ state: 'available', notes: 'cdn notes' })
+      expect.objectContaining({
+        state: 'available',
+        notes: 'cdn notes',
+        localizedNotes: { 'zh-Hans': 'CDN 说明' }
+      })
     )
     expect((await downloading).state).toBe('ready')
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)

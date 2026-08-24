@@ -545,6 +545,12 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
           tag: {
             description: 'Release tag to mirror (e.g. v0.1.2)',
             required: true
+          },
+          dry_run: {
+            description: 'Run local release transforms without AWS credentials or uploads',
+            required: false,
+            type: 'boolean',
+            default: false
           }
         }
       }
@@ -552,6 +558,16 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(install.run).toBe(
       'npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund'
     )
+    const dryRunStage = findStep(mirror, 'Stage release metadata for dry run')
+    expect(dryRunStage.if).toBe('${{ inputs.dry_run }}')
+    expect(dryRunStage.run).toContain("--pattern 'SHA256SUMS.txt' --pattern '*.yml'")
+    expect(dryRunStage.run).toContain('truncate -s "$size" "dist-assets/$name"')
+    const generate = findStep(mirror, 'Generate version.json')
+    expect(generate.env?.NOTES_DIR).toBe('release-notes/${{ steps.ref.outputs.version }}')
+    expect(generate.run).not.toContain(
+      'gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body'
+    )
+    expect(findStep(mirror, 'Summarize dry run').if).toBe('${{ inputs.dry_run }}')
     expect(mirror.steps?.filter(({ run }) => run?.includes('npm install'))).toEqual([])
     expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Install manifest dependencies'))
     expect(configureIndex).toBeGreaterThan(
@@ -578,6 +594,16 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(historical.run).toContain('gzip -t "$target"')
     const backfill = findStep(mirror, 'Backfill historical Windows blockmaps')
     expect(backfill.run).toContain('releases/$version/$(basename "$blockmap")')
+    for (const sideEffectStep of [
+      'Configure AWS credentials',
+      'Collect historical Windows blockmaps',
+      'Backfill historical Windows blockmaps',
+      'Sync installers to versioned path',
+      'Upload version.json',
+      'Upload update feed to channel root'
+    ]) {
+      expect(findStep(mirror, sideEffectStep).if).toBe('${{ !inputs.dry_run }}')
+    }
   })
 
   it('pins external actions in every changed release workflow', () => {

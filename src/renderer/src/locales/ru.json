@@ -1070,6 +1070,7 @@
   "Loading...": "Загрузка…",
   "Loading…": "Загрузка…",
   "Local changes will be permanently replaced": "Локальные изменения будут полностью заменены",
+  "Localized release notes are unavailable; showing English.": "Локализованные примечания к выпуску недоступны; показана английская версия.",
   "Local command": "Локальная команда",
   "Local compute": "Локальные вычисления",
   "Local edits will be replaced by this import.": "Локальные изменения будут заменены этим импортом.",

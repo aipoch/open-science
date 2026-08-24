@@ -1095,6 +1095,7 @@
   "Loading...": "正在加载……",
   "Loading…": "加载中…",
   "Local changes will be permanently replaced": "本地更改将被永久替换",
+  "Localized release notes are unavailable; showing English.": "暂无本地化发行说明；以下显示英文内容。",
   "Local command": "本地命令",
   "Local compute": "本地算力",
   "Local edits will be replaced by this import.": "本地编辑将被此次导入覆盖。",

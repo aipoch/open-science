@@ -14,6 +14,7 @@ const manifest: UpdateManifest = {
   version: '0.3.0',
   releaseDate: '',
   notes: 'release notes',
+  localizedNotes: { 'zh-Hans': '发行说明' },
   downloads: { 'mac-arm64': { url: 'https://cdn/x-mac-arm64.dmg', size: 5, sha256: 'h' } }
 }
 
@@ -75,6 +76,7 @@ describe('UpdateService.check', () => {
     expect(status.state).toBe('available')
     expect(status.latest).toBe('0.3.0')
     expect(status.notes).toBe('release notes')
+    expect(status.localizedNotes).toEqual({ 'zh-Hans': '发行说明' })
     expect(status.download?.url).toContain('mac-arm64')
     expect(broadcast).toHaveBeenCalledWith(
       'update:status',
