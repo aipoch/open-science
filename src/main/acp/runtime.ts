@@ -389,6 +389,11 @@ const PERMISSION_DENIED_CONTINUATION_TEXT =
   'that is already permitted. If the denied operation is required, explain the boundary and wait ' +
   'for the user to explicitly change their decision in a new message.'
 
+const PERMISSION_CANCELLED_CONTINUATION_TEXT =
+  'The pending permission interaction was cancelled without granting authorization. Do not ' +
+  'execute or retry the parked tool call unless the user explicitly approves it later. Continue ' +
+  'only with independent work that is already permitted, or explain what cannot be completed.'
+
 const PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS = 3
 const PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS = 25
 
@@ -1507,10 +1512,12 @@ class AcpRuntime {
     }
 
     const scope = decision.option?.scope
-    const text = decision.denied
-      ? PERMISSION_DENIED_CONTINUATION_TEXT
-      : `The user approved the pending tool permission${scope ? ` for ${scope}` : ''}. Retry only ` +
-        'the exact parked tool call and continue the current task. Do not broaden or reinterpret the approval.'
+    const text = response.cancelled
+      ? PERMISSION_CANCELLED_CONTINUATION_TEXT
+      : decision.denied
+        ? PERMISSION_DENIED_CONTINUATION_TEXT
+        : `The user approved the pending tool permission${scope ? ` for ${scope}` : ''}. Retry only ` +
+          'the exact parked tool call and continue the current task. Do not broaden or reinterpret the approval.'
     this.appContinuations.set(restored.sessionId, {
       condition: 'always',
       request: {
