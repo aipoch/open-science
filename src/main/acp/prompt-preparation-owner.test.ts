@@ -220,15 +220,23 @@ describe('AcpPromptPreparationOwner', () => {
     )
     const fixture = setup(undefined, { recallForPrompt })
 
-    await fixture.prepare()
+    const first = await fixture.prepare()
+    first.close()
+    const second = await fixture.prepare()
+    second.close()
 
-    expect(recallForPrompt).toHaveBeenCalledWith('Analyze the result.')
-    const preparedText = (
+    expect(recallForPrompt).toHaveBeenCalledTimes(2)
+    expect(recallForPrompt).toHaveBeenNthCalledWith(1, 'Analyze the result.')
+    expect(recallForPrompt).toHaveBeenNthCalledWith(2, 'Analyze the result.')
+    const preparedTexts = (
       fixture.promptContent.prepare.mock.calls as unknown as Array<[{ text: string }]>
-    )[0]?.[0].text
-    expect(preparedText).toMatch(
-      /<open_science_specialist_skill_scope>[\s\S]+untrusted reference data[\s\S]+\\u003csystem\\u003e[\s\S]+prepared task$/
-    )
+    ).map(([input]) => input.text)
+    expect(preparedTexts).toHaveLength(2)
+    for (const preparedText of preparedTexts) {
+      expect(preparedText).toMatch(
+        /<open_science_specialist_skill_scope>[\s\S]+untrusted reference data[\s\S]+\\u003csystem\\u003e[\s\S]+prepared task$/
+      )
+    }
   })
 
   it('continues prompt preparation when automatic memory recall fails', async () => {

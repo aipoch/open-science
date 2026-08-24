@@ -139,7 +139,9 @@ test('persists editable memory across an application restart', async ({ app }) =
   await expect(settings.getByText('Prefers reproducible and concise experiments.')).toBeVisible()
 })
 
-test('injects recent auto-recall memory into an unrelated Agent turn', async ({ app }) => {
+test('injects recent auto-recall memory after reopen into an unrelated Agent turn', async ({
+  app
+}) => {
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
   await page.evaluate(async () => {
@@ -154,6 +156,7 @@ test('injects recent auto-recall memory into an unrelated Agent turn', async ({ 
     })
     await window.api.memory.setEnabled({ enabled: true })
   })
+  page = await app.restart()
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })

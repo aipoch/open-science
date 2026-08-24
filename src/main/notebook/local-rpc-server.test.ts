@@ -4,11 +4,17 @@ import { request as httpRequest, type ClientRequest, type Server } from 'node:ht
 import { createConnection, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { ABOUT_YOU_MEMORY_CATEGORY_ID } from '../../shared/memory'
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import { PlanCommandError } from '../../shared/session-plan/contract'
+import { migrateApplicationDatabase } from '../database/migration-service'
 import { fetchLocalRpc } from '../local-rpc-transport'
+import { MemoryRepository } from '../memory/repository'
+import { MemoryService } from '../memory/service'
+import { createProjectDbClient } from '../projects/prisma-client'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { NotebookControlCompletionCapturedError, NotebookRuntimeService } from './runtime-service'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
@@ -125,6 +131,103 @@ describe('notebook local RPC server', () => {
     } finally {
       control.release()
       await server.close()
+    }
+  })
+
+  it('recalls an Agent memory after reopen from another session and Agent', async () => {
+    const root = await createStorageRoot()
+    let client: PrismaClient = createProjectDbClient(root)
+    const createMemoryService = (): MemoryService =>
+      new MemoryService(new MemoryRepository(async () => client), { publish: vi.fn() })
+
+    try {
+      await migrateApplicationDatabase(client)
+      const firstMemoryService = createMemoryService()
+      await firstMemoryService.setEnabled({ enabled: true })
+      const firstServer = new NotebookLocalRpcServer({} as never, {
+        transport: 'tcp',
+        memoryService: firstMemoryService
+      })
+      const firstControl = await firstServer.issueControlConnection(
+        'session-a',
+        'project-a',
+        'root-frame-session-a'
+      )
+      firstServer.registerSessionSpecialist('session-a', 'agent-a')
+
+      try {
+        const response = await fetch(firstControl.endpoint, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${firstControl.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'memoryRemember',
+            params: {
+              categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
+              content: 'Always report migration checks before delivery.',
+              sessionId: 'forged-session',
+              agentId: 'forged-agent'
+            }
+          })
+        })
+
+        expect(response.status).toBe(200)
+      } finally {
+        firstControl.release()
+        await firstServer.close()
+      }
+
+      await client.$disconnect()
+      client = createProjectDbClient(root)
+      await migrateApplicationDatabase(client)
+      const secondMemoryService = createMemoryService()
+
+      await expect(
+        secondMemoryService.recallForPrompt('Continue with an unrelated task.')
+      ).resolves.toContain('Always report migration checks before delivery.')
+
+      const secondServer = new NotebookLocalRpcServer({} as never, {
+        transport: 'tcp',
+        memoryService: secondMemoryService
+      })
+      const secondControl = await secondServer.issueControlConnection(
+        'session-b',
+        'project-b',
+        'root-frame-session-b'
+      )
+      secondServer.registerSessionSpecialist('session-b', 'agent-b')
+
+      try {
+        const response = await fetch(secondControl.endpoint, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${secondControl.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'memorySearch',
+            params: { query: 'migration checks', limit: 5 }
+          })
+        })
+        const payload = (await response.json()) as {
+          result: Array<{ content: string; provenance: { origin: string; agentId?: string } }>
+        }
+
+        expect(response.status).toBe(200)
+        expect(payload.result).toEqual([
+          expect.objectContaining({
+            content: 'Always report migration checks before delivery.',
+            provenance: { origin: 'agent', agentId: 'agent-a' }
+          })
+        ])
+      } finally {
+        secondControl.release()
+        await secondServer.close()
+      }
+    } finally {
+      await client.$disconnect()
     }
   })
 

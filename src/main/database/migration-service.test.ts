@@ -291,7 +291,7 @@ describe('application database migrations', () => {
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })
 
-  it('upgrades the pre-release agent memory ledger without losing saved memories', async () => {
+  it('rejects the obsolete pre-release agent memory ledger without rewriting it', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-pre-release-memory-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
@@ -335,10 +335,9 @@ describe('application database migrations', () => {
       'e398804209d9fc699a966bed07186717062e0516fbd43bb5f46ef7d9668986fc'
     )
 
-    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      adoptedLegacy: false,
-      applied: ['0013_session_projection', '0014_agent_memory'],
-      to: '0014_agent_memory'
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_history_invalid',
+      migrationId: '0013_agent_memory'
     })
     await expect(
       client.memoryEntry.findMany({ orderBy: { id: 'asc' }, select: { id: true, content: true } })
@@ -349,11 +348,10 @@ describe('application database migrations', () => {
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
         SELECT "id" FROM "_open_science_migrations"
-        WHERE "id" IN ('0013_session_projection', '0014_agent_memory')
+        WHERE "id" IN ('0013_agent_memory', '0013_session_projection', '0014_agent_memory')
         ORDER BY "id"
       `
-    ).resolves.toEqual([{ id: '0013_session_projection' }, { id: '0014_agent_memory' }])
-    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+    ).resolves.toEqual([{ id: '0013_agent_memory' }])
   })
 
   it('upgrades a pre-ledger ComputeJob table while preserving historical rows', async () => {

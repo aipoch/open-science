@@ -260,10 +260,6 @@ const AGENT_MEMORY_CHECKSUM = checksumMigrationPayload(
   agentMemoryMigration.verifiers,
   agentMemoryMigration.operations
 )
-const PRE_RELEASE_AGENT_MEMORY_LEDGER_ROW = {
-  id: '0013_agent_memory',
-  checksum: 'e398804209d9fc699a966bed07186717062e0516fbd43bb5f46ef7d9668986fc'
-} as const
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
     table,
@@ -684,51 +680,6 @@ const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
   return client.$queryRaw<LedgerRow[]>`
     SELECT "id", "checksum" FROM "_open_science_migrations" ORDER BY "id"
   `
-}
-
-const normalizePreReleaseAgentMemoryLedger = (
-  ledger: LedgerRow[],
-  manifest: readonly MigrationManifestEntry[]
-): { ledger: LedgerRow[]; obsoleteRow?: LedgerRow } => {
-  const sessionProjectionIndex = manifest.findIndex(
-    (migration) =>
-      migration.id === sessionProjectionMigration.id &&
-      migration.checksum === SESSION_PROJECTION_CHECKSUM
-  )
-  const currentAgentMemory = manifest[sessionProjectionIndex + 1]
-  const obsoleteRow = ledger[sessionProjectionIndex]
-  if (
-    sessionProjectionIndex < 0 ||
-    currentAgentMemory?.id !== agentMemoryMigration.id ||
-    currentAgentMemory.checksum !== AGENT_MEMORY_CHECKSUM ||
-    ledger.length !== sessionProjectionIndex + 1 ||
-    obsoleteRow?.id !== PRE_RELEASE_AGENT_MEMORY_LEDGER_ROW.id ||
-    obsoleteRow.checksum !== PRE_RELEASE_AGENT_MEMORY_LEDGER_ROW.checksum
-  ) {
-    return { ledger }
-  }
-
-  return { ledger: ledger.slice(0, sessionProjectionIndex), obsoleteRow }
-}
-
-const retirePreReleaseAgentMemoryLedgerRow = async (
-  client: PrismaClient,
-  row: LedgerRow
-): Promise<void> => {
-  const deleted = await migrationSqlExecutor.execute(
-    client,
-    `DELETE FROM "_open_science_migrations" WHERE "id" = ? AND "checksum" = ?`,
-    row.id,
-    row.checksum
-  )
-  if (deleted !== 1) {
-    throw new DatabaseMigrationError(
-      'database_history_invalid',
-      'The pre-release agent memory migration history changed while it was being upgraded.',
-      false,
-      row.id
-    )
-  }
 }
 
 const hasApplicationTables = async (client: PrismaClient): Promise<boolean> => {
@@ -1272,8 +1223,6 @@ const migrateApplicationDatabaseWithManifest = async (
     throw classifyDatabaseFailure(error, 'open')
   }
   const from = ledger.at(-1)?.id ?? null
-  const preReleaseAgentMemory = normalizePreReleaseAgentMemoryLedger(ledger, manifest)
-  ledger = preReleaseAgentMemory.ledger
   const appliedCount = validateLedger(ledger, manifest)
   const latest = manifest.at(-1)!
   const complete = async (result: SchemaMigrationResult): Promise<SchemaMigrationResult> => {
@@ -1397,13 +1346,6 @@ const migrateApplicationDatabaseWithManifest = async (
   for (const migration of manifest.slice(nextIndex)) {
     options.onProgress?.({ phase: 'migrating', migrationId: migration.id })
     await backupBeforeMigration(migration)
-    if (preReleaseAgentMemory.obsoleteRow && migration.id === sessionProjectionMigration.id) {
-      try {
-        await retirePreReleaseAgentMemoryLedgerRow(client, preReleaseAgentMemory.obsoleteRow)
-      } catch (error) {
-        throw classifyDatabaseFailure(error, 'migration', migration.id)
-      }
-    }
     await applyManifestMigration(client, migration)
     applied.push(migration.id)
   }
