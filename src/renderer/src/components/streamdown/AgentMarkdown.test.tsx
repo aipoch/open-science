@@ -416,7 +416,15 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(hoverCard?.textContent).toContain('Genome study')
     expect(hoverCard?.textContent).toContain('example.com')
     expect(hoverCard?.textContent).toContain('https://example.com/paper#results')
-    expect(hoverCard?.querySelector('[data-session-link-favicon]')).not.toBeNull()
+    const hoverFavicon = hoverCard?.querySelector<HTMLElement>('[data-session-link-favicon]')
+    expect(hoverFavicon).not.toBeNull()
+    expect(hoverFavicon?.querySelector('[data-session-link-favicon-skeleton]')).not.toBeNull()
+    const hoverFaviconImage = hoverFavicon?.querySelector<HTMLImageElement>('img')
+    await act(async () => {
+      fireEvent.load(hoverFaviconImage!)
+    })
+    expect(hoverFavicon?.querySelector('[data-session-link-favicon-skeleton]')).toBeNull()
+    expect(hoverFaviconImage?.className).toContain('opacity-100')
     const hoverCardUrl = hoverCard?.querySelector<HTMLElement>(
       '[title="https://example.com/paper#results"]'
     )

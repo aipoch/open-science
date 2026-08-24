@@ -172,8 +172,13 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
   let sourceDocumentRequestCount = 0
+  let releaseSourceDocument: (() => void) | undefined
+  const sourceDocumentGate = new Promise<void>((resolve) => {
+    releaseSourceDocument = resolve
+  })
   await page.route('https://citation.example/paper', async (route) => {
     sourceDocumentRequestCount += 1
+    await sourceDocumentGate
     await route.fulfill({
       contentType: 'text/html',
       body: '<!doctype html><html><body><main><h1>Fixture source</h1><p>Peer-reviewed evidence.</p></main></body></html>'
@@ -221,6 +226,10 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   const sourceFrame = page.locator('[data-source-preview-frame]')
   await expect(sourceFrame).toHaveAttribute('src', 'https://citation.example/paper')
   await expect.poll(() => sourceDocumentRequestCount).toBe(1)
+  const sourceProgress = page.locator('[data-source-preview-progress]')
+  await expect(sourceProgress).toBeVisible()
+  expect(await sourceProgress.evaluate((element) => getComputedStyle(element).height)).toBe('2px')
+  await page.screenshot({ path: testInfo.outputPath('source-preview-loading.png') })
   await expect(sourceFrame).toHaveAttribute('sandbox', 'allow-same-origin allow-scripts')
   await expect(sourceFrame).toHaveAttribute('referrerpolicy', 'no-referrer')
   await expect(sourceFrame).toHaveAttribute('name', 'open-science-source-preview')
@@ -230,11 +239,13 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(
     sourceHeader.getByText('https://citation.example/paper', { exact: true })
   ).toBeVisible()
+  releaseSourceDocument?.()
   await expect(
     page.frameLocator('[data-source-preview-frame]').getByRole('heading', {
       name: 'Fixture source'
     })
   ).toBeVisible()
+  await expect(sourceProgress).toHaveCount(0)
 
   await page.screenshot({ path: testInfo.outputPath('citation-source-preview.png') })
 })

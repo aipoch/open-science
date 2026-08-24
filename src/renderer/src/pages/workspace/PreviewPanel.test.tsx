@@ -56,12 +56,13 @@ const createToolItem = (overrides: Partial<PreviewToolItem>): PreviewToolItem =>
   ...overrides
 })
 
-const createSourceItem = (): PreviewSourceItem => ({
+const createSourceItem = (overrides: Partial<PreviewSourceItem> = {}): PreviewSourceItem => ({
   id: 'source:https://example.com/paper',
   sessionId: '__sources__',
   title: 'Genome study',
   type: 'source',
-  url: 'https://example.com/paper'
+  url: 'https://example.com/paper',
+  ...overrides
 })
 
 describe('PreviewPanel', () => {
@@ -81,6 +82,7 @@ describe('PreviewPanel', () => {
     await act(async () => {
       root.unmount()
     })
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     container.remove()
   })
@@ -226,6 +228,72 @@ describe('PreviewPanel', () => {
 
     expect(container.querySelector('[data-source-preview-frame]')).toBeNull()
     expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
+  })
+
+  it('shows a two-pixel simulated loading bar until the source frame loads', async () => {
+    vi.useFakeTimers()
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+
+    await renderPanel()
+
+    const progress = container.querySelector<HTMLElement>('[data-source-preview-progress]')
+    const progressFill = progress?.querySelector<HTMLElement>('[data-source-preview-progress-fill]')
+    expect(progress).not.toBeNull()
+    expect(progress?.className).toContain('h-0.5')
+    expect(progress?.getAttribute('role')).toBe('progressbar')
+    expect(progress?.getAttribute('aria-valuenow')).toBeNull()
+    expect(progressFill?.style.transform).toBe('scaleX(0.08)')
+
+    await act(async () => vi.advanceTimersByTimeAsync(700))
+
+    const advancedProgress = Number(progressFill?.style.transform.match(/scaleX\(([^)]+)\)/u)?.[1])
+    expect(advancedProgress).toBeGreaterThan(0.08)
+    expect(advancedProgress).toBeLessThanOrEqual(0.9)
+
+    await act(async () => vi.advanceTimersByTimeAsync(20_000))
+    expect(progressFill?.style.transform).toBe('scaleX(0.9)')
+    expect(vi.getTimerCount()).toBe(0)
+
+    const iframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
+    await act(async () => {
+      iframe?.dispatchEvent(new Event('load'))
+    })
+
+    expect(progressFill?.style.transform).toBe('scaleX(1)')
+    await act(async () => vi.advanceTimersByTimeAsync(250))
+    expect(container.querySelector('[data-source-preview-progress]')).toBeNull()
+  })
+
+  it('restarts source loading progress when the active URL changes', async () => {
+    vi.useFakeTimers()
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+
+    await renderPanel()
+    await act(async () => vi.advanceTimersByTimeAsync(700))
+
+    const firstIframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
+    const firstFill = container.querySelector<HTMLElement>('[data-source-preview-progress-fill]')
+    expect(firstFill?.style.transform).not.toBe('scaleX(0.08)')
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createSourceItem({
+          title: 'Second study',
+          url: 'https://example.com/second'
+        })
+      )
+    })
+
+    const restartedFill = container.querySelector<HTMLElement>(
+      '[data-source-preview-progress-fill]'
+    )
+    expect(restartedFill?.style.transform).toBe('scaleX(0.08)')
+
+    await act(async () => {
+      firstIframe?.dispatchEvent(new Event('load'))
+    })
+    expect(restartedFill?.style.transform).toBe('scaleX(0.08)')
+    expect(container.querySelector('[data-source-preview-progress]')).not.toBeNull()
   })
 
   it('wraps an active file in a compact card with middle-ellipsis title and header actions', async () => {

@@ -78,10 +78,12 @@ const getSessionLinkText = (children: ReactNode): string | undefined => {
 
 const SessionLinkFavicon = ({
   src,
-  className
+  className,
+  loadingFallback = 'globe'
 }: {
   src: string
   className?: string
+  loadingFallback?: 'globe' | 'skeleton'
 }): React.JSX.Element => {
   const [state, setState] = useState<FaviconState>('loading')
 
@@ -95,13 +97,20 @@ const SessionLinkFavicon = ({
         className
       )}
     >
-      <Globe2
-        data-session-link-favicon-fallback=""
-        className={cn(
-          'absolute inset-0 m-0! size-full! max-w-none! border-0! bg-transparent! p-0! transition-opacity duration-150',
-          state === 'success' ? 'opacity-0' : state === 'loading' ? 'opacity-50' : 'opacity-75'
-        )}
-      />
+      {state === 'loading' && loadingFallback === 'skeleton' ? (
+        <span
+          data-session-link-favicon-skeleton=""
+          className="absolute inset-0 size-full rounded-sm bg-bg-300 motion-safe:animate-pulse"
+        />
+      ) : (
+        <Globe2
+          data-session-link-favicon-fallback=""
+          className={cn(
+            'absolute inset-0 m-0! size-full! max-w-none! border-0! bg-transparent! p-0! transition-opacity duration-150',
+            state === 'success' ? 'opacity-0' : state === 'loading' ? 'opacity-50' : 'opacity-75'
+          )}
+        />
+      )}
       {state !== 'error' ? (
         <img
           src={src}
@@ -172,7 +181,11 @@ const SessionMessageLink = ({
         <HoverCardContent side="top" data-source-preview-hover-card="">
           <div className="flex min-w-0 items-start gap-2.5">
             {faviconUrl ? (
-              <SessionLinkFavicon className="mt-0.5 me-0 size-5 shrink-0" src={faviconUrl} />
+              <SessionLinkFavicon
+                className="mt-0.5 me-0 size-5 shrink-0"
+                src={faviconUrl}
+                loadingFallback="skeleton"
+              />
             ) : null}
             <div className="min-w-0 flex-1">
               <div className="break-words text-sm font-medium leading-5 text-text-100">
