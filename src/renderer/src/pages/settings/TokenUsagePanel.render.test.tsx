@@ -330,6 +330,44 @@ describe('TokenUsagePanel', () => {
     expect(document.body.textContent).toContain('Updated 2 minutes ago')
   })
 
+  it('reuses a recent projection across panel remounts and reloads it after ten minutes', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 15, 18))
+    const now = Date.now()
+    const projection: SessionUsageProjection = {
+      sessionCreatedAt: [now],
+      projectCreatedAt: [now],
+      artifactCreatedAt: [],
+      runsAt: [],
+      usageEvents: [],
+      totalArtifacts: 0
+    }
+    const loadUsage = vi.fn().mockResolvedValue(projection)
+    window.api = { sessions: { loadUsage } } as unknown as Window['api']
+    const panel = (
+      <TokenUsagePanel sessions={[createSession(now)]} projects={[createProject(now)]} />
+    )
+
+    await act(async () => {
+      root.render(panel)
+    })
+    expect(loadUsage).toHaveBeenCalledOnce()
+
+    act(() => root.render(<div />))
+    vi.advanceTimersByTime(9 * 60_000)
+    await act(async () => {
+      root.render(panel)
+    })
+    expect(loadUsage).toHaveBeenCalledOnce()
+
+    act(() => root.render(<div />))
+    vi.advanceTimersByTime(2 * 60_000)
+    await act(async () => {
+      root.render(panel)
+    })
+    expect(loadUsage).toHaveBeenCalledTimes(2)
+  })
+
   it('renders the stat strip, 30-day charts, coverage, and period controls', () => {
     const now = localTime(2026, 8, 15, 18)
 

@@ -38,6 +38,22 @@ type UsageProjectionLoadResult = Readonly<{
   lastRefreshedAt?: number
 }>
 
+type LoadUsage = () => Promise<SessionUsageProjection>
+
+const USAGE_PROJECTION_CACHE_TTL_MS = 10 * 60_000
+const usageProjectionCache = new WeakMap<LoadUsage, UsageProjectionLoadResult>()
+
+const readCachedUsageProjection = (
+  loadUsage: LoadUsage | undefined
+): UsageProjectionLoadResult | undefined => {
+  if (!loadUsage) return undefined
+  const cached = usageProjectionCache.get(loadUsage)
+  return cached?.lastRefreshedAt !== undefined &&
+    Date.now() - cached.lastRefreshedAt < USAGE_PROJECTION_CACHE_TTL_MS
+    ? cached
+    : undefined
+}
+
 const PERIODS: ReadonlyArray<{ value: TokenUsagePeriod; label: string; shortLabel: string }> = [
   { value: 'today', label: 'Today', shortLabel: 'Today' },
   { value: 'week', label: 'This week', shortLabel: 'Week' },
@@ -94,26 +110,32 @@ function TokenUsagePanel({
   const now = providedNow ?? currentTime
   const [period, setPeriod] = useState<TokenUsagePeriod>('30-days')
   const [heatmapMetric, setHeatmapMetric] = useState<TokenUsageHeatmapMetric>('totalTokens')
-  const [usageProjectionLoadResult, setUsageProjectionLoadResult] =
-    useState<UsageProjectionLoadResult>()
+  const loadUsage = window.api?.sessions?.loadUsage
+  const [initialCachedUsageProjection] = useState(() => readCachedUsageProjection(loadUsage))
+  const [usageProjectionLoadResult, setUsageProjectionLoadResult] = useState<
+    UsageProjectionLoadResult | undefined
+  >(initialCachedUsageProjection)
   const [usageProjectionLoadAttempt, setUsageProjectionLoadAttempt] = useState(0)
-  const canLoadUsageProjection = typeof window.api?.sessions?.loadUsage === 'function'
-  const [isUsageProjectionRefreshing, setIsUsageProjectionRefreshing] =
-    useState(canLoadUsageProjection)
+  const canLoadUsageProjection = typeof loadUsage === 'function'
+  const [isUsageProjectionRefreshing, setIsUsageProjectionRefreshing] = useState(
+    canLoadUsageProjection && initialCachedUsageProjection === undefined
+  )
   const usageProjection = usageProjectionLoadResult?.projection
   const usageProjectionLoadSettled = usageProjectionLoadResult !== undefined
   const usageProjectionLoadFailed = usageProjectionLoadResult?.failed === true
   const lastRefreshedAt = usageProjectionLoadResult?.lastRefreshedAt
 
   useEffect(() => {
-    const loadUsage = window.api?.sessions?.loadUsage
     if (typeof loadUsage !== 'function') return
+    if (usageProjectionLoadAttempt === 0 && initialCachedUsageProjection !== undefined) return
     let active = true
     void loadUsage()
       .then((projection) => {
         if (!active) return
         const refreshedAt = Date.now()
-        setUsageProjectionLoadResult({ projection, lastRefreshedAt: refreshedAt })
+        const result = { projection, lastRefreshedAt: refreshedAt }
+        usageProjectionCache.set(loadUsage, result)
+        setUsageProjectionLoadResult(result)
         setCurrentTime(refreshedAt)
         setRelativeTimeNow(refreshedAt)
       })
@@ -126,7 +148,7 @@ function TokenUsagePanel({
     return () => {
       active = false
     }
-  }, [usageProjectionLoadAttempt])
+  }, [initialCachedUsageProjection, loadUsage, usageProjectionLoadAttempt])
 
   useEffect(() => {
     if (lastRefreshedAt === undefined) return
