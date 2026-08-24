@@ -269,7 +269,7 @@ const createMainWindow = (
     void dialog
       .showMessageBox(window, {
         type: 'error',
-        buttons: [translate('Reload'), translate('Close window')],
+        buttons: [translate('Reload', { context: 'window' }), translate('Close window')],
         defaultId: 0,
         cancelId: 1,
         title: 'Open Science',

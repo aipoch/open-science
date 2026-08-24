@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import i18next from 'i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import { useUpdateStore } from '@/stores/update-store'
 import { UpdateDialog } from './UpdateDialog'
 import { APP } from '../../../shared/app-config'

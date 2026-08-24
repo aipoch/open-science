@@ -23,7 +23,7 @@ import ko from '../../../shared/i18n/locales/ko.json'
 import ru from '../../../shared/i18n/locales/ru.json'
 import zhHans from '../../../shared/i18n/locales/zh-Hans.json'
 import zhHant from '../../../shared/i18n/locales/zh-Hant.json'
-import { LOCALES } from '../../../shared/locale'
+import { LOCALES, LOCALE_SELF_NAMES } from '../../../shared/locale'
 import { createNativeI18n } from '../../../main/locale/main-process-messages'
 import { nativeCatalogs, nativeResources } from '../../../main/locale/resources'
 import {
@@ -137,7 +137,8 @@ const CONTEXT_SUFFIXES = new Set([
   'runtime',
   'step',
   'theme',
-  'verb'
+  'verb',
+  'window'
 ])
 const REQUIRED_PLURAL_CATEGORIES = {
   fr: ['one', 'many', 'other'],
@@ -513,13 +514,32 @@ describe('process catalog boundaries', () => {
     ).toEqual(Object.fromEntries(TRANSLATED.map((locale) => [locale, ['common', 'native']])))
   })
 
-  it.each(TRANSLATED)('%s gives every key exactly one owner per process', (locale) => {
+  it.each(TRANSLATED)('%s gives every translated key exactly one catalog owner', (locale) => {
     const commonKeys = new Set(Object.keys(commonCatalogs[locale]))
-    const rendererKeys = Object.keys(rendererCatalogs[locale])
-    const nativeKeys = Object.keys(nativeCatalogs[locale])
+    const rendererKeys = new Set(Object.keys(rendererCatalogs[locale]))
+    const nativeKeys = new Set(Object.keys(nativeCatalogs[locale]))
 
-    expect(rendererKeys.filter((key) => commonKeys.has(key))).toEqual([])
-    expect(nativeKeys.filter((key) => commonKeys.has(key))).toEqual([])
+    expect([...rendererKeys].filter((key) => commonKeys.has(key))).toEqual([])
+    expect([...nativeKeys].filter((key) => commonKeys.has(key))).toEqual([])
+    expect([...nativeKeys].filter((key) => rendererKeys.has(key))).toEqual([])
+  })
+
+  it.each(TRANSLATED)('%s keeps the legacy Connector picker title native-only', (locale) => {
+    const key = 'Import Connector configuration'
+
+    expect(nativeCatalogs[locale]).toHaveProperty(key)
+    expect(commonCatalogs[locale]).not.toHaveProperty(key)
+    expect(rendererCatalogs[locale]).not.toHaveProperty(key)
+  })
+
+  it.each(TRANSLATED)('%s keeps locale self-names out of translation catalogs', (locale) => {
+    const catalogKeys = new Set([
+      ...Object.keys(commonCatalogs[locale]),
+      ...Object.keys(nativeCatalogs[locale]),
+      ...Object.keys(rendererCatalogs[locale])
+    ])
+
+    expect(Object.values(LOCALE_SELF_NAMES).filter((name) => catalogKeys.has(name))).toEqual([])
   })
 
   it('shares close-confirm copy while keeping the renderer Quit noun explicit', () => {
@@ -670,6 +690,50 @@ describe('dynamic counted lookup translations', () => {
   })
 })
 
+const PRODUCT_TECHNICAL_TERM_LOCALES = TRANSLATED
+const RETAINED_PRODUCT_GLOSSARY = [
+  { term: 'Open Science', source: /\bOpen Science\b/ },
+  { term: 'Anthropic', source: /\bAnthropic\b/ },
+  { term: 'Claude', source: /\bClaude\b/ },
+  { term: 'Codex', source: /\bCodex\b/ },
+  { term: 'opencode', source: /\bOpenCode\b/, retained: /\b(?:OpenCode|opencode)\b/ },
+  { term: 'MCP', source: /\bMCP\b/ },
+  { term: 'ACP', source: /\bACP\b/ },
+  { term: 'API', source: /\bAPI\b/ },
+  { term: 'CLI', source: /\bCLI\b/ },
+  { term: 'SSH', source: /\bSSH\b/ },
+  { term: 'ZIP', source: /\bZIP\b/ },
+  { term: 'GitHub', source: /\bGitHub\b/ },
+  { term: 'Discord', source: /\bDiscord\b/ },
+  { term: 'Python', source: /\bPython\b/ },
+  { term: 'Jupyter', source: /\bJupyter\b/ },
+  { term: 'Office', source: /\bOffice\b/ },
+  { term: 'Chromium', source: /\bChromium\b/ }
+]
+
+const RETAINED_PRODUCT_GLOSSARY_EXCEPTIONS = new Set([
+  'ru: Open Science could not load Specialists. Retry to continue.: Open Science',
+  'ru: Open Science could not load projects. Retry to continue.: Open Science',
+  'ru: Open Science could not load Connectors.: Open Science',
+  'ru: Open Science could not load Skills.: Open Science',
+  'ru: Open Science could not load this Connector.: Open Science',
+  'ru: Open Science could not load this Skill.: Open Science'
+])
+
+const retainedProductGlossaryOffenders = (
+  locale: TranslatedLocale,
+  entries = allCatalogEntries(locale)
+): string[] =>
+  entries
+    .flatMap(([key, value]) => {
+      const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
+      return RETAINED_PRODUCT_GLOSSARY.filter(
+        ({ term, source: pattern, retained }) =>
+          pattern.test(source) && !(retained ? retained.test(value) : value.includes(term))
+      ).map(({ term }) => `${key}: ${term}`)
+    })
+    .filter((offender) => !RETAINED_PRODUCT_GLOSSARY_EXCEPTIONS.has(`${locale}: ${offender}`))
+
 describe('mandatory product glossary', () => {
   const retainedGlossary = [{ term: 'Notebook', source: /\bnotebooks?\b/i }]
 
@@ -684,38 +748,31 @@ describe('mandatory product glossary', () => {
     expect(offenders).toEqual([])
   })
 
-  it.each(['fr', 'ja', 'ko'] as const)(
+  it.each(PRODUCT_TECHNICAL_TERM_LOCALES)(
     '%s keeps product and technical terms in English',
     (locale) => {
-      const retainedProductGlossary = [
-        { term: 'Open Science', source: /\bOpen Science\b/ },
-        { term: 'Anthropic', source: /\bAnthropic\b/ },
-        { term: 'Claude', source: /\bClaude\b/ },
-        { term: 'Codex', source: /\bCodex\b/ },
-        { term: 'opencode', source: /\bOpenCode\b/ },
-        { term: 'MCP', source: /\bMCP\b/ },
-        { term: 'ACP', source: /\bACP\b/ },
-        { term: 'API', source: /\bAPI\b/ },
-        { term: 'CLI', source: /\bCLI\b/ },
-        { term: 'SSH', source: /\bSSH\b/ },
-        { term: 'ZIP', source: /\bZIP\b/ },
-        { term: 'GitHub', source: /\bGitHub\b/ },
-        { term: 'Discord', source: /\bDiscord\b/ },
-        { term: 'Python', source: /\bPython\b/ },
-        { term: 'Jupyter', source: /\bJupyter\b/ },
-        { term: 'Office', source: /\bOffice\b/ },
-        { term: 'Chromium', source: /\bChromium\b/ }
-      ]
-      const offenders = allCatalogEntries(locale).flatMap(([key, value]) => {
-        const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
-        return retainedProductGlossary
-          .filter(({ term, source: pattern }) => pattern.test(source) && !value.includes(term))
-          .map(({ term }) => `${key}: ${term}`)
-      })
+      const offenders = retainedProductGlossaryOffenders(locale)
 
       expect(offenders).toEqual([])
     }
   )
+
+  it('checks product terms in Chinese and Russian catalogs', () => {
+    const key = 'MCP server'
+    const mutations = new Map<TranslatedLocale, Array<[string, string]>>([
+      ['zh-Hans', [[key, '服务器']]],
+      ['ru', [[key, 'Сервер']]]
+    ])
+    const offenders = PRODUCT_TECHNICAL_TERM_LOCALES.flatMap((locale) =>
+      retainedProductGlossaryOffenders(locale, mutations.get(locale) ?? []).map(
+        (offender) => `${locale}: ${offender}`
+      )
+    )
+
+    expect(offenders).toEqual(
+      expect.arrayContaining(['zh-Hans: MCP server: MCP', 'ru: MCP server: MCP'])
+    )
+  })
 
   it('keeps reviewed French product and technical names in English', () => {
     const retainedTerms = [
@@ -842,6 +899,67 @@ describe('mandatory product glossary', () => {
     }
   } satisfies Record<TranslatedLocale, Record<string, string>>
 
+  const compoundGlossaryPatterns = {
+    mainModel: {
+      fr: /modèle principal/iu,
+      'zh-Hans': /主模型/u,
+      'zh-Hant': /主模型/u,
+      ja: /メインモデル/u,
+      ko: /메인 모델/u,
+      ru: /основн\p{L}*\s+модел/iu
+    },
+    mainAgent: {
+      fr: /agent principal/iu,
+      'zh-Hans': /主智能体/u,
+      'zh-Hant': /主智能體/u,
+      ja: /メインエージェント/u,
+      ko: /메인 에이전트/u,
+      ru: /главн\p{L}*\s+агент/iu
+    },
+    subagent: {
+      fr: /sous-agents?/iu,
+      'zh-Hans': /子智能体/u,
+      'zh-Hant': /子智能體/u,
+      ja: /サブエージェント/u,
+      ko: /서브에이전트/u,
+      ru: /субагент/iu
+    }
+  } satisfies Record<string, Record<TranslatedLocale, RegExp>>
+
+  const compoundGlossaryOffenders = (
+    entries: ReadonlyArray<readonly [string, string]>,
+    sourcePattern: RegExp,
+    translationPattern: RegExp
+  ): string[] =>
+    entries
+      .filter(([key]) => sourcePattern.test(englishOf(key)))
+      .filter(([, value]) => !translationPattern.test(value))
+      .map(([key]) => key)
+
+  const mainModelGlossaryOffenders = (
+    locale: TranslatedLocale,
+    entries: ReadonlyArray<readonly [string, string]>
+  ): string[] =>
+    compoundGlossaryOffenders(
+      entries,
+      /\bmain model\b/i,
+      compoundGlossaryPatterns.mainModel[locale]
+    )
+  const mainAgentGlossaryOffenders = (
+    locale: TranslatedLocale,
+    entries: ReadonlyArray<readonly [string, string]>
+  ): string[] =>
+    compoundGlossaryOffenders(
+      entries,
+      /\bmain agent\b/i,
+      compoundGlossaryPatterns.mainAgent[locale]
+    )
+  const subagentGlossaryOffenders = (
+    locale: TranslatedLocale,
+    entries: ReadonlyArray<readonly [string, string]>
+  ): string[] =>
+    compoundGlossaryOffenders(entries, /\bsubagents?\b/i, compoundGlossaryPatterns.subagent[locale])
+
   it.each(TRANSLATED)('%s uses the chosen generic terminology', (locale) => {
     const expected = chosenGenericTerms[locale]
     const actual = Object.fromEntries(
@@ -849,6 +967,40 @@ describe('mandatory product glossary', () => {
     )
 
     expect(actual).toEqual(expected)
+  })
+
+  it('rejects a Main model label translated as the Main Agent role', () => {
+    expect(mainModelGlossaryOffenders('zh-Hans', [['Main model', '主智能体']])).toEqual([
+      'Main model'
+    ])
+  })
+
+  it('rejects a lowercase main agent compound translated as generic Agent', () => {
+    const key = 'Runs delegated tasks spawned by the main agent.'
+
+    expect(mainAgentGlossaryOffenders('zh-Hans', [[key, '运行由智能体发起的委派任务。']])).toEqual([
+      key
+    ])
+  })
+
+  it('rejects a Subagent label translated as generic Agent', () => {
+    expect(subagentGlossaryOffenders('zh-Hans', [['Subagent', '智能体']])).toEqual(['Subagent'])
+  })
+
+  it('rejects a native Subagent compound translated as generic Agent', () => {
+    const key = 'Return to the running tasks and stop their subagents before quitting Open Science.'
+
+    expect(
+      subagentGlossaryOffenders('zh-Hans', [[key, '请返回正在运行的任务并停止其智能体。']])
+    ).toEqual([key])
+  })
+
+  it.each(TRANSLATED)('%s uses the chosen Main model term in every matching key', (locale) => {
+    expect(mainModelGlossaryOffenders(locale, allCatalogEntries(locale))).toEqual([])
+  })
+
+  it.each(TRANSLATED)('%s uses the chosen Subagent term in every matching key', (locale) => {
+    expect(subagentGlossaryOffenders(locale, allCatalogEntries(locale))).toEqual([])
   })
 
   it('uses native copy for the provider-controlled default hint', () => {
@@ -1096,29 +1248,13 @@ describe('mandatory product glossary', () => {
   it.each(TRANSLATED)(
     '%s uses the chosen Main Agent spelling in every Main role label',
     (locale) => {
-      const expected = {
-        fr: 'Agent principal',
-        'zh-Hans': '主智能体',
-        'zh-Hant': '主智能體',
-        ja: 'メインエージェント',
-        ko: '메인 에이전트',
-        ru: 'главн'
-      }[locale]
-      const offenders = Object.entries(catalog(locale))
-        // Main Agent role labels only — a plain "Main model" key is a different concept and
-        // must not be forced to carry the agent spelling.
-        .filter(([key]) => /\bMain Agent\b/.test(englishOf(key)))
-        .filter(([, value]) =>
-          locale === 'ru'
-            ? !value.toLocaleLowerCase('ru').includes(expected) || !/агент/iu.test(value)
-            : !value.toLocaleLowerCase().includes(expected.toLocaleLowerCase())
-        )
-        .map(([key]) => key)
+      const offenders = mainAgentGlossaryOffenders(locale, allCatalogEntries(locale))
 
       expect(offenders).toEqual([])
     }
   )
 
+  const oauthIdentifierPattern = /\bOAuth\b/g
   const exactTechnicalIdentifierPatterns = [
     /SKILL\.md/g,
     /\b[\w.-]+\.(?:md|txt|json|zip)\b/g,
@@ -1132,6 +1268,7 @@ describe('mandatory product glossary', () => {
     /setup-token/g,
     /\bopen-science\b/g,
     /\bRemote\.It\b/g,
+    oauthIdentifierPattern,
     /\bZIP\b/g,
     /(?<![:/\w])\/(?:[\w.-]+\/)+[\w.-]*[\w-]/g,
     /\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g,
@@ -1151,10 +1288,16 @@ describe('mandatory product glossary', () => {
       .flatMap((identifier) => text.match(identifier) ?? [])
       .sort((left, right) => left.localeCompare(right))
   const withoutTechnicalIdentifiers = (text: string): string =>
-    [/\{\{\w+\}\}/g, ...exactTechnicalIdentifierPatterns].reduce(
-      (prose, identifier) => prose.replace(identifier, ''),
-      text
-    )
+    [
+      /\{\{\w+\}\}/g,
+      ...exactTechnicalIdentifierPatterns.filter(
+        (identifier) => identifier !== oauthIdentifierPattern
+      )
+    ].reduce((prose, identifier) => prose.replace(identifier, ''), text)
+
+  it('treats OAuth as an exact technical identifier', () => {
+    expect(exactTechnicalIdentifiers('OAuth registration')).toEqual(['OAuth'])
+  })
 
   it.each(TRANSLATED)('%s preserves exact technical identifiers', (locale) => {
     const offenders = allCatalogEntries(locale).flatMap(([key, value]) => {
@@ -2064,15 +2207,6 @@ describe('Korean safety copy', () => {
     ['{{count}} allowed this session_other', '이번 세션에서 {{count}}개 허용됨']
   ])('preserves the scope of %s', (key, expected) => {
     expect(catalog('ko')[key]).toBe(expected)
-  })
-})
-
-describe('Korean language endonyms', () => {
-  it('keeps Chinese language names in their own script', () => {
-    expect(catalog('ko')).toMatchObject({
-      简体中文: '简体中文',
-      繁體中文: '繁體中文'
-    })
   })
 })
 
@@ -3168,6 +3302,24 @@ describe('missing translations', () => {
       .map((site) => `${site.file}: ${JSON.stringify(site.key)}`)
 
     expect(untranslated).toEqual([])
+  })
+
+  it('routes renderer contextual keys owned by common directly to that namespace', () => {
+    const commonContextualKeys = new Set(
+      Object.keys(commonCatalogs.fr).filter((key) => {
+        const suffix = withoutPluralCategory(key).split('_').at(-1)
+        return suffix !== undefined && CONTEXT_SUFFIXES.has(suffix)
+      })
+    )
+    const misrouted = sites
+      .filter((site) => site.file.startsWith('renderer/'))
+      .filter((site) =>
+        commonContextualKeys.has(site.context ? `${site.key}_${site.context}` : site.key)
+      )
+      .filter((site) => site.namespace !== 'common')
+      .map((site) => `${site.file}: ${JSON.stringify(site.key)}`)
+
+    expect(misrouted).toEqual([])
   })
 
   it.each(TRANSLATED)('every %s contextual key has an exact renderer call site', (locale) => {
