@@ -3277,5 +3277,6 @@
   "Removed packages": "패키지 제거 완료",
   "Removed {{count}} packages_other": "패키지 {{count}}개 제거 완료",
   "Bioconductor": "Bioconductor",
-  "Related changes": "관련 변경 사항"
+  "Related changes": "관련 변경 사항",
+  "Show in text field": "텍스트 입력란에 표시"
 }

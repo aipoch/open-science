@@ -15,14 +15,18 @@ import { createPreviewRequestScope } from '../previews/preview-file-reader'
 import { ArtifactMentionPopup, type PickedArtifact } from './ArtifactMentionPopup'
 import {
   applyDocToDom,
+  createPastedTextAnchor,
   docArtifactCount,
   docIsEmpty,
   docSessionCount,
   domToDoc,
   MAX_COMPOSER_ARTIFACT_MENTIONS,
   MAX_COMPOSER_SESSION_MENTIONS,
+  shouldAttachPastedText,
+  type ComposerCaretPosition,
   type ComposerDoc,
-  type ComposerNode
+  type ComposerNode,
+  type ComposerPastedTextNode
 } from './composer-doc'
 import { SkillMentionPopup } from './SkillMentionPopup'
 import { SessionMentionPopup, type PickedSession } from './SessionMentionPopup'
@@ -43,6 +47,8 @@ type ComposerEditorProps = {
   onDocChange: (doc: ComposerDoc) => void
   onSubmit: () => void
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
+  onLongTextPaste?: (doc: ComposerDoc, node: ComposerPastedTextNode) => void
+  onUndoPastedTextRemoval?: () => boolean
   disabled?: boolean
   placeholder: string
   className?: string
@@ -57,6 +63,7 @@ type ComposerEditorProps = {
   mentionPreviewContext?: { sessionId: string; projectId?: string }
   focusRequest?: string | number
   restoreFocusRequest?: number
+  caretRequest?: { key: number; position: ComposerCaretPosition }
 }
 
 // Structural equality over doc nodes; used to decide whether the incoming prop diverges from what
@@ -72,6 +79,14 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
     }
     if (node.type === 'session' && other.type === 'session') {
       return node.sessionId === other.sessionId && node.title === other.title
+    }
+    if (node.type === 'pasted-text' && other.type === 'pasted-text') {
+      return (
+        node.id === other.id &&
+        node.text === other.text &&
+        node.transferId === other.transferId &&
+        node.attachmentId === other.attachmentId
+      )
     }
     if (node.type === 'artifact' && other.type === 'artifact') {
       if (
@@ -109,9 +124,24 @@ const insertPlainTextAtCaret = (text: string): void => {
   selection.addRange(range)
 }
 
+const insertPastedTextAtCaret = (node: ComposerPastedTextNode): void => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return
+  const range = selection.getRangeAt(0)
+  range.deleteContents()
+  const inserted = createPastedTextAnchor(node)
+  range.insertNode(inserted)
+  range.setStartAfter(inserted)
+  range.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(range)
+}
+
 // A rendered mention chip element (skill or artifact) — any atomic, non-editable token span.
-const asMentionChip = (node: Node | null): HTMLElement | null =>
-  node?.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).hasAttribute('data-mention-type')
+const asAtomicChip = (node: Node | null): HTMLElement | null =>
+  node?.nodeType === Node.ELEMENT_NODE &&
+  ((node as HTMLElement).hasAttribute('data-mention-type') ||
+    (node as HTMLElement).getAttribute('data-composer-node-type') === 'pasted-text')
     ? (node as HTMLElement)
     : null
 
@@ -126,12 +156,12 @@ const chipBesideCaret = (root: HTMLElement, side: 'before' | 'after'): HTMLEleme
   const offset = range.startOffset
 
   if (node.nodeType === Node.TEXT_NODE) {
-    if (side === 'before') return offset === 0 ? asMentionChip(node.previousSibling) : null
-    return offset === (node.textContent ?? '').length ? asMentionChip(node.nextSibling) : null
+    if (side === 'before') return offset === 0 ? asAtomicChip(node.previousSibling) : null
+    return offset === (node.textContent ?? '').length ? asAtomicChip(node.nextSibling) : null
   }
   if (node.nodeType === Node.ELEMENT_NODE) {
     const index = side === 'before' ? offset - 1 : offset
-    return asMentionChip(node.childNodes[index] ?? null)
+    return asAtomicChip(node.childNodes[index] ?? null)
   }
   return null
 }
@@ -165,6 +195,18 @@ const moveCaretToEnd = (root: HTMLElement): void => {
   selection?.addRange(range)
 }
 
+const moveCaretToPosition = (root: HTMLElement, position: ComposerCaretPosition): void => {
+  const node = root.childNodes[position.nodeIndex]
+  if (!node || node.nodeType !== Node.TEXT_NODE) return moveCaretToEnd(root)
+  root.focus()
+  const range = document.createRange()
+  range.setStart(node, Math.min(position.offset, node.textContent?.length ?? 0))
+  range.collapse(true)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+}
+
 const canReceiveFocus = (root: HTMLElement): boolean =>
   root.getAttribute('contenteditable') === 'true' && root.closest('[hidden]') === null
 
@@ -175,6 +217,8 @@ export const ComposerEditor = ({
   onDocChange,
   onSubmit,
   onPaste,
+  onLongTextPaste,
+  onUndoPastedTextRemoval,
   disabled = false,
   placeholder,
   className,
@@ -185,7 +229,8 @@ export const ComposerEditor = ({
   onNavigateHistory,
   mentionPreviewContext,
   focusRequest,
-  restoreFocusRequest
+  restoreFocusRequest,
+  caretRequest
 }: ComposerEditorProps): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -195,6 +240,7 @@ export const ComposerEditor = ({
   const mentionListboxId = useId()
   const [activeMentionOptionId, setActiveMentionOptionId] = useState<string | undefined>()
   const restoreHistoryCaretRef = useRef(false)
+  const handledCaretRequestRef = useRef<number | undefined>(undefined)
   // Tracks IME composition so Enter never submits mid-composition.
   const composingRef = useRef(false)
 
@@ -236,11 +282,17 @@ export const ComposerEditor = ({
       focusRequest !== undefined && canReceiveFocus(root) && document.activeElement === root
     const docChanged = !nodesEqual(domToDoc(root).nodes, doc.nodes)
     if (docChanged) applyDocToDom(root, doc)
-    if (restoreHistoryCaretRef.current || (docChanged && shouldPreserveFocus)) {
+    const hasCaretRequest =
+      caretRequest !== undefined && handledCaretRequestRef.current !== caretRequest.key
+    if (hasCaretRequest) {
+      handledCaretRequestRef.current = caretRequest.key
+      restoreHistoryCaretRef.current = false
+      moveCaretToPosition(root, caretRequest.position)
+    } else if (restoreHistoryCaretRef.current || (docChanged && shouldPreserveFocus)) {
       restoreHistoryCaretRef.current = false
       moveCaretToEnd(root)
     }
-  }, [doc, focusRequest])
+  }, [caretRequest, doc, focusRequest])
 
   useLayoutEffect(() => {
     const root = editorRef.current
@@ -330,6 +382,20 @@ export const ComposerEditor = ({
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (disabled) return
+    const primaryUndoModifier =
+      (event.metaKey && !event.ctrlKey) || (event.ctrlKey && !event.metaKey)
+    if (
+      event.key.toLowerCase() === 'z' &&
+      primaryUndoModifier &&
+      !event.altKey &&
+      !event.shiftKey &&
+      !event.repeat &&
+      !event.nativeEvent.isComposing &&
+      onUndoPastedTextRemoval?.()
+    ) {
+      event.preventDefault()
+      return
+    }
     // While either mention popup is open it owns Enter/arrow keys; leave them to its document listener.
     if (mention.active || artifactMention.active || sessionMention.active) return
     if (
@@ -382,8 +448,19 @@ export const ComposerEditor = ({
     const text = event.clipboardData?.getData('text/plain') ?? ''
     if (text) {
       event.preventDefault()
-      insertPlainTextAtCaret(text)
-      emitDocFromDom()
+      if (onLongTextPaste && shouldAttachPastedText(text)) {
+        const node: ComposerPastedTextNode = {
+          type: 'pasted-text',
+          id: crypto.randomUUID(),
+          text
+        }
+        insertPastedTextAtCaret(node)
+        const root = editorRef.current
+        if (root) onLongTextPaste(domToDoc(root), node)
+      } else {
+        insertPlainTextAtCaret(text)
+        emitDocFromDom()
+      }
     }
   }
 

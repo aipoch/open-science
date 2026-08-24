@@ -4,7 +4,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ComposerEditor } from './ComposerEditor'
-import { emptyDoc, type ComposerDoc } from './composer-doc'
+import {
+  emptyDoc,
+  LONG_PASTE_CHARACTER_THRESHOLD,
+  type ComposerDoc,
+  type ComposerPastedTextNode
+} from './composer-doc'
 import {
   createInitialGrantedFoldersState,
   useGrantedFoldersStore
@@ -201,6 +206,8 @@ type Overrides = Partial<{
   onDocChange: (doc: ComposerDoc) => void
   onSubmit: () => void
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
+  onLongTextPaste: (doc: ComposerDoc, node: ComposerPastedTextNode) => void
+  onUndoPastedTextRemoval: () => boolean
   disabled: boolean
   isHistoryBrowsing: boolean
   historyStatus: string
@@ -208,6 +215,7 @@ type Overrides = Partial<{
   mentionPreviewContext: { sessionId: string; projectId?: string }
   focusRequest: string | number
   restoreFocusRequest: number
+  caretRequest: { key: number; position: { nodeIndex: number; offset: number } }
 }>
 
 const renderEditor = (overrides: Overrides = {}): void => {
@@ -218,6 +226,8 @@ const renderEditor = (overrides: Overrides = {}): void => {
         onDocChange={overrides.onDocChange ?? noop}
         onSubmit={overrides.onSubmit ?? noop}
         onPaste={overrides.onPaste ?? noop}
+        onLongTextPaste={overrides.onLongTextPaste}
+        onUndoPastedTextRemoval={overrides.onUndoPastedTextRemoval}
         disabled={overrides.disabled}
         placeholder="Ask anything"
         ariaLabel="Ask anything"
@@ -227,6 +237,7 @@ const renderEditor = (overrides: Overrides = {}): void => {
         mentionPreviewContext={overrides.mentionPreviewContext}
         focusRequest={overrides.focusRequest}
         restoreFocusRequest={overrides.restoreFocusRequest}
+        caretRequest={overrides.caretRequest}
       />
     )
   })
@@ -482,6 +493,87 @@ describe('ComposerEditor', () => {
     expect(onPaste).toHaveBeenCalledTimes(1)
     expect(editor().textContent).toContain('pasted')
     expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'pasted' }] })
+  })
+
+  it('replaces the active selection with a long-paste anchor at the exact document position', () => {
+    const onDocChange = vi.fn()
+    const onLongTextPaste = vi.fn()
+    renderEditor({
+      doc: { nodes: [{ type: 'text', text: 'before SELECT after' }] },
+      onDocChange,
+      onLongTextPaste
+    })
+    const textNode = editor().firstChild as Text
+    const range = document.createRange()
+    range.setStart(textNode, 'before '.length)
+    range.setEnd(textNode, 'before SELECT'.length)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    const payload = 'x'.repeat(LONG_PASTE_CHARACTER_THRESHOLD + 1)
+
+    act(() => {
+      const event = new Event('paste', { bubbles: true, cancelable: true }) as Event & {
+        clipboardData: unknown
+      }
+      event.clipboardData = {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? payload : '')
+      }
+      editor().dispatchEvent(event)
+    })
+
+    expect(onDocChange).not.toHaveBeenCalled()
+    const [nextDoc, node] = onLongTextPaste.mock.calls[0] as [ComposerDoc, ComposerPastedTextNode]
+    expect(node).toMatchObject({ type: 'pasted-text', text: payload })
+    expect(nextDoc).toEqual({
+      nodes: [{ type: 'text', text: 'before ' }, node, { type: 'text', text: ' after' }]
+    })
+    expect(editor().textContent).not.toContain(payload)
+  })
+
+  it('uses custom Cmd+Z only while a pasted-text removal is undoable', () => {
+    const onUndoPastedTextRemoval = vi.fn(() => true)
+    renderEditor({ onUndoPastedTextRemoval })
+    const handled = new KeyboardEvent('keydown', {
+      key: 'z',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    act(() => editor().dispatchEvent(handled))
+    expect(handled.defaultPrevented).toBe(true)
+    expect(onUndoPastedTextRemoval).toHaveBeenCalledOnce()
+
+    onUndoPastedTextRemoval.mockReturnValue(false)
+    const native = new KeyboardEvent('keydown', {
+      key: 'z',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    act(() => editor().dispatchEvent(native))
+    expect(native.defaultPrevented).toBe(false)
+  })
+
+  it('places the caret immediately after restored pasted text', () => {
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'text', text: 'before ' },
+          { type: 'pasted-text', id: 'paste-1', text: 'payload' },
+          { type: 'text', text: ' after' }
+        ]
+      }
+    })
+
+    renderEditor({
+      doc: { nodes: [{ type: 'text', text: 'before payload after' }] },
+      caretRequest: { key: 1, position: { nodeIndex: 0, offset: 'before payload'.length } }
+    })
+
+    expect(document.activeElement).toBe(editor())
+    expect(window.getSelection()?.anchorNode).toBe(editor().firstChild)
+    expect(window.getSelection()?.anchorOffset).toBe('before payload'.length)
   })
 
   it('keeps pasted "/name" text as plain text, never a functional skill chip', () => {

@@ -377,14 +377,18 @@ const createPanelDefaults = (): PanelProps => ({
       error: null,
       historyStatus: '',
       isHistoryBrowsing: false,
-      isUploading: false
+      isUploading: false,
+      caretRequest: undefined
     },
     actions: {
       changeDoc: vi.fn(),
       navigateHistory: vi.fn(() => false),
       stageFiles: onStageAttachmentFiles,
+      stagePastedText: vi.fn(),
       cancelTransfer: vi.fn(),
       removeAttachment: vi.fn(),
+      restorePastedText: vi.fn(),
+      undoPastedTextRemoval: vi.fn(() => false),
       setError: vi.fn()
     }
   },
@@ -1762,6 +1766,56 @@ describe('ConversationPanel composer intake', () => {
     expect(cancel).not.toBeNull()
     act(() => cancel?.click())
     expect(onCancelAttachmentTransfer).toHaveBeenCalledWith(transfer)
+  })
+
+  it('renders a reversible pasted-text attachment and routes restore and close separately', () => {
+    const attachment = {
+      id: 'upload-paste',
+      sessionId: '.pending',
+      name: 'Pasted text.txt',
+      originalName: 'Pasted text.txt',
+      path: '/uploads/Pasted text.txt',
+      mimeType: 'text/plain',
+      size: 12_000
+    }
+    const restorePastedText = vi.fn()
+    const removeAttachment = vi.fn()
+    renderPanel({
+      composer: {
+        view: {
+          doc: {
+            nodes: [
+              { type: 'text', text: 'before ' },
+              {
+                type: 'pasted-text',
+                id: 'paste-1',
+                text: 'payload',
+                attachmentId: attachment.id
+              },
+              { type: 'text', text: ' after' }
+            ]
+          },
+          attachments: [attachment]
+        },
+        actions: { restorePastedText, removeAttachment }
+      }
+    })
+
+    const card = container.querySelector('[data-pasted-text-attachment="true"]')
+    const restore = Array.from(card?.querySelectorAll('button') ?? []).find((button) =>
+      button.textContent?.includes('Show in text field')
+    )
+    const remove = card?.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove attachment Pasted text.txt"]'
+    )
+
+    expect(card?.getAttribute('data-state')).toBe('success')
+    expect(card?.textContent).toContain('Pasted text.txt')
+    expect(restore?.querySelector('span')?.className).toContain('whitespace-nowrap')
+    act(() => restore?.click())
+    expect(restorePastedText).toHaveBeenCalledWith('paste-1')
+    act(() => remove?.click())
+    expect(removeAttachment).toHaveBeenCalledWith(attachment)
   })
 
   it('uses a flat border without a card shadow', () => {

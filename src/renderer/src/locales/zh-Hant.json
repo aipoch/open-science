@@ -3279,5 +3279,6 @@
   "Removed packages": "已移除軟體套件",
   "Removed {{count}} packages_other": "已移除 {{count}} 個軟體套件",
   "Bioconductor": "Bioconductor",
-  "Related changes": "相關變更"
+  "Related changes": "相關變更",
+  "Show in text field": "在文字欄位中顯示"
 }

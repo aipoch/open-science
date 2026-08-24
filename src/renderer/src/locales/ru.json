@@ -3677,5 +3677,6 @@
   "Removed {{count}} packages_many": "Удалено {{count}} пакетов",
   "Removed {{count}} packages_other": "Удалено {{count}} пакета",
   "Bioconductor": "Bioconductor",
-  "Related changes": "Связанные изменения"
+  "Related changes": "Связанные изменения",
+  "Show in text field": "Показать в текстовом поле"
 }

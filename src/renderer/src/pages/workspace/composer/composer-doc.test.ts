@@ -4,16 +4,24 @@ import { describe, expect, it } from 'vitest'
 import {
   appendArtifactMention,
   applyDocToDom,
+  createPastedTextAnchor,
   docArtifactCount,
   docFromMessageParts,
   docFromText,
   docIsEmpty,
   docSessionCount,
   docToArtifactRefs,
+  docToMessageParts,
   docToSkillIds,
   docToText,
   domToDoc,
   emptyDoc,
+  insertPastedTextNodeAtLogicalOffset,
+  LONG_PASTE_CHARACTER_THRESHOLD,
+  LONG_PASTE_LINE_THRESHOLD,
+  pastedTextLogicalOffset,
+  restorePastedTextNode,
+  shouldAttachPastedText,
   type ComposerDoc
 } from './composer-doc'
 
@@ -79,6 +87,90 @@ describe('docToText', () => {
 
   it('returns an empty string for the empty doc', () => {
     expect(docToText(emptyDoc)).toBe('')
+  })
+
+  it('omits live pasted-text anchors from message text and durable parts', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'before' },
+        { type: 'pasted-text', id: 'paste-1', text: 'large payload', attachmentId: 'upload-1' },
+        { type: 'text', text: 'after' }
+      ]
+    }
+
+    expect(docToText(doc)).toBe('beforeafter')
+    expect(docToMessageParts(doc)).toEqual([
+      { type: 'text', text: 'before' },
+      { type: 'text', text: 'after' }
+    ])
+  })
+})
+
+describe('long pasted text', () => {
+  it('uses the confirmed character and line thresholds', () => {
+    expect(shouldAttachPastedText('x'.repeat(LONG_PASTE_CHARACTER_THRESHOLD))).toBe(false)
+    expect(shouldAttachPastedText('x'.repeat(LONG_PASTE_CHARACTER_THRESHOLD + 1))).toBe(true)
+    expect(shouldAttachPastedText('x\n'.repeat(LONG_PASTE_LINE_THRESHOLD - 1) + 'x')).toBe(false)
+    expect(shouldAttachPastedText('x\n'.repeat(LONG_PASTE_LINE_THRESHOLD) + 'x')).toBe(true)
+  })
+
+  it('restores the text between surrounding runs and returns the exact caret offset', () => {
+    const restored = restorePastedTextNode(
+      {
+        nodes: [
+          { type: 'text', text: 'before ' },
+          { type: 'pasted-text', id: 'paste-1', text: 'payload' },
+          { type: 'text', text: ' after' }
+        ]
+      },
+      'paste-1'
+    )
+
+    expect(restored).toEqual({
+      doc: { nodes: [{ type: 'text', text: 'before payload after' }] },
+      caret: { nodeIndex: 0, offset: 'before payload'.length }
+    })
+  })
+
+  it('reinserts only the removed anchor after another paste has become inline text', () => {
+    const removed = { type: 'pasted-text' as const, id: 'paste-a', text: 'alpha' }
+    const original: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'before ' },
+        removed,
+        { type: 'text', text: ' middle ' },
+        { type: 'pasted-text', id: 'paste-b', text: 'bravo' },
+        { type: 'text', text: ' after' }
+      ]
+    }
+    const offset = pastedTextLogicalOffset(original, removed.id)
+
+    expect(
+      insertPastedTextNodeAtLogicalOffset(
+        { nodes: [{ type: 'text', text: 'before  middle bravo after' }] },
+        removed,
+        offset ?? 0
+      )
+    ).toEqual({
+      nodes: [
+        { type: 'text', text: 'before ' },
+        removed,
+        { type: 'text', text: ' middle bravo after' }
+      ]
+    })
+  })
+
+  it('round-trips an invisible anchor without putting the payload in the DOM', () => {
+    const root = document.createElement('div')
+    const node = { type: 'pasted-text' as const, id: 'paste-1', text: 'private payload' }
+    const anchor = createPastedTextAnchor(node)
+    root.append(anchor)
+
+    expect(anchor.textContent).not.toContain(node.text)
+    expect(Array.from(anchor.attributes).map((attribute) => attribute.value)).not.toContain(
+      node.text
+    )
+    expect(domToDoc(root)).toEqual({ nodes: [node] })
   })
 })
 
@@ -276,6 +368,12 @@ describe('docIsEmpty', () => {
 
   it('is false when text has non-whitespace content', () => {
     expect(docIsEmpty(docFromText('x'))).toBe(false)
+  })
+
+  it('is false when a pasted-text attachment anchor exists', () => {
+    expect(docIsEmpty({ nodes: [{ type: 'pasted-text', id: 'paste-1', text: 'payload' }] })).toBe(
+      false
+    )
   })
 })
 
