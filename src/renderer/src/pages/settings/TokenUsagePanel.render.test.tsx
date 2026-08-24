@@ -322,6 +322,12 @@ describe('TokenUsagePanel', () => {
     expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
       'Total tokens20'
     )
+
+    await act(async () => {
+      vi.advanceTimersByTime(2 * 60_000)
+    })
+
+    expect(document.body.textContent).toContain('Updated 2 minutes ago')
   })
 
   it('renders the stat strip, 30-day charts, coverage, and period controls', () => {

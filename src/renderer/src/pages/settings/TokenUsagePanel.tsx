@@ -90,6 +90,7 @@ function TokenUsagePanel({
   const { t, i18n } = useTranslation()
   const formatRelative = useRelativeTimeFormat()
   const [currentTime, setCurrentTime] = useState(() => Date.now())
+  const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now())
   const now = providedNow ?? currentTime
   const [period, setPeriod] = useState<TokenUsagePeriod>('30-days')
   const [heatmapMetric, setHeatmapMetric] = useState<TokenUsageHeatmapMetric>('totalTokens')
@@ -114,6 +115,7 @@ function TokenUsagePanel({
         const refreshedAt = Date.now()
         setUsageProjectionLoadResult({ projection, lastRefreshedAt: refreshedAt })
         setCurrentTime(refreshedAt)
+        setRelativeTimeNow(refreshedAt)
       })
       .catch(() => {
         if (active) setUsageProjectionLoadResult((current) => ({ ...current, failed: true }))
@@ -125,6 +127,12 @@ function TokenUsagePanel({
       active = false
     }
   }, [usageProjectionLoadAttempt])
+
+  useEffect(() => {
+    if (lastRefreshedAt === undefined) return
+    const intervalId = window.setInterval(() => setRelativeTimeNow(Date.now()), 60_000)
+    return () => window.clearInterval(intervalId)
+  }, [lastRefreshedAt])
 
   useEffect(() => {
     if (providedNow !== undefined) return
@@ -367,7 +375,7 @@ function TokenUsagePanel({
                       <span className="truncate">
                         ·{' '}
                         {t('Updated {{time}}', {
-                          time: formatRelative(lastRefreshedAt, currentTime)
+                          time: formatRelative(lastRefreshedAt, relativeTimeNow)
                         })}
                       </span>
                     ) : null}
@@ -375,7 +383,7 @@ function TokenUsagePanel({
                 ) : lastRefreshedAt ? (
                   <span>
                     {t('Updated {{time}}', {
-                      time: formatRelative(lastRefreshedAt, currentTime)
+                      time: formatRelative(lastRefreshedAt, relativeTimeNow)
                     })}
                   </span>
                 ) : null}
