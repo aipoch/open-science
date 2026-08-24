@@ -322,6 +322,7 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
   for (const child of Array.from(root.childNodes)) {
     if (child.nodeType === Node.TEXT_NODE) {
       const text = child.textContent ?? ''
+      if (text === '') continue
       const last = nodes[nodes.length - 1]
       // Merge into a preceding text node so adjacent text collapses.
       if (last && last.type === 'text') last.text += text
@@ -473,4 +474,5 @@ export const applyDocToDom = (root: HTMLElement, doc: ComposerDoc): void => {
     else if (node.type === 'session') root.appendChild(createSessionChip(node))
     else root.appendChild(createPastedTextAnchor(node))
   }
+  if (doc.nodes.at(-1)?.type === 'pasted-text') root.appendChild(document.createTextNode(''))
 }

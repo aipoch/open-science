@@ -28,9 +28,10 @@ export type ComposerDraft = {
 
 type ComposerDeletionCleanup = Pick<ComposerDraft, 'attachments' | 'attachmentTransfers'>
 
-type RemovedPastedTextReceipt = {
+type PastedTextUndoReceipt = {
   logicalOffset: number
   node: ComposerPastedTextNode
+  attachmentDoc?: ComposerDoc
 }
 
 export type ComposerUploadApi = UploadStagingApi & {
@@ -109,7 +110,7 @@ export const useWorkspaceComposerUploadController = ({
   const controllersRef = useRef<Record<string, AbortController>>({})
   const cancelledTransfersRef = useRef(new Set<string>())
   const deletionCleanupRef = useRef<Record<string, ComposerDeletionCleanup>>({})
-  const removedPastedTextRef = useRef<Record<string, RemovedPastedTextReceipt[]>>({})
+  const removedPastedTextRef = useRef<Record<string, PastedTextUndoReceipt[]>>({})
   const setActiveAttachments = useCallback((next: UploadedAttachment[]): void => {
     attachmentsRef.current = next
     setAttachments(next)
@@ -491,7 +492,15 @@ export const useWorkspaceComposerUploadController = ({
       )
       if (!node) return
       const draftKey = activeDraftKeyRef.current
-      clearPastedTextUndo(draftKey)
+      const stack = removedPastedTextRef.current[draftKey] ?? []
+      removedPastedTextRef.current[draftKey] = [
+        ...stack,
+        {
+          logicalOffset: pastedTextLogicalOffset(docRef.current, node.id) ?? 0,
+          node: { ...node },
+          attachmentDoc: docRef.current
+        }
+      ].slice(-10)
       clearHistory(draftKey)
       markChanged(draftKey)
       restorePastedTextInline(draftKey, pastedTextId)
@@ -500,7 +509,6 @@ export const useWorkspaceComposerUploadController = ({
     [
       activeDraftKeyRef,
       clearHistory,
-      clearPastedTextUndo,
       deletePastedTextUpload,
       docRef,
       markChanged,
@@ -518,7 +526,9 @@ export const useWorkspaceComposerUploadController = ({
 
     const restoredNode = { ...receipt.node, transferId: undefined, attachmentId: undefined }
     stagePastedText(
-      insertPastedTextNodeAtLogicalOffset(docRef.current, restoredNode, receipt.logicalOffset),
+      receipt.attachmentDoc
+        ? updatePastedTextNode(receipt.attachmentDoc, restoredNode.id, () => restoredNode)
+        : insertPastedTextNodeAtLogicalOffset(docRef.current, restoredNode, receipt.logicalOffset),
       restoredNode,
       true
     )

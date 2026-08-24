@@ -154,17 +154,28 @@ describe('workspace composer controller', () => {
     expect(docToText(hook.result.current.view.doc)).toBe('before  after')
   })
 
-  it('restores staged pasted text at its exact position and deletes the pending upload', async () => {
+  it('restores staged pasted text at its exact position and Cmd+Z converts it back', async () => {
     const uploadApi = uploads(
-      vi.fn().mockResolvedValue({
-        id: 'upload-paste',
-        sessionId: '.pending',
-        name: 'Pasted text.txt',
-        originalName: 'Pasted text.txt',
-        path: '/uploads/Pasted text.txt',
-        mimeType: 'text/plain',
-        size: 7
-      })
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          id: 'upload-paste',
+          sessionId: '.pending',
+          name: 'Pasted text.txt',
+          originalName: 'Pasted text.txt',
+          path: '/uploads/Pasted text.txt',
+          mimeType: 'text/plain',
+          size: 7
+        })
+        .mockResolvedValueOnce({
+          id: 'upload-paste-restaged',
+          sessionId: '.pending',
+          name: 'Pasted text.txt',
+          originalName: 'Pasted text.txt',
+          path: '/uploads/Pasted text-restaged.txt',
+          mimeType: 'text/plain',
+          size: 7
+        })
     )
     const hook = renderController(uploadApi)
     mounted.push(hook)
@@ -186,6 +197,17 @@ describe('workspace composer controller', () => {
       offset: 'before payload'.length
     })
     expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/Pasted text.txt' })
+
+    act(() => expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(true))
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
+      type: 'pasted-text',
+      id: 'paste-1',
+      attachmentId: 'upload-paste-restaged'
+    })
+    expect(docToText(hook.result.current.view.doc)).toBe('before  after')
+    expect(hook.result.current.view.attachments[0]?.id).toBe('upload-paste-restaged')
   })
 
   it('restores the original text inline when staging a converted paste fails', async () => {

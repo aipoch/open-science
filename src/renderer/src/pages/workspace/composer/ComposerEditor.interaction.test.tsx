@@ -275,7 +275,11 @@ describe('ComposerEditor', () => {
   it('shows the placeholder when the doc is empty and hides it once there is content', () => {
     renderEditor({ doc: emptyDoc })
     // The only aria-hidden node in the editor is the placeholder overlay.
-    expect(document.body.querySelector('[aria-hidden="true"]')?.textContent).toBe('Ask anything')
+    expect(
+      Array.from(document.body.querySelectorAll('[aria-hidden="true"]')).some(
+        (node) => node.textContent === 'Ask anything'
+      )
+    ).toBe(true)
 
     act(() => {
       root.render(
@@ -290,6 +294,26 @@ describe('ComposerEditor', () => {
       )
     })
     expect(document.body.querySelector('[aria-hidden="true"]')).toBeNull()
+  })
+
+  it('keeps the placeholder and a visible caret host when only a pasted-text anchor remains', () => {
+    renderEditor({ focusRequest: 'session-a' })
+    const root = editor()
+
+    renderEditor({
+      doc: {
+        nodes: [{ type: 'pasted-text', id: 'paste-1', text: 'payload', attachmentId: 'upload-1' }]
+      },
+      focusRequest: 'session-a'
+    })
+
+    expect(
+      Array.from(document.body.querySelectorAll('[aria-hidden="true"]')).some(
+        (node) => node.textContent === 'Ask anything'
+      )
+    ).toBe(true)
+    expect(document.activeElement).toBe(root)
+    expect(window.getSelection()?.anchorNode?.nodeType).toBe(Node.TEXT_NODE)
   })
 
   it('refreshes an artifact chip when only its MIME type changes', () => {

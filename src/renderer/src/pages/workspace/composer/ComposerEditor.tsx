@@ -17,7 +17,6 @@ import {
   applyDocToDom,
   createPastedTextAnchor,
   docArtifactCount,
-  docIsEmpty,
   docSessionCount,
   domToDoc,
   MAX_COMPOSER_ARTIFACT_MENTIONS,
@@ -131,7 +130,12 @@ const insertPastedTextAtCaret = (node: ComposerPastedTextNode): void => {
   range.deleteContents()
   const inserted = createPastedTextAnchor(node)
   range.insertNode(inserted)
-  range.setStartAfter(inserted)
+  let caretHost = inserted.nextSibling
+  if (caretHost?.nodeType !== Node.TEXT_NODE) {
+    caretHost = document.createTextNode('')
+    inserted.after(caretHost)
+  }
+  range.setStart(caretHost, 0)
   range.collapse(true)
   selection.removeAllRanges()
   selection.addRange(range)
@@ -188,8 +192,12 @@ const caretIsAtStart = (root: HTMLElement): boolean => {
 const moveCaretToEnd = (root: HTMLElement): void => {
   root.focus()
   const range = document.createRange()
-  range.selectNodeContents(root)
-  range.collapse(false)
+  const last = root.lastChild
+  if (last?.nodeType === Node.TEXT_NODE && last.textContent === '') range.setStart(last, 0)
+  else {
+    range.selectNodeContents(root)
+    range.collapse(false)
+  }
   const selection = window.getSelection()
   selection?.removeAllRanges()
   selection?.addRange(range)
@@ -246,6 +254,9 @@ export const ComposerEditor = ({
 
   // At most one skill per message: once a chip exists, suppress the trigger so a further `/` does nothing.
   const hasSkill = doc.nodes.some((node) => node.type === 'skill')
+  const hasVisibleContent = doc.nodes.some(
+    (node) => node.type !== 'pasted-text' && (node.type !== 'text' || node.text.trim() !== '')
+  )
 
   // The hook guards a null current internally; widen the element type for its generic ref option.
   const mention = useMentionTrigger({
@@ -523,8 +534,8 @@ export const ComposerEditor = ({
       <span id={historyStatusId} role="status" aria-live="polite" className="sr-only">
         {historyStatus}
       </span>
-      {/* Show the placeholder whenever the doc is empty, regardless of focus. */}
-      {docIsEmpty(doc) ? (
+      {/* Attachment anchors are invisible, so they do not suppress the text-field placeholder. */}
+      {!hasVisibleContent ? (
         <div aria-hidden="true" className={composerPlaceholderClassName}>
           {placeholder}
         </div>
