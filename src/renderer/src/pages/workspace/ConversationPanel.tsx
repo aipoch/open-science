@@ -91,6 +91,7 @@ import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
+import { SessionSwitchSkeleton } from './SessionSwitchSkeleton'
 import { PlanProgressChip, WorkspacePlanCard } from './session-plan/SessionPlanSurfaces'
 import { projectDelegatedQuestionQueue } from './subagent-release-projection'
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
@@ -862,21 +863,25 @@ const ConversationPanel = ({
           </button>
         </header>
 
-        <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage && !sideChat}>
-          <WorkspaceMessageScroller
-            activeSession={activeSession}
-            optimisticMessage={optimisticMessage}
-            isResumingSession={isResuming}
-            notebookReference={notebookReference}
-            onSendEditedMessage={onSendEditedMessage}
-            canBranchInNewSession={canBranchInNewSession}
-            onBranchInNewSession={onBranchFromAgentMessage}
-            pendingElicitations={sideChat ? [] : sessionPendingElicitations}
-            handoffLifecycleSource={workspaceHandoffLifecycleClient}
-            onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
-            reportPresentationRevealing
-          />
-        </WorkspaceMessageEditStateProvider>
+        {activeSession?.contentLoaded === false ? (
+          <SessionSwitchSkeleton />
+        ) : (
+          <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage && !sideChat}>
+            <WorkspaceMessageScroller
+              activeSession={activeSession}
+              optimisticMessage={optimisticMessage}
+              isResumingSession={isResuming}
+              notebookReference={notebookReference}
+              onSendEditedMessage={onSendEditedMessage}
+              canBranchInNewSession={canBranchInNewSession}
+              onBranchInNewSession={onBranchFromAgentMessage}
+              pendingElicitations={sideChat ? [] : sessionPendingElicitations}
+              handoffLifecycleSource={workspaceHandoffLifecycleClient}
+              onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
+              reportPresentationRevealing
+            />
+          </WorkspaceMessageEditStateProvider>
+        )}
 
         <div className="relative shrink-0">
           <div

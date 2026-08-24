@@ -613,6 +613,51 @@ describe('ConversationPanel header spacing', () => {
   })
 })
 
+describe('ConversationPanel session loading presentation', () => {
+  it('replaces the transcript with a skeleton until lazy Session content is hydrated', () => {
+    const loadingSession: ChatSession = {
+      id: 'session-loading',
+      projectId: 'project-a',
+      title: 'Loading conversation',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      contentLoaded: false,
+      activeMessageCount: 12,
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({ view: { activeSession: loadingSession } })
+
+    expect(container.querySelector('[data-testid="session-switch-skeleton"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="scroller-pending-elicitations"]')).toBeNull()
+
+    renderPanel({
+      view: {
+        activeSession: {
+          ...loadingSession,
+          contentLoaded: undefined,
+          messages: [
+            {
+              id: 'message-1',
+              role: 'user',
+              content: 'Loaded content',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        }
+      }
+    })
+
+    expect(container.querySelector('[data-testid="session-switch-skeleton"]')).toBeNull()
+    expect(container.querySelector('[data-testid="scroller-pending-elicitations"]')).not.toBeNull()
+  })
+})
+
 const hasDropOverlay = (): boolean =>
   container.textContent?.includes('Drop files to attach') ?? false
 

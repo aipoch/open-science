@@ -530,6 +530,12 @@ colors communicate a successful or failed probe/migration result.
 - Outer shell: `ScrollArea className="min-w-0 flex-1"`.
 - Message scroller surface uses `bg-bg-10` with a top fade `bg-gradient-to-b from-bg-10 to-bg-10/0`.
 - Message content is centered in `mx-auto w-full max-w-4xl pb-[56px]`.
+- Selecting a Session whose persisted content is not hydrated yet replaces the transcript with a
+  conversation-shaped skeleton: one right-aligned user bubble and two left-aligned Agent text
+  groups on `bg-bg-10`, using `bg-bg-300`, the existing message radii, and pulse opacity motion.
+  Keep the header, sidebar, preview, and composer stable; hide the decorative skeleton from assistive
+  technology, and disable its pulse under reduced motion. Already-hydrated Session switches render
+  directly so short in-memory transitions never flash a loading surface.
 - Desktop conversations with at least two visible human-authored runs show **Run Marks** in the
   scroller's left gutter. One mark belongs to the visible user Message that admitted the Run; model
   Turns inside that Run do not create marks. At rest, every mark is the same short gray segment.
