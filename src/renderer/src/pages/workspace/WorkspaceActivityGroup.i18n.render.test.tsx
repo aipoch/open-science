@@ -381,11 +381,62 @@ describe('WorkspaceActivityGroup i18n', () => {
     expect(progress?.textContent).toContain('ggplot2')
     expect(progress?.textContent).toContain('4.0.0.9000')
     expect(progress?.textContent).toContain('tidyverse/ggplot2@main')
+    expect(progress?.querySelectorAll('[data-testid="manage-packages-package-row"]')).toHaveLength(
+      1
+    )
     expect(progress?.textContent).toContain('Related changes')
     expect(progress?.querySelector('details')?.hasAttribute('open')).toBe(false)
     expect(
       progress?.querySelector('[data-testid="manage-packages-related-row"]')?.textContent
     ).toContain('S7')
+  })
+
+  it('matches an exact Python request to its verified package change', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-exact-version',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-exact-version',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['numpy==2.0.0'] },
+                rawOutput: {
+                  ok: true,
+                  packageChanges: [
+                    {
+                      name: 'numpy',
+                      relationship: 'requested',
+                      change: 'installed',
+                      afterVersion: '2.0.0'
+                    }
+                  ]
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{ 'activity-packages-exact-version': true }}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const rows = container.querySelectorAll('[data-testid="manage-packages-package-row"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.textContent).toContain('numpy')
+    expect(rows[0]?.textContent).toContain('2.0.0')
   })
 
   it('renders a completed tool with ok false as a package failure', () => {

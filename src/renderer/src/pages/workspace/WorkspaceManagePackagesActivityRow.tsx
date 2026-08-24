@@ -53,6 +53,24 @@ type PackageDetail = {
   source?: string
 }
 
+const githubRepositoryFromSpec = (spec: string): string | undefined => {
+  const repository = spec.trim().split('@', 1)[0]
+  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) ? repository : undefined
+}
+
+const packageNameFromSpec = (spec: string, language: unknown): string => {
+  const repository = language === 'r' ? githubRepositoryFromSpec(spec) : undefined
+  if (repository) return repository.split('/').at(-1) ?? spec
+  const unqualified = spec.trim().split('::').at(-1) ?? spec.trim()
+  const name = unqualified.match(/^[A-Za-z0-9_.-]+/u)?.[0] ?? unqualified
+  if (language !== 'r') return name
+  if (name.toLowerCase().startsWith('r-')) return name.slice(2)
+  if (name.toLowerCase().startsWith('bioconductor-')) {
+    return name.slice('bioconductor-'.length)
+  }
+  return name
+}
+
 // A renderer-only projection for the long-running package tool. It deliberately derives everything
 // from the existing activity so no progress chatter enters the tool result or Agent context.
 const WorkspaceManagePackagesActivityRow = ({
@@ -118,11 +136,20 @@ const WorkspaceManagePackagesActivityRow = ({
     }
   }
   const requestedChanges = packageChanges.filter((change) => change.relationship === 'requested')
-  const packageDetails: PackageDetail[] = requestedPackages.map((name) => {
-    const change = packageChanges.find(
-      (candidate) =>
-        typeof candidate.name === 'string' && candidate.name.toLowerCase() === name.toLowerCase()
-    )
+  const packageDetails: PackageDetail[] = requestedPackages.map((spec) => {
+    const name = packageNameFromSpec(spec, input?.language)
+    const repository = input?.language === 'r' ? githubRepositoryFromSpec(spec) : undefined
+    const change = packageChanges.find((candidate) => {
+      if (typeof candidate.name !== 'string') return false
+      if (candidate.name.toLowerCase() === name.toLowerCase()) return true
+      if (!repository || !candidate.source || typeof candidate.source !== 'object') return false
+      const source = candidate.source as Record<string, unknown>
+      return (
+        source.type === 'github' &&
+        typeof source.repository === 'string' &&
+        source.repository.toLowerCase() === repository.toLowerCase()
+      )
+    })
     return change ? detailFromChange(change) : { name }
   })
   for (const change of requestedChanges) {
