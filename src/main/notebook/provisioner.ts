@@ -1148,6 +1148,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     language: NotebookLanguage,
     packages: string[] = []
   ): Promise<EnvironmentInfo> {
+    const flagLike = packages.find((pkg) => pkg.trim().startsWith('-'))
+    if (flagLike) {
+      throw new Error(
+        `"${flagLike}" is not a valid package specifier — options/flags cannot be passed as packages.`
+      )
+    }
     const base = language === 'python' ? BASE_PYTHON_PACKAGES : BASE_R_PACKAGES
     const pkgs = [...new Set([...base, ...packages])]
     const prefix = envPrefix(this.deps.root, name)

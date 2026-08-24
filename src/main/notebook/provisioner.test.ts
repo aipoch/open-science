@@ -1374,6 +1374,24 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
     expect(runArgv).not.toHaveBeenCalled()
   })
 
+  it('rejects flag-like package entries before starting micromamba', async () => {
+    const root = makeRoot()
+    const runArgv = vi.fn(async () => undefined)
+    const { deps } = makeNamedEnvDeps(root, { runArgv })
+    let error: unknown
+
+    try {
+      await new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python', [
+        '--offline'
+      ])
+    } catch (caught) {
+      error = caught
+    }
+
+    expect(runArgv).not.toHaveBeenCalled()
+    expect(error).toEqual(expect.objectContaining({ message: expect.stringMatching(/package/i) }))
+  })
+
   it('builds the create argv from the base floor + user packages (deduped), targeting envs/<name>', async () => {
     const root = makeRoot()
     const { deps, argvs } = makeNamedEnvDeps(root)
