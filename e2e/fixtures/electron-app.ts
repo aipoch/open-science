@@ -102,7 +102,7 @@ type ElectronApp = {
     detail: string
     includesRendererCatalog: boolean
     message: string
-  }>
+  } | null>
   completeOnboarding: () => Promise<Page>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
@@ -325,7 +325,7 @@ class ElectronAppHarness implements ElectronApp {
     detail: string
     includesRendererCatalog: boolean
     message: string
-  }> {
+  } | null> {
     return this.runningApplication.evaluate(async ({ app, dialog }) => {
       const { readFileSync, readdirSync } = process.getBuiltinModule('node:fs')
       const { createRequire } = process.getBuiltinModule('node:module')
@@ -370,7 +370,7 @@ class ElectronAppHarness implements ElectronApp {
         localePreference?: string
       }
       if (!settings.localePreference || settings.localePreference === 'system') {
-        throw new Error('The E2E locale preference must be explicit before capturing native copy.')
+        return null
       }
       const localeOwner = new ownerModule.LocalePreferenceOwner(
         ['en-US'],

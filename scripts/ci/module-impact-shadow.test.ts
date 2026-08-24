@@ -137,9 +137,16 @@ describe('module impact shadow', () => {
   )
 
   it.each([
-    ['main', 'src/main/locale/resources.ts', 'i18n_main_adapter', 'main_runtime'],
+    ['main resources', 'src/main/locale/resources.ts', 'i18n_main_adapter', 'main_runtime'],
+    [
+      'main translator',
+      'src/main/locale/main-process-messages.ts',
+      'i18n_main_adapter',
+      'main_runtime'
+    ],
+    ['main locale owner', 'src/main/locale/owner.ts', 'i18n_main_adapter', 'main_runtime'],
     ['renderer', 'src/renderer/src/i18n/resources.ts', 'i18n_renderer_adapter', 'renderer_view']
-  ])('uses the %s process fallback for its i18n adapter', (_process, path, module, fallback) => {
+  ])('uses the %s process fallback for its i18n adapter', (_surface, path, module, fallback) => {
     const report = reportFor([{ path, status: 'modified' }])
 
     expect(report.shadow).toMatchObject({

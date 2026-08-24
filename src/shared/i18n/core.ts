@@ -62,24 +62,87 @@ const isValidTranslation = (key: string, value: unknown): value is string => {
   )
 }
 
-const interpolateEnglish = (value: string, options: Record<string, unknown>): string =>
-  value.replace(/\{\{(\w+)\}\}/g, (marker, name: string) =>
-    Object.hasOwn(options, name) ? String(options[name]) : marker
-  )
+type ResolvedTranslation = {
+  res?: unknown
+  exactUsedKey?: string
+}
 
-// A missing translated plural can otherwise render "1 files" because the English source key is the
-// plural form. Keep this process-neutral so both adapters honor defaultValue_one the same way.
+type PostProcessorOptions = Record<string, unknown> & {
+  count?: number
+  defaultValue?: unknown
+  i18nResolved?: ResolvedTranslation
+  ordinal?: boolean
+}
+
+type PostProcessorTranslator = {
+  interpolator: {
+    interpolate(
+      value: string,
+      data: Record<string, unknown>,
+      language: string,
+      options: Record<string, unknown>
+    ): string
+  }
+  pluralResolver: {
+    getSuffix(language: string, count: number, options: Record<string, unknown>): string
+  }
+}
+
+const englishDefaultValue = (
+  key: string,
+  options: PostProcessorOptions,
+  translator: PostProcessorTranslator
+): string => {
+  if (typeof options.count !== 'number') {
+    return typeof options.defaultValue === 'string' ? options.defaultValue : key
+  }
+
+  const suffix = translator.pluralResolver.getSuffix(DEFAULT_LOCALE, options.count, options)
+  const ordinalSuffix = options.ordinal
+    ? translator.pluralResolver.getSuffix(DEFAULT_LOCALE, options.count, {
+        ...options,
+        ordinal: false
+      })
+    : ''
+  const candidates = [
+    options.count === 0 && !options.ordinal ? options.defaultValue_zero : undefined,
+    options[`defaultValue${suffix}`],
+    ordinalSuffix ? options[`defaultValue${ordinalSuffix}`] : undefined,
+    options.defaultValue,
+    key
+  ]
+
+  return candidates.find((candidate): candidate is string => typeof candidate === 'string') ?? key
+}
+
+// i18next chooses default values with the active locale's plural categories. When a translated key
+// is missing, resolve the English source with English CLDR rules instead, then delegate interpolation
+// to i18next as well. Sanitized entries are recognized by their source-text value.
 export const englishSourceFallbackPostProcessor = {
   type: 'postProcessor' as const,
   name: 'englishSourceFallback',
-  process(value: string, keys: string[], options: Record<string, unknown>): string {
-    const key = keys[0]
-    const singular = options.defaultValue_one
-    if (options.count !== 1 || typeof key !== 'string' || typeof singular !== 'string') return value
+  process(
+    value: string,
+    keys: string | string[],
+    options: PostProcessorOptions,
+    translator: PostProcessorTranslator
+  ): string {
+    const key = typeof keys === 'string' ? keys : keys[0]
+    const resolved = options.i18nResolved
+    if (typeof key !== 'string' || !resolved) return value
 
-    return value === interpolateEnglish(key, options)
-      ? interpolateEnglish(singular, options)
-      : value
+    const sanitizedToEnglish =
+      typeof resolved.res === 'string' &&
+      typeof resolved.exactUsedKey === 'string' &&
+      resolved.res === englishSource(resolved.exactUsedKey)
+    if (resolved.res !== undefined && !sanitizedToEnglish) return value
+
+    return translator.interpolator.interpolate(
+      englishDefaultValue(key, options, translator),
+      options,
+      DEFAULT_LOCALE,
+      options
+    )
   }
 }
 
@@ -148,6 +211,7 @@ export const initializeI18nInstance = (
     nsSeparator: false,
     interpolation: { escapeValue: false },
     postProcess: [englishSourceFallbackPostProcessor.name],
+    postProcessPassResolved: true,
     returnNull: false,
     initAsync: false
   })

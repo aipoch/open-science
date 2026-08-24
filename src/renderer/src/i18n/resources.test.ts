@@ -128,6 +128,17 @@ const markers = (text: string): string[] =>
 const englishOf = (key: string): string => key.split('_')[0]
 
 const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other'])
+const CONTEXT_SUFFIXES = new Set([
+  'ago',
+  'duration',
+  'files',
+  'inUse',
+  'language',
+  'runtime',
+  'step',
+  'theme',
+  'verb'
+])
 const REQUIRED_PLURAL_CATEGORIES = {
   fr: ['one', 'many', 'other'],
   ja: ['other'],
@@ -264,6 +275,7 @@ describe('runtime catalog fallback', () => {
       nsSeparator: false,
       interpolation: { escapeValue: false },
       postProcess: [englishSourceFallbackPostProcessor.name],
+      postProcessPassResolved: true,
       resources: {
         'zh-Hans': {
           translation: sanitizeCatalog({
@@ -510,9 +522,31 @@ describe('process catalog boundaries', () => {
     expect(nativeKeys.filter((key) => commonKeys.has(key))).toEqual([])
   })
 
-  it('keeps the native Quit command separate from the renderer noun', () => {
-    expect(nativeCatalogs.ru.Quit).toBe('Выйти')
+  it('shares close-confirm copy while keeping the renderer Quit noun explicit', () => {
+    const sharedCloseConfirmKeys = [
+      "Don't ask again",
+      'Minimize to tray',
+      'Return to tasks',
+      'Subagents are still running',
+      'Work is still running and will be interrupted if you quit.'
+    ]
+
+    for (const locale of TRANSLATED) {
+      for (const key of sharedCloseConfirmKeys) {
+        expect((commonCatalogs[locale] as Catalog)[key]).toEqual(expect.any(String))
+        expect(rendererCatalogs[locale]).not.toHaveProperty(key)
+        expect(nativeCatalogs[locale]).not.toHaveProperty(key)
+      }
+      expect(commonCatalogs[locale]).toHaveProperty('Quit_verb')
+      expect(nativeCatalogs[locale]).not.toHaveProperty('Quit')
+    }
+
     expect(rendererCatalogs.ru.Quit).toBe('Выход')
+
+    const renderer = initI18n('ru')
+    const main = createNativeI18n('ru')
+    expect(renderer.t('Quit', { context: 'verb', ns: 'common' })).toBe('Выйти')
+    expect(main.t('Quit', { context: 'verb' })).toBe('Выйти')
   })
 
   it('does not expose renderer-only copy through main resources', () => {
@@ -2555,18 +2589,7 @@ describe('key shape', () => {
   it.each(TRANSLATED)('%s keys carry no underscore inside the English text', (locale) => {
     // i18next's plural and context suffixes used by literal call sites. Each new context has to be
     // listed deliberately so an underscore in source copy cannot be mistaken for resolver syntax.
-    const suffixes = new Set([
-      ...PLURAL_CATEGORIES,
-      'verb',
-      'step',
-      'files',
-      'ago',
-      'duration',
-      'inUse',
-      'theme',
-      'language',
-      'runtime'
-    ])
+    const suffixes = new Set([...PLURAL_CATEGORIES, ...CONTEXT_SUFFIXES])
     const offenders = allCatalogEntries(locale)
       .map(([key]) => key)
       .filter((key) => key.includes('_'))
@@ -2677,9 +2700,9 @@ const unescape = (raw: string): string =>
   )
 
 // Every string literal in the renderer, not only the ones inside a t() call. Keys reach t() through
-// module-level lookup tables (COMPACT_ELAPSED, PANEL_NAME_LOWER, …) as often as they appear inline, and
-// matching those by pattern would miss them. Over-collecting costs nothing here: a stray non-key
-// literal can only mask an orphan, never invent one, and a silent miss beats a flaky guard.
+// imported error values and runtime lookup tables as often as they appear inline, so a complete exact
+// call graph is not available here. Exact guards below cover context-sensitive renderer keys and all
+// main keys; this conservative source scan covers the remaining dynamically supplied renderer keys.
 const literalsIn = (source: string): string[] => [
   ...[...source.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)].map((match) => unescape(match[1])),
   ...[...source.matchAll(/'((?:[^'\\\n]|\\.)*)'/g)].map((match) => unescape(match[1])),
@@ -2715,8 +2738,8 @@ describe('semantic key leaks', () => {
   it('no t() call passes a dotted semantic path', () => {
     const offenders = SCAN_ROOTS.flatMap(sourceFiles).flatMap((path) => {
       const source = codeOnly(readFileSync(path, 'utf8'))
-      return [...source.matchAll(/\bt\(\s*['"]([^'"]+)['"]/g)]
-        .map((match) => match[1])
+      return tCallSites(source)
+        .map((site) => site.key)
         .filter((key) => SEMANTIC_PATH.test(key))
         .map((key) => `${path.slice(SRC_ROOT.length + 1)}: ${key}`)
     })
@@ -2733,8 +2756,8 @@ describe('semantic key leaks', () => {
 // direction failed in a way nothing here caught: a call site whose English does not byte-match a
 // catalog key resolves to the key, which *is* correct English, so zh readers silently get English
 // while every parity check above stays green. Inline literals reaching t() and Trans are both
-// checked, as are the branches of a ternary argument; keys that arrive through a lookup table are
-// invisible here, and the orphan guard covers those instead.
+// checked, as are the branches of a ternary argument, same-file lookup tables, and aliases returned
+// by useTranslation. Imported and otherwise runtime-derived keys are covered by the orphan guard.
 
 // Consume one quoted string starting at the opening quote, honouring backslash escapes so an
 // apostrophe inside a double-quoted string cannot truncate the literal.
@@ -2850,8 +2873,135 @@ const namedCallSites = (source: string, callee: string): CallSite[] => {
   return sites
 }
 
-// Every `t('…')` / `t("…")`, skipping identifiers that merely end in t (startsWith, format, at).
-const tCallSites = (source: string): CallSite[] => namedCallSites(source, 't')
+const unwrapExpression = (expression: ts.Expression): ts.Expression => {
+  let current = expression
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression
+  }
+  return current
+}
+
+const translationCalleesIn = (source: string): Map<string, string | undefined> => {
+  const sourceFile = ts.createSourceFile(
+    'renderer-callees.tsx',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
+  const callees = new Map<string, string | undefined>()
+
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer
+    ) {
+      const initializer = unwrapExpression(node.initializer)
+      if (
+        ts.isCallExpression(initializer) &&
+        ts.isIdentifier(initializer.expression) &&
+        initializer.expression.text === 'useTranslation'
+      ) {
+        const translationBinding = node.name.elements.find((element) => {
+          const property = element.propertyName ?? element.name
+          return ts.isIdentifier(property) && property.text === 't'
+        })
+        if (translationBinding && ts.isIdentifier(translationBinding.name)) {
+          const namespaceArgument = initializer.arguments[0]
+          const namespace =
+            namespaceArgument && ts.isStringLiteralLike(namespaceArgument)
+              ? namespaceArgument.text
+              : undefined
+          const name = translationBinding.name.text
+          if (!callees.has(name) || callees.get(name) === namespace) callees.set(name, namespace)
+          else callees.set(name, undefined)
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  if (!callees.has('t')) callees.set('t', undefined)
+  return callees
+}
+
+// Lookup tables keep dynamic UI code readable, but their finite English values are still catalog
+// call sites. Resolve same-file object literals structurally so contextual keys such as compact ages
+// cannot hide behind an unrelated bare call with the same English base.
+const lookupTableCallSites = (
+  source: string,
+  translationCallees: ReadonlyMap<string, string | undefined>
+): CallSite[] => {
+  const sourceFile = ts.createSourceFile(
+    'renderer-calls.tsx',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
+  const tables = new Map<string, string[]>()
+
+  const collectTable = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const initializer = unwrapExpression(node.initializer)
+      if (ts.isObjectLiteralExpression(initializer)) {
+        const values = initializer.properties.flatMap((property) =>
+          ts.isPropertyAssignment(property) &&
+          ts.isStringLiteralLike(property.initializer) &&
+          !property.initializer.text.includes('_')
+            ? [property.initializer.text]
+            : []
+        )
+        if (values.length > 0) tables.set(node.name.text, values)
+      }
+    }
+    ts.forEachChild(node, collectTable)
+  }
+  collectTable(sourceFile)
+
+  const sites: CallSite[] = []
+  const collectCall = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      translationCallees.has(node.expression.text) &&
+      node.arguments[0] &&
+      ts.isElementAccessExpression(node.arguments[0]) &&
+      ts.isIdentifier(node.arguments[0].expression)
+    ) {
+      const keys = tables.get(node.arguments[0].expression.text) ?? []
+      const options = node.arguments[1]
+      const context = stringOption(options, 'context') ?? null
+      const namespace = stringOption(options, 'ns') ?? translationCallees.get(node.expression.text)
+      const plural = objectOption(options, 'count') !== undefined
+      for (const key of keys) {
+        sites.push({ key, plural, context, ...(namespace ? { namespace } : {}) })
+      }
+    }
+    ts.forEachChild(node, collectCall)
+  }
+  collectCall(sourceFile)
+  return sites
+}
+
+// Every literal call through t or a useTranslation alias, skipping identifiers that merely end in t
+// (startsWith, format, at).
+const tCallSites = (source: string): CallSite[] => {
+  const callees = translationCalleesIn(source)
+  return [
+    ...[...callees].flatMap(([callee, namespace]) =>
+      namedCallSites(source, callee).map((site) =>
+        site.namespace || !namespace ? site : { ...site, namespace }
+      )
+    ),
+    ...lookupTableCallSites(source, callees)
+  ]
+}
 
 const nativeCallKeys = (expression: ts.Expression): string[] => {
   if (ts.isStringLiteralLike(expression)) return [expression.text]
@@ -2967,6 +3117,23 @@ const resolvesIn = (
   return entries[key] !== undefined
 }
 
+const orphanedCatalogKeys = (
+  catalogKeys: readonly string[],
+  sites: readonly CallSite[],
+  pluralCategories: readonly string[] = ['other'],
+  namespace?: CatalogNamespace
+): string[] => {
+  const calledKeys = new Set(
+    sites
+      .filter((site) => !namespace || !site.namespace || site.namespace === namespace)
+      .flatMap((site) => {
+        const stem = site.context ? `${site.key}_${site.context}` : site.key
+        return site.plural ? pluralCategories.map((category) => `${stem}_${category}`) : [stem]
+      })
+  )
+  return catalogKeys.filter((key) => !calledKeys.has(key))
+}
+
 describe('missing translations', () => {
   const sites = SCAN_ROOTS.flatMap(sourceFiles)
     .flatMap((path) => {
@@ -3002,6 +3169,17 @@ describe('missing translations', () => {
 
     expect(untranslated).toEqual([])
   })
+
+  it.each(TRANSLATED)('every %s contextual key has an exact renderer call site', (locale) => {
+    const contextualKeys = Object.keys(catalog(locale)).filter((key) => {
+      const suffix = withoutPluralCategory(key).split('_').at(-1)
+      return suffix !== undefined && CONTEXT_SUFFIXES.has(suffix)
+    })
+
+    expect(orphanedCatalogKeys(contextualKeys, sites, REQUIRED_PLURAL_CATEGORIES[locale])).toEqual(
+      []
+    )
+  })
 })
 
 describe('main NativeTranslator catalog guard', () => {
@@ -3013,8 +3191,6 @@ describe('main NativeTranslator catalog guard', () => {
       file: path.slice(SRC_ROOT.length + 1)
     }))
   )
-  const calledKeys = new Set(sites.map((site) => site.key))
-
   it('finds native call sites to check', () => {
     expect(sites.length).toBeGreaterThan(20)
   })
@@ -3038,8 +3214,22 @@ describe('main NativeTranslator catalog guard', () => {
   })
 
   it.each(TRANSLATED)('every %s native key still matches a main source literal', (locale) => {
-    const orphans = Object.keys(nativeCatalogs[locale]).filter(
-      (key) => !calledKeys.has(englishOf(key))
+    const orphans = orphanedCatalogKeys(
+      Object.keys(nativeCatalogs[locale]),
+      sites,
+      REQUIRED_PLURAL_CATEGORIES[locale],
+      'native'
+    )
+
+    expect(orphans).toEqual([])
+  })
+
+  it.each(TRANSLATED)('every %s common key still matches a main source literal', (locale) => {
+    const orphans = orphanedCatalogKeys(
+      Object.keys(commonCatalogs[locale]),
+      sites,
+      REQUIRED_PLURAL_CATEGORIES[locale],
+      'common'
     )
 
     expect(orphans).toEqual([])
@@ -3057,6 +3247,27 @@ describe('t() call-site extraction', () => {
     expect(tCallSites(`t("I'm ready")`)).toEqual([
       { key: "I'm ready", plural: false, context: null }
     ])
+  })
+
+  it('reads useTranslation aliases and preserves their namespace', () => {
+    expect(
+      tCallSites(`
+        const { t: tCommon } = useTranslation('common')
+        tCommon('Cancel')
+      `)
+    ).toEqual([{ key: 'Cancel', plural: false, context: null, namespace: 'common' }])
+    expect(
+      tCallSites(`
+        const { t: tSettings } = useTranslation()
+        tSettings('Settings')
+      `)
+    ).toEqual([{ key: 'Settings', plural: false, context: null }])
+    expect(
+      tCallSites(`
+        const { t } = useTranslation('common')
+        t('Cancel')
+      `)
+    ).toEqual([{ key: 'Cancel', plural: false, context: null, namespace: 'common' }])
   })
 
   it('ignores identifiers that merely end in t', () => {
@@ -3105,6 +3316,12 @@ describe('t() call-site extraction', () => {
     ])
   })
 
+  it('does not let a bare call keep an unused context key alive', () => {
+    const sites = nativeTranslateCallSites(`translate('Quit')`)
+
+    expect(orphanedCatalogKeys(['Quit', 'Quit_verb'], sites)).toEqual(['Quit_verb'])
+  })
+
   // 'Pin project' shipped rendering English to zh readers because a ternary argument does not start
   // with a quote, so the literal read failed and the call was skipped entirely.
   it('reads both branches of a ternary argument', () => {
@@ -3128,9 +3345,21 @@ describe('t() call-site extraction', () => {
     ])
   })
 
-  // A lookup table reaching t() by identifier is the orphan guard's job. Claiming it here would
-  // report the surrounding literals as keys and bury the real gaps in false positives.
-  it('ignores a first argument that is not a ternary of literals', () => {
+  it('reads finite same-file lookup tables with their call options', () => {
+    expect(
+      tCallSites(`
+        const COMPACT = { day: '{{count}}d', week: '{{count}}w' } as const
+        t(COMPACT[unit], { count, context: 'ago' })
+      `)
+    ).toEqual([
+      { key: '{{count}}d', plural: true, context: 'ago' },
+      { key: '{{count}}w', plural: true, context: 'ago' }
+    ])
+  })
+
+  // An imported or runtime-built lookup cannot be resolved from one source file. Do not claim its
+  // surrounding literals as keys: that would bury real gaps in false positives.
+  it('ignores an unresolved first argument that is not a ternary of literals', () => {
     expect(tCallSites(`t(STATUS_COPY[check.status])`)).toEqual([])
     expect(tCallSites(`t(labelKey, { count })`)).toEqual([])
     expect(tCallSites(`t(value.key, value.params)`)).toEqual([])

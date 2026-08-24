@@ -751,8 +751,16 @@
       "fallbackCapability": "shared_contract"
     },
     "i18n_main_adapter": {
-      "ownerPaths": ["src/main/locale/resources.ts"],
-      "interfacePaths": ["src/main/locale/resources.ts"],
+      "ownerPaths": [
+        "src/main/locale/main-process-messages.ts",
+        "src/main/locale/owner.ts",
+        "src/main/locale/resources.ts"
+      ],
+      "interfacePaths": [
+        "src/main/locale/main-process-messages.ts",
+        "src/main/locale/owner.ts",
+        "src/main/locale/resources.ts"
+      ],
       "consumerModules": [],
       "testFiles": {
         "owner": ["src/main/locale/owner.test.ts"],

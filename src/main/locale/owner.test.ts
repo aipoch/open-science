@@ -69,6 +69,16 @@ describe('LocalePreferenceOwner', () => {
         name: 'Ada'
       })
     ).toBe('Missing native translation for Ada.')
+
+    const missingCountKey = '{{count}} missing native translations'
+    const missingCountOptions = (count: number): { count: number; defaultValue_one: string } => ({
+      count,
+      defaultValue_one: '{{count}} missing native translation'
+    })
+    expect(french.t(missingCountKey, missingCountOptions(0))).toBe('0 missing native translations')
+    expect(russian.t(missingCountKey, missingCountOptions(21))).toBe(
+      '21 missing native translations'
+    )
   })
 
   it('persists a changed preference and notifies consumers only after commit', async () => {
@@ -111,10 +121,10 @@ describe('LocalePreferenceOwner', () => {
     const owner = new LocalePreferenceOwner(['en-US'], await createRepository())
 
     expect(() => owner.setPreference('de')).toThrow('Invalid language preference')
-    expect(translateNativeMessage('ja', 'Quit')).toBe('終了')
-    expect(translateNativeMessage('ko', 'Quit')).toBe('종료')
-    expect(translateNativeMessage('ru', 'Quit')).toBe('Выйти')
-    expect(translateNativeMessage('fr', 'Quit')).toBe('Quitter')
+    expect(translateNativeMessage('ja', 'Quit', { context: 'verb' })).toBe('終了')
+    expect(translateNativeMessage('ko', 'Quit', { context: 'verb' })).toBe('종료')
+    expect(translateNativeMessage('ru', 'Quit', { context: 'verb' })).toBe('Выйти')
+    expect(translateNativeMessage('fr', 'Quit', { context: 'verb' })).toBe('Quitter')
     expect(
       translateNativeMessage(
         'zh-Hans',
@@ -141,11 +151,11 @@ describe('LocalePreferenceOwner', () => {
   it('updates native translations before a preference change resolves', async () => {
     const owner = new LocalePreferenceOwner(['en-US'], await createRepository())
 
-    expect(owner.t('Quit')).toBe('Quit')
+    expect(owner.t('Quit', { context: 'verb' })).toBe('Quit')
     await owner.setPreference('ru')
-    expect(owner.t('Quit')).toBe('Выйти')
+    expect(owner.t('Quit', { context: 'verb' })).toBe('Выйти')
     await owner.setPreference('fr')
-    expect(owner.t('Quit')).toBe('Quitter')
+    expect(owner.t('Quit', { context: 'verb' })).toBe('Quitter')
   })
 
   it('keeps French high punctuation attached to the preceding text', () => {

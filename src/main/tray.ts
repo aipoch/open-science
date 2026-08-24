@@ -132,13 +132,13 @@ const createAppTray = (opts: {
               { label: translate('Open Web UI'), click: () => void opts.onOpenWeb!() },
               { label: translate('Copy URL'), click: () => void opts.onCopyWebUrl!() },
               { type: 'separator' },
-              { label: translate('Quit'), click: () => opts.onQuit() }
+              { label: translate('Quit', { context: 'verb' }), click: () => opts.onQuit() }
             ]
           : [
               { label: translate('Show'), click: () => opts.onShow() },
               { label: translate('Hide'), click: () => opts.onHide() },
               { type: 'separator' },
-              { label: translate('Quit'), click: () => opts.onQuit() }
+              { label: translate('Quit', { context: 'verb' }), click: () => opts.onQuit() }
             ]
       )
       if (!(process.platform === 'win32' && headlessWeb)) tray.setContextMenu(menu)
