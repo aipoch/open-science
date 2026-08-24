@@ -1,10 +1,12 @@
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { operationJournalPath } from './operation-journal'
+import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import { DEFAULT_PY_ENV, envPrefix } from './runtime-paths'
 
 let root: string | undefined
 
@@ -54,6 +56,28 @@ describe('NotebookRecoveryCoordinator', () => {
 
     expect(coordinator.isPrefixBlocked(resetPrefix)).toBe(false)
     expect(coordinator.isPrefixBlocked(otherPrefix)).toBe(true)
+  })
+
+  it('removes an interrupted materialize prefix that has conda metadata but no interpreter', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    await mkdir(join(prefix, 'conda-meta'), { recursive: true })
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'partial-python',
+      kind: 'materialize',
+      runtimeId: DEFAULT_PY_ENV,
+      phase: 'create-python',
+      startedAt: 100,
+      targetPath: prefix
+    })
+
+    await new NotebookRecoveryCoordinator(runtimeRoot).recover()
+
+    expect({ prefixExists: existsSync(prefix), pending: await journal.pending() }).toEqual({
+      prefixExists: false,
+      pending: []
+    })
   })
 
   it('fails closed after disposal even if reset commands clear known blocks', async () => {

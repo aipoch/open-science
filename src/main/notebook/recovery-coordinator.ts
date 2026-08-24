@@ -9,7 +9,8 @@ import {
   RuntimeOperationJournal
 } from './operation-journal'
 import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
-import { addRepairRequired } from './runtime-paths'
+import { verifyExecutable } from './provisioner-runtime'
+import { addRepairRequired, pythonBin, rBin } from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 
 export type NotebookRecoveryReadiness =
@@ -188,7 +189,17 @@ export class NotebookRecoveryCoordinator {
       },
       verifyOrRebuildEnv: async (record) => {
         if (!record.targetPath || !existsSync(record.targetPath)) return
-        if (existsSync(join(record.targetPath, 'conda-meta'))) return
+        const bin = [pythonBin(record.targetPath), rBin(record.targetPath)].find((candidate) =>
+          existsSync(candidate)
+        )
+        if (existsSync(join(record.targetPath, 'conda-meta')) && bin) {
+          try {
+            await verifyExecutable(bin, { prefix: record.targetPath })
+            return
+          } catch {
+            // An interrupted mutation can leave an interpreter file before the prefix is runnable.
+          }
+        }
         await rm(record.targetPath, { recursive: true, force: true })
       },
       markRepairRequired: async (record) => {
