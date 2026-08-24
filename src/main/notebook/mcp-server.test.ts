@@ -1285,7 +1285,8 @@ describe('compactNotebookExecutionResult', () => {
   it('preserves multiline REPL error messages while omitting stack frames', () => {
     const traceback = [
       'Error: first diagnostic line',
-      'second diagnostic line',
+      '    at the lab, review the second diagnostic line',
+      'third diagnostic line',
       '    at <repl>:1:7',
       '    at run (/Users/alice/open-science/resources/notebook/repl_loop.js:3527:28)'
     ].join('\n')
@@ -1296,7 +1297,9 @@ describe('compactNotebookExecutionResult', () => {
       {}
     ) as { traceback: string }
 
-    expect(compact.traceback).toBe('Error: first diagnostic line\nsecond diagnostic line')
+    expect(compact.traceback).toBe(
+      'Error: first diagnostic line\n    at the lab, review the second diagnostic line\nthird diagnostic line'
+    )
   })
 
   it('keeps Python tracebacks intact for the agent', () => {

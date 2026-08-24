@@ -660,7 +660,11 @@ const compactReplTraceback = (value: string): string => {
   const errorLine = lines.findIndex((line) => /^[A-Za-z_$][\w$]*(?:Error|Exception)\b/.test(line))
   const messageStart = errorLine === -1 ? 0 : errorLine
   const frameStart = lines.findIndex(
-    (line, index) => index >= messageStart && /^\s+at(?:\s|$)/.test(line)
+    (line, index) =>
+      index >= messageStart &&
+      /^\s+at (?:(?:async|new)\s+)?(?:.+? \()?(?:node:|<repl>|file:|\/|[A-Za-z]:[\\/]).*:\d+:\d+\)?$/.test(
+        line
+      )
   )
   const message = lines.slice(messageStart, frameStart === -1 ? undefined : frameStart).join('\n')
   return message.trim() || value
