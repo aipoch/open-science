@@ -78,11 +78,15 @@ describe('WorkspaceActivityGroup i18n', () => {
     const progress = container.querySelector('[data-testid="manage-packages-progress"]')
     expect(container.querySelector('[data-testid="tool-group"]')?.contains(progress)).toBe(true)
     expect(progress?.textContent).toContain('Removing 2 packages')
+    expect(progress?.textContent).toContain('Python · conda')
     expect(progress?.textContent).toContain('This can take several minutes')
     expect(progress?.textContent).toContain('1:05')
-    expect(
-      progress?.querySelector('[data-testid="manage-packages-details"]')?.textContent
-    ).toContain('numpy· pandas')
+    expect(progress?.querySelectorAll('[data-testid="manage-packages-package-row"]')).toHaveLength(
+      2
+    )
+    expect(progress?.textContent).toContain('numpy')
+    expect(progress?.textContent).toContain('pandas')
+    expect(progress?.textContent).toContain('PackageStatusVersion')
     expect(progress?.textContent).not.toContain('Notebook · manage_packages')
     expect(progress?.textContent).not.toContain('Running')
     expect(progress?.querySelector('.bg-status-info-foreground')).not.toBeNull()
@@ -134,13 +138,72 @@ describe('WorkspaceActivityGroup i18n', () => {
 
     expect(container.querySelector('[data-testid="manage-packages-progress"]')).not.toBeNull()
     expect(container.textContent).toContain('Installed 1 package')
+    expect(container.textContent).toContain('R · conda')
     expect(
-      container.querySelector('[data-testid="manage-packages-details"]')?.textContent
-    ).toContain('ggplot2 4.0.3')
-    expect(container.textContent).toContain('restart needed')
+      container.querySelector('[data-testid="manage-packages-package-status"]')?.textContent
+    ).toBe('Unchanged')
+    expect(
+      container.querySelector('[data-testid="manage-packages-package-version"]')?.textContent
+    ).toBe('4.0.3')
+    expect(container.textContent).toContain('Installed R packages need a kernel restart to load.')
     expect(container.textContent).not.toContain('Completed')
-    expect(container.querySelector('.bg-status-warning-foreground')).not.toBeNull()
+    expect(container.querySelector('.text-status-warning-foreground')).not.toBeNull()
+    expect(container.querySelector('.bg-status-warning-foreground')).toBeNull()
     expect(container.textContent).not.toContain('manage_packages()')
+  })
+
+  it('shows the version transition for an updated package', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-updated',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-updated',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['pandas'], usePip: true },
+                rawOutput: {
+                  ok: true,
+                  needsRestart: false,
+                  method: 'pip',
+                  packageChanges: [
+                    {
+                      name: 'pandas',
+                      change: 'updated',
+                      beforeVersion: '2.2.2',
+                      afterVersion: '2.3.1'
+                    }
+                  ]
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{}}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Python · pip')
+    expect(
+      container.querySelector('[data-testid="manage-packages-package-status"]')?.textContent
+    ).toBe('Updated')
+    expect(
+      container.querySelector('[data-testid="manage-packages-package-version"]')?.textContent
+    ).toBe('2.2.2 → 2.3.1')
+    expect(container.querySelector('.install-progress-indeterminate')).toBeNull()
   })
 
   it('anchors the group in view before toggling its height', () => {

@@ -1,6 +1,6 @@
-/* Hallmark · component: async tool status · genre: modern-minimal · theme: project tokens
- * states: loading · warning · error · success
- * contrast: pass · pre-emit critique: P5 H5 E5 S5 R5 V4
+/* Hallmark · component: async package operation · genre: modern-minimal · theme: project tokens
+ * structure: result-led package ledger · states: loading · warning · error · success
+ * contrast: pass · pre-emit critique: P5 H5 E5 S5 R5 V5
  */
 import type { ToolActivity } from '@/stores/session-store'
 import { cn } from '@/lib/utils'
@@ -41,6 +41,12 @@ const formatElapsed = (elapsedMs: number): string => {
   return minutes > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : `${seconds}s`
 }
 
+type PackageDetail = {
+  name: string
+  change?: string
+  version?: string
+}
+
 // A renderer-only projection for the long-running package tool. It deliberately derives everything
 // from the existing activity so no progress chatter enters the tool result or Agent context.
 const WorkspaceManagePackagesActivityRow = ({
@@ -65,14 +71,36 @@ const WorkspaceManagePackagesActivityRow = ({
           typeof change === 'object' && change !== null && !Array.isArray(change)
       )
     : []
-  const packageDetails = requestedPackages.map((name) => {
+  const packageDetails: PackageDetail[] = requestedPackages.map((name) => {
     const change = packageChanges.find(
       (candidate) =>
         typeof candidate.name === 'string' && candidate.name.toLowerCase() === name.toLowerCase()
     )
-    const version = isRemoving ? change?.beforeVersion : change?.afterVersion
-    return typeof version === 'string' && version.trim() ? `${name} ${version.trim()}` : name
+    const beforeVersion =
+      typeof change?.beforeVersion === 'string' ? change.beforeVersion.trim() : undefined
+    const afterVersion =
+      typeof change?.afterVersion === 'string' ? change.afterVersion.trim() : undefined
+    const version =
+      change?.change === 'updated' && beforeVersion && afterVersion
+        ? `${beforeVersion} → ${afterVersion}`
+        : isRemoving
+          ? beforeVersion
+          : afterVersion
+
+    return {
+      name,
+      change: typeof change?.change === 'string' ? change.change : undefined,
+      version: version || undefined
+    }
   })
+  const languageLabel =
+    input?.language === 'r' ? 'R' : input?.language === 'python' ? 'Python' : null
+  const installer =
+    typeof result?.method === 'string' && result.method.trim()
+      ? result.method.trim()
+      : input?.usePip === true
+        ? 'pip'
+        : 'conda'
   const useActionLabel = isActive || isFailed
   const elapsedUntil = isActive ? now : activity.updatedAt
   const actionLabel = isRemoving
@@ -111,15 +139,15 @@ const WorkspaceManagePackagesActivityRow = ({
 
   return (
     <div
-      className="rounded-lg pb-1.5"
+      className="rounded-lg px-1.5 pb-2 pt-1"
       data-testid="manage-packages-progress"
       role="status"
       aria-live="polite"
     >
-      <div className="flex min-h-[44px] w-full items-center gap-2 px-1.5 py-2 text-[13px] md:min-h-0 md:py-[5px]">
+      <div className="flex min-h-[44px] w-full items-start gap-2 py-2 text-[13px] md:min-h-0">
         <span
           className={cn(
-            'inline-flex shrink-0',
+            'mt-0.5 inline-flex shrink-0',
             isActive
               ? 'text-status-info-foreground dark:text-status-info-dark-foreground'
               : isFailed
@@ -132,52 +160,114 @@ const WorkspaceManagePackagesActivityRow = ({
           <WorkspaceActivityIcon activity={activity} phase={phase} />
         </span>
         <span className="min-w-0 flex-1 text-left">
-          <span className="block font-medium text-text-000">
-            {actionLabel}
-            <span className="font-normal text-text-100">
-              {isActive
-                ? ` · ${t('This can take several minutes')}`
-                : isFailed
-                  ? ` · ${t('Failed')}`
-                  : needsRestart
-                    ? ` · ${t('restart needed')}`
-                    : null}
-            </span>
+          <span className="block font-medium leading-5 text-text-000">{actionLabel}</span>
+          <span className="mt-0.5 block text-[12px] leading-4 text-text-100">
+            {[languageLabel, installer].filter(Boolean).join(' · ')}
           </span>
-          {packageDetails.length > 0 ? (
-            <span
-              className="mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0 text-[12px] text-text-100"
-              data-testid="manage-packages-details"
-            >
-              {packageDetails.map((detail, index) => (
-                <span key={`${detail}-${index}`} className="whitespace-nowrap">
-                  {index > 0 ? '· ' : null}
-                  {detail}
-                </span>
-              ))}
-            </span>
-          ) : null}
         </span>
         <span className="shrink-0 tabular-nums text-[12px] text-text-100" aria-hidden="true">
           {formatElapsed(elapsedUntil - activity.createdAt)}
         </span>
       </div>
-      <div
-        className="mx-2 ml-[30px] h-0.5 overflow-hidden rounded-full bg-border-200"
-        aria-hidden="true"
-      >
-        <div
-          className={cn(
-            'h-full rounded-full',
-            isActive
-              ? 'install-progress-indeterminate w-1/3 bg-status-info-foreground motion-reduce:animate-none dark:bg-status-info-dark-foreground'
-              : isFailed
-                ? 'w-full bg-status-failure-accent'
-                : needsRestart
-                  ? 'w-full bg-status-warning-foreground dark:bg-status-warning-dark-foreground'
-                  : 'w-full bg-status-success-accent'
-          )}
-        />
+      {packageDetails.length > 0 ? (
+        <div className="ml-[26px] border-y border-border-200" data-testid="manage-packages-details">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 border-b border-border-200 px-2.5 py-1.5 text-[11px] font-medium text-text-200 sm:grid-cols-[minmax(0,1fr)_minmax(76px,auto)_minmax(88px,auto)]">
+            <span>{t('Package')}</span>
+            <span className="hidden sm:block">{t('Status')}</span>
+            <span className="text-right">{t('Version')}</span>
+          </div>
+          <div className="divide-y divide-border-200">
+            {packageDetails.map((detail, index) => {
+              const changeLabel = isActive
+                ? t('Installing…')
+                : detail.change === 'updated'
+                  ? t('Updated')
+                  : detail.change === 'removed'
+                    ? t('Removed')
+                    : detail.change === 'unchanged'
+                      ? t('Unchanged')
+                      : detail.change === 'installed'
+                        ? t('Installed')
+                        : isFailed
+                          ? t('Failed')
+                          : t('Installed')
+
+              return (
+                <div
+                  key={`${detail.name}-${index}`}
+                  className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-2.5 py-2 text-[12px] sm:grid-cols-[minmax(0,1fr)_minmax(76px,auto)_minmax(88px,auto)]"
+                  data-testid="manage-packages-package-row"
+                >
+                  <span className="min-w-0" title={detail.name}>
+                    <span className="block truncate font-medium text-text-000">{detail.name}</span>
+                    <span
+                      className={cn(
+                        'mt-0.5 block text-[11px] sm:hidden',
+                        isActive
+                          ? 'text-status-info-foreground dark:text-status-info-dark-foreground'
+                          : isFailed
+                            ? 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
+                            : needsRestart
+                              ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                              : 'text-status-success-foreground dark:text-status-success-dark-foreground'
+                      )}
+                      data-testid="manage-packages-package-status-mobile"
+                    >
+                      {changeLabel}
+                    </span>
+                  </span>
+                  <span
+                    className={cn(
+                      'hidden sm:block',
+                      isActive
+                        ? 'text-status-info-foreground dark:text-status-info-dark-foreground'
+                        : isFailed
+                          ? 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
+                          : needsRestart
+                            ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                            : 'text-status-success-foreground dark:text-status-success-dark-foreground'
+                    )}
+                    data-testid="manage-packages-package-status"
+                  >
+                    {changeLabel}
+                  </span>
+                  <span
+                    className="truncate text-right font-mono tabular-nums text-text-100"
+                    data-testid="manage-packages-package-version"
+                  >
+                    {detail.version ?? '—'}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
+      <div className="ml-[26px] mt-2">
+        {isActive ? (
+          <>
+            <div className="flex items-center justify-between gap-3 text-[11px] text-text-100">
+              <span>{t('This can take several minutes')}</span>
+              <span className="shrink-0 text-status-info-foreground dark:text-status-info-dark-foreground">
+                {t('Installing…')}
+              </span>
+            </div>
+            <div
+              className="mt-1.5 h-0.5 overflow-hidden rounded-full bg-border-200"
+              aria-hidden="true"
+            >
+              <div className="install-progress-indeterminate h-full w-1/3 rounded-full bg-status-info-foreground motion-reduce:animate-none dark:bg-status-info-dark-foreground" />
+            </div>
+          </>
+        ) : isFailed ? (
+          <p className="text-[12px] text-status-failure-foreground dark:text-status-failure-dark-foreground">
+            {t('Failed')}
+          </p>
+        ) : needsRestart ? (
+          <p className="text-[12px] text-status-warning-foreground dark:text-status-warning-dark-foreground">
+            {t('Installed R packages need a kernel restart to load.')}
+          </p>
+        ) : null}
       </div>
     </div>
   )
