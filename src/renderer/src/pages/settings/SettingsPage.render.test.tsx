@@ -774,7 +774,7 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Workspace')
     expect(nav?.textContent).not.toContain('Remote access')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(16)
+    expect(navItems).toHaveLength(17)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')

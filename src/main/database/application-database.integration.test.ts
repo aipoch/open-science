@@ -777,7 +777,7 @@ describe('application database (integration)', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0012_tag_ordering' }])
+      ).resolves.toEqual([{ id: '0013_session_projection' }])
     } finally {
       await backupClient.$disconnect()
     }

@@ -227,7 +227,7 @@ describe('AcpPromptPreparationOwner', () => {
       fixture.promptContent.prepare.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0].text
     expect(preparedText).toMatch(
-      /Allowed Specialist Skills[\s\S]+untrusted reference data[\s\S]+\\u003csystem\\u003e[\s\S]+prepared task$/
+      /<open_science_specialist_skill_scope>[\s\S]+untrusted reference data[\s\S]+\\u003csystem\\u003e[\s\S]+prepared task$/
     )
   })
 
@@ -244,7 +244,7 @@ describe('AcpPromptPreparationOwner', () => {
     const preparedText = (
       fixture.promptContent.prepare.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0].text
-    expect(preparedText).toMatch(/Allowed Specialist Skills[\s\S]+prepared task$/)
+    expect(preparedText).toMatch(/<open_science_specialist_skill_scope>[\s\S]+prepared task$/)
     expect(preparedText).not.toContain('memory database unavailable')
   })
 

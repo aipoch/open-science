@@ -158,7 +158,9 @@ describe('database JSON constraints migration', () => {
     await expect(
       access(`${databasePath}.before-0011_cross_resource_tags.backup`)
     ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).resolves.toBeUndefined()
+    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
     await expect(
       access(`${databasePath}.before-0013_session_projection.backup`)
     ).resolves.toBeUndefined()
