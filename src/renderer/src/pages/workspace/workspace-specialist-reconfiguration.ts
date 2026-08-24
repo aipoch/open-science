@@ -19,7 +19,7 @@ type IdleSpecialistFailure = {
 
 type IdleSpecialistAttempt = {
   complete: () => boolean
-  recordFailure: (message: string) => void
+  recordFailure: (message: string) => boolean
 }
 
 const specialistNameFor = (
@@ -92,7 +92,8 @@ const useWorkspaceSpecialistReconfiguration = (
           idleAttemptGenerations.current.delete(sessionId)
           return true
         },
-        recordFailure: (message: string): void => {
+        recordFailure: (message: string): boolean => {
+          if (idleAttemptGenerations.current.get(sessionId) !== generation) return false
           setIdleFailures((current) => {
             if (idleAttemptGenerations.current.get(sessionId) !== generation) return current
             return {
@@ -108,6 +109,7 @@ const useWorkspaceSpecialistReconfiguration = (
               }
             }
           })
+          return true
         }
       }
     },

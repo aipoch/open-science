@@ -454,7 +454,9 @@ const ConversationPanel = ({
   const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
   const { unavailableReason: subagentUnavailableReason, stop: onStopSubagents } = subagents
   const specialistId = activeSession
-    ? activeSession.specialistId
+    ? specialist.view.specialist.barrierInFlight
+      ? specialist.view.specialist.historyId
+      : activeSession.specialistId
     : specialist.view.specialist.newConversationId
   const specialistUnavailable = specialist.view.specialist.unavailable
   const specialistHasPendingSwitch = specialist.view.specialist.hasPendingSwitch

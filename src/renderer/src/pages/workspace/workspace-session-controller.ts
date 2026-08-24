@@ -349,7 +349,7 @@ const useWorkspaceSessionController = ({
       const setter = window.api?.specialist?.setSessionSpecialist
       if (!setter) return
       const attempt = reconfiguration.beginIdleAttempt(sessionId, specialistId)
-      clearPending(sessionId)
+      setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
       setBarrier(sessionId, true)
       void setter({ sessionId, specialistId })
         .then((result) => {
@@ -364,10 +364,11 @@ const useWorkspaceSessionController = ({
           }
           setSessionSpecialistId(sessionId, specialistId)
           if (result?.contextReset) markSpecialistSwitchResetRequired(sessionId)
+          clearPending(sessionId)
         })
         .catch((error: unknown) => {
           console.warn('setSessionSpecialist failed', error)
-          attempt.recordFailure(errorMessage(error))
+          if (attempt.recordFailure(errorMessage(error))) clearPending(sessionId)
         })
         .finally(() => setBarrier(sessionId, false))
     }

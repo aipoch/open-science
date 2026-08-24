@@ -446,6 +446,7 @@ describe('workspace session controller', () => {
       message: 'switch rejected',
       committed: false
     })
+    expect(hook.result.current.view.specialist.historyId).toBe('specialist-a')
     expect(hook.result.current.view.specialist.barrierInFlight).toBe(false)
 
     await act(async () => {
@@ -460,6 +461,39 @@ describe('workspace session controller', () => {
     })
     expect(useSessionStore.getState().sessions[0].specialistId).toBe('specialist-b')
     expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+  })
+
+  it('exposes an idle Session Specialist selection while reconfiguration is in flight', async () => {
+    const active = session({ specialistId: 'specialist-a' })
+    const switchRequest = deferred<{ status: 'applied'; contextReset: boolean }>()
+    const setSessionSpecialist = vi.fn(() => switchRequest.promise)
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    window.api = { specialist: { setSessionSpecialist } } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [
+        specialist('specialist-a', 'Specialist A'),
+        specialist('specialist-b', 'Specialist B')
+      ]
+    })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.selectSpecialist('specialist-b'))
+
+    expect(setSessionSpecialist).toHaveBeenCalledWith({
+      sessionId: active.id,
+      specialistId: 'specialist-b'
+    })
+    expect(hook.result.current.view.specialist.barrierInFlight).toBe(true)
+    const visibleSpecialistWhilePending = hook.result.current.view.specialist.historyId
+
+    await act(async () => {
+      switchRequest.resolve({ status: 'applied', contextReset: false })
+      await switchRequest.promise
+    })
+
+    expect(visibleSpecialistWhilePending).toBe('specialist-b')
+    expect(useSessionStore.getState().sessions[0].specialistId).toBe('specialist-b')
   })
 
   it('keeps idle Specialist failures scoped to each Session', async () => {

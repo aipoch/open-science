@@ -3973,6 +3973,62 @@ describe('ConversationPanel fix loop lock', () => {
     ).toContain('Available Specialist')
   })
 
+  it('shows the selected Specialist while idle reconfiguration is in flight', () => {
+    useSpecialistStore.setState({
+      items: [
+        {
+          kind: 'custom',
+          id: 'specialist-a',
+          name: 'SPECIALIST_A',
+          displayName: 'Specialist A',
+          colorKey: 'blue',
+          description: 'Currently applied.',
+          systemPrompt: 'Help the user.',
+          enabled: true,
+          capabilityMode: 'full',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        },
+        {
+          kind: 'custom',
+          id: 'specialist-b',
+          name: 'SPECIALIST_B',
+          displayName: 'Specialist B',
+          colorKey: 'purple',
+          description: 'Being configured.',
+          systemPrompt: 'Help the user.',
+          enabled: true,
+          capabilityMode: 'full',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        }
+      ],
+      isLoaded: true
+    })
+
+    renderPanel({
+      view: {
+        activeSession: { ...idleSession, specialistId: 'specialist-a' }
+      },
+      specialist: {
+        view: {
+          specialist: {
+            historyId: 'specialist-b',
+            barrierInFlight: true
+          }
+        }
+      }
+    })
+
+    expect(
+      container
+        .querySelector('[data-testid="composer-specialist-picker-trigger"]')
+        ?.getAttribute('aria-label')
+    ).toContain('Specialist B')
+  })
+
   it('cancel button is visible when session is running and calls onCancelRun', () => {
     const onCancelRun = vi.fn()
     const runningSession: ChatSession = {
