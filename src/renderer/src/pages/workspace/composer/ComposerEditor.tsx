@@ -5,6 +5,7 @@ import type { SkillView } from '../../../../../shared/settings'
 import { resolveLocalPath } from '../../../../../shared/local-fs'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from '../preview-file-item'
@@ -16,12 +17,15 @@ import {
   applyDocToDom,
   docArtifactCount,
   docIsEmpty,
+  docSessionCount,
   domToDoc,
   MAX_COMPOSER_ARTIFACT_MENTIONS,
+  MAX_COMPOSER_SESSION_MENTIONS,
   type ComposerDoc,
   type ComposerNode
 } from './composer-doc'
 import { SkillMentionPopup } from './SkillMentionPopup'
+import { SessionMentionPopup, type PickedSession } from './SessionMentionPopup'
 import { useMentionTrigger } from './useMentionTrigger'
 
 // Base editor styling: mirrors the sizing/leading of the legacy composer textarea. The placeholder is
@@ -65,6 +69,9 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
     if (node.type === 'text' && other.type === 'text') return node.text === other.text
     if (node.type === 'skill' && other.type === 'skill') {
       return node.id === other.id && node.name === other.name
+    }
+    if (node.type === 'session' && other.type === 'session') {
+      return node.sessionId === other.sessionId && node.title === other.title
     }
     if (node.type === 'artifact' && other.type === 'artifact') {
       if (
@@ -207,7 +214,12 @@ export const ComposerEditor = ({
     trigger: '@',
     disabled: disabled || docArtifactCount(doc) >= MAX_COMPOSER_ARTIFACT_MENTIONS
   })
-  const mentionPopupOpen = mention.active || artifactMention.active
+  const sessionMention = useMentionTrigger({
+    editorRef: editorRef as React.RefObject<HTMLElement>,
+    trigger: '#',
+    disabled: disabled || docSessionCount(doc) >= MAX_COMPOSER_SESSION_MENTIONS
+  })
+  const mentionPopupOpen = mention.active || artifactMention.active || sessionMention.active
 
   // Read the live DOM back into a doc and notify the parent.
   const emitDocFromDom = useCallback((): void => {
@@ -248,6 +260,16 @@ export const ComposerEditor = ({
   // inert, then open through the mention preview item.
   const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     const root = editorRef.current
+    const sessionChip = (event.target as HTMLElement).closest?.(
+      '[data-mention-type="session"]'
+    ) as HTMLElement | null
+    if (root && sessionChip && root.contains(sessionChip)) {
+      const sessionId = sessionChip.getAttribute('data-session-id')
+      if (!sessionId) return
+      event.preventDefault()
+      useNavigationStore.getState().openSessionById(sessionId, 'user')
+      return
+    }
     const chip = (event.target as HTMLElement).closest?.(
       '[data-mention-type="artifact"]'
     ) as HTMLElement | null
@@ -309,7 +331,7 @@ export const ComposerEditor = ({
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (disabled) return
     // While either mention popup is open it owns Enter/arrow keys; leave them to its document listener.
-    if (mention.active || artifactMention.active) return
+    if (mention.active || artifactMention.active || sessionMention.active) return
     if (
       (event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
       onNavigateHistory &&
@@ -385,6 +407,11 @@ export const ComposerEditor = ({
     artifactMention.cancel()
   }
 
+  const handleSelectSession = (session: PickedSession): void => {
+    sessionMention.replaceTokenWith(session)
+    sessionMention.cancel()
+  }
+
   return (
     <div className="relative min-w-0">
       <div
@@ -440,6 +467,15 @@ export const ComposerEditor = ({
           query={artifactMention.query}
           onSelect={handleSelectArtifact}
           onClose={artifactMention.cancel}
+          listboxId={mentionListboxId}
+          onActiveOptionIdChange={setActiveMentionOptionId}
+        />
+      ) : null}
+      {sessionMention.active ? (
+        <SessionMentionPopup
+          query={sessionMention.query}
+          onSelect={handleSelectSession}
+          onClose={sessionMention.cancel}
           listboxId={mentionListboxId}
           onActiveOptionIdChange={setActiveMentionOptionId}
         />

@@ -4,6 +4,7 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn, formatByteSize } from '@/lib/utils'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
@@ -639,6 +640,18 @@ const MessagePartsMeasurement = ({
         )
       }
 
+      if (part.type === 'session') {
+        return (
+          <span
+            key={index}
+            data-slot="user-message-measurement-part"
+            data-part-type="session"
+            data-content={`#${part.title}`}
+            className={cn(mentionPillClassName, measurementContentClassName)}
+          />
+        )
+      }
+
       return (
         <span
           key={index}
@@ -1103,6 +1116,25 @@ const MessagePartsContent = ({
           )
         }
 
+        if (part.type === 'session') {
+          return (
+            <button
+              key={index}
+              type="button"
+              className={cn(
+                mentionPillClassName,
+                mentionButtonClassName,
+                'bg-bg-300 text-text-100'
+              )}
+              onClick={() => useNavigationStore.getState().openSessionById(part.sessionId, 'user')}
+              aria-label={t('Open session {{title}}', { title: part.title })}
+              title={part.title}
+            >
+              #{part.title}
+            </button>
+          )
+        }
+
         return (
           <span key={index} className="whitespace-pre-wrap">
             {part.text}
@@ -1248,7 +1280,10 @@ const WorkspaceMessageItemImpl = ({
       <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{message.content}</p>
     ) : null
   const hasInteractiveUserMessageContent = Boolean(
-    !staticParts && message.parts?.some((part) => part.type === 'skill' || part.type === 'artifact')
+    !staticParts &&
+    message.parts?.some(
+      (part) => part.type === 'skill' || part.type === 'artifact' || part.type === 'session'
+    )
   )
 
   return (

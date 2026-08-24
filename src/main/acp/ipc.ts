@@ -22,6 +22,7 @@ import type {
   AcpRevokePermissionGrantRequest,
   AcpSetPermissionProfileRequest
 } from '../../shared/acp'
+import { sanitizeSessionReferences } from '../../shared/session-persistence'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpHandlerWorkflows } from './handler-workflows'
 import {
@@ -80,14 +81,19 @@ const registerAcpIpcHandlerSet = (
   ipcMainHandle('acp:send-prompt', (_event, request: AcpPromptRequest) => {
     // Continuation controls are main-process-owned. Renderer input must never suppress a visible
     // user message or impersonate the handoff path.
-    const { attribution: _untrustedAttribution, ...untrustedRequest } =
-      request as AcpPromptRequest & {
-        attribution?: unknown
-      }
+    const {
+      attribution: _untrustedAttribution,
+      referencedSessions: untrustedSessionReferences,
+      ...untrustedRequest
+    } = request as AcpPromptRequest & {
+      attribution?: unknown
+    }
     void _untrustedAttribution
+    const referencedSessions = sanitizeSessionReferences(untrustedSessionReferences)
     const rendererRequest: AcpPromptRequest = {
       ...untrustedRequest,
       turnIntent: request.turnIntent === 'plan-first' ? 'plan-first' : undefined,
+      ...(referencedSessions.length > 0 ? { referencedSessions } : {}),
       continuation: undefined,
       suppressUserMessage: undefined
     }

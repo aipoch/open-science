@@ -4,6 +4,7 @@ import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
 
 import {
   SESSION_FILE_VERSION,
+  collectSessionReferences,
   createSessionFile,
   ConversationGraphMaterializationError,
   decodeSessionFile,
@@ -513,6 +514,55 @@ describe('message attribution persistence', () => {
 })
 
 describe('message part persistence', () => {
+  it('collects at most five unique Session references with their first title snapshot', () => {
+    expect(
+      collectSessionReferences([
+        { type: 'session', sessionId: 'session-1', title: 'Original title' },
+        { type: 'session', sessionId: 'session-1', title: 'Renamed title' },
+        ...Array.from({ length: 5 }, (_, index) => ({
+          type: 'session' as const,
+          sessionId: `session-${index + 2}`,
+          title: `Session ${index + 2}`
+        }))
+      ])
+    ).toEqual([
+      { type: 'session', sessionId: 'session-1', title: 'Original title' },
+      { type: 'session', sessionId: 'session-2', title: 'Session 2' },
+      { type: 'session', sessionId: 'session-3', title: 'Session 3' },
+      { type: 'session', sessionId: 'session-4', title: 'Session 4' },
+      { type: 'session', sessionId: 'session-5', title: 'Session 5' }
+    ])
+  })
+
+  it('preserves only Session identity and the reference-time title snapshot', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: '#Earlier result',
+          parts: [
+            {
+              type: 'session',
+              sessionId: 'session-2',
+              title: 'Earlier result',
+              projectId: 'must-not-persist',
+              frameId: 'must-not-persist'
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].parts).toEqual([
+      { type: 'session', sessionId: 'session-2', title: 'Earlier result' }
+    ])
+  })
+
   it('preserves a linked-folder reference as root id plus relative path', () => {
     const restored = normalizeSessionFile({
       ...createSessionWithActivity(undefined),

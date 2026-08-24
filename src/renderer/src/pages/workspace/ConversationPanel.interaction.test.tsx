@@ -1034,7 +1034,7 @@ describe('ConversationPanel composer intake', () => {
     renderPanel()
 
     expect(getComposerEditor().getAttribute('data-placeholder')).toBe(
-      `Ask anything — / skills · @ files · ${shortcut} search · ↑↓ history`
+      `Ask anything — / skills · @ files · # sessions · ${shortcut} search · ↑↓ history`
     )
     window.api = previousApi
   })

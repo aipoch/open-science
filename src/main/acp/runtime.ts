@@ -35,7 +35,10 @@ import {
 } from '../../shared/acp'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { type AgentFrameworkId } from '../../shared/settings'
-import type { MessageAttribution } from '../../shared/session-persistence'
+import {
+  sanitizeSessionReferences,
+  type MessageAttribution
+} from '../../shared/session-persistence'
 import {
   sanitizeAgentUserChoiceRequest,
   type AgentUserChoiceRequest,
@@ -54,6 +57,7 @@ import {
 } from '../agent-framework'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
+import { buildSessionReferencePrompt } from './session-reference-prompt'
 import { ConversationPermissionGrantStore } from './permission-broker'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import type { AcpPermissionContext } from './permission-context'
@@ -703,6 +707,10 @@ class AcpRuntime {
     return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectId
   }
 
+  isSessionReferenceAllowed(sessionId: string, referencedSessionId: string): boolean {
+    return this.sessionInteractions.isSessionReferenceAllowed(sessionId, referencedSessionId)
+  }
+
   // Handoff adapters select their framework without reaching into session ownership maps. The
   // framework recorded here is the one that provisioned this logical session, including after a
   // coordinator generation rotation.
@@ -1153,6 +1161,11 @@ class AcpRuntime {
   private async prepareNativeFollowUpContent(
     request: AcpSteerFollowUpRequest
   ): Promise<NativeFollowUpPreparedContent> {
+    const referencedSessions = sanitizeSessionReferences(request.parts)
+    this.sessionInteractions.authorizeSessionReferences(
+      request.sessionId,
+      referencedSessions.map((reference) => reference.sessionId)
+    )
     const presented = await this.turnSkills.presentFollowUp({
       frameworkId: this.framework.id,
       text: request.text,
@@ -1169,7 +1182,9 @@ class AcpRuntime {
       appSessionId: request.sessionId,
       projectId: this.liveSessionProjectId(request.sessionId) ?? '',
       connectionGeneration: this.connectionGeneration,
-      text: followUpPromptText(presented),
+      text: [buildSessionReferencePrompt(referencedSessions), followUpPromptText(presented)]
+        .filter((segment): segment is string => Boolean(segment))
+        .join('\n\n'),
       historyImages: [],
       historyUploads: [],
       currentUploads: request.attachments ?? [],

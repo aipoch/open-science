@@ -1424,7 +1424,7 @@ const ConversationPanel = ({
                           onPaste={handleMessageDraftPaste}
                           disabled={!canEditDraft}
                           placeholder={t(
-                            'Ask anything — / skills · @ files · {{shortcut}} search · ↑↓ history',
+                            'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
                             {
                               shortcut: globalSearchShortcut
                             }

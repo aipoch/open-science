@@ -363,6 +363,14 @@ class AcpRuntimeCoordinator {
     return this.sessionRuntimes.get(sessionId)?.liveSessionProjectId(sessionId)
   }
 
+  isSessionReferenceAllowed(sessionId: string, referencedSessionId: string): boolean {
+    return (
+      this.sessionRuntimes
+        .get(sessionId)
+        ?.isSessionReferenceAllowed(sessionId, referencedSessionId) ?? false
+    )
+  }
+
   getSessionFramework(sessionId: string): AgentFrameworkId | undefined {
     return this.findRuntimeForSession(sessionId)?.getSessionFramework(sessionId)
   }

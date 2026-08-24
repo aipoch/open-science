@@ -1882,6 +1882,22 @@ const createApplicationModules = async (
         : undefined
     }
   })
+  const resolveHostReferencedSession = async (
+    context: { sessionId: string },
+    referencedSessionId: string
+  ): Promise<{ projectId: string } | undefined> => {
+    if (!runtimeRef.current?.isSessionReferenceAllowed(context.sessionId, referencedSessionId)) {
+      return undefined
+    }
+    const summary = (await sessionRepository.loadSessionSummaries()).find(
+      (candidate) => candidate.id === referencedSessionId && candidate.archivedAt === undefined
+    )
+    if (!summary) return undefined
+    const project = await projectRepository.get(summary.projectId)
+    return project && project.archivedAt === undefined
+      ? { projectId: summary.projectId }
+      : undefined
+  }
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
       onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
@@ -1929,14 +1945,17 @@ const createApplicationModules = async (
         catalog: projectFilesRepository,
         provenance: artifactProvenanceRepository
       }),
-      hostFrames: new HostFramesService({
-        readProject: (projectId) =>
-          sessionRepository.loadProjectWithDiagnostics(projectId, { mode: 'read-only' }),
-        readSession: (projectId, sessionId) =>
-          sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
-            mode: 'read-only'
-          })
-      }),
+      hostFrames: new HostFramesService(
+        {
+          readProject: (projectId) =>
+            sessionRepository.loadProjectWithDiagnostics(projectId, { mode: 'read-only' }),
+          readSession: (projectId, sessionId) =>
+            sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
+              mode: 'read-only'
+            })
+        },
+        resolveHostReferencedSession
+      ),
       hostSessions: new HostSessionsService(
         {
           readProject: (projectId) =>
@@ -1946,7 +1965,8 @@ const createApplicationModules = async (
               mode: 'read-only'
             })
         },
-        { getSnapshot: () => runtimeRef.current?.getSnapshot() }
+        { getSnapshot: () => runtimeRef.current?.getSnapshot() },
+        resolveHostReferencedSession
       ),
       inputRegistry: notebookInputRegistry,
       agentsService,

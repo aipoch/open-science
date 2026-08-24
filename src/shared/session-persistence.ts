@@ -341,13 +341,36 @@ export type PersistedMessageImage = AcpMessageImage & {
   id: string
 }
 
-// Ordered structural segments of a user message, letting the bubble re-render skill/artifact
+export type SessionReference = { type: 'session'; sessionId: string; title: string }
+export const MAX_SESSION_REFERENCES_PER_MESSAGE = 5
+const MAX_SESSION_REFERENCE_ID_LENGTH = 512
+const MAX_SESSION_REFERENCE_TITLE_LENGTH = 4096
+
+// Ordered structural segments of a user message, letting the bubble re-render skill/artifact/session
 // mentions as styled pills instead of plain text. Structurally mirrors the renderer ComposerNode
 // (shared cannot import renderer code). Absent on older messages, which fall back to plain content.
 export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'skill'; id: string; name: string }
   | ({ type: 'artifact' } & FileReference)
+  | SessionReference
+
+export const collectSessionReferences = (
+  parts: readonly MessagePart[] | undefined
+): SessionReference[] => {
+  const references: SessionReference[] = []
+  for (const part of parts ?? []) {
+    if (
+      part.type !== 'session' ||
+      references.some((reference) => reference.sessionId === part.sessionId)
+    ) {
+      continue
+    }
+    references.push({ type: 'session', sessionId: part.sessionId, title: part.title })
+    if (references.length >= MAX_SESSION_REFERENCES_PER_MESSAGE) break
+  }
+  return references
+}
 
 export type PersistedChatMessage = {
   id: string
@@ -2636,6 +2659,12 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
 
       return id && name ? { type: 'skill', id, name } : undefined
     }
+    case 'session': {
+      const sessionId = asString(part.sessionId)
+      const title = asString(part.title)
+
+      return sessionId && title ? { type: 'session', sessionId, title } : undefined
+    }
     case 'artifact': {
       const id = asString(part.id)
       const name = asString(part.name)
@@ -2675,6 +2704,25 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
     default:
       return undefined
   }
+}
+
+export const sanitizeSessionReferences = (value: unknown): SessionReference[] => {
+  if (!Array.isArray(value)) return []
+  const references: SessionReference[] = []
+  for (const candidate of value) {
+    if (references.length >= MAX_SESSION_REFERENCES_PER_MESSAGE) break
+    const part = sanitizeMessagePart(candidate)
+    if (
+      part?.type !== 'session' ||
+      part.sessionId.length > MAX_SESSION_REFERENCE_ID_LENGTH ||
+      part.title.length > MAX_SESSION_REFERENCE_TITLE_LENGTH ||
+      references.some((reference) => reference.sessionId === part.sessionId)
+    ) {
+      continue
+    }
+    references.push({ type: 'session', sessionId: part.sessionId, title: part.title })
+  }
+  return references
 }
 
 // Revalidates embedded message images before writing or restoring a session file. The count and

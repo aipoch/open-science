@@ -10,6 +10,7 @@ import {
   useGrantedFoldersStore
 } from '@/stores/granted-folders-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useProjectStore } from '@/stores/project-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import {
@@ -150,6 +151,19 @@ const pickerProjectFiles = [
 
 beforeEach(() => {
   useSettingsStore.setState({ ...createInitialSettingsState(), skills: seedSkills })
+  useProjectStore.setState({
+    projects: [
+      {
+        id: 'default',
+        name: 'Current Project',
+        description: '',
+        agentContext: '',
+        isExample: false,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+  })
   seedProjectFiles()
   // The artifact popup icon may read image previews; stub the api so it never throws.
   ;(window as unknown as { api: unknown }).api = {
@@ -616,6 +630,40 @@ describe('ComposerEditor', () => {
     expect(
       lastCall.nodes.some((node) => node.type === 'artifact' && node.id === 'upload:up-1')
     ).toBe(true)
+  })
+
+  it('inserts a Session chip from `#` and navigates by Session id when clicked', () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      selectedSessionId: 'session-1',
+      sessions: [
+        createSession({ id: 'session-1', title: 'Current conversation' }),
+        createSession({ id: 'session-2', title: 'Prior analysis', updatedAt: 1710000001000 })
+      ]
+    })
+    const onDocChange = vi.fn()
+    renderEditor({ onDocChange })
+
+    const textNode = document.createTextNode('#prior')
+    editor().appendChild(textNode)
+    setCaret(textNode, 6)
+    act(() => editor().dispatchEvent(new Event('input', { bubbles: true })))
+    dispatchKey(document, 'Enter')
+
+    const chip = editor().querySelector<HTMLElement>('[data-mention-type="session"]')
+    expect(chip?.textContent).toBe('#Prior analysis')
+    expect(chip?.getAttribute('data-session-id')).toBe('session-2')
+    expect(chip?.getAttribute('data-project-id')).toBeNull()
+    expect(chip?.getAttribute('data-frame-id')).toBeNull()
+    const lastDoc = onDocChange.mock.calls.at(-1)?.[0] as ComposerDoc
+    expect(lastDoc.nodes).toContainEqual({
+      type: 'session',
+      sessionId: 'session-2',
+      title: 'Prior analysis'
+    })
+
+    act(() => chip?.click())
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-2')
   })
 
   it('exposes the active artifact suggestion from the focused editor', async () => {
