@@ -109,6 +109,12 @@ describe('TokenUsagePanel', () => {
     expect(document.body.querySelector('[data-slot="token-usage-loading"]')?.textContent).toBe(
       'Loading…'
     )
+    expect(document.body.querySelectorAll('[data-slot="token-usage-skeleton-stat"]')).toHaveLength(
+      8
+    )
+    expect(document.body.querySelectorAll('[data-slot="token-usage-skeleton-chart"]')).toHaveLength(
+      2
+    )
     expect(document.body.querySelector('[data-slot="token-usage-summary"]')).toBeNull()
 
     await act(async () => {
