@@ -5335,7 +5335,7 @@ describe('notebook runtime service', () => {
   })
 
   describe('managePackages', () => {
-    it('returns verified version changes for requested packages without transitive inventory noise', async () => {
+    it('returns verified requested package changes alongside related inventory changes', async () => {
       const root = await createStorageRoot()
       const service = new NotebookRuntimeService({
         configRoot: root,
@@ -5388,9 +5388,17 @@ describe('notebook runtime service', () => {
       expect(result.packageChanges).toEqual([
         expect.objectContaining({
           name: 'numpy',
+          relationship: 'requested',
           change: 'updated',
           beforeVersion: '2.1.0',
           afterVersion: '2.2.0'
+        }),
+        expect.objectContaining({
+          name: 'packaging',
+          relationship: 'unattributed',
+          change: 'updated',
+          beforeVersion: '24.0',
+          afterVersion: '25.0'
         })
       ])
       expect(result.target).toMatchObject({
