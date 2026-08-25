@@ -46,7 +46,7 @@ export const LONG_PASTE_CHARACTER_THRESHOLD = 10_000
 export const LONG_PASTE_LINE_THRESHOLD = 300
 
 export const pastedTextPreviewName = (text: string): string =>
-  `${Array.from(text.trim().replace(/\s+/gu, ' ')).slice(0, 20).join('')}...`
+  `${Array.from(text.trim().replace(/\s+/gu, ' ')).slice(0, 17).join('')}...`
 
 export const pastedTextAttachmentDomId = (id: string): string =>
   `composer-pasted-text-attachment-${id}`

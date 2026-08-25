@@ -1817,7 +1817,7 @@ describe('ConversationPanel composer intake', () => {
     expect(card?.id).toBe('composer-pasted-text-attachment-paste-1')
     expect(card?.className).toContain('h-9')
     expect(card?.className).not.toContain('h-12')
-    expect(card?.textContent).toContain('<div class="contents...')
+    expect(card?.textContent).toContain('<div class="conte...')
     expect(card?.textContent).not.toContain(pastedTextName)
     expect(restore?.querySelector('span')?.className).toContain('whitespace-nowrap')
     const scrollIntoView = vi.fn()
