@@ -268,6 +268,7 @@ const useWorkspaceComposerController = ({
           delete historyRef.current[currentDraftKey]
           markChanged(currentDraftKey)
           clearPastedTextUndo(currentDraftKey)
+          clearUndo(currentDraftKey)
           setActiveDoc(navigation.scratch)
           setHistoryBrowsingKey(undefined)
           setHistoryStatus('Draft restored')
@@ -307,6 +308,7 @@ const useWorkspaceComposerController = ({
       )
       markChanged(currentDraftKey)
       clearPastedTextUndo(currentDraftKey)
+      clearUndo(currentDraftKey)
       setActiveDoc(normalized.doc)
       setHistoryBrowsingKey(currentDraftKey)
       setHistoryStatus(
@@ -327,6 +329,7 @@ const useWorkspaceComposerController = ({
       markChanged,
       ready,
       clearPastedTextUndo,
+      clearUndo,
       setActiveDoc,
       transfers.length
     ]
@@ -352,6 +355,7 @@ const useWorkspaceComposerController = ({
     if (JSON.stringify(normalized.doc) !== JSON.stringify(doc)) {
       markChanged(currentDraftKey)
       clearPastedTextUndo(currentDraftKey)
+      clearUndo(currentDraftKey)
       setActiveDoc(normalized.doc)
     }
     setHistoryStatus(
@@ -363,6 +367,7 @@ const useWorkspaceComposerController = ({
     )
   }, [
     clearPastedTextUndo,
+    clearUndo,
     currentDraftKey,
     doc,
     historyBrowsingKey,
@@ -386,11 +391,13 @@ const useWorkspaceComposerController = ({
     delete historyRef.current[currentDraftKey]
     markChanged(currentDraftKey)
     clearPastedTextUndo(currentDraftKey)
+    clearUndo(currentDraftKey)
     setActiveDoc(navigation.scratch)
     setHistoryBrowsingKey(undefined)
     setHistoryStatus('Draft restored')
   }, [
     clearPastedTextUndo,
+    clearUndo,
     currentDraftKey,
     hasActiveSession,
     historyBrowsingKey,

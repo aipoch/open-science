@@ -278,6 +278,17 @@ export const useWorkspaceComposerUploadController = ({
           }))
         )
       }
+      undoRef.current[draftKey] = (undoRef.current[draftKey] ?? []).map((snapshot) =>
+        snapshot.attachmentTransfers.some((transfer) => transfer.transferId === transferId)
+          ? {
+              ...snapshot,
+              attachmentTransfers: snapshot.attachmentTransfers.filter(
+                (transfer) => transfer.transferId !== transferId
+              ),
+              attachments: [...snapshot.attachments, attachment]
+            }
+          : snapshot
+      )
     },
     [
       activeDraftKeyRef,
@@ -468,6 +479,7 @@ export const useWorkspaceComposerUploadController = ({
       if (!preserveRemovalUndo) clearPastedTextUndo(draftKey)
       clearHistory(draftKey)
       markChanged(draftKey)
+      if (!preserveRemovalUndo) captureUndo(draftKey)
       const releasedSlots = reconcileRemovedPastedTextUploads(nextDoc, draftKey)
       const nodes: readonly ComposerPastedTextNode[] = Array.isArray(staged)
         ? staged
@@ -476,7 +488,6 @@ export const useWorkspaceComposerUploadController = ({
         node,
         file: new File([node.text], pastedTextFilename(node.text), { type: 'text/plain' })
       }))
-      if (!preserveRemovalUndo) captureUndo(draftKey)
       const intake = canStageAttachments
         ? planComposerAttachmentIntake(
             records.map(({ file }) => file),
@@ -673,9 +684,38 @@ export const useWorkspaceComposerUploadController = ({
     }
     clearHistory(draftKey)
     markChanged(draftKey)
-    setActiveDoc(snapshot.doc)
-    setActiveAttachments(snapshot.attachments)
-    setActiveTransfers(snapshot.attachmentTransfers)
+    const currentAttachmentIds = new Set(attachmentsRef.current.map(({ id }) => id))
+    const pastedTextToRestage = snapshot.doc.nodes.filter(
+      (node): node is ComposerPastedTextNode =>
+        node.type === 'pasted-text' &&
+        Boolean(node.attachmentId && !currentAttachmentIds.has(node.attachmentId))
+    )
+    setActiveAttachments(
+      attachmentsRef.current.filter((attachment) => attachmentIds.has(attachment.id))
+    )
+    setActiveTransfers(
+      transfersRef.current.filter((transfer) => transferIds.has(transfer.transferId))
+    )
+    if (pastedTextToRestage.length > 0) {
+      const restagedIds = new Set(pastedTextToRestage.map(({ id }) => id))
+      stagePastedText(
+        {
+          nodes: snapshot.doc.nodes.map((node) =>
+            node.type === 'pasted-text' && restagedIds.has(node.id)
+              ? { ...node, attachmentId: undefined, transferId: undefined }
+              : node
+          )
+        },
+        pastedTextToRestage.map((node) => ({
+          ...node,
+          attachmentId: undefined,
+          transferId: undefined
+        })),
+        true
+      )
+    } else {
+      setActiveDoc(snapshot.doc)
+    }
     return true
   }, [
     activeDraftKeyRef,
@@ -685,6 +725,7 @@ export const useWorkspaceComposerUploadController = ({
     setActiveAttachments,
     setActiveDoc,
     setActiveTransfers,
+    stagePastedText,
     undoPastedTextRemoval,
     uploads
   ])

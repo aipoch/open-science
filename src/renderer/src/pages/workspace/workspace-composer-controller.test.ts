@@ -13,6 +13,7 @@ import {
   type ComposerPastedTextNode
 } from './composer/composer-doc'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
+import type { ComposerHistoryEntry } from './composer/composer-history'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -64,7 +65,8 @@ type ControllerHook = {
 
 const renderController = (
   uploadApi = uploads(),
-  loadSkills = vi.fn().mockResolvedValue(undefined)
+  loadSkills = vi.fn().mockResolvedValue(undefined),
+  historyEntries: ComposerHistoryEntry[] = []
 ): ControllerHook => {
   let currentDraftKey = 'session-a'
   const container = document.createElement('div')
@@ -79,7 +81,7 @@ const renderController = (
       activeProjectId: 'project',
       pendingCustomizePrefill: undefined,
       onCustomizePrefillApplied: vi.fn(),
-      historyEntries: [],
+      historyEntries,
       hasActiveSession: true,
       historyPolicy: {
         catalogSkillIds: new Set(),
@@ -175,6 +177,51 @@ describe('workspace composer controller', () => {
 
     expect(hook.result.current.view.transfers).toEqual([])
     expect(uploadApi.abortTransfer).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an attachment whose pending transfer completed after a later text edit', async () => {
+    const pending = deferred<UploadedAttachment | null>()
+    const uploadApi = uploads(vi.fn(() => pending.promise))
+    const hook = renderController(uploadApi)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.stageFiles([new File(['a'], 'paper.pdf')]))
+    act(() => hook.result.current.actions.changeDoc(textDoc('explain this')))
+    await act(async () => {
+      pending.resolve({
+        id: 'upload-a',
+        sessionId: '.pending',
+        name: 'paper.pdf',
+        originalName: 'paper.pdf',
+        path: '/uploads/paper.pdf',
+        size: 1
+      })
+      await pending.promise
+      await Promise.resolve()
+    })
+
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+    expect(hook.result.current.view.attachments.map(({ id }) => id)).toEqual(['upload-a'])
+    expect(hook.result.current.view.transfers).toEqual([])
+    expect(uploadApi.deleteUpload).not.toHaveBeenCalled()
+  })
+
+  it('clears draft undo when prompt history replaces the Composer document', () => {
+    const historyEntry: ComposerHistoryEntry = {
+      id: 'session:message',
+      messageId: 'message',
+      doc: textDoc('history prompt')
+    }
+    const hook = renderController(uploads(), vi.fn().mockResolvedValue(undefined), [historyEntry])
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('scratch')))
+    act(() => expect(hook.result.current.actions.navigateHistory('previous')).toBe(true))
+
+    expect(hook.result.current.view.doc).toEqual(textDoc('history prompt'))
+    expect(hook.result.current.actions.undo()).toBe(false)
   })
 
   it('undoes a long paste as one Composer edit', async () => {
@@ -627,6 +674,15 @@ describe('workspace composer controller', () => {
         mimeType: 'text/plain',
         size: 3
       })
+      .mockResolvedValueOnce({
+        id: 'upload-old-restaged',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/old-restaged.txt',
+        mimeType: 'text/plain',
+        size: 3
+      })
     const uploadApi = uploads(stageLocalFile)
     const hook = renderController(uploadApi)
     mounted.push(hook)
@@ -648,6 +704,20 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.doc.nodes).not.toContainEqual(
       expect.objectContaining({ type: 'pasted-text', id: 'paste-old' })
     )
+
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.doc.nodes).toContainEqual(
+      expect.objectContaining({
+        type: 'pasted-text',
+        id: 'paste-old',
+        attachmentId: 'upload-old-restaged'
+      })
+    )
+    expect(hook.result.current.view.attachments.map(({ id }) => id)).toEqual([
+      'upload-old-restaged'
+    ])
   })
 
   it('reuses the attachment slot when a new long paste replaces an anchor at the cap', () => {
