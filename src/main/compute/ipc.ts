@@ -191,6 +191,7 @@ type ComputeHandlers = {
   approvalPauseSession: (sessionId: string) => void
   approvalResumeSession: (sessionId: string) => void
   approvalCancelSession: (sessionId: string) => void
+  approvalCancelAll: () => void
   approvalCompleteSessionCancellation: (sessionId: string) => void
   // Returns JobSummary[] for a session, optionally filtered by status (renderer feed, issue 05).
   jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
@@ -439,6 +440,7 @@ const createComputeHandlers = (
     approvalPauseSession: (sessionId) => broker.pauseSession(sessionId),
     approvalResumeSession: (sessionId) => broker.resumeSession(sessionId),
     approvalCancelSession: (sessionId) => broker.cancelSession(sessionId),
+    approvalCancelAll: () => broker.cancelAll(),
     approvalCompleteSessionCancellation: (sessionId) =>
       broker.completeSessionCancellation(sessionId),
     jobsList: async (filter) => {

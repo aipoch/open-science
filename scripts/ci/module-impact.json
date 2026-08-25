@@ -219,6 +219,9 @@
     },
     "compute_service": {
       "ownerPaths": [
+        "src/main/compute/approval-session-lifecycle.ts",
+        "src/main/compute/agent-compute-service.ts",
+        "src/main/compute/compute-approval-broker.ts",
         "src/main/compute/compute-host-profile-owner.ts",
         "src/main/compute/compute-job-lifecycle.ts",
         "src/main/compute/job-deletion-owner.ts",
@@ -246,6 +249,10 @@
       "consumerModules": [],
       "testFiles": {
         "owner": [
+          "src/main/compute/approval-session-lifecycle.test.ts",
+          "src/main/compute/agent-compute-service.test.ts",
+          "src/main/compute/agent-no-list-jobs.test.ts",
+          "src/main/compute/compute-approval-broker.test.ts",
           "src/main/compute/compute-job-lifecycle.test.ts",
           "src/main/compute/job-deletion-owner.test.ts",
           "src/main/compute/compute-service.architecture.test.ts",

@@ -326,6 +326,19 @@ export class ComputeApprovalBroker {
     }
   }
 
+  cancelAll(): void {
+    const sessionIds = new Set(this.inFlightSessionRequests.keys())
+    for (const entry of this.pending.values()) {
+      if (entry.context) sessionIds.add(entry.context.sessionId)
+    }
+    for (const sessionId of sessionIds) this.cancelSession(sessionId)
+    for (const [id, entry] of this.pending) {
+      if (!entry.context) this.settle(id, 'deny', 'cancelled')
+    }
+    this.pausedSessions.clear()
+    this.conversationGrants.clear()
+  }
+
   completeSessionCancellation(sessionId: string): void {
     if (!this.cancellingSessions.has(sessionId)) return
     if (this.inFlightSessionRequests.has(sessionId)) {

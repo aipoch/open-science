@@ -520,6 +520,9 @@ describe('Compute service architecture', () => {
     const computeService = manifest.modules.compute_service
 
     expect(computeService.ownerPaths).toEqual([
+      'src/main/compute/approval-session-lifecycle.ts',
+      'src/main/compute/agent-compute-service.ts',
+      'src/main/compute/compute-approval-broker.ts',
       'src/main/compute/compute-host-profile-owner.ts',
       'src/main/compute/compute-job-lifecycle.ts',
       'src/main/compute/job-deletion-owner.ts',
@@ -547,6 +550,9 @@ describe('Compute service architecture', () => {
     expect(computeService.testFiles.owner).toEqual(
       expect.arrayContaining([
         architectureTestPath,
+        'src/main/compute/approval-session-lifecycle.test.ts',
+        'src/main/compute/agent-compute-service.test.ts',
+        'src/main/compute/compute-approval-broker.test.ts',
         'src/main/compute/connection-broker.test.ts',
         'src/main/compute/compute-job-lifecycle.test.ts',
         'src/main/compute/job-deletion-owner.test.ts',

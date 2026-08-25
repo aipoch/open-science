@@ -311,6 +311,42 @@ describe('ComputeApprovalBroker', () => {
     await retainedCall
   })
 
+  it('cancels every pending approval when all Session runtimes stop', async () => {
+    const timer = makeTimer()
+    const onSettled = vi.fn()
+    let sequence = 0
+    const broker = new ComputeApprovalBroker({
+      generateId: () => `id-${++sequence}`,
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      onSettled
+    })
+    const first = broker.request(makeRequest(), {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      operation: 'call_command'
+    })
+    const second = broker.request(makeDownloadRequest(), {
+      sessionId: 'session-2',
+      projectId: 'project-1',
+      operation: 'download'
+    })
+    const contextless = broker.request(makeRequest())
+
+    broker.cancelAll()
+
+    await expect(Promise.all([first, second, contextless])).resolves.toEqual([
+      'deny',
+      'deny',
+      'deny'
+    ])
+    expect(onSettled).toHaveBeenCalledTimes(3)
+    expect(onSettled).toHaveBeenCalledWith('id-1', 'cancelled')
+    expect(onSettled).toHaveBeenCalledWith('id-2', 'cancelled')
+    expect(onSettled).toHaveBeenCalledWith('id-3', 'cancelled')
+  })
+
   it('allows new approvals if Session deletion fails after pending requests are cancelled', async () => {
     const timer = makeTimer()
     const broker = new ComputeApprovalBroker({
