@@ -30,6 +30,22 @@ const withPlanMcpClient = async <Result>(
   }
 }
 
+const VALID_STEP = { title: 'Analyze', description: 'Produce the result.' }
+const VALID_DELEGATION = { name: 'Primary agent', steps: [VALID_STEP] }
+const VALID_PHASE = { name: 'Analysis', delegations: [VALID_DELEGATION] }
+
+function planGenerationArguments(
+  phases: unknown,
+  feasibility: unknown = { confidence: 'high', rationale: 'Inputs are available.' }
+): Record<string, unknown> {
+  return {
+    task_summary: 'Analyze one dataset',
+    phases,
+    desired_outputs: [],
+    feasibility
+  }
+}
+
 describe('Session Plan MCP server', () => {
   it('advertises the complete nested Plan content schema', async () => {
     const server = createPlanMcpServer({
@@ -56,11 +72,10 @@ describe('Session Plan MCP server', () => {
       })
       expect(inputSchema.properties?.phases).toMatchObject({
         type: 'array',
-        description: expect.stringContaining(
-          'delegations: [{ name, steps: [{ title, description }] }]'
-        ),
+        description: expect.stringContaining('ordered phases'),
         items: {
           type: 'object',
+          required: ['name', 'delegations'],
           properties: {
             name: { type: 'string', description: expect.any(String) },
             delegations: {
@@ -68,13 +83,15 @@ describe('Session Plan MCP server', () => {
               description: expect.stringContaining('at least one delegation'),
               items: {
                 type: 'object',
+                required: ['name', 'steps'],
                 properties: {
                   name: { type: 'string', description: expect.any(String) },
                   steps: {
                     type: 'array',
-                    description: expect.stringContaining('non-empty array'),
+                    description: expect.stringContaining('at least one step'),
                     items: {
                       type: 'object',
+                      required: ['title', 'description'],
                       properties: {
                         title: { type: 'string', description: expect.any(String) },
                         description: { type: 'string', description: expect.any(String) }
@@ -105,6 +122,10 @@ describe('Session Plan MCP server', () => {
         }
       })
       expect(inputSchema).not.toHaveProperty('required')
+      expect(JSON.stringify(inputSchema)).not.toContain(
+        'delegations: [{ name, steps: [{ title, description }] }]'
+      )
+      expect(JSON.stringify(inputSchema)).not.toContain('`{ title, description }` objects')
     } finally {
       await client.close()
       await server.close()
@@ -533,35 +554,66 @@ describe('Session Plan MCP server', () => {
     })
   })
 
-  it('explains how to repair a delegation that omits its steps array', async () => {
+  it.each([
+    {
+      name: 'omitted delegation steps',
+      input: planGenerationArguments([
+        { name: 'Analysis', delegations: [{ name: 'Primary agent' }] }
+      ]),
+      expected: 'Expected array; received missing value at phases[0].delegations[0].steps'
+    },
+    {
+      name: 'omitted phase delegations',
+      input: planGenerationArguments([{ name: 'Analysis' }]),
+      expected: 'Expected array; received missing value at phases[0].delegations'
+    },
+    {
+      name: 'omitted step title',
+      input: planGenerationArguments([
+        {
+          ...VALID_PHASE,
+          delegations: [{ ...VALID_DELEGATION, steps: [{ description: 'Produce the result.' }] }]
+        }
+      ]),
+      expected: 'Expected string; received missing value at phases[0].delegations[0].steps[0].title'
+    },
+    {
+      name: 'invalid feasibility confidence',
+      input: planGenerationArguments([VALID_PHASE], {
+        confidence: 'certain',
+        rationale: 'Inputs are available.'
+      }),
+      expected:
+        'Expected one of "high", "medium", "low"; received "certain" at feasibility.confidence'
+    },
+    {
+      name: 'invalid phase object',
+      input: planGenerationArguments(['Analysis']),
+      expected: 'Expected object; received string at phases[0]'
+    },
+    {
+      name: 'invalid decision',
+      input: { decision: 'maybe' },
+      expected: 'Expected one of "approved", "rejected"; received "maybe" at decision'
+    }
+  ])('formats $name with the shared schema error convention', async ({ name, input, expected }) => {
+    const generate = vi.fn()
+
     await withPlanMcpClient(
-      'plan-missing-steps-test',
+      `plan-schema-error-${name}`,
       {
-        generate: vi.fn(),
+        generate,
         approve: vi.fn(),
         reject: vi.fn(),
         updateStepStatus: vi.fn()
       },
       async (client) => {
-        const result = await client.callTool({
-          name: 'generate_plan',
-          arguments: {
-            task_summary: 'Analyze one dataset',
-            phases: [
-              {
-                name: 'Analysis',
-                delegations: [{ name: 'Primary agent' }]
-              }
-            ],
-            desired_outputs: [],
-            feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
-          }
-        })
+        const result = await client.callTool({ name: 'generate_plan', arguments: input })
         const text = (result as { content: Array<{ text: string }> }).content[0].text
 
-        expect(text).toContain(
-          'Every delegation must include a non-empty `steps` array of `{ title, description }` objects.'
-        )
+        expect(result).toMatchObject({ isError: true })
+        expect(text).toContain(expected)
+        expect(generate).not.toHaveBeenCalled()
       }
     )
   })
@@ -712,9 +764,10 @@ describe('Session Plan MCP server', () => {
     expect(generateTool).toBeDefined()
     expect(generateTool?.description).toContain('kind:feedback')
     expect(generateTool?.description).toContain('decision:"approved"')
-    expect(generateTool?.description).toContain(
+    expect(generateTool?.description).not.toContain(
       'every delegation must include its own non-empty `steps` array'
     )
+    expect(generateTool?.description).toContain('repair each reported path')
     expect(generateTool?.description).toContain('never resend the same invalid arguments unchanged')
     await client.callTool({
       name: 'generate_plan',

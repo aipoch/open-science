@@ -33,7 +33,7 @@ describe('resolveCanonicalMcpToolIdentity', () => {
     )
   })
 
-  it('documents complete generation and approval call shapes', () => {
+  it('documents generation, recovery, and approval without repeating the tool schema', () => {
     expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
       'generation supplies all four Plan fields (`task_summary`, `phases`, `desired_outputs`, and `feasibility`) in one call'
     )
@@ -43,9 +43,13 @@ describe('resolveCanonicalMcpToolIdentity', () => {
     expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
       'Never call `update_step_status` while approval is pending'
     )
-    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).not.toContain(
       'delegations: [{ name, steps: [{ title, description }] }]'
     )
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).not.toContain(
+      'verify that no phase, delegation, or step is only partially shaped'
+    )
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain('repair each reported path')
     expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain('do not repeat an unchanged invalid call')
   })
 
@@ -97,6 +101,8 @@ describe('resolveCanonicalMcpToolIdentity', () => {
       expect(guidance).toContain('discover applicable skills before generating')
       expect(guidance).toContain(generateTool)
       expect(guidance).toContain(updateTool)
+      expect(guidance).toContain('repair each reported path')
+      expect(guidance).not.toContain('delegations: [{ name, steps:')
       expect(guidance).toContain('not for simple lookups')
       expect(guidance).not.toContain('get_active_plan')
       expect(guidance).not.toContain('Plan mode')

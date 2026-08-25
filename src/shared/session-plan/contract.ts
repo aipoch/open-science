@@ -5,77 +5,103 @@ import type {
 } from '../session-persistence'
 import { z } from 'zod'
 
+function planSchemaInputType(input: unknown): string {
+  if (input === undefined) return 'missing value'
+  if (input === null) return 'null'
+  if (Array.isArray(input)) return 'array'
+  return typeof input
+}
+
+export function formatPlanSchemaIssue(issue: z.core.$ZodRawIssue): string | undefined {
+  if (issue.code === 'invalid_type') {
+    return `Expected ${issue.expected}; received ${planSchemaInputType(issue.input)}`
+  }
+  if (issue.code === 'invalid_value') {
+    const expected = issue.values.map((value) => JSON.stringify(value)).join(', ')
+    return `Expected one of ${expected}; received ${JSON.stringify(issue.input)}`
+  }
+  return undefined
+}
+
+function planString(description: string): z.ZodString {
+  return z.string({ error: formatPlanSchemaIssue }).describe(description)
+}
+
+function planArray<Element extends z.ZodType>(
+  element: Element,
+  description: string
+): z.ZodArray<Element> {
+  return z.array(element, { error: formatPlanSchemaIssue }).describe(description)
+}
+
+function planObject<const Shape extends z.ZodRawShape>(
+  shape: Shape,
+  description: string
+): z.ZodObject<Shape> {
+  return z.object(shape, { error: formatPlanSchemaIssue }).describe(description)
+}
+
 export const planConfidenceSchema = z
-  .enum(['high', 'medium', 'low'])
+  .enum(['high', 'medium', 'low'], { error: formatPlanSchemaIssue })
   .describe('How confident the planner is that the proposed work can be completed.')
 
 export type PlanConfidence = z.infer<typeof planConfidenceSchema>
 
-export const planStepSchema = z
-  .object({
-    title: z.string().describe('A unique, concise step title used for exact status updates.'),
-    description: z
-      .string()
-      .describe('The concrete work to perform and the result this step should produce.')
-  })
-  .describe('One executable step within a delegation.')
+export const planStepSchema = planObject(
+  {
+    title: planString('A unique, concise step title used for exact status updates.'),
+    description: planString('The concrete work to perform and the result this step should produce.')
+  },
+  'One executable step within a delegation.'
+)
 
-export const planDelegationSchema = z
-  .object({
-    name: z.string().describe('A human-readable name for this independent work track.'),
-    steps: z
-      .array(planStepSchema, {
-        error:
-          'Every delegation must include a non-empty `steps` array of `{ title, description }` objects.'
-      })
-      .describe(
-        'Required ordered executable steps for this delegation. Use a non-empty array of `{ title, description }` objects.'
-      )
-  })
-  .describe('An independent work track within a phase.')
+export const planDelegationSchema = planObject(
+  {
+    name: planString('A human-readable name for this independent work track.'),
+    steps: planArray(
+      planStepSchema,
+      'The ordered executable steps for this delegation. Include at least one step.'
+    )
+  },
+  'An independent work track within a phase.'
+)
 
-export const planPhaseSchema = z
-  .object({
-    name: z.string().describe('A human-readable name for this ordered phase.'),
-    delegations: z
-      .array(planDelegationSchema)
-      .describe(
-        'The independent work tracks that make up this phase. Include at least one delegation.'
-      )
-  })
-  .describe('An ordered phase of the Session Plan.')
+export const planPhaseSchema = planObject(
+  {
+    name: planString('A human-readable name for this ordered phase.'),
+    delegations: planArray(
+      planDelegationSchema,
+      'The independent work tracks that make up this phase. Include at least one delegation.'
+    )
+  },
+  'An ordered phase of the Session Plan.'
+)
 
-export const planFeasibilitySchema = z
-  .object({
+export const planFeasibilitySchema = planObject(
+  {
     confidence: planConfidenceSchema,
-    rationale: z
-      .string()
-      .describe('Why the selected confidence level is appropriate for the proposed work.')
-  })
-  .describe('An assessment of whether the Plan can be completed with available inputs.')
+    rationale: planString('Why the selected confidence level is appropriate for the proposed work.')
+  },
+  'An assessment of whether the Plan can be completed with available inputs.'
+)
 
-export const generatePlanContentSchema = z
-  .object({
-    task_summary: z
-      .string()
-      .describe(
-        "A concise summary of the user's multi-stage objective. Required in generation mode."
-      ),
-    phases: z
-      .array(planPhaseSchema)
-      .describe(
-        'The ordered phases of work. Shape each item as `{ name, delegations: [{ name, steps: [{ title, description }] }] }`; every phase, delegation, and steps array must be non-empty.'
-      ),
-    desired_outputs: z
-      .array(
-        z.string().describe('A concrete artifact, finding, or decision expected from the Plan.')
-      )
-      .describe(
-        'The artifacts, findings, or decisions expected when the Plan completes. This may be an empty array.'
-      ),
+export const generatePlanContentSchema = planObject(
+  {
+    task_summary: planString(
+      "A concise summary of the user's multi-stage objective. Required in generation mode."
+    ),
+    phases: planArray(
+      planPhaseSchema,
+      'The ordered phases of work, each containing one or more delegations.'
+    ),
+    desired_outputs: planArray(
+      planString('A concrete artifact, finding, or decision expected from the Plan.'),
+      'The artifacts, findings, or decisions expected when the Plan completes. This may be an empty array.'
+    ),
     feasibility: planFeasibilitySchema
-  })
-  .describe('The four content fields required to generate a complete Session Plan.')
+  },
+  'The four content fields required to generate a complete Session Plan.'
+)
 
 export const generatePlanContentToolSchema = generatePlanContentSchema.partial()
 
