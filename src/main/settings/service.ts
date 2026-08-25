@@ -665,8 +665,7 @@ class SettingsService {
     return this.skills.importSkillArchiveBatch(zip, items)
   }
 
-  // Lazily loads one selected GitHub candidate. The repository's bounded helper downloads only its
-  // SKILL.md; the display label is reconstructed from the public URL and contains no host paths.
+  // Lazily previews one GitHub skill without exposing host paths.
   async previewGitHubSkill(
     request: PreviewGitHubSkillRequest,
     signal?: AbortSignal

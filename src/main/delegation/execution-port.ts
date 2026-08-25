@@ -1,4 +1,9 @@
-import type { AcpAgentRuntimeUpdate, AcpPermissionScope, AcpTurnTokenUsage } from '../../shared/acp'
+import type {
+  AcpAgentRuntimeUpdate,
+  AcpModelCallUsage,
+  AcpPermissionScope,
+  AcpTurnTokenUsage
+} from '../../shared/acp'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { ResolvedSubagentModelSnapshot } from '../../shared/session-persistence'
 import type { ResolvedAgentBackend } from '../agent-framework'
@@ -63,6 +68,7 @@ type DelegateExecutionOutcome =
       status: 'completed'
       response: string
       turnUsage?: AcpTurnTokenUsage
+      modelCallUsage?: readonly AcpModelCallUsage[]
       turnUsageUnavailable?: true
     }>
   | Readonly<{ status: 'cancelled' }>
@@ -109,7 +115,8 @@ type DelegateChildTurnIdentity = Readonly<{
   complete?(
     response: string,
     turnUsage?: AcpTurnTokenUsage,
-    turnUsageUnavailable?: true
+    turnUsageUnavailable?: true,
+    modelCallUsage?: readonly AcpModelCallUsage[]
   ): Promise<void>
 }>
 

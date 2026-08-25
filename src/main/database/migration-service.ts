@@ -28,6 +28,7 @@ import { crossResourceTagsMigration } from './migrations/0011-cross-resource-tag
 import { tagOrderingMigration } from './migrations/0012-tag-ordering'
 import { sessionProjectionMigration } from './migrations/0013-session-projection'
 import { reviewQueryIndexesMigration } from './migrations/0014-review-query-indexes'
+import { sessionModelCallUsageMigration } from './migrations/0015-session-model-call-usage'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -230,6 +231,12 @@ const REVIEW_QUERY_INDEXES_CHECKSUM = checksumMigrationPayload(
   reviewQueryIndexesMigration.verifiers,
   reviewQueryIndexesMigration.operations
 )
+const SESSION_MODEL_CALL_USAGE_CHECKSUM = checksumMigrationPayload(
+  sessionModelCallUsageMigration.id,
+  sessionModelCallUsageMigration.statements,
+  sessionModelCallUsageMigration.verifiers,
+  sessionModelCallUsageMigration.operations
+)
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
     table,
@@ -376,6 +383,12 @@ const MIGRATION_MANIFEST = [
   {
     ...reviewQueryIndexesMigration,
     checksum: REVIEW_QUERY_INDEXES_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionModelCallUsageMigration,
+    checksum: SESSION_MODEL_CALL_USAGE_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }

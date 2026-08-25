@@ -10,11 +10,13 @@ import {
   sanitizeAcpContextUsage,
   sanitizeAcpContextWindowSample,
   sanitizeAcpMessageImage,
+  sanitizeAcpModelCallUsage,
   sanitizeAcpTurnTokenUsage,
   type AcpPermissionRequest,
   type AcpContextUsage,
   type AcpContextWindowSample,
   type AcpMessageImage,
+  type AcpModelCallUsage,
   type AcpTurnTokenUsage
 } from './acp'
 import {
@@ -401,6 +403,8 @@ export type PersistedChatMessage = {
   relayedFrom?: { kind: 'side-chat'; direction: 'to-main' }
   // Whole-turn totals reported with the completed Agent response; absent for older sessions/providers.
   turnUsage?: AcpTurnTokenUsage
+  // Exact per-inference usage; absent for older sessions/providers and whenever coverage is partial.
+  modelCallUsage?: AcpModelCallUsage[]
   // Terminal last-model-step context-window snapshots for each visible execution of this user Message.
   contextWindowSamples?: AcpContextWindowSample[]
   // Marks the final Agent message for a turn whose provider did not report usable totals.
@@ -3206,6 +3210,34 @@ const sanitizeMessage = (
     : []
   const images = sanitizeMessageImages(message.images)
   const turnUsage = role === 'agent' ? sanitizeAcpTurnTokenUsage(message.turnUsage) : undefined
+  const candidateModelCallUsage =
+    role === 'agent' && turnUsage?.turnCount && Array.isArray(message.modelCallUsage)
+      ? message.modelCallUsage.map(sanitizeAcpModelCallUsage)
+      : []
+  const modelCallUsage =
+    candidateModelCallUsage.length === turnUsage?.turnCount &&
+    candidateModelCallUsage.every(
+      (call, index): call is AcpModelCallUsage => call !== undefined && call.index === index
+    ) &&
+    new Set(candidateModelCallUsage.map((call) => call?.id)).size === candidateModelCallUsage.length
+      ? candidateModelCallUsage
+      : []
+  const modelCallTotals = modelCallUsage.reduce(
+    (totals, call) => ({
+      inputTokens: totals.inputTokens + call.inputTokens,
+      cacheTokens: totals.cacheTokens + call.cacheTokens,
+      outputTokens: totals.outputTokens + call.outputTokens
+    }),
+    { inputTokens: 0, cacheTokens: 0, outputTokens: 0 }
+  )
+  const hasMatchingModelCallTotals =
+    !!turnUsage &&
+    Number.isSafeInteger(modelCallTotals.inputTokens) &&
+    Number.isSafeInteger(modelCallTotals.cacheTokens) &&
+    Number.isSafeInteger(modelCallTotals.outputTokens) &&
+    modelCallTotals.inputTokens === turnUsage.inputTokens &&
+    modelCallTotals.cacheTokens === turnUsage.cacheTokens &&
+    modelCallTotals.outputTokens === turnUsage.outputTokens
   const turnUsageUnavailable =
     role === 'agent' && !turnUsage && message.turnUsageUnavailable === true
   const contextWindowSamples =
@@ -3247,6 +3279,7 @@ const sanitizeMessage = (
   }
   if (images) sanitized.images = images
   if (turnUsage) sanitized.turnUsage = turnUsage
+  if (hasMatchingModelCallTotals) sanitized.modelCallUsage = modelCallUsage
   if (contextWindowSamples.length > 0) sanitized.contextWindowSamples = contextWindowSamples
   if (turnUsageUnavailable) sanitized.turnUsageUnavailable = true
   if (structuredOutputEvidence) sanitized.structuredOutputEvidence = structuredOutputEvidence
@@ -3849,6 +3882,26 @@ const sanitizeSession = (
       updatedAt: sanitized.updatedAt
     })
   }
+
+  const canonicalGraph = sanitized.conversationGraph
+  // Call IDs are Session-scoped keys; drop every colliding Turn's detail rather than choose one.
+  const modelCallIdCounts = new Map<string, number>()
+  for (const message of canonicalGraph.messages) {
+    for (const call of message.modelCallUsage ?? []) {
+      modelCallIdCounts.set(call.id, (modelCallIdCounts.get(call.id) ?? 0) + 1)
+    }
+  }
+  sanitized.conversationGraph = {
+    ...canonicalGraph,
+    messages: canonicalGraph.messages.map((message) =>
+      message.modelCallUsage?.some((call) => (modelCallIdCounts.get(call.id) ?? 0) > 1)
+        ? { ...message, modelCallUsage: undefined }
+        : message
+    )
+  }
+  sanitized.messages = resolveActiveConversationMessages(sanitized.conversationGraph).map(
+    projectConversationMessage
+  )
 
   const firstSessionDetailsMessageId = sanitized.messages.find(
     (message) => isHumanUserMessage(message) && !isHiddenControlMessage(message)

@@ -2824,12 +2824,22 @@ describe('session store', () => {
       content: ' complete'
     })
 
-    useSessionStore.getState().finishRun('transport-session-1', {
-      inputTokens: 31,
-      cacheTokens: 15,
-      outputTokens: 14,
-      turnCount: 3
-    })
+    useSessionStore.getState().finishRun(
+      'transport-session-1',
+      {
+        inputTokens: 31,
+        cacheTokens: 15,
+        outputTokens: 14,
+        turnCount: 3
+      },
+      undefined,
+      undefined,
+      [
+        { id: 'call-1', index: 0, inputTokens: 10, cacheTokens: 5, outputTokens: 4 },
+        { id: 'call-2', index: 1, inputTokens: 11, cacheTokens: 5, outputTokens: 5 },
+        { id: 'call-3', index: 2, inputTokens: 10, cacheTokens: 5, outputTokens: 5 }
+      ]
+    )
 
     const session = useSessionStore.getState().sessions[0]
     const agentMessage = session.messages[1]
@@ -2843,18 +2853,25 @@ describe('session store', () => {
       responseToMessageId: result?.messageId,
       eventIds: ['event-1', 'event-2'],
       status: 'complete',
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 },
+      modelCallUsage: [
+        { id: 'call-1', index: 0, inputTokens: 10, cacheTokens: 5, outputTokens: 4 },
+        { id: 'call-2', index: 1, inputTokens: 11, cacheTokens: 5, outputTokens: 5 },
+        { id: 'call-3', index: 2, inputTokens: 10, cacheTokens: 5, outputTokens: 5 }
+      ]
     })
     expect(agentMessage.completedAt).toBe(session.updatedAt)
     expect(
       session.conversationGraph?.messages.find((message) => message.id === agentMessage.id)
     ).toMatchObject({
       completedAt: agentMessage.completedAt,
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 },
+      modelCallUsage: agentMessage.modelCallUsage
     })
     expect(toPersistedSession(session).messages[1]).toMatchObject({
       completedAt: agentMessage.completedAt,
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 },
+      modelCallUsage: agentMessage.modelCallUsage
     })
     expect(session.status).toBe('idle')
     expect(session.activeRun).toBeUndefined()

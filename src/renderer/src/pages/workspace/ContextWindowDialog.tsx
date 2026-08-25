@@ -1,6 +1,13 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-/* Hallmark · component: context-window dialog · genre: modern-minimal · theme: product tokens · contrast: pass (40–41) · mobile: pass (34, 49, 50–57) */
+/* Hallmark · component: context-window dialog · genre: modern-minimal · theme: product tokens · contrast: pass (40–41) · mobile: pass (34, 49, 50–57) · slop: pass (1–58) */
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import {
   dialogBodyClassName,
   dialogCloseButtonClassName,
@@ -20,12 +27,13 @@ import {
   Bot,
   Brain,
   CheckCircle2,
+  ChevronDown,
   CircleStop,
   Minimize2,
   X,
   type LucideIcon
 } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import { Dialog, RadioGroup } from 'radix-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatDisplayNumber } from '@/lib/locale-format'
@@ -37,7 +45,14 @@ import type {
   AcpPromptStopReason
 } from '../../../../shared/acp'
 import {
+  groupContextWindowCallPoints,
+  selectContextWindowCallCoverage,
+  selectContextWindowCallPoints,
   selectContextWindowTrendPoints,
+  type ContextWindowCallCoverage,
+  type ContextWindowCallGroup,
+  type ContextWindowCallGroupBy,
+  type ContextWindowCallPoint,
   type ContextWindowTrendPoint
 } from './context-window-trend'
 import { resolveSessionProviderId } from './error-report'
@@ -162,23 +177,14 @@ const CompositionStrip = ({ usage }: { usage: AcpContextUsage }): React.JSX.Elem
   )
 }
 
-const CategoryLegend = ({
-  usage,
-  singleRow = false
-}: {
-  usage: AcpContextUsage
-  singleRow?: boolean
-}): React.JSX.Element => {
+const CategoryLegend = ({ usage }: { usage: AcpContextUsage }): React.JSX.Element => {
   const { t } = useTranslation()
   const categories = visibleCategories(usage)
   const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0)
 
   return (
     <div
-      className={cn(
-        'grid min-w-0 gap-x-5 gap-y-1.5',
-        singleRow ? 'grid-flow-col auto-cols-fr' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
-      )}
+      className="grid min-w-0 grid-cols-1 gap-x-5 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3"
       data-slot="context-category-legend"
     >
       {categories.map((category) => (
@@ -252,46 +258,61 @@ const CurrentComposition = ({
   return (
     <section
       aria-labelledby="current-composition-title"
-      className="rounded-lg border border-border bg-card p-4"
+      className="overflow-hidden rounded-lg border border-border bg-card"
       data-slot="current-composition"
     >
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-        <h3 id="current-composition-title" className="text-sm font-medium text-foreground">
-          {t('Current composition')}
-        </h3>
-        {model ? (
-          <span className="min-w-0 truncate text-xs text-muted-foreground">{model}</span>
-        ) : null}
-      </div>
-      <div className="mt-2 flex min-w-0 flex-wrap items-baseline gap-x-2">
-        <span className="text-2xl font-semibold tabular-nums text-foreground">
-          {formatTokens(usage.used)}
-        </span>
-        <span className="text-sm tabular-nums text-muted-foreground">
-          {usage.size ? t('/ {{size}} tokens', { size: formatTokens(usage.size) }) : t('tokens')}
-          {percent === undefined ? '' : ` (${percent}%)`}
-        </span>
-      </div>
-      <div className="mt-3">
-        <CompositionStrip usage={usage} />
-      </div>
-      {categories.length ? (
-        <div className="mt-3">
-          <CategoryLegend usage={usage} singleRow />
+      <div className="grid min-w-0 gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(12rem,0.72fr)_minmax(0,1.28fr)] lg:gap-8">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+            <h3 id="current-composition-title" className="text-sm font-medium text-foreground">
+              {t('Current composition')}
+            </h3>
+            {model ? (
+              <span className="min-w-0 truncate text-xs text-muted-foreground">{model}</span>
+            ) : null}
+          </div>
+          <div className="mt-3 flex min-w-0 flex-wrap items-baseline gap-x-2">
+            <span className="text-3xl font-semibold tracking-tight tabular-nums text-foreground">
+              {formatTokens(usage.used)}
+            </span>
+            <span className="text-sm tabular-nums text-muted-foreground">
+              {usage.size
+                ? t('/ {{size}} tokens', { size: formatTokens(usage.size) })
+                : t('tokens')}
+            </span>
+          </div>
+          {percent === undefined ? null : (
+            <div className="mt-1 text-xs font-medium tabular-nums text-primary">{percent}%</div>
+          )}
+          <div className="mt-3">
+            <BreakdownDiagnostics usage={usage} />
+          </div>
         </div>
-      ) : (
-        <p className="mt-2 text-xs text-muted-foreground">
-          {t('Category breakdown is unavailable for this snapshot.')}
-        </p>
-      )}
-      <div className="mt-2">
-        <BreakdownDiagnostics usage={usage} />
+
+        <div className="min-w-0 border-t border-border pt-4 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+          <CompositionStrip usage={usage} />
+          {categories.length ? (
+            <div className="mt-4">
+              <CategoryLegend usage={usage} />
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {t('Category breakdown is unavailable for this snapshot.')}
+            </p>
+          )}
+        </div>
       </div>
     </section>
   )
 }
 
-const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.Element => {
+const PointDetails = ({
+  point,
+  contained = false
+}: {
+  point: ContextWindowTrendPoint
+  contained?: boolean
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
   const frameworks = useSettingsStore((state) => state.agentFrameworks)
@@ -328,7 +349,10 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
 
   return (
     <section
-      className="min-w-0 rounded-lg border border-border bg-card p-4 text-xs"
+      className={cn(
+        'min-w-0 bg-card p-4 text-xs sm:p-5',
+        !contained && 'rounded-lg border border-border'
+      )}
       data-slot="context-window-point-details"
     >
       <div className="flex items-start justify-between gap-3">
@@ -617,8 +641,262 @@ const ContextHistory = ({ points }: { points: ContextWindowTrendPoint[] }): Reac
             )
           }
         />
+        {activePoint ? (
+          <div className="border-t border-border">
+            <PointDetails point={activePoint} contained />
+          </div>
+        ) : null}
       </div>
-      <div className="mt-4">{activePoint ? <PointDetails point={activePoint} /> : null}</div>
+    </section>
+  )
+}
+
+type ContextWindowGranularity = 'turn' | 'call'
+
+const ContextCallSummary = ({
+  coverage,
+  points
+}: {
+  coverage: ContextWindowCallCoverage
+  points: readonly ContextWindowCallPoint[]
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const contextualCalls = points.filter((point) => point.call.contextUsedTokens !== undefined)
+  const peakCall = contextualCalls.reduce<ContextWindowCallPoint | undefined>(
+    (peak, point) =>
+      !peak || point.call.contextUsedTokens! > peak.call.contextUsedTokens! ? point : peak,
+    undefined
+  )
+  const coveragePercent =
+    coverage.reportedCallCountComplete && coverage.reportedCallCount > 0
+      ? Math.round((coverage.detailedCallCount / coverage.reportedCallCount) * 100)
+      : undefined
+  const reportedCalls = coverage.reportedCallCountComplete
+    ? formatDisplayNumber(coverage.reportedCallCount)
+    : `≥${formatDisplayNumber(coverage.reportedCallCount)}`
+
+  return (
+    <section
+      className="rounded-lg border border-border bg-card px-4 py-4 sm:px-5"
+      data-slot="context-call-summary"
+      aria-label={t('Session call summary')}
+    >
+      <h3 className="text-sm font-medium text-foreground">{t('Session call summary')}</h3>
+      <div
+        className="mt-3 grid grid-cols-2 gap-x-5 gap-y-4 border-t border-border pt-3 lg:grid-cols-4"
+        data-slot="context-call-metrics"
+      >
+        {[
+          { label: t('Reported calls'), value: reportedCalls },
+          { label: t('Detailed calls'), value: formatDisplayNumber(coverage.detailedCallCount) },
+          {
+            label: t('Coverage'),
+            value: coveragePercent === undefined ? t('Partial') : `${coveragePercent}%`
+          },
+          {
+            label: t('Peak window'),
+            value:
+              peakCall?.call.contextUsedTokens === undefined
+                ? '—'
+                : `${formatTokens(peakCall.call.contextUsedTokens)}${
+                    peakCall.call.contextWindowSize === undefined
+                      ? ''
+                      : ` / ${formatTokens(peakCall.call.contextWindowSize)}`
+                  }`
+          }
+        ].map((metric) => (
+          <div key={metric.label} className="min-w-0">
+            <div className="text-[11px] text-muted-foreground">{metric.label}</div>
+            <div className="mt-1 truncate text-base font-semibold tracking-tight tabular-nums text-foreground sm:text-xl">
+              {metric.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+const callGroupTitle = (
+  group: ContextWindowCallGroup,
+  groupBy: ContextWindowCallGroupBy,
+  t: ReturnType<typeof useTranslation>['t']
+): string => {
+  const first = group.calls[0]
+  if (groupBy === 'turn') return t('Turn {{turn}}', { turn: first?.turnNumber ?? 0 })
+  if (groupBy === 'none') return t('Call {{call}}', { call: first?.callNumber ?? 0 })
+  if (groupBy === 'model' && group.label === 'Unknown model') return t('Unknown model')
+  if (groupBy === 'framework' && group.label === 'Unknown framework') return t('Unknown framework')
+  return group.label
+}
+
+const ContextCallHistory = ({
+  points,
+  groupBy
+}: {
+  points: readonly ContextWindowCallPoint[]
+  groupBy: ContextWindowCallGroupBy
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const groups = useMemo(() => groupContextWindowCallPoints(points, groupBy), [groupBy, points])
+  const [groupExpansion, setGroupExpansion] = useState<Record<string, boolean>>({})
+
+  if (groups.length === 0) {
+    return (
+      <div className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center">
+        <div className="max-w-md">
+          <Activity className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
+          <h3 className="mt-3 text-sm font-medium text-foreground">{t('No call details yet')}</h3>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {t(
+              'This Session may predate call tracking, or its framework reported only aggregate turn usage.'
+            )}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <section aria-labelledby="context-call-history-title" data-slot="context-call-history">
+      <div className="pb-3">
+        <h3 id="context-call-history-title" className="text-sm font-medium text-foreground">
+          {t('Call history')}
+        </h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {t('Token totals are summed; context window values show peak and latest snapshots.')}
+        </p>
+      </div>
+      <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+        {groups.map((group, groupIndex) => {
+          const expansionKey = `${groupBy}:${group.key}`
+          const isExpanded = groupExpansion[expansionKey] ?? groupIndex === groups.length - 1
+          return (
+            <article key={group.key} data-slot="context-call-group">
+              <button
+                type="button"
+                className="flex min-h-11 w-full items-start justify-between gap-4 px-3 py-3 text-left outline-none transition-colors duration-150 hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/50 active:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none sm:px-4"
+                data-slot="context-call-group-toggle"
+                aria-expanded={isExpanded}
+                onClick={() =>
+                  setGroupExpansion((current) => ({
+                    ...current,
+                    [expansionKey]: !isExpanded
+                  }))
+                }
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-medium text-foreground">
+                    {callGroupTitle(group, groupBy, t)}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                    {group.calls[0]?.prompt || t('Empty prompt')}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-2 text-[10px] tabular-nums text-muted-foreground">
+                  <span className="whitespace-nowrap">
+                    {t('{{count}} calls', {
+                      count: group.callCount,
+                      defaultValue_one: '{{count}} call'
+                    })}
+                  </span>
+                  {group.peakContextUsedTokens === undefined ? null : (
+                    <span className="hidden sm:inline">
+                      {t('Peak {{tokens}}', { tokens: formatTokens(group.peakContextUsedTokens) })}
+                    </span>
+                  )}
+                  <ChevronDown
+                    className={cn(
+                      'size-4 transition-transform duration-150 motion-reduce:transition-none',
+                      isExpanded && 'rotate-180'
+                    )}
+                    aria-hidden="true"
+                  />
+                </span>
+              </button>
+              {isExpanded ? (
+                <div className="border-t border-border" data-slot="context-call-group-content">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 bg-muted/25 px-3 py-2 text-[10px] tabular-nums text-muted-foreground sm:px-4">
+                    <span>
+                      {t('Input {{tokens}}', { tokens: formatTokens(group.inputTokens) })}
+                    </span>
+                    <span>
+                      {t('Cache {{tokens}}', { tokens: formatTokens(group.cacheTokens) })}
+                    </span>
+                    <span>
+                      {t('Output {{tokens}}', { tokens: formatTokens(group.outputTokens) })}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-border">
+                    {group.calls.map((point) => {
+                      const used = point.call.contextUsedTokens
+                      const size = point.call.contextWindowSize
+                      const percent =
+                        used !== undefined && size !== undefined && size > 0
+                          ? Math.min(100, Math.round((used / size) * 100))
+                          : undefined
+                      return (
+                        <div
+                          key={point.call.id}
+                          className="min-w-0 px-3 py-3 text-[11px] sm:px-4"
+                          data-slot="context-call-row"
+                        >
+                          <div className="flex min-w-0 items-center justify-between gap-3">
+                            <span className="shrink-0 font-medium tabular-nums text-foreground">
+                              {t('Call {{call}}', { call: point.callNumber })}
+                            </span>
+                            <span className="shrink-0 tabular-nums text-foreground">
+                              {used === undefined
+                                ? '—'
+                                : `${formatTokens(used)}${
+                                    size === undefined ? '' : ` / ${formatTokens(size)}`
+                                  }${percent === undefined ? '' : ` · ${percent}%`}`}
+                            </span>
+                          </div>
+                          <div className="mt-1 truncate text-muted-foreground">
+                            {point.runtime?.model ?? point.agentName ?? t('Unknown model')}
+                          </div>
+                          <div className="min-w-0">
+                            {percent === undefined ? null : (
+                              <div
+                                className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
+                                data-slot="context-call-window-meter"
+                                aria-hidden="true"
+                              >
+                                <span
+                                  className="block h-full rounded-full bg-primary"
+                                  style={{ width: `${percent}%` }}
+                                />
+                              </div>
+                            )}
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 tabular-nums text-muted-foreground">
+                              <span>
+                                {t('In {{tokens}}', {
+                                  tokens: formatTokens(point.call.inputTokens)
+                                })}
+                              </span>
+                              <span>
+                                {t('Cache {{tokens}}', {
+                                  tokens: formatTokens(point.call.cacheTokens)
+                                })}
+                              </span>
+                              <span>
+                                {t('Out {{tokens}}', {
+                                  tokens: formatTokens(point.call.outputTokens)
+                                })}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          )
+        })}
+      </div>
     </section>
   )
 }
@@ -630,6 +908,8 @@ const ContextWindowDialog = ({
   onOpenChange
 }: ContextWindowDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const [granularity, setGranularity] = useState<ContextWindowGranularity>('turn')
+  const [callGroupBy, setCallGroupBy] = useState<ContextWindowCallGroupBy>('turn')
   const messages = session?.messages
   const activities = session?.activities
   const conversationGraph = session?.conversationGraph
@@ -642,6 +922,21 @@ const ContextWindowDialog = ({
   )
   const latestPoint = points.at(-1)
   const currentUsage = contextUsage ?? latestPoint?.sample.contextWindow
+  const callPoints = useMemo(
+    () =>
+      messages === undefined
+        ? []
+        : selectContextWindowCallPoints({ activities, conversationGraph, messages }),
+    [activities, conversationGraph, messages]
+  )
+  const callCoverage = useMemo(
+    () =>
+      selectContextWindowCallCoverage(
+        messages === undefined ? undefined : { activities, conversationGraph, messages },
+        callPoints
+      ),
+    [activities, callPoints, conversationGraph, messages]
+  )
   const contentRef = useRef<HTMLDivElement>(null)
 
   return (
@@ -660,8 +955,11 @@ const ContextWindowDialog = ({
             'flex max-h-[min(820px,calc(100dvh-1.5rem))] w-[min(1040px,calc(100vw-1.5rem))] flex-col overflow-hidden p-0'
           )}
         >
-          <div className={dialogHeaderClassName} data-slot="context-window-dialog-header">
-            <div className="min-w-0">
+          <div
+            className={cn(dialogHeaderClassName, 'items-start')}
+            data-slot="context-window-dialog-header"
+          >
+            <div className="min-w-0 flex-1">
               <Dialog.Title className={dialogTitleClassName}>{t('Context window')}</Dialog.Title>
               <Dialog.Description
                 id="context-window-description"
@@ -677,7 +975,7 @@ const ContextWindowDialog = ({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className={dialogCloseButtonClassName}
+                className={cn(dialogCloseButtonClassName, '-mr-2 -mt-1 size-11')}
                 aria-label={t('Close context window')}
               >
                 <X className="size-4" aria-hidden="true" />
@@ -686,32 +984,91 @@ const ContextWindowDialog = ({
           </div>
 
           <div
+            className="flex flex-col gap-2 border-b border-border px-5 py-3 sm:flex-row sm:items-center sm:justify-between"
+            data-slot="context-window-toolbar"
+          >
+            <RadioGroup.Root
+              value={granularity}
+              onValueChange={(value) => setGranularity(value as ContextWindowGranularity)}
+              orientation="horizontal"
+              aria-label={t('Usage detail level')}
+              className="grid w-full grid-cols-2 items-center gap-1 rounded-lg bg-muted p-1 sm:w-auto"
+            >
+              {(
+                [
+                  ['turn', t('Turns')],
+                  ['call', t('Calls')]
+                ] as const
+              ).map(([value, label]) => (
+                <RadioGroup.Item
+                  key={value}
+                  value={value}
+                  className={cn(
+                    'h-11 whitespace-nowrap rounded-md px-4 text-xs font-medium text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-card/70 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none',
+                    granularity === value && 'bg-card text-foreground shadow-sm'
+                  )}
+                >
+                  {label}
+                </RadioGroup.Item>
+              ))}
+            </RadioGroup.Root>
+            {granularity === 'call' ? (
+              <Select
+                value={callGroupBy}
+                onValueChange={(value) => setCallGroupBy(value as ContextWindowCallGroupBy)}
+              >
+                <SelectTrigger className="h-11 w-full sm:w-44" aria-label={t('Group calls by')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="turn">{t('Group by turn')}</SelectItem>
+                  <SelectItem value="model">{t('Group by model')}</SelectItem>
+                  <SelectItem value="framework">{t('Group by framework')}</SelectItem>
+                  <SelectItem value="none">{t('No grouping')}</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : null}
+          </div>
+
+          <div
             className={cn(dialogBodyClassName, 'min-h-0 flex-1 overflow-y-auto')}
             data-slot="context-window-dialog-body"
           >
             <div className="space-y-6">
-              {currentUsage ? (
-                <CurrentComposition
-                  usage={currentUsage}
-                  model={session?.agentModel ?? latestPoint?.runtime?.model}
-                />
-              ) : null}
-              {points.length ? (
-                <ContextHistory points={points} />
+              {granularity === 'turn' ? (
+                <>
+                  {currentUsage ? (
+                    <CurrentComposition
+                      usage={currentUsage}
+                      model={session?.agentModel ?? latestPoint?.runtime?.model}
+                    />
+                  ) : null}
+                  {points.length ? (
+                    <ContextHistory points={points} />
+                  ) : (
+                    <div className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center">
+                      <div className="max-w-sm">
+                        <Activity
+                          className="mx-auto size-6 text-muted-foreground"
+                          aria-hidden="true"
+                        />
+                        <h3 className="mt-3 text-sm font-medium text-foreground">
+                          {t('No run history yet')}
+                        </h3>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          {t(
+                            'A bar appears after a run completes, is interrupted, or ends with an error. Older sessions remain compatible and may not contain history data.'
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
-                <div className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center">
-                  <div className="max-w-sm">
-                    <Activity className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
-                    <h3 className="mt-3 text-sm font-medium text-foreground">
-                      {t('No run history yet')}
-                    </h3>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {t(
-                        'A bar appears after a run completes, is interrupted, or ends with an error. Older sessions remain compatible and may not contain history data.'
-                      )}
-                    </p>
-                  </div>
-                </div>
+                <>
+                  <ContextCallSummary coverage={callCoverage} points={callPoints} />
+                  <ContextCallHistory points={callPoints} groupBy={callGroupBy} />
+                </>
               )}
             </div>
           </div>

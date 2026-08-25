@@ -110,6 +110,12 @@ const stopped = (
   facts: {
     turnUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3 },
     modelTurnCount: 4,
+    modelCalls: [
+      { sourceInvocationId: 'call-a', inputTokens: 3, cacheTokens: 1, outputTokens: 1 },
+      { sourceInvocationId: 'call-b', inputTokens: 2, cacheTokens: 0, outputTokens: 1 },
+      { sourceInvocationId: 'call-c', inputTokens: 3, cacheTokens: 1, outputTokens: 0 },
+      { sourceInvocationId: 'call-d', inputTokens: 2, cacheTokens: 0, outputTokens: 1 }
+    ],
     contextUsedTokens: 12,
     lastModelStepUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3 }
   }
@@ -134,6 +140,44 @@ describe('AcpPromptOutcomeFinalizer', () => {
           outputTokens: 3,
           turnCount: 4
         },
+        modelCallUsage: [
+          {
+            id: 'prompt-1:model-call:0',
+            index: 0,
+            sourceInvocationId: 'call-a',
+            inputTokens: 3,
+            cacheTokens: 1,
+            outputTokens: 1,
+            contextWindowSize: 128_000
+          },
+          {
+            id: 'prompt-1:model-call:1',
+            index: 1,
+            sourceInvocationId: 'call-b',
+            inputTokens: 2,
+            cacheTokens: 0,
+            outputTokens: 1,
+            contextWindowSize: 128_000
+          },
+          {
+            id: 'prompt-1:model-call:2',
+            index: 2,
+            sourceInvocationId: 'call-c',
+            inputTokens: 3,
+            cacheTokens: 1,
+            outputTokens: 0,
+            contextWindowSize: 128_000
+          },
+          {
+            id: 'prompt-1:model-call:3',
+            index: 3,
+            sourceInvocationId: 'call-d',
+            inputTokens: 2,
+            cacheTokens: 0,
+            outputTokens: 1,
+            contextWindowSize: 128_000
+          }
+        ],
         terminalContextWindow: {
           termination: { kind: 'stop', stopReason: 'end_turn' },
           contextWindow: { used: 12, size: 128_000 },

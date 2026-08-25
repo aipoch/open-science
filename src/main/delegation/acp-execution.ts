@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import {
   getAcpRuntimeEventText,
   type AcpAgentRuntimeUpdate,
+  type AcpModelCallUsage,
   type AcpPermissionRequest,
   type AcpPermissionResponse,
   type AcpRuntimeEvent,
@@ -207,6 +208,34 @@ const addTurnUsage = (
   }
 }
 
+const hasExactModelCallUsage = (
+  turnUsage: AcpTurnTokenUsage,
+  modelCallUsage: readonly AcpModelCallUsage[] | undefined
+): modelCallUsage is readonly AcpModelCallUsage[] => {
+  if (
+    !turnUsage.turnCount ||
+    modelCallUsage?.length !== turnUsage.turnCount ||
+    new Set(modelCallUsage.map((call) => call.id)).size !== modelCallUsage.length
+  ) {
+    return false
+  }
+  const totals = modelCallUsage.reduce(
+    (sum, call, index) => ({
+      inputTokens: sum.inputTokens + call.inputTokens,
+      cacheTokens: sum.cacheTokens + call.cacheTokens,
+      outputTokens: sum.outputTokens + call.outputTokens,
+      indicesMatch: sum.indicesMatch && call.index === index
+    }),
+    { inputTokens: 0, cacheTokens: 0, outputTokens: 0, indicesMatch: true }
+  )
+  return (
+    totals.indicesMatch &&
+    totals.inputTokens === turnUsage.inputTokens &&
+    totals.cacheTokens === turnUsage.cacheTokens &&
+    totals.outputTokens === turnUsage.outputTokens
+  )
+}
+
 const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): DelegateExecution => {
   if (!Number.isSafeInteger(options.capacity) || options.capacity < 1) {
     throw new Error('delegate execution capacity must be a positive integer')
@@ -290,8 +319,10 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
     let cancelRequested = false
     let currentResponse: string[] = []
     let turnUsage: AcpTurnTokenUsage | undefined
+    let modelCallUsage: AcpModelCallUsage[] = []
     let sawStopEvent = false
     let turnUsageAvailable = true
+    let modelCallUsageAvailable = true
     let lastStopEvent: AcpAgentRuntimeUpdate['event'] | undefined
     let currentStopEvent: AcpAgentRuntimeUpdate['event'] | undefined
     // Provider event ids are unique within this Attempt-owned runtime lifetime.
@@ -334,6 +365,28 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
             else {
               turnUsageAvailable = false
               turnUsage = undefined
+            }
+          }
+          if (
+            !event.turnUsage ||
+            !hasExactModelCallUsage(event.turnUsage, event.modelCallUsage) ||
+            !modelCallUsageAvailable
+          ) {
+            modelCallUsageAvailable = false
+            modelCallUsage = []
+          } else {
+            const offset = modelCallUsage.length
+            const knownIds = new Set(modelCallUsage.map((call) => call.id))
+            if (event.modelCallUsage.some((call) => knownIds.has(call.id))) {
+              modelCallUsageAvailable = false
+              modelCallUsage = []
+            } else {
+              modelCallUsage.push(
+                ...event.modelCallUsage.map((call, index) => ({
+                  ...call,
+                  index: offset + index
+                }))
+              )
             }
           }
         }
@@ -544,7 +597,8 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           await activeTurn?.complete?.(
             response,
             currentStopEvent?.turnUsage,
-            currentStopEvent && !currentStopEvent.turnUsage ? true : undefined
+            currentStopEvent && !currentStopEvent.turnUsage ? true : undefined,
+            currentStopEvent?.modelCallUsage
           )
           currentStopEvent = undefined
           const queued = queuedPrompts.shift()
@@ -555,8 +609,6 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         }
 
         if (!cancelRequested && lastStopEvent) {
-          const { turnUsage: providerTurnUsage, ...stopWithoutUsage } = lastStopEvent
-          void providerTurnUsage
           publish({
             kind: 'runtime',
             update: {
@@ -568,10 +620,7 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
                 runtimeSegmentId: activeTurn?.runtimeSegmentId ?? scope.provenance.runtimeSegmentId,
                 promptMessageId: activeTurn?.promptMessageId ?? scope.provenance.promptMessageId!
               },
-              event:
-                turnUsageAvailable && turnUsage
-                  ? { ...stopWithoutUsage, turnUsage }
-                  : stopWithoutUsage
+              event: lastStopEvent
             }
           })
         }
@@ -583,7 +632,12 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
             status: 'completed',
             response,
             ...(turnUsageAvailable && turnUsage
-              ? { turnUsage }
+              ? {
+                  turnUsage,
+                  ...(modelCallUsageAvailable && modelCallUsage.length > 0
+                    ? { modelCallUsage }
+                    : {})
+                }
               : sawStopEvent
                 ? { turnUsageUnavailable: true }
                 : {})

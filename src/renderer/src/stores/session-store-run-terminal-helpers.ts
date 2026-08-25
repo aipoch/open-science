@@ -1,6 +1,7 @@
 import {
   sanitizeAcpContextWindowSample,
   type AcpContextWindowSample,
+  type AcpModelCallUsage,
   type AcpTurnTokenUsage
 } from '../../../shared/acp'
 import { isReportableRunFailure } from '../../../shared/run-error-classification'
@@ -85,6 +86,7 @@ const completeStreamingMessages = (
   messages: ChatMessage[],
   promptMessageId: string | undefined,
   turnUsage: AcpTurnTokenUsage | undefined,
+  modelCallUsage: readonly AcpModelCallUsage[] | undefined,
   now: number
 ): ChatMessage[] => {
   const promptResponses = promptMessageId
@@ -106,12 +108,21 @@ const completeStreamingMessages = (
       (ownsTurnUsageFooter && message.status === 'complete' && message.completedAt === undefined)
     return {
       ...message,
-      ...(belongsToPrompt ? { turnUsage: undefined, turnUsageUnavailable: undefined } : {}),
+      ...(belongsToPrompt
+        ? {
+            turnUsage: undefined,
+            turnUsageUnavailable: undefined,
+            modelCallUsage: undefined
+          }
+        : {}),
       ...(completesStream ? { status: 'complete' as const } : {}),
       ...(recordsCompletion ? { completedAt: now } : {}),
       ...(ownsTurnUsageFooter
         ? turnUsage
-          ? { turnUsage }
+          ? {
+              turnUsage,
+              modelCallUsage: modelCallUsage?.map((call) => ({ ...call }))
+            }
           : { turnUsageUnavailable: true as const }
         : {}),
       updatedAt: now
@@ -271,14 +282,21 @@ export const projectFinishedRun = (
   session: ChatSession,
   turnUsage?: AcpTurnTokenUsage,
   promptMessageId?: string,
-  contextWindowSample?: RunTerminalContextWindowSample
+  contextWindowSample?: RunTerminalContextWindowSample,
+  modelCallUsage?: readonly AcpModelCallUsage[]
 ): ChatSession => {
   const keepArtifactError = session.error?.startsWith(ARTIFACT_ERROR_PREFIX) ?? false
   const now = Math.max(Date.now(), session.updatedAt + 1)
   const terminalPromptMessageId = promptMessageId ?? session.activeRun?.promptMessageId
   const messages = appendContextWindowSample(
     session,
-    completeStreamingMessages(session.messages, terminalPromptMessageId, turnUsage, now),
+    completeStreamingMessages(
+      session.messages,
+      terminalPromptMessageId,
+      turnUsage,
+      modelCallUsage,
+      now
+    ),
     terminalPromptMessageId,
     contextWindowSample,
     now

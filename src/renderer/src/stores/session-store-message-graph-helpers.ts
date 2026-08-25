@@ -358,6 +358,7 @@ export const copySnapshotMessage = (
   images: message.images?.map((image) => ({ ...image })),
   parts: message.parts?.map((part) => ({ ...part })),
   turnUsage: message.turnUsage ? { ...message.turnUsage } : undefined,
+  modelCallUsage: message.modelCallUsage?.map((call) => ({ ...call })),
   sortIndex
 })
 

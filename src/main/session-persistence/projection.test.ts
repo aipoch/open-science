@@ -55,12 +55,48 @@ const session = (id: string, createdAt = 100): PersistedChatSession => ({
       content: 'Done',
       status: 'complete',
       eventIds: [],
-      turnUsage: { inputTokens: 10, cacheTokens: 4, outputTokens: 3 },
+      turnUsage: {
+        inputTokens: 10,
+        cacheTokens: 4,
+        cachedReadTokens: 3,
+        cachedWriteTokens: 1,
+        outputTokens: 3,
+        turnCount: 2
+      },
+      modelCallUsage: [
+        {
+          id: `${id}-usage:model-call:0`,
+          index: 0,
+          sourceInvocationId: 'provider-call-1',
+          inputTokens: 6,
+          cacheTokens: 3,
+          cachedReadTokens: 2,
+          cachedWriteTokens: 1,
+          outputTokens: 1,
+          contextUsedTokens: 9,
+          contextWindowSize: 128_000
+        },
+        {
+          id: `${id}-usage:model-call:1`,
+          index: 1,
+          sourceInvocationId: 'provider-call-2',
+          inputTokens: 4,
+          cacheTokens: 1,
+          cachedReadTokens: 1,
+          cachedWriteTokens: 0,
+          outputTokens: 2,
+          contextUsedTokens: 5,
+          contextWindowSize: 128_000
+        }
+      ],
       createdAt: createdAt + 2,
       updatedAt: createdAt + 3,
       completedAt: createdAt + 4
     }
   ],
+  agentFrameworkId: 'opencode',
+  agentBackendId: 'opencode-backend',
+  agentModel: 'gpt-5',
   artifacts: [
     {
       id: `${id}-artifact`,
@@ -98,13 +134,65 @@ describe('Session projection', () => {
         completedAtMs: 104n,
         inputTokens: 10n,
         cacheTokens: 4n,
+        cachedReadTokens: 3n,
+        cachedWriteTokens: 1n,
         outputTokens: 3n,
+        modelCallCount: 2,
         isRootFrame: true
+      }
+    ])
+    expect(projected.modelCalls).toEqual([
+      {
+        messageId: 'session-1-usage',
+        callId: 'session-1-usage:model-call:0',
+        callIndex: 0,
+        sourceInvocationId: 'provider-call-1',
+        frameworkId: 'opencode',
+        backendId: 'opencode-backend',
+        model: 'gpt-5',
+        inputTokens: 6n,
+        cacheTokens: 3n,
+        cachedReadTokens: 2n,
+        cachedWriteTokens: 1n,
+        outputTokens: 1n,
+        contextUsedTokens: 9n,
+        contextWindowSize: 128000n
+      },
+      {
+        messageId: 'session-1-usage',
+        callId: 'session-1-usage:model-call:1',
+        callIndex: 1,
+        sourceInvocationId: 'provider-call-2',
+        frameworkId: 'opencode',
+        backendId: 'opencode-backend',
+        model: 'gpt-5',
+        inputTokens: 4n,
+        cacheTokens: 1n,
+        cachedReadTokens: 1n,
+        cachedWriteTokens: 0n,
+        outputTokens: 2n,
+        contextUsedTokens: 5n,
+        contextWindowSize: 128000n
       }
     ])
     expect(projected.artifactRefs).toEqual([
       { artifactId: 'session-1-artifact', artifactCreatedAtMs: 101n }
     ])
+  })
+
+  it('clamps negative optional turn usage counters before database projection', () => {
+    const invalid = session('negative-usage')
+    const usage = invalid.messages[1]?.turnUsage
+    if (!usage) throw new Error('Expected turn usage fixture')
+    usage.cachedReadTokens = -3
+    usage.cachedWriteTokens = -1
+    usage.turnCount = -2
+
+    expect(buildSessionProjection(invalid).turnUsage[0]).toMatchObject({
+      cachedReadTokens: 0n,
+      cachedWriteTokens: 0n,
+      modelCallCount: 0
+    })
   })
 
   it('marks pending Artifact paths for one-time startup recovery', () => {
@@ -173,6 +261,28 @@ describe('Session projection', () => {
         expect.objectContaining({ timestamp: 104, inputTokens: 10, rootRunUsage: true })
       ])
     })
+    await expect(
+      client.sessionModelCallUsage.findMany({
+        where: { sessionId: first.id },
+        orderBy: { callIndex: 'asc' }
+      })
+    ).resolves.toMatchObject([
+      {
+        messageId: 'session-1-usage',
+        callId: 'session-1-usage:model-call:0',
+        callIndex: 0,
+        frameworkId: 'opencode',
+        backendId: 'opencode-backend',
+        model: 'gpt-5',
+        contextUsedTokens: 9n,
+        contextWindowSize: 128000n
+      },
+      {
+        messageId: 'session-1-usage',
+        callId: 'session-1-usage:model-call:1',
+        callIndex: 1
+      }
+    ])
 
     const bulk = Array.from({ length: 75 }, (_, index) => ({
       ...session(`bulk-${index}`, 1_000 + index),
@@ -181,6 +291,7 @@ describe('Session projection', () => {
     await repository.replaceAll(bulk)
     await expect(client.session.count()).resolves.toBe(75)
     await expect(client.sessionTurnUsage.count()).resolves.toBe(75)
+    await expect(client.sessionModelCallUsage.count()).resolves.toBe(150)
   })
 
   it('keeps a deleted metadata tombstone, excludes its facts, and never reuses its number', async () => {
@@ -477,7 +588,7 @@ describe('Session projection', () => {
     const deleted = await repository.saveSession(session('deleted', 100))
     await repository.deleteSession(deleted.projectId, deleted.id)
     await client.sessionProjectionState.create({
-      data: { id: 'session-projection', projectionVersion: 2, completedAt: new Date() }
+      data: { id: 'session-projection', projectionVersion: 1, completedAt: new Date() }
     })
     const files = new SessionRepository(storageRoot)
     await files.saveSession(session('live', 200))

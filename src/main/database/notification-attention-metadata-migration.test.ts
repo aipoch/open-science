@@ -73,10 +73,11 @@ describe('notification attention metadata migration', () => {
         '0011_cross_resource_tags',
         '0012_tag_ordering',
         '0013_session_projection',
-        '0014_review_query_indexes'
+        '0014_review_query_indexes',
+        '0015_session_model_call_usage'
       ],
       from: '0006_database_domain_constraints',
-      to: '0014_review_query_indexes'
+      to: '0015_session_model_call_usage'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
@@ -89,9 +90,12 @@ describe('notification attention metadata migration', () => {
     })
     await expect(
       access(`${databasePath}.before-0013_session_projection.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0014_review_query_indexes.backup`)
+    ).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0015_session_model_call_usage.backup`)
     ).resolves.toBeUndefined()
 
     await expect(

@@ -184,7 +184,7 @@ describe('ContextWindowDialog', () => {
     const header = dialog?.querySelector('[data-slot="context-window-dialog-header"]')
     const description = dialog?.querySelector('#context-window-description')
     expect(dialog?.textContent).toContain('Current composition')
-    expect(dialog?.textContent).toContain('34K/ 128K tokens (27%)')
+    expect(dialog?.textContent).toContain('34K/ 128K tokens27%')
     expect(dialog?.textContent).toContain('System prompt')
     expect(dialog?.textContent).toContain('Tools and agents')
     expect(dialog?.textContent).toContain('History')
@@ -203,7 +203,7 @@ describe('ContextWindowDialog', () => {
     expect(
       dialog
         ?.querySelector('[data-slot="current-composition"] [data-slot="context-category-legend"]')
-        ?.className.includes('grid-flow-col')
+        ?.className.includes('grid-cols-1')
     ).toBe(true)
     expect(dialog?.querySelector('[role="group"]')?.className.includes('min-w-full')).toBe(true)
     expect(
@@ -228,11 +228,92 @@ describe('ContextWindowDialog', () => {
     })
 
     expect(document.body.querySelector('[data-slot="current-composition"]')?.textContent).toContain(
-      '48K/ 128K tokens (38%)'
+      '48K/ 128K tokens38%'
     )
     expect(
       document.body.querySelector('[data-slot="context-window-point-details"]')?.textContent
     ).toContain('34K / 128K')
+  })
+
+  it('switches to exact Session calls and shows reported coverage without summing context', () => {
+    const withCalls = session()
+    withCalls.messages.push({
+      id: 'answer-1',
+      role: 'agent',
+      responseToMessageId: 'prompt-1',
+      content: 'Done',
+      eventIds: [],
+      status: 'complete',
+      turnUsage: { inputTokens: 30, cacheTokens: 6, outputTokens: 8, turnCount: 2 },
+      modelCallUsage: [
+        {
+          id: 'answer-1:model-call:0',
+          index: 0,
+          inputTokens: 10,
+          cacheTokens: 2,
+          outputTokens: 3,
+          contextUsedTokens: 12,
+          contextWindowSize: 100
+        },
+        {
+          id: 'answer-1:model-call:1',
+          index: 1,
+          inputTokens: 20,
+          cacheTokens: 4,
+          outputTokens: 5,
+          contextUsedTokens: 24,
+          contextWindowSize: 100
+        }
+      ],
+      createdAt: 2,
+      updatedAt: 3,
+      completedAt: 3
+    })
+    withCalls.conversationGraph?.messages.push({
+      id: 'answer-1',
+      role: 'agent',
+      responseToMessageId: 'prompt-1',
+      content: 'Done',
+      eventIds: [],
+      status: 'complete',
+      agentFrameId: 'root',
+      introducedOnBranchId: 'branch-1',
+      revisionRootMessageId: 'answer-1',
+      runtimeSegmentId: 'runtime-2',
+      createdAt: 2,
+      updatedAt: 3
+    })
+
+    act(() => {
+      root.render(<ContextWindowDialog open session={withCalls} onOpenChange={vi.fn()} />)
+    })
+    const callsToggle = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('[role="radio"]')
+    ].find((button) => button.textContent === 'Calls')
+    act(() => callsToggle?.click())
+
+    const summary = document.body.querySelector('[data-slot="context-call-summary"]')
+    expect(summary?.className).toContain('bg-card')
+    expect(summary?.querySelector('[data-slot="context-call-metrics"]')?.className).toContain(
+      'grid-cols-2'
+    )
+    expect(summary?.textContent).toContain('Reported calls2')
+    expect(summary?.textContent).toContain('Detailed calls2')
+    expect(summary?.textContent).toContain('Coverage100%')
+    expect(summary?.textContent).toContain('Peak window24 / 100')
+    expect(document.body.querySelectorAll('[data-slot="context-call-row"]')).toHaveLength(2)
+    expect(document.body.querySelectorAll('[data-slot="context-call-window-meter"]')).toHaveLength(
+      2
+    )
+
+    const groupToggle = document.body.querySelector<HTMLButtonElement>(
+      '[data-slot="context-call-group-toggle"]'
+    )
+    expect(groupToggle?.getAttribute('aria-expanded')).toBe('true')
+
+    act(() => groupToggle?.click())
+    expect(groupToggle?.getAttribute('aria-expanded')).toBe('false')
+    expect(document.body.querySelectorAll('[data-slot="context-call-row"]')).toHaveLength(0)
   })
 
   it('previews on hover and pins a selected run on activation', () => {

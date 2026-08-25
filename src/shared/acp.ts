@@ -314,6 +314,14 @@ export type AcpTurnTokenUsage = {
 
 export type AcpModelStepTokenUsage = Omit<AcpTurnTokenUsage, 'turnCount'>
 
+export type AcpModelCallUsage = AcpModelStepTokenUsage & {
+  id: string
+  index: number
+  sourceInvocationId?: string
+  contextUsedTokens?: number
+  contextWindowSize?: number
+}
+
 export type AcpPromptStopReason = PromptResponse['stopReason']
 
 export type AcpPromptTermination =
@@ -344,6 +352,7 @@ export type AcpContextWindowSample = AcpTerminalContextWindow & {
 // separate from ACP's latest-request usage snapshot.
 export const ACP_TURN_TOKEN_USAGE_META_KEY = 'open-science/turn-usage'
 export const ACP_MODEL_TURN_COUNT_META_KEY = 'open-science/model-turn-count'
+export const ACP_MODEL_CALL_USAGE_META_KEY = 'open-science/model-call-usage'
 
 // Normalizes ACP's experimental PromptResponse usage into the stable, provider-neutral projection the
 // renderer persists. Missing cache categories mean zero; malformed totals suppress the entire footer.
@@ -406,6 +415,30 @@ export const sanitizeAcpTurnTokenUsage = (value: unknown): AcpTurnTokenUsage | u
     ...(hasCacheBreakdown ? { cachedReadTokens, cachedWriteTokens } : {}),
     outputTokens,
     ...(turnCount !== undefined && turnCount > 0 ? { turnCount } : {})
+  }
+}
+
+export const sanitizeAcpModelCallUsage = (value: unknown): AcpModelCallUsage | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+
+  const call = value as Record<string, unknown>
+  const id = typeof call.id === 'string' ? call.id.trim() : ''
+  const index = asTokenCount(call.index)
+  const usage = sanitizeAcpTurnTokenUsage(call)
+  if (!id || index === undefined || !usage) return undefined
+
+  const sourceInvocationId =
+    typeof call.sourceInvocationId === 'string' ? call.sourceInvocationId.trim() : ''
+  const contextUsedTokens = asTokenCount(call.contextUsedTokens)
+  const contextWindowSize = asTokenCount(call.contextWindowSize)
+  delete usage.turnCount
+  return {
+    id,
+    index,
+    ...usage,
+    ...(sourceInvocationId ? { sourceInvocationId } : {}),
+    ...(contextUsedTokens === undefined ? {} : { contextUsedTokens }),
+    ...(contextWindowSize !== undefined && contextWindowSize > 0 ? { contextWindowSize } : {})
   }
 }
 
@@ -481,6 +514,8 @@ export type AcpRuntimeEvent = {
   contextUsage?: AcpContextUsage
   // Present on a completed prompt's stop event when the Agent reports whole-turn token totals.
   turnUsage?: AcpTurnTokenUsage
+  // Exact per-inference usage for the completed visible turn. Absent means unavailable, never zero.
+  modelCallUsage?: AcpModelCallUsage[]
   // Frozen last-model-step context facts for a visible prompt stop/error. Renderer discards an
   // intermediate recoverable overflow when compaction takes ownership of retrying the same Run.
   terminalContextWindow?: AcpTerminalContextWindow

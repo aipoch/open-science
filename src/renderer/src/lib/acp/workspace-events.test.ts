@@ -404,14 +404,40 @@ describe('workspace runtime events', () => {
         id: 'event-2',
         kind: 'stop',
         text: 'end_turn',
-        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 2 },
+        modelCallUsage: [
+          {
+            id: 'prompt-message:model-call:0',
+            index: 0,
+            sourceInvocationId: 'provider-call-1',
+            inputTokens: 19,
+            cacheTokens: 8,
+            outputTokens: 5,
+            contextUsedTokens: 27,
+            contextWindowSize: 128_000
+          },
+          {
+            id: 'prompt-message:model-call:1',
+            index: 1,
+            sourceInvocationId: 'provider-call-2',
+            inputTokens: 12,
+            cacheTokens: 7,
+            outputTokens: 9,
+            contextUsedTokens: 19,
+            contextWindowSize: 128_000
+          }
+        ]
       })
     )
 
     expect(useSessionStore.getState().sessions[0].status).toBe('idle')
     expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
       status: 'complete',
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 2 },
+      modelCallUsage: [
+        expect.objectContaining({ id: 'prompt-message:model-call:0', index: 0 }),
+        expect.objectContaining({ id: 'prompt-message:model-call:1', index: 1 })
+      ]
     })
 
     useSessionStore.getState().appendUserMessage({

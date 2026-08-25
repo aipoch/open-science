@@ -212,11 +212,47 @@ describe('supported catalog registration', () => {
 })
 
 describe('runtime catalog fallback', () => {
+  it.each([
+    [
+      'ja',
+      'セッション呼び出しの概要',
+      'このセッションは呼び出し追跡より前に作成されたか、フレームワークがターンの集計使用量のみを報告した可能性があります。'
+    ],
+    [
+      'ru',
+      'Сводка вызовов сессии',
+      'Эта сессия могла быть создана до появления отслеживания вызовов, либо её фреймворк сообщил только суммарное использование хода.'
+    ],
+    ['zh-Hans', '会话调用摘要', '此会话可能早于调用追踪功能，或其框架仅报告了轮次聚合用量。'],
+    ['zh-Hant', '會話呼叫摘要', '此工作階段可能早於呼叫追蹤功能，或其框架僅回報了輪次彙總用量。']
+  ] as const)('%s localizes Session in Context Window copy', (locale, summary, emptyState) => {
+    expect(rendererCatalogs[locale]['Session call summary']).toBe(summary)
+    expect(
+      rendererCatalogs[locale][
+        'This Session may predate call tracking, or its framework reported only aggregate turn usage.'
+      ]
+    ).toBe(emptyState)
+  })
+
   it('ships and registers the Russian catalog', () => {
     expect(
       existsSync(join(__dirname, '..', '..', '..', 'shared', 'i18n', 'locales', 'ru.json'))
     ).toBe(true)
     expect('ru' in resources).toBe(true)
+  })
+
+  it.each([
+    ['fr', 'Tours', 'Appels'],
+    ['ja', 'ターン', '呼び出し'],
+    ['ko', '턴', '호출'],
+    ['ru', 'Ходы', 'Вызовы'],
+    ['zh-Hans', '轮次', '调用'],
+    ['zh-Hant', '輪次', '呼叫']
+  ] as const)('translates Context Window detail levels for %s', (locale, turns, calls) => {
+    const renderer = initI18n(locale)
+
+    expect(renderer.t('Turns')).toBe(turns)
+    expect(renderer.t('Calls')).toBe(calls)
   })
 
   it('keeps valid translations without copying the catalog', () => {

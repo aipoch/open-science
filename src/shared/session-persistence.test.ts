@@ -1130,8 +1130,97 @@ describe('turn token usage persistence', () => {
             outputTokens: 90,
             turnCount: 3
           },
+          modelCallUsage: [
+            {
+              id: 'call-1',
+              index: 0,
+              sourceInvocationId: 'provider-call-1',
+              inputTokens: 4_000,
+              cacheTokens: 200,
+              outputTokens: 30,
+              contextUsedTokens: 4_200,
+              contextWindowSize: 128_000
+            },
+            {
+              id: 'call-2',
+              index: 1,
+              inputTokens: 4_100,
+              cacheTokens: 220,
+              outputTokens: 30,
+              contextUsedTokens: 4_320,
+              contextWindowSize: 128_000
+            },
+            {
+              id: 'call-3',
+              index: 2,
+              inputTokens: 4_245,
+              cacheTokens: 258,
+              outputTokens: 30,
+              contextUsedTokens: 4_503,
+              contextWindowSize: 128_000
+            }
+          ],
           createdAt: 1,
           updatedAt: 1
+        },
+        {
+          id: 'message-invalid-call-window',
+          role: 'agent',
+          content: 'Done with malformed call metadata',
+          status: 'complete',
+          eventIds: [],
+          turnUsage: { inputTokens: 4, cacheTokens: 2, outputTokens: 3, turnCount: 1 },
+          modelCallUsage: [
+            {
+              id: 'call-invalid-window',
+              index: 0,
+              inputTokens: 4,
+              cacheTokens: 2,
+              outputTokens: 3,
+              contextUsedTokens: 6,
+              contextWindowSize: 0
+            }
+          ],
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'message-duplicate-call-id-a',
+          role: 'agent',
+          content: 'Done with duplicate call identity',
+          status: 'complete',
+          eventIds: [],
+          turnUsage: { inputTokens: 1, cacheTokens: 0, outputTokens: 1, turnCount: 1 },
+          modelCallUsage: [
+            {
+              id: 'duplicate-call',
+              index: 0,
+              inputTokens: 1,
+              cacheTokens: 0,
+              outputTokens: 1
+            }
+          ],
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'message-duplicate-call-id-b',
+          role: 'agent',
+          content: 'Also done with duplicate call identity',
+          status: 'complete',
+          eventIds: [],
+          turnUsage: { inputTokens: 2, cacheTokens: 0, outputTokens: 1, turnCount: 1 },
+          modelCallUsage: [
+            {
+              id: 'duplicate-call',
+              index: 0,
+              inputTokens: 2,
+              cacheTokens: 0,
+              outputTokens: 1
+            }
+          ],
+          createdAt: 2,
+          updatedAt: 2
         },
         {
           id: 'message-invalid',
@@ -1167,9 +1256,51 @@ describe('turn token usage persistence', () => {
       outputTokens: 90,
       turnCount: 3
     })
-    expect(restored?.messages[1].turnUsage).toBeUndefined()
-    expect(restored?.messages[1].turnUsageUnavailable).toBe(true)
-    expect(restored?.messages[2].turnUsageUnavailable).toBeUndefined()
+    expect(restored?.messages[0].modelCallUsage).toEqual([
+      {
+        id: 'call-1',
+        index: 0,
+        sourceInvocationId: 'provider-call-1',
+        inputTokens: 4_000,
+        cacheTokens: 200,
+        outputTokens: 30,
+        contextUsedTokens: 4_200,
+        contextWindowSize: 128_000
+      },
+      {
+        id: 'call-2',
+        index: 1,
+        inputTokens: 4_100,
+        cacheTokens: 220,
+        outputTokens: 30,
+        contextUsedTokens: 4_320,
+        contextWindowSize: 128_000
+      },
+      {
+        id: 'call-3',
+        index: 2,
+        inputTokens: 4_245,
+        cacheTokens: 258,
+        outputTokens: 30,
+        contextUsedTokens: 4_503,
+        contextWindowSize: 128_000
+      }
+    ])
+    expect(restored?.messages[1].modelCallUsage).toEqual([
+      {
+        id: 'call-invalid-window',
+        index: 0,
+        inputTokens: 4,
+        cacheTokens: 2,
+        outputTokens: 3,
+        contextUsedTokens: 6
+      }
+    ])
+    expect(restored?.messages[2].modelCallUsage).toBeUndefined()
+    expect(restored?.messages[3].modelCallUsage).toBeUndefined()
+    expect(restored?.messages[4].turnUsage).toBeUndefined()
+    expect(restored?.messages[4].turnUsageUnavailable).toBe(true)
+    expect(restored?.messages[5].turnUsageUnavailable).toBeUndefined()
   })
 })
 

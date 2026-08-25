@@ -75,6 +75,9 @@ const normalizeFacts = (
   return Object.freeze({
     ...(turnUsage ? { turnUsage: Object.freeze({ ...turnUsage }) } : {}),
     ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount }),
+    ...(facts.modelCalls
+      ? { modelCalls: Object.freeze(facts.modelCalls.map((call) => Object.freeze({ ...call }))) }
+      : {}),
     ...(facts.contextUsedTokens === undefined
       ? {}
       : { contextUsedTokens: facts.contextUsedTokens }),

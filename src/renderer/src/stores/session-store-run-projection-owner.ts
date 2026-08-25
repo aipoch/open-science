@@ -1,7 +1,7 @@
 import type { StoreApi } from 'zustand'
 
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
-import type { AcpTurnTokenUsage, ElicitationAnswer } from '../../../shared/acp'
+import type { AcpModelCallUsage, AcpTurnTokenUsage, ElicitationAnswer } from '../../../shared/acp'
 import type {
   PersistedChatSession,
   PersistedPendingHistoryReplay,
@@ -71,7 +71,8 @@ export type SessionRunProjectionActions = {
     sessionId: string,
     turnUsage?: AcpTurnTokenUsage,
     promptMessageId?: string,
-    contextWindowSample?: RunTerminalContextWindowSample
+    contextWindowSample?: RunTerminalContextWindowSample,
+    modelCallUsage?: readonly AcpModelCallUsage[]
   ) => void
   interruptRun: (
     sessionId: string,
@@ -326,10 +327,16 @@ export const createSessionRunProjectionOwner = <
       })
     },
 
-    finishRun: (sessionId, turnUsage, promptMessageId, contextWindowSample) => {
+    finishRun: (sessionId, turnUsage, promptMessageId, contextWindowSample, modelCallUsage) => {
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
-          projectFinishedRun(session, turnUsage, promptMessageId, contextWindowSample)
+          projectFinishedRun(
+            session,
+            turnUsage,
+            promptMessageId,
+            contextWindowSample,
+            modelCallUsage
+          )
         )
       }))
     },

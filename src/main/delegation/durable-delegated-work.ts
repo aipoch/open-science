@@ -266,7 +266,10 @@ const createDurableDelegatedWork = (
                 endedAt,
                 fallbackResponse: outcome.response,
                 ...(outcome.turnUsage
-                  ? { turnUsage: outcome.turnUsage }
+                  ? {
+                      turnUsage: outcome.turnUsage,
+                      ...(outcome.modelCallUsage ? { modelCallUsage: outcome.modelCallUsage } : {})
+                    }
                   : outcome.turnUsageUnavailable
                     ? { turnUsageUnavailable: true }
                     : {})
