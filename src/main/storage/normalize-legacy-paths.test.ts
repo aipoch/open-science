@@ -195,7 +195,7 @@ describe('normalizeLegacyDataPaths (integration)', () => {
       )
 
       const relocatedPreview = await previewStateRepository.get(projectId)
-      expect(relocatedPreview?.items[0].path).toBe(
+      expect(relocatedPreview?.state.items[0].path).toBe(
         join(newRoot, 'artifacts', projectId, 'session-1', 'm', 'plot.png')
       )
 

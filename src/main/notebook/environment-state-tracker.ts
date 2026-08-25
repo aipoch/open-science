@@ -14,6 +14,7 @@ import {
   type NotebookInventoryRefreshAttempt,
   type NotebookLiveEnvironmentOverlay,
   type NotebookLanguage,
+  type NotebookPackageSource,
   type NotebookPackageInstallerAttempt
 } from '../../shared/notebook'
 import { condaActivatedPath } from './runtime-paths'
@@ -61,6 +62,7 @@ type PackageMutationOutcome = PackageMutationIntent & {
   result: NotebookEnvironmentOperation['result']
   attempts?: NotebookPackageInstallerAttempt[]
   fallbackUsed?: boolean
+  source?: NotebookPackageSource
 }
 
 type PackageMutationVerification = {
@@ -119,6 +121,7 @@ type PendingEnvironmentOperationRecord = {
   fallbackUsed: boolean
   inventoryRefreshAttempts: NotebookInventoryRefreshAttempt[]
   beforeInventoryChecksum?: string
+  source?: NotebookPackageSource
 }
 
 type StoredInventory = InstalledEnvironmentInventory & {
@@ -283,11 +286,31 @@ const packageIdentityKey = (pkg: NotebookEnvironmentPackage): string =>
       : [])
   ].join('\0')
 
+const packageSourceKey = (pkg: NotebookEnvironmentPackage): string => {
+  const source = pkg.source
+  if (!source) return ''
+  return source.type === 'github'
+    ? ['github', packageKey(source.repository), source.ref ?? '', source.commit ?? ''].join('\0')
+    : ['bioconductor', source.version ?? ''].join('\0')
+}
+
 const requestedPackageKey = (value: string): string => packageKey(value).replace(/[-_.]+/gu, '-')
+
+const githubSourceFromSpec = (value: string): { repository: string; ref?: string } | undefined => {
+  const spec = value.trim()
+  const separator = spec.lastIndexOf('@')
+  const repository = separator > 0 ? spec.slice(0, separator) : spec
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) return undefined
+  const ref = separator > 0 ? spec.slice(separator + 1) : undefined
+  return { repository: packageKey(repository), ...(ref ? { ref } : {}) }
+}
 
 const packageNameFromSpec = (value: string, language: NotebookLanguage): string | undefined => {
   const unqualified = value.trim().split('::').at(-1) ?? ''
-  const name = unqualified.match(/^[A-Za-z0-9_.-]+/u)?.[0]
+  const pathName = /^[./\\]/u.test(unqualified)
+    ? unqualified.split(/[/\\]/u).filter(Boolean).at(-1)
+    : undefined
+  const name = (pathName ?? unqualified).match(/^[A-Za-z0-9_.-]+/u)?.[0]
   if (!name) return undefined
   if (language !== 'r') return name
   const lowerName = name.toLocaleLowerCase('und')
@@ -296,12 +319,54 @@ const packageNameFromSpec = (value: string, language: NotebookLanguage): string 
   return name
 }
 
+const exactVersionFromSpec = (value: string, language: NotebookLanguage): string | undefined => {
+  if (language !== 'python') return undefined
+  return value.trim().match(/^[A-Za-z0-9_.-]+==([^\s;,]+)$/u)?.[1]
+}
+
+const normalizedPythonVersion = (
+  value: string
+): { publicVersion: string; localVersion?: string } | undefined => {
+  const [publicValue, localValue] = value.trim().toLowerCase().replace(/^v/u, '').split('+', 2)
+  if (!publicValue) return undefined
+  const match = publicValue.match(/^(?:(\d+)!)?(\d+(?:\.\d+)*)(.*)$/u)
+  if (!match) return undefined
+  const release = match[2].split('.').map(Number)
+  while (release.length > 1 && release.at(-1) === 0) release.pop()
+  const suffix = match[3]
+    .replace(/[-_.]+/gu, '.')
+    .replace(/^\.(?:alpha|a)(\d*)$/u, 'a$1')
+    .replace(/^\.(?:beta|b)(\d*)$/u, 'b$1')
+    .replace(/^\.(?:c|pre|preview|rc)(\d*)$/u, 'rc$1')
+    .replace(/^\.(?:post|rev|r)(\d*)$/u, 'post$1')
+    .replace(/^\.dev(\d*)$/u, 'dev$1')
+  return {
+    publicVersion: `${match[1] ?? '0'}!${release.join('.')}${suffix}`,
+    ...(localValue ? { localVersion: localValue.replace(/[-_.]+/gu, '.') } : {})
+  }
+}
+
+const pythonExactVersionMatches = (requested: string, installed: string | undefined): boolean => {
+  if (!installed) return false
+  const requestedVersion = normalizedPythonVersion(requested)
+  const installedVersion = normalizedPythonVersion(installed)
+  if (!requestedVersion || !installedVersion) return requested === installed
+  return (
+    requestedVersion.publicVersion === installedVersion.publicVersion &&
+    (requestedVersion.localVersion === undefined ||
+      requestedVersion.localVersion === installedVersion.localVersion)
+  )
+}
+
 const inspectRequestedPackage = (
   target: EnvironmentCaptureTarget,
   requested: string,
   installed: NotebookEnvironmentPackage[] | undefined
 ): InspectedPackage => {
-  const requestedName = packageNameFromSpec(requested, target.language)
+  const githubSource = target.language === 'r' ? githubSourceFromSpec(requested) : undefined
+  const requestedName = githubSource
+    ? githubSource.repository.split('/').at(-1)
+    : packageNameFromSpec(requested, target.language)
   if (!requestedName || !installed) {
     return {
       requested,
@@ -309,9 +374,14 @@ const inspectRequestedPackage = (
       status: 'unknown'
     }
   }
-  const match = installed.find(
-    (pkg) => requestedPackageKey(pkg.name) === requestedPackageKey(requestedName)
-  )
+  const match = githubSource
+    ? installed.find(
+        (pkg) =>
+          pkg.source?.type === 'github' &&
+          packageKey(pkg.source.repository) === githubSource.repository &&
+          (githubSource.ref === undefined || pkg.source.ref === githubSource.ref)
+      )
+    : installed.find((pkg) => requestedPackageKey(pkg.name) === requestedPackageKey(requestedName))
   return match
     ? { requested, ...match, status: 'installed' }
     : { requested, name: requestedName, status: 'missing' }
@@ -323,14 +393,27 @@ const verifyPackageMutation = (
   packages: NotebookEnvironmentPackage[]
 ): PackageMutationVerification => {
   if (outcome.result !== 'success') return { result: outcome.result }
-  const installedNames = new Set(
-    packages.map((pkg) => requestedPackageKey(pkg.name)).filter((name) => name.length > 0)
-  )
   const unsatisfiedPackages = outcome.packages.filter((spec) => {
     const name = packageNameFromSpec(spec, target.language)
+    const githubSource = target.language === 'r' ? githubSourceFromSpec(spec) : undefined
+    if (githubSource) {
+      return !packages.some(
+        (pkg) =>
+          pkg.source?.type === 'github' &&
+          packageKey(pkg.source.repository) === githubSource.repository &&
+          (githubSource.ref === undefined || pkg.source.ref === githubSource.ref)
+      )
+    }
     if (!name) return false
-    const installed = installedNames.has(requestedPackageKey(name))
-    return outcome.operation === 'uninstall' ? installed : !installed
+    const installed = packages.find(
+      (pkg) => requestedPackageKey(pkg.name) === requestedPackageKey(name)
+    )
+    if (outcome.operation === 'uninstall') return installed !== undefined
+    const exactVersion = exactVersionFromSpec(spec, target.language)
+    return (
+      !installed ||
+      (exactVersion !== undefined && !pythonExactVersionMatches(exactVersion, installed.version))
+    )
   })
   return unsatisfiedPackages.length > 0
     ? { result: 'failure', unsatisfiedPackages }
@@ -350,14 +433,25 @@ const packageChangesForOperation = ({
 }): NotebookEnvironmentPackageChange[] => {
   const requestedKeys = new Set(
     requestedPackages.flatMap((spec) => {
+      if (language === 'r' && githubSourceFromSpec(spec)) return []
       const name = packageNameFromSpec(spec, language)
       return name ? [requestedPackageKey(name)] : []
+    })
+  )
+  const requestedGithubRepositories = new Set(
+    requestedPackages.flatMap((spec) => {
+      const source = language === 'r' ? githubSourceFromSpec(spec) : undefined
+      return source ? [source.repository] : []
     })
   )
   const relationshipFor = (
     pkg: NotebookEnvironmentPackage
   ): NotebookEnvironmentPackageChange['relationship'] =>
-    requestedKeys.has(requestedPackageKey(pkg.name)) ? 'requested' : 'unattributed'
+    requestedKeys.has(requestedPackageKey(pkg.name)) ||
+    (pkg.source?.type === 'github' &&
+      requestedGithubRepositories.has(packageKey(pkg.source.repository)))
+      ? 'requested'
+      : 'unattributed'
   const toChange = (
     pkg: NotebookEnvironmentPackage,
     relationship: NotebookEnvironmentPackageChange['relationship'],
@@ -372,7 +466,8 @@ const packageChangesForOperation = ({
     ...(beforeVersion ? { beforeVersion } : {}),
     ...(afterVersion ? { afterVersion } : {}),
     ...(pkg.libraryRank !== undefined ? { libraryRank: pkg.libraryRank } : {}),
-    ...(pkg.libraryScope ? { libraryScope: pkg.libraryScope } : {})
+    ...(pkg.libraryScope ? { libraryScope: pkg.libraryScope } : {}),
+    ...(pkg.source ? { source: pkg.source } : {})
   })
 
   if (!before) {
@@ -401,7 +496,9 @@ const packageChangesForOperation = ({
     }
     if (!previous || !current) continue
     const versionChanged =
-      previous.version !== current.version || previous.versionStatus !== current.versionStatus
+      previous.version !== current.version ||
+      previous.versionStatus !== current.versionStatus ||
+      packageSourceKey(previous) !== packageSourceKey(current)
     if (versionChanged) {
       changes.push(toChange(current, relationship, 'updated', previous.version, current.version))
     } else if (relationship === 'requested') {
@@ -410,6 +507,16 @@ const packageChangesForOperation = ({
   }
   return changes
 }
+
+const packageChangesWithSource = (
+  changes: NotebookEnvironmentPackageChange[],
+  source: NotebookPackageSource | undefined
+): NotebookEnvironmentPackageChange[] =>
+  source
+    ? changes.map((change) =>
+        change.relationship === 'requested' && !change.source ? { ...change, source } : change
+      )
+    : changes
 
 const normalizePackage = (pkg: NotebookEnvironmentPackage): NotebookEnvironmentPackage => ({
   ...pkg,
@@ -482,7 +589,10 @@ const R_INVENTORY_SCRIPT = [
   '    libraryPath <- normalizePath(ip[i, "LibPath"], winslash="/", mustWork=FALSE)',
   '    libraryRank <- match(libraryPath, libraryPaths)',
   '    libraryScope <- if (startsWith(libraryPath, paste0(runtimeHome, "/"))) "environment" else if (nzchar(userLibrary) && startsWith(libraryPath, userLibrary)) "user" else "system"',
-  '    cat("PACKAGE\\t", ip[i, "Package"], "\\t", ip[i, "Version"], "\\t", priority, "\\t", built, "\\t", libraryRank, "\\t", libraryScope, "\\n", sep="")',
+  '    descriptionPath <- file.path(ip[i, "LibPath"], ip[i, "Package"], "DESCRIPTION")',
+  '    description <- tryCatch(read.dcf(descriptionPath), error=function(e) matrix(character(), nrow=0, ncol=0))',
+  '    field <- function(name) if (nrow(description) > 0 && name %in% colnames(description) && !is.na(description[1, name])) gsub("[\\t\\r\\n]", " ", description[1, name]) else ""',
+  '    cat("PACKAGE\\t", ip[i, "Package"], "\\t", ip[i, "Version"], "\\t", priority, "\\t", built, "\\t", libraryRank, "\\t", libraryScope, "\\t", field("RemoteType"), "\\t", field("RemoteHost"), "\\t", field("RemoteUsername"), "\\t", field("RemoteRepo"), "\\t", field("RemoteRef"), "\\t", field("RemoteSha"), "\\n", sep="")',
   '  }',
   '}'
 ].join('\n')
@@ -534,8 +644,21 @@ const parseInventory = (
   let runtimeArchitecture: string | undefined
   const packages: NotebookEnvironmentPackage[] = []
   for (const line of stdout.split(/\r?\n/u)) {
-    const [kind, nameOrVersion, version, priority, built, libraryRankValue, libraryScope] =
-      line.split('\t')
+    const [
+      kind,
+      nameOrVersion,
+      version,
+      priority,
+      built,
+      libraryRankValue,
+      libraryScope,
+      remoteType,
+      remoteHost,
+      remoteUsername,
+      remoteRepo,
+      remoteRef,
+      remoteSha
+    ] = line.split('\t')
     if (kind === 'RUNTIME') {
       runtimeVersion = nameOrVersion || undefined
       runtimePlatform = version || undefined
@@ -564,7 +687,21 @@ const parseInventory = (
         ? { libraryScope }
         : language === 'r'
           ? { libraryScope: 'unknown' as const }
-          : {})
+          : {}),
+      ...(remoteType?.toLowerCase() === 'github' &&
+      (remoteHost?.toLowerCase() === 'github.com' ||
+        remoteHost?.toLowerCase() === 'api.github.com') &&
+      remoteUsername &&
+      remoteRepo
+        ? {
+            source: {
+              type: 'github' as const,
+              repository: `${remoteUsername}/${remoteRepo}`,
+              ...(remoteRef ? { ref: remoteRef } : {}),
+              ...(remoteSha ? { commit: remoteSha } : {})
+            }
+          }
+        : {})
     })
   }
   return {
@@ -912,9 +1049,6 @@ class EnvironmentStateTracker {
       const cache = await this.readBinding(target)
       const operation = await this.readOperation(target, outcome.operationId)
       const beforeInventoryChecksum = operation?.beforeInventoryChecksum ?? cache.inventoryChecksum
-      const beforeInventory = beforeInventoryChecksum
-        ? await this.readInventory(target, beforeInventoryChecksum).catch(() => undefined)
-        : undefined
       const baseLogEntry: NotebookEnvironmentOperation = {
         operationId: outcome.operationId,
         timestamp: this.now().toISOString(),
@@ -926,6 +1060,28 @@ class EnvironmentStateTracker {
         inventoryRefresh: 'failed',
         inventoryRefreshAttempts: operation?.inventoryRefreshAttempts ?? []
       }
+      const terminalOperation: PendingEnvironmentOperationRecord = {
+        ...(operation ?? {
+          schemaVersion: 1,
+          operationId: outcome.operationId,
+          runtimeLocalKey: this.targetKey(target),
+          generation: cache.generation,
+          operation: outcome.operation,
+          packages: [...outcome.packages],
+          inventoryRefreshAttempts: []
+        }),
+        lifecycle: 'terminal-refresh-pending',
+        terminalResult: outcome.result,
+        ...(outcome.source ? { source: outcome.source } : {}),
+        attempts: baseLogEntry.attempts,
+        fallbackUsed: baseLogEntry.fallbackUsed
+      }
+      // Persist the completed installer outcome before any inventory I/O so recovery retains source
+      // evidence if the app exits between the installer and terminal refresh.
+      await this.writeOperation(target, terminalOperation)
+      const beforeInventory = beforeInventoryChecksum
+        ? await this.readInventory(target, beforeInventoryChecksum).catch(() => undefined)
+        : undefined
       let verification: PackageMutationVerification = { result: outcome.result }
       try {
         const previousInventoryChecksum = cache.inventoryChecksum
@@ -939,12 +1095,15 @@ class EnvironmentStateTracker {
           timestamp: this.now().toISOString(),
           result: inventoryRefresh
         }
-        const packageChanges = packageChangesForOperation({
-          language: target.language,
-          before: beforeInventory?.packages,
-          after: inventory.packages,
-          requestedPackages: outcome.packages
-        })
+        const packageChanges = packageChangesWithSource(
+          packageChangesForOperation({
+            language: target.language,
+            before: beforeInventory?.packages,
+            after: inventory.packages,
+            requestedPackages: outcome.packages
+          }),
+          outcome.source
+        )
         verification = {
           ...verifyPackageMutation(target, outcome, inventory.packages),
           ...(packageChanges.length > 0 ? { packageChanges } : {})
@@ -1000,21 +1159,7 @@ class EnvironmentStateTracker {
         cache.dirtyOperationId = outcome.operationId
         cache.dirtyReason = 'recovery'
         await this.writeOperation(target, {
-          ...(operation ?? {
-            schemaVersion: 1,
-            operationId: outcome.operationId,
-            runtimeLocalKey: this.targetKey(target),
-            generation: cache.generation,
-            operation: outcome.operation,
-            packages: [...outcome.packages],
-            attempts: outcome.attempts ?? [],
-            fallbackUsed: outcome.fallbackUsed ?? false,
-            inventoryRefreshAttempts: []
-          }),
-          lifecycle: 'terminal-refresh-pending',
-          terminalResult: outcome.result,
-          attempts: baseLogEntry.attempts,
-          fallbackUsed: baseLogEntry.fallbackUsed,
+          ...terminalOperation,
           inventoryRefreshAttempts: pendingEntry.inventoryRefreshAttempts
         })
       }
@@ -1170,18 +1315,21 @@ class EnvironmentStateTracker {
           result: 'published'
         }
       ],
-      packageChanges: packageChangesForOperation({
-        language: target.language,
-        before: pending.beforeInventoryChecksum
-          ? (
-              await this.readInventory(target, pending.beforeInventoryChecksum).catch(
-                () => undefined
-              )
-            )?.packages
-          : undefined,
-        after: inventory.packages,
-        requestedPackages: pending.packages
-      })
+      packageChanges: packageChangesWithSource(
+        packageChangesForOperation({
+          language: target.language,
+          before: pending.beforeInventoryChecksum
+            ? (
+                await this.readInventory(target, pending.beforeInventoryChecksum).catch(
+                  () => undefined
+                )
+              )?.packages
+            : undefined,
+          after: inventory.packages,
+          requestedPackages: pending.packages
+        }),
+        pending.source
+      )
     }
     cache.currentManifestChecksum = await this.publishOperationManifest(
       target,

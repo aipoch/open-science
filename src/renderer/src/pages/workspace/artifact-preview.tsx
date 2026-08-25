@@ -16,7 +16,7 @@ import {
 import { PdfThumbnail } from './previews/renderers/PdfThumbnail'
 import { TiffThumbnail } from './previews/renderers/TiffThumbnail'
 import { createPreviewResourceKey } from './previews/preview-resource-key'
-import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
+import { useCachedPreviewImage } from './previews/useCachedPreviewImage'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type ArtifactIconKind = 'archive' | 'code' | 'file' | 'image' | 'spreadsheet' | 'text'
@@ -267,7 +267,7 @@ const FileTypePreview = ({ artifact }: { artifact: MessageArtifact }): React.JSX
   )
 }
 
-// Streams image bytes through a short-lived managed URL instead of copying them into renderer state.
+// Copies managed image bytes into the bounded renderer cache so transcript remounts can reuse them.
 const ManagedImageThumbnail = ({
   artifact,
   name,
@@ -302,7 +302,7 @@ const ManagedImageThumbnail = ({
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
   const hasFailed = failedRequestKey === requestKey
   // A decode failure disables the hook, which releases the protocol capability immediately.
-  const resourceState = useManagedPreviewResource(
+  const imageState = useCachedPreviewImage(
     {
       path: artifact.path,
       projectId,
@@ -314,14 +314,15 @@ const ManagedImageThumbnail = ({
       managedFileId,
       selectedVersionId
     },
-    enabled && !hasFailed
+    enabled && !hasFailed,
+    hasFailed
   )
 
-  if (resourceState.status !== 'ready') return <FileTypePreview artifact={artifact} />
+  if (imageState.status !== 'ready') return <FileTypePreview artifact={artifact} />
 
   return (
     <img
-      src={resourceState.resource.url}
+      src={imageState.url}
       alt={t('Preview of {{name}}', { name })}
       className="size-full object-cover object-top"
       loading="lazy"

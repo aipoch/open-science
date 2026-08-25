@@ -22,10 +22,11 @@ import type { ProjectIdScope } from '../../shared/project-scope'
 import { NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 
 const NOTEBOOK_MCP_SERVER_NAME = 'open-science-notebook'
+const NOTEBOOK_MCP_PROGRESS_HEARTBEAT_MS = 30_000
 const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
 const HOST_SDK_DISCOVERY_GUIDANCE =
-  "Host SDK discovery (use from `repl_execute`): `await host.help()` is the role-aware catalog. Query only the operation you plan to call; each topic returns concise parameter and result field descriptions. Main/root agents can use `await host.help('delegate')` when delegation guidance is needed; do not prefetch all Help topics. Delegate agents should use the same catalog for messaging and structured-output operations; unavailable root-only topics remain visible with a reason."
+  "Host SDK discovery (use from `repl_execute`): `await host.help()` is the role-aware catalog. Query only the planned operation; each topic returns concise field descriptions. Main/root agents can use `await host.help('delegate')` when needed; do not prefetch all Help topics. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
 
 // Scoped prompt addendum that only applies when the agent is given notebook tools.
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
@@ -35,10 +36,11 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Notebook preview is only for code and execution results; keep chat, explanation, and diagnosis in the chat area.',
   'Use `notebook_execute` for one persistent Python/R cell per call; reuse `cellId` to rerun it. Python/R data kernels cannot call connectors; use `repl_execute` for `host.capabilities`/`host.llm`/`host.mcp`/`host.compute`/`host.agents`/`host.skills`. For large cross-kernel data, write under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL and read that path from Python/R.',
   HOST_SDK_DISCOVERY_GUIDANCE,
-  'Each runtime is a separate persistent namespace. Create named runtimes with `manage_environments`, select them with the bind/switch tools, and use files to move data across runtimes. Memory is lost on restart or app reopen; run history and files survive.',
-  'The notebook already runs inside a writable session workspace. The cwd is already the session data dir; use plain relative paths for normal inputs and outputs. The connector handoff directory is outside that cwd and must be resolved from `OPEN_SCIENCE_HANDOFF_DIR`. Never copy a saved file onto the same path. Do not modify original user files.',
+  '`manage_environments` creates separate runtimes and returns canonical `created.runtimeId`.',
+  'The notebook already runs inside a writable session workspace. cwd is the session data dir; use plain relative paths. Connector handoff is outside cwd and must be resolved from `OPEN_SCIENCE_HANDOFF_DIR`. Never copy a saved file onto the same path. Do not modify original user files.',
   'Use `inspect_packages` for version checks and `manage_packages` for installs. Never install inside a cell or shell. App-managed runtime contents belong under `$OPEN_SCIENCE_RUNTIME_DIR`, never the project, workspace, system Python, or a user global environment.',
   'MCP execution replies include bounded output for the next step; use it directly when sufficient. Full output remains in the notebook preview. Inspect stdout, stderr, traceback, outputs, and workingFiles, then revise and rerun if needed. The notebook runtime does not classify files for you.',
+  'Dependency metadata describes execution order, not an execution verdict: `clear` means no later tracked change, `stale` means a tracked dependency changed after that run, and `unknown` means tracking was incomplete. `stale` does not mean the run failed or its captured output is incorrect; rerun only when the task requires the current variable state.',
   'For a final user-facing file, call `write_artifact_file` from the `open-science-artifacts` server before announcing it. Use `source: { "kind": "localPath", "path": "plot.png" }` with the SAME relative filename you saved with and `producerRunId` set to the exact `runId` returned by the execution that last wrote it. Use inline content only for small text.',
   '</open_science_notebook_instructions>'
 ].join('\n')
@@ -83,6 +85,7 @@ const managePackagesToolSchema = {
   language: z.enum(['python', 'r']),
   packages: z.array(z.string().min(1)).min(1),
   usePip: z.boolean().optional(),
+  installer: z.enum(['biocmanager', 'github']).optional(),
   channels: z.array(z.string().min(1)).optional(),
   // No `environment`: packages install into the session's bound runtime (notebook_bind_runtime).
   operation: z.enum(['install', 'uninstall']).optional()
@@ -145,16 +148,18 @@ const INSPECT_PACKAGES_DOC = [
 
 const MANAGE_PACKAGES_DOC = [
   'Install packages in the session-bound runtime through this trusted tool only. Select with language="python" or language="r", usePip=true only for PyPI-only packages, and pass channels only when needed.',
+  'For managed R runtimes, installer="biocmanager" accepts Bioconductor package names and installer="github" accepts owner/repository or owner/repository@ref. Both are verified from the target R library inventory after installation.',
   'conda installs resolve conda-forge + bioconda by default. A CRAN R package is installed by its plain name (e.g. "dplyr" → r-dplyr); a Bioconductor R package must be named by its bioconda package id "bioconductor-<name>" in lowercase (e.g. DESeq2 → "bioconductor-deseq2"), which is left as-is (not r- prefixed).',
   'There is no per-call environment: bind/switch first. Default runtimes are additive-only (bare name or exact name==version); uninstall, ranges, URLs, extras, and downgrades require a named environment. External runtimes may refuse writes; surface that result.',
-  'operation defaults to install; use operation:"uninstall" only in a named environment. The concise result reports verified requested-package changes. New packages import immediately; use notebook_restart only to reload a newer version already imported.',
+  'operation:"uninstall" is named-only. Results include a target receipt. unchanged means only target distribution metadata is unchanged; verify imports with notebook_execute. Use notebook_restart when needsRestart.',
   'Never use apt, brew, sudo, curl | bash, subprocess installs, %pip, !pip, or install.packages(), and never substitute another library. Report required OS dependencies to the user instead of installing them.'
 ].join('\n')
 
 const MANAGE_ENVIRONMENTS_DOC = [
   'Create, list, or remove named persistent Python/R environments. Each is a separate process and namespace.',
-  `action:"create" needs language and name (optional initial packages); action:"list" reports provisioned environments in pages of at most ${MAX_ENVIRONMENT_RESULTS} using optional offset/limit and nextOffset; action:"remove" accepts a name.`,
-  'Create before bind/switch. Removal is limited to agent-created, idle named environments; defaults, app-managed versioned environments, and external interpreters cannot be removed.',
+  `Only action:"list" returns the full snapshot (at most ${MAX_ENVIRONMENT_RESULTS}, with offset/limit/nextOffset); action:"create" needs language/name (optional packages), and action:"remove" needs name. Mutations return only target receipts.`,
+  'Create returns created.runtimeId and does not select it; bind the first target, otherwise switch.',
+  'Removal is limited to agent-created, idle named environments; defaults, app-managed versioned environments, and external interpreters cannot be removed.',
   'Named data kernels cannot call connectors; use repl_execute and the OPEN_SCIENCE_HANDOFF_DIR environment path.'
 ].join('\n')
 
@@ -165,11 +170,12 @@ const LIST_NOTEBOOK_RUNTIMES_DOC = [
 
 const BIND_RUNTIME_DOC = [
   'Bind a language to one enabled runtimeId for the rest of this session (one runtime per language). Disabled/unknown IDs are refused.',
-  'Use switch to change an existing binding. notebook_execute then uses the binding automatically; no per-call runtime is accepted.'
+  'Use bind only when no binding exists; use switch to change an existing binding. notebook_execute then uses the binding automatically; no per-call runtime is accepted.'
 ].join('\n')
 
 const SWITCH_RUNTIME_DOC = [
   'Switch a language to another enabled runtimeId. This tears down that language kernel and clears its memory; other kernels are unaffected.',
+  'Requires an existing binding; it is not a first bind.',
   'The new per-session binding is used automatically by notebook_execute; disabled/unknown IDs are refused.'
 ].join('\n')
 
@@ -235,6 +241,7 @@ type NotebookRpcToolDefinition = {
   mapResult?: (raw: unknown, input: unknown) => unknown
   resultLimitChars?: number
   includeViewImages?: boolean
+  progressMessage?: string
 }
 
 type NotebookToolContent =
@@ -344,10 +351,11 @@ const callNotebookRpc = async (
   return payload.result
 }
 
-// Python/R cells are intentionally unbounded. Only their local RPC hop needs the transport that
-// omits Undici's response-headers deadline; short control methods retain the ordinary transport.
+// Python/R cells and control-plane REPL execution are intentionally unbounded. Their local RPC hop
+// needs the transport that omits Undici's response-headers deadline; short methods retain the
+// ordinary transport.
 const resolveNotebookRpcFetch = (method: string): typeof fetchLocalRpc =>
-  method === 'execute' ? fetchLongLivedLocalRpc : fetchLocalRpc
+  method === 'execute' || method === 'executeControl' ? fetchLongLivedLocalRpc : fetchLocalRpc
 
 // These character caps apply only to serialized MCP replies; full values stay in run.json and the
 // notebook preview.
@@ -362,6 +370,8 @@ const MAX_EXECUTION_FILES = 10
 const MAX_STATE_CELLS = 20
 const MAX_STATE_RUNS = 10
 const MAX_PACKAGE_RESULTS = 50
+const EXECUTION_STALENESS_LIMITS = { items: 20, text: 160 } as const
+const STATE_STALENESS_LIMITS = { items: 2, text: 48 } as const
 
 const isImageMime = (mime: string): boolean => mime.startsWith('image/')
 
@@ -392,6 +402,47 @@ const pickDefined = (
   return picked
 }
 
+const compactStaleness = (
+  value: unknown,
+  limits: { items: number; text: number }
+): { value?: Record<string, unknown>; truncated: boolean } => {
+  const record = asRecord(value)
+  if (!record) return { truncated: false }
+  let truncated = false
+  const text = (candidate: unknown): unknown => {
+    if (typeof candidate !== 'string' || candidate.length <= limits.text) return candidate
+    truncated = true
+    return `${candidate.slice(0, limits.text - 1)}…`
+  }
+  const list = (candidate: unknown, preserveEndpoints = false): unknown[] | undefined => {
+    if (!Array.isArray(candidate)) return undefined
+    const strings = candidate.filter((item): item is string => typeof item === 'string')
+    if (strings.length !== candidate.length) truncated = true
+    const selected =
+      preserveEndpoints && strings.length > limits.items
+        ? [
+            ...strings.slice(0, Math.ceil(limits.items / 2)),
+            ...strings.slice(-Math.floor(limits.items / 2))
+          ]
+        : strings.slice(0, limits.items)
+    if (selected.length < strings.length) truncated = true
+    return selected.map(text)
+  }
+  const names = list(record.names)
+  const path = list(record.path, true)
+  const reasons = list(record.reasons)
+  return {
+    value: {
+      ...pickDefined(record, ['state']),
+      ...(record.causedByRunId !== undefined ? { causedByRunId: text(record.causedByRunId) } : {}),
+      ...(names ? { names } : {}),
+      ...(path ? { path } : {}),
+      ...(reasons ? { reasons } : {})
+    },
+    truncated
+  }
+}
+
 const compactRuntimeBinding = (value: unknown): Record<string, unknown> | undefined => {
   const record = asRecord(value)
   return record
@@ -417,6 +468,21 @@ const compactRuntimeBindings = (value: unknown): Record<string, unknown> | undef
     if (binding) bindings[language] = binding
   }
   return Object.keys(bindings).length > 0 ? bindings : undefined
+}
+
+const compactRuntimeTarget = (value: unknown): Record<string, unknown> | undefined => {
+  const record = asRecord(value)
+  return record
+    ? pickDefined(record, [
+        'language',
+        'selection',
+        'runtimeSource',
+        'environmentName',
+        'runtimeId',
+        'label',
+        'prefix'
+      ])
+    : undefined
 }
 
 const compactWorkingFiles = (value: unknown): unknown[] => {
@@ -541,6 +607,7 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
   const compactOutputs = compactExecutionOutputs(record.outputs, stream('traceback'))
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const artifacts = compactArtifacts(record.artifacts)
+  const staleness = compactStaleness(record.staleness, EXECUTION_STALENESS_LIMITS)
   const filesOmitted =
     (Array.isArray(record.workingFiles) && record.workingFiles.length > workingFiles.length) ||
     (Array.isArray(record.artifacts) && record.artifacts.length > artifacts.length)
@@ -549,10 +616,25 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
     stderr.clipped ||
     traceback.clipped ||
     compactOutputs.truncated ||
-    filesOmitted
+    filesOmitted ||
+    staleness.truncated
   const captureTruncated = record.truncated === true
   const truncated = captureTruncated || resultCompacted
-
+  const invalidatedRuns = Array.isArray(record.invalidatedRuns)
+    ? record.invalidatedRuns.slice(0, 50).flatMap((value) => {
+        const invalidated = asRecord(value)
+        if (!invalidated) return []
+        return [
+          {
+            ...pickDefined(invalidated, ['runId', 'cellId', 'state']),
+            names: Array.isArray(invalidated.names) ? invalidated.names.slice(0, 20) : [],
+            ...(Array.isArray(invalidated.reasons)
+              ? { reasons: invalidated.reasons.slice(0, 20) }
+              : {})
+          }
+        ]
+      })
+    : []
   return {
     ...pickDefined(record, [
       'runId',
@@ -566,6 +648,8 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
       'endedAt',
       'exitCode'
     ]),
+    ...(staleness.value ? { staleness: staleness.value } : {}),
+    ...(invalidatedRuns.length ? { invalidatedRuns } : {}),
     ...(stdout.text ? { stdout: stdout.text } : {}),
     ...(stderr.text ? { stderr: stderr.text } : {}),
     ...(traceback.text ? { traceback: traceback.text } : {}),
@@ -589,7 +673,53 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
   }
 }
 
-const compactStateRun = (value: unknown, includeOutputPreview: boolean): unknown => {
+// Internal VM frames remain in the durable run but do not help the Agent repair its REPL request.
+const compactReplTraceback = (value: string): string => {
+  const lines = value.split(/\r?\n/)
+  const errorLine = lines.findIndex((line) => /^[A-Za-z_$][\w$]*(?:Error|Exception)\b/.test(line))
+  const messageStart = errorLine === -1 ? 0 : errorLine
+  const frameStart = lines.findIndex(
+    (line, index) =>
+      index >= messageStart &&
+      /^\s+at (?:(?:async|new)\s+)?(?:.+? \()?(?:node:|<repl>|file:|\/|[A-Za-z]:[\\/]).*:\d+:\d+\)?$/.test(
+        line
+      )
+  )
+  const message = lines.slice(messageStart, frameStart === -1 ? undefined : frameStart).join('\n')
+  return message.trim() || value
+}
+
+const compactReplExecutionResult = (raw: unknown): unknown => {
+  const record = asRecord(raw)
+  if (!record) return raw
+
+  const text = asRecord(record.text)
+  const outputs = Array.isArray(record.outputs)
+    ? record.outputs.map((value) => {
+        const output = asRecord(value)
+        return output?.type === 'error' && typeof output.traceback === 'string'
+          ? { ...output, traceback: compactReplTraceback(output.traceback) }
+          : value
+      })
+    : record.outputs
+
+  return compactNotebookExecutionResult({
+    ...record,
+    ...(typeof record.traceback === 'string'
+      ? { traceback: compactReplTraceback(record.traceback) }
+      : {}),
+    ...(text && typeof text.traceback === 'string'
+      ? { text: { ...text, traceback: compactReplTraceback(text.traceback) } }
+      : {}),
+    ...(Array.isArray(record.outputs) ? { outputs } : {})
+  })
+}
+
+const compactStateRun = (
+  value: unknown,
+  includeOutputPreview: boolean,
+  staleness?: unknown
+): unknown => {
   const record = asRecord(value)
   if (!record) return value
   const text = asRecord(record.text)
@@ -611,6 +741,7 @@ const compactStateRun = (value: unknown, includeOutputPreview: boolean): unknown
       ? clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT).text
       : undefined
   const workingFiles = compactWorkingFiles(record.workingFiles)
+  const compactedStaleness = compactStaleness(staleness, STATE_STALENESS_LIMITS)
 
   return {
     ...pickDefined(record, [
@@ -626,6 +757,7 @@ const compactStateRun = (value: unknown, includeOutputPreview: boolean): unknown
       'truncated'
     ]),
     ...(workingFiles.length ? { workingFiles } : {}),
+    ...(compactedStaleness.value ? { staleness: compactedStaleness.value } : {}),
     ...(outputPreview ? { outputPreview } : {})
   }
 }
@@ -639,6 +771,7 @@ const compactNotebookStateResult = (raw: unknown): unknown => {
   const runs = Array.isArray(record.runs) ? record.runs : []
   const recentSource = Array.isArray(record.recentRuns) ? record.recentRuns : runs
   const recentRuns = recentSource.slice(-MAX_STATE_RUNS)
+  const runStaleness = asRecord(record.runStaleness)
   const cells = Array.isArray(record.cells)
     ? record.cells.slice(-MAX_STATE_CELLS).flatMap((cell) => {
         const cellRecord = asRecord(cell)
@@ -673,16 +806,19 @@ const compactNotebookStateResult = (raw: unknown): unknown => {
     ...(cells.length ? { cells } : {}),
     runCount:
       typeof record.runCount === 'number' ? record.runCount : runs.length || recentSource.length,
-    recentRuns: recentRuns.map((run, index) =>
-      compactStateRun(run, index === recentRuns.length - 1)
-    ),
+    recentRuns: recentRuns.map((run, index) => {
+      const runRecord = asRecord(run)
+      const staleness =
+        typeof runRecord?.runId === 'string' ? runStaleness?.[runRecord.runId] : undefined
+      return compactStateRun(run, index === recentRuns.length - 1, staleness)
+    }),
     environmentCount: Array.isArray(record.environments) ? record.environments.length : 0,
     ...(environments.length ? { environments } : {}),
     ...(Array.isArray(record.environments) && record.environments.length > environments.length
       ? { omittedEnvironmentCount: record.environments.length - environments.length }
       : {}),
     historyCompacted: true,
-    note: 'Only recent run metadata and the latest output preview are returned; full history remains in the notebook preview.'
+    note: 'Only recent run metadata and the latest output preview are returned; dependency details may be shortened, and full history remains in the notebook preview.'
   }
 }
 
@@ -790,15 +926,39 @@ const registerNotebookRpcTool = (
         definition.method === 'requestUserInput'
           ? { ...input, _appToolRequestId: String(extra.requestId) }
           : input
-      const raw = await callNotebookRpc(
-        environment,
-        definition.method,
-        rpcInput,
-        resolveNotebookRpcFetch(definition.method),
-        extra.signal
-      )
-      return {
-        content: buildNotebookToolContent(raw, definition, input)
+      const progressToken = extra._meta?.progressToken
+      let progress = 0
+      const heartbeat =
+        definition.progressMessage !== undefined && progressToken !== undefined
+          ? setInterval(() => {
+              progress += 1
+              void extra
+                .sendNotification({
+                  method: 'notifications/progress',
+                  params: {
+                    progressToken,
+                    progress,
+                    message: definition.progressMessage
+                  }
+                })
+                .catch(() => undefined)
+            }, NOTEBOOK_MCP_PROGRESS_HEARTBEAT_MS)
+          : undefined
+      heartbeat?.unref()
+
+      try {
+        const raw = await callNotebookRpc(
+          environment,
+          definition.method,
+          rpcInput,
+          resolveNotebookRpcFetch(definition.method),
+          extra.signal
+        )
+        return {
+          content: buildNotebookToolContent(raw, definition, input)
+        }
+      } finally {
+        if (heartbeat) clearInterval(heartbeat)
       }
     }
   )
@@ -879,7 +1039,13 @@ const compactRuntimeBindingResult = (raw: unknown): unknown => {
   const record = asRecord(raw)
   if (!record) return raw
   const bound = compactRuntimeBinding(record.bound)
-  return bound ? { bound } : {}
+  const target = compactRuntimeTarget(record.target)
+  return {
+    ...(bound ? { bound } : {}),
+    ...pickDefined(record, ['ok', 'bindingChanged']),
+    ...(typeof record.error === 'string' ? { error: clipToolDiagnostic(record.error, 2_000) } : {}),
+    ...(target ? { target } : {})
+  }
 }
 
 const compactShutdownResult = (raw: unknown): unknown => {
@@ -934,6 +1100,29 @@ const compactInspectPackagesResult = (raw: unknown): unknown => {
 const compactManageEnvironmentsResult = (raw: unknown, input: unknown = {}): unknown => {
   const record = asRecord(raw)
   if (!record) return raw
+  const request = asRecord(input)
+  const createdRecord = asRecord(record.created)
+  const created = createdRecord
+    ? {
+        ...pickDefined(createdRecord, ['name', 'language', 'runtimeId', 'runnable']),
+        ...(typeof createdRecord.detail === 'string'
+          ? { detail: clipToolDiagnostic(createdRecord.detail, 500) }
+          : {})
+      }
+    : undefined
+  if (request?.action === 'create' || created) return created ? { created } : {}
+
+  if (request?.action === 'remove' || record.removed !== undefined) {
+    const removedRecord = asRecord(record.removed)
+    const name =
+      typeof removedRecord?.name === 'string'
+        ? removedRecord.name
+        : typeof request?.name === 'string'
+          ? request.name
+          : undefined
+    return name ? { removed: { name } } : {}
+  }
+
   const source = Array.isArray(record.environments) ? record.environments : []
   const { offset, limit } = resultPage(input, MAX_ENVIRONMENT_RESULTS)
   const pageSource = source.slice(offset, offset + limit)
@@ -942,7 +1131,6 @@ const compactManageEnvironmentsResult = (raw: unknown, input: unknown = {}): unk
     return item ? [pickDefined(item, ['name', 'language', 'ready', 'isDefault', 'sizeBytes'])] : []
   })
   return {
-    environmentCount: source.length,
     offset,
     environments,
     ...(offset + pageSource.length < source.length
@@ -964,39 +1152,75 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
     Number(logTruncation.droppedBytes) > 0
       ? Number(logTruncation.droppedBytes)
       : undefined
-  const packageChanges = Array.isArray(result.packageChanges)
-    ? result.packageChanges.slice(0, MAX_PACKAGE_RESULTS).flatMap((change) => {
-        const item = asRecord(change)
-        return item
-          ? [
-              pickDefined(item, [
-                'name',
-                'ecosystem',
-                'relationship',
-                'change',
-                'beforeVersion',
-                'afterVersion'
-              ])
-            ]
-          : []
-      })
-    : undefined
-  return {
+  const target = compactRuntimeTarget(result.target)
+  const base = {
     ok: result.ok,
     needsRestart: result.needsRestart,
+    ...(result.environmentName !== undefined ? { environmentName: result.environmentName } : {}),
     ...(result.method !== undefined ? { method: result.method } : {}),
+    ...(asRecord(result.source)
+      ? {
+          source: pickDefined(asRecord(result.source)!, [
+            'type',
+            'repository',
+            'ref',
+            'commit',
+            'version'
+          ])
+        }
+      : {}),
     ...(result.fallbackUsed !== undefined ? { fallbackUsed: result.fallbackUsed } : {}),
     ...(droppedLogBytes !== undefined ? { logTruncation: { droppedBytes: droppedLogBytes } } : {}),
-    ...(packageChanges !== undefined ? { packageChanges } : {}),
-    ...(Array.isArray(result.packageChanges) &&
-    result.packageChanges.length > (packageChanges?.length ?? 0)
-      ? { omittedPackageChangeCount: result.packageChanges.length - (packageChanges?.length ?? 0) }
-      : {}),
+    ...(target ? { target } : {}),
     ...(typeof result.error === 'string'
       ? { error: clipToolDiagnostic(result.error, 2_000) }
       : result.error !== undefined
         ? { error: result.error }
         : {})
+  }
+  if (!Array.isArray(result.packageChanges)) return base
+
+  const orderedChanges = [
+    ...result.packageChanges.filter((change) => asRecord(change)?.relationship === 'requested'),
+    ...result.packageChanges.filter((change) => asRecord(change)?.relationship !== 'requested')
+  ]
+  const candidates = orderedChanges.slice(0, MAX_PACKAGE_RESULTS).flatMap((change) => {
+    const item = asRecord(change)
+    if (!item) return []
+    const compact = pickDefined(item, [
+      'name',
+      'ecosystem',
+      'relationship',
+      'change',
+      'beforeVersion',
+      'afterVersion'
+    ])
+    for (const [key, value] of Object.entries(compact)) {
+      if (typeof value === 'string') compact[key] = clipToolDiagnostic(value, 256)
+    }
+    const source = asRecord(item.source)
+    if (source) {
+      compact.source = pickDefined(source, ['type', 'repository', 'ref', 'commit', 'version'])
+    }
+    return [compact]
+  })
+  const packageChanges: Record<string, unknown>[] = []
+  for (const change of candidates) {
+    const next = [...packageChanges, change]
+    const omittedPackageChangeCount = result.packageChanges.length - next.length
+    const candidate = {
+      ...base,
+      packageChanges: next,
+      ...(omittedPackageChangeCount > 0 ? { omittedPackageChangeCount } : {})
+    }
+    if (JSON.stringify(candidate, null, 2).length > NOTEBOOK_MCP_CONTROL_RESULT_LIMIT) break
+    packageChanges.push(change)
+  }
+  const omittedPackageChangeCount = result.packageChanges.length - packageChanges.length
+  return {
+    ...base,
+    packageChanges,
+    ...(omittedPackageChangeCount > 0 ? { omittedPackageChangeCount } : {})
   }
 }
 
@@ -1020,7 +1244,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     method: 'execute',
     inputSchema: executeToolSchema,
     mapResult: compactNotebookExecutionResult,
-    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
+    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
+    progressMessage: 'Notebook execution is still running.'
   },
   {
     name: 'repl_execute',
@@ -1028,9 +1253,10 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: REPL_EXECUTE_DOC,
     method: 'executeControl',
     inputSchema: replExecuteToolSchema,
-    mapResult: compactNotebookExecutionResult,
+    mapResult: compactReplExecutionResult,
     includeViewImages: true,
-    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
+    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
+    progressMessage: 'Control-plane REPL execution is still running.'
   },
   {
     name: 'bash_execute',

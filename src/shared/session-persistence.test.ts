@@ -4,6 +4,7 @@ import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
 
 import {
   SESSION_FILE_VERSION,
+  collectSessionReferences,
   createSessionFile,
   ConversationGraphMaterializationError,
   decodeSessionFile,
@@ -513,6 +514,55 @@ describe('message attribution persistence', () => {
 })
 
 describe('message part persistence', () => {
+  it('collects at most five unique Session references with their first title snapshot', () => {
+    expect(
+      collectSessionReferences([
+        { type: 'session', sessionId: 'session-1', title: 'Original title' },
+        { type: 'session', sessionId: 'session-1', title: 'Renamed title' },
+        ...Array.from({ length: 5 }, (_, index) => ({
+          type: 'session' as const,
+          sessionId: `session-${index + 2}`,
+          title: `Session ${index + 2}`
+        }))
+      ])
+    ).toEqual([
+      { type: 'session', sessionId: 'session-1', title: 'Original title' },
+      { type: 'session', sessionId: 'session-2', title: 'Session 2' },
+      { type: 'session', sessionId: 'session-3', title: 'Session 3' },
+      { type: 'session', sessionId: 'session-4', title: 'Session 4' },
+      { type: 'session', sessionId: 'session-5', title: 'Session 5' }
+    ])
+  })
+
+  it('preserves only Session identity and the reference-time title snapshot', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: '#Earlier result',
+          parts: [
+            {
+              type: 'session',
+              sessionId: 'session-2',
+              title: 'Earlier result',
+              projectId: 'must-not-persist',
+              frameId: 'must-not-persist'
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].parts).toEqual([
+      { type: 'session', sessionId: 'session-2', title: 'Earlier result' }
+    ])
+  })
+
   it('round-trips managed file and Version identity for an upload mention', () => {
     const restored = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
@@ -2851,7 +2901,7 @@ describe('normalizeSessionFile with activities', () => {
     expect(malformed?.filesRevision).toBeUndefined()
   })
 
-  it('round-trips agent, provider, backend, and model identity', () => {
+  it('round-trips agent, provider, backend, model identity, and Session configuration', () => {
     const session = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
       activities: undefined,
@@ -2859,7 +2909,12 @@ describe('normalizeSessionFile with activities', () => {
       agentBackendId: 'codex:codex-isolated',
       providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
       providerContinuityToken: 'bridge-generation-1',
-      agentModel: 'gpt-5.6-sol'
+      agentModel: 'gpt-5.6-sol',
+      agentConfiguration: {
+        providerId: 'codex-isolated',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'high'
+      }
     })
 
     expect(session?.agentFrameworkId).toBe('codex')
@@ -2867,6 +2922,25 @@ describe('normalizeSessionFile with activities', () => {
     expect(session?.providerSessionId).toBe('019fb8c8-6c66-7f22-9653-17b5b287dbbb')
     expect(session?.providerContinuityToken).toBe('bridge-generation-1')
     expect(session?.agentModel).toBe('gpt-5.6-sol')
+    expect(session?.agentConfiguration).toEqual({
+      providerId: 'codex-isolated',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'high'
+    })
+  })
+
+  it('drops malformed Session agent configurations', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      agentConfiguration: {
+        providerId: 'provider',
+        model: 'model',
+        reasoningEffort: 'extreme'
+      }
+    })
+
+    expect(session?.agentConfiguration).toBeUndefined()
   })
 
   it('keeps known approval profiles and safely defaults unknown values', () => {

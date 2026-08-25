@@ -151,6 +151,7 @@ const api: OpenScienceAPI = {
     resetSessionContext: (request) =>
       electronRendererContracts.invoke('acp.resetSessionContext', request),
     sendPrompt: (request) => electronRendererContracts.invoke('acp.sendPrompt', request),
+    steerFollowUp: (request) => electronRendererContracts.invoke('acp.steerFollowUp', request),
     saveAsSkill: (request) => electronRendererContracts.invoke('acp.saveAsSkill', request),
     compactSession: (request) => electronRendererContracts.invoke('acp.compactSession', request),
     cancel: (request) => electronRendererContracts.invoke('acp.cancel', request),
@@ -192,10 +193,13 @@ const api: OpenScienceAPI = {
     onChanged: (listener) => electronRendererContracts.subscribe('permissions.onChanged', listener)
   },
   sessions: {
+    // Lists lightweight SQLite-backed Session metadata without reading transcript JSON files.
+    list: () => electronRendererContracts.invoke('sessions.list'),
     // Loads every per-session file plus the last-open manifest from the main process.
     loadAll: () => electronRendererContracts.invoke('sessions.loadAll'),
     // Loads one durable Session without scanning unrelated Project/Session files.
     loadOne: (request) => electronRendererContracts.invoke('sessions.loadOne', request),
+    loadUsage: () => electronRendererContracts.invoke('sessions.loadUsage'),
     // Persists a single sanitized session file.
     saveSession: async (session, options) =>
       unwrapApplicationCommandOutcome(
@@ -272,6 +276,10 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.validateProvider', request),
     cancelCodexLogin: () => electronRendererContracts.invoke('settings.cancelCodexLogin'),
     cancelClaudeLogin: () => electronRendererContracts.invoke('settings.cancelClaudeLogin'),
+    beginXaiOAuthLogin: () => electronRendererContracts.invoke('settings.beginXaiOAuthLogin'),
+    waitXaiOAuthLogin: () => electronRendererContracts.invoke('settings.waitXaiOAuthLogin'),
+    cancelXaiOAuthLogin: () => electronRendererContracts.invoke('settings.cancelXaiOAuthLogin'),
+    logoutXaiOAuth: () => electronRendererContracts.invoke('settings.logoutXaiOAuth'),
     loginIsolatedCodex: () => electronRendererContracts.invoke('settings.loginIsolatedCodex'),
     logoutIsolatedCodex: () => electronRendererContracts.invoke('settings.logoutIsolatedCodex'),
     loginSharedClaude: () => electronRendererContracts.invoke('settings.loginSharedClaude'),
@@ -869,12 +877,16 @@ const api: OpenScienceAPI = {
     // Cmd/Ctrl+F. Returns a teardown that announces UNREADY on unmount.
     announceWindowFindReady: () =>
       announceWindowFindReady({ send: (channel) => ipcRenderer.send(channel) }),
+    announceWindowFindContentReady: () =>
+      electronRendererContracts.send('window.announceWindowFindContentReady'),
     onFindInPageResult: (listener) =>
       electronRendererContracts.subscribe('window.onFindInPageResult', listener),
     // Overlay-only surface: main signals the bar was shown (focus + restore remembered query), and the
     // overlay asks main to hide it. The localhost Web UI never loads this overlay, so both stay optional.
     onShowWindowFind: (listener) =>
       electronRendererContracts.subscribe('window.onShowWindowFind', listener),
+    onHideWindowFind: (listener) =>
+      electronRendererContracts.subscribe('window.onHideWindowFind', listener),
     onWindowFindAppearance: (listener) =>
       electronRendererContracts.subscribe('window.onWindowFindAppearance', listener),
     announceWindowFindAppearance: (appearance) =>

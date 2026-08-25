@@ -389,6 +389,7 @@ const createPanelDefaults = (): PanelProps => ({
     }
   },
   conversation: {
+    optimisticMessage: undefined,
     availability: {
       submit: false,
       submitMode: undefined,
@@ -442,6 +443,7 @@ const createPanelDefaults = (): PanelProps => ({
     },
     actions: {
       selectSpecialist: vi.fn(),
+      retrySpecialistSelection: vi.fn(() => false),
       chooseOtherSpecialist: vi.fn(),
       useMainAgent: vi.fn()
     }
@@ -611,6 +613,51 @@ describe('ConversationPanel header spacing', () => {
   })
 })
 
+describe('ConversationPanel session loading presentation', () => {
+  it('replaces the transcript with a skeleton until lazy Session content is hydrated', () => {
+    const loadingSession: ChatSession = {
+      id: 'session-loading',
+      projectId: 'project-a',
+      title: 'Loading conversation',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      contentLoaded: false,
+      activeMessageCount: 12,
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({ view: { activeSession: loadingSession } })
+
+    expect(container.querySelector('[data-testid="session-switch-skeleton"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="scroller-pending-elicitations"]')).toBeNull()
+
+    renderPanel({
+      view: {
+        activeSession: {
+          ...loadingSession,
+          contentLoaded: undefined,
+          messages: [
+            {
+              id: 'message-1',
+              role: 'user',
+              content: 'Loaded content',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        }
+      }
+    })
+
+    expect(container.querySelector('[data-testid="session-switch-skeleton"]')).toBeNull()
+    expect(container.querySelector('[data-testid="scroller-pending-elicitations"]')).not.toBeNull()
+  })
+})
+
 const hasDropOverlay = (): boolean =>
   container.textContent?.includes('Drop files to attach') ?? false
 
@@ -632,6 +679,80 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
   container.remove()
+})
+
+describe('ConversationPanel Specialist reconfigure recovery', () => {
+  const activeSession: ChatSession = {
+    id: 'session-specialist-retry',
+    projectId: 'project-a',
+    title: 'Specialist retry',
+    cwd: '/workspace',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+
+  const clickRetry = (): void => {
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    const retryButton = Array.from(banner?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent === 'Retry'
+    )
+    act(() => retryButton?.click())
+  }
+
+  const errorView = {
+    sessionId: activeSession.id,
+    specialistName: 'Specialist B',
+    message: 'switch rejected',
+    committed: false
+  }
+
+  it('retries an idle Specialist selection without submitting the draft', () => {
+    const retrySpecialistSelection = vi.fn(() => true)
+    const retryDraftReconfigure = vi.fn()
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: { specialist: { reconfigureError: errorView } },
+        actions: { retrySpecialistSelection }
+      },
+      conversation: {
+        actions: {
+          submit: { draft: routeDraftSubmit({ reconfigure: retryDraftReconfigure }) }
+        }
+      }
+    })
+
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    expect(banner?.textContent).toContain('Could not switch to Specialist B')
+    clickRetry()
+
+    expect(retrySpecialistSelection).toHaveBeenCalledOnce()
+    expect(retryDraftReconfigure).not.toHaveBeenCalled()
+  })
+
+  it('keeps send-barrier Retry routed through draft submission', () => {
+    const retrySpecialistSelection = vi.fn(() => false)
+    const retryDraftReconfigure = vi.fn()
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: { specialist: { reconfigureError: errorView } },
+        actions: { retrySpecialistSelection }
+      },
+      conversation: {
+        actions: {
+          submit: { draft: routeDraftSubmit({ reconfigure: retryDraftReconfigure }) }
+        }
+      }
+    })
+
+    clickRetry()
+
+    expect(retrySpecialistSelection).toHaveBeenCalledOnce()
+    expect(retryDraftReconfigure).toHaveBeenCalledOnce()
+  })
 })
 
 describe('ConversationPanel composer intake', () => {
@@ -913,7 +1034,7 @@ describe('ConversationPanel composer intake', () => {
     renderPanel()
 
     expect(getComposerEditor().getAttribute('data-placeholder')).toBe(
-      `Ask anything — / skills · @ files · ${shortcut} search · ↑↓ history`
+      `Ask anything — / skills · @ files · # sessions · ${shortcut} search · ↑↓ history`
     )
     window.api = previousApi
   })
@@ -2207,7 +2328,7 @@ describe('ConversationPanel composer intake', () => {
     expect(agentControls?.getAttribute('data-grants-read-only')).toBe('true')
     expect(agentControls?.getAttribute('data-auto-review-disabled')).toBe('true')
     expect(agentControls?.getAttribute('data-specialist-read-only')).toBe('true')
-    expect((modelPicker as HTMLButtonElement).disabled).toBe(false)
+    expect(modelPicker).toBeNull()
     const followUp = container.querySelector('textarea[placeholder="Follow up…"]')
     expect(followUp).not.toBeNull()
     expect(document.activeElement).toBe(followUp)
@@ -3897,6 +4018,104 @@ describe('ConversationPanel fix loop lock', () => {
     ).toContain('Available Specialist')
   })
 
+  it('shows the selected Specialist while idle reconfiguration is in flight', () => {
+    useSpecialistStore.setState({
+      items: [
+        {
+          kind: 'custom',
+          id: 'specialist-a',
+          name: 'SPECIALIST_A',
+          displayName: 'Specialist A',
+          colorKey: 'blue',
+          description: 'Currently applied.',
+          systemPrompt: 'Help the user.',
+          enabled: true,
+          capabilityMode: 'full',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        },
+        {
+          kind: 'custom',
+          id: 'specialist-b',
+          name: 'SPECIALIST_B',
+          displayName: 'Specialist B',
+          colorKey: 'purple',
+          description: 'Being configured.',
+          systemPrompt: 'Help the user.',
+          enabled: true,
+          capabilityMode: 'full',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        }
+      ],
+      isLoaded: true
+    })
+
+    renderPanel({
+      view: {
+        activeSession: { ...idleSession, specialistId: 'specialist-a' }
+      },
+      specialist: {
+        view: {
+          specialist: {
+            historyId: 'specialist-b',
+            barrierInFlight: true
+          }
+        }
+      }
+    })
+
+    expect(
+      container
+        .querySelector('[data-testid="composer-specialist-picker-trigger"]')
+        ?.getAttribute('aria-label')
+    ).toContain('Specialist B')
+  })
+
+  it('keeps the Specialist control visible while switching back to Main Agent', () => {
+    useSpecialistStore.setState({
+      items: [
+        {
+          kind: 'custom',
+          id: 'specialist-a',
+          name: 'SPECIALIST_A',
+          displayName: 'Specialist A',
+          colorKey: 'blue',
+          description: 'Currently applied.',
+          systemPrompt: 'Help the user.',
+          enabled: true,
+          capabilityMode: 'full',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        }
+      ],
+      isLoaded: true
+    })
+
+    renderPanel({
+      view: {
+        activeSession: { ...idleSession, specialistId: 'specialist-a' }
+      },
+      specialist: {
+        view: {
+          specialist: {
+            historyId: undefined,
+            barrierInFlight: true
+          }
+        }
+      }
+    })
+
+    expect(
+      container
+        .querySelector('[data-testid="composer-specialist-picker-trigger"]')
+        ?.getAttribute('aria-label')
+    ).toContain('Specialist A')
+  })
+
   it('cancel button is visible when session is running and calls onCancelRun', () => {
     const onCancelRun = vi.fn()
     const runningSession: ChatSession = {
@@ -4701,6 +4920,73 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(openSettingsToPanel).toHaveBeenCalledWith('model')
   })
 
+  it('opens Agent settings instead of reporting an unsupported Codex ACP version', () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({ openSettingsToPanel })
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          error:
+            'Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.',
+          errorReportable: true
+        }
+      }
+    })
+
+    expect(errorBoxText()).toContain('Codex ACP adapter 1.1.4 is no longer supported.')
+    expect(reportButton()).toBeNull()
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent === 'Agent settings'
+    )
+    expect(button).toBeDefined()
+    act(() => button?.click())
+    expect(openSettingsToPanel).toHaveBeenCalledWith('agent')
+  })
+
+  it('opens Agent settings from an unsupported Codex ACP session resume failure', () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({ openSettingsToPanel })
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          interrupted: true,
+          error:
+            'Agent session resume failed: Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
+        }
+      }
+    })
+
+    expect(errorBoxText()).toContain('Agent session resume failed: Codex ACP adapter 1.1.4')
+    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent === 'Agent settings'
+    )
+    expect(button).toBeDefined()
+    act(() => button?.click())
+    expect(openSettingsToPanel).toHaveBeenCalledWith('agent')
+  })
+
+  it('keeps an unrelated session resume failure in the Resume banner', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          interrupted: true,
+          error: 'Agent session resume failed: connection reset'
+        }
+      }
+    })
+
+    expect(container.querySelector('[aria-label="Resume session"]')).not.toBeNull()
+    expect(
+      Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent === 'Agent settings'
+      )
+    ).toBeUndefined()
+  })
+
   it('shows both a transient actionError and the run failure, keeping the Report button', () => {
     // Both present: each error gets its own row, and the run failure keeps its report entry — a
     // transient error must not suppress the ability to report the actual failure.
@@ -4714,6 +5000,23 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(text).toContain('Could not send message')
     expect(text).toContain('Run failed: connection reset')
     expect(reportButton()).not.toBeNull()
+  })
+
+  it('keeps a reportable run action beside unsupported Codex action guidance', () => {
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, errorReportable: true },
+        actionError:
+          'Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
+      }
+    })
+
+    expect(reportButton()).not.toBeNull()
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (candidate) => candidate.textContent === 'Agent settings'
+      )
+    ).toBe(true)
   })
 
   it('opens the report dialog when the Report button is clicked', () => {
@@ -4827,5 +5130,19 @@ describe('ConversationPanel error box + report affordance', () => {
       }
     })
     expect(reportButton()).not.toBeNull()
+  })
+
+  it('hides the Report button for a persisted Claude API connection failure without the reportable flag', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          error: 'Internal error: API Error: Unable to connect to API (ConnectionRefused)',
+          errorReportable: undefined
+        }
+      }
+    })
+    expect(errorBoxText()).toContain('Unable to connect to API (ConnectionRefused)')
+    expect(reportButton()).toBeNull()
   })
 })

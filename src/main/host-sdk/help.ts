@@ -41,7 +41,7 @@ type HostSdkHelpOperationDescriptor = Readonly<{
   path: string
   aliases: readonly string[]
   summary: string
-  call_forms: readonly Readonly<{ signature: string; accepts: string }>[]
+  callForms: readonly Readonly<{ signature: string; accepts: string }>[]
   request: Readonly<Record<string, unknown>>
   options: Readonly<Record<string, unknown>>
   returns: Readonly<Record<string, unknown>>
@@ -100,15 +100,15 @@ const rootOnlyAvailability =
 const NO_OPTIONS = { fields: [] } as const
 
 const DELEGATION_CHILD_FIELDS = [
-  { name: 'frame_id', type: 'string', required: true, description: 'Child Frame id.' },
+  { name: 'frameId', type: 'string', required: true, description: 'Child Frame id.' },
   {
-    name: 'attempt_id',
+    name: 'attemptId',
     type: 'string',
     required: true,
     description: 'Selected Attempt id.'
   },
   { name: 'name', type: 'string', required: true, description: 'Child name.' },
-  { name: 'agent_name', type: 'string', required: true, description: 'Specialist.' },
+  { name: 'agentName', type: 'string', required: true, description: 'Specialist.' },
   {
     name: 'status',
     type: 'string',
@@ -116,33 +116,33 @@ const DELEGATION_CHILD_FIELDS = [
     description: 'running/completed/cancelled/error.'
   },
   {
-    name: 'terminal_message_id',
+    name: 'terminalMessageId',
     type: 'string',
     when: 'terminal',
     description: 'Terminal message id.'
   },
   { name: 'response', type: 'string', when: 'completed', description: 'Final text.' },
   {
-    name: 'artifacts_created',
+    name: 'artifactsCreated',
     type: 'array',
     when: 'terminal',
     description: 'Created Artifacts.'
   },
   {
-    name: 'cancellation_reason',
+    name: 'cancellationReason',
     type: 'string',
     when: 'cancelled',
     description: 'Stop reason.'
   },
   { name: 'error', type: 'object', when: 'error', description: 'Failure details.' },
   {
-    name: 'structured_output',
+    name: 'structuredOutput',
     type: 'JSON value',
     when: 'submitted',
     description: 'Validated output.'
   },
   {
-    name: 'structured_output_unsatisfied',
+    name: 'structuredOutputUnsatisfied',
     type: 'boolean',
     when: 'terminal without required submission',
     description: 'Required output missing.'
@@ -155,7 +155,7 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.delegate',
   aliases: ['delegate'],
   summary: 'Dispatch one child or an atomic fan-out; optionally observe it.',
-  call_forms: [
+  callForms: [
     {
       signature: 'await host.delegate(request | requests, options?)',
       accepts: 'object_or_non_empty_array'
@@ -230,7 +230,7 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         statuses: ['completed', 'cancelled', 'error']
       }
     ],
-    child_fields: DELEGATION_CHILD_FIELDS
+    childFields: DELEGATION_CHILD_FIELDS
   },
   constraints: [
     'Main/root only; no nested delegation.',
@@ -257,11 +257,11 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
 }
 
 const INVENTORY_FIELDS = [
-  { name: 'frame_id', type: 'string', required: true, description: 'Stable child Frame id.' },
-  { name: 'attempt_id', type: 'string', required: true, description: 'Current Attempt id.' },
+  { name: 'frameId', type: 'string', required: true, description: 'Stable child Frame id.' },
+  { name: 'attemptId', type: 'string', required: true, description: 'Current Attempt id.' },
   { name: 'title', type: 'string', required: false, description: 'Legacy display title.' },
   { name: 'name', type: 'string', required: true, description: 'Child name.' },
-  { name: 'agent_name', type: 'string', required: true, description: 'Specialist name.' },
+  { name: 'agentName', type: 'string', required: true, description: 'Specialist name.' },
   {
     name: 'status',
     type: 'string',
@@ -276,7 +276,7 @@ const CHILDREN_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.children',
   aliases: ['children'],
   summary: 'List current direct-child Attempts on the active Message Branch.',
-  call_forms: [{ signature: 'await host.children(frameIds?)', accepts: 'optional_frame_id_array' }],
+  callForms: [{ signature: 'await host.children(frameIds?)', accepts: 'optional_frame_id_array' }],
   request: {
     fields: [
       {
@@ -288,7 +288,7 @@ const CHILDREN_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
     ]
   },
   options: NO_OPTIONS,
-  returns: { type: 'array', item_fields: INVENTORY_FIELDS },
+  returns: { type: 'array', itemFields: INVENTORY_FIELDS },
   constraints: [
     'Main/root only; results cover current direct-child Attempts on the active branch.',
     'Results preserve durable admission order; historical Attempt handles are not recovered.'
@@ -305,8 +305,8 @@ const COLLECT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   id: 'host.collect',
   path: 'host.collect',
   aliases: ['collect'],
-  summary: 'Observe pinned child Attempts until all settle or a deadline expires.',
-  call_forms: [
+  summary: 'Observe pinned Attempts until any/all settle or time expires.',
+  callForms: [
     { signature: 'await host.collect(selectors, options?)', accepts: 'non_empty_selector_array' }
   ],
   request: {
@@ -328,18 +328,26 @@ const COLLECT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         default: 30,
         range: '0..1800',
         description: 'Observation deadline.'
+      },
+      {
+        name: 'returnWhen',
+        type: 'string',
+        required: false,
+        default: 'all',
+        description: 'all waits for every pinned Attempt; any returns after the first settles.'
       }
     ]
   },
-  returns: { type: 'array', item_fields: DELEGATION_CHILD_FIELDS },
+  returns: { type: 'array', itemFields: DELEGATION_CHILD_FIELDS },
   constraints: [
     'Main/root only; only direct children on the active branch are collectible.',
-    'Expiry returns running observations and never stops a child.'
+    'Expiry returns every latest observation and never stops a child.',
+    'To wait for the next settlement with any, first use host.children() and select exact handles for currently running Attempts.'
   ],
   examples: [
     {
       title: 'Collect pinned Attempts',
-      code: 'await host.collect(sent.children.map(({ frame_id, attempt_id }) => ({ frameId: frame_id, attemptId: attempt_id })))'
+      code: 'await host.collect(sent.children.map(({ frameId, attemptId }) => ({ frameId, attemptId })))'
     }
   ],
   resolveAvailability: rootOnlyAvailability('collect', 'Delegate agents cannot collect children.')
@@ -351,9 +359,7 @@ const STOP_CHILD_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.stopChild',
   aliases: ['stopChild'],
   summary: 'Stop one or more direct-child Frames.',
-  call_forms: [
-    { signature: 'await host.stopChild(frameIds)', accepts: 'non_empty_frame_id_array' }
-  ],
+  callForms: [{ signature: 'await host.stopChild(frameIds)', accepts: 'non_empty_frame_id_array' }],
   request: {
     fields: [
       {
@@ -367,8 +373,8 @@ const STOP_CHILD_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   options: NO_OPTIONS,
   returns: {
     type: 'array',
-    item_fields: [
-      { name: 'frame_id', type: 'string', required: true, description: 'Requested Frame.' },
+    itemFields: [
+      { name: 'frameId', type: 'string', required: true, description: 'Requested Frame.' },
       {
         name: 'status',
         type: 'string',
@@ -384,7 +390,7 @@ const STOP_CHILD_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   examples: [
     {
       title: 'Stop children',
-      code: 'await host.stopChild(current.map(({ frame_id }) => frame_id))'
+      code: 'await host.stopChild(current.map(({ frameId }) => frameId))'
     }
   ],
   resolveAvailability: rootOnlyAvailability(
@@ -399,7 +405,7 @@ const SUBMIT_OUTPUT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.submitOutput',
   aliases: ['submitOutput'],
   summary: 'Submit the authenticated child Attempt structured JSON value.',
-  call_forms: [{ signature: 'await host.submitOutput(value)', accepts: 'json_value' }],
+  callForms: [{ signature: 'await host.submitOutput(value)', accepts: 'json_value' }],
   request: {
     fields: [
       {
@@ -419,6 +425,7 @@ const SUBMIT_OUTPUT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   },
   constraints: [
     'Available only to a running child delegated with outputSchema.',
+    'A configured structured submission is mandatory and supplements rather than replaces the child’s ordinary final response.',
     'The first valid value is durable; equal retry is idempotent and different retry is rejected.'
   ],
   examples: [{ title: 'Submit output', code: 'await host.submitOutput({ answer: 42 })' }],
@@ -440,17 +447,17 @@ const messageAvailability =
     capabilities[operation] ? { status: 'available' } : unavailableProvisioning(operation)
 
 const DELIVERY_RECEIPT_FIELDS = [
-  { name: 'request_id', type: 'string', required: true, description: 'Idempotency key.' },
-  { name: 'message_id', type: 'string', required: true, description: 'Command id.' },
-  { name: 'source_frame_id', type: 'string', required: true, description: 'Sender Frame.' },
-  { name: 'target_frame_id', type: 'string', required: true, description: 'Receiver Frame.' },
+  { name: 'requestId', type: 'string', required: true, description: 'Idempotency key.' },
+  { name: 'messageId', type: 'string', required: true, description: 'Command id.' },
+  { name: 'sourceFrameId', type: 'string', required: true, description: 'Sender Frame.' },
+  { name: 'targetFrameId', type: 'string', required: true, description: 'Receiver Frame.' },
   {
-    name: 'reply_to_message_id',
+    name: 'replyToMessageId',
     type: 'string',
     required: false,
     description: 'Replied-to message.'
   },
-  { name: 'queued_at', type: 'number', required: true, description: 'Queue time.' },
+  { name: 'queuedAt', type: 'number', required: true, description: 'Queue time.' },
   { name: 'direction', type: 'string', required: true, description: 'Route.' },
   {
     name: 'disposition',
@@ -459,25 +466,25 @@ const DELIVERY_RECEIPT_FIELDS = [
     description: 'Delivery form.'
   },
   {
-    name: 'target_attempt_id',
+    name: 'targetAttemptId',
     type: 'string',
     when: 'to_child message',
     description: 'Receiver Attempt.'
   },
   {
-    name: 'continuation_attempt_id',
+    name: 'continuationAttemptId',
     type: 'string',
     when: 'to_child continued',
     description: 'New Attempt.'
   },
   {
-    name: 'source_attempt_id',
+    name: 'sourceAttemptId',
     type: 'string',
     when: 'to_parent',
     description: 'Sender Attempt.'
   },
   {
-    name: 'root_prompt_message_id',
+    name: 'rootPromptMessageId',
     type: 'string',
     when: 'to_parent',
     description: 'Root prompt id.'
@@ -489,18 +496,18 @@ const DELIVERY_RECEIPT_FIELDS = [
     description: 'Delivery state.'
   },
   {
-    name: 'dispatch_started_at',
+    name: 'dispatchStartedAt',
     type: 'number',
     when: 'queued',
     description: 'Dispatch start.'
   },
-  { name: 'accepted_at', type: 'number', when: 'accepted', description: 'Acceptance time.' },
+  { name: 'acceptedAt', type: 'number', when: 'accepted', description: 'Acceptance time.' },
   { name: 'evidence', type: 'string', when: 'accepted', description: 'Acceptance proof.' },
-  { name: 'failed_at', type: 'number', when: 'failed', description: 'Failure time.' },
+  { name: 'failedAt', type: 'number', when: 'failed', description: 'Failure time.' },
   { name: 'error', type: 'object', when: 'failed', description: 'Failure/retry details.' },
-  { name: 'uncertain_at', type: 'number', when: 'uncertain', description: 'Uncertainty time.' },
+  { name: 'uncertainAt', type: 'number', when: 'uncertain', description: 'Uncertainty time.' },
   {
-    name: 'delivery_may_have_occurred',
+    name: 'deliveryMayHaveOccurred',
     type: 'boolean',
     when: 'uncertain',
     description: 'Delivery is unknown.'
@@ -512,13 +519,13 @@ const DELIVERY_RECEIPT_FIELDS = [
     description: 'Risk resolution.'
   },
   {
-    name: 'new_request_retry_safe',
+    name: 'newRequestRetrySafe',
     type: 'boolean',
     required: true,
     description: 'New-id retry safety.'
   },
   {
-    name: 'same_request_safe',
+    name: 'sameRequestSafe',
     type: 'boolean',
     required: true,
     description: 'Same-id recovery safety.'
@@ -536,8 +543,8 @@ const SEND_FRAME_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   id: 'host.sendFrameMessage',
   path: 'host.sendFrameMessage',
   aliases: ['sendFrameMessage'],
-  summary: 'Durably queue a reliable message to a direct child or root parent.',
-  call_forms: [
+  summary: 'Queue a running coordination message to a child or parent.',
+  callForms: [
     {
       signature: 'await host.sendFrameMessage(target, message, options?)',
       accepts: 'positional_arguments'
@@ -577,7 +584,8 @@ const SEND_FRAME_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
     fields: DELIVERY_RECEIPT_FIELDS
   },
   constraints: [
-    'Receipt is delivery evidence, not a reply; same requestId recovers, and uncertain is not auto-retried.'
+    'Receipt is delivery evidence, not a reply; same requestId recovers, and uncertain is not auto-retried.',
+    'A Subagent uses parent messaging only for coordination while its Attempt is running; its final response is already preserved as the canonical terminal result and should not be duplicated here.'
   ],
   examples: [],
   resolveAvailability: messageAvailability('sendFrameMessage')
@@ -589,7 +597,7 @@ const MESSAGE_RECEIPT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.messageReceipt',
   aliases: ['messageReceipt'],
   summary: 'Observe an owned delivery receipt for a bounded time.',
-  call_forms: [
+  callForms: [
     { signature: 'await host.messageReceipt(selector, options?)', accepts: 'selector_options' }
   ],
   request: {
@@ -626,7 +634,7 @@ const MESSAGE_RECEIPT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   examples: [
     {
       title: 'Observe delivery',
-      code: 'await host.messageReceipt(receipt.message_id, { timeoutSeconds: 30 })'
+      code: 'await host.messageReceipt(receipt.messageId, { timeoutSeconds: 30 })'
     }
   ],
   resolveAvailability: messageAvailability('messageReceipt')
@@ -638,7 +646,7 @@ const RESOLVE_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.resolveMessage',
   aliases: ['resolveMessage'],
   summary: 'Acknowledge uncertain delivery risk and release its lane fence.',
-  call_forms: [
+  callForms: [
     {
       signature: "await host.resolveMessage(messageId, { action: 'acknowledge_uncertain' })",
       accepts: 'message_resolution'
@@ -673,7 +681,7 @@ const RESOLVE_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   examples: [
     {
       title: 'Release fence',
-      code: "await host.resolveMessage(receipt.message_id, { action: 'acknowledge_uncertain' })"
+      code: "await host.resolveMessage(receipt.messageId, { action: 'acknowledge_uncertain' })"
     }
   ],
   resolveAvailability: rootOnlyAvailability(
@@ -688,7 +696,7 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.viewImage',
   aliases: ['viewImage'],
   summary: 'Attach an authorized existing image to the current repl_execute result.',
-  call_forms: [{ signature: 'await host.viewImage(source, options?)', accepts: 'source_options' }],
+  callForms: [{ signature: 'await host.viewImage(source, options?)', accepts: 'source_options' }],
   request: {
     fields: [
       {
@@ -756,7 +764,7 @@ const CURRENT_MODEL_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.currentModel',
   aliases: ['currentModel'],
   summary: "Return the calling Session's exact current model id.",
-  call_forms: [{ signature: 'await host.currentModel()', accepts: 'no_arguments' }],
+  callForms: [{ signature: 'await host.currentModel()', accepts: 'no_arguments' }],
   request: NO_OPTIONS,
   options: NO_OPTIONS,
   returns: { type: 'string', description: 'Exact model id for the token-bound Session.' },
@@ -777,7 +785,7 @@ const LLM_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.llm',
   aliases: ['llm'],
   summary: 'Run bounded, one-shot, tool-less inference through the active Host LLM backend.',
-  call_forms: [{ signature: 'await host.llm(request, options?)', accepts: 'request_options' }],
+  callForms: [{ signature: 'await host.llm(request, options?)', accepts: 'request_options' }],
   request: {
     accepts: ['prompt_string', 'exact_prompt_object', 'request_array'],
     fields: [
@@ -803,7 +811,7 @@ const LLM_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   },
   returns: {
     mirrorsInput: true,
-    success_fields: [
+    successFields: [
       { name: 'text', type: 'string', required: true, description: 'Generated text.' },
       { name: 'model', type: 'string', required: true, description: 'Observed model id.' },
       {
@@ -819,7 +827,7 @@ const LLM_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         description: 'Provider-neutral camelCase token usage when available.'
       }
     ],
-    usage_fields: [
+    usageFields: [
       {
         name: 'inputTokens',
         type: 'integer',
@@ -857,7 +865,7 @@ const LLM_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         description: 'Positive provider-turn count when available.'
       }
     ],
-    batch_error_fields: [
+    batchErrorFields: [
       { name: 'error', type: 'string', required: true, description: 'Public per-item failure.' }
     ]
   },
@@ -885,7 +893,7 @@ const LIST_MODELS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.listModels',
   aliases: ['listModels'],
   summary: 'List configured models for the current Host LLM Provider and framework.',
-  call_forms: [{ signature: 'await host.listModels()', accepts: 'no_arguments' }],
+  callForms: [{ signature: 'await host.listModels()', accepts: 'no_arguments' }],
   request: NO_OPTIONS,
   options: NO_OPTIONS,
   returns: {
@@ -909,7 +917,7 @@ const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.sessions',
   aliases: ['sessions'],
   summary: 'List or inspect read-only Session diagnostics in the current Project.',
-  call_forms: [
+  callForms: [
     { signature: 'await host.sessions.list(options?)', accepts: 'optional_list_options' },
     { signature: 'await host.sessions.inspect(sessionId)', accepts: 'exact_session_id' }
   ],
@@ -957,12 +965,12 @@ const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   },
   returns: {
     type: 'SessionDiagnostic | SessionDiagnosticPage',
-    list_fields: [
+    listFields: [
       { name: 'totalCount', type: 'integer', required: true, description: 'Total matches.' },
       { name: 'nextCursor', type: 'string', required: false, description: 'Next page.' },
       { name: 'sessions', type: 'SessionDiagnostic[]', required: true, description: 'Page.' }
     ],
-    session_fields: [
+    sessionFields: [
       { name: 'sessionId', type: 'string', required: true, description: 'Exact Session id.' },
       { name: 'title', type: 'string', required: true, description: 'Durable title.' },
       { name: 'status', type: 'string', required: true, description: 'Durable Session status.' },
@@ -1123,7 +1131,7 @@ const hostSdkHelp: HostSdkHelpRegistry = Object.freeze({
       {
         kind: descriptor.kind,
         id: descriptor.id,
-        call_forms: descriptor.call_forms,
+        callForms: descriptor.callForms,
         request: descriptor.request,
         options: descriptor.options,
         returns: descriptor.returns,

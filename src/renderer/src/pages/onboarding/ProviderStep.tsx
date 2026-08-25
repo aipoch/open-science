@@ -10,24 +10,33 @@ import {
   CardTitle
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import type { UpsertProviderRequest, ValidateProviderResult } from '../../../../shared/settings'
+import type {
+  UpsertProviderRequest,
+  ValidateProviderResult,
+  XaiOAuthDeviceAuthorization
+} from '../../../../shared/settings'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { ClaudeIsolatedSignInModal } from '../settings/ClaudeIsolatedSignInModal'
 import { ProviderForm } from '../settings/ProviderForm'
+import { XaiOAuthSignInDialog } from '../settings/XaiOAuthSignInDialog'
 import {
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
+  providerFormTokenLimits,
   providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
 import { describeValidation } from '../settings/validation-message'
 
 const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
-  type === 'codex-isolated' || type === 'claude-isolated' || type === 'claude-shared'
+  type === 'codex-isolated' ||
+  type === 'claude-isolated' ||
+  type === 'claude-shared' ||
+  type === 'xai-subscription'
 
 // Converts a form value into the upsert request the main process expects.
 const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
@@ -35,6 +44,7 @@ const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   name: value.name,
   baseUrl: value.baseUrl,
   model: value.model,
+  ...providerFormTokenLimits(value),
   vendorId: value.vendorId,
   region: value.region,
   // Persist the chosen API format so an OpenAI-compatible provider is validated + driven correctly.
@@ -72,6 +82,7 @@ const ProviderStep = ({
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
   const persistProvider = useSettingsStore((state) => state.persistProvider)
+  const validateProvider = useSettingsStore((state) => state.validateProvider)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
   const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
@@ -80,9 +91,13 @@ const ProviderStep = ({
   const cancelIsolatedClaudeLogin = useSettingsStore((state) => state.cancelIsolatedClaudeLogin)
   const loginSharedClaude = useSettingsStore((state) => state.loginSharedClaude)
   const cancelSharedClaudeLogin = useSettingsStore((state) => state.cancelSharedClaudeLogin)
+  const beginXaiOAuthLogin = useSettingsStore((state) => state.beginXaiOAuthLogin)
+  const waitXaiOAuthLogin = useSettingsStore((state) => state.waitXaiOAuthLogin)
+  const cancelXaiOAuthLogin = useSettingsStore((state) => state.cancelXaiOAuthLogin)
 
   const [isSaving, setIsSaving] = useState(false)
   const [isClaudeSignInOpen, setIsClaudeSignInOpen] = useState(false)
+  const [xaiSession, setXaiSession] = useState<XaiOAuthDeviceAuthorization>()
   const claudeProviderIdRef = useRef<string | undefined>(undefined)
   const manualClaudePasteWonRef = useRef(false)
   // Required-field errors stay hidden until the user first tries to submit, so an untouched form is
@@ -98,13 +113,16 @@ const ProviderStep = ({
   const codexLoginPendingRef = useRef(false)
   const claudeLoginPendingRef = useRef(false)
   const claudeSharedLoginPendingRef = useRef(false)
+  const xaiLoginPendingRef = useRef(false)
+  const xaiLoginCancelledRef = useRef(false)
   useEffect(
     () => () => {
       if (codexLoginPendingRef.current) void cancelCodexLogin()
       if (claudeLoginPendingRef.current) void cancelIsolatedClaudeLogin()
       if (claudeSharedLoginPendingRef.current) void cancelSharedClaudeLogin()
+      if (xaiLoginPendingRef.current) void cancelXaiOAuthLogin()
     },
-    [cancelCodexLogin, cancelIsolatedClaudeLogin, cancelSharedClaudeLogin]
+    [cancelCodexLogin, cancelIsolatedClaudeLogin, cancelSharedClaudeLogin, cancelXaiOAuthLogin]
   )
 
   // Seed an untouched draft from the active framework. Codex starts with its subscription provider;
@@ -302,6 +320,35 @@ const ProviderStep = ({
         return
       }
 
+      if (formValue.type === 'xai-subscription') {
+        const providerId = await persistProvider(toUpsertRequest(formValue))
+        xaiLoginCancelledRef.current = false
+        xaiLoginPendingRef.current = true
+        try {
+          const session = await beginXaiOAuthLogin()
+          if (xaiLoginCancelledRef.current) return
+          setXaiSession(session)
+          await waitXaiOAuthLogin()
+        } finally {
+          xaiLoginPendingRef.current = false
+        }
+        if (xaiLoginCancelledRef.current) return
+        setXaiSession(undefined)
+        const validation = await validateProvider({ providerId })
+        if (validation.applied === false) {
+          setValidationOk(false)
+          setValidationMessage(t('The provider changed during testing. Try again.'))
+          return
+        }
+        setValidationOk(validation.ok)
+        setValidationMessage(describeValidation(validation, tSettings))
+        if (validation.ok) {
+          await setActiveProvider(providerId)
+          onAdvance()
+        }
+        return
+      }
+
       const { validation } = await saveAndActivateProvider(toUpsertRequest(formValue))
 
       // A validation superseded by a newer test (or a provider removed/edited mid-test) reports its
@@ -320,6 +367,7 @@ const ProviderStep = ({
         onAdvance()
       }
     } catch (error) {
+      if (formValue.type === 'xai-subscription' && xaiLoginCancelledRef.current) return
       setValidationOk(false)
       setValidationMessage(error instanceof Error ? error.message : t('Could not save provider.'))
     } finally {
@@ -388,6 +436,18 @@ const ProviderStep = ({
           <Button type="button" variant="outline" onClick={() => void cancelSharedClaudeLogin()}>
             {t('Cancel sign-in')}
           </Button>
+        ) : isSaving && formValue.type === 'xai-subscription' ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              xaiLoginCancelledRef.current = true
+              setXaiSession(undefined)
+              void cancelXaiOAuthLogin()
+            }}
+          >
+            {t('Cancel sign-in')}
+          </Button>
         ) : (
           <Button type="button" variant="outline" onClick={onBack}>
             {t('Back', { context: 'step' })}
@@ -413,6 +473,16 @@ const ProviderStep = ({
         onOpenChange={setIsClaudeSignInOpen}
         onSubmit={handleClaudeTokenFallback}
         browserSignInPending={isSaving && isClaudeSignInOpen}
+      />
+      <XaiOAuthSignInDialog
+        open={Boolean(xaiSession)}
+        session={xaiSession}
+        error={validationMessage}
+        onCancel={() => {
+          xaiLoginCancelledRef.current = true
+          setXaiSession(undefined)
+          void cancelXaiOAuthLogin()
+        }}
       />
     </>
   )

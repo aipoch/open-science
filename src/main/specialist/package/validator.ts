@@ -362,8 +362,6 @@ const parsePayload = (
 }
 
 type SpecialistContentHashInput = SpecialistPackagePayload & {
-  iconKey?: string
-  colorKey?: string
   capabilityMode?: 'full' | 'selected'
   fullAccess?: {
     excludedSkillIds: readonly string[]
@@ -391,8 +389,6 @@ export const specialistPayloadContentHash = (payload: SpecialistContentHashInput
         ...(payload.connectorIds === undefined
           ? {}
           : { connectorIds: [...new Set(payload.connectorIds)].sort() }),
-        ...(payload.iconKey === undefined ? {} : { iconKey: payload.iconKey }),
-        ...(payload.colorKey === undefined ? {} : { colorKey: payload.colorKey }),
         ...(payload.capabilityMode === undefined
           ? {}
           : {

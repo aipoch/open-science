@@ -67,6 +67,7 @@ type RuntimeMock = {
   resumeSession: Mock
   resetSessionContext: Mock
   sendPrompt: Mock
+  steerFollowUp: Mock
   compactSession: Mock
   cancel: Mock
   deleteSession: Mock
@@ -87,6 +88,7 @@ const createRuntime = (state: AcpStateSnapshot): RuntimeMock => ({
   resumeSession: vi.fn(),
   resetSessionContext: vi.fn(),
   sendPrompt: vi.fn().mockResolvedValue(state),
+  steerFollowUp: vi.fn().mockResolvedValue({ injected: false, reason: 'not-advertised' }),
   compactSession: vi.fn(),
   cancel: vi.fn(),
   deleteSession: vi.fn(),
@@ -265,7 +267,9 @@ describe('workspace Agent Runtime hook contract', () => {
         'sendMessage',
         'resendEditedMessage',
         'cancelRun',
+        'steerFollowUp',
         'resumeInterruptedSession',
+        'resolveSessionRuntimeSelection',
         'respondToPermission',
         'setPermissionProfile',
         'revokePermissionGrant'
@@ -284,6 +288,225 @@ describe('workspace Agent Runtime hook contract', () => {
       saveAsSkillInFlightSessionIds: [],
       nativeContextCompactionSessionIds: ['session-1']
     })
+  })
+
+  it('resolves image input support from the Session-selected official model', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'deepseek',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'deepseek',
+          type: 'official',
+          vendorId: 'deepseek',
+          name: 'DeepSeek',
+          apiEndpoints: ['anthropic'],
+          model: 'deepseek-v4-pro',
+          models: ['deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Inspect the image.',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentConfiguration: {
+        providerId: 'deepseek',
+        model: 'deepseek-v4-flash-vision-exp',
+        reasoningEffort: 'default'
+      }
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await render()
+
+    expect(latest.resolveSessionRuntimeSelection('session-1').supportsImageInput).toBe(true)
+  })
+
+  it('resolves runtime selection from legacy backend identity when configuration is absent', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'deepseek',
+      reasoningEffort: 'low',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'deepseek',
+          type: 'official',
+          vendorId: 'deepseek',
+          name: 'DeepSeek',
+          apiEndpoints: ['anthropic'],
+          model: 'deepseek-v4-pro',
+          models: ['deepseek-v4-pro'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        },
+        {
+          id: 'legacy-provider',
+          type: 'official',
+          vendorId: 'anthropic',
+          name: 'Legacy',
+          apiEndpoints: ['anthropic'],
+          model: 'legacy-model',
+          models: ['legacy-model'],
+          supportsImageInput: true,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue the restored chat.',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:legacy-provider',
+      agentModel: 'legacy-model'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await render()
+
+    expect(useSessionStore.getState().sessions[0].agentConfiguration).toBeUndefined()
+    expect(latest.resolveSessionRuntimeSelection('session-1')).toMatchObject({
+      agentBackendId: 'claude-code:legacy-provider',
+      agentModel: 'legacy-model',
+      supportsImageInput: true,
+      agentTarget: {
+        frameworkId: 'claude-code',
+        providerId: 'legacy-provider',
+        model: 'legacy-model',
+        reasoningEffort: 'low'
+      }
+    })
+  })
+
+  it('falls back to the Settings Active Model instead of the provider base model', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'custom',
+      activeModel: 'settings-selected',
+      reasoningEffort: 'low',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'custom',
+          type: 'custom',
+          name: 'Custom',
+          apiEndpoints: ['anthropic'],
+          baseUrl: 'https://example.test/v1',
+          model: 'provider-base',
+          models: ['provider-base', 'settings-selected'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue the restored chat.',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'claude-code:deleted-provider',
+      agentModel: 'gone'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    await render()
+
+    expect(latest.resolveSessionRuntimeSelection('session-1')).toMatchObject({
+      agentBackendId: 'claude-code:custom',
+      agentModel: 'settings-selected',
+      agentTarget: {
+        frameworkId: 'claude-code',
+        providerId: 'custom',
+        model: 'settings-selected',
+        reasoningEffort: 'low'
+      }
+    })
+  })
+
+  it('does not auto-send when the Session target is unavailable', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'incompatible',
+      activeModel: 'other',
+      reasoningEffort: 'low',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'incompatible',
+          type: 'custom',
+          name: 'Incompatible',
+          apiEndpoints: ['openai'],
+          baseUrl: 'https://example.test/v1',
+          model: 'other',
+          models: ['other'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Earlier turn',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentConfiguration: {
+        providerId: 'deleted',
+        model: 'gone',
+        reasoningEffort: 'low'
+      }
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const runtime = createRuntime(createSnapshot())
+    runtimeMock.current = runtime
+    await render()
+
+    await expect(
+      latest.sendMessage({ sessionId: 'session-1', text: 'Job analysis' })
+    ).resolves.toBeUndefined()
+    expect(runtime.resumeSession).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('routes live events into Workspace before snapshot reconciliation', async () => {
@@ -422,6 +645,31 @@ describe('workspace Agent Runtime hook contract', () => {
   })
 
   it('publishes runtime adoption as preparation and releases it before opening the prompt', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'session-provider',
+          type: 'custom',
+          name: 'Session',
+          apiEndpoints: ['anthropic'],
+          baseUrl: 'https://example.test/v1',
+          model: 'session-model',
+          models: ['session-model'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Earlier turn',
@@ -430,6 +678,20 @@ describe('workspace Agent Runtime hook contract', () => {
       agentFrameworkId: 'claude-code'
     })
     useSessionStore.getState().finishRun('session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1'
+          ? {
+              ...session,
+              agentConfiguration: {
+                providerId: 'session-provider',
+                model: 'session-model',
+                reasoningEffort: 'high'
+              }
+            }
+          : session
+      )
+    }))
 
     const resume = createDeferred<AcpCreateSessionResponse>()
     const runtime = createRuntime(createSnapshot())
@@ -452,6 +714,12 @@ describe('workspace Agent Runtime hook contract', () => {
     await act(async () => Promise.resolve())
 
     expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.resumeSession.mock.calls[0]?.at(-1)).toEqual({
+      frameworkId: 'claude-code',
+      providerId: 'session-provider',
+      model: 'session-model',
+      reasoningEffort: 'high'
+    })
     expect(latest.sendPreparationInFlightSessionIds).toEqual(['session-1'])
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
@@ -644,6 +912,7 @@ describe('workspace Agent Runtime hook contract', () => {
       'project-1',
       'ask',
       'claude-code',
+      undefined,
       undefined,
       undefined,
       undefined,

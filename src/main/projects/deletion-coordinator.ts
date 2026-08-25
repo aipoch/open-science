@@ -340,23 +340,21 @@ class ProjectDeletionCoordinator {
     return failures
   }
 
-  // The Project row is removed only after every fallible authority cleanup succeeds. Keeping both
-  // the row and deletion intent through Permission Grant pruning lets the renderer contract report
-  // the failure without publishing a false success; replaying this tail is idempotent.
+  // The Project becomes an invisible metadata tombstone only after every fallible authority cleanup
+  // succeeds. Keeping it active with the deletion intent through pruning lets the renderer report a
+  // failure without publishing false success; replaying this tail is idempotent.
   private async finishDeletion(projectId: string): Promise<void> {
-    // Prune is transactional and idempotent. Run it before the hard delete so a Registry/database
+    // Prune is transactional and idempotent. Run it before the soft delete so a Registry/database
     // failure retains the visible Project plus its durable intent for an explicit or startup retry.
     await this.permissionGrants?.prune({ kind: 'project', projectId })
     if (await this.projects.get(projectId)) await this.projects.delete(projectId)
-    // The Project FK cascade commits outside the Registry mutation queue. A remember/restore that
-    // was already in flight may have updated its cache around that commit, so enqueue one non-failing
-    // cache barrier after the hard delete. Later mutations fail owner-liveness validation.
+    // The metadata tombstone commits outside the Registry mutation queue. A remember/restore already
+    // in flight may have updated its cache around that commit, so enqueue one non-failing barrier.
     await this.permissionGrants
       ?.finalizeOwnerDeletion?.({ kind: 'project', projectId })
       .catch(() => undefined)
 
-    // Review rows still have no Project FK cascade. Retain the durable intent on failure so startup
-    // or an explicit retry can finish their cleanup; Preview rows are removed by the Project cascade.
+    // Retain the durable intent on failure so startup or an explicit retry can finish cleanup.
     try {
       await this.reviews?.deleteReviewsForProject(projectId)
     } catch (error) {
@@ -364,8 +362,8 @@ class ProjectDeletionCoordinator {
     }
 
     // Session deletion retains provenance, but Project deletion is terminal. This tail is replayed
-    // from the durable intent after a crash, so both SQLite rows and immutable bytes are eventually
-    // removed even if the Project row is already gone.
+    // from the durable intent after a crash, so derived SQLite rows and immutable bytes are
+    // eventually removed even after the Project metadata row has become an invisible tombstone.
     await this.provenance?.deleteProjectProvenance(projectId)
 
     // Fallible runtime/profile cleanup must finish while the existing intent and Session tombstone

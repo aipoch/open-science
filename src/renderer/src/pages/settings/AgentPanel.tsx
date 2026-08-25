@@ -15,6 +15,10 @@ import {
   getCodexInstallSources,
   getOpencodeInstallSources
 } from '../../../../shared/settings'
+import {
+  isSupportedCodexAcpVersion,
+  MINIMUM_CODEX_ACP_VERSION
+} from '../../../../shared/codex-runtime'
 import { AgentFrameworkCard } from './AgentFrameworkCard'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
 import { AgentFrameworkIcon } from './provider-icons'
@@ -238,6 +242,8 @@ const AgentPanel = ({
   const pendingSwitchName = agentFrameworks.find(
     (framework) => framework.id === pendingSwitch
   )?.displayName
+  const codexReady =
+    preflight.codexReady && (!codex.version || isSupportedCodexAcpVersion(codex.version))
 
   // First-run users should land on a runtime they can actually use. Registry order is the stable
   // tie-breaker, and this onboarding-only preference never changes Settings selection behavior.
@@ -253,7 +259,7 @@ const AgentPanel = ({
     const readyByFramework: Record<AgentFrameworkId, boolean> = {
       'claude-code': preflight.claudeReady,
       opencode: preflight.opencodeReady,
-      codex: preflight.codexReady
+      codex: codexReady
     }
     if (readyByFramework[agentFrameworkId]) return
 
@@ -267,7 +273,7 @@ const AgentPanel = ({
     agentFrameworks,
     isOnboarding,
     preflight.claudeReady,
-    preflight.codexReady,
+    codexReady,
     preflight.opencodeReady,
     queueOnboardingSwitch
   ])
@@ -306,6 +312,8 @@ const AgentPanel = ({
     icon: React.ReactNode
     description: string
     ready: boolean
+    updateRequired?: boolean
+    minimumVersion?: string
     version?: string
     path?: string
     sourceLabel: string
@@ -378,18 +386,31 @@ const AgentPanel = ({
       name: 'Codex',
       icon: <AgentFrameworkIcon frameworkId="codex" size={24} />,
       description: t("OpenAI's coding agent, connected through the Codex ACP adapter."),
-      ready: preflight.codexReady,
+      ready: codexReady,
+      updateRequired: Boolean(
+        codex.resolvedPath && codex.version && !isSupportedCodexAcpVersion(codex.version)
+      ),
+      minimumVersion: MINIMUM_CODEX_ACP_VERSION,
       version: codex.version,
       path: codex.resolvedPath,
       sourceLabel: 'agentclientprotocol/codex-acp',
       sourceUrl: 'https://github.com/agentclientprotocol/codex-acp',
-      notReadyHint: codex.resolvedPath
-        ? t(
-            'The adapter or its paired native Codex runtime did not pass detection. Reinstall the managed pair below, or repair your manual installation and re-detect.'
-          )
-        : t(
-            'Codex ACP is required for this framework. Install it below, or install it manually and re-detect.'
-          ),
+      notReadyHint:
+        codex.resolvedPath && codex.version && !isSupportedCodexAcpVersion(codex.version)
+          ? t(
+              'Codex ACP v{{installedVersion}} is no longer supported. Update to v{{minimumVersion}} or later to use Codex.',
+              {
+                installedVersion: codex.version,
+                minimumVersion: MINIMUM_CODEX_ACP_VERSION
+              }
+            )
+          : codex.resolvedPath
+            ? t(
+                'The adapter or its paired native Codex runtime did not pass detection. Reinstall the managed pair below, or repair your manual installation and re-detect.'
+              )
+            : t(
+                'Codex ACP is required for this framework. Install it below, or install it manually and re-detect.'
+              ),
       uninstallCommand: 'npm uninstall -g @agentclientprotocol/codex-acp',
       managed: codexManaged,
       installSources: getCodexInstallSources(),
@@ -402,8 +423,8 @@ const AgentPanel = ({
     }
   ]
 
-  const installedFrameworks = frameworkCards.filter((card) => card.ready)
-  const availableFrameworks = frameworkCards.filter((card) => !card.ready)
+  const installedFrameworks = frameworkCards.filter((card) => card.ready || card.updateRequired)
+  const availableFrameworks = frameworkCards.filter((card) => !card.ready && !card.updateRequired)
 
   // Environment blockers disable only the sources they invalidate. Official scripts remain a
   // usable fallback when managed registry access or the local managed installer is unavailable.
@@ -439,7 +460,7 @@ const AgentPanel = ({
   ): Promise<void> => {
     setInstallActionError(undefined)
     setFrameworkDetectionError(undefined)
-    const shouldActivateAfterInstall = isOnboarding && installedFrameworks.length === 0
+    const shouldActivateAfterInstall = isOnboarding && !frameworkCards.some((card) => card.ready)
     const intentVersion = isOnboarding
       ? (onboardingUserIntentVersion.current += 1)
       : onboardingUserIntentVersion.current
@@ -484,8 +505,8 @@ const AgentPanel = ({
 
   const pendingRepairCard = frameworkCards.find((card) => card.key === pendingRepair)
   const installedRadioId =
-    installedFrameworks.find((card) => card.frameworkId === agentFrameworkId)?.frameworkId ??
-    installedFrameworks[0]?.frameworkId
+    installedFrameworks.find((card) => card.ready && card.frameworkId === agentFrameworkId)
+      ?.frameworkId ?? installedFrameworks.find((card) => card.ready)?.frameworkId
 
   const handleFrameworkRadioKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'radio') {
@@ -528,6 +549,8 @@ const AgentPanel = ({
       name={card.name}
       description={card.description}
       ready={card.ready}
+      updateRequired={card.updateRequired}
+      minimumVersion={card.minimumVersion}
       needsRepair={cardNeedsRepair(card)}
       version={card.version}
       path={card.path}
@@ -537,7 +560,9 @@ const AgentPanel = ({
       active={agentFrameworkId === card.frameworkId}
       onSelect={() => requestSwitch(card.frameworkId)}
       radioTabIndex={card.ready ? (card.frameworkId === installedRadioId ? 0 : -1) : undefined}
-      onRepairRequired={cardNeedsRepair(card) ? () => setPendingRepair(card.key) : undefined}
+      onRepairRequired={
+        cardNeedsRepair(card) && !card.updateRequired ? () => setPendingRepair(card.key) : undefined
+      }
       selectDisabled={
         anyInstalling ||
         isUninstalling ||

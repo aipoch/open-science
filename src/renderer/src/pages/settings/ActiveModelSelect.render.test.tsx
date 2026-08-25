@@ -72,7 +72,7 @@ const render = (): void => {
 
 // Open the Select trigger and click an option by its visible text (portalled to body).
 const openSelect = (): void => {
-  const trigger = document.body.querySelector<HTMLButtonElement>('[aria-label="Active model"]')
+  const trigger = document.body.querySelector<HTMLButtonElement>('[aria-label="Main model"]')
   act(() => {
     trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
     trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -97,7 +97,7 @@ describe('ActiveModelSelect', () => {
     useSettingsStore.setState({ providers: [] })
     render()
 
-    expect(container.querySelector('[aria-label="Active model"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Main model"]')).toBeNull()
     expect(container.textContent).toBe('')
   })
 
@@ -111,7 +111,7 @@ describe('ActiveModelSelect', () => {
     })
     render()
 
-    const trigger = container.querySelector('[aria-label="Active model"]')
+    const trigger = container.querySelector('[aria-label="Main model"]')
     expect(trigger).not.toBeNull()
     expect(trigger?.textContent).toContain('claude-sonnet-4-5')
     expect(trigger?.textContent).toContain('Gateway')
@@ -125,7 +125,7 @@ describe('ActiveModelSelect', () => {
     })
     render()
 
-    expect(container.querySelector('[aria-label="Active model"]')?.textContent).toContain(
+    expect(container.querySelector('[aria-label="Main model"]')?.textContent).toContain(
       'Select a model'
     )
   })

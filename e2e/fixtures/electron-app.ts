@@ -10,6 +10,7 @@ import {
   type RuntimeResourceProfilerOptions
 } from '../../scripts/performance/runtime-resource-profiler'
 import { terminateProcessTree } from '../../src/main/process-tree'
+import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { RendererFailureGate } from './renderer-failure-gate'
 
 const APP_ROOT = resolve(process.cwd())
@@ -114,10 +115,10 @@ type ElectronApp = {
   requestMainWindowClose: () => Promise<void>
   restoreDelegatedHandoffCleanup: (childName: string) => Promise<void>
   restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
+  restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
   finishResourceProfile: () => Promise<RuntimeProfileResult>
-  writeCorruptSessionFile: (projectId: string) => Promise<void>
 }
 
 const launchEnvironment = (
@@ -559,13 +560,27 @@ class ElectronAppHarness implements ElectronApp {
     return this.page
   }
 
-  async writeCorruptSessionFile(projectId: string): Promise<void> {
+  async restartWithCorruptHistoricalSessionFile(projectId: string): Promise<Page> {
     if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) {
       throw new Error(`Invalid E2E project id: ${projectId}`)
     }
+    await this.close()
     const projectSessionsRoot = join(this.roots.storageRoot, 'sessions', projectId)
     await mkdir(projectSessionsRoot, { recursive: true })
     await writeFile(join(projectSessionsRoot, 'corrupt-e2e-session.json'), '{invalid json', 'utf8')
+
+    // Exercise the historical-JSON backfill path. A healthy projection intentionally avoids
+    // inventorying every Session JSON on startup, so an unindexed out-of-band file alone should not
+    // trigger a scan.
+    const client = createProjectDbClient(this.roots.storageRoot)
+    try {
+      await client.sessionProjectionState.deleteMany()
+    } finally {
+      await client.$disconnect()
+    }
+
+    await this.launch()
+    return this.page
   }
 
   async dispose(): Promise<void> {

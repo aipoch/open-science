@@ -167,12 +167,13 @@ describe('createProjectHandlers', () => {
     await ipcHandlers.get('preview:load')?.(undefined, { projectId: 'project-1' })
     await ipcHandlers.get('preview:save')?.(undefined, {
       projectId: 'project-1',
-      state: previewState
+      state: previewState,
+      expectedRevision: 7
     })
     await ipcHandlers.get('preview:delete')?.(undefined, { projectId: 'project-1' })
 
     expect(previewRepository.get).toHaveBeenCalledWith('project-1')
-    expect(previewRepository.save).toHaveBeenCalledWith('project-1', previewState)
+    expect(previewRepository.save).toHaveBeenCalledWith('project-1', previewState, 7)
     expect(previewRepository.delete).toHaveBeenCalledWith('project-1')
   })
 })

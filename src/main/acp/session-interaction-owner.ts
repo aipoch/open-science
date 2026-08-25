@@ -28,6 +28,7 @@ export interface AcpPromptSessionInteractionRequest {
   readonly promptMessageId?: string
   readonly provenanceContext?: AcpPromptRequest['provenanceContext']
   readonly turnToken?: string
+  readonly referencedSessionIds?: readonly string[]
 }
 
 export interface AcpCompactionSessionInteractionRequest {
@@ -100,6 +101,7 @@ interface ActiveSessionInteraction {
   readonly abortController: AbortController
   cancelled: boolean
   modelTurnCount: number
+  readonly referencedSessionIds: Set<string>
 }
 
 interface TerminalSettlement {
@@ -143,6 +145,27 @@ export class AcpSessionInteractionOwner {
 
   current(sessionId: string): AcpSessionInteractionScope | undefined {
     return this.activeInteractions.get(sessionId)?.scope
+  }
+
+  has(sessionId: string): boolean {
+    return this.activeInteractions.has(sessionId) || this.pendingPromptReservations.has(sessionId)
+  }
+
+  isSessionReferenceAllowed(sessionId: string, referencedSessionId: string): boolean {
+    const interaction = this.activeInteractions.get(sessionId)
+    return (
+      interaction?.scope.kind === 'prompt' &&
+      interaction.referencedSessionIds.has(referencedSessionId)
+    )
+  }
+
+  authorizeSessionReferences(sessionId: string, referencedSessionIds: readonly string[]): void {
+    const interaction =
+      this.activeInteractions.get(sessionId) ?? this.pendingPromptReservations.get(sessionId)
+    if (interaction?.scope.kind !== 'prompt') return
+    for (const referencedSessionId of referencedSessionIds) {
+      if (referencedSessionId) interaction.referencedSessionIds.add(referencedSessionId)
+    }
   }
 
   snapshot(): readonly AcpSessionInteractionSnapshotEntry[] {
@@ -255,8 +278,8 @@ export class AcpSessionInteractionOwner {
     this.pendingCancellations.set(request.sessionId, attempt)
 
     const active =
-      this.activeInteractions.get(request.sessionId) ??
-      this.pendingPromptReservations.get(request.sessionId)
+      this.pendingPromptReservations.get(request.sessionId) ??
+      this.activeInteractions.get(request.sessionId)
     const scope = active?.scope
     active?.abortController.abort()
     this.clearCancellationTimer(request.sessionId)
@@ -323,7 +346,7 @@ export class AcpSessionInteractionOwner {
   }
 
   reservePrompt(request: AcpPromptSessionInteractionRequest): AcpPromptSessionInteractionScope {
-    if (this.activeInteractions.has(request.sessionId)) {
+    if (this.activeInteractions.get(request.sessionId)?.scope.kind === 'prompt') {
       throw new Error('An ACP interaction is already running for this session')
     }
 
@@ -342,7 +365,8 @@ export class AcpSessionInteractionOwner {
       scope,
       abortController,
       cancelled: false,
-      modelTurnCount: 0
+      modelTurnCount: 0,
+      referencedSessionIds: new Set(request.referencedSessionIds ?? [])
     })
 
     return scope
@@ -364,7 +388,10 @@ export class AcpSessionInteractionOwner {
   }
 
   claim<Request extends AcpSessionInteractionRequest>(request: Request): ScopeFor<Request> {
-    if (this.activeInteractions.has(request.sessionId)) {
+    if (
+      this.activeInteractions.has(request.sessionId) ||
+      this.pendingPromptReservations.has(request.sessionId)
+    ) {
       throw new Error('An ACP interaction is already running for this session')
     }
 
@@ -389,7 +416,10 @@ export class AcpSessionInteractionOwner {
       scope,
       abortController,
       cancelled: false,
-      modelTurnCount: 0
+      modelTurnCount: 0,
+      referencedSessionIds: new Set(
+        request.kind === 'prompt' ? (request.referencedSessionIds ?? []) : []
+      )
     })
 
     return scope as ScopeFor<Request>

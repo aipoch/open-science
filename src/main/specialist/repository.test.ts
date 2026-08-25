@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { SpecialistDocumentDegradedError, SpecialistRepository } from './repository'
 import { sanitizeSpecialist } from './repository'
-import type { StoredSpecialist } from './types'
+import { SPECIALISTS_FILE_VERSION, type StoredSpecialist } from './types'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
 
 // ---------------------------------------------------------------------------
@@ -74,6 +74,26 @@ describe('sanitizeSpecialist', () => {
   it('defaults setupPending to false and preserves an imported pending state', () => {
     expect(sanitizeSpecialist(valid)?.setupPending).toBe(false)
     expect(sanitizeSpecialist({ ...valid, setupPending: true })?.setupPending).toBe(true)
+  })
+
+  it('accepts Marketplace origin without changing the specialists.json document version', () => {
+    const result = sanitizeSpecialist({
+      ...valid,
+      origin: 'marketplace',
+      importBaseline: {
+        importedAt: '2026-08-23T00:00:00.000Z',
+        archiveDigest: 'a'.repeat(64),
+        contentDigest: 'b'.repeat(64),
+        packageContentDigest: 'c'.repeat(64),
+        packageVersion: '1.0.0'
+      }
+    })
+
+    expect(result).toMatchObject({
+      origin: 'marketplace',
+      importBaseline: { packageVersion: '1.0.0' }
+    })
+    expect(SPECIALISTS_FILE_VERSION).toBe(2)
   })
 })
 

@@ -246,6 +246,65 @@ describe('AgentFrameworkCard', () => {
     ).toBe(false)
   })
 
+  it('shows an installed outdated runtime with a one-click managed Update action', () => {
+    const onInstall = vi.fn()
+    renderCard({
+      name: 'Codex',
+      ready: false,
+      updateRequired: true,
+      minimumVersion: '1.6.2',
+      path: '/data/codex-acp',
+      version: '1.1.4',
+      onInstall
+    })
+
+    const card = container.querySelector('[data-slot="card"]')
+    expect(card?.className).not.toContain('border-dashed')
+    expect(card?.className).toContain('border-status-warning-foreground/30')
+    expect(container.textContent).toContain('Update required')
+    expect(container.textContent).toContain('Requires Codex ACP v1.6.2 or later')
+
+    const update = container.querySelector<HTMLButtonElement>('[aria-label="Update Codex"]')
+    act(() => update?.click())
+    expect(onInstall).toHaveBeenCalledWith('managed')
+  })
+
+  it('labels update progress distinctly and exposes only the managed update path', () => {
+    const onInstall = vi.fn()
+    renderCard({
+      name: 'Codex',
+      ready: false,
+      updateRequired: true,
+      minimumVersion: '1.6.2',
+      path: '/data/codex-acp',
+      version: '1.1.4',
+      onInstall,
+      install: {
+        isInstalling: true,
+        installLogs: [],
+        installProgress: null
+      }
+    })
+
+    expect(container.querySelector('[aria-label="Update progress"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Update Codex"]')?.textContent).toContain(
+      'Updating…'
+    )
+
+    renderCard({
+      name: 'Codex',
+      ready: false,
+      updateRequired: true,
+      minimumVersion: '1.6.2',
+      path: '/data/codex-acp',
+      version: '1.1.4',
+      onInstall
+    })
+    expect(
+      container.querySelector('[aria-label="Choose another update source for Codex"]')
+    ).toBeNull()
+  })
+
   it('requests repair instead of selecting when a broken card is clicked', () => {
     const onRepairRequired = vi.fn()
     const onSelect = vi.fn()

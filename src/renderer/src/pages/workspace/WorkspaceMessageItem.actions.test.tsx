@@ -628,6 +628,36 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(editor?.querySelector('[data-mention-type="skill"]')).not.toBeNull()
   })
 
+  it('separates read-only uploaded files from the message editor', async () => {
+    await renderItem(
+      createMessage({
+        uploads: [
+          {
+            id: 'upload-1',
+            versionId: 'upload-version-1',
+            versionNumber: 1,
+            sessionId: 'session-1',
+            name: 'GSE23649_group-1.csv',
+            originalName: 'GSE23649_group-1.csv',
+            mimeType: 'text/csv',
+            size: 1024,
+            sha256: 'checksum-1'
+          }
+        ]
+      }),
+      { canEditMessage: true }
+    )
+
+    await click(getButton('Edit message'))
+
+    const editorCard = getEditorCardButton('Send').parentElement?.parentElement
+    expect(editorCard?.textContent).toContain('GSE23649_group-1.csv')
+    expect(editorCard?.querySelector('[role="separator"]')).not.toBeNull()
+    expect(
+      editorCard?.querySelector('[aria-label="Remove attachment GSE23649_group-1.csv"]')
+    ).toBeNull()
+  })
+
   it('keeps the artifact mention popup outside transcript row containment while editing', async () => {
     await renderItem(createMessage(), { canEditMessage: true })
 

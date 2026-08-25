@@ -7,7 +7,7 @@ import type {
   SpecialistSelectedConfig
 } from '../../shared/specialist'
 
-export type SpecialistOrigin = 'local' | 'imported'
+export type SpecialistOrigin = 'local' | 'imported' | 'marketplace'
 
 export type SpecialistImportBaseline = {
   importedAt: string

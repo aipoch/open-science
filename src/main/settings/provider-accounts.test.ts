@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type { CodexAuthControllerPort, CodexAuthStatus } from './codex-auth'
 import type { ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import type { ClaudeSharedAuthControllerPort, ClaudeSharedAuthStatus } from './claude-shared-auth'
+import type { XaiOAuthControllerPort } from './xai-oauth'
 import type { ValidateProviderResult } from '../../shared/settings'
 import type { ResolvedProvider } from './provider-env'
 import type { StoredSettings } from './types'
@@ -24,12 +25,18 @@ vi.mock('electron', () => ({
 const { ProviderAccountsModule } = await import('./provider-accounts')
 const { SettingsRepository } = await import('./repository')
 
-const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+const deferred = <T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (error: unknown) => void
+} => {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 describe('ProviderAccountsModule', () => {
@@ -38,6 +45,7 @@ describe('ProviderAccountsModule', () => {
   let codexAuth: CodexAuthControllerPort
   let claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
   let claudeSharedAuth: ClaudeSharedAuthControllerPort
+  let xaiOAuth: XaiOAuthControllerPort
   let module: InstanceType<typeof ProviderAccountsModule>
   let runClaudeSubscriptionProbe: (
     provider: ResolvedProvider,
@@ -78,6 +86,18 @@ describe('ProviderAccountsModule', () => {
       loginShared: vi.fn(async () => ({ supported: true, authenticated: true })),
       cancelLogin: vi.fn()
     }
+    xaiOAuth = {
+      beginLogin: vi.fn(async () => ({
+        userCode: 'GROK-1234',
+        verificationUri: 'https://auth.x.ai/activate',
+        expiresAt: Date.now() + 300_000,
+        intervalSeconds: 5
+      })),
+      waitForLogin: vi.fn(async () => ({ accountEmail: 'researcher@example.com' })),
+      cancelLogin: vi.fn(),
+      getAccessToken: vi.fn(async () => 'access-token'),
+      logout: vi.fn(async () => undefined)
+    }
     runClaudeSubscriptionProbe = vi.fn(async (): Promise<ValidateProviderResult> => ({
       ok: true,
       category: 'ok'
@@ -96,7 +116,8 @@ describe('ProviderAccountsModule', () => {
       runClaudeSubscriptionProbe,
       codexAuth,
       claudeIsolatedAuth,
-      claudeSharedAuth
+      claudeSharedAuth,
+      xaiOAuth
     })
 
     return async () => {
@@ -373,6 +394,45 @@ describe('ProviderAccountsModule', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
+  it('owns the single xAI OAuth provider lifecycle without persisting an access token', async () => {
+    await module.upsertProvider({ type: 'xai-subscription' })
+    const stored = (await repository.getSettings()).providers[0]
+
+    expect(stored).toMatchObject({
+      id: 'builtin-xai-subscription',
+      type: 'xai-subscription',
+      name: 'xAI (Grok) OAuth',
+      model: 'grok-4.6',
+      apiEndpoints: ['anthropic', 'openai', 'responses']
+    })
+    expect(stored.keyRef).toBeUndefined()
+    await expect(module.beginXaiOAuthLogin()).resolves.toMatchObject({ userCode: 'GROK-1234' })
+    await expect(module.waitXaiOAuthLogin()).resolves.toEqual({
+      accountEmail: 'researcher@example.com'
+    })
+    await expect(module.getXaiOAuthAccessToken()).resolves.toBe('access-token')
+
+    await module.deleteProvider(stored.id)
+    expect(xaiOAuth.logout).toHaveBeenCalledOnce()
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+
+  it('does not apply an in-flight xAI validation after logout', async () => {
+    await module.upsertProvider({ type: 'xai-subscription' })
+    const pendingToken = deferred<string>()
+    vi.mocked(xaiOAuth.getAccessToken).mockImplementationOnce(() => pendingToken.promise)
+
+    const pending = module.validateProvider({ providerId: 'builtin-xai-subscription' })
+    await vi.waitFor(() => expect(xaiOAuth.getAccessToken).toHaveBeenCalledOnce())
+    await module.logoutXaiOAuth()
+    pendingToken.reject(new Error('Sign in to xAI (Grok) OAuth to continue.'))
+
+    await expect(pending).resolves.toMatchObject({ ok: false, applied: false })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toBeUndefined()
+  })
+
   it('exposes authentication lifecycle operations through the Module Interface', async () => {
     await module.upsertProvider({ type: 'codex-isolated' })
 
@@ -449,4 +509,22 @@ describe('ProviderAccountsModule', () => {
       })
     ).resolves.toMatchObject({ ok: false, category: 'incompatible' })
   })
+
+  it.each(['contextWindow', 'maxInputTokens', 'maxOutputTokens'] as const)(
+    'rejects an invalid %s on an unsaved validation draft',
+    async (field) => {
+      await expect(
+        module.validateProvider({
+          draft: {
+            type: 'custom',
+            baseUrl: 'https://lab.example/v1',
+            model: 'lab-model',
+            key: 'secret-key',
+            apiEndpoints: ['openai'],
+            [field]: 0
+          }
+        })
+      ).rejects.toThrow(/positive whole number of tokens/)
+    }
+  )
 })

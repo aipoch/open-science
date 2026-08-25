@@ -581,6 +581,10 @@ class AcpPermissionContext {
     return this.broker.getPendingRequests()
   }
 
+  hasPendingForSession(sessionId: string): boolean {
+    return this.broker.hasPendingForSession(sessionId)
+  }
+
   hasDurablePendingForSession(sessionId: string): boolean {
     return this.broker.hasDurablePendingForSession(sessionId)
   }

@@ -37,6 +37,7 @@ type AgentMarkdownProps = {
   sessionLinks?: boolean
   extension?: AgentMarkdownExtension
   fallback?: ReactNode
+  components?: Components
 }
 
 type RichAgentMarkdownProps = AgentMarkdownProps & {
@@ -259,6 +260,7 @@ const RichAgentMarkdown = memo(
     isAnimating = false,
     allowMedia = true,
     sessionLinks = false,
+    components,
     incrementalBlocks = false,
     extension
   }: RichAgentMarkdownProps): React.JSX.Element => {
@@ -269,13 +271,14 @@ const RichAgentMarkdown = memo(
       () => (extension ? { ...AGENT_ALLOWED_TAGS, ...extension.allowedTags } : AGENT_ALLOWED_TAGS),
       [extension]
     )
-    const components = useMemo(() => {
-      if (!sessionLinks && !extension) return undefined
+    const renderedComponents = useMemo(() => {
+      if (!sessionLinks && !components && !extension) return undefined
       return {
         ...(sessionLinks ? sessionLinkComponents : {}),
+        ...components,
         ...extension?.components
       }
-    }, [extension, sessionLinks])
+    }, [components, extension, sessionLinks])
 
     return (
       <div
@@ -289,7 +292,7 @@ const RichAgentMarkdown = memo(
           plugins={plugins}
           controls={AGENT_CONTROLS}
           linkSafety={agentLinkSafety}
-          components={components}
+          components={renderedComponents}
           dir="auto"
           mode={isAnimating || incrementalBlocks ? 'streaming' : 'static'}
           isAnimating={isAnimating}
@@ -320,6 +323,7 @@ const PresentedAgentMarkdown = memo(
     isAnimating = false,
     allowMedia = true,
     sessionLinks = false,
+    components,
     incrementalBlocks = true,
     extension,
     fallback
@@ -330,6 +334,7 @@ const PresentedAgentMarkdown = memo(
         isAnimating={isAnimating}
         allowMedia={allowMedia}
         sessionLinks={sessionLinks}
+        components={components}
         incrementalBlocks={incrementalBlocks}
         extension={extension}
       />
@@ -346,6 +351,7 @@ const AgentMarkdown = memo(
     isAnimating = false,
     allowMedia = true,
     sessionLinks = false,
+    components,
     extension,
     fallback
   }: AgentMarkdownProps): React.JSX.Element => {
@@ -357,6 +363,7 @@ const AgentMarkdown = memo(
         isAnimating={presentation.isPresenting}
         allowMedia={allowMedia}
         sessionLinks={sessionLinks}
+        components={components}
         incrementalBlocks={false}
         extension={extension}
         fallback={fallback}

@@ -197,4 +197,57 @@ describe('notebook IPC handlers', () => {
     expect(service.restart).toHaveBeenCalledWith(session)
     expect(service.shutdown).toHaveBeenCalledWith(session)
   })
+
+  it('logs terminal execution and submission failures without logging source code', async () => {
+    const executionFailure = {
+      runId: 'run-failed',
+      status: 'failed',
+      environment: 'default-python',
+      text: {
+        stdout: '',
+        stderr: '',
+        traceback: 'Traceback\nValueError: diagnostic detail',
+        plain: []
+      }
+    }
+    const submissionFailure = new Error('kernel connection closed')
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce(executionFailure)
+      .mockRejectedValueOnce(submissionFailure)
+    const service = { execute } as unknown as NotebookRuntimeService
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    registerNotebookIpcHandlers(createNotebookCommandWorkflows(service))
+    const request = {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      workspaceCwd: '/workspace',
+      code: 'secret = 42',
+      source: 'user' as const,
+      inputKind: 'terminal' as const,
+      language: 'python' as const
+    }
+    const handler = ipcHandlers.get('notebook:execute')
+
+    await expect(handler?.(undefined, request)).resolves.toBe(executionFailure)
+    await expect(handler?.(undefined, request)).rejects.toBe(submissionFailure)
+
+    expect(errorSpy).toHaveBeenNthCalledWith(1, '[notebook] User terminal execution failed', {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      language: 'python',
+      environment: 'default-python',
+      runId: 'run-failed',
+      status: 'failed',
+      error: 'ValueError: diagnostic detail'
+    })
+    expect(errorSpy).toHaveBeenNthCalledWith(2, '[notebook] User terminal submission failed', {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      language: 'python',
+      codeLength: 11,
+      error: submissionFailure
+    })
+    expect(errorSpy.mock.calls.flat().join(' ')).not.toContain('secret = 42')
+  })
 })

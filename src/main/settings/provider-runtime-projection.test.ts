@@ -97,6 +97,36 @@ describe('ProviderRuntimeProjectionOwner', () => {
     })
   })
 
+  it('enables image input only for DeepSeek vision-exp while keeping native Responses', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'deepseek',
+      type: 'official',
+      vendorId: 'deepseek',
+      name: 'DeepSeek'
+    }
+
+    expect(
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: 'deepseek-v4-flash-vision-exp' },
+        getAgentFramework('codex')
+      )
+    ).toMatchObject({
+      apiEndpoints: ['anthropic', 'openai', 'responses'],
+      needsNativeResponsesCompatibility: true,
+      provider: { supportsImageInput: true, model: 'deepseek-v4-flash-vision-exp' }
+    })
+    expect(
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: 'deepseek-v4-flash' },
+        getAgentFramework('codex')
+      ).provider.supportsImageInput
+    ).toBe(false)
+    expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
+  })
+
   it('keeps an exact required model when a subscription catalog is unknown', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

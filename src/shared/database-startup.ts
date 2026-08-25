@@ -32,6 +32,7 @@ type DatabaseStartupError = {
 type DatabaseStartupState =
   | { phase: 'checking' }
   | { phase: 'migrating'; migrationId: string }
+  | { phase: 'starting' }
   | { phase: 'ready' }
   | { phase: 'blocked'; error: DatabaseStartupError }
 

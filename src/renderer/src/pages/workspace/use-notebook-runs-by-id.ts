@@ -33,8 +33,9 @@ const trimHistoricalRuns = (
 }
 
 // Keeps the recent full-run window in this mounted renderer, then hydrates only historical runIds
-// whose transcript details the user expanded. Image payloads never enter session messages or agent
-// context. Historical records use a small LRU, except currently expanded records remain protected.
+// requested by transcript surfaces (expanded details or near-viewport figures). Image payloads never
+// enter session messages or agent context. Historical records use a small LRU, except currently
+// requested records remain protected.
 const useNotebookRunsById = (
   reference: NotebookSessionReference | undefined,
   referencedRunIds: readonly string[] = []

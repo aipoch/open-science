@@ -1,8 +1,30 @@
+import { availableParallelism, cpus } from 'node:os'
 import { basename, dirname, resolve } from 'path'
 import { defineConfig, configDefaults } from 'vitest/config'
 
 const testRoot = resolve('.')
 const sharedInstallRoot = basename(dirname(testRoot)) === '.worktree' ? resolve('../..') : testRoot
+
+export function resolveVitestMaxWorkers(
+  available = typeof availableParallelism === 'function' ? availableParallelism() : cpus().length
+): number {
+  return Math.max(available - 1, 1)
+}
+
+export const VITEST_ARCHITECTURE_TEST_GLOBS = ['**/*.architecture.test.ts'] as const
+
+export const VITEST_PROCESS_TEST_GLOBS = [
+  '**/*.integration.test.ts',
+  '**/*.certification.test.ts',
+  'src/main/notebook/kernel-executor.test.ts',
+  'src/main/notebook/full-stack.smoke.test.ts',
+  'src/main/local-rpc-transport.test.ts',
+  'src/main/session-plan/plan-mcp-server.test.ts',
+  'src/main/acp/mcp-http-host.test.ts',
+  'src/main/settings/openai-provider-bridge.test.ts',
+  'src/main/settings/anthropic-provider-bridge.test.ts',
+  'resources/skills/literature-review/kernel.test.ts'
+] as const
 
 const VITEST_EXCLUDE_PATTERNS = [
   ...configDefaults.exclude,
@@ -75,6 +97,45 @@ export default defineConfig({
     // Schema-backed hooks can exceed Vitest's 10s default on loaded runners. Keep a safe repository
     // default while allowing slower platform workflows to raise it explicitly from the CLI.
     hookTimeout: 30000,
+    // Pin the pool to Vitest's own CPU-minus-one bound so full-suite runs cannot spawn an unbounded
+    // set of short-lived workers. Heavy files below run in later groups and do not share that pool.
+    maxWorkers: resolveVitestMaxWorkers(),
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'default',
+          exclude: [
+            ...VITEST_EXCLUDE_PATTERNS,
+            ...VITEST_ARCHITECTURE_TEST_GLOBS,
+            ...VITEST_PROCESS_TEST_GLOBS
+          ]
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'architecture',
+          include: [...VITEST_ARCHITECTURE_TEST_GLOBS],
+          exclude: [...VITEST_EXCLUDE_PATTERNS],
+          isolate: false,
+          fileParallelism: false,
+          maxWorkers: 1,
+          sequence: { groupOrder: 1 }
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'process',
+          include: [...VITEST_PROCESS_TEST_GLOBS],
+          exclude: [...VITEST_EXCLUDE_PATTERNS],
+          isolate: true,
+          fileParallelism: false,
+          maxWorkers: 1
+        }
+      }
+    ],
     coverage: {
       provider: 'v8',
       // text for the CI log, lcov for upload/tooling, html for local inspection.

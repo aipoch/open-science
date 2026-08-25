@@ -46,6 +46,11 @@ type AttemptRuntimeTranscriptStager = (
   input: StageAttemptRuntimeTranscriptInput
 ) => Promise<AttemptRuntimeTranscript | undefined>
 
+type AttemptRuntimeTranscriptScope = Readonly<{
+  runtimeSegmentId: string
+  promptMessageId: string
+}>
+
 type AttemptCancellationReason = 'main_agent_stop' | 'session_stop' | 'runtime_interrupted'
 
 const TOOL_STATUSES = new Set<PersistedToolActivityStatus>([
@@ -71,6 +76,16 @@ const toolTitle = (title: string | undefined, kind: string | undefined): string 
 
 const appOwnedToolCallId = (runtimeSegmentId: string, providerToolCallId: string): string =>
   `agent-runtime:${encodeURIComponent(runtimeSegmentId)}:${encodeURIComponent(providerToolCallId)}`
+
+const selectRuntimeScopeUpdates = (
+  updates: readonly AcpAgentRuntimeUpdate[],
+  scope: AttemptRuntimeTranscriptScope
+): AcpAgentRuntimeUpdate[] =>
+  updates.filter(
+    (update) =>
+      update.scope.runtimeSegmentId === scope.runtimeSegmentId &&
+      update.scope.promptMessageId === scope.promptMessageId
+  )
 
 const projectAttemptRuntimeTranscript = (
   input: ProjectAttemptRuntimeTranscriptInput
@@ -264,18 +279,19 @@ const createAttemptRuntimeTranscriptStager = (options: {
   frameId: string
   attemptId: string
   updates: readonly AcpAgentRuntimeUpdate[]
-  promptMessageId(): string | undefined
+  runtimeScope(): AttemptRuntimeTranscriptScope | undefined
   createMessageId(): string
 }): AttemptRuntimeTranscriptStager => {
   let stagingStarted = false
   return async (input) => {
-    const promptMessageId = options.promptMessageId()
-    if (!promptMessageId || stagingStarted) return undefined
+    const runtimeScope = options.runtimeScope()
+    if (!runtimeScope || stagingStarted) return undefined
     stagingStarted = true
     return stageAttemptRuntimeTranscript(options.records, options.frameId, options.attemptId, {
-      updates: options.updates,
+      updates: selectRuntimeScopeUpdates(options.updates, runtimeScope),
       frameId: options.frameId,
-      promptMessageId,
+      promptMessageId: runtimeScope.promptMessageId,
+      runtimeSegmentId: runtimeScope.runtimeSegmentId,
       fallbackResponse: input.fallbackResponse ?? '',
       endedAt: input.endedAt,
       terminalStatus: input.terminalStatus,
@@ -334,6 +350,7 @@ const terminalizeUnsuccessfulAttempt = async (
 export {
   createAttemptRuntimeTranscriptStager,
   projectAttemptRuntimeTranscript,
+  selectRuntimeScopeUpdates,
   stageAttemptRuntimeTranscript,
   terminalizeUnsuccessfulAttempt
 }

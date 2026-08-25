@@ -14,11 +14,14 @@ import {
   type PersistedChatSession,
   type PersistedSessionManifest,
   type SaveSessionManifestRequest,
+  type SessionSummary,
+  type SessionUsageProjection,
   type SessionLoadFailure,
   type SessionLoadWarning
 } from '../../shared/session-persistence'
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
+import { buildSessionProjection, type SessionProjectionRepository } from './projection'
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
@@ -157,6 +160,57 @@ const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
   wait: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))
 }
 
+const projectIncompleteSummaries = (
+  result: LoadAllSessionsResult,
+  existingNumbers: ReadonlyMap<string, number> = new Map()
+): SessionSummary[] => {
+  const ordered = [...result.sessions].sort(
+    (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+  )
+  const existingIdByNumber = new Map(
+    [...existingNumbers].map(([id, number]) => [number, id] as const)
+  )
+  const candidateNumber = (session: PersistedChatSession): number | undefined =>
+    existingNumbers.get(session.id) ?? session.number
+  const candidateCounts = new Map<number, number>()
+  for (const session of ordered) {
+    const number = candidateNumber(session)
+    const owner = number === undefined ? undefined : existingIdByNumber.get(number)
+    if (
+      number === undefined ||
+      !Number.isSafeInteger(number) ||
+      number < 1 ||
+      (owner && owner !== session.id)
+    ) {
+      continue
+    }
+    candidateCounts.set(number, (candidateCounts.get(number) ?? 0) + 1)
+  }
+  const used = new Set(existingNumbers.values())
+  for (const [number, count] of candidateCounts) if (count === 1) used.add(number)
+  let nextNumber = 1
+  for (const number of used) nextNumber = Math.max(nextNumber, number + 1)
+  return ordered
+    .map((session) => {
+      let number = candidateNumber(session)
+      const owner = number === undefined ? undefined : existingIdByNumber.get(number)
+      if (
+        number === undefined ||
+        !Number.isSafeInteger(number) ||
+        number < 1 ||
+        (owner && owner !== session.id) ||
+        candidateCounts.get(number) !== 1
+      ) {
+        while (used.has(nextNumber)) nextNumber += 1
+        number = nextNumber
+        used.add(number)
+        nextNumber += 1
+      }
+      return { ...buildSessionProjection(session).summary, number }
+    })
+    .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+}
+
 // Production storage lives under ~/.open-science; dev builds use an isolated sibling directory.
 export const PROD_SESSION_DIR_NAME = '.open-science'
 export const DEV_SESSION_DIR_NAME = '.open-science-project'
@@ -191,12 +245,21 @@ const assertSafeSegment = (segment: string): string => {
 class SessionRepository {
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private readonly sessionRevisions = new Map<string, number>()
+  private projectionWritesSuspended = false
+  private readonly suspendedProjectionSessionWrites = new Map<
+    string,
+    Readonly<{ projectId: string; sessionId: string }>
+  >()
+  private suspendedProjectionCatalogMutation = false
+  private projectionInitialization:
+    Promise<{ result?: LoadAllSessionsResult; sessions: SessionSummary[] }> | undefined
   private backupSequence = 0
   private readonly dependencies: SessionRepositoryDependencies
 
   constructor(
     private readonly storageDir: string,
-    dependencies: Partial<SessionRepositoryDependencies> = {}
+    dependencies: Partial<SessionRepositoryDependencies> = {},
+    private readonly projection?: SessionProjectionRepository
   ) {
     this.dependencies = {
       hasActiveRuntimePrompt:
@@ -239,6 +302,244 @@ class SessionRepository {
   async loadAll(): Promise<LoadAllSessionsResult> {
     const scan = await this.loadAllWithDiagnostics()
     return scan.result
+  }
+
+  async loadManifest(): Promise<PersistedSessionManifest> {
+    return (await this.readManifest({ quarantineInvalidFiles: true })).manifest
+  }
+
+  async ensureSessionProjection(
+    loadAuthority: () => Promise<LoadAllSessionsResult>
+  ): Promise<{ result?: LoadAllSessionsResult; sessions: SessionSummary[] }> {
+    if (!this.projection) throw new Error('Session projection is unavailable.')
+    if (this.projectionInitialization) return this.projectionInitialization
+
+    const initialization = this.ensureSessionProjectionNow(loadAuthority)
+    this.projectionInitialization = initialization
+    void initialization.then(
+      () => {
+        if (this.projectionInitialization === initialization) {
+          this.projectionInitialization = undefined
+        }
+      },
+      () => {
+        if (this.projectionInitialization === initialization) {
+          this.projectionInitialization = undefined
+        }
+      }
+    )
+    return initialization
+  }
+
+  async reconcilePendingSessionProjection(): Promise<void> {
+    await this.operationScheduler.runGlobal(async () => {
+      if (!this.projection || !(await this.projection.isInitialized())) return
+      for (const pending of await this.projection.pending()) {
+        if (pending.operation === 'delete') {
+          await this.deleteSessionNow(pending.projectId, pending.sessionId)
+          continue
+        }
+        const loaded = await this.loadSessionWithDiagnostics(pending.projectId, pending.sessionId, {
+          mode: 'read-only'
+        })
+        if (loaded.status === 'unreadable') break
+        if (loaded.status === 'found') {
+          // The global barrier keeps the authority read and replay ahead of every later save. Call
+          // the unscheduled implementation to avoid nesting the same repository scheduler.
+          await this.saveSessionNow(loaded.session)
+          continue
+        }
+
+        const deletionState = await this.getProjectSessionDeletionState(pending.projectId)
+        if (deletionState === 'prepared' || deletionState === 'legacy-committed') {
+          const committed = await this.loadCommittedProjectWithDiagnostics(pending.projectId)
+          if (!committed.isComplete) break
+          const session = committed.sessions.find(({ id }) => id === pending.sessionId)
+          if (session) {
+            await this.projection.commitReconciliation(session)
+            continue
+          }
+        }
+        await this.projection.commitDelete(pending.projectId, pending.sessionId)
+      }
+    })
+  }
+
+  async summarizeReadOnlyAuthority(result: LoadAllSessionsResult): Promise<SessionSummary[]> {
+    if (!this.projection) throw new Error('Session projection is unavailable.')
+    const assignments = await this.operationScheduler.runGlobal(() =>
+      this.projection!.numberAssignments()
+    )
+    return projectIncompleteSummaries(
+      result,
+      new Map(assignments.map(({ id, number }) => [id, number]))
+    )
+  }
+
+  private async ensureSessionProjectionNow(
+    loadAuthority: () => Promise<LoadAllSessionsResult>
+  ): Promise<{ result?: LoadAllSessionsResult; sessions: SessionSummary[] }> {
+    if (!this.projection) throw new Error('Session projection is unavailable.')
+
+    const loadReadyProjection = async (): Promise<{
+      result?: LoadAllSessionsResult
+      sessions: SessionSummary[]
+    }> => {
+      const summaries = await this.operationScheduler.runGlobal(() => this.projection!.list())
+      if (!summaries.some((session) => session.needsStartupRecovery)) {
+        return { sessions: summaries }
+      }
+      const result = await this.loadAuthorityWithSuspendedProjection(loadAuthority)
+      return this.operationScheduler.runGlobal(async () => {
+        const freshResult = await this.refreshProjectionBuildAuthority(result)
+        const numbers = new Map(summaries.map((session) => [session.id, session.number]))
+        if (freshResult.diagnostics?.isComplete === false) {
+          return {
+            result: freshResult,
+            sessions: projectIncompleteSummaries(freshResult, numbers)
+          }
+        }
+        const numbered = freshResult.sessions.map((session) => ({
+          ...session,
+          number: session.number ?? numbers.get(session.id)
+        }))
+        await this.projection!.replaceAll(numbered)
+        return {
+          result: { ...freshResult, sessions: numbered },
+          sessions: await this.projection!.list()
+        }
+      })
+    }
+
+    if (await this.projection.isInitialized()) {
+      await this.reconcilePendingSessionProjection()
+      if (await this.projection.isReady()) return loadReadyProjection()
+    }
+
+    const result = await this.loadAuthorityWithSuspendedProjection(loadAuthority)
+    return this.operationScheduler.runGlobal(async () => {
+      const freshResult = await this.refreshProjectionBuildAuthority(result)
+      if (freshResult.diagnostics?.isComplete === false) {
+        return { result: freshResult, sessions: projectIncompleteSummaries(freshResult) }
+      }
+      const assignments = await this.projection!.numberAssignments()
+      const existingNumberById = new Map(assignments.map(({ id, number }) => [id, number]))
+      const existingIdByNumber = new Map(assignments.map(({ id, number }) => [number, id]))
+      await this.projection!.clearForRebuild()
+      const ordered = [...freshResult.sessions].sort(
+        (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+      )
+      const numberCounts = new Map<number, number>()
+      for (const session of ordered) {
+        const number = existingNumberById.get(session.id) ?? session.number
+        const owner = number === undefined ? undefined : existingIdByNumber.get(number)
+        if (
+          number === undefined ||
+          !Number.isSafeInteger(number) ||
+          number < 1 ||
+          (owner && owner !== session.id)
+        )
+          continue
+        numberCounts.set(number, (numberCounts.get(number) ?? 0) + 1)
+      }
+      const rebuiltById = new Map<string, PersistedChatSession>()
+      for (const session of ordered) {
+        const number = existingNumberById.get(session.id) ?? session.number
+        const owner = number === undefined ? undefined : existingIdByNumber.get(number)
+        if (
+          number !== undefined &&
+          Number.isSafeInteger(number) &&
+          number > 0 &&
+          (!owner || owner === session.id) &&
+          numberCounts.get(number) === 1
+        ) {
+          const numbered =
+            session.number === number ? session : await this.saveSessionNow({ ...session, number })
+          rebuiltById.set(session.id, numbered)
+          continue
+        }
+        const persisted = await this.saveSessionNow({ ...session, number: undefined })
+        rebuiltById.set(session.id, persisted)
+      }
+      const rebuilt = freshResult.sessions.map((session) => rebuiltById.get(session.id) ?? session)
+      await this.projection!.replaceAll(rebuilt)
+      return {
+        result: { ...freshResult, sessions: rebuilt },
+        sessions: await this.projection!.list()
+      }
+    })
+  }
+
+  private async loadAuthorityWithSuspendedProjection(
+    loadAuthority: () => Promise<LoadAllSessionsResult>
+  ): Promise<LoadAllSessionsResult> {
+    this.projectionWritesSuspended = true
+    this.suspendedProjectionSessionWrites.clear()
+    this.suspendedProjectionCatalogMutation = false
+    try {
+      return await loadAuthority()
+    } catch (error) {
+      this.projectionWritesSuspended = false
+      throw error
+    }
+  }
+
+  private async refreshProjectionBuildAuthority(
+    result: LoadAllSessionsResult
+  ): Promise<LoadAllSessionsResult> {
+    try {
+      if (this.suspendedProjectionCatalogMutation) {
+        const scan = await this.loadAllWithDiagnostics({ mode: 'read-only' })
+        return {
+          ...result,
+          ...scan.result,
+          diagnostics: {
+            ...result.diagnostics,
+            isComplete: scan.isComplete,
+            warnings: scan.warnings ?? [],
+            failure: scan.failure
+          }
+        }
+      }
+
+      const sessions = new Map(result.sessions.map((session) => [session.id, session]))
+      for (const { projectId, sessionId } of this.suspendedProjectionSessionWrites.values()) {
+        const loaded = await this.loadSessionWithDiagnostics(projectId, sessionId, {
+          mode: 'read-only'
+        })
+        if (loaded.status === 'unreadable') {
+          this.suspendedProjectionCatalogMutation = true
+          return this.refreshProjectionBuildAuthority(result)
+        }
+        if (loaded.status === 'found') sessions.set(sessionId, loaded.session)
+        else sessions.delete(sessionId)
+      }
+      return {
+        ...result,
+        sessions: [...sessions.values()],
+        diagnostics: {
+          isComplete: result.diagnostics?.isComplete ?? true,
+          warnings: result.diagnostics?.warnings ?? [],
+          ...result.diagnostics
+        }
+      }
+    } finally {
+      this.projectionWritesSuspended = false
+    }
+  }
+
+  async loadSessionSummaries(): Promise<SessionSummary[]> {
+    if (!this.projection || !(await this.projection.isReady())) {
+      throw new Error('Session projection is not ready.')
+    }
+    return this.operationScheduler.runGlobal(() => this.projection!.list())
+  }
+
+  async loadSessionUsageProjection(): Promise<SessionUsageProjection> {
+    if (!this.projection || !(await this.projection.isReady())) {
+      throw new Error('Session projection is not ready.')
+    }
+    return this.operationScheduler.runGlobal(() => this.projection!.usage())
   }
 
   // Loads one durable session directly instead of scanning every project/session file. Reviewer fix
@@ -415,33 +716,52 @@ class SessionRepository {
     session: PersistedChatSession,
     expectedRevision?: number
   ): Promise<PersistedChatSession> {
-    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
-      const key = `${session.projectId}:${session.id}`
-      let actualRevision = Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
-      if (expectedRevision !== undefined) {
-        if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-          throw new Error('Session expected revision must be a non-negative integer.')
-        }
-        const current = await this.loadSessionWithDiagnostics(session.projectId, session.id, {
-          mode: 'read-only'
-        })
-        if (current.status === 'unreadable') {
-          throw new Error('Cannot compare Session revision because durable JSON is unreadable.')
-        }
-        actualRevision = current.status === 'found' ? sessionRevision(current.session) : 0
-        if (actualRevision !== expectedRevision) {
-          throw new SessionRevisionConflictError(expectedRevision, actualRevision)
-        }
-      }
+    return this.operationScheduler.runSession(session.projectId, session.id, () =>
+      this.saveSessionNow(session, expectedRevision)
+    )
+  }
 
-      const durableSession: PersistedChatSession = {
-        ...session,
-        revision: actualRevision + 1
+  private async saveSessionNow(
+    session: PersistedChatSession,
+    expectedRevision?: number
+  ): Promise<PersistedChatSession> {
+    const key = `${session.projectId}:${session.id}`
+    let actualRevision = Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
+    if (expectedRevision !== undefined) {
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+        throw new Error('Session expected revision must be a non-negative integer.')
       }
-      await this.writeSession(durableSession)
-      this.sessionRevisions.set(key, durableSession.revision!)
-      return durableSession
-    })
+      const current = await this.loadSessionWithDiagnostics(session.projectId, session.id, {
+        mode: 'read-only'
+      })
+      if (current.status === 'unreadable') {
+        throw new Error('Cannot compare Session revision because durable JSON is unreadable.')
+      }
+      actualRevision = current.status === 'found' ? sessionRevision(current.session) : 0
+      if (actualRevision !== expectedRevision) {
+        throw new SessionRevisionConflictError(expectedRevision, actualRevision)
+      }
+    }
+
+    const projectedSession =
+      this.projection && !this.projectionWritesSuspended
+        ? await this.projection.prepareSave(session)
+        : session
+    const durableSession: PersistedChatSession = {
+      ...projectedSession,
+      revision: actualRevision + 1
+    }
+    await this.writeSession(durableSession)
+    if (this.projectionWritesSuspended) {
+      this.suspendedProjectionSessionWrites.set(key, {
+        projectId: session.projectId,
+        sessionId: session.id
+      })
+    } else {
+      await this.projection?.commitSave(durableSession)
+    }
+    this.sessionRevisions.set(key, durableSession.revision!)
+    return durableSession
   }
 
   async saveCommittedProjectSession(session: PersistedChatSession): Promise<void> {
@@ -455,51 +775,76 @@ class SessionRepository {
         revision: Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0) + 1
       }
       await this.writeSessionToDirectory(durableSession, this.deletedProjectDir(session.projectId))
+      if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
       this.sessionRevisions.set(key, durableSession.revision!)
     })
   }
 
   // Removes a single session file.
   async deleteSession(projectId: string, sessionId: string): Promise<void> {
-    return this.operationScheduler.runSession(projectId, sessionId, async () => {
-      const safeProjectId = assertSafeSegment(projectId)
-      const safeSessionId = assertSafeSegment(sessionId)
-      const diagnostic = await this.loadSessionWithDiagnostics(safeProjectId, safeSessionId)
-      if (diagnostic.status === 'unreadable') {
-        throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
-      }
-      const revisionKey = `${safeProjectId}:${safeSessionId}`
-      if (diagnostic.status === 'missing') {
-        this.sessionRevisions.delete(revisionKey)
-        return
-      }
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.deleteSessionNow(projectId, sessionId)
+    )
+  }
 
-      // The valid primary proves matching quarantines are superseded authority covered by this
-      // explicit Session deletion. Remove every backup first so any failure leaves that proof in
-      // place and the operation safely retryable; only then remove the current primary.
-      const primaryPath = this.sessionFilePath(safeProjectId, safeSessionId)
-      for (const suffix of [PRE_S2_BACKUP_SUFFIX, PRE_SUBAGENT_MODEL_BACKUP_SUFFIX]) {
-        await this.dependencies.remove(`${primaryPath}${suffix}`, {
-          force: true,
-          recursive: false
+  private async deleteSessionNow(projectId: string, sessionId: string): Promise<void> {
+    const safeProjectId = assertSafeSegment(projectId)
+    const safeSessionId = assertSafeSegment(sessionId)
+    const diagnostic = await this.loadSessionWithDiagnostics(safeProjectId, safeSessionId)
+    if (diagnostic.status === 'unreadable') {
+      throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
+    }
+    const revisionKey = `${safeProjectId}:${safeSessionId}`
+    if (diagnostic.status === 'missing') {
+      this.sessionRevisions.delete(revisionKey)
+      if (this.projectionWritesSuspended) {
+        this.suspendedProjectionSessionWrites.set(revisionKey, {
+          projectId: safeProjectId,
+          sessionId: safeSessionId
         })
+      } else {
+        await this.projection?.commitDelete(safeProjectId, safeSessionId)
       }
-      const quarantines = await this.listQuarantinedSessionFiles(safeProjectId, safeSessionId)
-      if (!quarantines.isComplete) {
-        throw new Error('Cannot delete a Session whose quarantine directory is unreadable.')
-      }
-      for (const fileName of quarantines.names) {
-        await this.dependencies.remove(join(this.projectDir(safeProjectId), fileName), {
-          force: true,
-          recursive: false
-        })
-      }
-      await this.dependencies.remove(primaryPath, {
+      return
+    }
+
+    if (!this.projectionWritesSuspended) {
+      await this.projection?.markPending(safeProjectId, safeSessionId, 'delete')
+    }
+
+    // The valid primary proves matching quarantines are superseded authority covered by this
+    // explicit Session deletion. Remove every backup first so any failure leaves that proof in
+    // place and the operation safely retryable; only then remove the current primary.
+    const primaryPath = this.sessionFilePath(safeProjectId, safeSessionId)
+    for (const suffix of [PRE_S2_BACKUP_SUFFIX, PRE_SUBAGENT_MODEL_BACKUP_SUFFIX]) {
+      await this.dependencies.remove(`${primaryPath}${suffix}`, {
         force: true,
         recursive: false
       })
-      this.sessionRevisions.delete(revisionKey)
+    }
+    const quarantines = await this.listQuarantinedSessionFiles(safeProjectId, safeSessionId)
+    if (!quarantines.isComplete) {
+      throw new Error('Cannot delete a Session whose quarantine directory is unreadable.')
+    }
+    for (const fileName of quarantines.names) {
+      await this.dependencies.remove(join(this.projectDir(safeProjectId), fileName), {
+        force: true,
+        recursive: false
+      })
+    }
+    await this.dependencies.remove(primaryPath, {
+      force: true,
+      recursive: false
     })
+    if (this.projectionWritesSuspended) {
+      this.suspendedProjectionSessionWrites.set(revisionKey, {
+        projectId: safeProjectId,
+        sessionId: safeSessionId
+      })
+    } else {
+      await this.projection?.commitDelete(safeProjectId, safeSessionId)
+    }
+    this.sessionRevisions.delete(revisionKey)
   }
 
   // Atomically moves a marked live directory into the durable deletion area. The marker/tombstone is
@@ -518,6 +863,7 @@ class SessionRepository {
       await mkdir(liveProjectDir, { recursive: true })
       await writeFile(join(liveProjectDir, PROJECT_DELETION_COMMIT_MARKER), '', 'utf8')
       await rename(liveProjectDir, deletedProjectDir)
+      if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
     })
   }
 
@@ -578,16 +924,18 @@ class SessionRepository {
         join(this.deletedProjectDir(assertSafeSegment(projectId)), PROJECT_DELETION_COMMIT_MARKER),
         ''
       )
+      if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
     })
   }
 
   async completeProjectSessionDeletion(projectId: string): Promise<void> {
-    await this.operationScheduler.runProject(projectId, () =>
-      this.dependencies.remove(this.deletedProjectDir(assertSafeSegment(projectId)), {
+    await this.operationScheduler.runProject(projectId, async () => {
+      await this.dependencies.remove(this.deletedProjectDir(assertSafeSegment(projectId)), {
         recursive: true,
         force: true
       })
-    )
+      if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
+    })
   }
 
   async listLegacyProjectSessionTombstones(): Promise<string[]> {

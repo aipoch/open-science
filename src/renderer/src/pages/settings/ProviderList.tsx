@@ -24,6 +24,7 @@ import {
   codexSubscriptionProviderIdentity,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
+  isXaiSubscriptionProvider,
   providerEndpoints,
   providerValidationFailed,
   resolveCodexSubscriptionType,
@@ -68,6 +69,10 @@ type ProviderListProps = {
   onCancelIsolatedClaudeLogin?: () => void
   onLoginIsolatedClaudePaste?: () => void
   onLogoutIsolatedClaude?: () => void
+  isXaiLoginPending?: boolean
+  onLoginXai?: () => void
+  onCancelXaiLogin?: () => void
+  onLogoutXai?: () => void
 }
 
 // Concise, actionable reason for a failed connection test, shown on the unverified warning.
@@ -123,6 +128,7 @@ const describeType = (provider: ProviderView, t: TFunction): string => {
   if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
     return t('Claude subscription')
   if (isCodexSubscriptionProvider(provider.type)) return codexSubscriptionProviderIdentity().name
+  if (isXaiSubscriptionProvider(provider.type)) return 'xAI (Grok) OAuth'
 
   return provider.vendorId
     ? (getOfficialVendor(provider.vendorId)?.label ?? t('Official'))
@@ -153,7 +159,11 @@ const ProviderList = ({
   onLoginIsolatedClaude,
   onCancelIsolatedClaudeLogin,
   onLoginIsolatedClaudePaste,
-  onLogoutIsolatedClaude
+  onLogoutIsolatedClaude,
+  isXaiLoginPending = false,
+  onLoginXai,
+  onCancelXaiLogin,
+  onLogoutXai
 }: ProviderListProps): React.JSX.Element => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
@@ -205,6 +215,7 @@ const ProviderList = ({
           // A passing test shows a green check. Suppressed while a test is in flight.
           const isVerified = !failure && !isBusy && provider.lastValidatedAt !== undefined
           const isCodexSubscription = isCodexSubscriptionProvider(provider.type)
+          const isXaiSubscription = isXaiSubscriptionProvider(provider.type)
           const codexSubscriptionType = isCodexSubscription
             ? resolveCodexSubscriptionType(provider)
             : undefined
@@ -327,6 +338,16 @@ const ProviderList = ({
                       ) : (
                         <div>{t('Not signed in')}</div>
                       )
+                    ) : isXaiSubscription ? (
+                      <>
+                        <div>{provider.accountEmail ?? t('Not signed in')}</div>
+                        <div>
+                          {t('{{count}} models', {
+                            defaultValue_one: '{{count}} model',
+                            count: provider.models.length
+                          })}
+                        </div>
+                      </>
                     ) : (
                       // custom + official both authenticate with a key; official's models come from its
                       // catalog (shown as a count) rather than a single stored model.
@@ -362,7 +383,14 @@ const ProviderList = ({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {isCodexSubscription && isCodexLoginPending ? (
+                  {isXaiSubscription && isXaiLoginPending ? (
+                    <SettingsIconAction
+                      label={t('Cancel sign-in')}
+                      icon={X}
+                      onClick={() => onCancelXaiLogin?.()}
+                      className="border border-border text-foreground"
+                    />
+                  ) : isCodexSubscription && isCodexLoginPending ? (
                     <SettingsIconAction
                       label={t('Cancel sign-in')}
                       icon={X}
@@ -408,6 +436,22 @@ const ProviderList = ({
                       label={t('Sign out')}
                       icon={LogOut}
                       onClick={() => onLogoutIsolatedCodex?.()}
+                      className="border border-border text-foreground"
+                    />
+                  ) : null}
+                  {isXaiSubscription && !provider.hasKey && !isXaiLoginPending ? (
+                    <SettingsIconAction
+                      label={t('Sign in')}
+                      icon={LogIn}
+                      onClick={() => onLoginXai?.()}
+                      className="border border-border text-foreground"
+                    />
+                  ) : null}
+                  {isXaiSubscription && provider.hasKey ? (
+                    <SettingsIconAction
+                      label={t('Sign out')}
+                      icon={LogOut}
+                      onClick={() => onLogoutXai?.()}
                       className="border border-border text-foreground"
                     />
                   ) : null}

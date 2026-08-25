@@ -21,7 +21,7 @@ import {
   type UpsertToolActivityInput
 } from './session-store-run-activity-helpers'
 import {
-  projectAgentMessageChunk,
+  projectAgentMessageChunks,
   projectMessageArtifacts,
   projectMessageUploads,
   projectRunArtifacts,
@@ -153,26 +153,31 @@ export const createSessionRunProjectionOwner = <
     if (inputs.length === 0) return []
 
     const state = get()
-    let sessions = state.sessions
+    const inputIndexesBySessionId = new Map<string, number[]>()
+    inputs.forEach((input, index) => {
+      if (!input.sessionId) return
+      const indexes = inputIndexesBySessionId.get(input.sessionId)
+      if (indexes) indexes.push(index)
+      else inputIndexesBySessionId.set(input.sessionId, [index])
+    })
     let shouldCommit = false
-    const results: AppendMessageResult[] = []
-
-    for (const input of inputs) {
-      if (!input.sessionId) continue
-      const session = sessions.find((candidate) => candidate.id === input.sessionId)
-      if (!session) continue
-      const projection = projectAgentMessageChunk(session, input)
-      if (projection.result) results.push(projection.result)
-      if (!projection.shouldCommit) continue
-
-      shouldCommit = true
-      sessions = sessions.map((candidate) =>
-        candidate.id === input.sessionId ? projection.session : candidate
+    const indexedResults: Array<AppendMessageResult | undefined> = []
+    const sessions = state.sessions.map((session) => {
+      const indexes = inputIndexesBySessionId.get(session.id)
+      if (!indexes) return session
+      const projection = projectAgentMessageChunks(
+        session,
+        indexes.map((index) => inputs[index])
       )
-    }
+      indexes.forEach((inputIndex, resultIndex) => {
+        indexedResults[inputIndex] = projection.results[resultIndex]
+      })
+      shouldCommit ||= projection.shouldCommit
+      return projection.session
+    })
 
     if (shouldCommit) setSessionState({ sessions } as Partial<State>)
-    return results
+    return indexedResults.filter((result): result is AppendMessageResult => Boolean(result))
   }
 
   return {

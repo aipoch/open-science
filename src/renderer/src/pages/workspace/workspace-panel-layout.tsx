@@ -1,5 +1,6 @@
 import { animate } from 'motion'
 import { PanelLeft, PanelRight } from 'lucide-react'
+import { FocusScope } from '@radix-ui/react-focus-scope'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
@@ -254,24 +255,37 @@ type PreviewPanelLayoutPort = {
 }
 
 // Presents one layout contract to WorkspacePage across desktop and mobile surfaces.
-const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): WorkspacePanelLayout => {
+const useWorkspacePanelLayout = (
+  previewPort: PreviewPanelLayoutPort,
+  mobileSidebarDialogRef: React.RefObject<HTMLDivElement | null>
+): WorkspacePanelLayout => {
   const { t } = useTranslation()
   const [sidebarState, setSidebarState] = useState<ResizablePanelState>('open')
   const sidebarToggleRef = useRef<HTMLButtonElement | null>(null)
   const previewToggleRef = useRef<HTMLButtonElement | null>(null)
   const isMobile = useMediaQuery('(max-width: 767px)')
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
+  const mobileSidebarReturnFocusRef = useRef<HTMLElement | null>(null)
+  const mobileSidebarWasOpenRef = useRef(false)
   // Latest sidebar width in pixels and a render-phase-independent mirror of the collapse state,
   // so the floating fallback can be positioned no matter which toggle instance holds the ref.
   const sidebarPixelWidthRef = useRef<number | null>(null)
   const sidebarStateRef = useRef(sidebarState)
 
-  const openMobileSidebar = useCallback((): void => setIsMobileSidebarOpen(true), [])
+  const rememberMobileSidebarReturnFocus = useCallback((): void => {
+    const activeElement = document.activeElement
+    mobileSidebarReturnFocusRef.current =
+      activeElement instanceof HTMLElement && activeElement !== document.body ? activeElement : null
+  }, [])
+  const openMobileSidebar = useCallback((): void => {
+    rememberMobileSidebarReturnFocus()
+    setIsMobileSidebarOpen(true)
+  }, [rememberMobileSidebarReturnFocus])
   const closeMobileSidebar = useCallback((): void => setIsMobileSidebarOpen(false), [])
-  const toggleMobileSidebar = useCallback(
-    (): void => setIsMobileSidebarOpen((isOpen) => !isOpen),
-    []
-  )
+  const toggleMobileSidebar = useCallback((): void => {
+    if (!isMobileSidebarOpen) rememberMobileSidebarReturnFocus()
+    setIsMobileSidebarOpen(!isMobileSidebarOpen)
+  }, [isMobileSidebarOpen, rememberMobileSidebarReturnFocus])
   const toggleSidebar = useCallback(
     (): void => setSidebarState((state) => (state === 'collapsed' ? 'open' : 'collapsed')),
     []
@@ -309,6 +323,36 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
   useEffect(() => {
     sidebarStateRef.current = sidebarState
   }, [sidebarState])
+
+  useEffect(() => {
+    const dialog = mobileSidebarDialogRef.current
+    if (isMobile && isMobileSidebarOpen) {
+      mobileSidebarWasOpenRef.current = true
+      dialog
+        ?.querySelector<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+        ?.focus()
+      return
+    }
+
+    if (!mobileSidebarWasOpenRef.current) return
+    mobileSidebarWasOpenRef.current = false
+
+    const activeElement = document.activeElement
+    if (
+      activeElement instanceof HTMLElement &&
+      activeElement !== document.body &&
+      document.contains(activeElement) &&
+      !dialog?.contains(activeElement)
+    ) {
+      return
+    }
+
+    const returnFocus = mobileSidebarReturnFocusRef.current
+    mobileSidebarReturnFocusRef.current = null
+    if (returnFocus?.isConnected && !returnFocus.closest('[inert]')) returnFocus.focus()
+  }, [isMobile, isMobileSidebarOpen, mobileSidebarDialogRef])
 
   // Drag-to-collapse emits its final zero-width resize while the header toggle still holds the
   // ref, so the freshly mounted floating fallback reapplies the tracked width on collapse.
@@ -353,6 +397,9 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
   useEffect(() => {
     const toggleSidebarFromShortcut = (event: KeyboardEvent): void => {
       const isMac = window.api?.platform === 'darwin'
+      const hasBlockingDialog = Array.from(
+        document.querySelectorAll<HTMLElement>(OPEN_DIALOG_SELECTOR)
+      ).some((dialog) => dialog !== mobileSidebarDialogRef.current)
       if (
         event.defaultPrevented ||
         event.isComposing ||
@@ -361,7 +408,7 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
         !(isMac ? event.metaKey : event.ctrlKey) ||
         event.altKey ||
         event.shiftKey ||
-        document.querySelector(OPEN_DIALOG_SELECTOR) !== null
+        hasBlockingDialog
       ) {
         return
       }
@@ -373,7 +420,7 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
 
     window.addEventListener('keydown', toggleSidebarFromShortcut)
     return () => window.removeEventListener('keydown', toggleSidebarFromShortcut)
-  }, [isMobile, toggleMobileSidebar, toggleSidebar])
+  }, [isMobile, mobileSidebarDialogRef, toggleMobileSidebar, toggleSidebar])
 
   return {
     isMobile,
@@ -480,7 +527,11 @@ const WorkspacePanelLayout = ({
   renderConversation
 }: WorkspacePanelLayoutProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const { isMobile, mobileSidebar, sidebar, preview } = useWorkspacePanelLayout(previewPort)
+  const mobileSidebarDialogRef = useRef<HTMLDivElement | null>(null)
+  const { isMobile, mobileSidebar, sidebar, preview } = useWorkspacePanelLayout(
+    previewPort,
+    mobileSidebarDialogRef
+  )
 
   return (
     <>
@@ -490,14 +541,36 @@ const WorkspacePanelLayout = ({
             type="button"
             className="fixed inset-0 z-[65] bg-black/45 md:hidden"
             aria-label={t('Close navigation')}
+            tabIndex={-1}
             onClick={mobileSidebar.close}
           />
         ) : null}
-        {isMobile
-          ? renderMobileSidebar({ isOpen: mobileSidebar.isOpen, close: mobileSidebar.close })
-          : null}
+        {isMobile ? (
+          <FocusScope
+            asChild
+            loop={mobileSidebar.isOpen}
+            trapped={mobileSidebar.isOpen}
+            onMountAutoFocus={(event) => event.preventDefault()}
+            onUnmountAutoFocus={(event) => event.preventDefault()}
+          >
+            <div
+              ref={mobileSidebarDialogRef}
+              role={mobileSidebar.isOpen ? 'dialog' : undefined}
+              aria-modal={mobileSidebar.isOpen ? true : undefined}
+              aria-label={mobileSidebar.isOpen ? t('Workspace navigation') : undefined}
+              className="contents"
+            >
+              {renderMobileSidebar({
+                isOpen: mobileSidebar.isOpen,
+                close: mobileSidebar.close
+              })}
+            </div>
+          </FocusScope>
+        ) : null}
         <ResizablePanelGroup
           orientation="horizontal"
+          aria-hidden={isMobile && mobileSidebar.isOpen ? true : undefined}
+          inert={isMobile && mobileSidebar.isOpen ? true : undefined}
           className={isMobile ? 'min-w-0 flex-1' : '-mr-[10px] min-w-0 flex-1'}
         >
           {!isMobile ? (

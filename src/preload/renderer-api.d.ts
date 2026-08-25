@@ -12,6 +12,8 @@ import type {
   AcpPermissionResponse,
   ElicitationResponse,
   AcpPromptRequest,
+  AcpSteerFollowUpRequest,
+  AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
   AcpSaveAsSkillRequest,
   AcpRevokePermissionGrantRequest,
@@ -173,7 +175,8 @@ import type {
 import type {
   DeletePreviewStateRequest,
   LoadPreviewStateRequest,
-  PersistedPreviewState,
+  PreviewStateSnapshot,
+  SavePreviewStateResult,
   SavePreviewStateRequest
 } from '../shared/preview-state'
 import type {
@@ -220,10 +223,12 @@ import type {
   DeleteSessionRequest,
   SessionDeletionResult,
   LoadAllSessionsResult,
+  ListSessionSummariesResult,
   LoadSessionRequest,
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
+  SessionUsageProjection,
   UpdateSessionArchiveRequest
 } from '../shared/session-persistence'
 import type {
@@ -240,6 +245,7 @@ import type {
   ClaudeInstallResult,
   DeleteProviderRequest,
   EnvironmentCheckResult,
+  XaiOAuthDeviceAuthorization,
   InstallClaudeRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
@@ -451,6 +457,7 @@ export interface OpenScienceAPI {
     continueInterruptedTurn(request: AcpContinueInterruptedTurnRequest): Promise<AcpStateSnapshot>
     resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
     sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
+    steerFollowUp(request: AcpSteerFollowUpRequest): Promise<AcpSteerFollowUpResult>
     saveAsSkill(request: AcpSaveAsSkillRequest): Promise<AcpStateSnapshot>
     compactSession(request: AcpCompactSessionRequest): Promise<AcpStateSnapshot>
     cancel(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot>
@@ -461,7 +468,7 @@ export interface OpenScienceAPI {
     revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpStateSnapshot>
     onState(listener: AcpListener<AcpStateSnapshot>): RemoveListener
     onAgentRuntimeUpdate(listener: AcpListener<AcpAgentRuntimeUpdate>): RemoveListener
-    onEvent(listener: AcpListener<AcpRuntimeEvent>): RemoveListener
+    onEvent(listener: AcpListener<readonly AcpRuntimeEvent[]>): RemoveListener
     onPermissionRequest(listener: AcpListener<AcpPermissionRequest>): RemoveListener
   }
   sideChat: {
@@ -483,8 +490,10 @@ export interface OpenScienceAPI {
     onChanged(listener: AcpListener<PermissionGrantsChangedEvent>): RemoveListener
   }
   sessions: {
+    list(): Promise<ListSessionSummariesResult>
     loadAll(): Promise<LoadAllSessionsResult>
     loadOne(request: LoadSessionRequest): Promise<PersistedChatSession | undefined>
+    loadUsage(): Promise<SessionUsageProjection>
     saveSession(
       session: PersistedChatSession,
       options?: SaveSessionOptions
@@ -539,6 +548,10 @@ export interface OpenScienceAPI {
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
     cancelCodexLogin(): Promise<void>
     cancelClaudeLogin(): Promise<void>
+    beginXaiOAuthLogin(): Promise<XaiOAuthDeviceAuthorization>
+    waitXaiOAuthLogin(): Promise<{ accountEmail?: string }>
+    cancelXaiOAuthLogin(): Promise<void>
+    logoutXaiOAuth(): Promise<SettingsSnapshot>
     loginIsolatedCodex(): Promise<ValidateProviderResult>
     logoutIsolatedCodex(): Promise<ValidateProviderResult>
     loginSharedClaude(): Promise<ValidateProviderResult>
@@ -690,7 +703,7 @@ export interface OpenScienceAPI {
       request: NotificationMarkSessionCompletionsReadRequest
     ): Promise<void>
     onChanged(listener: AcpListener<NotificationInboxChanged>): RemoveListener
-    onOpenSession(listener: () => void): RemoveListener
+    onOpenSession?(listener: () => void): RemoveListener
     peekPendingOpenSession(): Promise<OpenSessionFromNotificationRequest | null>
     takePendingOpenSession(
       expectedToken: number
@@ -834,8 +847,8 @@ export interface OpenScienceAPI {
     ): Promise<PersistedChatSession>
   }
   preview: {
-    load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>
-    save(request: SavePreviewStateRequest): Promise<void>
+    load(request: LoadPreviewStateRequest): Promise<PreviewStateSnapshot | null>
+    save(request: SavePreviewStateRequest): Promise<SavePreviewStateResult>
     delete(request: DeletePreviewStateRequest): Promise<void>
   }
   previewResources: {
@@ -894,7 +907,7 @@ export interface OpenScienceAPI {
     getTransferStatus(request: UploadTransferRequest): Promise<UploadTransferStatus | null>
     finishTransfer(request: UploadTransferRequest): Promise<UploadedAttachment>
     abortTransfer(request: UploadTransferRequest): Promise<void>
-    onTransferProgress(listener: AcpListener<UploadTransferProgress>): RemoveListener
+    onTransferProgress?(listener: AcpListener<UploadTransferProgress>): RemoveListener
     // Deletes a staged upload when the composer chip is removed or the draft is abandoned.
     deleteUpload(request: DeleteUploadRequest): Promise<void>
     // Moves pending uploads into the durable session directory once a session id exists.
@@ -1047,14 +1060,18 @@ export interface OpenScienceAPI {
     // Closes the focused window (the Cmd+W / Ctrl+W fallback when no preview panel is open).
     close(): Promise<void>
     // Fires when Cmd+W / Ctrl+W is pressed; the renderer decides pane-vs-window.
-    onCloseActivePane(listener: () => void): RemoveListener
+    onCloseActivePane?(listener: () => void): RemoveListener
     findInPage?(request: WindowFindRequest): void
     clearFind?(): void
     // Announces the Workspace is mounted (READY) and returns a teardown that announces UNREADY.
     announceWindowFindReady?(): RemoveListener
+    // Announces that the full searchable transcript has committed to the renderer DOM.
+    announceWindowFindContentReady?(): void
     onFindInPageResult?(listener: AcpListener<WindowFindResult>): RemoveListener
     // Overlay-only: main signals the bar was shown; the overlay asks main to hide it.
     onShowWindowFind?(listener: AcpListener<WindowFindAppearance>): RemoveListener
+    // Main renderer only: the overlay was hidden, so temporary searchable content can be released.
+    onHideWindowFind?(listener: () => void): RemoveListener
     onWindowFindAppearance?(listener: AcpListener<WindowFindAppearance>): RemoveListener
     announceWindowFindAppearance?(appearance: WindowFindAppearance): void
     closeFind?(): void

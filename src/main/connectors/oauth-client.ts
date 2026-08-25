@@ -12,6 +12,10 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js'
 
 import type { StoredCustomMcpOAuthConfig, StoredCustomMcpOAuthState } from '../settings/types'
+import {
+  DEFAULT_LOOPBACK_OAUTH_REDIRECT_URI,
+  normalizeLoopbackOAuthRedirectUri
+} from '../../shared/oauth-redirect'
 
 export type OAuthCallback = {
   code?: string
@@ -25,6 +29,7 @@ type PendingCallback = {
 }
 
 const OAUTH_CALLBACK_TIMEOUT_MS = 5 * 60_000
+const DEFAULT_OAUTH_CALLBACK_PATH = new URL(DEFAULT_LOOPBACK_OAUTH_REDIRECT_URI).pathname
 
 // One loopback listener is shared by all custom MCP OAuth logins. The callback state is matched to
 // the pending flow before handing the authorization code back to the caller.
@@ -33,23 +38,36 @@ export class OAuthCallbackServer {
   private redirectUrl: string | undefined
   private starting: Promise<string> | undefined
   private readonly pending = new Map<string, PendingCallback>()
+  private readonly callbackPaths = new Set([DEFAULT_OAUTH_CALLBACK_PATH])
 
-  async ensureStarted(): Promise<string> {
-    if (this.redirectUrl) return this.redirectUrl
+  async ensureStarted(registeredRedirectUri?: string): Promise<string> {
+    if (this.redirectUrl) return this.runtimeRedirectUrl(registeredRedirectUri)
 
     const starting = this.starting ?? this.start()
     this.starting = starting
     try {
-      return await starting
+      await starting
+      return this.runtimeRedirectUrl(registeredRedirectUri)
     } finally {
       if (this.starting === starting) this.starting = undefined
     }
   }
 
+  private runtimeRedirectUrl(registeredRedirectUri?: string): string {
+    if (!this.redirectUrl) throw new Error('OAuth callback server did not start')
+    if (!registeredRedirectUri) return this.redirectUrl
+
+    const registered = new URL(normalizeLoopbackOAuthRedirectUri(registeredRedirectUri))
+    const runtime = new URL(this.redirectUrl)
+    registered.port = runtime.port
+    this.callbackPaths.add(registered.pathname)
+    return registered.toString()
+  }
+
   private async start(): Promise<string> {
     const server = createServer((request, response) => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-      if (url.pathname !== '/oauth/callback') {
+      if (!this.callbackPaths.has(url.pathname)) {
         response.writeHead(404)
         response.end('Not found')
         return
@@ -83,7 +101,7 @@ export class OAuthCallbackServer {
     const address = server.address()
     if (!address || typeof address === 'string')
       throw new Error('OAuth callback server did not bind')
-    this.redirectUrl = `http://127.0.0.1:${address.port}/oauth/callback`
+    this.redirectUrl = `http://127.0.0.1:${address.port}${DEFAULT_OAUTH_CALLBACK_PATH}`
     return this.redirectUrl
   }
 
@@ -132,6 +150,8 @@ export class OAuthCallbackServer {
     const server = this.server
     this.server = undefined
     this.redirectUrl = undefined
+    this.callbackPaths.clear()
+    this.callbackPaths.add(DEFAULT_OAUTH_CALLBACK_PATH)
     if (!server) return
     server.closeAllConnections()
     await new Promise<void>((resolve) => server.close(() => resolve()))

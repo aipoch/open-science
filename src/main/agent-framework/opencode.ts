@@ -1,4 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  spawn,
+  type ChildProcessWithoutNullStreams,
+  type SpawnOptionsWithoutStdio
+} from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { SessionModeState } from '@agentclientprotocol/sdk'
@@ -25,6 +29,18 @@ import type {
 } from './types'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
 import { renderAppMcpToolReferences } from './app-mcp-names'
+
+type SpawnProcess = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptionsWithoutStdio & { stdio: 'pipe' }
+) => ChildProcessWithoutNullStreams
+
+type OpencodeFrameworkDeps = {
+  platform?: NodeJS.Platform
+  sourceEnv?: NodeJS.ProcessEnv
+  spawnProcess?: SpawnProcess
+}
 
 // opencode speaks ACP over `opencode acp` (stdio JSON-RPC). Only the shapes that differ from Claude
 // are implemented here: model config (a generated opencode.json, not ANTHROPIC_* env), system-prompt
@@ -76,25 +92,18 @@ const OPENCODE_ENDPOINT_PROVIDER: Record<'anthropic' | 'openai', { id: string; n
 // plaintext key OFF disk — opencode.json only ever holds the reference, never the secret.
 const OPENCODE_API_KEY_ENV = 'OPENCODE_APP_API_KEY'
 
+// OpenCode rejects a model limit that declares context without output. Keep maxOutputTokens optional
+// in the provider model, but reserve a conservative adapter-only output budget when it is absent so
+// the generated config remains valid and OpenCode can calculate its native compaction threshold.
+const OPENCODE_DEFAULT_OUTPUT_LIMIT = 32_000
+
+const opencodeOutputLimit = (contextWindow: number, configured?: number): number =>
+  Math.min(configured ?? OPENCODE_DEFAULT_OUTPUT_LIMIT, contextWindow)
+
 const opencodeApiKeyEnv = (provider: ResolvedProvider): string =>
   provider.agentProviderId
     ? `${OPENCODE_API_KEY_ENV}_${provider.agentProviderId.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase()}`
     : OPENCODE_API_KEY_ENV
-
-// opencode's model `limit` block requires BOTH `context` and `output` (its config schema rejects a
-// limit that carries only one — "Missing key ...limit.output" and the ACP connection closes). We set
-// context from the provider catalog (the whole point: it makes opencode emit usage_update); opencode
-// uses these limits for context accounting, so a best-effort output cap is fine here. Tunable.
-const OPENCODE_DEFAULT_OUTPUT_LIMIT = 32_000
-
-const opencodeOutputLimit = (contextWindow: number, configured?: unknown): number => {
-  const requested =
-    typeof configured === 'number' && Number.isFinite(configured) && configured > 0
-      ? configured
-      : OPENCODE_DEFAULT_OUTPUT_LIMIT
-
-  return Math.min(requested, contextWindow)
-}
 
 // The app's permission policy for opencode: every side-effecting/MCP tool must ASK the ACP client (the
 // app's broker then enforces the selected profile); safe read-only tools and OpenCode's native skill
@@ -241,10 +250,11 @@ const buildOpencodeModelConfig = (
   reasoningEffort: ModelReasoningEffort | undefined,
   baseModel: Record<string, unknown> = {}
 ): Record<string, unknown> => {
-  const baseLimit = asRecord(baseModel.limit)
+  const baseModelWithoutLimit = { ...baseModel }
+  delete baseModelWithoutLimit.limit
   const modelCapabilities = buildModelCapabilities(provider, reasoningEffort)
   return {
-    ...baseModel,
+    ...baseModelWithoutLimit,
     ...modelCapabilities,
     ...(modelCapabilities.options
       ? {
@@ -258,9 +268,9 @@ const buildOpencodeModelConfig = (
       ? {}
       : {
           limit: {
-            ...baseLimit,
             context: provider.contextWindow,
-            output: opencodeOutputLimit(provider.contextWindow, baseLimit.output)
+            ...(provider.maxInputTokens === undefined ? {} : { input: provider.maxInputTokens }),
+            output: opencodeOutputLimit(provider.contextWindow, provider.maxOutputTokens)
           }
         })
   }
@@ -388,10 +398,16 @@ const buildOpencodeConfig = (
 
 export { buildOpencodeConfig }
 
-export const opencodeFramework: AgentFramework = {
+export const createOpencodeFramework = ({
+  platform = process.platform,
+  sourceEnv = process.env,
+  spawnProcess = spawn as SpawnProcess
+}: OpencodeFrameworkDeps = {}): AgentFramework => ({
   id: 'opencode',
   displayName: 'OpenCode',
-  contextCompaction: { kind: 'native-command', command: '/compact', triggerAtPercent: 90 },
+  // OpenCode owns automatic compaction using its resolved model limits. Keep the native command for
+  // manual compaction, but do not race it with a second host-owned percentage threshold.
+  contextCompaction: { kind: 'native-command', command: '/compact' },
   // opencode discovers skills natively at <configDir>/skills/<name>/SKILL.md (same layout as Claude),
   // loaded on-demand via its skill tool; the app materializes the enabled set into the isolated config.
   supportsSkills: true,
@@ -412,13 +428,13 @@ export const opencodeFramework: AgentFramework = {
     // Windows an npm-installed opencode is a `opencode.cmd`/`.bat` shim that Node cannot launch without
     // a shell (spawn EINVAL, same as Claude's cli.js shim), so those go through the shell with the
     // path quoted; a native `.exe`/Unix binary spawns directly.
-    const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
+    const needsShell = platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
 
-    return spawn(
+    return spawnProcess(
       needsShell ? `"${input.executablePath}"` : input.executablePath,
       ['acp', ...input.args],
       {
-        env: { ...augmentedPathEnv(process.env), ...input.env },
+        env: { ...augmentedPathEnv(sourceEnv), ...input.env },
         stdio: 'pipe',
         windowsHide: true,
         shell: needsShell
@@ -543,4 +559,6 @@ export const opencodeFramework: AgentFramework = {
     // enforces ask/auto/full app-side. That's why Full access is offered even without a native bypass.
     return resolvePermissionProfileApplication(profile, modes, { brokerEnforcesFullAccess: true })
   }
-}
+})
+
+export const opencodeFramework = createOpencodeFramework()

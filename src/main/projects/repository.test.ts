@@ -9,6 +9,8 @@ const createRow = (overrides: Record<string, unknown> = {}): Record<string, unkn
   agentContext: '',
   isExample: false,
   pinned: false,
+  archivedAt: null,
+  deletedAt: null,
   createdAt: new Date(1710000000000),
   updatedAt: new Date(1710000000100),
   ...overrides
@@ -24,6 +26,8 @@ const createMockClient = (
   executeRaw: ReturnType<typeof vi.fn>
   project: Record<string, ReturnType<typeof vi.fn>>
   projectDeletionIntent: Record<string, ReturnType<typeof vi.fn>>
+  projectPreviewState: { deleteMany: ReturnType<typeof vi.fn> }
+  visionEvidence: { deleteMany: ReturnType<typeof vi.fn> }
 } => {
   const project = {
     findMany: vi.fn(methods.findMany as never),
@@ -40,12 +44,24 @@ const createMockClient = (
     findMany: vi.fn().mockResolvedValue([])
   }
   const executeRaw = vi.fn().mockResolvedValue(1)
+  const projectPreviewState = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const visionEvidence = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const client = {
+    $executeRaw: executeRaw,
+    $transaction: vi.fn((operation: (transaction: unknown) => unknown) => operation(client)),
+    project,
+    projectDeletionIntent,
+    projectPreviewState,
+    visionEvidence
+  } as unknown as ProjectClient
 
   return {
-    client: { $executeRaw: executeRaw, project, projectDeletionIntent } as unknown as ProjectClient,
+    client,
     executeRaw,
     project,
-    projectDeletionIntent
+    projectDeletionIntent,
+    projectPreviewState,
+    visionEvidence
   }
 }
 
@@ -66,7 +82,10 @@ describe('project repository', () => {
         updatedAt: 1710000000100
       }
     ])
-    expect(project.findMany).toHaveBeenCalledWith({ orderBy: { updatedAt: 'desc' } })
+    expect(project.findMany).toHaveBeenCalledWith({
+      where: { deletedAt: null },
+      orderBy: { updatedAt: 'desc' }
+    })
   })
 
   it('returns null when a project is not found', async () => {
@@ -74,6 +93,15 @@ describe('project repository', () => {
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
     await expect(repository.get('missing')).resolves.toBeNull()
+  })
+
+  it('hides a soft-deleted project', async () => {
+    const { client } = createMockClient({
+      findUnique: () => Promise.resolve(createRow({ deletedAt: new Date(1710000000200) }))
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.get('project-1')).resolves.toBeNull()
   })
 
   it('trims the name and defaults the description on create', async () => {
@@ -112,7 +140,11 @@ describe('project repository', () => {
     })
 
     expect(project.updateMany).toHaveBeenCalledWith({
-      where: { id: 'project-1', updatedAt: new Date(1710000000100) },
+      where: {
+        id: 'project-1',
+        deletedAt: null,
+        updatedAt: new Date(1710000000100)
+      },
       data: { name: 'Renamed' }
     })
     expect(project.update).not.toHaveBeenCalled()
@@ -163,15 +195,27 @@ describe('project repository', () => {
     expect(project.update).not.toHaveBeenCalled()
   })
 
-  it('deletes a project by id', async () => {
-    const { client, project } = createMockClient({
-      delete: () => Promise.resolve(createRow())
+  it('soft-deletes a project while removing active-only derived children', async () => {
+    const { client, project, projectPreviewState, visionEvidence } = createMockClient({
+      findUnique: () => Promise.resolve(createRow()),
+      updateMany: () => Promise.resolve({ count: 1 })
     })
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
     await repository.delete('project-1')
 
-    expect(project.delete).toHaveBeenCalledWith({ where: { id: 'project-1' } })
+    expect(projectPreviewState.deleteMany).toHaveBeenCalledWith({
+      where: { projectId: 'project-1' }
+    })
+    expect(visionEvidence.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
+    expect(project.updateMany).toHaveBeenCalledWith({
+      where: { id: 'project-1', deletedAt: null },
+      data: {
+        deletedAt: expect.any(Date),
+        updatedAt: new Date(1710000000100)
+      }
+    })
+    expect(project.delete).not.toHaveBeenCalled()
   })
 
   it('changes archive visibility with compare-and-set while preserving activity time', async () => {
@@ -195,7 +239,7 @@ describe('project repository', () => {
     ).resolves.toMatchObject({ archivedAt: 1710000000200, updatedAt: 1710000000100 })
 
     expect(project.updateMany).toHaveBeenCalledWith({
-      where: { id: 'project-1', archivedAt: null },
+      where: { id: 'project-1', deletedAt: null, archivedAt: null },
       data: {
         archivedAt: new Date(1710000000200),
         updatedAt: new Date(1710000000100)
@@ -253,7 +297,11 @@ describe('project repository', () => {
     })
 
     expect(project.updateMany).toHaveBeenCalledWith({
-      where: { id: 'project-1', updatedAt: new Date(1710000000100) },
+      where: {
+        id: 'project-1',
+        deletedAt: null,
+        updatedAt: new Date(1710000000100)
+      },
       data: { agentContext: 'Prefer Python.' }
     })
   })
@@ -277,7 +325,11 @@ describe('project repository', () => {
     // would silently drop the Agent Context.
     expect(executeRaw).not.toHaveBeenCalled()
     expect(project.updateMany).toHaveBeenCalledWith({
-      where: { id: 'project-1', updatedAt: new Date(1710000000100) },
+      where: {
+        id: 'project-1',
+        deletedAt: null,
+        updatedAt: new Date(1710000000100)
+      },
       data: { pinned: true, agentContext: 'Always cite DOIs.' }
     })
   })

@@ -9,7 +9,15 @@ import type {
 
 // Only the project delegate is needed; typing to this subset keeps the repository unit-testable with a
 // lightweight mock instead of a real (engine-backed) PrismaClient.
-type ProjectClient = Pick<PrismaClient, '$executeRaw' | 'project' | 'projectDeletionIntent'>
+type ProjectClient = Pick<
+  PrismaClient,
+  | '$executeRaw'
+  | '$transaction'
+  | 'project'
+  | 'projectDeletionIntent'
+  | 'projectPreviewState'
+  | 'visionEvidence'
+>
 
 // Normalizes Prisma rows into the epoch-ms shape shared with the renderer.
 const toProject = (row: PrismaProject): Project => ({
@@ -36,7 +44,10 @@ class ProjectRepository {
   // Lists projects most-recently-updated first for the home screen.
   async list(): Promise<Project[]> {
     const client = await this.getClient()
-    const rows = await client.project.findMany({ orderBy: { updatedAt: 'desc' } })
+    const rows = await client.project.findMany({
+      where: { deletedAt: null },
+      orderBy: { updatedAt: 'desc' }
+    })
 
     return rows.map(toProject)
   }
@@ -46,7 +57,7 @@ class ProjectRepository {
     const client = await this.getClient()
     const row = await client.project.findUnique({ where: { id } })
 
-    return row ? toProject(row) : null
+    return row && row.deletedAt === null ? toProject(row) : null
   }
 
   // Creates a project; rejects blank names before touching the database.
@@ -111,19 +122,24 @@ class ProjectRepository {
       const updated = await client.$executeRaw`
         UPDATE "Project"
         SET "pinned" = ${request.pinned}
-        WHERE "id" = ${request.id}
+        WHERE "id" = ${request.id} AND "deletedAt" IS NULL
       `
       if (updated !== 1) throw new Error('Project not found.')
 
       const row = await client.project.findUnique({ where: { id: request.id } })
       if (!row) throw new Error('Project not found.')
+      if (row.deletedAt !== null) throw new Error('Project not found.')
       return toProject(row)
     }
 
     if (request.pinned !== undefined) data.pinned = request.pinned
 
     const result = await client.project.updateMany({
-      where: { id: request.id, updatedAt: new Date(request.expectedUpdatedAt) },
+      where: {
+        id: request.id,
+        deletedAt: null,
+        updatedAt: new Date(request.expectedUpdatedAt)
+      },
       data
     })
     if (result.count !== 1) {
@@ -131,7 +147,7 @@ class ProjectRepository {
     }
 
     const row = await client.project.findUnique({ where: { id: request.id } })
-    if (!row) throw new Error('Project not found.')
+    if (!row || row.deletedAt !== null) throw new Error('Project not found.')
     return toProject(row)
   }
 
@@ -148,12 +164,13 @@ class ProjectRepository {
 
     const client = await this.getClient()
     const current = await client.project.findUnique({ where: { id: request.id } })
-    if (!current) throw new Error('Project not found.')
+    if (!current || current.deletedAt !== null) throw new Error('Project not found.')
 
     const expectedArchivedAt = request.expectedArchivedAt
     const result = await client.project.updateMany({
       where: {
         id: request.id,
+        deletedAt: null,
         archivedAt: expectedArchivedAt === null ? null : new Date(expectedArchivedAt)
       },
       data: {
@@ -168,15 +185,24 @@ class ProjectRepository {
     }
 
     const row = await client.project.findUnique({ where: { id: request.id } })
-    if (!row) throw new Error('Project not found.')
+    if (!row || row.deletedAt !== null) throw new Error('Project not found.')
     return toProject(row)
   }
 
-  // Removes a project row. Cascading its sessions is handled by the session layer, not the DB.
+  // Retains Project and Session metadata/Usage for historical totals while removing active-only
+  // derived children that previously relied on a hard-delete cascade.
   async delete(id: string): Promise<void> {
     const client = await this.getClient()
-
-    await client.project.delete({ where: { id } })
+    await client.$transaction(async (transaction) => {
+      await transaction.projectPreviewState.deleteMany({ where: { projectId: id } })
+      await transaction.visionEvidence.deleteMany({ where: { projectId: id } })
+      const current = await transaction.project.findUnique({ where: { id } })
+      if (!current || current.deletedAt !== null) return
+      await transaction.project.updateMany({
+        where: { id, deletedAt: null },
+        data: { deletedAt: new Date(), updatedAt: current.updatedAt }
+      })
+    })
   }
 
   // Upsert makes intent creation idempotent across repeated delete commands and crash recovery.

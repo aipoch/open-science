@@ -8,6 +8,7 @@ import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile
 } from '../../../../shared/artifacts'
+import { SessionRevisionConflictError } from '../../../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1044,6 +1045,22 @@ describe('workspace runtime events', () => {
     expect(useSessionStore.getState().sessions[0].messages).toHaveLength(1)
   })
 
+  it('does not project thought events into the transcript', async () => {
+    const sessionBefore = useSessionStore.getState().sessions[0]
+
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-thought-1',
+        kind: 'thought',
+        role: 'assistant',
+        text: 'I will inspect the notebook next.'
+      })
+    )
+
+    expect(applied).toBe(false)
+    expect(useSessionStore.getState().sessions[0]).toBe(sessionBefore)
+  })
+
   it('ignores an info-level system event (only warnings become status)', async () => {
     const applied = await applyWorkspaceRuntimeEvent(
       createEvent({ id: 'event-1', kind: 'system', level: 'info', text: 'Session created' })
@@ -1666,6 +1683,70 @@ describe('workspace runtime events', () => {
     expect(session.messages[1].artifactIds).toEqual([
       `transport-session-1:${responseMessageId}:result.txt`
     ])
+  })
+
+  it('keeps a successful artifact finalization complete when the projection save conflicts', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'assistant-before-save-conflict',
+        role: 'assistant',
+        messageId: 'assistant-before-save-conflict',
+        text: 'Saved the result.'
+      })
+    )
+    const responseMessageId = useSessionStore.getState().sessions[0].messages[1].id
+    const finalizedArtifact = createArtifactFile({
+      id: `transport-session-1:${responseMessageId}:result.txt`,
+      sessionId: 'transport-session-1',
+      messageId: responseMessageId,
+      runId: undefined
+    })
+    const operationOrder: string[] = []
+    const finalizeRunArtifacts = vi.fn().mockImplementation(async () => {
+      operationOrder.push('finalize')
+      return [finalizedArtifact]
+    })
+    const revisionConflict = new SessionRevisionConflictError(562, 567)
+    const saveSession = vi.fn(async () => {
+      operationOrder.push('save')
+      if (operationOrder.length === 3) throw revisionConflict
+    })
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-before-save-conflict',
+        kind: 'artifact',
+        runId: 'artifact-run-before-save-conflict',
+        promptMessageId,
+        artifactSessionId: 'artifact-session-1',
+        artifactClaimId: 'claim-before-save-conflict',
+        artifacts: [createArtifactFile({ runId: 'artifact-run-before-save-conflict' })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    const failure = await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-after-finalization', kind: 'stop', text: 'end_turn' })
+    ).then(
+      () => undefined,
+      (error: unknown) => error
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
+    expect(operationOrder).toEqual(['save', 'finalize', 'save'])
+    expect(session).toMatchObject({
+      status: 'idle',
+      activeRun: undefined,
+      error: undefined
+    })
+    expect(session.messages[1]).toMatchObject({
+      id: responseMessageId,
+      status: 'complete',
+      artifactIds: [finalizedArtifact.id]
+    })
+    expect(failure).toBe(revisionConflict)
   })
 
   it.each([

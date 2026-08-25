@@ -18,9 +18,9 @@ const stringLiteral = (node, label) => {
 
 // prettier-ignore
 const invokeProfiles = new Set(['WEB', 'LOCAL', 'MAPPED_ELECTRON', 'MAPPED_NATIVE', 'DELEGATED_NATIVE'])
-const eventProfiles = new Set(['EVENT', 'DORMANT_EVENT', 'CLOSE_PANE_EVENT'])
+const eventProfiles = new Set(['EVENT'])
 // prettier-ignore
-const unprojectedProfiles = new Set(['ELECTRON', 'SEND', 'WINDOW_FIND_READY', 'ELECTRON_EVENT', 'NATIVE'])
+const unprojectedProfiles = new Set(['ELECTRON', 'SEND', 'WINDOW_FIND_READY', 'ELECTRON_EVENT', 'CLOSE_PANE_EVENT', 'NATIVE'])
 
 const projectionFor = (node) => {
   if (!node) return 'invoke'

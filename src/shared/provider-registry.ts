@@ -169,8 +169,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   },
   {
     id: 'xai',
-    label: 'Grok (xAI)',
-    // xAI documents four selectable effort values for Grok 4.5. Models with a different capability
+    label: 'xAI (Grok)',
+    // xAI documents four selectable effort values for Grok 4.6. Models with a different capability
     // override this default below; models without a documented effort control stay unsupported.
     reasoningEffort: 'low-medium-high-xhigh',
     // xAI serves OpenAI-compatible Chat Completions and native Responses from the same versioned
@@ -184,6 +184,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // audio, and video generation models, so exposing refresh would pollute the chat-model picker.
     // Experimental Grok 4.20 beta variants are intentionally omitted from the stable default list.
     models: [
+      { id: 'grok-4.6', contextWindow: 500_000 },
       { id: 'grok-4.5', contextWindow: 500_000 },
       {
         id: 'grok-4.3',
@@ -213,12 +214,20 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     models: [
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-pro[1m]', contextWindow: 1_000_000 },
-      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 }
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000 }
     ],
-    // Both DeepSeek V4 models serve the native Responses API. Keep the explicit list because the
+    // Bundled DeepSeek V4 models serve the native Responses API. Keep the explicit list because the
     // vendor also exposes non-Responses models through its live model catalog.
-    responsesModels: ['deepseek-v4-pro', 'deepseek-v4-pro[1m]', 'deepseek-v4-flash']
-    // DeepSeek's chat models are text-only, so no `multimodal` rule (image input stays disabled).
+    responsesModels: [
+      'deepseek-v4-pro',
+      'deepseek-v4-pro[1m]',
+      'deepseek-v4-flash',
+      'deepseek-v4-flash-vision-exp'
+    ],
+    // Only the vision-exp id accepts image input. Pro and flash stay text-only; sending images to
+    // them returns 400. The explicit list also covers the same id when it arrives via live refresh.
+    multimodal: { multimodalModels: ['deepseek-v4-flash-vision-exp'] }
   },
   {
     id: 'bailian',

@@ -33,6 +33,7 @@ type NotebookRunTerminalResult = {
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
   environmentCapture?: NotebookRunEnvironmentCapture
+  kernelDispatched?: boolean
 }
 
 type TerminalizeNotebookRunRequest<Result extends NotebookRunTerminalResult> = {
@@ -193,6 +194,9 @@ class NotebookRunTerminalizationOwner {
       workingFiles: limitedResult.workingFiles ?? [],
       ...(limitedResult.truncated ? { truncated: true } : {}),
       environmentCapture,
+      ...(limitedResult.kernelDispatched !== undefined
+        ? { kernelDispatched: limitedResult.kernelDispatched }
+        : {}),
       ...(interruptionReason ? { interruptionReason } : {}),
       ...(environmentCapture.state !== 'unavailable' && limitedResult.environmentManifest
         ? { environmentManifest: limitedResult.environmentManifest }

@@ -179,7 +179,15 @@ const createDurableDelegatedWork = (
       frameId: child.frameId,
       attemptId: attempt.id,
       updates: runtimeUpdates,
-      promptMessageId: () => context?.promptMessageId,
+      runtimeScope: () => {
+        const unstagedScope = turnLifecycle.unstagedRuntimeScope(context)
+        return unstagedScope
+          ? {
+              runtimeSegmentId: unstagedScope.runtimeSegmentId,
+              promptMessageId: unstagedScope.promptMessageId
+            }
+          : undefined
+      },
       createMessageId: () => createId('message')
     })
     const completion = (async () => {

@@ -8,6 +8,7 @@ import type {
   NotebookLanguage,
   NotebookOutput,
   NotebookRunRecord,
+  NotebookRunProvenanceContext,
   NotebookRunSource,
   NotebookRunStatus,
   NotebookWorkingFile,
@@ -37,6 +38,11 @@ import {
 } from './shell-process'
 import { startWorkingFileObservation } from './working-file-observer'
 import type { TransientViewImage } from './host-view-image-service'
+import {
+  unavailableNotebookDependencyProjection,
+  type NotebookDependencyInterpreter,
+  type NotebookDependencyProjection
+} from './dependency-analysis'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
@@ -100,6 +106,11 @@ type NotebookExecutionOwnerOptions = {
   ) => Promise<void>
   getMcpRpcConnectionResolver: () => McpRpcConnectionResolver | undefined
   notifyAvailable: (session: NotebookSessionAggregate, source: NotebookRunSource) => void
+  projectDependencies: (
+    session: NotebookSessionAggregate,
+    run: NotebookRunRecord,
+    interpreter?: NotebookDependencyInterpreter
+  ) => Promise<NotebookDependencyProjection>
   platform?: NodeJS.Platform
   shellProcess?: NotebookShellProcess
 }
@@ -109,6 +120,7 @@ const errorToExecutionResult = (error: unknown, cwd: string): NotebookSessionExe
 
   return {
     status: 'failed',
+    kernelDispatched: false,
     stdout: '',
     stderr: message,
     traceback: message,
@@ -123,6 +135,14 @@ const cancelledExecutionResult = (cwd: string): NotebookSessionExecutionResult =
   ...errorToExecutionResult(new Error(CANCELLED_MESSAGE), cwd),
   status: 'cancelled'
 })
+
+// Root runtime ownership is Session-scoped, but every durable Run still belongs to the authenticated
+// conversation Frame that produced it. A renderer state read may have created the shared owner first.
+const runAgentFrameId = (
+  session: NotebookSessionAggregate,
+  provenanceContext: NotebookRunProvenanceContext | undefined
+): string => provenanceContext?.agentFrameId ?? notebookLaneScope(session.lane).agentFrameId
+
 class NotebookExecutionOwner {
   private readonly shellProcess: NotebookShellProcess
   private controlCompletionInterceptor: NotebookControlCompletionInterceptor | undefined
@@ -140,7 +160,7 @@ class NotebookExecutionOwner {
     session: NotebookSessionAggregate,
     request: RunNotebookCellRequest,
     signal?: AbortSignal
-  ): Promise<NotebookRunRecord> {
+  ): Promise<{ run: NotebookRunRecord; dependencyProjection: NotebookDependencyProjection }> {
     const cell = session.cellView(request.cellId)
     if (session.isCellReceiving(cell.id)) {
       throw new Error(`Notebook cell is still receiving code: ${cell.id}`)
@@ -157,7 +177,7 @@ class NotebookExecutionOwner {
     cell: Readonly<NotebookCell>,
     request: RunNotebookCellRequest,
     signal?: AbortSignal
-  ): Promise<NotebookRunRecord> {
+  ): Promise<{ run: NotebookRunRecord; dependencyProjection: NotebookDependencyProjection }> {
     this.options.notifyAvailable(session, request.source ?? 'agent')
     const { runId } = this.options.runTerminalization.allocateRunIdentity()
     const startedAt = Date.now()
@@ -166,9 +186,15 @@ class NotebookExecutionOwner {
     const admission = await this.options.dataExecutionAdmission.admit(session, cell)
     const { environment, processKey } = admission.route
     const { binding, resolvedInterpreter } = admission
+    const kernelWasTerminated =
+      session.isKernelTerminated(processKey) ||
+      session.kernelStatus(processKey) === 'terminated' ||
+      session.hasDurableKernelTermination(processKey)
+    const kernelEpochId = session.kernelEpochId(processKey, kernelWasTerminated)
     session.markCellRunning(cell.id, runId, executionCount)
     const runningRun: NotebookRunRecord = {
       runId,
+      kernelEpochId,
       ...(request.executionInvocationId
         ? { executionInvocationId: request.executionInvocationId }
         : {}),
@@ -182,8 +208,9 @@ class NotebookExecutionOwner {
       cwdBefore,
       executionCount,
       environment,
+      ...(binding?.source === 'external' ? { runtimeId: binding.runtimeId } : {}),
       ...request.provenanceContext,
-      agentFrameId: notebookLaneScope(session.lane).agentFrameId,
+      agentFrameId: runAgentFrameId(session, request.provenanceContext),
       text: { stdout: '', stderr: '', traceback: '', plain: [] },
       outputs: [],
       artifacts: [],
@@ -196,10 +223,6 @@ class NotebookExecutionOwner {
       )
     }
     const kernelMarkedRunning = admission.rejection === undefined
-    const kernelWasTerminated =
-      session.isKernelTerminated(processKey) ||
-      session.kernelStatus(processKey) === 'terminated' ||
-      session.hasDurableKernelTermination(processKey)
     if (kernelMarkedRunning) {
       session.clearKernelTerminated(processKey)
       this.options.setKernelStatus(session, 'running', processKey)
@@ -230,7 +253,7 @@ class NotebookExecutionOwner {
             return errorToExecutionResult(error, cwdBefore)
           }
           reachedExecutor = true
-          const result = await session
+          const executionResult = await session
             .execute({
               code: cell.code,
               cwd: cwdBefore,
@@ -247,10 +270,15 @@ class NotebookExecutionOwner {
             })
             .catch((error: unknown) => {
               executedOnLiveKernel = false
-              return session.consumeForceStopped(processKey)
+              const fallback = session.consumeForceStopped(processKey)
                 ? cancelledExecutionResult(cwdBefore)
                 : errorToExecutionResult(error, cwdBefore)
+              return { ...fallback, kernelDispatched: true }
             })
+          const result =
+            executionResult.kernelDispatched === undefined
+              ? { ...executionResult, kernelDispatched: true }
+              : executionResult
           if (result.status !== 'completed') return result
           try {
             const capture = await this.options.environmentStateTracker.captureCompletedRun(
@@ -296,7 +324,10 @@ class NotebookExecutionOwner {
         await this.options.persistRecoveredKernelIdle(session, processKey)
       }
     }
-    return run
+    const dependencyProjection = await this.options
+      .projectDependencies(session, run, resolvedInterpreter)
+      .catch(() => unavailableNotebookDependencyProjection([run]))
+    return { run, dependencyProjection }
   }
   async executeControl(
     session: NotebookSessionAggregate,
@@ -385,7 +416,7 @@ class NotebookExecutionOwner {
       startedAt: Date.now(),
       cwdBefore: session.cwd,
       ...request.provenanceContext,
-      agentFrameId: notebookLaneScope(session.lane).agentFrameId,
+      agentFrameId: runAgentFrameId(session, request.provenanceContext),
       text: { stdout: '', stderr: '', traceback: '', plain: [] },
       outputs: [],
       artifacts: [],
@@ -511,7 +542,7 @@ class NotebookExecutionOwner {
       startedAt: Date.now(),
       cwdBefore: session.cwd,
       ...request.provenanceContext,
-      agentFrameId: notebookLaneScope(session.lane).agentFrameId,
+      agentFrameId: runAgentFrameId(session, request.provenanceContext),
       text: { stdout: '', stderr: '', traceback: '', plain: [] },
       outputs: [],
       artifacts: [],

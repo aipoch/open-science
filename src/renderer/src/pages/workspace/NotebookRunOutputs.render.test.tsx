@@ -175,7 +175,7 @@ describe('NotebookRunOutputs', () => {
     expect(container.querySelector('[data-testid="notebook-figure-outputs"]')).toBeNull()
   })
 
-  it('preserves every captured occurrence without adding mutable saved-file previews', () => {
+  it('keeps synthetic filenames when multiple saved-file associations are ambiguous', () => {
     const figures = resolveNotebookRunFigures(
       makeRun({
         outputs: [
@@ -184,14 +184,14 @@ describe('NotebookRunOutputs', () => {
         ],
         workingFiles: [
           {
-            path: '/workspace/plot.png',
-            relativePath: 'plot.png',
+            path: '/workspace/first.png',
+            relativePath: 'charts/first.png',
             kind: 'other',
             createdByRunId: 'r1'
           },
           {
-            path: '/workspace/plot.png',
-            relativePath: 'plot.png',
+            path: '/workspace/second.png',
+            relativePath: 'charts/second.png',
             kind: 'other',
             createdByRunId: 'r1'
           }
@@ -203,6 +203,52 @@ describe('NotebookRunOutputs', () => {
       expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' }),
       expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' })
     ])
+    expect(figures).toEqual([
+      expect.not.objectContaining({ filename: expect.any(String) }),
+      expect.not.objectContaining({ filename: expect.any(String) })
+    ])
+  })
+
+  it('keeps a synthetic filename when saved-file association is ambiguous', () => {
+    const figures = resolveNotebookRunFigures(
+      makeRun({
+        outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }],
+        workingFiles: [
+          {
+            path: '/workspace/plot.pdf',
+            relativePath: 'plot.pdf',
+            kind: 'other',
+            createdByRunId: 'r1'
+          },
+          {
+            path: '/workspace/plot.tiff',
+            relativePath: 'plot.tiff',
+            kind: 'other',
+            createdByRunId: 'r1'
+          }
+        ]
+      })
+    )
+
+    expect(figures).toEqual([expect.not.objectContaining({ filename: expect.any(String) })])
+  })
+
+  it('keeps a synthetic filename for a single saved file with an incompatible type', () => {
+    const figures = resolveNotebookRunFigures(
+      makeRun({
+        outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }],
+        workingFiles: [
+          {
+            path: '/workspace/report.pdf',
+            relativePath: 'report.pdf',
+            kind: 'other',
+            createdByRunId: 'r1'
+          }
+        ]
+      })
+    )
+
+    expect(figures).toEqual([expect.not.objectContaining({ filename: expect.any(String) })])
   })
 
   it('renders stream stdout text', () => {

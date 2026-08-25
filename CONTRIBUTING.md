@@ -148,7 +148,7 @@ Use one of these standard type prefixes:
 - Formatting is handled by Prettier. `npm run format` is optional; review its
   changes before committing because it rewrites files across the repository.
 - Linting is enforced by ESLint; run `npm run lint`.
-- Wrap user-facing strings with the `t()` translation function from `react-i18next`. Add corresponding translations to `src/renderer/src/locales/fr.json` (French), `src/renderer/src/locales/ja.json` (Japanese), `src/renderer/src/locales/ko.json` (Korean), `src/renderer/src/locales/zh-Hans.json` (Simplified Chinese), and `src/renderer/src/locales/zh-Hant.json` (Traditional Chinese). Use the English text as the translation key. Keep code comments and documentation in English.
+- Wrap user-facing strings with the `t()` translation function from `react-i18next`. Add corresponding translations to `src/renderer/src/locales/fr.json` (French), `src/renderer/src/locales/ja.json` (Japanese), `src/renderer/src/locales/ko.json` (Korean), `src/renderer/src/locales/ru.json` (Russian), `src/renderer/src/locales/zh-Hans.json` (Simplified Chinese), and `src/renderer/src/locales/zh-Hant.json` (Traditional Chinese). Use the English text as the translation key. Keep code comments and documentation in English.
 
 ## Verification Policy
 

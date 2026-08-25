@@ -17,6 +17,7 @@ import {
 } from './skill-selector-routing'
 import {
   ProviderLoopbackHttpHost,
+  ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
@@ -37,6 +38,8 @@ type JsonObject = Record<string, any>
 type NativeResponsesCompatibilityTarget = {
   baseUrl: string
   key?: string
+  resolveKey?: (forceRefresh?: boolean) => Promise<string>
+  sanitizeRequest?: (body: JsonObject) => JsonObject
   model?: string
   reviewerScope?: {
     namespacedTools: ResponsesBridgeNamespacedTool[]
@@ -156,7 +159,7 @@ export const flattenNativeResponsesRequest = (
   body: JsonObject
 ): { request: JsonObject; aliases: NativeResponsesToolAliases } => {
   if (body.tools !== undefined && !Array.isArray(body.tools)) {
-    throw new Error('native Responses tools must be an array')
+    throw new ProviderLoopbackRequestError('native Responses tools must be an array')
   }
 
   const tools = (body.tools ?? []) as unknown[]
@@ -171,16 +174,20 @@ export const flattenNativeResponsesRequest = (
   const flattenedTools = tools.flatMap((tool) => {
     if (!isObject(tool) || tool.type !== 'namespace') return [tool]
     if (typeof tool.name !== 'string' || !Array.isArray(tool.tools)) {
-      throw new Error('native Responses namespace tools require a name and child tools')
+      throw new ProviderLoopbackRequestError(
+        'native Responses namespace tools require a name and child tools'
+      )
     }
 
     return tool.tools.map((child) => {
       if (!isObject(child) || child.type !== 'function' || typeof child.name !== 'string') {
-        throw new Error('native Responses namespace children must be function tools')
+        throw new ProviderLoopbackRequestError(
+          'native Responses namespace children must be function tools'
+        )
       }
       const alias = namespaceAlias(tool.name, child.name)
       if (occupiedNames.has(alias) || aliases.has(alias)) {
-        throw new Error(`duplicate native Responses tool alias: ${alias}`)
+        throw new ProviderLoopbackRequestError(`duplicate native Responses tool alias: ${alias}`)
       }
       occupiedNames.add(alias)
       aliases.set(alias, { namespace: tool.name, name: child.name })
@@ -367,6 +374,7 @@ export class NativeResponsesCompatibilityProxy {
     private readonly options: NativeResponsesCompatibilityOptions = {}
   ) {
     this.host = new ProviderLoopbackHttpHost({
+      diagnosticName: 'native-responses-compatibility',
       credentialMode: 'bearer',
       createConnection: (origin, token) => ({
         baseUrl: origin + '/v1',
@@ -377,14 +385,15 @@ export class NativeResponsesCompatibilityProxy {
         json(response, 401, {
           error: { message: 'Invalid native Responses compatibility token' }
         }),
-      onError: (_error, response) => {
+      onError: (error, response) => {
         if (response.headersSent) {
           response.destroy()
           return
         }
-        json(response, 400, {
+        const requestError = error instanceof ProviderLoopbackRequestError
+        json(response, requestError ? 400 : 502, {
           error: {
-            type: 'invalid_request_error',
+            type: requestError ? 'invalid_request_error' : 'api_error',
             message: 'Native Responses compatibility request failed'
           }
         })
@@ -428,11 +437,12 @@ export class NativeResponsesCompatibilityProxy {
     }, this.options.skillSelectorTimeoutMs ?? 15_000)
     timer.unref?.()
     try {
+      const resolvedKey = this.target.resolveKey ? await this.target.resolveKey() : this.target.key
       const response = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          ...(this.target.key ? { authorization: `Bearer ${this.target.key}` } : {})
+          ...(resolvedKey ? { authorization: `Bearer ${resolvedKey}` } : {})
         },
         body: JSON.stringify({
           model: this.target.model,
@@ -623,9 +633,13 @@ export class NativeResponsesCompatibilityProxy {
       const routedBody = this.target.model
         ? { ...scopedBody, model: this.target.model }
         : scopedBody
-      const { request: upstreamRequest, aliases } = flattenNativeResponsesRequest(routedBody)
+      const { request: flattenedRequest, aliases } = flattenNativeResponsesRequest(routedBody)
+      const upstreamRequest = this.target.sanitizeRequest
+        ? this.target.sanitizeRequest(flattenedRequest)
+        : flattenedRequest
       const upstreamRequestBody = JSON.stringify(upstreamRequest)
-      const headersToForward = upstreamHeaders(request, this.target.key)
+      const resolvedKey = this.target.resolveKey ? await this.target.resolveKey() : this.target.key
+      const headersToForward = upstreamHeaders(request, resolvedKey)
       const replayKey = providerRequestFingerprint(
         this.target.baseUrl,
         providerRequestHeadersFingerprint(headersToForward),
@@ -685,12 +699,21 @@ export class NativeResponsesCompatibilityProxy {
         this.options.responseHeaderTimeoutMs ?? DEFAULT_RESPONSE_HEADER_TIMEOUT_MS,
         'Native Responses upstream did not return response headers in time.'
       )
-      const upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+      let upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
         method: 'POST',
         headers: headersToForward,
         body: upstreamRequestBody,
         signal: AbortSignal.any([request.signal, upstreamAbort.signal])
       })
+      if (upstream.status === 401 && this.target.resolveKey) {
+        const refreshedKey = await this.target.resolveKey(true)
+        upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+          method: 'POST',
+          headers: upstreamHeaders(request, refreshedKey),
+          body: upstreamRequestBody,
+          signal: AbortSignal.any([request.signal, upstreamAbort.signal])
+        })
+      }
       clearUpstreamTimeout()
       const contentType = upstream.headers.get('content-type') ?? ''
       const responseType = upstreamResponseType(contentType)

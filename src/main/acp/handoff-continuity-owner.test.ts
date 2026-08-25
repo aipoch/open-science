@@ -26,6 +26,9 @@ describe('AcpHandoffContinuityOwner', () => {
         size: 42
       }
     ]
+    const referencedSessions = [
+      { type: 'session' as const, sessionId: 'referenced-session', title: 'Prior analysis' }
+    ]
     owner.recordAdmittedPrompt({
       sessionId: 'session-1',
       text: 'Analyse the dataset',
@@ -34,6 +37,7 @@ describe('AcpHandoffContinuityOwner', () => {
         messageAncestry: ['message-root']
       },
       attachments,
+      referencedSessions,
       forcedSkillIds: ['source-only-skill']
     })
 
@@ -50,10 +54,14 @@ describe('AcpHandoffContinuityOwner', () => {
         promptMessageId: 'message-1',
         messageAncestry: ['message-root']
       },
-      attachments
+      attachments,
+      referencedSessions: [
+        { type: 'session', sessionId: 'referenced-session', title: 'Prior analysis' }
+      ]
     })
     expect(continuation).not.toHaveProperty('forcedSkillIds')
     expect(continuation.attachments).not.toBe(attachments)
+    expect(continuation.referencedSessions).not.toBe(referencedSessions)
     expect(continuation.provenanceContext?.messageAncestry).not.toBe(
       owner.createClaudeContinuation({ sessionId: 'session-1', switchReadBack }).provenanceContext
         ?.messageAncestry

@@ -112,6 +112,83 @@ describe('conversation export service', () => {
     expect(result).toEqual({ saved: true, filePath: '/downloads/export.md' })
   })
 
+  it('saves only the selected durable turns in conversation order', async () => {
+    loadSession.mockResolvedValue({
+      ...session,
+      messages: [
+        ...session.messages,
+        {
+          id: 'message-2',
+          role: 'agent',
+          content: 'First answer',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'message-3',
+          role: 'user',
+          content: 'Follow-up',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 3,
+          updatedAt: 3
+        },
+        {
+          id: 'message-4',
+          role: 'agent',
+          content: 'Selected answer',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 4,
+          updatedAt: 4
+        }
+      ]
+    })
+
+    await createService().exportConversation({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      format: 'markdown',
+      selectedPromptMessageIds: ['message-3']
+    })
+
+    const markdown = writeExportFile.mock.calls[0]?.[1]
+    expect(markdown).toContain('Follow-up')
+    expect(markdown).toContain('Selected answer')
+    expect(markdown).not.toContain('First answer')
+  })
+
+  it('rejects empty, duplicate, and stale turn selections before saving', async () => {
+    await expect(
+      createService().exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'markdown',
+        selectedPromptMessageIds: []
+      })
+    ).rejects.toThrow('Invalid conversation export request.')
+    await expect(
+      createService().exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'markdown',
+        selectedPromptMessageIds: ['message-1', 'message-1']
+      })
+    ).rejects.toThrow('Invalid conversation export request.')
+    await expect(
+      createService().exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'markdown',
+        selectedPromptMessageIds: ['missing-message']
+      })
+    ).rejects.toThrow('Selected conversation turns are no longer available.')
+
+    expect(showSaveDialog).not.toHaveBeenCalled()
+  })
+
   it('prints dedicated HTML to PDF and always destroys the hidden window', async () => {
     showSaveDialog.mockResolvedValue({ canceled: false, filePath: '/downloads/export.pdf' })
 
@@ -202,6 +279,72 @@ describe('conversation export service', () => {
     expect(showSaveDialog).not.toHaveBeenCalled()
   })
 
+  it('rejects durable delegated activity while the root session is idle', async () => {
+    loadSession.mockResolvedValueOnce({
+      ...session,
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [
+            {
+              agentFrameId: 'frame-1',
+              attempts: [
+                {
+                  id: 'attempt-1',
+                  status: 'running',
+                  startedAt: 3,
+                  resolvedAgent: { kind: 'main' },
+                  runtimeSegmentIds: []
+                }
+              ]
+            }
+          ]
+        }
+      }
+    })
+    await expect(
+      createService().exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'markdown'
+      })
+    ).rejects.toThrow('finish before exporting')
+
+    loadSession.mockResolvedValueOnce({
+      ...session,
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [],
+          questionRequests: [
+            {
+              requestId: 'question-1',
+              sourceFrameId: 'frame-1',
+              sourceName: 'Researcher',
+              rootBranchId: 'root-branch',
+              rootOriginMessageId: 'message-1',
+              sourceMessageBranchId: 'delegate-branch',
+              question: 'Choose a source',
+              askedAt: 3,
+              status: 'pending'
+            }
+          ]
+        }
+      }
+    })
+    await expect(
+      createService().exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'pdf'
+      })
+    ).rejects.toThrow('finish before exporting')
+
+    expect(showSaveDialog).not.toHaveBeenCalled()
+  })
+
   it('rejects missing, empty, active and malformed conversations', async () => {
     loadSession.mockResolvedValueOnce(undefined)
     await expect(
@@ -240,6 +383,15 @@ describe('conversation export service', () => {
     ).rejects.toThrow('finish before exporting')
 
     loadSession.mockResolvedValueOnce({ ...session, status: 'waiting-for-user' })
+    await expect(
+      createService().exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'markdown'
+      })
+    ).rejects.toThrow('finish before exporting')
+
+    loadSession.mockResolvedValueOnce({ ...session, status: 'waiting-plan-approval' })
     await expect(
       createService().exportConversation({
         projectId: 'project-1',

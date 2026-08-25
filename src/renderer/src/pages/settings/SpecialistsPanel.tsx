@@ -13,11 +13,14 @@ import {
   MessagesSquare,
   Pencil,
   Plus,
+  SearchX,
+  Store,
   Trash2,
   Upload,
   X
 } from 'lucide-react'
 import { AlertDialog, Collapsible } from 'radix-ui'
+import { OwlScholarIcon } from '@/components/app-icons/custom-glyphs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -38,6 +41,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { specialistDiagnosticCopy } from '@/lib/specialist-diagnostics'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
@@ -45,9 +49,10 @@ import { SettingsToggle } from './SettingsLayout'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useMarketplaceStore } from '@/stores/marketplace-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
-import type { CreateSpecialistInput } from '../../../../shared/specialist'
+import type { CreateSpecialistInput, SpecialistListItem } from '../../../../shared/specialist'
 import type { SkillSource } from '../../../../shared/settings'
 import { specialistPackageReportFromPreview } from '../../../../shared/specialist-package'
 import type {
@@ -55,15 +60,12 @@ import type {
   SpecialistDeleteResult
 } from '../../../../shared/specialist-package'
 import { SpecialistEditor } from './SpecialistEditor'
-import {
-  MarketplaceTabs,
-  SpecialistMarketplace,
-  type SpecialistMarketplaceView
-} from './SpecialistMarketplace'
+import { MarketplaceManagedSpecialistDetail } from './MarketplaceManagedSpecialistDetail'
+import { SpecialistMarketplace, type SpecialistMarketplaceView } from './SpecialistMarketplace'
 import { SettingsSearchInput } from './SettingsSearchInput'
-import { SettingsSegmentedControl } from './SettingsSegmentedControl'
 import { SpecialistAppearancePicker } from './SpecialistAppearancePicker'
 import { SpecialistAvatar } from './specialist-avatar'
+import { getAvatarStyle } from './specialist-icons'
 import { SpecialistSkillConflictChoices } from './SpecialistSkillConflictChoices'
 import {
   skillConflictResolutionList,
@@ -87,11 +89,12 @@ export type SpecialistsView =
   | { kind: 'builtin'; id: string }
   | SpecialistMarketplaceView
 
-type CategoryFilter = 'all' | 'custom' | 'builtin'
+type CategoryFilter = 'all' | 'custom' | 'marketplace' | 'builtin'
 
 const FILTER_LABELS: Record<CategoryFilter, string> = {
   all: 'All',
   custom: 'Custom',
+  marketplace: 'Marketplace',
   builtin: 'Built-in'
 }
 
@@ -190,6 +193,8 @@ const InstalledSpecialistsPanel = ({
   const previewExport = useSpecialistStore((s) => s.previewExport)
   const exportSpecialist = useSpecialistStore((s) => s.exportSpecialist)
   const clearExport = useSpecialistStore((s) => s.clearExport)
+  const marketplaceSnapshot = useMarketplaceStore((s) => s.snapshot)
+  const refreshMarketplace = useMarketplaceStore((s) => s.refresh)
   // Live project catalog drives the `Chat with agent` entry's enabled state and routing. The stored
   // last-opened reference is re-validated against this list before navigating.
   const projects = useProjectStore((s) => s.projects)
@@ -197,11 +202,16 @@ const InstalledSpecialistsPanel = ({
   const [query, setQuery] = useState('')
   const [tagFilter, setTagFilter] = useState('all')
   const tagAssignments = useTagStore((state) => state.assignments)
+  const hasAssignedTags = tagAssignments.some(
+    (assignment) => assignment.resourceType === 'catalog.specialist'
+  )
+  const effectiveTagFilter = hasAssignedTags ? tagFilter : 'all'
   const [deletingItem, setDeletingItem] = useState<{
     id: string
     revision: number
     name: string
     preview: SpecialistDeletePreview
+    action: 'delete' | 'uninstall'
   } | null>(null)
   const [deleteSkillIds, setDeleteSkillIds] = useState<Set<string>>(new Set())
   const [deleteSkillsExpanded, setDeleteSkillsExpanded] = useState(false)
@@ -225,12 +235,34 @@ const InstalledSpecialistsPanel = ({
   const catalogReadOnly = integrity.status === 'degraded'
 
   // Memoised so visibleCustomItems' memo can reference a stable value.
-  const customItems = useMemo(() => items.filter((i) => i.kind === 'custom'), [items])
+  const customItems = useMemo(
+    () =>
+      items.filter(
+        (item): item is Extract<SpecialistListItem, { kind: 'custom' }> =>
+          item.kind === 'custom' && item.origin !== 'marketplace'
+      ),
+    [items]
+  )
+  const marketplaceItems = useMemo(
+    () =>
+      items.filter(
+        (
+          item
+        ): item is Extract<SpecialistListItem, { kind: 'custom' }> & {
+          origin: 'marketplace'
+        } => item.kind === 'custom' && item.origin === 'marketplace'
+      ),
+    [items]
+  )
   const builtinItems = useMemo(() => items.filter((i) => i.kind === 'builtin'), [items])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (marketplaceItems.length > 0) void refreshMarketplace()
+  }, [marketplaceItems.length, refreshMarketplace])
 
   useEffect(() => {
     if (
@@ -292,19 +324,40 @@ const InstalledSpecialistsPanel = ({
     }
   }
 
+  const openDeleteDialog = (
+    item: Extract<SpecialistListItem, { kind: 'custom' }>,
+    action: 'delete' | 'uninstall'
+  ): void => {
+    setDeleteError(undefined)
+    setDeleteSkillIds(new Set())
+    setDeleteSkillsExpanded(false)
+    setDeleteBusy(false)
+    void previewSpecialistDelete(item.id)
+      .then((preview) =>
+        setDeletingItem({
+          id: item.id,
+          revision: preview.expectedRevision,
+          name: item.displayName ?? item.name,
+          preview,
+          action
+        })
+      )
+      .catch(() => setDeleteError('Could not load live Skill relationships.'))
+  }
+
   // Keep runnable builtins distinct from the Reviewer placeholder even though Settings groups both
   // under Built-in. Only runnable builtins enter the Session picker.
   const reviewerItems = items.filter((i) => i.kind === 'reviewer')
   const visibleBuiltinItems = useMemo(() => {
-    if (filter === 'custom') return []
+    if (filter === 'custom' || filter === 'marketplace') return []
     const term = query.trim().toLowerCase()
     const filtered =
-      tagFilter === 'all'
+      effectiveTagFilter === 'all'
         ? builtinItems
         : builtinItems.filter((item) =>
             tagAssignments.some(
               (assignment) =>
-                assignment.tagId === tagFilter &&
+                assignment.tagId === effectiveTagFilter &&
                 assignment.resourceType === 'catalog.specialist' &&
                 assignment.resourceId === item.id
             )
@@ -316,17 +369,17 @@ const InstalledSpecialistsPanel = ({
         item.name.toLowerCase().includes(term) ||
         item.description.toLowerCase().includes(term)
     )
-  }, [builtinItems, filter, query, tagAssignments, tagFilter])
+  }, [builtinItems, effectiveTagFilter, filter, query, tagAssignments])
   const visibleCustomItems = useMemo(() => {
     const term = query.trim().toLowerCase()
-    if (filter === 'builtin') return []
+    if (filter === 'builtin' || filter === 'marketplace') return []
     const filtered =
-      tagFilter === 'all'
+      effectiveTagFilter === 'all'
         ? customItems
         : customItems.filter((item) =>
             tagAssignments.some(
               (assignment) =>
-                assignment.tagId === tagFilter &&
+                assignment.tagId === effectiveTagFilter &&
                 assignment.resourceType === 'catalog.specialist' &&
                 assignment.resourceId === item.id
             )
@@ -338,13 +391,45 @@ const InstalledSpecialistsPanel = ({
         item.name.toLowerCase().includes(term) ||
         item.description.toLowerCase().includes(term)
     )
-  }, [customItems, filter, query, tagAssignments, tagFilter])
+  }, [customItems, effectiveTagFilter, filter, query, tagAssignments])
+  const visibleMarketplaceItems = useMemo(() => {
+    const term = query.trim().toLowerCase()
+    if (filter === 'builtin' || filter === 'custom') return []
+    const filtered =
+      effectiveTagFilter === 'all'
+        ? marketplaceItems
+        : marketplaceItems.filter((item) =>
+            tagAssignments.some(
+              (assignment) =>
+                assignment.tagId === effectiveTagFilter &&
+                assignment.resourceType === 'catalog.specialist' &&
+                assignment.resourceId === item.id
+            )
+          )
+    if (!term) return filtered
+    return filtered.filter(
+      (item) =>
+        (item.displayName ?? item.name).toLowerCase().includes(term) ||
+        item.name.toLowerCase().includes(term) ||
+        item.description.toLowerCase().includes(term)
+    )
+  }, [effectiveTagFilter, filter, marketplaceItems, query, tagAssignments])
   const visibleReviewerItems = useMemo(() => {
-    if (filter === 'custom' || tagFilter !== 'all') return []
+    if (filter === 'custom' || filter === 'marketplace' || effectiveTagFilter !== 'all') return []
     const term = query.trim().toLowerCase()
     if (!term || 'reviewer used by auto-review'.includes(term)) return reviewerItems
     return []
-  }, [filter, query, reviewerItems, tagFilter])
+  }, [effectiveTagFilter, filter, query, reviewerItems])
+  const visibleItemCount =
+    visibleMarketplaceItems.length +
+    visibleCustomItems.length +
+    visibleBuiltinItems.length +
+    visibleReviewerItems.length
+  const resetListFilters = (): void => {
+    setFilter('all')
+    setTagFilter('all')
+    setQuery('')
+  }
 
   // Built-in Skills are app-managed and never participate in Specialist deletion. Keep this
   // renderer-side filter as a defensive boundary even though the main-side preview omits them.
@@ -427,7 +512,7 @@ const InstalledSpecialistsPanel = ({
   if (view.kind === 'create') {
     return (
       <SpecialistEditor
-        existingNames={customItems.map((item) => item.name)}
+        existingNames={items.flatMap((item) => (item.kind === 'custom' ? [item.name] : []))}
         existingIds={items.map((item) => item.id)}
         initialInput={view.draft}
         onCancel={() => onNavigate({ kind: 'list' })}
@@ -623,8 +708,53 @@ const InstalledSpecialistsPanel = ({
 
   if (view.kind === 'edit') {
     // Reuse the existing editor for both ordinary edits and the setup that follows an import.
-    const specialist = customItems.find((item) => item.kind === 'custom' && item.id === view.id)
+    const specialist = items.find((item) => item.kind === 'custom' && item.id === view.id)
     if (specialist && specialist.kind === 'custom') {
+      if (specialist.origin === 'marketplace') {
+        const listing = marketplaceSnapshot?.specialists.find(
+          (item) =>
+            item.id === specialist.id &&
+            item.sourceId === specialist.marketplaceProvenance?.sourceId
+        )
+        return (
+          <MarketplaceManagedSpecialistDetail
+            specialist={specialist as typeof specialist & { origin: 'marketplace' }}
+            update={listing}
+            disabled={catalogReadOnly}
+            onBack={() => onNavigate({ kind: 'list' })}
+            onAppearanceChange={(patch) =>
+              updateSpecialist({
+                id: specialist.id,
+                revision: specialist.revision,
+                ...patch
+              }).then(() => undefined)
+            }
+            onToggle={() => void setEnabled(specialist.id, !specialist.enabled)}
+            onDuplicate={() =>
+              void duplicateSpecialist(specialist.id).then((draft) =>
+                onNavigate({ kind: 'create', draft })
+              )
+            }
+            onUpdate={() => {
+              if (!listing) return
+              onNavigate({
+                kind: 'marketplace-release',
+                sourceId: listing.sourceId,
+                sourceName: listing.sourceName,
+                sourceTrust: listing.sourceTrust,
+                id: listing.id,
+                version: listing.version,
+                installedVersion: listing.installedVersion,
+                updateAvailable: listing.updateAvailable
+              })
+            }}
+            onUninstall={() => {
+              openDeleteDialog(specialist, 'uninstall')
+              onNavigate({ kind: 'list' })
+            }}
+          />
+        )
+      }
       return (
         <div>
           <ResourceTagSummary
@@ -635,9 +765,9 @@ const InstalledSpecialistsPanel = ({
           <SpecialistEditor
             key={specialist.id}
             editSpecialist={specialist}
-            existingNames={customItems
-              .filter((item) => item.id !== view.id)
-              .map((item) => item.name)}
+            existingNames={items.flatMap((item) =>
+              item.kind === 'custom' && item.id !== view.id ? [item.name] : []
+            )}
             onCancel={() => onNavigate({ kind: 'list' })}
             onSave={async () => onNavigate({ kind: 'list' })}
             onSaveEdit={async (input) => {
@@ -1221,115 +1351,133 @@ const InstalledSpecialistsPanel = ({
   return (
     <div className="p-5">
       <div className="mb-5">
-        <MarketplaceTabs
-          active="installed"
-          installedCount={items.length}
-          onNavigate={onNavigate}
-          t={t}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate text-lg font-semibold text-foreground">{t('Installed')}</h2>
+            {items.length > 0 ? (
+              <Badge variant="outline" className="tabular-nums text-muted-foreground">
+                {items.length}
+              </Badge>
+            ) : null}
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <Button
+              type="button"
+              onClick={() => onNavigate({ kind: 'marketplace' })}
+              className="whitespace-nowrap"
+            >
+              <Store data-icon="inline-start" aria-hidden="true" />
+              {t('Browse Marketplace')}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="shrink-0 whitespace-nowrap">
+                  <Plus data-icon="inline-start" aria-hidden="true" />
+                  {t('Add specialist')}
+                  <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  className="gap-2.5"
+                  disabled={catalogReadOnly}
+                  onSelect={() => onNavigate({ kind: 'create' })}
+                >
+                  <Pencil className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="flex flex-col">
+                    <span>{t('Write from scratch')}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t('Configure instructions and capabilities yourself')}
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="gap-2.5"
+                  disabled={!chatProjectId}
+                  aria-disabled={!chatProjectId}
+                  onSelect={(event) => {
+                    // A disabled item cannot fire onSelect in Radix, but keep the guard explicit so the
+                    // intent stays a no-op if the catalog empties between render and click.
+                    if (!chatProjectId) {
+                      event.preventDefault()
+                      return
+                    }
+                    startChatWithAgent()
+                  }}
+                >
+                  <MessagesSquare className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                  <span className="flex flex-col">
+                    <span>{t('Chat with agent')}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t('Start a normal conversation; the agent guides you step by step')}
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+                {!chatProjectId ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <p className="px-2.5 pb-1 pt-0.5 text-xs text-muted-foreground">
+                      {t('Open a project to chat with the agent')}
+                    </p>
+                  </>
+                ) : null}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="gap-2.5"
+                  disabled={catalogReadOnly}
+                  onSelect={() => onNavigate({ kind: 'import' })}
+                >
+                  <Upload className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="flex flex-col">
+                    <span>{t('Import ZIP')}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t('Preview a package, then finish setup in the existing editor')}
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {t('Manage Specialists available on this device.')}
+        </p>
       </div>
       {/* Toolbar */}
-      <div data-slot="specialists-toolbar" className="mb-4 flex flex-wrap items-center gap-2">
-        <SettingsSegmentedControl
-          value={filter}
-          options={(['all', 'custom', 'builtin'] as const).map((key) => {
-            const count =
-              key === 'all'
-                ? items.length
-                : key === 'custom'
-                  ? customItems.length
-                  : builtinItems.length + reviewerItems.length
-            return {
-              value: key,
-              label: (
-                <>
+      {items.length > 0 ? (
+        <div data-slot="specialists-toolbar" className="mb-4 flex flex-wrap items-center gap-2">
+          <SettingsSearchInput
+            containerClassName="min-w-56"
+            aria-label={t('Search specialists')}
+            placeholder={t('Search specialists…')}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <Select value={filter} onValueChange={(value) => setFilter(value as CategoryFilter)}>
+            <SelectTrigger
+              aria-label={t('Filter specialists by category')}
+              className="w-44 shrink-0"
+            >
+              <span>{getFilterLabel(filter, t)}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {(['all', 'custom', 'marketplace', 'builtin'] as const).map((key) => (
+                <SelectItem key={key} value={key}>
                   {getFilterLabel(key, t)}
-                  <span className="ml-1 tabular-nums text-muted-foreground">({count})</span>
-                </>
-              )
-            }
-          })}
-          onValueChange={setFilter}
-          ariaLabel={t('Filter specialists by category')}
-          semantics="tab"
-          columnWidth="6.5rem"
-        />
-        <TagFilter resourceType="catalog.specialist" value={tagFilter} onChange={setTagFilter} />
-        <SettingsSearchInput
-          aria-label={t('Search specialists')}
-          placeholder={t('Search specialists…')}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="ml-auto shrink-0">
-              <Plus data-icon="inline-start" aria-hidden="true" />
-              {t('Add specialist')}
-              <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              className="gap-2.5"
-              disabled={catalogReadOnly}
-              onSelect={() => onNavigate({ kind: 'create' })}
-            >
-              <Pencil className="size-4 shrink-0" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>{t('Write from scratch')}</span>
-                <span className="text-xs text-muted-foreground">
-                  {t('Configure instructions and capabilities yourself')}
-                </span>
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="gap-2.5"
-              disabled={!chatProjectId}
-              aria-disabled={!chatProjectId}
-              onSelect={(event) => {
-                // A disabled item cannot fire onSelect in Radix, but keep the guard explicit so the
-                // intent stays a no-op if the catalog empties between render and click.
-                if (!chatProjectId) {
-                  event.preventDefault()
-                  return
-                }
-                startChatWithAgent()
-              }}
-            >
-              <MessagesSquare className="size-4 shrink-0 text-primary" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>{t('Chat with agent')}</span>
-                <span className="text-xs text-muted-foreground">
-                  {t('Start a normal conversation; the agent guides you step by step')}
-                </span>
-              </span>
-            </DropdownMenuItem>
-            {!chatProjectId ? (
-              <>
-                <DropdownMenuSeparator />
-                <p className="px-2.5 pb-1 pt-0.5 text-xs text-muted-foreground">
-                  {t('Open a project to chat with the agent')}
-                </p>
-              </>
-            ) : null}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="gap-2.5"
-              disabled={catalogReadOnly}
-              onSelect={() => onNavigate({ kind: 'import' })}
-            >
-              <Upload className="size-4 shrink-0" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>{t('Import ZIP')}</span>
-                <span className="text-xs text-muted-foreground">
-                  {t('Preview a package, then finish setup in the existing editor')}
-                </span>
-              </span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {hasAssignedTags ? (
+            <TagFilter
+              resourceType="catalog.specialist"
+              value={tagFilter}
+              onChange={setTagFilter}
+              className="w-44 shrink-0"
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       {loadError ? (
         <div
@@ -1386,40 +1534,262 @@ const InstalledSpecialistsPanel = ({
         <p className="text-sm text-muted-foreground">{t('Loading…')}</p>
       ) : isLoaded ? (
         <div className="flex flex-col gap-6">
+          {/* Marketplace-managed Specialists are installed packages, not editable custom drafts. */}
+          {visibleMarketplaceItems.length > 0 ? (
+            <div data-slot="specialists-source-group" data-source="marketplace">
+              <div className="flex flex-col items-start gap-0.5">
+                <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  {t('Marketplace')}
+                  <span className="text-xs font-normal tabular-nums text-muted-foreground">
+                    {visibleMarketplaceItems.length}
+                  </span>
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {t('Installed from Marketplace and managed by its publisher.')}
+                </span>
+              </div>
+              <ul className="mt-2 flex flex-col divide-y divide-border">
+                {visibleMarketplaceItems.map((item) => {
+                  if (item.kind !== 'custom' || item.origin !== 'marketplace') return null
+                  const listing = marketplaceSnapshot?.specialists.find(
+                    (candidate) =>
+                      candidate.id === item.id &&
+                      candidate.sourceId === item.marketplaceProvenance?.sourceId
+                  )
+                  return (
+                    <li
+                      key={item.id}
+                      data-slot="settings-list-row"
+                      className="flex min-h-14 items-center gap-2 py-2.5"
+                    >
+                      <SpecialistAppearancePicker
+                        name={item.displayName ?? item.name}
+                        iconKey={item.iconKey}
+                        colorKey={item.colorKey}
+                        disabled={catalogReadOnly}
+                        onChange={(patch) =>
+                          updateSpecialist({
+                            id: item.id,
+                            revision: item.revision,
+                            ...patch
+                          }).then(() => undefined)
+                        }
+                      />
+                      <div className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                          aria-label={t('View {{name}}', {
+                            name: item.displayName ?? item.name
+                          })}
+                          className="block w-full min-w-0 cursor-pointer rounded-md text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-muted/50"
+                        >
+                          <span className="block truncate text-sm text-foreground">
+                            {item.displayName ?? item.name}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {item.description}
+                          </span>
+                        </button>
+                        <span
+                          className="mt-1 flex min-w-0 flex-wrap items-center gap-1"
+                          data-specialist-metadata-group={item.id}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                            aria-label={t('View {{name}}', {
+                              name: item.displayName ?? item.name
+                            })}
+                            className="flex min-w-0 cursor-pointer flex-wrap items-center gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            <Badge
+                              variant="secondary"
+                              className="h-5 px-1.5 text-[11px] font-normal"
+                              data-specialist-metadata="source"
+                            >
+                              {t('Marketplace')}
+                            </Badge>
+                            <Badge
+                              variant="outline"
+                              className="h-5 px-1.5 text-[11px] font-normal tabular-nums text-muted-foreground"
+                              data-specialist-metadata="version"
+                            >
+                              {t('Version {{version}}', {
+                                version: item.packageVersion ?? '0.1.0'
+                              })}
+                            </Badge>
+                            {item.marketplaceProvenance?.publisher ? (
+                              <Badge
+                                variant="outline"
+                                className="h-5 max-w-full px-1.5 text-[11px] font-normal text-muted-foreground"
+                                data-specialist-metadata="publisher"
+                              >
+                                <span className="truncate">
+                                  {t('By {{publisher}}', {
+                                    publisher: item.marketplaceProvenance.publisher
+                                  })}
+                                </span>
+                              </Badge>
+                            ) : null}
+                            {listing?.updateAvailable ? (
+                              <Badge className="h-5 border-primary/20 bg-primary/10 px-1.5 text-[11px] font-normal text-primary">
+                                {t('Update available')}
+                              </Badge>
+                            ) : null}
+                          </button>
+                          <ResourceTagBadges
+                            reference={{
+                              resourceType: 'catalog.specialist',
+                              resourceId: item.id
+                            }}
+                            onOpenTag={onOpenTag}
+                          />
+                        </span>
+                      </div>
+                      <ResourceTagMenu
+                        reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
+                      />
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label={t('Actions for {{name}}', {
+                              name: item.displayName ?? item.name
+                            })}
+                          >
+                            <ChevronDown aria-hidden="true" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            className="gap-2 text-xs"
+                            disabled={catalogReadOnly}
+                            onSelect={() =>
+                              void duplicateSpecialist(item.id).then((draft) =>
+                                onNavigate({ kind: 'create', draft })
+                              )
+                            }
+                          >
+                            <Copy className="size-3.5" aria-hidden="true" />
+                            {t('Create editable copy')}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="gap-2 text-xs text-destructive"
+                            disabled={catalogReadOnly}
+                            onSelect={() => openDeleteDialog(item, 'uninstall')}
+                          >
+                            <Trash2 className="size-3.5" aria-hidden="true" /> {t('Uninstall')}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      {listing?.updateAvailable ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="hidden shrink-0 sm:inline-flex"
+                          onClick={() =>
+                            onNavigate({
+                              kind: 'marketplace-release',
+                              sourceId: listing.sourceId,
+                              sourceName: listing.sourceName,
+                              sourceTrust: listing.sourceTrust,
+                              id: listing.id,
+                              version: listing.version,
+                              installedVersion: listing.installedVersion,
+                              updateAvailable: listing.updateAvailable
+                            })
+                          }
+                        >
+                          {t('Update')}
+                        </Button>
+                      ) : null}
+                      <SettingsToggle
+                        enabled={item.enabled}
+                        disabled={catalogReadOnly}
+                        aria-label={t('Toggle {{name}}', {
+                          name: item.displayName ?? item.name
+                        })}
+                        onToggle={() => void setEnabled(item.id, !item.enabled)}
+                      />
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          ) : null}
+
           {/* Custom specialists group */}
-          {filter !== 'builtin' ? (
-            <div>
-              <div className="mb-1 flex flex-col gap-0.5">
-                <span className="text-sm font-semibold text-foreground">{t('Custom')}</span>
+          {visibleCustomItems.length > 0 ? (
+            <div data-slot="specialists-source-group" data-source="custom">
+              <div className="flex flex-col items-start gap-0.5">
+                <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  {t('Custom')}
+                  <span className="text-xs font-normal tabular-nums text-muted-foreground">
+                    {visibleCustomItems.length}
+                  </span>
+                </span>
                 <span className="text-xs text-muted-foreground">{t('Created by you.')}</span>
               </div>
 
-              {visibleCustomItems.length > 0 ? (
-                <ul className="mt-2 flex flex-col divide-y divide-border">
-                  {visibleCustomItems.map((item) => {
-                    if (item.kind !== 'custom') return null
-                    return (
-                      <li
-                        key={item.id}
-                        data-slot="settings-list-row"
-                        className="flex min-h-14 items-center gap-2 py-2.5"
-                      >
-                        <SpecialistAppearancePicker
-                          name={item.displayName ?? item.name}
-                          iconKey={item.iconKey}
-                          colorKey={item.colorKey}
-                          disabled={catalogReadOnly}
-                          onChange={(patch) =>
-                            updateSpecialist({
-                              id: item.id,
-                              revision: item.revision,
-                              ...patch
-                            }).then(() => undefined)
-                          }
-                        />
+              <ul className="mt-2 flex flex-col divide-y divide-border">
+                {visibleCustomItems.map((item) => {
+                  if (item.kind !== 'custom') return null
+                  return (
+                    <li
+                      key={item.id}
+                      data-slot="settings-list-row"
+                      className="flex min-h-14 items-center gap-2 py-2.5"
+                    >
+                      <SpecialistAppearancePicker
+                        name={item.displayName ?? item.name}
+                        iconKey={item.iconKey}
+                        colorKey={item.colorKey}
+                        disabled={catalogReadOnly}
+                        onChange={(patch) =>
+                          updateSpecialist({
+                            id: item.id,
+                            revision: item.revision,
+                            ...patch
+                          }).then(() => undefined)
+                        }
+                      />
 
-                        {/* Click the row body to open the editor (prefilled) */}
-                        <div className="min-w-0 flex-1">
+                      {/* Click the row body to open the editor (prefilled) */}
+                      <div className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          disabled={catalogReadOnly}
+                          onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                          aria-label={
+                            item.setupPending
+                              ? t('Continue setup for {{name}}', {
+                                  name: item.displayName ?? item.name
+                                })
+                              : t('Edit {{name}}', { name: item.displayName ?? item.name })
+                          }
+                          className="flex w-full min-w-0 cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                        >
+                          {/* Body: name + description */}
+                          <div className="min-w-0 flex-1">
+                            <span className="block truncate text-sm text-foreground">
+                              {item.displayName ?? item.name}
+                            </span>
+                            {item.description ? (
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {item.description}
+                              </span>
+                            ) : null}
+                          </div>
+                        </button>
+                        <span
+                          className="mt-1 flex min-w-0 flex-wrap items-center gap-1"
+                          data-specialist-metadata-group={item.id}
+                        >
                           <button
                             type="button"
                             disabled={catalogReadOnly}
@@ -1431,229 +1801,180 @@ const InstalledSpecialistsPanel = ({
                                   })
                                 : t('Edit {{name}}', { name: item.displayName ?? item.name })
                             }
-                            className="flex w-full min-w-0 cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                            className="flex min-w-0 cursor-pointer flex-wrap items-center gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
                           >
-                            {/* Body: name + description */}
-                            <div className="min-w-0 flex-1">
-                              <span className="block truncate text-sm text-foreground">
-                                {item.displayName ?? item.name}
-                              </span>
-                              {item.description ? (
-                                <span className="block truncate text-xs text-muted-foreground">
-                                  {item.description}
-                                </span>
-                              ) : null}
-                            </div>
-                          </button>
-                          <span
-                            className="mt-1 flex min-w-0 flex-wrap items-center gap-1"
-                            data-specialist-metadata-group={item.id}
-                          >
-                            <button
-                              type="button"
-                              disabled={catalogReadOnly}
-                              onClick={() => onNavigate({ kind: 'edit', id: item.id })}
-                              aria-label={
-                                item.setupPending
-                                  ? t('Continue setup for {{name}}', {
-                                      name: item.displayName ?? item.name
-                                    })
-                                  : t('Edit {{name}}', { name: item.displayName ?? item.name })
-                              }
-                              className="flex min-w-0 cursor-pointer flex-wrap items-center gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                            <Badge
+                              variant="outline"
+                              className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground"
+                              data-specialist-metadata="capabilities"
                             >
-                              <Badge
-                                variant="outline"
-                                className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground"
-                                data-specialist-metadata="capabilities"
-                              >
-                                {item.setupPending
-                                  ? t('Setup incomplete')
-                                  : item.capabilityMode === 'full'
-                                    ? t('Full access')
-                                    : t('Selected capabilities')}
-                              </Badge>
-                              {!item.setupPending && item.origin === 'imported' ? (
-                                <>
+                              {item.setupPending
+                                ? t('Setup incomplete')
+                                : item.capabilityMode === 'full'
+                                  ? t('Full access')
+                                  : t('Selected capabilities')}
+                            </Badge>
+                            {!item.setupPending && item.origin === 'imported' ? (
+                              <>
+                                <Badge
+                                  variant="secondary"
+                                  className="h-5 px-1.5 text-[11px] font-normal"
+                                  data-specialist-metadata="source"
+                                >
+                                  {item.marketplaceProvenance
+                                    ? t('Marketplace')
+                                    : t('Imported ZIP')}
+                                </Badge>
+                                {item.marketplaceProvenance?.publisher ? (
                                   <Badge
-                                    variant="secondary"
-                                    className="h-5 px-1.5 text-[11px] font-normal"
-                                    data-specialist-metadata="source"
+                                    variant="outline"
+                                    className="h-5 max-w-full px-1.5 text-[11px] font-normal text-muted-foreground"
+                                    data-specialist-metadata="publisher"
+                                    title={t('By {{publisher}}', {
+                                      publisher: item.marketplaceProvenance.publisher
+                                    })}
                                   >
-                                    {item.marketplaceProvenance
-                                      ? t('Marketplace')
-                                      : t('Imported ZIP')}
-                                  </Badge>
-                                  {item.marketplaceProvenance?.publisher ? (
-                                    <Badge
-                                      variant="outline"
-                                      className="h-5 max-w-full px-1.5 text-[11px] font-normal text-muted-foreground"
-                                      data-specialist-metadata="publisher"
-                                      title={t('By {{publisher}}', {
+                                    <span className="truncate">
+                                      {t('By {{publisher}}', {
                                         publisher: item.marketplaceProvenance.publisher
                                       })}
-                                    >
-                                      <span className="truncate">
-                                        {t('By {{publisher}}', {
-                                          publisher: item.marketplaceProvenance.publisher
-                                        })}
-                                      </span>
-                                    </Badge>
-                                  ) : null}
-                                  <Badge
-                                    variant="outline"
-                                    className="h-5 px-1.5 text-[11px] font-normal tabular-nums text-muted-foreground"
-                                    data-specialist-metadata="version"
-                                  >
-                                    {t('Version {{version}}', {
-                                      version: item.packageVersion ?? '0.1.0'
-                                    })}
+                                    </span>
                                   </Badge>
-                                  <Badge
-                                    variant="outline"
-                                    className={
-                                      item.modifiedSinceImport
-                                        ? 'h-5 border-warning-100 bg-warning-100/60 px-1.5 text-[11px] font-normal text-warning-900'
-                                        : 'h-5 px-1.5 text-[11px] font-normal text-muted-foreground'
-                                    }
-                                    data-specialist-metadata="local-status"
-                                  >
-                                    {item.modifiedSinceImport
-                                      ? t('Modified locally')
-                                      : t('Unchanged locally')}
-                                  </Badge>
-                                </>
-                              ) : null}
-                            </button>
-                            <ResourceTagBadges
-                              reference={{
-                                resourceType: 'catalog.specialist',
-                                resourceId: item.id
-                              }}
-                              onOpenTag={onOpenTag}
-                            />
-                          </span>
-                        </div>
-
-                        <ResourceTagMenu
-                          reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
-                        />
-                        <DropdownMenu>
-                          <TooltipProvider delayDuration={200}>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    disabled={exportingId === item.id}
-                                    aria-label={t('Actions for {{name}}', {
-                                      name: item.displayName ?? item.name
-                                    })}
-                                  >
-                                    {exportingId === item.id ? (
-                                      <span role="status" aria-label={t('Preparing export')}>
-                                        <Loader2
-                                          className="size-4 animate-spin"
-                                          aria-hidden="true"
-                                        />
-                                      </span>
-                                    ) : (
-                                      <ChevronDown aria-hidden="true" />
-                                    )}
-                                  </Button>
-                                </DropdownMenuTrigger>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {t('Actions for {{name}}', { name: item.displayName ?? item.name })}
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              className="gap-2 text-xs"
-                              disabled={catalogReadOnly}
-                              onSelect={() =>
-                                void duplicateSpecialist(item.id).then((draft) =>
-                                  onNavigate({ kind: 'create', draft })
-                                )
-                              }
-                            >
-                              <Copy className="size-3.5" aria-hidden="true" /> {t('Duplicate')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="gap-2 text-xs"
-                              onSelect={() => void runDirectExport(item.id)}
-                            >
-                              <Download className="size-3.5" aria-hidden="true" /> {t('Export ZIP')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="gap-2 text-xs text-destructive"
-                              disabled={catalogReadOnly}
-                              onSelect={() => {
-                                setDeleteError(undefined)
-                                setDeleteSkillIds(new Set())
-                                setDeleteSkillsExpanded(false)
-                                setDeleteBusy(false)
-                                void previewSpecialistDelete(item.id)
-                                  .then((preview) =>
-                                    setDeletingItem({
-                                      id: item.id,
-                                      revision: preview.expectedRevision,
-                                      name: item.displayName ?? item.name,
-                                      preview
-                                    })
-                                  )
-                                  .catch(() =>
-                                    setDeleteError('Could not load live Skill relationships.')
-                                  )
-                              }}
-                            >
-                              <Trash2 className="size-3.5" aria-hidden="true" /> {t('Delete')}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                        {item.setupPending ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="shrink-0"
-                            disabled={catalogReadOnly}
-                            aria-label={t('Continue setup for {{name}}', {
-                              name: item.displayName ?? item.name
-                            })}
-                            onClick={() => onNavigate({ kind: 'edit', id: item.id })}
-                          >
-                            {t('Continue setup')}
-                          </Button>
-                        ) : (
-                          <SettingsToggle
-                            enabled={item.enabled}
-                            disabled={catalogReadOnly}
-                            aria-label={t('Toggle {{name}}', {
-                              name: item.displayName ?? item.name
-                            })}
-                            onToggle={() => void setEnabled(item.id, !item.enabled)}
+                                ) : null}
+                                <Badge
+                                  variant="outline"
+                                  className="h-5 px-1.5 text-[11px] font-normal tabular-nums text-muted-foreground"
+                                  data-specialist-metadata="version"
+                                >
+                                  {t('Version {{version}}', {
+                                    version: item.packageVersion ?? '0.1.0'
+                                  })}
+                                </Badge>
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    item.modifiedSinceImport
+                                      ? 'h-5 border-warning-100 bg-warning-100/60 px-1.5 text-[11px] font-normal text-warning-900'
+                                      : 'h-5 px-1.5 text-[11px] font-normal text-muted-foreground'
+                                  }
+                                  data-specialist-metadata="local-status"
+                                >
+                                  {item.modifiedSinceImport
+                                    ? t('Modified locally')
+                                    : t('Unchanged locally')}
+                                </Badge>
+                              </>
+                            ) : null}
+                          </button>
+                          <ResourceTagBadges
+                            reference={{
+                              resourceType: 'catalog.specialist',
+                              resourceId: item.id
+                            }}
+                            onOpenTag={onOpenTag}
                           />
-                        )}
-                      </li>
-                    )
-                  })}
-                </ul>
-              ) : (
-                <p className="mt-2 py-2 text-xs text-muted-foreground">
-                  {t('No specialists yet. Use "Add specialist" to create one.')}
-                </p>
-              )}
+                        </span>
+                      </div>
+
+                      <ResourceTagMenu
+                        reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
+                      />
+                      <DropdownMenu>
+                        <TooltipProvider delayDuration={200}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  disabled={exportingId === item.id}
+                                  aria-label={t('Actions for {{name}}', {
+                                    name: item.displayName ?? item.name
+                                  })}
+                                >
+                                  {exportingId === item.id ? (
+                                    <span role="status" aria-label={t('Preparing export')}>
+                                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                                    </span>
+                                  ) : (
+                                    <ChevronDown aria-hidden="true" />
+                                  )}
+                                </Button>
+                              </DropdownMenuTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {t('Actions for {{name}}', { name: item.displayName ?? item.name })}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            className="gap-2 text-xs"
+                            disabled={catalogReadOnly}
+                            onSelect={() =>
+                              void duplicateSpecialist(item.id).then((draft) =>
+                                onNavigate({ kind: 'create', draft })
+                              )
+                            }
+                          >
+                            <Copy className="size-3.5" aria-hidden="true" /> {t('Duplicate')}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="gap-2 text-xs"
+                            onSelect={() => void runDirectExport(item.id)}
+                          >
+                            <Download className="size-3.5" aria-hidden="true" /> {t('Export ZIP')}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="gap-2 text-xs text-destructive"
+                            disabled={catalogReadOnly}
+                            onSelect={() => openDeleteDialog(item, 'delete')}
+                          >
+                            <Trash2 className="size-3.5" aria-hidden="true" /> {t('Delete')}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      {item.setupPending ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0"
+                          disabled={catalogReadOnly}
+                          aria-label={t('Continue setup for {{name}}', {
+                            name: item.displayName ?? item.name
+                          })}
+                          onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                        >
+                          {t('Continue setup')}
+                        </Button>
+                      ) : (
+                        <SettingsToggle
+                          enabled={item.enabled}
+                          disabled={catalogReadOnly}
+                          aria-label={t('Toggle {{name}}', {
+                            name: item.displayName ?? item.name
+                          })}
+                          onToggle={() => void setEnabled(item.id, !item.enabled)}
+                        />
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
             </div>
           ) : null}
 
           {/* Built-in group: runnable repository profiles plus the separate Reviewer placeholder. */}
           {visibleBuiltinItems.length > 0 || visibleReviewerItems.length > 0 ? (
-            <div>
-              <div className="mb-1 flex flex-col gap-0.5">
-                <span className="text-sm font-semibold text-foreground">{t('Built-in')}</span>
+            <div data-slot="specialists-source-group" data-source="builtin">
+              <div className="flex flex-col items-start gap-0.5">
+                <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  {t('Built-in')}
+                  <span className="text-xs font-normal tabular-nums text-muted-foreground">
+                    {visibleBuiltinItems.length + visibleReviewerItems.length}
+                  </span>
+                </span>
                 <span className="text-xs text-muted-foreground">
                   {t('Shipped with the app. Not configurable.')}
                 </span>
@@ -1665,25 +1986,25 @@ const InstalledSpecialistsPanel = ({
                     data-slot="settings-list-row"
                     className="flex min-h-14 items-center gap-2 py-2.5"
                   >
+                    <span className="flex size-11 shrink-0 items-center justify-center">
+                      <SpecialistAvatar iconKey={item.iconKey} colorKey={item.colorKey} />
+                    </span>
                     <div className="min-w-0 flex-1">
                       <button
                         type="button"
                         onClick={() => onNavigate({ kind: 'builtin', id: item.id })}
                         aria-label={t('View {{name}}', { name: item.displayName ?? item.name })}
-                        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="block w-full min-w-0 cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
-                        <SpecialistAvatar iconKey={item.iconKey} colorKey={item.colorKey} />
-                        <div className="min-w-0 flex-1">
-                          <span className="block truncate text-sm text-foreground">
-                            {item.displayName ?? item.name}
-                          </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {item.description}
-                          </span>
-                        </div>
+                        <span className="block truncate text-sm text-foreground">
+                          {item.displayName ?? item.name}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {item.description}
+                        </span>
                       </button>
                       <div
-                        className="mt-0.5 ml-9 flex min-w-0 items-center gap-2"
+                        className="mt-0.5 flex min-w-0 items-center gap-2"
                         data-specialist-metadata-group={item.id}
                       >
                         <button
@@ -1716,11 +2037,17 @@ const InstalledSpecialistsPanel = ({
                     data-slot="settings-list-row"
                     className="flex min-h-14 items-center gap-2 py-2.5"
                   >
-                    <span
-                      className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-[13px] text-primary"
-                      aria-hidden="true"
-                    >
-                      ✓
+                    <span className="flex size-11 shrink-0 items-center justify-center">
+                      <span
+                        className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[13px]"
+                        style={getAvatarStyle('teal')}
+                        aria-hidden="true"
+                      >
+                        <OwlScholarIcon
+                          className="size-[18px]"
+                          data-specialist-icon="owl-scholar"
+                        />
+                      </span>
                     </span>
                     <div className="min-w-0 flex-1">
                       <span className="block truncate text-sm text-foreground">
@@ -1735,6 +2062,35 @@ const InstalledSpecialistsPanel = ({
                 ))}
               </ul>
             </div>
+          ) : null}
+
+          {visibleItemCount === 0 ? (
+            items.length === 0 ? (
+              <div className="px-4 py-14 text-center">
+                <p className="text-sm font-medium text-foreground">
+                  {t('No Specialists installed yet.')}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t('Browse the Marketplace or create a Specialist to get started.')}
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center rounded-lg border border-dashed border-border px-4 py-10 text-center">
+                <SearchX className="size-5 text-muted-foreground" aria-hidden="true" />
+                <p className="mt-3 text-sm font-medium text-foreground">
+                  {t('No installed Specialists match these filters.')}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={resetListFilters}
+                >
+                  {t('Show all Specialists')}
+                </Button>
+              </div>
+            )
           ) : null}
         </div>
       ) : null}
@@ -1766,7 +2122,9 @@ const InstalledSpecialistsPanel = ({
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
                 <AlertDialog.Title className={dialogTitleClassName}>
-                  {t('Delete “{{name}}”?', { name: deletingItem?.name ?? '' })}
+                  {deletingItem?.action === 'uninstall'
+                    ? t('Uninstall “{{name}}”?', { name: deletingItem.name })
+                    : t('Delete “{{name}}”?', { name: deletingItem?.name ?? '' })}
                 </AlertDialog.Title>
               </div>
               <AlertDialog.Cancel asChild>
@@ -1785,9 +2143,13 @@ const InstalledSpecialistsPanel = ({
 
             <div className={`${dialogBodyClassName} overflow-y-auto`}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                {t(
-                  'This permanently deletes the Specialist. Conversations using it will no longer be able to use it.'
-                )}
+                {deletingItem?.action === 'uninstall'
+                  ? t(
+                      'This removes the Marketplace Specialist from this device. Conversations using it will no longer be able to use it.'
+                    )
+                  : t(
+                      'This permanently deletes the Specialist. Conversations using it will no longer be able to use it.'
+                    )}
               </AlertDialog.Description>
               {visibleDeleteSkills?.length ? (
                 <Collapsible.Root
@@ -2011,7 +2373,9 @@ const InstalledSpecialistsPanel = ({
                 {deleteBusy ? (
                   <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" />
                 ) : null}
-                {t(deleteBusy ? 'Deleting…' : 'Delete Specialist')}
+                {deletingItem?.action === 'uninstall'
+                  ? t(deleteBusy ? 'Uninstalling…' : 'Uninstall')
+                  : t(deleteBusy ? 'Deleting…' : 'Delete Specialist')}
               </Button>
             </div>
           </AlertDialog.Content>

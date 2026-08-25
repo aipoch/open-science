@@ -27,6 +27,7 @@ type ProjectDeletionPath =
   | 'notification-session-invalidation'
   | 'project-deletion-intent-protocol'
   | 'project-file-projection-delete'
+  | 'project-metadata-soft-delete'
   | 'project-runtime-quiescence'
   | 'project-session-json-delete'
   | 'provenance-tail'
@@ -105,8 +106,11 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       }
     ],
     policy: {
-      kind: 'foreign-key-cascade',
-      note: 'Project deletion also prunes the permission registry before deleting the Project row.'
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'PermissionGrantRegistry.prune',
+      note: 'Permission rows are pruned before the Project metadata row is soft-deleted.'
     }
   },
   {
@@ -128,8 +132,11 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       }
     ],
     policy: {
-      kind: 'foreign-key-cascade',
-      note: 'The preview projection has no lifecycle outside its Project.'
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'ProjectRepository.delete',
+      note: 'The preview projection is explicitly removed before retaining the Project metadata row.'
     }
   },
   {
@@ -157,8 +164,47 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       }
     ],
     policy: {
-      kind: 'foreign-key-cascade',
-      note: 'Project and Upload Version deletion cascade into this derived cache; Session catalog cleanup prunes message-image rows.'
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'ProjectRepository.delete',
+      note: 'Derived evidence is explicitly removed before retaining the Project metadata row.'
+    }
+  },
+  {
+    id: 'session-metadata-usage-history',
+    medium: 'sqlite',
+    resources: [
+      'Session',
+      'PendingSessionReconciliation',
+      'SessionTurnUsage',
+      'SessionRun',
+      'SessionArtifactRef'
+    ],
+    prismaModels: [
+      {
+        name: 'Session',
+        ownerFields: [requiredOwner('projectId')],
+        relationContracts: [
+          {
+            field: 'project',
+            target: 'Project',
+            fromFields: ['projectId'],
+            onDelete: 'Restrict'
+          }
+        ]
+      },
+      {
+        name: 'PendingSessionReconciliation',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')]
+      }
+    ],
+    policy: {
+      kind: 'retained-history',
+      effect: 'retain',
+      retention: 'Retained with the soft-deleted Project row.',
+      reason:
+        'Project metadata and Session Usage facts remain queryable for per-Project and global historical totals.'
     }
   },
   {

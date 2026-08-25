@@ -14,7 +14,7 @@ export const providerType = (env: DiscoveredInterpreter, t: TFunction): string =
   if (env.provenance === 'agent-created') return t('Agent-created')
   // The conda env name is the user's own label — it interpolates unchanged.
   if (env.condaEnv) return t('Conda: {{name}}', { name: env.condaEnv })
-  return t('System')
+  return t('System', { context: 'runtime' })
 }
 
 // One-line readiness for a discovered env: version plus runnable/gap detail.

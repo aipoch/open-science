@@ -1148,6 +1148,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     language: NotebookLanguage,
     packages: string[] = []
   ): Promise<EnvironmentInfo> {
+    const flagLike = packages.find((pkg) => pkg.trim().startsWith('-'))
+    if (flagLike) {
+      throw new Error(
+        `"${flagLike}" is not a valid package specifier — options/flags cannot be passed as packages.`
+      )
+    }
     const base = language === 'python' ? BASE_PYTHON_PACKAGES : BASE_R_PACKAGES
     const pkgs = [...new Set([...base, ...packages])]
     const prefix = envPrefix(this.deps.root, name)
@@ -1248,13 +1254,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   }
 
   // rm -rf the env prefix; refuses the two default envs (app baseline, D2). "refuse if live" is
-  // enforced by the service layer, not here. Returns the refreshed list for a one-shot UI update.
-  removeEnvironment(name: string): EnvironmentInfo[] {
+  // enforced by the service layer, not here. Inventory refresh is an explicit list operation.
+  removeEnvironment(name: string): void {
     if (name === DEFAULT_PY_ENV || name === DEFAULT_R_ENV) {
       throw new Error(`Refusing to remove the default environment "${name}"`)
     }
     rmSync(envPrefix(this.deps.root, name), { recursive: true, force: true })
-    return this.listEnvironments()
   }
 
   // Keeps a healthy legacy R prefix additive, but replaces an invalid partial prefix from the lock.

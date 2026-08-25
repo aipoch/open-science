@@ -23,7 +23,7 @@ import {
   type Project,
   type UpdateProjectRequest
 } from '../../shared/projects'
-import type { AgentFrameworkId } from '../../shared/settings'
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../shared/settings'
 import type {
   DelegationPolicy,
   PersistedArtifact,
@@ -83,6 +83,7 @@ type TaskAgentSession = {
   frameworkId?: AgentFrameworkId
   backendId?: string
   contextReset?: boolean
+  agentConfiguration?: SessionAgentConfiguration
 }
 
 type TaskAgentCreateSessionRequest = {
@@ -101,8 +102,10 @@ type TaskAgentResumeSessionRequest = {
   permissionProfile: PermissionProfileId
   previousFrameworkId?: AgentFrameworkId
   previousBackendId?: string
+  previousModel?: string
   specialistId?: string
   specialistBindingPending?: true
+  agentConfiguration?: SessionAgentConfiguration
 }
 
 type TaskAgentPromptRequest = {
@@ -856,7 +859,11 @@ class TaskRunner {
 
     if (existing) {
       const attachedSessionIds = await this.dependencies.agent.listAttachedSessionIds()
-      if (attachedSessionIds.includes(existing.id)) {
+      if (
+        attachedSessionIds.includes(existing.id) &&
+        !existing.agentConfiguration &&
+        !existing.agentBackendId
+      ) {
         if (request.permissionProfile && request.permissionProfile !== existing.permissionProfile) {
           await this.dependencies.agent.setPermissionProfile(existing.id, request.permissionProfile)
         }
@@ -876,10 +883,14 @@ class TaskRunner {
           permissionProfile,
           previousFrameworkId: existing.agentFrameworkId,
           previousBackendId: existing.agentBackendId,
+          previousModel: existing.agentModel,
           providerSessionId: existing.providerSessionId,
           providerContinuityToken: existing.providerContinuityToken,
           ...(specialistId ? { specialistId } : {}),
-          ...(existing.specialistBindingPending === true ? { specialistBindingPending: true } : {})
+          ...(existing.specialistBindingPending === true ? { specialistBindingPending: true } : {}),
+          ...(existing.agentConfiguration
+            ? { agentConfiguration: existing.agentConfiguration }
+            : {})
         })
       }
     } else {
@@ -905,6 +916,7 @@ class TaskRunner {
           agentBackendId: sessionInfo.backendId ?? existing.agentBackendId,
           providerSessionId: sessionInfo.providerSessionId ?? existing.providerSessionId,
           providerContinuityToken: sessionInfo.providerContinuityToken,
+          agentConfiguration: sessionInfo.agentConfiguration ?? existing.agentConfiguration,
           messages: [...existing.messages, userMessage],
           activeRun: { promptMessageId: userMessageId, startedAt: now },
           error: undefined,
@@ -924,6 +936,7 @@ class TaskRunner {
           agentBackendId: sessionInfo.backendId,
           providerSessionId: sessionInfo.providerSessionId,
           providerContinuityToken: sessionInfo.providerContinuityToken,
+          agentConfiguration: sessionInfo.agentConfiguration,
           ...(request.computeHostIds !== undefined
             ? {
                 enabledComputeHosts: request.computeHostIds,

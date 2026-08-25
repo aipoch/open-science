@@ -1,8 +1,12 @@
 import type { AcpMessageImage, AcpRuntimeEvent } from '../../../../shared/acp'
 import type { FileReference } from '../../../../shared/artifacts'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
-import type { MessagePart } from '../../../../shared/session-persistence'
-import type { AgentFrameworkId } from '../../../../shared/settings'
+import {
+  collectSessionReferences,
+  type MessagePart,
+  type SessionReference
+} from '../../../../shared/session-persistence'
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId
@@ -14,7 +18,6 @@ import {
 } from '../../../../shared/uploads'
 import { getActiveConversationContext } from '../../../../shared/conversation-graph'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
-import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
 import {
   buildWorkspaceHistoryReplay,
@@ -22,13 +25,17 @@ import {
   type HistoryReplayDescriptor
 } from './history-preamble'
 import {
-  canPrepareExistingWorkspacePrompt,
+  canAdmitExistingWorkspacePrompt,
   prepareExistingWorkspacePrompt
 } from './workspace-runtime-prompt-preparation-owner'
 import {
   branchWorkspaceSessionFromMessage,
   reconcileBranchedAttachments
 } from './workspace-runtime-session-branch-owner'
+import {
+  finalizeWorkspaceAttachments,
+  partitionWorkspacePromptAttachments
+} from './workspace-runtime-attachment-owner'
 import type { useAcpRuntime } from './useAcpRuntime'
 
 type SendWorkspaceMessageIntent = {
@@ -50,8 +57,8 @@ type SendWorkspaceMessageIntent = {
   specialistId?: string | null
   enabledComputeHosts?: string[]
   selectedComputeHosts?: string[]
+  agentConfiguration?: SessionAgentConfiguration
 }
-
 type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   agentFrameworkId?: AgentFrameworkId
   agentBackendId?: string
@@ -64,13 +71,13 @@ type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   allowCompactionRecovery?: boolean
   requireExistingSession?: boolean
 }
-
 type SendWorkspaceMessageResult = { sessionId: string; messageId: string }
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
 type RuntimeEventDrain = (sessionId?: string) => Promise<void>
 type WorkspaceCommandLifecycle = {
   onSendPreparationStateChange?: SendPreparationStateChange
   drainRuntimeEvents?: RuntimeEventDrain
+  onSessionBound?: (pendingSessionId: string, sessionId: string) => void
 }
 type ResendEditedMessageInput = {
   text: string
@@ -84,6 +91,7 @@ type ResendEditedWorkspaceMessageOptions = WorkspaceCommandLifecycle & {
   agentFrameworkId?: AgentFrameworkId
   agentBackendId?: string
   agentModel?: string
+  agentConfiguration?: SessionAgentConfiguration
   historyReplayDescriptor?: HistoryReplayDescriptor
 }
 type WorkspaceCommandRuntime = Pick<
@@ -139,17 +147,6 @@ const failPrompt = async (
   useSessionStore.getState().failRun(sessionId, message, { reportable })
 }
 
-const finalizeAttachments = async (
-  sessionId: string,
-  attachments: UploadedAttachment[],
-  projectId?: string
-): Promise<UploadedAttachment[]> => {
-  if (attachments.length === 0) return attachments
-  const finalized = await window.api.uploads.finalizeSession({ projectId, sessionId, attachments })
-  usePreviewWorkbenchStore.getState().reconcileFinalizedUploads(finalized)
-  return finalized
-}
-
 const replayHistory = (
   messages: ChatMessage[],
   input: SendWorkspaceMessageCommand,
@@ -179,6 +176,9 @@ const ownsPrompt = (sessionId: string, messageId: string): boolean => {
   return session?.status === 'running' && session.activeRun?.promptMessageId === messageId
 }
 
+const isOverlappingPromptRejection = (error: unknown): boolean =>
+  /An ACP (?:prompt|interaction) is already running/i.test(errorMessage(error))
+
 type PromptDispatch = {
   sessionId: string
   messageId: string
@@ -186,6 +186,7 @@ type PromptDispatch = {
   attachments: UploadedAttachment[]
   forcedSkillIds?: string[]
   referencedArtifacts?: FileReference[]
+  referencedSessions?: SessionReference[]
   replay?: HistoryReplayContext & {
     resumeFallback?: HistoryReplayContext
     contextReset?: boolean
@@ -213,14 +214,23 @@ const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatc
     promptContext(request.sessionId, request.messageId),
     request.replay?.contextReset
   ] as const
-  const result = request.turnIntent
-    ? runtime.sendPrompt(...args, request.continuation, request.turnIntent)
-    : request.continuation
-      ? runtime.sendPrompt(...args, request.continuation)
-      : runtime.sendPrompt(...args)
+  const result = request.referencedSessions?.length
+    ? runtime.sendPrompt(
+        ...args,
+        request.continuation,
+        request.turnIntent,
+        request.referencedSessions
+      )
+    : request.turnIntent
+      ? runtime.sendPrompt(...args, request.continuation, request.turnIntent)
+      : request.continuation
+        ? runtime.sendPrompt(...args, request.continuation)
+        : runtime.sendPrompt(...args)
   void result
     .then(() => request.accepted?.())
     .catch((error) => {
+      if (isOverlappingPromptRejection(error) && !ownsPrompt(request.sessionId, request.messageId))
+        return
       const message = errorMessage(error).trim() || 'Agent run failed'
       void failPrompt(request.sessionId, message, priorErrorEventId)
     })
@@ -238,19 +248,32 @@ type PendingPromptRequest = SendWorkspaceMessageCommand & {
 
 const startPendingPrompt = (
   runtime: WorkspaceCommandRuntime,
-  request: PendingPromptRequest
+  request: PendingPromptRequest,
+  onSessionBound?: (pendingSessionId: string, sessionId: string) => void
 ): void => {
   void (async () => {
     const pending = request.pending
     if (!ownsPrompt(pending.sessionId, pending.messageId)) return
     let created
     try {
-      created = await runtime.createSession(
-        request.cwd,
-        request.projectId,
-        request.permissionProfile,
-        request.specialistId ?? undefined
-      )
+      const target =
+        request.agentFrameworkId && request.agentConfiguration
+          ? { frameworkId: request.agentFrameworkId, ...request.agentConfiguration }
+          : undefined
+      created = target
+        ? await runtime.createSession(
+            request.cwd,
+            request.projectId,
+            request.permissionProfile,
+            request.specialistId ?? undefined,
+            target
+          )
+        : await runtime.createSession(
+            request.cwd,
+            request.projectId,
+            request.permissionProfile,
+            request.specialistId ?? undefined
+          )
     } catch (error) {
       if (ownsPrompt(pending.sessionId, pending.messageId)) {
         useSessionStore.getState().failRun(pending.sessionId, createSessionFailureMessage(error))
@@ -278,12 +301,17 @@ const startPendingPrompt = (
       providerSessionId: created.providerSessionId,
       providerContinuityToken: created.providerContinuityToken
     })
+    onSessionBound?.(pending.sessionId, created.sessionId)
     const boundMessageId = bound?.messageId
     if (!boundMessageId || !ownsPrompt(created.sessionId, boundMessageId)) return
 
     let attachments = request.attachments
     try {
-      attachments = await finalizeAttachments(created.sessionId, attachments, request.projectId)
+      attachments = await finalizeWorkspaceAttachments({
+        sessionId: created.sessionId,
+        attachments,
+        projectId: request.projectId
+      })
       useSessionStore.getState().replaceMessageUploads({
         sessionId: created.sessionId,
         messageId: boundMessageId,
@@ -328,6 +356,7 @@ const startPendingPrompt = (
       attachments,
       forcedSkillIds: request.forcedSkillIds,
       referencedArtifacts: request.referencedArtifacts,
+      referencedSessions: collectSessionReferences(request.parts),
       replay: { ...request.replay, contextReset: Boolean(request.contextReset) },
       turnIntent: request.turnIntent,
       accepted: () =>
@@ -348,6 +377,7 @@ const sendWorkspaceMessage = async (
       agentFrameworkId: input.agentFrameworkId,
       agentBackendId: input.agentBackendId,
       agentModel: input.agentModel,
+      agentConfiguration: input.agentConfiguration,
       specialistId: input.specialistId
     })
   }
@@ -378,6 +408,7 @@ const sendWorkspaceMessage = async (
       agentFrameworkId: input.agentFrameworkId,
       agentBackendId: input.agentBackendId,
       agentModel: input.agentModel,
+      agentConfiguration: input.agentConfiguration,
       specialistId: input.specialistId
     })
     if (!pending?.messageId) return undefined
@@ -411,18 +442,22 @@ const sendWorkspaceMessage = async (
       useSessionStore.getState().failRun(pending.sessionId, errorMessage(error))
       return pendingPrompt
     }
-    startPendingPrompt(runtime, {
-      ...input,
-      pending: pendingPrompt,
-      content,
-      attachments,
-      cwd: session.cwd || input.cwd,
-      projectId: session.projectId,
-      permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-      specialistId: session.specialistId,
-      replay,
-      contextReset: true
-    })
+    startPendingPrompt(
+      runtime,
+      {
+        ...input,
+        pending: pendingPrompt,
+        content,
+        attachments,
+        cwd: session.cwd || input.cwd,
+        projectId: session.projectId,
+        permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+        specialistId: session.specialistId,
+        replay,
+        contextReset: true
+      },
+      lifecycle.onSessionBound
+    )
     return pendingPrompt
   }
 
@@ -430,15 +465,7 @@ const sendWorkspaceMessage = async (
     const sessionId = input.sessionId
     const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
     if (input.requireExistingSession && !session) return undefined
-    if (
-      !canPrepareExistingWorkspacePrompt({
-        sessionId,
-        session,
-        runtimeState: runtime.state,
-        allowCompactionRecovery: input.allowCompactionRecovery === true
-      })
-    )
-      return undefined
+    if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
     const projectId = input.projectId ?? session?.projectId
     if (input.planContinuation && !projectId) return undefined
 
@@ -467,21 +494,26 @@ const sendWorkspaceMessage = async (
         projectId: input.projectId ?? session.projectId,
         agentFrameworkId: input.agentFrameworkId,
         agentBackendId: input.agentBackendId,
-        agentModel: input.agentModel
+        agentModel: input.agentModel,
+        agentConfiguration: input.agentConfiguration
       })
       if (!appended) return undefined
-      startPendingPrompt(runtime, {
-        ...input,
-        pending: appended,
-        content,
-        attachments: effectiveAttachments,
-        cwd,
-        projectId,
-        permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-        specialistId: session.pendingContextReplayMessageId ? session.specialistId : undefined,
-        replay,
-        contextReset: Boolean(session.pendingContextReplayMessageId)
-      })
+      startPendingPrompt(
+        runtime,
+        {
+          ...input,
+          pending: appended,
+          content,
+          attachments: effectiveAttachments,
+          cwd,
+          projectId,
+          permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+          specialistId: session.pendingContextReplayMessageId ? session.specialistId : undefined,
+          replay,
+          contextReset: Boolean(session.pendingContextReplayMessageId)
+        },
+        lifecycle.onSessionBound
+      )
       return appended
     }
 
@@ -494,6 +526,8 @@ const sendWorkspaceMessage = async (
       selectedRuntime: {
         frameworkId: input.agentFrameworkId,
         backendId: input.agentBackendId,
+        agentModel: input.agentModel,
+        agentConfiguration: input.agentConfiguration,
         supportsImageInput: input.supportsImageInput,
         supportsImageRelay: input.supportsImageRelay
       },
@@ -509,12 +543,25 @@ const sendWorkspaceMessage = async (
     if (!prepared) return undefined
     let promptAttachments = effectiveAttachments
     try {
-      promptAttachments = await finalizeAttachments(sessionId, effectiveAttachments, projectId)
+      promptAttachments = await finalizeWorkspaceAttachments({
+        sessionId,
+        attachments: effectiveAttachments,
+        projectId,
+        preserveSourceOwnership: Boolean(input.truncateFromMessageId)
+      })
     } catch (error) {
       useSessionStore.getState().failRun(sessionId, errorMessage(error))
       return undefined
     }
+    if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
     if (input.truncateFromMessageId) {
+      if (promptAttachments.length > 0) {
+        useSessionStore.getState().replaceMessageUploads({
+          sessionId,
+          messageId: input.truncateFromMessageId,
+          uploads: promptAttachments.map(toPersistedUploadedAttachment)
+        })
+      }
       useSessionStore.getState().truncateSessionFromMessage(sessionId, input.truncateFromMessageId)
     }
     const appended = useSessionStore.getState().appendUserMessage({
@@ -527,7 +574,8 @@ const sendWorkspaceMessage = async (
       projectId: input.projectId ?? prepared.appendOwnership.projectId,
       agentFrameworkId: prepared.appendOwnership.agentFrameworkId,
       agentBackendId: prepared.appendOwnership.agentBackendId,
-      agentModel: input.agentModel
+      agentModel: input.agentModel,
+      agentConfiguration: input.agentConfiguration
     })
     if (!appended) return undefined
     const replay = prepared.replay()
@@ -541,14 +589,26 @@ const sendWorkspaceMessage = async (
             : {})
         }
       : undefined
+    const promptMedia =
+      input.truncateFromMessageId && promptAttachments.length > 0
+        ? partitionWorkspacePromptAttachments({
+            historyAttachments: replay?.historyAttachments,
+            latestAttachments: promptAttachments,
+            supportsImageInput: input.supportsImageInput,
+            supportsImageRelay: input.supportsImageRelay
+          })
+        : undefined
     dispatchPrompt(runtime, {
       sessionId,
       messageId: appended.messageId,
       content,
-      attachments: promptAttachments,
+      attachments: promptMedia?.currentAttachments ?? promptAttachments,
       forcedSkillIds: input.forcedSkillIds,
       referencedArtifacts: input.referencedArtifacts,
-      replay,
+      referencedSessions: collectSessionReferences(input.parts),
+      replay: promptMedia
+        ? { ...replay, historyAttachments: promptMedia.historyAttachments }
+        : replay,
       continuation,
       turnIntent: input.turnIntent,
       accepted: () => prepared.acceptPrompt(appended.messageId)
@@ -567,22 +627,27 @@ const sendWorkspaceMessage = async (
     agentFrameworkId: input.agentFrameworkId,
     agentBackendId: input.agentBackendId,
     agentModel: input.agentModel,
+    agentConfiguration: input.agentConfiguration,
     specialistId: input.specialistId ?? undefined,
     enabledComputeHosts: input.enabledComputeHosts,
     selectedComputeHosts: input.selectedComputeHosts
   })
   if (!pending) return undefined
-  startPendingPrompt(runtime, {
-    ...input,
-    pending,
-    content,
-    attachments,
-    cwd: input.cwd,
-    projectId: input.projectId,
-    permissionProfile: input.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-    specialistId: input.specialistId ?? undefined,
-    turnIntent: input.turnIntent
-  })
+  startPendingPrompt(
+    runtime,
+    {
+      ...input,
+      pending,
+      content,
+      attachments,
+      cwd: input.cwd,
+      projectId: input.projectId,
+      permissionProfile: input.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+      specialistId: input.specialistId ?? undefined,
+      turnIntent: input.turnIntent
+    },
+    lifecycle.onSessionBound
+  )
   return pending
 }
 
@@ -593,13 +658,23 @@ const resendEditedWorkspaceMessage = async (
 ): Promise<boolean> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === input.sessionId)
   if (!session) return false
+  const sourceMessage = session.messages.find((message) => message.id === input.messageId)
   const cwd = session.cwd || runtime.state.cwd
   if (
     !cwd ||
     !input.text.trim() ||
-    !session.messages.some((message) => message.id === input.messageId) ||
+    !sourceMessage ||
     runtime.state.promptInFlightSessionIds.includes(input.sessionId)
   ) {
+    return false
+  }
+  let attachments: UploadedAttachment[]
+  try {
+    attachments = (sourceMessage.uploads ?? []).map((upload) =>
+      toRuntimeUploadedAttachment(upload, session.projectId)
+    )
+  } catch (error) {
+    useSessionStore.getState().failRun(input.sessionId, errorMessage(error))
     return false
   }
   return Boolean(
@@ -608,7 +683,7 @@ const resendEditedWorkspaceMessage = async (
       {
         sessionId: input.sessionId,
         text: input.text.trim(),
-        attachments: [],
+        attachments,
         parts: input.parts,
         cwd,
         projectId: session.projectId,
@@ -618,6 +693,7 @@ const resendEditedWorkspaceMessage = async (
         agentFrameworkId: options.agentFrameworkId,
         agentBackendId: options.agentBackendId,
         agentModel: options.agentModel,
+        agentConfiguration: options.agentConfiguration,
         historyReplayDescriptor: options.historyReplayDescriptor,
         truncateFromMessageId: input.messageId,
         supportsImageInput: options.supportsImageInput,

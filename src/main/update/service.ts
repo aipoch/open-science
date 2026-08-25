@@ -84,7 +84,9 @@ export class UpdateService implements UpdateStrategy {
   // latest, so an older (drained) download can't clear a newer one's lifecycle.
   private downloadGeneration = 0
   private downloadOperation?: DiagnosticOperation
-  private checkInFlight = false
+  // In-flight check() promise. Overlapping check()/download() await this instead of returning a
+  // snapshot taken while the startup scheduler still owns the manifest fetch.
+  private checkLifecycle?: Promise<UpdateStatus>
   private readonly fetchImpl?: typeof fetch
   private readonly platform: NodeJS.Platform
   private readonly arch: string
@@ -157,15 +159,15 @@ export class UpdateService implements UpdateStrategy {
   async check(): Promise<UpdateStatus> {
     // A transfer and a manifest check cannot own the status concurrently. Once ready, checks still run
     // but only a strictly newer release may supersede the downloaded installer.
-    if (this.downloadLifecycle || this.checkInFlight) return this.status
+    if (this.downloadLifecycle) return this.status
+    if (this.checkLifecycle) return this.checkLifecycle
 
     const readyStatus = this.status.state === 'ready' ? this.status : undefined
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-check',
       fields: { strategy: 'manifest' }
     })
-    this.checkInFlight = true
-    try {
+    const lifecycle = (async () => {
       if (!readyStatus) this.setStatus({ state: 'checking', current: this.currentVersion })
       operation.phase('fetch-manifest')
       try {
@@ -197,6 +199,7 @@ export class UpdateService implements UpdateStrategy {
           current: this.currentVersion,
           latest: manifest.version,
           notes: manifest.notes,
+          localizedNotes: manifest.localizedNotes,
           download,
           totalBytes: download?.size
         })
@@ -214,8 +217,12 @@ export class UpdateService implements UpdateStrategy {
         operation.fail(error, { result: 'error' })
       }
       return this.status
+    })()
+    this.checkLifecycle = lifecycle
+    try {
+      return await lifecycle
     } finally {
-      this.checkInFlight = false
+      if (this.checkLifecycle === lifecycle) this.checkLifecycle = undefined
     }
   }
 
@@ -223,7 +230,11 @@ export class UpdateService implements UpdateStrategy {
     // An active download is in flight; ignore repeat clicks / concurrent renderers. The abort claim
     // below is synchronous (before any await) so this guard and a cancel() during the drain both target
     // a consistent slot — a cancel while a retry is still draining must abort it, not be a no-op.
-    if (this.checkInFlight || this.downloadAbort) return this.status
+    if (this.downloadAbort) return this.status
+    // The startup scheduler owns check() at launch. Returning the in-flight snapshot dropped download
+    // requests that arrived after the UI/RPC already observed `available`. Wait, then start.
+    if (this.checkLifecycle) await this.checkLifecycle
+    if (this.downloadAbort) return this.status
 
     const { download } = this.status
     if (!download) return this.status

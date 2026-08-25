@@ -22,10 +22,7 @@ describe('database startup owner', () => {
     finish?.()
     await attempt
 
-    expect(owner.getState()).toEqual({
-      phase: 'migrating',
-      migrationId: '0001_runtime_schema_baseline'
-    })
+    expect(owner.getState()).toEqual({ phase: 'starting' })
     expect(owner.isMigrating()).toBe(false)
   })
 
@@ -58,15 +55,9 @@ describe('database startup owner', () => {
       migrationId: '0001_runtime_schema_baseline'
     })
 
-    await expect(owner.retry()).resolves.toEqual({
-      phase: 'migrating',
-      migrationId: '0001_runtime_schema_baseline'
-    })
+    await expect(owner.retry()).resolves.toEqual({ phase: 'starting' })
     await expect(owner.whenVerified()).resolves.toBeUndefined()
-    expect(owner.getState()).toEqual({
-      phase: 'migrating',
-      migrationId: '0001_runtime_schema_baseline'
-    })
+    expect(owner.getState()).toEqual({ phase: 'starting' })
 
     owner.complete()
     expect(owner.getState()).toEqual({ phase: 'ready' })
@@ -97,9 +88,24 @@ describe('database startup owner', () => {
       })
     )
 
-    await expect(owner.retry()).resolves.toEqual({ phase: 'checking' })
+    await expect(owner.retry()).resolves.toEqual({ phase: 'starting' })
     await expect(owner.whenVerified()).resolves.toBeUndefined()
     expect(verifyDatabase).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves the database-checking copy after verification while runtime composition continues', async () => {
+    const owner = createDatabaseStartupOwner({
+      reportBlocked: vi.fn(),
+      verifyDatabase: async (onProgress) => {
+        onProgress({ phase: 'checking' })
+      }
+    })
+    const states: ReturnType<typeof owner.getState>[] = []
+    owner.subscribe((state) => states.push(state))
+
+    await expect(owner.start()).resolves.toEqual({ phase: 'starting' })
+    expect(states).toEqual([{ phase: 'checking' }, { phase: 'checking' }, { phase: 'starting' }])
+    expect(owner.getState()).toEqual({ phase: 'starting' })
   })
 
   it('does not retry a non-retryable compatibility failure', async () => {

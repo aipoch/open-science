@@ -2,13 +2,13 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
+  XAI_SUBSCRIPTION_PROVIDER_ID,
   type SetActiveProviderRequest,
   type SetAgentFrameworkRequest,
   type SetReasoningEffortRequest,
   type UpsertProviderRequest
 } from '../../../shared/settings'
-import type { ResolvedReasoningEffort } from '../../../shared/reasoning-effort'
-import type { AgentFrameworkId, AgentModelChangeTarget } from '../../agent-framework'
+import type { AgentFrameworkId } from '../../agent-framework'
 import type { SettingsService } from '../service'
 
 type RuntimeSettingsWorkflowStore = Pick<
@@ -22,8 +22,6 @@ type RuntimeSettingsWorkflowStore = Pick<
   | 'setActiveProvider'
   | 'setAgentFramework'
   | 'setReasoningEffort'
-  | 'resolveActiveReasoningEffort'
-  | 'resolveActiveModelChangeTarget'
   | 'loginClaudeShared'
   | 'logoutClaudeShared'
   | 'loginIsolatedClaude'
@@ -31,16 +29,23 @@ type RuntimeSettingsWorkflowStore = Pick<
   | 'logoutIsolatedClaude'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
+  | 'beginXaiOAuthLogin'
+  | 'waitXaiOAuthLogin'
+  | 'cancelXaiOAuthLogin'
+  | 'logoutXaiOAuth'
 >
 
 type RuntimeSettingsWorkflowEffects = {
-  requestProviderReconnect: () => void
-  requestAgentFrameworkSwitch: () => void
-  applyReasoningEffort: (effort: ResolvedReasoningEffort) => Promise<boolean>
-  applyModelChange: (target: AgentModelChangeTarget) => Promise<boolean>
+  requestProviderReconnect: (providerIds?: readonly string[], includeDefault?: boolean) => void
+  requestAgentFrameworkSwitch: (frameworkId?: AgentFrameworkId) => void
 }
 
 type RuntimeUninstallMethod = 'uninstallClaude' | 'uninstallOpencode' | 'uninstallCodex'
+
+const affectedProviderIds = (providerId: string): readonly string[] =>
+  providerId === CLAUDE_SHARED_PROVIDER_ID || providerId === CLAUDE_ISOLATED_PROVIDER_ID
+    ? [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID]
+    : [providerId]
 
 // Owns post-persistence runtime and authentication effects. Its required effect port makes an
 // incomplete production composition fail at construction instead of silently skipping a reconnect.
@@ -62,7 +67,7 @@ class RuntimeSettingsWorkflows {
       if (result.snapshot.agentFrameworkId !== framework) {
         this.effects.requestAgentFrameworkSwitch()
       } else {
-        this.effects.requestProviderReconnect()
+        this.effects.requestAgentFrameworkSwitch(framework)
       }
     }
 
@@ -75,11 +80,11 @@ class RuntimeSettingsWorkflows {
     const before = await this.settings.getSettingsView()
     const snapshot = await this.settings.upsertProvider(request)
 
-    if (
-      request.id &&
-      (request.id === before.activeProviderId || request.id === snapshot.activeProviderId)
-    ) {
-      this.effects.requestProviderReconnect()
+    if (request.id) {
+      this.effects.requestProviderReconnect(
+        affectedProviderIds(request.id),
+        request.id === before.activeProviderId || request.id === snapshot.activeProviderId
+      )
     }
 
     return snapshot
@@ -90,28 +95,17 @@ class RuntimeSettingsWorkflows {
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['deleteProvider']>>> {
     const before = await this.settings.getSettingsView()
     const snapshot = await this.settings.deleteProvider(id)
-    if (before.activeProviderId !== snapshot.activeProviderId) {
-      this.effects.requestProviderReconnect()
-    }
+    this.effects.requestProviderReconnect(
+      affectedProviderIds(id),
+      before.activeProviderId !== snapshot.activeProviderId
+    )
     return snapshot
   }
 
   async setActiveProvider(
     request: SetActiveProviderRequest
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['setActiveProvider']>>> {
-    const before = await this.settings.getSettingsView()
-    const snapshot = await this.settings.setActiveProvider(request.id, request.model)
-    if (
-      before.activeProviderId === snapshot.activeProviderId &&
-      before.activeModel === snapshot.activeModel
-    ) {
-      return snapshot
-    }
-
-    const target = await this.settings.resolveActiveModelChangeTarget()
-    const appliedLive = target ? await this.effects.applyModelChange(target) : false
-    if (!appliedLive) this.effects.requestProviderReconnect()
-    return snapshot
+    return this.settings.setActiveProvider(request.id, request.model)
   }
 
   async setAgentFramework(
@@ -125,11 +119,7 @@ class RuntimeSettingsWorkflows {
   async setReasoningEffort(
     request: SetReasoningEffortRequest
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['setReasoningEffort']>>> {
-    const snapshot = await this.settings.setReasoningEffort(request.effort)
-    const resolvedEffort = await this.settings.resolveActiveReasoningEffort(request.effort)
-    const appliedLive = await this.effects.applyReasoningEffort(resolvedEffort)
-    if (!appliedLive) this.effects.requestProviderReconnect()
-    return snapshot
+    return this.settings.setReasoningEffort(request.effort)
   }
 
   async loginClaudeShared(): Promise<
@@ -138,15 +128,10 @@ class RuntimeSettingsWorkflows {
     const result = await this.settings.loginClaudeShared()
     if (result.ok) {
       const snapshot = await this.settings.getSettingsView()
-      const active = snapshot.providers.find(
-        (provider) => provider.id === snapshot.activeProviderId
+      this.effects.requestProviderReconnect(
+        [CLAUDE_SHARED_PROVIDER_ID],
+        snapshot.activeProviderId === CLAUDE_SHARED_PROVIDER_ID
       )
-      if (
-        snapshot.activeProviderId === CLAUDE_SHARED_PROVIDER_ID &&
-        active?.type === 'claude-shared'
-      ) {
-        this.effects.requestProviderReconnect()
-      }
     }
     return result
   }
@@ -157,9 +142,10 @@ class RuntimeSettingsWorkflows {
     const result = await this.settings.logoutClaudeShared()
     if (result.ok) {
       const snapshot = await this.settings.getSettingsView()
-      if (snapshot.activeProviderId === CLAUDE_SHARED_PROVIDER_ID) {
-        this.effects.requestProviderReconnect()
-      }
+      this.effects.requestProviderReconnect(
+        [CLAUDE_SHARED_PROVIDER_ID],
+        snapshot.activeProviderId === CLAUDE_SHARED_PROVIDER_ID
+      )
     }
     return result
   }
@@ -182,9 +168,10 @@ class RuntimeSettingsWorkflows {
     const result = await this.settings.logoutIsolatedClaude()
     if (result.ok) {
       const snapshot = await this.settings.getSettingsView()
-      if (snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID) {
-        this.effects.requestProviderReconnect()
-      }
+      this.effects.requestProviderReconnect(
+        [CLAUDE_ISOLATED_PROVIDER_ID],
+        snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID
+      )
     }
     return result
   }
@@ -195,16 +182,10 @@ class RuntimeSettingsWorkflows {
     const result = await this.settings.loginIsolatedCodex()
     if (result.ok && result.applied !== false) {
       const snapshot = await this.settings.getSettingsView()
-      const active = snapshot.providers.find(
-        (provider) => provider.id === snapshot.activeProviderId
+      this.effects.requestProviderReconnect(
+        [CODEX_SUBSCRIPTION_PROVIDER_ID],
+        snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID
       )
-      if (
-        snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID &&
-        active?.type === 'codex-isolated' &&
-        active.codexAuthMode === 'isolated'
-      ) {
-        this.effects.requestProviderReconnect()
-      }
     }
     return result
   }
@@ -215,11 +196,43 @@ class RuntimeSettingsWorkflows {
     const result = await this.settings.logoutIsolatedCodex()
     if (result.ok) {
       const snapshot = await this.settings.getSettingsView()
-      if (snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID) {
-        this.effects.requestProviderReconnect()
-      }
+      this.effects.requestProviderReconnect(
+        [CODEX_SUBSCRIPTION_PROVIDER_ID],
+        snapshot.activeProviderId === CODEX_SUBSCRIPTION_PROVIDER_ID
+      )
     }
     return result
+  }
+
+  beginXaiOAuthLogin(): ReturnType<RuntimeSettingsWorkflowStore['beginXaiOAuthLogin']> {
+    return this.settings.beginXaiOAuthLogin()
+  }
+
+  async waitXaiOAuthLogin(): Promise<
+    Awaited<ReturnType<RuntimeSettingsWorkflowStore['waitXaiOAuthLogin']>>
+  > {
+    const result = await this.settings.waitXaiOAuthLogin()
+    const snapshot = await this.settings.getSettingsView()
+    this.effects.requestProviderReconnect(
+      [XAI_SUBSCRIPTION_PROVIDER_ID],
+      snapshot.activeProviderId === XAI_SUBSCRIPTION_PROVIDER_ID
+    )
+    return result
+  }
+
+  cancelXaiOAuthLogin(): void {
+    this.settings.cancelXaiOAuthLogin()
+  }
+
+  async logoutXaiOAuth(): Promise<
+    Awaited<ReturnType<RuntimeSettingsWorkflowStore['logoutXaiOAuth']>>
+  > {
+    const snapshot = await this.settings.logoutXaiOAuth()
+    this.effects.requestProviderReconnect(
+      [XAI_SUBSCRIPTION_PROVIDER_ID],
+      snapshot.activeProviderId === XAI_SUBSCRIPTION_PROVIDER_ID
+    )
+    return snapshot
   }
 
   private async finishIsolatedClaudeLogin(
@@ -227,15 +240,10 @@ class RuntimeSettingsWorkflows {
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['loginIsolatedClaude']>>> {
     if (result.ok && result.applied !== false) {
       const snapshot = await this.settings.getSettingsView()
-      const active = snapshot.providers.find(
-        (provider) => provider.id === snapshot.activeProviderId
+      this.effects.requestProviderReconnect(
+        [CLAUDE_ISOLATED_PROVIDER_ID],
+        snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID
       )
-      if (
-        snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID &&
-        active?.type === 'claude-isolated'
-      ) {
-        this.effects.requestProviderReconnect()
-      }
     }
     return result
   }

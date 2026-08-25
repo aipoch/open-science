@@ -42,13 +42,10 @@ type InstalledButNotDeliveredEventChannel = Exclude<
   ApplicationEventChannel
 >
 
-const INSTALLED_BUT_NOT_DELIVERED_EVENTS = {
-  'notebook-env:progress': true,
-  'notifications:open-session': true,
-  'notifications:probe-unread-view': true,
-  'shortcut:close-active-pane': true,
-  'uploads:transfer-progress': true
-} as const satisfies Record<InstalledButNotDeliveredEventChannel, true>
+const INSTALLED_BUT_NOT_DELIVERED_EVENTS = {} as const satisfies Record<
+  InstalledButNotDeliveredEventChannel,
+  true
+>
 
 // These functions exist on the real Electron preload API but the current AST generator does not
 // recognize their implementation shape or channel constants. T1b must make each omission explicit.
@@ -71,6 +68,8 @@ const GENERATED_SOURCE_OMISSIONS = [
   'managedFileVersions.saveTextEdit',
   'network.checkConnectivity',
   'network.getInfo',
+  'notifications.onOpenSession',
+  'notifications.onViewProbe',
   'notifications.syncViewState',
   'officePreview.attachFrame',
   'officePreview.close',
@@ -122,13 +121,17 @@ const GENERATED_SOURCE_OMISSIONS = [
   'specialist.setEnabled',
   'specialist.setSessionSpecialist',
   'specialist.update',
+  'uploads.onTransferProgress',
   'window.announceWindowFindAppearance',
+  'window.announceWindowFindContentReady',
   'window.announceWindowFindReady',
   'window.clearFind',
   'window.closeFind',
   'window.findInPage',
+  'window.onCloseActivePane',
   'window.onCloseConfirmRequest',
   'window.onFindInPageResult',
+  'window.onHideWindowFind',
   'window.onShowWindowFind',
   'window.onWindowFindAppearance',
   'window.sendCloseConfirmResponse'
@@ -190,10 +193,12 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   ],
   settings: [
     'authenticate-custom-server',
+    'begin-xai-oauth-login',
     'cancel-claude-login',
     'cancel-codex-login',
     'cancel-custom-server-authentication',
     'cancel-isolated-claude-login',
+    'cancel-xai-oauth-login',
     'get-github-token-status',
     'install-claude',
     'install-codex',
@@ -205,6 +210,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'logout-isolated-claude',
     'logout-isolated-codex',
     'logout-shared-claude',
+    'logout-xai-oauth',
     'remove-github-token',
     'retry-custom-server',
     'save-github-token',
@@ -217,7 +223,8 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-project-files-filter',
     'uninstall-claude',
     'uninstall-codex',
-    'uninstall-opencode'
+    'uninstall-opencode',
+    'wait-xai-oauth-login'
   ],
   storage: [
     'cancel-migrate',
@@ -279,14 +286,8 @@ describe('renderer surface inventory', () => {
     )
   })
 
-  it('pins subscriptions installed in Web but not published through ApplicationEventHub', () => {
-    expectSameSet(Object.keys(INSTALLED_BUT_NOT_DELIVERED_EVENTS), [
-      'notebook-env:progress',
-      'notifications:open-session',
-      'notifications:probe-unread-view',
-      'shortcut:close-active-pane',
-      'uploads:transfer-progress'
-    ])
+  it('does not install Web subscriptions that lack ApplicationEventHub delivery', () => {
+    expectSameSet(Object.keys(INSTALLED_BUT_NOT_DELIVERED_EVENTS), [])
   })
 
   it('pins browser-native replacements and Electron-only categories', () => {

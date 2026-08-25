@@ -9,12 +9,14 @@ import {
   type AcpContextUsage,
   type AcpPermissionRequest,
   type AcpRuntimeEvent,
+  type AcpSessionAgentTarget,
   type AcpStateSnapshot,
   type PendingElicitationRequest
 } from '../../../../shared/acp'
 import { useCallback, useEffect, useRef } from 'react'
 import type { HistoryReplayDescriptor } from '../../../../shared/history-preamble'
 import { useSessionStore } from '../../stores/session-store'
+import { loadPersistedSession } from '../session-persistence/session-persistence'
 import {
   acceptAcpRuntimeSnapshotRevision,
   resetAcpRuntimeSnapshotRevisionForTests
@@ -130,7 +132,7 @@ const createWorkspaceRuntimeEventProcessor = (
   const unscopedEventLane = Symbol('unscoped-workspace-runtime-events')
   const eventLanes = new Map<string | symbol, EventLane>()
   const presentationBuffer = createWorkspaceRuntimePresentationBuffer(options.presentation)
-  let latestEvents: AcpRuntimeEvent[] = []
+  let latestEventsById = new Map<string, AcpRuntimeEvent>()
   let acceptedEventVersion = 0
 
   const getEventLaneKey = (event: AcpRuntimeEvent): string | symbol =>
@@ -153,20 +155,24 @@ const createWorkspaceRuntimeEventProcessor = (
     return lane
   }
 
+  const releaseProcessedEvent = (lane: EventLane, eventId: string): void => {
+    if (latestEventsById.has(eventId) || !lane.processedEventIds.has(eventId)) return
+    lane.acceptedEvents.delete(eventId)
+    lane.failedEventIds.delete(eventId)
+    lane.processedEventIds.delete(eventId)
+    lane.processingEventIds.delete(eventId)
+  }
+
   const cleanEventLane = (laneKey: string | symbol, lane: EventLane): void => {
-    const visibleEventIds = new Set(
-      latestEvents.filter((event) => getEventLaneKey(event) === laneKey).map((event) => event.id)
-    )
+    for (const eventId of lane.acceptedEvents.keys()) releaseProcessedEvent(lane, eventId)
+    if (lane.acceptedEvents.size === 0 && !lane.drainInFlight) eventLanes.delete(laneKey)
+  }
 
-    for (const eventId of lane.acceptedEvents.keys()) {
-      if (!visibleEventIds.has(eventId) && lane.processedEventIds.has(eventId)) {
-        lane.acceptedEvents.delete(eventId)
-        lane.failedEventIds.delete(eventId)
-        lane.processedEventIds.delete(eventId)
-        lane.processingEventIds.delete(eventId)
-      }
-    }
-
+  const releaseEvictedEvent = (event: AcpRuntimeEvent): void => {
+    const laneKey = getEventLaneKey(event)
+    const lane = eventLanes.get(laneKey)
+    if (!lane) return
+    releaseProcessedEvent(lane, event.id)
     if (lane.acceptedEvents.size === 0 && !lane.drainInFlight) eventLanes.delete(laneKey)
   }
 
@@ -191,7 +197,6 @@ const createWorkspaceRuntimeEventProcessor = (
         const selectedEvents = presentationBuffer.select(lane.presentation, pendingLaneEvents(lane))
         if (selectedEvents.length === 0) continue
 
-        const processedCount = lane.processedEventIds.size
         await processVisibleWorkspaceRuntimeEvents(
           selectedEvents,
           lane.processedEventIds,
@@ -202,9 +207,7 @@ const createWorkspaceRuntimeEventProcessor = (
               lane.failedEventIds.delete(event.id)
               return applied
             } catch (error) {
-              const isVisible = latestEvents.some(
-                (candidate) => candidate.id === event.id && getEventLaneKey(candidate) === laneKey
-              )
+              const isVisible = latestEventsById.has(event.id)
               if (hadFailed && !isVisible) {
                 lane.acceptedEvents.delete(event.id)
                 lane.failedEventIds.delete(event.id)
@@ -220,7 +223,8 @@ const createWorkspaceRuntimeEventProcessor = (
             retainedEvents: [...lane.acceptedEvents.values()]
           }
         )
-        const madeProgress = lane.processedEventIds.size > processedCount
+        const madeProgress = selectedEvents.some((event) => lane.processedEventIds.has(event.id))
+        for (const event of selectedEvents) releaseProcessedEvent(lane, event.id)
         const hasPending = pendingLaneEvents(lane).length > 0
         if (madeProgress) {
           presentationBuffer.recordProgress(lane.presentation, selectedEvents, hasPending)
@@ -233,7 +237,7 @@ const createWorkspaceRuntimeEventProcessor = (
       await lane.drainInFlight
     } finally {
       lane.drainInFlight = undefined
-      cleanEventLane(laneKey, lane)
+      if (lane.acceptedEvents.size === 0) eventLanes.delete(laneKey)
     }
   }
 
@@ -241,18 +245,21 @@ const createWorkspaceRuntimeEventProcessor = (
     events: readonly AcpRuntimeEvent[],
     replaceLatestEvents: boolean
   ): Promise<void> => {
+    const evictedEvents: AcpRuntimeEvent[] = []
     if (replaceLatestEvents) {
-      latestEvents = [...events]
+      latestEventsById = new Map(events.map((event) => [event.id, event]))
     } else {
-      const latestEventIds = new Set(latestEvents.map((event) => event.id))
       for (const event of events) {
-        if (!latestEventIds.has(event.id)) {
-          latestEvents.push(event)
-          latestEventIds.add(event.id)
+        if (!latestEventsById.has(event.id)) {
+          latestEventsById.set(event.id, event)
         }
       }
-      if (latestEvents.length > MAX_ACP_RUNTIME_EVENTS) {
-        latestEvents = latestEvents.slice(-MAX_ACP_RUNTIME_EVENTS)
+      while (latestEventsById.size > MAX_ACP_RUNTIME_EVENTS) {
+        const oldest = latestEventsById.entries().next().value as
+          [string, AcpRuntimeEvent] | undefined
+        if (!oldest) break
+        latestEventsById.delete(oldest[0])
+        evictedEvents.push(oldest[1])
       }
     }
     const visibleLaneKeys = new Set<string | symbol>()
@@ -274,7 +281,14 @@ const createWorkspaceRuntimeEventProcessor = (
       }
     }
 
-    for (const [laneKey, lane] of eventLanes) cleanEventLane(laneKey, lane)
+    // Keep processed markers through admission so an oversized batch cannot re-admit an event that
+    // this same retention update evicted. Once every batch item has been classified, targeted cleanup
+    // can safely release the evicted lane state.
+    for (const event of evictedEvents) releaseEvictedEvent(event)
+
+    if (replaceLatestEvents) {
+      for (const [laneKey, lane] of eventLanes) cleanEventLane(laneKey, lane)
+    }
 
     const drains = [...visibleLaneKeys].map((laneKey) => drainLane(laneKey))
     for (const [laneKey, lane] of eventLanes) {
@@ -490,7 +504,9 @@ type WorkspaceRuntimeEventIngestRuntime = {
   ) => () => void
 }
 type WorkspaceRuntimeEventLifecycleOptions = {
-  supportsImageInput?: boolean
+  supportsImageRelay?: boolean
+  getAgentTarget: (sessionId: string) => AcpSessionAgentTarget | undefined
+  getSupportsImageInput: (sessionId: string) => boolean | undefined
   getHistoryReplayDescriptor: (sessionId: string) => HistoryReplayDescriptor
 }
 const EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS: string[] = []
@@ -504,19 +520,37 @@ const useWorkspaceRuntimeEventIngest = <Runtime extends WorkspaceRuntimeEventIng
     events: AcpRuntimeEvent[],
     options: WorkspaceRuntimeEventLifecycleOptions
   ) => void,
-  supportsImageInput: boolean | undefined,
+  supportsImageRelay: boolean | undefined,
+  getAgentTarget: (sessionId: string) => AcpSessionAgentTarget | undefined,
+  getSupportsImageInput: (sessionId: string) => boolean | undefined,
   getHistoryReplayDescriptor: (sessionId: string) => HistoryReplayDescriptor
 ): boolean => {
   const subscribeRuntimeEvents = runtime.subscribeRuntimeEvents
   const runtimeRef = useRef(runtime)
-  const optionsRef = useRef({ supportsImageInput, getHistoryReplayDescriptor })
+  const optionsRef = useRef({
+    supportsImageRelay,
+    getAgentTarget,
+    getSupportsImageInput,
+    getHistoryReplayDescriptor
+  })
   const agentPromptInFlightSessionIds =
     runtime.state.agentPromptInFlightSessionIds ?? EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS
 
   useEffect(() => {
     runtimeRef.current = runtime
-    optionsRef.current = { supportsImageInput, getHistoryReplayDescriptor }
-  }, [getHistoryReplayDescriptor, runtime, supportsImageInput])
+    optionsRef.current = {
+      supportsImageRelay,
+      getAgentTarget,
+      getSupportsImageInput,
+      getHistoryReplayDescriptor
+    }
+  }, [
+    getAgentTarget,
+    getHistoryReplayDescriptor,
+    getSupportsImageInput,
+    runtime,
+    supportsImageRelay
+  ])
 
   useEffect(() => {
     if (!subscribeRuntimeEvents) return
@@ -594,9 +628,7 @@ const refreshDelegatedWorkSessions = async (
     .getState()
     .sessions.filter((session) => liveSessionIds.has(session.id))
     .map(({ id: sessionId, projectId }) => ({ projectId, sessionId }))
-  const sessions = await Promise.all(
-    requests.map((request) => window.api.sessions.loadOne(request))
-  )
+  const sessions = await Promise.all(requests.map((request) => loadPersistedSession(request)))
   if (isCancelled()) return
   for (const session of sessions) {
     if (session?.runtimeContext?.delegatedWork) {

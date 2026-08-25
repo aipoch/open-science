@@ -236,6 +236,9 @@ vi.mock('@/components/LegacyDataMoveDialog', () => ({
 vi.mock('@/components/LifecycleToast', () => ({
   LifecycleToast: (): React.JSX.Element => <div data-testid="lifecycle-toast" />
 }))
+vi.mock('@/components/ConnectorAuthToast', () => ({
+  ConnectorAuthToast: (): React.JSX.Element => <div data-testid="connector-auth-toast" />
+}))
 vi.mock('@/components/NotificationLiveToast', () => ({
   NotificationLiveToast: (): React.JSX.Element => <div data-testid="notification-live-toast" />
 }))
@@ -639,6 +642,11 @@ describe('App startup routing', () => {
       container.querySelector('[data-testid="lifecycle-toast"]')?.closest('[aria-hidden="true"]')
     ).not.toBeNull()
     expect(
+      container
+        .querySelector('[data-testid="connector-auth-toast"]')
+        ?.closest('[aria-hidden="true"]')
+    ).not.toBeNull()
+    expect(
       container.querySelector('[data-testid="permission-undo"]')?.closest('[aria-hidden="true"]')
     ).not.toBeNull()
 
@@ -820,6 +828,28 @@ describe('App startup routing', () => {
     expect(logo?.getAttribute('aria-hidden')).toBe('true')
     expect(container.textContent).toContain('Loading settings')
     expect(mocks.syncWindowFindAppearance).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders Home while existing-user runtime probes continue', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isLoading = true
+    mocks.startupView = 'app'
+
+    await render()
+
+    expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="settings-startup-loading"]')).toBeNull()
+  })
+
+  it('keeps first-run onboarding behind runtime initialization', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isLoading = true
+    mocks.startupView = 'onboarding'
+
+    await render()
+
+    expect(container.querySelector('[data-testid="settings-startup-loading"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="onboarding-page"]')).toBeNull()
   })
 
   it('shows a settings load error and retries the complete initialization', async () => {
@@ -1240,7 +1270,20 @@ describe('App startup routing', () => {
     expect(alert?.textContent).toContain('A damaged saved conversation was moved aside')
     expect(alert?.textContent).toContain('You can still permanently delete the project')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
-    expect(container.querySelector('[data-testid="session-persistence-dismiss"]')).toBeNull()
+    const dismiss = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-dismiss"]'
+    )
+    expect(dismiss?.getAttribute('aria-label')).toBe('Dismiss storage warning')
+    expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset
+        .hasCompleteSessionCatalog
+    ).toBe('false')
+
+    await act(async () => dismiss?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).toBeNull()
+    expect(container.textContent).not.toContain('saved conversation file was damaged')
     expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ReactNode, Ref } from 'react'
 
 import type { ToolActivity } from '@/stores/session-store'
 
@@ -17,6 +17,7 @@ type WorkspaceToolActivityRowButtonProps = {
   canExpand?: boolean
   panelClassName: string
   panelTestId: string
+  buttonRef?: Ref<HTMLButtonElement>
   onToggle: (activityId: string, nextExpanded: boolean) => void
   children: ReactNode
 }
@@ -36,6 +37,7 @@ const WorkspaceToolActivityRowButton = ({
   canExpand = true,
   panelClassName,
   panelTestId,
+  buttonRef,
   onToggle,
   children
 }: WorkspaceToolActivityRowButtonProps): React.JSX.Element => {
@@ -45,6 +47,7 @@ const WorkspaceToolActivityRowButton = ({
   return (
     <>
       <button
+        ref={buttonRef}
         type="button"
         className={getActivitySurfaceClassName(activity, phase)}
         data-testid="tool-chip"

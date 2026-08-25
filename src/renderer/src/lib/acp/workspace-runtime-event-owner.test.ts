@@ -100,6 +100,28 @@ describe('delegated-work Session refresh', () => {
     expect(sessions[0]).toMatchObject({ id: 'session-1', runtimeContext: { revision: 2 } })
     expect(sessions[1]).toMatchObject({ id: 'session-2', runtimeContext: { revision: 1 } })
   })
+
+  it('uses the existing Web load-all path when load-one is unavailable', async () => {
+    const first = createSession('session-1', 'project-1', 1)
+    const refreshedFirst = createSession('session-1', 'project-1', 2)
+    useSessionStore.getState().hydrateSessions([first])
+
+    const loadAll = vi.fn().mockResolvedValue({
+      sessions: [refreshedFirst],
+      manifest: { version: 1 }
+    })
+    vi.stubGlobal('window', {
+      api: { sessions: { loadAll } }
+    } as unknown as Window)
+
+    await refreshDelegatedWorkSessions(['session-1'])
+
+    expect(loadAll).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: 'session-1',
+      runtimeContext: { revision: 2 }
+    })
+  })
 })
 
 describe('live runtime event ingest', () => {
@@ -119,6 +141,8 @@ describe('live runtime event ingest', () => {
         { state: createSnapshot() },
         processLifecycleEvents,
         true,
+        () => undefined,
+        () => true,
         () => ({ target: 'codex-bridge' })
       )
     )
@@ -157,6 +181,8 @@ describe('live runtime event ingest', () => {
         },
         processLifecycleEvents,
         true,
+        () => undefined,
+        () => true,
         () => ({ target: 'codex-bridge' })
       )
     )
@@ -168,7 +194,7 @@ describe('live runtime event ingest', () => {
     expect(processLifecycleEvents).toHaveBeenCalledWith(
       expect.objectContaining({ state: snapshot }),
       [event],
-      expect.objectContaining({ supportsImageInput: true })
+      expect.objectContaining({ supportsImageRelay: true })
     )
     unmount()
     expect(unsubscribe).toHaveBeenCalledOnce()

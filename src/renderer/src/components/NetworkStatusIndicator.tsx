@@ -48,7 +48,7 @@ const NetworkStatusIndicator = ({
   const label = !onlineProblem
     ? t('No internet connection')
     : connectivity === 'unreachable'
-      ? t('Internet unreachable')
+      ? t('Package registries unreachable')
       : t('Internet check failed')
   const text = !onlineProblem
     ? t('Offline')

@@ -84,12 +84,14 @@ import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
 import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
 import { setWorkspacePresentationRevealing } from './workspace-presentation-revealing'
+import { useTranscriptWindow } from './use-transcript-window'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
   isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
+  optimisticMessage?: ChatMessage
   canBranchInNewSession?: boolean
   onBranchInNewSession?: (messageId: string) => void
   trailingContent?: ReactNode
@@ -122,7 +124,13 @@ type SessionScopedActivityExpansionState = {
   overrides: ActivityExpansionOverrides
 }
 
+type SessionScopedNearViewportNotebookRunState = {
+  sessionId: string | undefined
+  runIds: Set<string>
+}
+
 const EMPTY_ACTIVITY_EXPANSION_OVERRIDES: ActivityExpansionOverrides = {}
+const EMPTY_NOTEBOOK_RUN_IDS: ReadonlySet<string> = new Set()
 
 // Extra hold after the paced reveal drains, so a queued message dispatches into a settled
 // transcript instead of the same moment as the final reveal frame.
@@ -154,6 +162,7 @@ const VisibleMessageSnapshotCommit = ({
 }
 
 type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uploads']>[number]
+type ConversationMessageNode = NonNullable<ChatSession['conversationGraph']>['messages'][number]
 const SCROLL_TO_FIRST_MESSAGE_MIN_USER_TURNS = 2
 const SCROLL_TO_FIRST_MESSAGE_MIN_HEIGHT_VIEWPORTS = 2
 const SCROLL_TO_FIRST_MESSAGE_MIN_PROGRESS = 0.1
@@ -228,6 +237,21 @@ const previewArtifact = (
 
   // Generated files keep their artifact id so repeated clicks refresh the existing preview tab.
   if (previewItem) usePreviewWorkbenchStore.getState().upsertAndActivateItem(previewItem)
+}
+
+// Opens an artifact-backed Markdown image in the existing transient file-preview dialog.
+const previewArtifactModal = (
+  artifact: MessageArtifact,
+  sessionId: string,
+  projectId?: string
+): void => {
+  const previewItem = createPreviewFileItemFromArtifact(
+    artifact,
+    artifact.resolvedSessionId ?? sessionId,
+    artifact.resolvedProjectId ?? projectId
+  )
+
+  if (previewItem) usePreviewWorkbenchStore.getState().openFileDialog(previewItem)
 }
 
 // Sends an app-managed uploaded file to the preview workbench.
@@ -344,6 +368,7 @@ const WorkspaceMessageScrollerImpl = ({
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
+  optimisticMessage,
   canBranchInNewSession = false,
   onBranchInNewSession,
   trailingContent,
@@ -374,16 +399,17 @@ const WorkspaceMessageScrollerImpl = ({
     messageScrollerViewportRef.current = node
     setMessageScrollerViewport(node)
   }, [])
-  const activeConversationFrame = activeSession?.conversationGraph?.frames.find(
-    (frame) => frame.id === activeSession.conversationGraph?.activeFrameId
+  const conversationGraph = activeSession?.conversationGraph
+  const activeConversationFrame = conversationGraph?.frames.find(
+    (frame) => frame.id === conversationGraph.activeFrameId
   )
   const currentPresentationScopeId = currentSessionId
     ? JSON.stringify([currentSessionId, activeConversationFrame?.activeBranchId ?? 'legacy'])
     : undefined
   const artifactVisibility = useWorkspaceArtifactVisibility(activeSession)
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
-  // The whole-window find bar is an Electron overlay owned by main; the Workspace only needs to tell
-  // main it is mounted and searchable so Cmd/Ctrl+F is intercepted (and re-arm UNREADY on unmount).
+  // The whole-window find bar is an Electron overlay owned by main. Announce that this transcript is
+  // searchable, and expand a bounded transcript before native find scans the main renderer document.
   useEffect(() => {
     const stop = window.api?.window?.announceWindowFindReady?.()
     return () => stop?.()
@@ -468,6 +494,15 @@ const WorkspaceMessageScrollerImpl = ({
     activityExpansionOverrideState.sessionId === currentSessionId
       ? activityExpansionOverrideState.overrides
       : EMPTY_ACTIVITY_EXPANSION_OVERRIDES
+  const [nearViewportNotebookRunState, setNearViewportNotebookRunState] =
+    useState<SessionScopedNearViewportNotebookRunState>(() => ({
+      sessionId: undefined,
+      runIds: new Set()
+    }))
+  const nearViewportNotebookRunIds =
+    nearViewportNotebookRunState.sessionId === currentSessionId
+      ? nearViewportNotebookRunState.runIds
+      : EMPTY_NOTEBOOK_RUN_IDS
   const rawConversationItems = useMemo(
     () => createConversationItems(activeSession, handoffEvents),
     [activeSession, handoffEvents]
@@ -494,15 +529,36 @@ const WorkspaceMessageScrollerImpl = ({
       ),
     [conversationItems]
   )
-  const requestedNotebookRunIds = useMemo(
-    () =>
-      Object.entries(activityExpansionOverrides).flatMap(([activityId, expanded]) => {
+  const requestedNotebookRunIds = useMemo(() => {
+    const expandedRunIds = Object.entries(activityExpansionOverrides).flatMap(
+      ([activityId, expanded]) => {
         const runId = expanded ? notebookRunIdByActivityId.get(activityId) : undefined
         return runId ? [runId] : []
-      }),
-    [activityExpansionOverrides, notebookRunIdByActivityId]
-  )
+      }
+    )
+    return [...new Set([...expandedRunIds, ...nearViewportNotebookRunIds])]
+  }, [activityExpansionOverrides, nearViewportNotebookRunIds, notebookRunIdByActivityId])
   const notebookRunsById = useNotebookRunsById(notebookReference, requestedNotebookRunIds)
+  const handleNotebookRunNearViewport = useCallback(
+    (runId: string, isNearViewport: boolean): void => {
+      if (!currentSessionId) return
+      setNearViewportNotebookRunState((current) => {
+        const runIds =
+          current.sessionId === currentSessionId ? new Set(current.runIds) : new Set<string>()
+        const hadRunId = runIds.has(runId)
+
+        if (isNearViewport) {
+          runIds.add(runId)
+        } else {
+          runIds.delete(runId)
+        }
+
+        if (current.sessionId === currentSessionId && hadRunId === runIds.has(runId)) return current
+        return { sessionId: currentSessionId, runIds }
+      })
+    },
+    [currentSessionId]
+  )
   const [visibleMessageSnapshot, setVisibleMessageSnapshot] = useState<VisibleMessageSnapshot>(
     () => ({ scopeId: undefined, messageIds: new Set() })
   )
@@ -539,9 +595,60 @@ const WorkspaceMessageScrollerImpl = ({
     presentationBarrierIndex >= 0
       ? conversationItems.slice(0, presentationBarrierIndex + 1)
       : conversationItems
+  const transcriptWindow = useTranscriptWindow(
+    currentPresentationScopeId,
+    conversationItems,
+    presentationBarrierIndex,
+    messageScrollerViewportRef
+  )
+  const revealFullTranscript = transcriptWindow.revealAll
+  const [windowFindOpen, setWindowFindOpen] = useState(false)
+  const windowFindAcknowledgedScopeRef = useRef<{ scopeId: string | undefined } | undefined>(
+    undefined
+  )
+  const showWindowFind = useCallback((): void => {
+    windowFindAcknowledgedScopeRef.current = undefined
+    setWindowFindOpen(true)
+    revealFullTranscript()
+  }, [revealFullTranscript])
+  useEffect(() => {
+    return window.api?.window?.onShowWindowFind?.(showWindowFind)
+  }, [showWindowFind])
+  const restoreTranscriptWindow = transcriptWindow.restoreWindow
+  const hideWindowFind = useCallback((): void => {
+    windowFindAcknowledgedScopeRef.current = undefined
+    setWindowFindOpen(false)
+    restoreTranscriptWindow()
+  }, [restoreTranscriptWindow])
+  useEffect(() => {
+    return window.api?.window?.onHideWindowFind?.(hideWindowFind)
+  }, [hideWindowFind])
+  useLayoutEffect(() => {
+    if (windowFindOpen) revealFullTranscript()
+  }, [currentPresentationScopeId, revealFullTranscript, windowFindOpen])
+  useLayoutEffect(() => {
+    if (
+      !windowFindOpen ||
+      presentationBarrierIndex >= 0 ||
+      transcriptWindow.entries.length !== conversationItems.length
+    ) {
+      return
+    }
+    const acknowledgedScope = windowFindAcknowledgedScopeRef.current
+    if (acknowledgedScope && acknowledgedScope.scopeId === currentPresentationScopeId) return
+    windowFindAcknowledgedScopeRef.current = { scopeId: currentPresentationScopeId }
+    window.api?.window?.announceWindowFindContentReady?.()
+  }, [
+    conversationItems.length,
+    currentPresentationScopeId,
+    presentationBarrierIndex,
+    transcriptWindow.entries.length,
+    windowFindOpen
+  ])
   // Brand-new conversation (nothing presented, no resume in flight): invite the first prompt with
   // a centered placeholder banner over the empty transcript area.
-  const showEmptyConversationBanner = presentedConversationItems.length === 0 && !isResumingSession
+  const showEmptyConversationBanner =
+    presentedConversationItems.length === 0 && !optimisticMessage && !isResumingSession
   const visibleMessageIds = presentedConversationItems.flatMap((item) =>
     item.type === 'message' ? [item.message.id] : []
   )
@@ -614,16 +721,17 @@ const WorkspaceMessageScrollerImpl = ({
       setScrollToFirstMessageRevealed(false)
     }, SCROLL_TO_FIRST_MESSAGE_IDLE_TIMEOUT_MS)
   }, [clearScrollToFirstMessageHideTimeout, setScrollToFirstMessageRevealed])
-  const handleMessageScrollerScroll = useCallback((): void => {
+  const handleMessageScrollerScroll = (): void => {
     const viewport = messageScrollerViewportRef.current
     if (!viewport) return
 
     const previousScrollTop = previousMessageScrollerScrollTopRef.current
     previousMessageScrollerScrollTopRef.current = viewport.scrollTop
     const eligible = updateScrollToFirstMessageEligibility()
+    transcriptWindow.expandAtScrollEdge(previousScrollTop)
     if (viewport.scrollTop < previousScrollTop && eligible) revealScrollToFirstMessage()
     else if (viewport.scrollTop > previousScrollTop) hideScrollToFirstMessage()
-  }, [hideScrollToFirstMessage, revealScrollToFirstMessage, updateScrollToFirstMessageEligibility])
+  }
   useLayoutEffect(() => {
     updateScrollToFirstMessageEligibility()
   }, [currentSessionId, updateScrollToFirstMessageEligibility, visibleMessageIdsKey])
@@ -732,21 +840,47 @@ const WorkspaceMessageScrollerImpl = ({
         : undefined,
     [legacyAgentBackendId, legacyAgentModel]
   )
-  const messageCreatedAtById = new Map(
-    activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
+  const { conversationMessageById, runtimeSegmentById, revisionsByRootMessageId } = useMemo(() => {
+    const messageById = new Map(conversationGraph?.messages.map((message) => [message.id, message]))
+    const segmentById = new Map(
+      conversationGraph?.runtimeSegments.map((segment) => [segment.id, segment])
+    )
+    const revisionsByRoot = new Map<string, ConversationMessageNode[]>()
+    for (const message of conversationGraph?.messages ?? []) {
+      if (message.role !== 'user' || !message.revisionRootMessageId) continue
+      const revisions = revisionsByRoot.get(message.revisionRootMessageId) ?? []
+      revisions.push(message)
+      revisionsByRoot.set(message.revisionRootMessageId, revisions)
+    }
+    for (const revisions of revisionsByRoot.values()) {
+      revisions.sort(
+        (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+      )
+    }
+    return {
+      conversationMessageById: messageById,
+      runtimeSegmentById: segmentById,
+      revisionsByRootMessageId: revisionsByRoot
+    }
+  }, [conversationGraph])
+  const messageCreatedAtById = useMemo(
+    () => new Map(activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []),
+    [activeSession?.messages]
   )
 
   // Counts the user turns after each message; the destructive-resend warning keys off turns, not
   // raw message count, so a single follow-up turn stays warning-free.
-  const subsequentTurnCountByMessageId = new Map<string, number>()
-  if (activeSession) {
+  const subsequentTurnCountByMessageId = useMemo(() => {
+    const counts = new Map<string, number>()
     let subsequentTurns = 0
-    for (let index = activeSession.messages.length - 1; index >= 0; index -= 1) {
-      const message = activeSession.messages[index]
-      subsequentTurnCountByMessageId.set(message.id, subsequentTurns)
+    for (let index = (activeSession?.messages.length ?? 0) - 1; index >= 0; index -= 1) {
+      const message = activeSession?.messages[index]
+      if (!message) continue
+      counts.set(message.id, subsequentTurns)
       if (message.role === 'user') subsequentTurns += 1
     }
-  }
+    return counts
+  }, [activeSession?.messages])
 
   // Build a map from job_id → JobSummary for all session jobs (used in binding)
   const sessionJobs = useMemo((): JobSummary[] => {
@@ -759,18 +893,15 @@ const WorkspaceMessageScrollerImpl = ({
   const { jobsByActivityId, boundJobIds } = useMemo(() => {
     const byActivityId = new Map<string, JobSummary>()
     const bound = new Set<string>()
+    const jobsByJobId = new Map(sessionJobs.map((job) => [job.job_id, job]))
 
-    const allActivities = activeSession?.activities ?? []
-    for (const job of sessionJobs) {
-      // Scan all activities for this job_id
-      for (const activity of allActivities) {
-        const extracted = extractJobIdFromActivity(activity)
-        if (extracted === job.job_id) {
-          byActivityId.set(job.job_id, job)
-          bound.add(job.job_id)
-          break // Found — no need to scan further activities for this job
-        }
-      }
+    for (const activity of activeSession?.activities ?? []) {
+      const jobId = extractJobIdFromActivity(activity)
+      if (!jobId) continue
+      const job = jobsByJobId.get(jobId)
+      if (!job) continue
+      byActivityId.set(jobId, job)
+      bound.add(jobId)
     }
 
     return { jobsByActivityId: byActivityId, boundJobIds: bound }
@@ -845,6 +976,13 @@ const WorkspaceMessageScrollerImpl = ({
   const onPreviewArtifact = useCallback(
     (artifact: MessageArtifact): void => {
       if (currentSessionId) previewArtifact(artifact, currentSessionId, currentProjectId)
+    },
+    [currentProjectId, currentSessionId]
+  )
+
+  const onPreviewArtifactModal = useCallback(
+    (artifact: MessageArtifact): void => {
+      if (currentSessionId) previewArtifactModal(artifact, currentSessionId, currentProjectId)
     },
     [currentProjectId, currentSessionId]
   )
@@ -1008,6 +1146,9 @@ const WorkspaceMessageScrollerImpl = ({
           <WorkspaceRunMarks
             items={presentedConversationItems}
             viewport={messageScrollerViewport}
+            onRevealMessage={
+              presentationBarrierIndex >= 0 ? undefined : transcriptWindow.revealMessage
+            }
           />
           <div
             aria-hidden="true"
@@ -1055,7 +1196,7 @@ const WorkspaceMessageScrollerImpl = ({
                 onCommit={handleVisibleMessageSnapshotCommit}
               />
               {/* Messages and tool activities share one sorted transcript timeline. */}
-              {conversationItems.map((item, itemIndex) => {
+              {transcriptWindow.entries.map(({ item, itemIndex }) => {
                 // Only later text messages stay behind the presentation barrier; tool,
                 // activity, and other non-message rows render in real time so their
                 // running state stays visible while the reply paces above them.
@@ -1071,14 +1212,9 @@ const WorkspaceMessageScrollerImpl = ({
                   const artifacts = artifactVisibility.artifactsForMessage(item.message)
                   // Jobs pre-assigned to this slot: each job appears in exactly one slot.
                   const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
-                  const graph = activeSession?.conversationGraph
-                  const messageNode = graph?.messages.find(
-                    (message) => message.id === item.message.id
-                  )
+                  const messageNode = conversationMessageById.get(item.message.id)
                   const runtimeSegment = messageNode?.runtimeSegmentId
-                    ? graph?.runtimeSegments.find(
-                        (segment) => segment.id === messageNode.runtimeSegmentId
-                      )
+                    ? runtimeSegmentById.get(messageNode.runtimeSegmentId)
                     : undefined
                   // Legacy sessions synthesize this segment with a fallback framework. Keep only
                   // the session-level values that were actually persisted.
@@ -1093,16 +1229,7 @@ const WorkspaceMessageScrollerImpl = ({
                     ? messageNode?.revisionRootMessageId
                     : undefined
                   const revisions = revisionRootMessageId
-                    ? (graph?.messages
-                        .filter(
-                          (message) =>
-                            message.role === 'user' &&
-                            message.revisionRootMessageId === revisionRootMessageId
-                        )
-                        .sort(
-                          (left, right) =>
-                            left.createdAt - right.createdAt || left.id.localeCompare(right.id)
-                        ) ?? [])
+                    ? (revisionsByRootMessageId.get(revisionRootMessageId) ?? [])
                     : []
                   const revisionIndex = revisions.findIndex(
                     (message) => message.id === item.message.id
@@ -1119,6 +1246,7 @@ const WorkspaceMessageScrollerImpl = ({
                   const messageItemProps: EditableWorkspaceMessageItemProps = {
                     message: item.message,
                     onPreviewArtifact,
+                    onPreviewArtifactModal,
                     onPreviewUploadAttachment,
                     onOpenSkillMention,
                     onPreviewMentionArtifact,
@@ -1148,12 +1276,22 @@ const WorkspaceMessageScrollerImpl = ({
                       !respondedPromptMessageIds.has(item.message.id)
                   }
                   if (item.message.role === 'agent') {
+                    const nextConversationItem = conversationItems[itemIndex + 1]
+                    // Completed activity rows remain visible too. Any following activity row means
+                    // this message is not replacing the trailing loading row and needs no reserve.
+                    const hasFollowingActivityRow =
+                      nextConversationItem?.type === 'activity' ||
+                      nextConversationItem?.type === 'activity-group'
                     messageItemProps.onPresentationChange = handleMessagePresentationChange
                     messageItemProps.presentationSourceOpen =
                       itemIndex === conversationItems.length - 1
                     messageItemProps.presentationAnimateOnMount =
                       presentationScopeRemainedVisible &&
                       !visibleMessageSnapshot.messageIds.has(item.message.id)
+                    messageItemProps.reserveLoadingRowHeight =
+                      !hasFollowingActivityRow &&
+                      !isResumingSession &&
+                      agentLoadingPhase === 'hidden'
                   }
 
                   return (
@@ -1204,14 +1342,9 @@ const WorkspaceMessageScrollerImpl = ({
                 }
 
                 if (item.type === 'turn-completion') {
-                  const graph = activeSession?.conversationGraph
-                  const messageNode = graph?.messages.find(
-                    (message) => message.id === item.message.id
-                  )
+                  const messageNode = conversationMessageById.get(item.message.id)
                   const runtimeSegment = messageNode?.runtimeSegmentId
-                    ? graph?.runtimeSegments.find(
-                        (segment) => segment.id === messageNode.runtimeSegmentId
-                      )
+                    ? runtimeSegmentById.get(messageNode.runtimeSegmentId)
                     : undefined
                   const synthesizedLegacyRuntime =
                     runtimeSegment?.id === `runtime-segment-${activeSession?.id}` &&
@@ -1363,6 +1496,7 @@ const WorkspaceMessageScrollerImpl = ({
                     expansionOverrides={activityExpansionOverrides}
                     onToggleRow={toggleActivityRow}
                     notebookRunsById={notebookRunsById}
+                    onNotebookRunNearViewport={handleNotebookRunNearViewport}
                     permission={activeSession?.runtimeContext?.permission}
                     jobsByActivityId={jobsByActivityId}
                     onOpenJobDetail={handleOpenJobDetail}
@@ -1371,19 +1505,34 @@ const WorkspaceMessageScrollerImpl = ({
               })}
 
               {/* Render any remaining unbound completed jobs after all conversation items */}
-              {trailingJobs.map((job) => (
-                <MessageScrollerItem
-                  key={`completed-job-${job.job_id}`}
-                  messageId={`completed-job-${job.job_id}`}
-                  className="min-w-0"
-                >
-                  <div className="px-4 py-1 md:px-6">
-                    <div className="mx-auto w-full max-w-4xl">
-                      <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
-                    </div>
-                  </div>
-                </MessageScrollerItem>
-              ))}
+              {transcriptWindow.end === conversationItems.length
+                ? trailingJobs.map((job) => (
+                    <MessageScrollerItem
+                      key={`completed-job-${job.job_id}`}
+                      messageId={`completed-job-${job.job_id}`}
+                      className="min-w-0"
+                    >
+                      <div className="px-4 py-1 md:px-6">
+                        <div className="mx-auto w-full max-w-4xl">
+                          <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
+                        </div>
+                      </div>
+                    </MessageScrollerItem>
+                  ))
+                : null}
+
+              {optimisticMessage ? (
+                <WorkspaceMessageItem
+                  message={optimisticMessage}
+                  onPreviewArtifact={onPreviewArtifact}
+                  onPreviewArtifactModal={onPreviewArtifactModal}
+                  onPreviewUploadAttachment={onPreviewUploadAttachment}
+                  onOpenSkillMention={onOpenSkillMention}
+                  onPreviewMentionArtifact={onPreviewMentionArtifact}
+                  showUserActions={false}
+                  sending
+                />
+              ) : null}
 
               {presentationBarrierIndex < 0 ? trailingContent : null}
 
@@ -1403,19 +1552,28 @@ const WorkspaceMessageScrollerImpl = ({
             <MessageScrollerButton
               ref={scrollToFirstMessageButtonRef}
               direction="start"
+              onClick={() => {
+                const firstMessage = conversationItems.find((item) => item.type === 'message')
+                if (firstMessage?.type === 'message') {
+                  transcriptWindow.revealMessage(firstMessage.message.id)
+                }
+              }}
               aria-label={t('Scroll to first message')}
               aria-hidden="true"
               data-revealed="false"
               tabIndex={-1}
               size="default"
-              className="z-20 min-h-11 gap-1 rounded-full border-transparent bg-bg-000 px-4 text-sm shadow-card transition-[translate,scale,opacity] hover:bg-bg-200 data-[direction=start]:top-3 data-[revealed=false]:pointer-events-none data-[revealed=false]:-translate-y-2 data-[revealed=false]:opacity-0 motion-reduce:transition-none"
+              className="z-20 gap-1 rounded-full border-transparent bg-bg-000 px-3 text-sm shadow-card transition-[translate,scale,opacity] hover:bg-bg-200 data-[direction=start]:top-3 data-[revealed=false]:pointer-events-none data-[revealed=false]:-translate-y-2 data-[revealed=false]:opacity-0 motion-reduce:transition-none [&_svg]:size-3.5"
             >
               <ArrowDownIcon aria-hidden="true" />
               <span>{t('First message')}</span>
             </MessageScrollerButton>
           ) : null}
 
-          <MessageScrollerButton className="z-10 border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
+          <MessageScrollerButton
+            size="icon-lg"
+            className="z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
+          />
           <div
             data-testid="message-completion-live-region"
             aria-live="polite"
@@ -1497,6 +1655,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   next: WorkspaceMessageScrollerProps
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  previous.optimisticMessage === next.optimisticMessage &&
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   (previous.reportPresentationRevealing ?? false) === (next.reportPresentationRevealing ?? false) &&
   previous.onBranchInNewSession === next.onBranchInNewSession &&

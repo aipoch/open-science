@@ -1,16 +1,24 @@
+import type { TFunction } from 'i18next'
 import { useEffect, useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { useSettingsStore } from '@/stores/settings-store'
-import type { ProviderView, ValidateProviderResult } from '../../../../shared/settings'
+import type {
+  ProviderView,
+  ValidateProviderResult,
+  XaiOAuthDeviceAuthorization
+} from '../../../../shared/settings'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
+import { DiagnosticDetails } from '@/components/diagnostic-details'
+import { errorDetail } from '@/lib/error-detail'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
-import { ReviewerModelSelect, SubagentModelSelect, VisionModelSelect } from './SubagentModelSelect'
-import { SettingsSection } from './SettingsLayout'
+import { ScenarioModelList } from './ScenarioModelList'
+import { SettingsField, SettingsRow, SettingsSection } from './SettingsLayout'
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
+import { XaiOAuthSignInDialog } from './XaiOAuthSignInDialog'
 
 type ProvidersPanelProps = {
   // Navigation callbacks into the page-level history: the add/edit provider form is a breadcrumb
@@ -21,6 +29,50 @@ type ProvidersPanelProps = {
   // the owner lives in SettingsPage and is passed down.
   busyProviderId?: string
   onBusyProviderChange: (providerId: string | undefined) => void
+}
+
+type ProviderActionError = {
+  action:
+    | 'test'
+    | 'codex-sign-in'
+    | 'codex-sign-out'
+    | 'codex-reimport'
+    | 'claude-token-save'
+    | 'claude-sign-in'
+    | 'claude-sign-out'
+    | 'claude-disconnect'
+    | 'xai-sign-in'
+    | 'xai-sign-out'
+  detail?: string
+}
+
+type ProviderPanelError = string | ProviderActionError
+
+const providerErrorCopy = (error: ProviderPanelError, t: TFunction): string => {
+  if (typeof error === 'string') return error
+
+  switch (error.action) {
+    case 'test':
+      return t('Could not test the provider connection.')
+    case 'codex-sign-in':
+      return t('Could not sign in to Codex.')
+    case 'codex-sign-out':
+      return t('Could not sign out of Codex.')
+    case 'codex-reimport':
+      return t('Could not re-import the Codex login.')
+    case 'claude-token-save':
+      return t('Could not save the Claude token.')
+    case 'claude-sign-in':
+      return t('Could not sign in to Claude.')
+    case 'claude-sign-out':
+      return t('Could not sign out of Claude.')
+    case 'claude-disconnect':
+      return t('Could not disconnect Claude from Open Science.')
+    case 'xai-sign-in':
+      return t('Could not sign in to xAI.')
+    case 'xai-sign-out':
+      return t('Could not sign out of xAI.')
+  }
 }
 
 // The Model settings panel: active-model selection, reasoning effort, and the provider list with
@@ -52,9 +104,15 @@ const ProvidersPanel = ({
   const loginIsolatedClaudeBrowser = useSettingsStore((state) => state.loginIsolatedClaudeBrowser)
   const cancelIsolatedClaudeLogin = useSettingsStore((state) => state.cancelIsolatedClaudeLogin)
   const logoutIsolatedClaude = useSettingsStore((state) => state.logoutIsolatedClaude)
+  const beginXaiOAuthLogin = useSettingsStore((state) => state.beginXaiOAuthLogin)
+  const waitXaiOAuthLogin = useSettingsStore((state) => state.waitXaiOAuthLogin)
+  const cancelXaiOAuthLogin = useSettingsStore((state) => state.cancelXaiOAuthLogin)
+  const logoutXaiOAuth = useSettingsStore((state) => state.logoutXaiOAuth)
 
   // The last connection-test/sign-in failure, shown as an error line under the list.
-  const [providerTestError, setProviderTestError] = useState<string | undefined>(undefined)
+  const [providerTestError, setProviderTestError] = useState<ProviderPanelError | undefined>(
+    undefined
+  )
   // True while the explicit isolated Codex sign-in is open in the browser; drives the cancel action.
   const [isCodexLoginPending, setIsCodexLoginPending] = useState(false)
   // True while the explicit shared Claude sign-in is open in the browser.
@@ -66,6 +124,9 @@ const ProvidersPanel = ({
   // user whose browser didn't open (or who prefers a token) can paste one. The wizard uses its own
   // flow, so this state lives on the panel rather than the store.
   const [isClaudeSignInOpen, setIsClaudeSignInOpen] = useState(false)
+  const [xaiSession, setXaiSession] = useState<XaiOAuthDeviceAuthorization>()
+  const [isXaiLoginPending, setIsXaiLoginPending] = useState(false)
+  const xaiLoginCancelledRef = useRef(false)
   // Guards the race between the two isolated sign-in paths. The browser flow (setup-token + its
   // localhost callback) and a manual paste both write the same provider token; whichever finishes
   // first wins. When the manual paste wins we cancel the background browser login, and this flag
@@ -102,6 +163,18 @@ const ProvidersPanel = ({
       if (isClaudeIsolatedLoginPendingRef.current) void cancelIsolatedClaudeLogin()
     }
   }, [cancelSharedClaudeLogin, cancelIsolatedClaudeLogin])
+  const isXaiLoginPendingRef = useRef(isXaiLoginPending)
+  useEffect(() => {
+    isXaiLoginPendingRef.current = isXaiLoginPending
+  }, [isXaiLoginPending])
+  useEffect(() => {
+    return () => {
+      if (isXaiLoginPendingRef.current) {
+        xaiLoginCancelledRef.current = true
+        void cancelXaiOAuthLogin()
+      }
+    }
+  }, [cancelXaiOAuthLogin])
 
   // Codex + Claude subscription pseudo-providers only make sense while their matching framework is the
   // active one. Hide claude-isolated and claude-shared from non-claude-code frameworks (same rule as codex).
@@ -122,9 +195,7 @@ const ProvidersPanel = ({
       // separate status line.
       await validateProvider({ providerId: provider.id })
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not test the provider connection.')
-      )
+      setProviderTestError({ action: 'test', detail: errorDetail(error) })
     } finally {
       onBusyProviderChange(undefined)
     }
@@ -140,9 +211,7 @@ const ProvidersPanel = ({
     try {
       await loginIsolatedCodex()
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not sign in to Codex.')
-      )
+      setProviderTestError({ action: 'codex-sign-in', detail: errorDetail(error) })
     } finally {
       setIsCodexLoginPending(false)
     }
@@ -159,9 +228,7 @@ const ProvidersPanel = ({
         setProviderTestError(result.message ?? t('Codex sign-out did not complete. Try again.'))
       }
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not sign out of Codex.')
-      )
+      setProviderTestError({ action: 'codex-sign-out', detail: errorDetail(error) })
     }
   }
 
@@ -179,9 +246,7 @@ const ProvidersPanel = ({
         reimportCodexAuthentication: true
       })
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not re-import the Codex login.')
-      )
+      setProviderTestError({ action: 'codex-reimport', detail: errorDetail(error) })
     } finally {
       onBusyProviderChange(undefined)
     }
@@ -208,9 +273,7 @@ const ProvidersPanel = ({
 
       return result
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not save the Claude token.')
-      )
+      setProviderTestError({ action: 'claude-token-save', detail: errorDetail(error) })
 
       return undefined
     }
@@ -244,9 +307,7 @@ const ProvidersPanel = ({
       }
     } catch (error) {
       if (manualClaudePasteWonRef.current) return
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not sign in to Claude.')
-      )
+      setProviderTestError({ action: 'claude-sign-in', detail: errorDetail(error) })
     } finally {
       setIsClaudeIsolatedLoginPending(false)
     }
@@ -261,9 +322,7 @@ const ProvidersPanel = ({
         setProviderTestError(result.message ?? t('Claude sign-out did not complete. Try again.'))
       }
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not sign out of Claude.')
-      )
+      setProviderTestError({ action: 'claude-sign-out', detail: errorDetail(error) })
     }
   }
 
@@ -278,9 +337,7 @@ const ProvidersPanel = ({
         setProviderTestError(result.message ?? t('Could not sign in to Claude. Try again.'))
       }
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not sign in to Claude.')
-      )
+      setProviderTestError({ action: 'claude-sign-in', detail: errorDetail(error) })
     } finally {
       setIsClaudeSharedLoginPending(false)
     }
@@ -295,81 +352,84 @@ const ProvidersPanel = ({
         setProviderTestError(result.message ?? t('Could not disconnect Claude from Open Science.'))
       }
     } catch (error) {
-      setProviderTestError(
-        error instanceof Error ? error.message : t('Could not disconnect Claude from Open Science.')
-      )
+      setProviderTestError({ action: 'claude-disconnect', detail: errorDetail(error) })
+    }
+  }
+
+  const handleXaiLogin = async (): Promise<void> => {
+    setProviderTestError(undefined)
+    xaiLoginCancelledRef.current = false
+    isXaiLoginPendingRef.current = true
+    setIsXaiLoginPending(true)
+    try {
+      const session = await beginXaiOAuthLogin()
+      if (xaiLoginCancelledRef.current) return
+      setXaiSession(session)
+      await waitXaiOAuthLogin()
+      if (xaiLoginCancelledRef.current) return
+      setXaiSession(undefined)
+    } catch (error) {
+      if (xaiLoginCancelledRef.current) return
+      setProviderTestError({ action: 'xai-sign-in', detail: errorDetail(error) })
+    } finally {
+      isXaiLoginPendingRef.current = false
+      setIsXaiLoginPending(false)
+    }
+  }
+
+  const handleCancelXaiLogin = (): void => {
+    xaiLoginCancelledRef.current = true
+    isXaiLoginPendingRef.current = false
+    void cancelXaiOAuthLogin()
+    setXaiSession(undefined)
+    setIsXaiLoginPending(false)
+  }
+
+  const handleXaiLogout = async (): Promise<void> => {
+    setProviderTestError(undefined)
+    try {
+      await logoutXaiOAuth()
+    } catch (error) {
+      setProviderTestError({ action: 'xai-sign-out', detail: errorDetail(error) })
     }
   }
 
   return (
     <div className="space-y-5 p-5">
-      {/* Active model is its own section so the current selection reads separately from provider
-          management. */}
-      {visibleProviders.length > 0 ? (
-        <SettingsSection
-          title={t('Active model')}
-          aria-label={t('Active model')}
-          description={t('The model that drives new agent sessions.')}
-        >
-          <div className="max-w-md">
-            <ActiveModelSelect />
+      {/* Main model selection and reasoning effort share one section and one row, mirroring the
+          scenario model selectors below. The Model field needs at least one provider; the effort
+          control is always visible. */}
+      <SettingsSection
+        title={t('Main model')}
+        aria-label={t('Main model')}
+        description={
+          <>
+            {t('The model that drives new agent sessions.')}{' '}
+            {t(
+              'Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests.'
+            )}
+          </>
+        }
+      >
+        <SettingsRow layout="model-effort" className="py-0 lg:grid-cols-[minmax(0,1fr)_auto]">
+          {visibleProviders.length > 0 ? (
+            <SettingsField label={t('Model')}>
+              <ActiveModelSelect />
+            </SettingsField>
+          ) : null}
+          {/* Not a SettingsField: a <label> would forward clicks to the segmented control's first
+              radio option. The styling matches SettingsField's. */}
+          <div className="grid min-w-0 gap-1.5 text-sm font-medium">
+            <span>{t('Reasoning effort')}</span>
+            <ReasoningEffortSelect />
           </div>
-        </SettingsSection>
-      ) : null}
-
-      {/* Model-level generation tuning; always visible, unlike the Active model section above
-          which needs at least one provider. */}
-      <SettingsSection
-        title={t('Reasoning effort')}
-        aria-label={t('Reasoning effort')}
-        description={t(
-          'Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests.'
-        )}
-        separated={visibleProviders.length > 0}
-      >
-        <div className="max-w-md">
-          <ReasoningEffortSelect />
-        </div>
+        </SettingsRow>
       </SettingsSection>
 
-      <SettingsSection
-        title={t('Subagent model')}
-        aria-label={t('Subagent model')}
-        description={t('Model used by subagents when Delegation is on.')}
-        separated
-      >
-        <div className="max-w-2xl">
-          <SubagentModelSelect />
-        </div>
-      </SettingsSection>
+      {/* Subagent / Reviewer / Vision routing collapsed into a single accordion card. */}
+      <ScenarioModelList />
 
-      <SettingsSection
-        title={t('Reviewer model')}
-        aria-label={t('Reviewer model')}
-        description={t(
-          'Model used for manual, automatic, and re-run Reviews. Follow Active model keeps the current behavior; a fixed selection runs in an isolated Reviewer runtime.'
-        )}
-        separated
-      >
-        <div className="max-w-2xl">
-          <ReviewerModelSelect />
-        </div>
-      </SettingsSection>
-
-      <SettingsSection
-        title={t('Vision model')}
-        aria-label={t('Vision model')}
-        description={t(
-          'Reads attached images when the active model cannot. The selected provider receives only the image; the active model receives text evidence.'
-        )}
-        separated
-      >
-        <div className="max-w-2xl">
-          <VisionModelSelect />
-        </div>
-      </SettingsSection>
-
-      <SettingsSection title={t('Providers')} aria-label={t('Providers')} separated>
+      <SettingsSection title={t('Providers')} aria-label={t('Providers')}>
         <ProviderList
           providers={visibleProviders}
           activeProviderId={activeProviderId}
@@ -398,11 +458,20 @@ const ProvidersPanel = ({
           }}
           onLoginIsolatedClaudePaste={() => setIsClaudeSignInOpen(true)}
           onLogoutIsolatedClaude={() => void handleClaudeLogout()}
+          isXaiLoginPending={isXaiLoginPending}
+          onLoginXai={() => void handleXaiLogin()}
+          onCancelXaiLogin={handleCancelXaiLogin}
+          onLogoutXai={() => void handleXaiLogout()}
         />
         {providerTestError ? (
-          <p className="mt-2 text-sm text-destructive" role="alert">
-            {providerTestError}
-          </p>
+          <div className="mt-2">
+            <p className="text-sm text-destructive" role="alert">
+              {providerErrorCopy(providerTestError, t)}
+            </p>
+            <DiagnosticDetails
+              detail={typeof providerTestError === 'string' ? undefined : providerTestError.detail}
+            />
+          </div>
         ) : null}
         {/* The add action lives with the list: a dashed ghost row appended after the last provider,
             matching the Available-group placeholder treatment. */}
@@ -422,6 +491,12 @@ const ProvidersPanel = ({
         onOpenChange={setIsClaudeSignInOpen}
         onSubmit={(token) => handleClaudeSignIn(token)}
         browserSignInPending={isClaudeIsolatedLoginPending}
+      />
+      <XaiOAuthSignInDialog
+        open={Boolean(xaiSession)}
+        session={xaiSession}
+        error={providerTestError ? providerErrorCopy(providerTestError, t) : undefined}
+        onCancel={handleCancelXaiLogin}
       />
     </div>
   )

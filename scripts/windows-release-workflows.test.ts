@@ -21,16 +21,18 @@ type WorkflowJob = {
   env?: Record<string, string>
   if?: string
   needs?: string | string[]
+  outputs?: Record<string, string>
   permissions?: Record<string, string>
   'runs-on'?: string
   steps?: WorkflowStep[]
-  strategy?: { matrix?: Record<string, unknown> }
+  strategy?: { matrix?: unknown }
   'timeout-minutes'?: number
   uses?: string
   with?: Record<string, unknown>
 }
 
 type Workflow = {
+  concurrency?: { 'cancel-in-progress'?: boolean; group?: string }
   jobs: Record<string, WorkflowJob>
   permissions?: Record<string, string>
   on?: {
@@ -40,7 +42,9 @@ type Workflow = {
     workflow_call?: {
       inputs?: Record<string, { default?: unknown; description?: string; type?: string }>
     }
-    workflow_dispatch?: unknown
+    workflow_dispatch?: {
+      inputs?: Record<string, { default?: unknown; options?: string[]; type?: string }>
+    }
   }
 }
 
@@ -93,9 +97,64 @@ describe('post-merge Windows validation', () => {
     const smoke = findStep(job, 'Smoke test Windows installer')
 
     expect(job['continue-on-error']).toBeUndefined()
-    expect(smoke.if).toBe("matrix.platform == 'win'")
+    expect(smoke.if).toBe("${{ !inputs.install_only && matrix.platform == 'win' }}")
     expect(smoke.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(smoke['timeout-minutes']).toBe(10)
+  })
+
+  it('installs Electron from GitHub mirrors and exposes an install-only dry-run', () => {
+    const smokeWorkflow = readWorkflow('package-smoke.yml')
+    const job = smokeWorkflow.jobs.smoke
+    const install = findStep(job, 'Install dependencies')
+    const download = findStep(job, 'Download packaged artifacts')
+    const linux = findStep(job, 'Smoke test Linux packages')
+    const evidence = findStep(job, 'Record platform certification evidence')
+    const uploadEvidence = findStep(job, 'Upload platform certification evidence')
+    const dispatch = smokeWorkflow.on?.workflow_dispatch
+
+    expect(smokeWorkflow.on).toHaveProperty('workflow_call')
+    expect(smokeWorkflow.on).toHaveProperty('workflow_dispatch')
+    expect(smokeWorkflow.on?.workflow_call?.inputs?.install_only).toMatchObject({
+      type: 'boolean',
+      default: false
+    })
+    expect(smokeWorkflow.on?.workflow_call?.inputs?.setup_only).toMatchObject({
+      type: 'boolean',
+      default: false
+    })
+    expect(dispatch?.inputs?.setup_only).toMatchObject({ type: 'boolean', default: false })
+    expect(dispatch?.inputs?.install_only).toMatchObject({ type: 'boolean', default: true })
+    expect(dispatch?.inputs?.platform_name).toMatchObject({
+      type: 'choice',
+      default: 'macos-x64',
+      options: ['macos-x64', 'macos-arm64', 'linux-x64', 'windows-x64', 'all']
+    })
+    expect(smokeWorkflow.permissions).toEqual({ contents: 'read' })
+    expect(smokeWorkflow.concurrency).toEqual({
+      group:
+        "package-smoke-${{ github.workflow }}-${{ github.ref }}-${{ inputs.platform_name || 'all' }}",
+      'cancel-in-progress': true
+    })
+    const setup = smokeWorkflow.jobs.setup
+    expect(setup).toMatchObject({
+      'runs-on': 'ubuntu-latest',
+      outputs: { matrix: '${{ steps.set.outputs.matrix }}' }
+    })
+    expect(findStep(setup, 'Checkout').uses).toBe(
+      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
+    )
+    expect(findStep(setup, 'Resolve platform include list')).toMatchObject({
+      id: 'set',
+      run: 'echo "matrix=$(node scripts/ci/resolve-package-smoke-matrix.mjs)" >> "$GITHUB_OUTPUT"'
+    })
+    expect(job.needs).toBe('setup')
+    expect(job.if).toBe("${{ needs.setup.result == 'success' && !inputs.setup_only }}")
+    expect(job.strategy?.matrix).toBe('${{ fromJson(needs.setup.outputs.matrix) }}')
+    expect(install.run).toBe('node scripts/ci/npm-ci.mjs')
+    expect(download.if).toBe('${{ !inputs.install_only }}')
+    expect(linux.if).toBe("${{ !inputs.install_only && matrix.platform == 'linux' }}")
+    expect(evidence.if).toBe('${{ !inputs.install_only }}')
+    expect(uploadEvidence.if).toBe('${{ !inputs.install_only }}')
   })
 
   it('keeps Windows packaging unsigned until signing credentials are available', () => {
@@ -244,17 +303,11 @@ describe('post-merge Windows validation', () => {
     )
     expect(upload.if).toBeUndefined()
     expect(upload.with?.['retention-days']).toBe(7)
-    expect(smoke.strategy?.matrix).toEqual({
-      include: [
-        { name: 'macos-arm64', os: 'macos-26', platform: 'mac' },
-        { name: 'macos-x64', os: 'macos-26-intel', platform: 'mac' },
-        { name: 'linux-x64', os: 'ubuntu-latest', platform: 'linux' },
-        { name: 'windows-x64', os: 'windows-latest', platform: 'win' }
-      ]
-    })
+    expect(smoke.needs).toBe('setup')
+    expect(smoke.strategy?.matrix).toBe('${{ fromJson(needs.setup.outputs.matrix) }}')
     expect(downloadPackage.with?.name).toBe('${{ matrix.name }}')
     expect(downloadPackage.with?.path).toBe('dist')
-    expect(macos.if).toBe("matrix.platform == 'mac'")
+    expect(macos.if).toBe("${{ !inputs.install_only && matrix.platform == 'mac' }}")
     expect(macos.run).toBe('node scripts/macos-package-smoke.mjs --artifact-dir dist')
     expect(windows.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(linux.run).toContain('scripts/linux-package-smoke.mjs')
@@ -545,6 +598,12 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
           tag: {
             description: 'Release tag to mirror (e.g. v0.1.2)',
             required: true
+          },
+          dry_run: {
+            description: 'Run local release transforms without AWS credentials or uploads',
+            required: false,
+            type: 'boolean',
+            default: false
           }
         }
       }
@@ -552,6 +611,16 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(install.run).toBe(
       'npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund'
     )
+    const dryRunStage = findStep(mirror, 'Stage release metadata for dry run')
+    expect(dryRunStage.if).toBe('${{ inputs.dry_run }}')
+    expect(dryRunStage.run).toContain("--pattern 'SHA256SUMS.txt' --pattern '*.yml'")
+    expect(dryRunStage.run).toContain('truncate -s "$size" "dist-assets/$name"')
+    const generate = findStep(mirror, 'Generate version.json')
+    expect(generate.env?.NOTES_DIR).toBe('release-notes/${{ steps.ref.outputs.version }}')
+    expect(generate.run).toContain('if [ ! -d "$NOTES_DIR" ]')
+    expect(generate.run).toContain('gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body')
+    expect(generate.run).toContain('unset NOTES_DIR')
+    expect(findStep(mirror, 'Summarize dry run').if).toBe('${{ inputs.dry_run }}')
     expect(mirror.steps?.filter(({ run }) => run?.includes('npm install'))).toEqual([])
     expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Install manifest dependencies'))
     expect(configureIndex).toBeGreaterThan(
@@ -578,6 +647,16 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(historical.run).toContain('gzip -t "$target"')
     const backfill = findStep(mirror, 'Backfill historical Windows blockmaps')
     expect(backfill.run).toContain('releases/$version/$(basename "$blockmap")')
+    for (const sideEffectStep of [
+      'Configure AWS credentials',
+      'Collect historical Windows blockmaps',
+      'Backfill historical Windows blockmaps',
+      'Sync installers to versioned path',
+      'Upload version.json',
+      'Upload update feed to channel root'
+    ]) {
+      expect(findStep(mirror, sideEffectStep).if).toBe('${{ !inputs.dry_run }}')
+    }
   })
 
   it('pins external actions in every changed release workflow', () => {

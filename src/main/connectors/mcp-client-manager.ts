@@ -31,6 +31,7 @@ export type CustomMcpServerConfig = {
     scopes?: string[]
     clientId?: string
     clientSecret?: string
+    redirectUri?: string
     state?: StoredCustomMcpOAuthState
   }
 }
@@ -181,11 +182,16 @@ export class McpClientManager {
   ): Promise<McpClientManagerTool[]> {
     signal?.throwIfAborted()
     const client = await this.connect(config, signal)
-    signal?.throwIfAborted()
-    const { tools } = signal
-      ? await client.listTools(undefined, { signal })
-      : await client.listTools()
-    return tools
+    try {
+      signal?.throwIfAborted()
+      const { tools } = signal
+        ? await client.listTools(undefined, { signal })
+        : await client.listTools()
+      return tools
+    } catch (error) {
+      if (!signal?.aborted) await this.discardClient(config.id, client)
+      throw error
+    }
   }
 
   async call(
@@ -196,12 +202,19 @@ export class McpClientManager {
   ): Promise<unknown> {
     signal?.throwIfAborted()
     const client = await this.connect(config, signal)
-    signal?.throwIfAborted()
-    const input = { name: method, arguments: args }
-    const result = signal
-      ? await client.callTool(input, undefined, { signal })
-      : await client.callTool(input)
-    return unwrapToolResult(result)
+    try {
+      signal?.throwIfAborted()
+      const input = { name: method, arguments: args }
+      const result = signal
+        ? await client.callTool(input, undefined, { signal })
+        : await client.callTool(input)
+      return unwrapToolResult(result)
+    } catch (error) {
+      if (!signal?.aborted && !(error instanceof McpToolCallError)) {
+        await this.discardClient(config.id, client)
+      }
+      throw error
+    }
   }
 
   async close(id: string): Promise<void> {
@@ -256,7 +269,7 @@ export class McpClientManager {
       if (generation !== this.generation(config.id)) {
         throw new Error(`custom MCP server "${config.name}" connection was superseded`)
       }
-      const redirectUrl = await this.callbackServer.ensureStarted()
+      const redirectUrl = await this.callbackServer.ensureStarted(config.oauth.redirectUri)
       if (generation !== this.generation(config.id)) {
         throw new Error(`custom MCP server "${config.name}" connection was superseded`)
       }
@@ -367,7 +380,7 @@ export class McpClientManager {
   ): Promise<Client> {
     signal.throwIfAborted()
     if (!config.oauth) return this.createClient(config, undefined, signal)
-    const redirectUrl = await this.callbackServer.ensureStarted()
+    const redirectUrl = await this.callbackServer.ensureStarted(config.oauth.redirectUri)
     signal.throwIfAborted()
     return this.createClient(config, this.oauthProvider(config, redirectUrl, generation), signal)
   }
@@ -396,6 +409,12 @@ export class McpClientManager {
 
   private generation(id: string): number {
     return this.generations.get(id) ?? 0
+  }
+
+  private async discardClient(id: string, expected: Client): Promise<void> {
+    if (this.clients.get(id) !== expected) return
+    this.clients.delete(id)
+    await expected.close().catch(() => undefined)
   }
 }
 

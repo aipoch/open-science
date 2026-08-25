@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
@@ -17,8 +18,15 @@ const SessionCatalogRecoveryAlert = ({
   onRetry
 }: SessionCatalogRecoveryAlertProps): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const [isOverlayDismissed, setIsOverlayDismissed] = useState(false)
 
   if (recovery.kind === 'ready') return null
+  if (!inline && isOverlayDismissed) return null
+
+  // Overlay dismissal is session-local: archive remains blocked and Settings still shows the
+  // inline reminder. Restarting the app re-derives catalog recovery and shows the overlay again.
+  const onDismiss = inline ? undefined : () => setIsOverlayDismissed(true)
+
   if (recovery.kind === 'project-deletion-recovery') {
     return (
       <SessionPersistenceAlert
@@ -29,6 +37,7 @@ const SessionCatalogRecoveryAlert = ({
         inline={inline}
         onRetry={onRetry}
         retryLabel={t('Retry recovery')}
+        onDismiss={onDismiss}
       />
     )
   }
@@ -46,6 +55,7 @@ const SessionCatalogRecoveryAlert = ({
         )}
         variant="warning"
         inline={inline}
+        onDismiss={onDismiss}
       />
     )
   }
@@ -63,6 +73,7 @@ const SessionCatalogRecoveryAlert = ({
         )}
         variant="warning"
         inline={inline}
+        onDismiss={onDismiss}
       />
     )
   }
@@ -82,6 +93,7 @@ const SessionCatalogRecoveryAlert = ({
       inline={inline}
       onRetry={onRetry}
       retryLabel={t('Repair index')}
+      onDismiss={onDismiss}
     />
   )
 }

@@ -247,7 +247,8 @@ class AcpPromptContentOwner {
         const stagedHistoryUploads = input.historyUploads.filter(
           (upload) => !upload.versionId && upload.sessionId === PENDING_UPLOAD_SESSION_ID
         )
-        const uploadsToFinalize = [...stagedHistoryUploads, ...input.currentUploads]
+        const stagedCurrentUploads = input.currentUploads.filter((upload) => !upload.versionId)
+        const uploadsToFinalize = [...stagedHistoryUploads, ...stagedCurrentUploads]
         const finalizedUploads =
           uploadsToFinalize.length > 0
             ? await this.options.uploadRepository.finalizePendingSessionUploads(
@@ -461,7 +462,11 @@ class AcpPromptContentOwner {
       { path: attachment.path },
       {
         projectId: input.projectId,
-        ...(isHistoryUpload ? {} : { sessionId: input.appSessionId })
+        ...(isHistoryUpload
+          ? {}
+          : {
+              sessionId: attachment.versionId ? attachment.sessionId : input.appSessionId
+            })
       }
     )
     const { size } = await stat(filePath)

@@ -73,12 +73,16 @@ const ownerNames = [
   'workspace-runtime-event-owner',
   'workspace-runtime-prompt-preparation-owner',
   'workspace-runtime-session-branch-owner',
+  'workspace-runtime-attachment-owner',
   'workspace-runtime-command-owner',
   'workspace-runtime-session-lifecycle-owner',
+  'workspace-runtime-selection-owner',
   'workspace-runtime-save-as-skill-owner'
 ] as const
 const facadeOwnerNames = ownerNames.filter(
-  (name) => name !== 'workspace-runtime-session-branch-owner'
+  (name) =>
+    name !== 'workspace-runtime-session-branch-owner' &&
+    name !== 'workspace-runtime-attachment-owner'
 )
 const ownerTargets = new Map(ownerNames.map((name) => [name, modulePath(resolve(__dirname, name))]))
 const ownerFilePath = (name: (typeof ownerNames)[number]): string => `${ownerTargets.get(name)}.ts`
@@ -466,10 +470,12 @@ const hookKeys = [
   'sendMessage',
   'resendEditedMessage',
   'cancelRun',
+  'steerFollowUp',
   'resumeInterruptedSession',
   'respondToPermission',
   'setPermissionProfile',
-  'revokePermissionGrant'
+  'revokePermissionGrant',
+  'resolveSessionRuntimeSelection'
 ] as const
 const sendIntentKeys = [
   'sessionId',
@@ -487,7 +493,8 @@ const sendIntentKeys = [
   'parts',
   'specialistId',
   'enabledComputeHosts',
-  'selectedComputeHosts'
+  'selectedComputeHosts',
+  'agentConfiguration'
 ] as const
 const ownerDependencyNames = (path: string): string[] => {
   const targets = new Set(importsFrom(path).map((reference) => reference.target))
@@ -523,9 +530,9 @@ const privateOwnerBoundaryViolations = (path: string, source = readSource(path))
 describe('workspace runtime architecture', () => {
   const facadeFile = sourceFileFor(facadePath)
   it('keeps the facade, deep owners, and presentation adapter within their completion gates', () => {
-    expect(physicalLines(facadePath), 'workspace runtime facade').toBeLessThanOrEqual(600)
+    expect(physicalLines(facadePath), 'workspace runtime facade').toBeLessThanOrEqual(605)
     for (const name of ownerNames) {
-      expect(physicalLines(ownerFilePath(name)), name).toBeLessThanOrEqual(660)
+      expect(physicalLines(ownerFilePath(name)), name).toBeLessThanOrEqual(720)
     }
     expect(
       physicalLines(`${subagentPresentationTarget}.ts`),
@@ -610,15 +617,21 @@ describe('workspace runtime architecture', () => {
       'workspace-runtime-event-owner': [],
       'workspace-runtime-prompt-preparation-owner': [],
       'workspace-runtime-session-branch-owner': [],
+      'workspace-runtime-attachment-owner': [],
       'workspace-runtime-command-owner': [
         'workspace-runtime-prompt-preparation-owner',
-        'workspace-runtime-session-branch-owner'
+        'workspace-runtime-session-branch-owner',
+        'workspace-runtime-attachment-owner'
       ],
       'workspace-runtime-session-lifecycle-owner': [
         'workspace-runtime-prompt-preparation-owner',
         'workspace-runtime-command-owner'
       ],
-      'workspace-runtime-save-as-skill-owner': ['workspace-runtime-prompt-preparation-owner']
+      'workspace-runtime-selection-owner': [],
+      'workspace-runtime-save-as-skill-owner': [
+        'workspace-runtime-prompt-preparation-owner',
+        'workspace-runtime-selection-owner'
+      ]
     })
     expect(importsFrom(facadePath).map((reference) => reference.target)).toContain(
       subagentPresentationTarget

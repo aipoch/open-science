@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ReviewRunRequest } from '../../shared/reviewer'
 import { REVIEWER_IPC } from '../../shared/reviewer'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { AcpRuntime } from '../acp/runtime'
 import { ReviewerProjectRuntimeOwner } from './project-runtime-owner'
 
@@ -269,6 +270,72 @@ describe('reviewer IPC handlers', () => {
     expect(passed.acpRuntime).toBe(acpRuntime)
     expect(passed.reviewerAcpRuntime).toBe(fixedReviewerRuntime)
     expect(passed.model).toBe('reviewer-model')
+  })
+
+  it('resolves and forwards the persisted Session target to background reviews', async () => {
+    const agentConfiguration = {
+      providerId: 'provider-1',
+      model: 'model-1',
+      reasoningEffort: 'high' as const
+    }
+    const agentTarget = { frameworkId: 'opencode' as const, ...agentConfiguration }
+    const resolveSessionAgentTarget = vi.fn(async () => agentTarget)
+    const persistedSession = { id: 'session-1', agentConfiguration }
+    sessionLoadOne.mockResolvedValue(persistedSession)
+    const owner = createReviewerCommandOwner({
+      acpRuntime,
+      resolveSessionAgentTarget
+    })
+
+    await expect(owner.run(createRequest())).resolves.toEqual({ started: true })
+    await vi.waitFor(() => expect(runReview).toHaveBeenCalledOnce())
+
+    expect(resolveSessionAgentTarget).toHaveBeenCalledWith(persistedSession)
+    expect(runReview.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        agentTarget
+      })
+    )
+  })
+
+  it('materializes and persists legacy Session identity before background reviews', async () => {
+    const legacySession: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Legacy review',
+      cwd: '/workspace/review',
+      status: 'idle',
+      agentFrameworkId: 'opencode',
+      agentBackendId: 'opencode:provider-legacy',
+      agentModel: 'model-legacy',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const agentConfiguration = {
+      providerId: 'provider-legacy',
+      model: 'model-legacy',
+      reasoningEffort: 'high' as const
+    }
+    const agentTarget = { frameworkId: 'opencode' as const, ...agentConfiguration }
+    const resolveSessionAgentTarget = vi.fn(async () => agentTarget)
+    const saveSessionAgentConfiguration = vi.fn(async () => ({
+      ...legacySession,
+      agentConfiguration
+    }))
+    sessionLoadOne.mockResolvedValue(legacySession)
+    const owner = createReviewerCommandOwner({
+      acpRuntime,
+      resolveSessionAgentTarget,
+      saveSessionAgentConfiguration
+    })
+
+    await expect(owner.run(createRequest())).resolves.toEqual({ started: true })
+    await vi.waitFor(() => expect(runReview).toHaveBeenCalledOnce())
+
+    expect(resolveSessionAgentTarget).toHaveBeenCalledWith(legacySession)
+    expect(saveSessionAgentConfiguration).toHaveBeenCalledWith(legacySession, agentConfiguration)
+    expect(runReview.mock.calls[0][0]).toEqual(expect.objectContaining({ agentTarget }))
   })
 
   it('lets injected options override the config/data split independently', async () => {

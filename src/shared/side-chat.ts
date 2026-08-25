@@ -8,10 +8,10 @@ export type SideChatSendMessageRequest = Readonly<{
 }>
 
 export type SideChatSendMessageResult = Readonly<{
-  status: 'queued'
+  status: 'queued' | 'injected'
   messageId: string
   targetState: SideChatTargetState
-  delivery: 'next-user-turn'
+  delivery: 'next-user-turn' | 'current-turn'
   persisted: true
   systemHint: string
 }>

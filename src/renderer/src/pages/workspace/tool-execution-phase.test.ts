@@ -58,6 +58,38 @@ describe('getToolExecutionPhase', () => {
     expect(getToolExecutionPhase(activity(), permission())).toBe('awaiting-approval')
   })
 
+  it('moves one approved Notebook activity from approval preview into Run execution', () => {
+    const authorizedActivity = activity({ executionInvocationId: 'invocation-1' })
+
+    expect([
+      getToolExecutionPhase(activity(), permission()),
+      getToolExecutionPhase(authorizedActivity, undefined),
+      getToolExecutionPhase(
+        authorizedActivity,
+        undefined,
+        new Map([['run-1', run({ status: 'running' })]])
+      ),
+      getToolExecutionPhase(
+        authorizedActivity,
+        undefined,
+        new Map([['run-1', run({ status: 'completed', endedAt: 2 })]])
+      )
+    ]).toEqual(['awaiting-approval', 'prepared', 'executing', 'completed'])
+  })
+
+  it('skips approval preview when Notebook execution is already authorized', () => {
+    const authorizedActivity = activity({ executionInvocationId: 'invocation-1' })
+
+    expect([
+      getToolExecutionPhase(authorizedActivity, undefined),
+      getToolExecutionPhase(
+        authorizedActivity,
+        undefined,
+        new Map([['run-1', run({ status: 'running' })]])
+      )
+    ]).toEqual(['prepared', 'executing'])
+  })
+
   it('fails closed when permission identity does not match the active activity', () => {
     expect(
       getToolExecutionPhase(

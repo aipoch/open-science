@@ -440,7 +440,11 @@ class NotebookSessionLifecycleOwner {
   ): Promise<void> {
     const session = this.options.sessions.get(lane)
     if (!session) return
-    await this.persistKernelStatus(session, 'terminated', processKeyFor(kind, env))
+    const processKey = processKeyFor(kind, env)
+    // The executor has already ended this concrete process. Rotate volatile dependency identity
+    // even when the durable status projection fails, so a respawn cannot inherit the old namespace.
+    session.retireKernelEpoch(processKey)
+    await this.persistKernelStatus(session, 'terminated', processKey)
     this.notifyChanged(session)
   }
 
@@ -453,6 +457,7 @@ class NotebookSessionLifecycleOwner {
     if (!session) return
     const processKey = processKeyFor(kind, env)
     session.markKernelTerminated(processKey)
+    session.retireKernelEpoch(processKey)
     await this.persistKernelStatus(session, 'terminated', processKey)
     this.notifyChanged(session)
   }

@@ -29,6 +29,10 @@ export type RendererSessionPersistenceFlushOutcome =
   | 'send-failed'
   | 'timeout'
 
+export const rendererSessionPersistenceFlushBlocksShutdown = (
+  outcome: RendererSessionPersistenceFlushOutcome
+): boolean => outcome === 'conflict' || outcome === 'renderer-failed'
+
 export const requestRendererSessionPersistenceFlush = async (
   deps: RendererSessionPersistenceFlushDeps
 ): Promise<RendererSessionPersistenceFlushOutcome> => {

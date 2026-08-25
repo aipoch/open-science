@@ -6,6 +6,8 @@ import type {
   AcpPermissionResponse
 } from '../../shared/acp'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { materializeSessionConversationGraph } from '../../shared/session-persistence'
+import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import type { SpecialistProfileView } from '../../shared/specialist'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
@@ -34,6 +36,11 @@ import {
 } from './durable-delegated-work'
 import { createProductionFrameWorkspace, type ResolvedImmutableInput } from './frame-workspace'
 import { createSessionDelegatedWorkRecords } from './session-record-adapter'
+import {
+  DelegationSettlementWakeOwner,
+  type DelegationSettlementDispatch,
+  type DelegationSettlementSnapshot
+} from './delegation-settlement-wake-owner'
 
 type CertifiedSessionFramework = Readonly<{
   frameworkId: AgentFrameworkId
@@ -65,6 +72,9 @@ type ProductionDelegatedWorkOptions = Readonly<{
   }>
   onAgentRuntimeUpdate?(update: AcpAgentRuntimeUpdate): void
   resolveExecutionModel(session: PersistedChatSession): Promise<DelegatedExecutionModelAdmission>
+  settlementContinuations?: Readonly<{
+    dispatch(request: DelegationSettlementDispatch): Promise<void> | void
+  }>
 }>
 
 type RootDelegatedWorkEvent =
@@ -93,6 +103,21 @@ type RootDelegatedWorkControl = Readonly<{
     }>
   ): Promise<void>
   wakeMessages?(sessionId: string): Promise<void>
+  rootTurnStarted?(
+    input: Readonly<{
+      sessionId: string
+      originatingPromptId: string
+    }>
+  ): Promise<string | undefined>
+  rootTurnEnded?(
+    input: Readonly<{
+      sessionId: string
+      originatingPromptId: string
+      clean: boolean
+      leaseId?: string
+    }>
+  ): Promise<void>
+  settlementPromptEnded?(sessionId: string, promptId: string): Promise<void>
   stopAll(): Promise<void>
   deleteSession(sessionId: string): Promise<void>
   deleteProject(projectId: string): Promise<void>
@@ -122,6 +147,47 @@ const keyOf = (key: SessionKey): string => `${key.projectId}\u0000${key.sessionI
 const permissionPublicId = (session: SessionKey, request: RootDelegatePermissionRequest): string =>
   `delegated:${encodeURIComponent(session.projectId)}:${encodeURIComponent(session.sessionId)}:${encodeURIComponent(request.frameId)}:${encodeURIComponent(request.attemptId)}:${encodeURIComponent(request.requestId)}`
 
+const settlementSnapshot = (
+  session: PersistedChatSession
+): DelegationSettlementSnapshot | undefined => {
+  const graph = materializeSessionConversationGraph(session).conversationGraph
+  if (!graph) return undefined
+  const rootFrame = graph.frames.find(({ id }) => id === graph.rootFrameId)
+  if (!rootFrame) return undefined
+  const rootBranch = graph.branches.find(({ id }) => id === rootFrame.activeBranchId)
+  if (!rootBranch) return undefined
+  const activeRootPromptIds = resolveActiveConversationMessages({
+    ...graph,
+    activeFrameId: graph.rootFrameId
+  }).map(({ id }) => id)
+  const records = session.runtimeContext?.delegatedWork?.records ?? []
+  return {
+    projectId: session.projectId,
+    sessionId: session.id,
+    rootFrameId: graph.rootFrameId,
+    rootBranchId: rootBranch.id,
+    activeRootPromptIds,
+    attempts: records.flatMap((record) => {
+      const frame = graph.frames.find(({ id }) => id === record.agentFrameId)
+      if (!frame) return []
+      return record.attempts.flatMap((attempt) =>
+        attempt.initiatingTurnMessageId
+          ? [
+              {
+                frameId: record.agentFrameId,
+                attemptId: attempt.id,
+                parentFrameId: frame.parentFrameId ?? '',
+                originatingPromptId: attempt.initiatingTurnMessageId,
+                name: frame.delegateName ?? frame.agentName ?? record.agentFrameId,
+                status: attempt.status
+              }
+            ]
+          : []
+      )
+    })
+  }
+}
+
 const createProductionDelegatedWorkComposition = (
   options: ProductionDelegatedWorkOptions
 ): ProductionDelegatedWorkComposition => {
@@ -145,6 +211,16 @@ const createProductionDelegatedWorkComposition = (
     : undefined
   const reviewEvidence = options.reviewEvidence
     ? createDelegatedReviewEvidence(options.reviewEvidence)
+    : undefined
+  const settlementWake = options.settlementContinuations
+    ? new DelegationSettlementWakeOwner({
+        readSnapshot: async (sessionId) => {
+          const sessions = (await options.sessions.findSessions?.(sessionId)) ?? []
+          const matches = sessions.filter(({ id }) => id === sessionId)
+          return matches.length === 1 ? settlementSnapshot(matches[0]) : undefined
+        },
+        dispatch: (request) => options.settlementContinuations!.dispatch(request)
+      })
     : undefined
 
   const publish = (event: RootDelegatedWorkEvent): void => {
@@ -193,7 +269,10 @@ const createProductionDelegatedWorkComposition = (
         commands: options.sessions.commands,
         readSession: options.sessions.readSession,
         frameworkId: framework.frameworkId,
-        onRecordsChanged: () => publish({ kind: 'records-changed', sessionId: key.sessionId })
+        onRecordsChanged: () => {
+          publish({ kind: 'records-changed', sessionId: key.sessionId })
+          void settlementWake?.onRecordsChanged(key.sessionId)
+        }
       },
       key
     )
@@ -207,7 +286,7 @@ const createProductionDelegatedWorkComposition = (
           throw new DurableDelegatedWorkError(
             'admission_rejection',
             `configured Subagent model is unavailable: ${error instanceof Error ? error.message : String(error)}`,
-            'The configured Subagent model is unavailable. Open Settings → Model → Subagent model and choose an available model.'
+            'The configured Subagent model is unavailable. Open Settings → Model → Scenario models and choose an available model.'
           )
         }
       },
@@ -275,6 +354,21 @@ const createProductionDelegatedWorkComposition = (
         const result = await (
           await workFor(caller.session)
         ).work.delegate(caller, request, delegateOptions)
+        const unobserved =
+          result.kind === 'receipts'
+            ? result.children
+            : result.kind === 'observations'
+              ? result.children.filter(
+                  ({ status }) => status === 'running' || status === 'awaiting_user'
+                )
+              : []
+        if (unobserved.length > 0) {
+          settlementWake?.trackUnobservedAttempts({
+            sessionId: caller.session.sessionId,
+            originatingPromptId: caller.originMessageId,
+            attempts: unobserved
+          })
+        }
         unavailableReasons.delete(caller.session.sessionId)
         return result
       } catch (error) {
@@ -299,7 +393,20 @@ const createProductionDelegatedWorkComposition = (
       return (await workFor(caller.session)).work.children(caller, frameIds)
     },
     async collect(caller, selectors, collectOptions) {
-      return (await workFor(caller.session)).work.collect(caller, selectors, collectOptions)
+      const observations = await (
+        await workFor(caller.session)
+      ).work.collect(caller, selectors, collectOptions)
+      const observed = observations.filter(
+        ({ status }) => status !== 'running' && status !== 'awaiting_user'
+      )
+      if (observed.length > 0) {
+        settlementWake?.markAttemptsObserved({
+          sessionId: caller.session.sessionId,
+          originatingPromptId: caller.originMessageId,
+          attempts: observed
+        })
+      }
+      return observations
     },
     async submitOutput(caller, value) {
       return (await workFor(caller.session)).work.submitOutput(caller, value)
@@ -362,6 +469,10 @@ const createProductionDelegatedWorkComposition = (
       await Promise.all(scoped.map(({ key, work }) => work.setPermissionProfile(key, profile)))
     },
     async cancelTurn(sessionId, initiatingTurnMessageId) {
+      const settlementInvalidation = settlementWake?.invalidateBranch(
+        sessionId,
+        initiatingTurnMessageId
+      )
       cancelledSessionTurns.add(`${sessionId}\u0000${initiatingTurnMessageId}`)
       const pendingScoped = [...works.entries()].filter(([identity]) =>
         identity.endsWith(`\u0000${sessionId}`)
@@ -372,9 +483,10 @@ const createProductionDelegatedWorkComposition = (
         cancelledTurns.add(`${identity}\u0000${initiatingTurnMessageId}`)
       }
       const scoped = await Promise.all(pendingScoped.map(([, work]) => work))
-      await Promise.all(
-        scoped.map(({ key, work }) => work.cancelTurn(key, initiatingTurnMessageId))
-      )
+      await Promise.all([
+        settlementInvalidation,
+        ...scoped.map(({ key, work }) => work.cancelTurn(key, initiatingTurnMessageId))
+      ])
     },
     async stopActiveBranch(sessionId) {
       const scoped = await worksForSession(sessionId)
@@ -389,6 +501,7 @@ const createProductionDelegatedWorkComposition = (
       }
     },
     async stopSession(sessionId) {
+      settlementWake?.invalidateSession(sessionId)
       const scoped = await worksForSession(sessionId)
       await Promise.all(scoped.map(({ key, work }) => work.stopSession(key)))
     },
@@ -427,11 +540,22 @@ const createProductionDelegatedWorkComposition = (
       const scoped = await worksForSession(sessionId)
       await Promise.all(scoped.map(({ work }) => work.wakeMessages()))
     },
+    async rootTurnEnded(input) {
+      await settlementWake?.onRootTurnEnded(input)
+    },
+    async rootTurnStarted(input) {
+      return settlementWake?.onRootTurnStarted(input)
+    },
+    async settlementPromptEnded(sessionId, promptId) {
+      await settlementWake?.onWakePromptEnded(sessionId, promptId)
+    },
     async stopAll() {
+      settlementWake?.shutdown()
       const scoped = await Promise.all([...works.values()])
       await Promise.all(scoped.map(({ key, work }) => work.stopSession(key)))
     },
     async deleteSession(sessionId) {
+      settlementWake?.invalidateSession(sessionId)
       const scoped = await worksForSession(sessionId)
       const durableSessions = (await options.sessions.findSessions?.(sessionId)) ?? []
       const keys = new Map<string, SessionKey>()
@@ -464,6 +588,7 @@ const createProductionDelegatedWorkComposition = (
       }
     },
     async deleteProject(projectId) {
+      await settlementWake?.invalidateProject(projectId)
       const scoped = await worksForProject(projectId)
       const workDeletion = await Promise.allSettled(
         scoped.map(({ key, work }) => work.deleteSession(key))

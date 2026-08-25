@@ -72,7 +72,7 @@ const pressKey = (key: string, init: KeyboardEventInit = {}): KeyboardEvent => {
 }
 
 describe('SkillMentionPopup', () => {
-  it('hides Skills outside a bound Specialist scope but leaves Main unfiltered', () => {
+  it('shows the exact Specialist scope and only Main-enabled Skills for Main', () => {
     act(() => {
       root.render(
         <SkillMentionPopup
@@ -88,12 +88,20 @@ describe('SkillMentionPopup', () => {
     act(() => {
       root.render(<SkillMentionPopup query="" onSelect={vi.fn()} onClose={vi.fn()} />)
     })
-    expect(options()).toHaveLength(3)
+    expect(options()).toHaveLength(2)
+    expect(document.body.textContent).not.toContain('Imported Helper')
   })
 
   it('filters by name or description and renders name, badge, and description', () => {
     act(() => {
-      root.render(<SkillMentionPopup query="lit" onSelect={vi.fn()} onClose={vi.fn()} />)
+      root.render(
+        <SkillMentionPopup
+          query="lit"
+          allowedSkillIds={seedSkills.map((skill) => skill.id)}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
     })
 
     // "lit" matches "Literature Review" by name and "Imported Helper" by description, not ProteinMPNN.
@@ -110,21 +118,42 @@ describe('SkillMentionPopup', () => {
     expect(text).toContain('Find, verify, and synthesize scientific papers')
   })
 
-  it('shows every source when the query is empty', () => {
+  it('omits Main-disabled sources when the query is empty', () => {
     act(() => {
       root.render(<SkillMentionPopup query="" onSelect={vi.fn()} onClose={vi.fn()} />)
     })
 
-    expect(options()).toHaveLength(3)
+    expect(options()).toHaveLength(2)
     const text = document.body.textContent ?? ''
     expect(text).toContain('Featured')
     expect(text).toContain('Personal')
-    expect(text).toContain('Imported')
+    expect(text).not.toContain('Imported')
+  })
+
+  it('keeps the shortcut footer outside the scrollable skill list', () => {
+    act(() => {
+      root.render(<SkillMentionPopup query="" onSelect={vi.fn()} onClose={vi.fn()} />)
+    })
+
+    const listbox = document.body.querySelector<HTMLElement>('[role="listbox"]')!
+    const popup = listbox.parentElement!
+    const footer = popup.lastElementChild as HTMLElement
+
+    expect([...popup.classList]).toEqual(expect.arrayContaining(['flex', 'flex-col']))
+    expect([...listbox.classList]).toEqual(expect.arrayContaining(['min-h-0', 'flex-1']))
+    expect(footer.classList).toContain('shrink-0')
   })
 
   it('moves aria-selected with ArrowDown/ArrowUp and wraps', () => {
     act(() => {
-      root.render(<SkillMentionPopup query="" onSelect={vi.fn()} onClose={vi.fn()} />)
+      root.render(
+        <SkillMentionPopup
+          query=""
+          allowedSkillIds={seedSkills.map((skill) => skill.id)}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
     })
 
     const selectedIndex = (): number =>
@@ -151,7 +180,14 @@ describe('SkillMentionPopup', () => {
   it('selects the active skill on Enter', () => {
     const onSelect = vi.fn()
     act(() => {
-      root.render(<SkillMentionPopup query="" onSelect={onSelect} onClose={vi.fn()} />)
+      root.render(
+        <SkillMentionPopup
+          query=""
+          allowedSkillIds={seedSkills.map((skill) => skill.id)}
+          onSelect={onSelect}
+          onClose={vi.fn()}
+        />
+      )
     })
 
     pressKey('ArrowDown')
@@ -191,7 +227,14 @@ describe('SkillMentionPopup', () => {
   it('selects a skill on click and sets it active on hover', () => {
     const onSelect = vi.fn()
     act(() => {
-      root.render(<SkillMentionPopup query="" onSelect={onSelect} onClose={vi.fn()} />)
+      root.render(
+        <SkillMentionPopup
+          query=""
+          allowedSkillIds={seedSkills.map((skill) => skill.id)}
+          onSelect={onSelect}
+          onClose={vi.fn()}
+        />
+      )
     })
 
     const third = options()[2]
@@ -207,7 +250,14 @@ describe('SkillMentionPopup', () => {
 
   it('ranks a name match above a description-only match', () => {
     act(() => {
-      root.render(<SkillMentionPopup query="literature" onSelect={vi.fn()} onClose={vi.fn()} />)
+      root.render(
+        <SkillMentionPopup
+          query="literature"
+          allowedSkillIds={seedSkills.map((skill) => skill.id)}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
     })
 
     // "literature" hits Literature Review by name and Imported Helper only by description.

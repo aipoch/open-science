@@ -6,8 +6,8 @@ import {
   useSyncExternalStore,
   type FormEvent
 } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import type { ConversationExportFormat } from '../../../../shared/conversation-export'
 import type {
   DeleteSessionRequest,
   SessionDeletionResult
@@ -19,8 +19,12 @@ import type {
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
-import { projectSessionActionability, type ChatSession } from '@/stores/session-store'
-import { useSessionStore } from '@/stores/session-store'
+import { projectSessionActionability, useSessionStore } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store'
+import {
+  hydratePersistedSessionIfPresent,
+  loadPersistedSession
+} from '@/lib/session-persistence/session-persistence'
 
 import {
   getWorkspaceSpecialistBarrierSnapshot,
@@ -32,6 +36,7 @@ import {
   compareHandoffEventOrder,
   pendingSpecialistReconfigureError,
   specialistNameFor,
+  useWorkspaceSpecialistReconfiguration,
   type WorkspaceSpecialistReconfigureError as ReconfigureError
 } from './workspace-specialist-reconfiguration'
 
@@ -52,21 +57,17 @@ type WorkspaceSessionControllerOptions = {
   settleSessionDeletion: (sessionId: string, deleted: boolean) => void
   deleteSession: (request: DeleteSessionRequest) => Promise<SessionDeletionResult>
 }
-
 type SessionDeletionFailureReason = Extract<SessionDeletionResult, { status: 'failed' }>['reason']
-
 type SessionDeleteDialogState = {
   session: ChatSession
   isDeleting: boolean
   error: SessionDeletionFailureReason | null
 }
-
 type SpecialistSendIntent = {
   draftSpecialistId: string | null | undefined
   hasPendingSwitch: boolean
   pendingSpecialistId: string | undefined
 }
-
 type WorkspaceSessionController = {
   view: {
     dialogs: {
@@ -74,6 +75,7 @@ type WorkspaceSessionController = {
       delete: SessionDeleteDialogState | null
       downloadArtifacts: ChatSession | null
       notebook: ChatSession | null
+      exportConversation: ChatSession | null
       jobList: { open: boolean; sessionId: string }
     }
     exportError: string | null
@@ -96,7 +98,8 @@ type WorkspaceSessionController = {
     confirmRename: (event: FormEvent<HTMLFormElement>) => void
     togglePin: (session: ChatSession) => void
     archive: (session: ChatSession) => void
-    exportConversation: (session: ChatSession, format: ConversationExportFormat) => void
+    openExportConversation: (session: ChatSession) => void
+    closeExportConversation: () => void
     openDelete: (session: ChatSession) => void
     closeDelete: () => void
     confirmDelete: () => void
@@ -107,6 +110,7 @@ type WorkspaceSessionController = {
     openJobList: (sessionId: string) => void
     closeJobList: () => void
     selectSpecialist: (specialistId: string | undefined) => void
+    retrySpecialistSelection: () => boolean
     resetNewConversationSpecialist: () => void
     beginReconfigureRetry: () => boolean
     chooseOtherSpecialist: () => void
@@ -120,11 +124,8 @@ type WorkspaceSessionController = {
     isBarrierInFlight: (sessionId: string) => boolean
   }
 }
-
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
-
-// Owns Workspace session transactions and Specialist identity without taking over message dispatch.
 const useWorkspaceSessionController = ({
   activeSession,
   selectedSessionId,
@@ -142,6 +143,7 @@ const useWorkspaceSessionController = ({
   settleSessionDeletion,
   deleteSession
 }: WorkspaceSessionControllerOptions): WorkspaceSessionController => {
+  const { t } = useTranslation()
   const renameSession = useSessionStore((state) => state.renameSession)
   const togglePinned = useSessionStore((state) => state.togglePinned)
   const updateSessionArchive = useSessionStore((state) => state.updateSessionArchive)
@@ -151,21 +153,23 @@ const useWorkspaceSessionController = ({
     (state) => state.markSpecialistSwitchResetRequired
   )
   const enqueueSessionArchive = useArchiveUndoStore((state) => state.enqueueSession)
-
   const [newConversationSpecialistId, setNewConversationSpecialistId] = useState<
     string | undefined
   >(undefined)
   const [pendingSpecialists, setPendingSpecialists] = useState<Record<string, string | undefined>>(
     {}
   )
-  const [reconfigureError, setReconfigureError] = useState<ReconfigureError | null>(null)
+  const reconfiguration = useWorkspaceSpecialistReconfiguration(specialistItems)
+  const { error: reconfigureError, setError: setReconfigureError, clearIdleRetry } = reconfiguration
+  const activeReconfigureError =
+    reconfiguration.idleErrorFor(activeSession?.id) ??
+    (reconfigureError?.sessionId === activeSession?.id ? reconfigureError : null)
   const barrierInFlightIds = useSyncExternalStore(
     subscribeWorkspaceSpecialistBarriers,
     getWorkspaceSpecialistBarrierSnapshot,
     getWorkspaceSpecialistBarrierSnapshot
   )
   const specialistItemsRef = useRef(specialistItems)
-
   const [exportError, setExportError] = useState<string | null>(null)
   const [renameDialog, setRenameDialog] = useState<{
     session: ChatSession
@@ -174,11 +178,11 @@ const useWorkspaceSessionController = ({
   const [deleteDialog, setDeleteDialog] = useState<SessionDeleteDialogState | null>(null)
   const [downloadArtifactsDialog, setDownloadArtifactsDialog] = useState<ChatSession | null>(null)
   const [notebookDialog, setNotebookDialog] = useState<ChatSession | null>(null)
+  const [exportConversationDialog, setExportConversationDialog] = useState<ChatSession | null>(null)
   const [jobListDialog, setJobListDialog] = useState({ open: false, sessionId: '' })
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
   const deletingIdsRef = useRef(new Set<string>())
   const [archivingIds, setArchivingIds] = useState<ReadonlySet<string>>(new Set())
-
   const activeHasPending = Boolean(
     activeSession &&
     (activeSession.specialistBindingPending === true ||
@@ -213,11 +217,9 @@ const useWorkspaceSessionController = ({
     activeHasPending &&
     projectSessionActionability(activeSession).activity !== 'inactive'
   )
-
   const setBarrier = useCallback((sessionId: string, inFlight: boolean): void => {
     setWorkspaceSpecialistBarrier(sessionId, inFlight)
   }, [])
-
   const clearPending = useCallback((sessionId: string): void => {
     setPendingSpecialists((current) => {
       const next = { ...current }
@@ -225,7 +227,6 @@ const useWorkspaceSessionController = ({
       return next
     })
   }, [])
-
   const canArchive = (session: ChatSession): boolean =>
     isPersistenceReady &&
     !session.isPending &&
@@ -239,29 +240,16 @@ const useWorkspaceSessionController = ({
       hasRunningWork: hasCurrentRunningDelegatedAttempt(session)
     }).actions.archive.allowed &&
     !hasUnfinishedTransfers(session.id)
-
   const openRename = (session: ChatSession): void => {
     if (isPersistenceReady) setRenameDialog({ session, draft: session.title })
   }
-
   const closeRename = (): void => setRenameDialog(null)
-
   const confirmRename = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     if (!isPersistenceReady || !renameDialog || renameDialog.draft.trim().length === 0) return
     renameSession(renameDialog.session.id, renameDialog.draft)
     closeRename()
   }
-
-  const exportConversation = (session: ChatSession, format: ConversationExportFormat): void => {
-    const exporter = window.api?.sessions?.exportConversation
-    if (!exporter) return
-    setExportError(null)
-    void exporter({ projectId: session.projectId, sessionId: session.id, format }).catch(
-      (error: unknown) => setExportError(errorMessage(error))
-    )
-  }
-
   const archive = (session: ChatSession): void => {
     if (!canArchive(session)) return
     setArchivingIds((current) => new Set(current).add(session.id))
@@ -273,6 +261,7 @@ const useWorkspaceSessionController = ({
       expectedArchivedAt: null
     })
       .then((archived) => {
+        if (clearIdleRetry(session.id)) clearPending(session.id)
         enqueueSessionArchive(archived)
         if (selectedSessionId === session.id) clearSelection()
       })
@@ -285,7 +274,6 @@ const useWorkspaceSessionController = ({
         })
       })
   }
-
   const openDelete = (session: ChatSession): void => {
     if (isPersistenceHydrated && canDeleteConversations && deletingIdsRef.current.size === 0) {
       setDeleteDialog({
@@ -295,7 +283,6 @@ const useWorkspaceSessionController = ({
       })
     }
   }
-
   const confirmDelete = (): void => {
     if (!isPersistenceHydrated || !canDeleteConversations || !deleteDialog) return
     useNavigationStore.getState().recordUserNavigation()
@@ -312,6 +299,7 @@ const useWorkspaceSessionController = ({
         const deleted = result.status === 'deleted'
         settleSessionDeletion(sessionId, deleted)
         if (deleted) {
+          if (clearIdleRetry(sessionId)) clearPending(sessionId)
           setDeleteDialog((current) => (current?.session.id === sessionId ? null : current))
           return
         }
@@ -343,7 +331,6 @@ const useWorkspaceSessionController = ({
         })
       })
   }
-
   const selectSpecialist = (specialistId: string | undefined): void => {
     if (!activeSession) {
       setNewConversationSpecialistId(specialistId)
@@ -351,16 +338,19 @@ const useWorkspaceSessionController = ({
     }
     const sessionId = activeSession.id
     if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return
+    if (clearIdleRetry(sessionId)) clearPending(sessionId)
     const running = projectSessionActionability(activeSession).activity !== 'inactive'
     if (running) {
       setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
     } else {
       const setter = window.api?.specialist?.setSessionSpecialist
       if (!setter) return
-      clearPending(sessionId)
+      const attempt = reconfiguration.beginIdleAttempt(sessionId, specialistId)
+      setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
       setBarrier(sessionId, true)
       void setter({ sessionId, specialistId })
         .then((result) => {
+          if (!attempt.complete()) return
           if (result?.status === 'pending') {
             setSessionSpecialistId(sessionId, specialistId, true)
             setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
@@ -371,15 +361,16 @@ const useWorkspaceSessionController = ({
           }
           setSessionSpecialistId(sessionId, specialistId)
           if (result?.contextReset) markSpecialistSwitchResetRequired(sessionId)
+          clearPending(sessionId)
         })
         .catch((error: unknown) => {
           console.warn('setSessionSpecialist failed', error)
+          if (attempt.recordFailure(errorMessage(error))) clearPending(sessionId)
         })
         .finally(() => setBarrier(sessionId, false))
     }
     if (reconfigureError?.sessionId === sessionId) setReconfigureError(null)
   }
-
   const canStartSend = (sessionId?: string): boolean => {
     if (sessionId && sessionId !== activeSession?.id) {
       const session = useSessionStore
@@ -387,6 +378,7 @@ const useWorkspaceSessionController = ({
         .sessions.find((candidate) => candidate.id === sessionId)
       if (
         !session ||
+        session.contentLoaded === false ||
         session.specialistBindingPending === true ||
         isWorkspaceSpecialistBarrierInFlight(sessionId)
       )
@@ -401,6 +393,7 @@ const useWorkspaceSessionController = ({
       )
     }
     if (!activeSession) return !newConversationSpecialistUnavailable
+    if (activeSession.contentLoaded === false) return false
     if (activeSession.specialistBindingPending === true) return false
     if (isWorkspaceSpecialistBarrierInFlight(activeSession.id)) return false
     if (activeSession.specialistId === undefined) return specialistSendAvailable
@@ -410,7 +403,6 @@ const useWorkspaceSessionController = ({
     }
     return specialistSendAvailable
   }
-
   const captureSendIntent = (branchInNewSession: boolean): SpecialistSendIntent => {
     const hasPending = Boolean(
       activeSession &&
@@ -434,7 +426,6 @@ const useWorkspaceSessionController = ({
       pendingSpecialistId
     }
   }
-
   const prepareSpecialistSend = async (
     sessionId: string,
     specialistId: string | undefined
@@ -476,7 +467,6 @@ const useWorkspaceSessionController = ({
     setBarrier(sessionId, false)
     return true
   }
-
   const beginReconfigureRetry = (): boolean => {
     if (!reconfigureError || !Object.hasOwn(pendingSpecialists, reconfigureError.sessionId)) {
       setReconfigureError(null)
@@ -485,21 +475,22 @@ const useWorkspaceSessionController = ({
     setReconfigureError(null)
     return true
   }
-
   const chooseOtherSpecialist = (): void => {
-    if (!activeSession || !reconfigureError) return
+    if (!activeSession || !activeReconfigureError) return
     clearPending(activeSession.id)
+    clearIdleRetry(activeSession.id)
     setReconfigureError(null)
   }
-
   const useMainAgent = (): void => {
-    if (!activeSession || !reconfigureError) return
+    if (!activeSession || !activeReconfigureError) return
     const sessionId = activeSession.id
     const setter = window.api?.specialist?.setSessionSpecialist
     if (!setter || isWorkspaceSpecialistBarrierInFlight(sessionId)) return
+    const attempt = reconfiguration.beginIdleAttempt(sessionId, undefined)
     setBarrier(sessionId, true)
     void setter({ sessionId, specialistId: undefined })
       .then((result) => {
+        if (!attempt.complete()) return
         if (result?.status === 'pending') {
           setSessionSpecialistId(sessionId, undefined, true)
           setPendingSpecialists((current) => ({ ...current, [sessionId]: undefined }))
@@ -515,10 +506,10 @@ const useWorkspaceSessionController = ({
       })
       .catch((error: unknown) => {
         console.warn('setSessionSpecialist (none) failed', error)
+        attempt.recordFailure(errorMessage(error))
       })
       .finally(() => setBarrier(sessionId, false))
   }
-
   useEffect(() => {
     if (!activeSession || activeSession.specialistBindingPending !== true) return
     // The durable Session store is an external source. Mirror its restored recovery state so the
@@ -538,7 +529,7 @@ const useWorkspaceSessionController = ({
             activeSession.specialistId
           )
     )
-  }, [activeSession, specialistItems])
+  }, [activeSession, setReconfigureError, specialistItems])
 
   useEffect(() => {
     if (typeof window.api?.specialist?.list !== 'function') return
@@ -554,6 +545,7 @@ const useWorkspaceSessionController = ({
     const specialistApi = window.api?.specialist
     if (!specialistApi?.onPendingSwitch) return
     return specialistApi.onPendingSwitch((pending) => {
+      if (clearIdleRetry(pending.sessionId)) clearPending(pending.sessionId)
       if (pending.targetName === null) {
         setPendingSpecialists((current) => ({
           ...current,
@@ -585,8 +577,7 @@ const useWorkspaceSessionController = ({
         })
         .catch(() => undefined)
     })
-  }, [])
-
+  }, [clearIdleRetry, clearPending])
   const applyHandoffLifecycleEvent = useCallback(
     (event: CompletionHandoffLifecycleEvent): void => {
       if (event.phase !== 'continuation-start' && event.phase !== 'continued') return
@@ -600,19 +591,18 @@ const useWorkspaceSessionController = ({
             setSessionSpecialistId(event.sessionId, resolution.profile.id)
           } else if (resolution.kind === 'main') {
             setSessionSpecialistId(event.sessionId, undefined)
-          }
+          } else return
+          if (clearIdleRetry(event.sessionId)) clearPending(event.sessionId)
         })
         .catch(() => undefined)
     },
-    [setSessionSpecialistId]
+    [clearIdleRetry, clearPending, setSessionSpecialistId]
   )
-
   useEffect(() => {
     const specialistApi = window.api?.specialist
     if (!specialistApi?.onHandoffLifecycleEvent) return
     return specialistApi.onHandoffLifecycleEvent(applyHandoffLifecycleEvent)
   }, [applyHandoffLifecycleEvent])
-
   useEffect(() => {
     const specialistApi = window.api?.specialist
     if (!activeSession?.id || !specialistApi?.getHandoffEvents) return
@@ -624,7 +614,6 @@ const useWorkspaceSessionController = ({
       })
       .catch(() => undefined)
   }, [activeSession?.id, applyHandoffLifecycleEvent])
-
   return {
     view: {
       dialogs: {
@@ -632,6 +621,7 @@ const useWorkspaceSessionController = ({
         delete: deleteDialog,
         downloadArtifacts: downloadArtifactsDialog,
         notebook: notebookDialog,
+        exportConversation: exportConversationDialog,
         jobList: jobListDialog
       },
       exportError,
@@ -643,8 +633,7 @@ const useWorkspaceSessionController = ({
         hasPendingSwitch: activeHasPendingSwitch,
         barrierInFlight: barrierInFlightIds.has(activeSession?.id ?? ''),
         sendAvailable: specialistSendAvailable && !barrierInFlightIds.has(activeSession?.id ?? ''),
-        reconfigureError:
-          reconfigureError?.sessionId === activeSession?.id ? reconfigureError : null
+        reconfigureError: activeReconfigureError
       }
     },
     actions: {
@@ -658,7 +647,22 @@ const useWorkspaceSessionController = ({
         if (isPersistenceReady) togglePinned(session.id)
       },
       archive,
-      exportConversation,
+      openExportConversation: (session: ChatSession) => {
+        setExportError(null)
+        if (session.contentLoaded === false) {
+          void loadPersistedSession({ projectId: session.projectId, sessionId: session.id })
+            .then((persisted) => {
+              if (!persisted) throw new Error('Selected Session JSON is missing.')
+              const hydrated = hydratePersistedSessionIfPresent(persisted)
+              if (!hydrated) return
+              setExportConversationDialog(hydrated)
+            })
+            .catch(() => setExportError(t('Could not load this session for export.')))
+          return
+        }
+        setExportConversationDialog(session)
+      },
+      closeExportConversation: () => setExportConversationDialog(null),
       openDelete,
       closeDelete: () => setDeleteDialog((current) => (current?.isDeleting ? current : null)),
       confirmDelete,
@@ -669,6 +673,8 @@ const useWorkspaceSessionController = ({
       openJobList: (sessionId: string) => setJobListDialog({ open: true, sessionId }),
       closeJobList: () => setJobListDialog((current) => ({ ...current, open: false })),
       selectSpecialist,
+      retrySpecialistSelection: () =>
+        reconfiguration.retryIdle(activeSession?.id, selectSpecialist),
       resetNewConversationSpecialist: () => setNewConversationSpecialistId(undefined),
       beginReconfigureRetry,
       chooseOtherSpecialist,
@@ -683,7 +689,6 @@ const useWorkspaceSessionController = ({
     }
   }
 }
-
 export { useWorkspaceSessionController }
 export type {
   ReconfigureError,

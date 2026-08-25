@@ -55,6 +55,12 @@ const stateFromSnapshot = (
   status: 'ready'
 })
 
+const stateFromMutationSnapshot = (
+  snapshot: TagSnapshot,
+  currentRevision: number
+): Partial<Pick<TagStore, keyof TagSnapshot | 'status'>> =>
+  snapshot.revision < currentRevision ? { status: 'ready' } : stateFromSnapshot(snapshot)
+
 export const useTagStore = create<TagStore>((set, get) => ({
   ...createInitialTagState(),
   setBrowserSelectedId: (browserSelectedId) =>
@@ -89,7 +95,7 @@ export const useTagStore = create<TagStore>((set, get) => ({
   create: async (request) => {
     const snapshot = await window.api.tags.create(request)
     loadSequence += 1
-    set({ ...stateFromSnapshot(snapshot), error: undefined })
+    set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
     const requestedNameKey = request.name
       .normalize('NFKC')
       .trim()
@@ -106,12 +112,12 @@ export const useTagStore = create<TagStore>((set, get) => ({
   update: async (request) => {
     const snapshot = await window.api.tags.update(request)
     loadSequence += 1
-    set({ ...stateFromSnapshot(snapshot), error: undefined })
+    set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
   },
   delete: async (id) => {
     const snapshot = await window.api.tags.delete({ id })
     loadSequence += 1
-    set({ ...stateFromSnapshot(snapshot), error: undefined })
+    set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
   },
   reorder: async (request) => {
     const before = get().tags
@@ -128,7 +134,7 @@ export const useTagStore = create<TagStore>((set, get) => ({
     try {
       const snapshot = await window.api.tags.reorder(request)
       loadSequence += 1
-      set({ ...stateFromSnapshot(snapshot), error: undefined })
+      set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
     } catch (error) {
       set({ tags: before })
       await get().load()
@@ -159,7 +165,7 @@ export const useTagStore = create<TagStore>((set, get) => ({
     try {
       const snapshot = await window.api.tags.setAssignment(request)
       loadSequence += 1
-      set({ ...stateFromSnapshot(snapshot), error: undefined })
+      set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
     } catch (error) {
       set({ assignments: before })
       await get().load()

@@ -1,3 +1,10 @@
+import { z } from 'zod'
+
+import {
+  defineApplicationCommandContract,
+  validationCodec,
+  type RuntimeCodec
+} from './application-command-contract'
 import type { ArtifactFile } from './artifacts'
 import type { NotebookRuntimeBindings } from './notebook-runtime'
 import type { OptionalProjectIdScope, ProjectIdScope } from './project-scope'
@@ -34,12 +41,73 @@ export type NotebookRunProvenanceContext = {
 }
 
 // Languages a notebook kernel can run in this phase; each runs as a persistent exec-loop process
-// (no ipykernel/IRkernel involved).
-export type NotebookLanguage = 'python' | 'r'
+// (no ipykernel/IRkernel involved). Renderer IPC must parse this at runtime — TypeScript unions
+// do not reject a compromised or stale client.
+export const NOTEBOOK_LANGUAGES = ['python', 'r'] as const
+export type NotebookLanguage = (typeof NOTEBOOK_LANGUAGES)[number]
+export const notebookLanguageSchema = z.enum(NOTEBOOK_LANGUAGES)
+
+export const parseNotebookLanguage = (value: unknown): NotebookLanguage => {
+  const parsed = notebookLanguageSchema.safeParse(value)
+  if (!parsed.success) {
+    throw new Error('Notebook language must be python or r.')
+  }
+  return parsed.data
+}
+
+export const parseOptionalNotebookLanguage = (value: unknown): NotebookLanguage | undefined => {
+  if (value == null) return undefined
+  return parseNotebookLanguage(value)
+}
+
+// JSON RPC encodes omitted optional slots as null. Drop trailing nulls so cancel() and
+// provision/repair without an operation id stay valid, while a null required language still fails.
+const omitTrailingNull = (value: unknown): unknown => {
+  if (!Array.isArray(value)) return value
+  const args = [...value]
+  while (args.length > 0 && args[args.length - 1] === null) args.pop()
+  return args
+}
+
+const parsedArgs = <Args extends readonly unknown[]>(schema: z.ZodType<Args>): RuntimeCodec<Args> =>
+  Object.freeze({
+    parse: (value: unknown): Args => schema.parse(omitTrailingNull(value))
+  })
+
+const languageAndOptionalOperationId = parsedArgs(
+  z.union([z.tuple([notebookLanguageSchema]), z.tuple([notebookLanguageSchema, z.string()])])
+)
+
+export const notebookEnvironmentApplicationCommandContracts = Object.freeze({
+  provision: defineApplicationCommandContract(
+    languageAndOptionalOperationId,
+    validationCodec(z.undefined())
+  ),
+  repair: defineApplicationCommandContract(
+    languageAndOptionalOperationId,
+    validationCodec(z.undefined())
+  ),
+  cancel: defineApplicationCommandContract(
+    parsedArgs(z.union([z.tuple([]), z.tuple([notebookLanguageSchema])])),
+    validationCodec(z.undefined())
+  )
+})
 
 // Identifies which kernel produced a run: python/r are analysis cells, repl/bash are
 // control-plane/shell.
 export type NotebookKernelKind = 'python' | 'r' | 'repl' | 'bash'
+
+export type NotebookPackageSource =
+  | {
+      type: 'github'
+      repository: string
+      ref?: string
+      commit?: string
+    }
+  | {
+      type: 'bioconductor'
+      version?: string
+    }
 
 export type NotebookEnvironmentPackage = {
   name: string
@@ -57,6 +125,7 @@ export type NotebookEnvironmentPackage = {
   libraryScope?: 'environment' | 'user' | 'system' | 'unknown'
   builtForRuntime?: string
   priority?: 'base' | 'recommended' | 'other'
+  source?: NotebookPackageSource
 }
 
 export type NotebookPackageInstaller =
@@ -68,6 +137,7 @@ export type NotebookPackageInstaller =
   | 'renv'
   | 'pak'
   | 'biocmanager'
+  | 'github'
   | 'unknown'
 
 export type NotebookPackageInstallerAttempt = {
@@ -108,6 +178,7 @@ export type NotebookEnvironmentPackageChange = {
   afterVersion?: string
   libraryRank?: number
   libraryScope?: NotebookEnvironmentPackage['libraryScope']
+  source?: NotebookPackageSource
 }
 
 export type NotebookEnvironmentOperation = {
@@ -324,6 +395,15 @@ export type NotebookRunRecord = {
   // App-owned one-shot identity joining an authorized ACP tool call to the execution admitted by
   // the authenticated Notebook RPC bridge. Optional keeps existing run.json documents readable.
   executionInvocationId?: string
+  // Identifies one live persistent-kernel generation. A new value is allocated after process/app
+  // restart; optional keeps legacy run.json documents readable without a migration.
+  kernelEpochId?: string
+  // Whether this run's source was handed to the persistent data kernel. Pre-dispatch failures set
+  // false so dependency projection never invents mutations; absent legacy evidence stays conservative.
+  kernelDispatched?: boolean
+  // Stable identity of the external runtime used by this run. Managed runs are reproducible from
+  // their environment; external runs need this identity to rebuild a missing derived sidecar.
+  runtimeId?: string
   cellId: string
   source: NotebookRunSource
   inputKind?: NotebookRunInputKind
@@ -352,7 +432,8 @@ export type NotebookRunRecord = {
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
   // Trusted turn/Branch attribution injected by the main-process RPC bridge. Legacy and user-run
-  // records may omit it; a supplied Artifact producer must match all five fields.
+  // records may omit it. An Artifact producer must share root/agent identity, belong to the trusted
+  // Branch and message ancestry, and match the active Runtime Segment for the active prompt.
   rootFrameId?: string
   agentFrameId?: string
   messageBranchId?: string
@@ -363,6 +444,23 @@ export type NotebookRunRecord = {
   // Optional keeps existing run.json documents readable without a migration.
   interruptionReason?: 'app-terminated' | 'execution-error'
 }
+
+// Orthogonal to NotebookRunStatus: a completed run may later become stale when a name it depended
+// on is redefined in the same persistent-kernel generation.
+export type NotebookRunStaleness =
+  | { state: 'clear' }
+  | { state: 'stale'; causedByRunId: string; names: string[]; path: string[] }
+  | { state: 'unknown'; reasons: string[] }
+
+type NotebookAffectedRun = {
+  runId: string
+  cellId: string
+  names: string[]
+}
+
+export type NotebookInvalidatedRun =
+  | (NotebookAffectedRun & { state: 'stale' })
+  | (NotebookAffectedRun & { state: 'unknown'; reasons: string[] })
 
 // The complete JSON document persisted at each notebook session's run.json path.
 export type NotebookRunDocument = ProjectIdScope & {
@@ -435,6 +533,18 @@ export type NotebookRunHistorySummary = {
   latestDataKernel?: 'python' | 'r'
 }
 
+// Stable chronological cursor for renderer history pagination. runId disambiguates runs that share
+// the same millisecond timestamp across Notebook lanes.
+export type NotebookRunCursor = {
+  startedAt: number
+  runId: string
+}
+
+export type NotebookRunPage = {
+  hasEarlierRuns: boolean
+  oldestCursor?: NotebookRunCursor
+}
+
 // Renderer-facing snapshot of one shared notebook interpreter session.
 export type NotebookSessionState = {
   id: string
@@ -454,10 +564,21 @@ export type NotebookSessionState = {
   runCount: number
   // Latest durable environment evidence per data kernel, independent of the bounded run window.
   latestRunEnvironments: Partial<Record<'python' | 'r', string>>
+  // Live execution target derived from each language's Session runtime binding. This is not
+  // persisted; optional keeps older renderer/remote clients compatible.
+  executionEnvironments?: Partial<Record<'python' | 'r', string>>
+  // Current per-language runtime bindings returned by state(); optional keeps older renderer and
+  // remote clients compatible. The binding itself is already persisted on NotebookRunDocument.
+  runtimeBindings?: NotebookRuntimeBindings
   // Present only when state() requested one Agent's complete-history discovery metadata.
   historySummary?: NotebookRunHistorySummary
+  // Present on normal and cursor-paged renderer reads; omitted for sparse run-id/summary requests.
+  historyPage?: NotebookRunPage
   runs: NotebookRunRecord[]
   recentRuns: NotebookRunRecord[]
+  // Derived from run history and the rebuildable dependency-analysis sidecar; never written into
+  // run.json. Optional keeps older renderer/remote clients compatible.
+  runStaleness?: Record<string, NotebookRunStaleness>
   // Live per-(kind, env) kernel status view (design D6); empty until the session spawns a kernel.
   environments: NotebookEnvironmentStatus[]
 }
@@ -483,6 +604,8 @@ export type NotebookRunSummary = Omit<NotebookRunRecord, 'inputFiles'> & {
   runtimeRoot: string
   pythonPath?: string
   kernelName: string
+  staleness?: NotebookRunStaleness
+  invalidatedRuns?: NotebookInvalidatedRun[]
 }
 
 // Common routing fields required by every notebook command.
@@ -504,10 +627,25 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
 // request immutable historical Runs by id without changing or widening that default window.
 export const NOTEBOOK_STATE_TARGET_RUN_LIMIT = 20
 export const NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES = 1_024
+export const NOTEBOOK_STATE_HISTORY_PAGE_LIMIT = 100
+export const NOTEBOOK_STATE_HISTORY_CURSOR_RUN_ID_LIMIT = 1_024
+
+export const isNotebookRunCursor = (value: unknown): value is NotebookRunCursor => {
+  if (!value || typeof value !== 'object') return false
+  const cursor = value as Partial<NotebookRunCursor>
+  return (
+    Number.isFinite(cursor.startedAt) &&
+    typeof cursor.runId === 'string' &&
+    cursor.runId.length > 0 &&
+    cursor.runId.length <= NOTEBOOK_STATE_HISTORY_CURSOR_RUN_ID_LIMIT
+  )
+}
 
 export type NotebookSessionStateRequest = NotebookSessionRequest & {
   runIds?: string[]
   historySummaryFrameId?: string
+  historyBefore?: NotebookRunCursor
+  historyLimit?: number
 }
 
 // Resolves the data kernel ('python' or 'r') that owns a given tab. For python/r tabs the

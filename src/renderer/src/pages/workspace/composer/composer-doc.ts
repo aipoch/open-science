@@ -5,21 +5,28 @@
 import { getExtensionPreservingFileNameParts } from '../extension-preserving-file-name'
 
 import type { FileReference } from '../../../../../shared/artifacts'
-import type { MessagePart } from '../../../../../shared/session-persistence'
+import {
+  MAX_SESSION_REFERENCES_PER_MESSAGE,
+  type MessagePart,
+  type SessionReference
+} from '../../../../../shared/session-persistence'
 
 // One file-reference chip in the composer doc. The linked-folder variant deliberately carries only
 // a granted root id plus a relative path, reserving the future source without exposing an absolute path.
 export type ComposerArtifactNode = { type: 'artifact' } & FileReference
+export type ComposerSessionNode = SessionReference
 
 export type ComposerNode =
   | { type: 'text'; text: string }
   | { type: 'skill'; id: string; name: string }
   | ComposerArtifactNode
+  | ComposerSessionNode
 
 export type ComposerDoc = { nodes: ComposerNode[] }
 
 // Max artifact `@` mentions per message, mirroring the composer upload attachment cap.
 export const MAX_COMPOSER_ARTIFACT_MENTIONS = 10
+export const MAX_COMPOSER_SESSION_MENTIONS = MAX_SESSION_REFERENCES_PER_MESSAGE
 
 // Shared canonical empty document.
 export const emptyDoc: ComposerDoc = { nodes: [] }
@@ -29,6 +36,7 @@ export const emptyDoc: ComposerDoc = { nodes: [] }
 const nodeToText = (node: ComposerNode): string => {
   if (node.type === 'text') return node.text
   if (node.type === 'skill') return `/${node.name}`
+  if (node.type === 'session') return `#${node.title}`
   if (node.source === 'linked-folder') return `@${node.relativePath}`
   return `@${node.name}`
 }
@@ -87,6 +95,9 @@ export const docToArtifactRefs = (doc: ComposerDoc): FileReference[] => {
 export const docArtifactCount = (doc: ComposerDoc): number =>
   doc.nodes.reduce((total, node) => (node.type === 'artifact' ? total + 1 : total), 0)
 
+export const docSessionCount = (doc: ComposerDoc): number =>
+  doc.nodes.reduce((total, node) => (node.type === 'session' ? total + 1 : total), 0)
+
 // Adds a complete immutable Artifact reference from a global action without routing it through the
 // contenteditable's caret-based mention trigger. Keep the operation pure so Workspace can preserve
 // its existing per-draft ownership and tests can cover the spacing/cap behavior directly.
@@ -116,6 +127,9 @@ export const docFromMessageParts = (parts: MessagePart[]): ComposerDoc => {
   const nodes: ComposerNode[] = parts.map((part) => {
     if (part.type === 'text') return { type: 'text', text: part.text }
     if (part.type === 'skill') return { type: 'skill', id: part.id, name: part.name }
+    if (part.type === 'session') {
+      return { type: 'session', sessionId: part.sessionId, title: part.title }
+    }
     if (part.source === 'linked-folder') {
       return {
         type: 'artifact',
@@ -149,6 +163,7 @@ export const docIsEmpty = (doc: ComposerDoc): boolean =>
 // Chip markers on the contenteditable spans.
 const SKILL_MENTION_TYPE = 'skill'
 const ARTIFACT_MENTION_TYPE = 'artifact'
+const SESSION_MENTION_TYPE = 'session'
 
 // Read one artifact chip element back into a node; returns null when required attributes are missing.
 const artifactNodeFromEl = (el: HTMLElement): ComposerArtifactNode | null => {
@@ -209,6 +224,12 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
       if (mentionType === ARTIFACT_MENTION_TYPE) {
         const node = artifactNodeFromEl(el)
         if (node) nodes.push(node)
+        continue
+      }
+      if (mentionType === SESSION_MENTION_TYPE) {
+        const sessionId = el.getAttribute('data-session-id')
+        const title = el.getAttribute('data-session-title')
+        if (sessionId && title) nodes.push({ type: 'session', sessionId, title })
       }
     }
   }
@@ -291,12 +312,27 @@ export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement 
   return span
 }
 
+// Session chips are atomic navigation links. The full snapshot title stays in attributes/title while
+// the visible label truncates to a single line inside the composer.
+export const createSessionChip = (node: ComposerSessionNode): HTMLSpanElement => {
+  const span = document.createElement('span')
+  span.setAttribute('contenteditable', 'false')
+  span.setAttribute('data-mention-type', SESSION_MENTION_TYPE)
+  span.setAttribute('data-session-id', node.sessionId)
+  span.setAttribute('data-session-title', node.title)
+  span.className = `${CHIP_BASE_CLASS} cursor-pointer select-none bg-accent text-accent-foreground`
+  span.textContent = `#${node.title}`
+  span.title = node.title
+  return span
+}
+
 // Replace the root's content with the doc rendered as text nodes and chip spans.
 export const applyDocToDom = (root: HTMLElement, doc: ComposerDoc): void => {
   root.textContent = ''
   for (const node of doc.nodes) {
     if (node.type === 'text') root.appendChild(document.createTextNode(node.text))
     else if (node.type === 'skill') root.appendChild(createSkillChip(node))
-    else root.appendChild(createArtifactChip(node))
+    else if (node.type === 'artifact') root.appendChild(createArtifactChip(node))
+    else root.appendChild(createSessionChip(node))
   }
 }

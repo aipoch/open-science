@@ -12,6 +12,7 @@ const vm = require('node:vm')
 const readline = require('node:readline')
 const fs = require('node:fs')
 const path = require('node:path')
+const { randomUUID } = require('node:crypto')
 const { fileURLToPath } = require('node:url')
 
 // Protocol output line. console is captured into strings during a run (see run()), so writing the
@@ -1557,6 +1558,19 @@ const exactObject = (value, requiredKeys, optionalKeys = []) => {
   )
 }
 
+const camelCasedHostValue = (value) => {
+  if (Array.isArray(value)) return Object.freeze(value.map(camelCasedHostValue))
+  if (!value || typeof value !== 'object') return value
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key.replace(/_([a-z])/gu, (_, letter) => letter.toUpperCase()),
+        camelCasedHostValue(entry)
+      ])
+    )
+  )
+}
+
 const hostFrameString = (value) => typeof value === 'string'
 const hostFrameCount = (value) => Number.isSafeInteger(value) && value >= 0
 const hostFrameOptionalString = (value) => value === undefined || hostFrameString(value)
@@ -1896,6 +1910,34 @@ const hasHostLineageKeys = (value, required, optional = []) => {
   return required.every((key) => keys.includes(key)) && keys.every((key) => allowed.has(key))
 }
 
+const validatedHostPackageSource = (value) => {
+  if (
+    hasHostLineageKeys(value, ['type', 'repository'], ['ref', 'commit']) &&
+    value.type === 'github' &&
+    typeof value.repository === 'string' &&
+    (value.ref === undefined || typeof value.ref === 'string') &&
+    (value.commit === undefined || typeof value.commit === 'string')
+  ) {
+    return Object.freeze({
+      type: value.type,
+      repository: value.repository,
+      ...(value.ref !== undefined ? { ref: value.ref } : {}),
+      ...(value.commit !== undefined ? { commit: value.commit } : {})
+    })
+  }
+  if (
+    hasHostLineageKeys(value, ['type'], ['version']) &&
+    value.type === 'bioconductor' &&
+    (value.version === undefined || typeof value.version === 'string')
+  ) {
+    return Object.freeze({
+      type: value.type,
+      ...(value.version !== undefined ? { version: value.version } : {})
+    })
+  }
+  throw new Error('host.lineage.get returned an invalid package source')
+}
+
 const validatedHostLineageNode = (value) => {
   const required = [
     'file_id',
@@ -2154,7 +2196,8 @@ const validatedHostLineageEnvironment = (value) => {
         'library_rank',
         'library_scope',
         'built_for_runtime',
-        'priority'
+        'priority',
+        'source'
       ]
       if (
         !hasHostLineageKeys(entry, packageRequired, packageOptional) ||
@@ -2193,7 +2236,8 @@ const validatedHostLineageEnvironment = (value) => {
         ...(entry.built_for_runtime !== undefined
           ? { built_for_runtime: entry.built_for_runtime }
           : {}),
-        ...(entry.priority !== undefined ? { priority: entry.priority } : {})
+        ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
+        ...(entry.source !== undefined ? { source: validatedHostPackageSource(entry.source) } : {})
       })
     })
   )
@@ -2251,6 +2295,7 @@ const validatedHostLineageEnvironment = (value) => {
                   'renv',
                   'pak',
                   'biocmanager',
+                  'github',
                   'unknown'
                 ].includes(attempt.installer) ||
                 !Array.isArray(attempt.packages) ||
@@ -2305,7 +2350,8 @@ const validatedHostLineageEnvironment = (value) => {
                     'before_version',
                     'after_version',
                     'library_rank',
-                    'library_scope'
+                    'library_scope',
+                    'source'
                   ]
                   if (
                     !hasHostLineageKeys(change, changeRequired, changeOptional) ||
@@ -2326,13 +2372,16 @@ const validatedHostLineageEnvironment = (value) => {
                   ) {
                     throw new Error('host.lineage.get returned an invalid package change')
                   }
-                  return Object.freeze(
-                    Object.fromEntries(
+                  return Object.freeze({
+                    ...Object.fromEntries(
                       [...changeRequired, ...changeOptional]
-                        .filter((key) => change[key] !== undefined)
+                        .filter((key) => key !== 'source' && change[key] !== undefined)
                         .map((key) => [key, change[key]])
-                    )
-                  )
+                    ),
+                    ...(change.source !== undefined
+                      ? { source: validatedHostPackageSource(change.source) }
+                      : {})
+                  })
                 })
               )
             : undefined
@@ -2546,21 +2595,25 @@ async function hostLineageGraph(versionId, options = {}) {
   if (arguments.length < 1 || arguments.length > 2) {
     throw new TypeError('host.lineage.graph accepts versionId and at most one options object')
   }
-  return validatedHostLineageGraph(
-    await lineageRpc('graph', {
-      version_id: versionId,
-      options: remappedHostObject(options, 'host.lineage.graph options', {
-        direction: 'direction',
-        maxDepth: 'max_depth',
-        maxNodes: 'max_nodes'
+  return camelCasedHostValue(
+    validatedHostLineageGraph(
+      await lineageRpc('graph', {
+        version_id: versionId,
+        options: remappedHostObject(options, 'host.lineage.graph options', {
+          direction: 'direction',
+          maxDepth: 'max_depth',
+          maxNodes: 'max_nodes'
+        })
       })
-    })
+    )
   )
 }
 
 async function hostLineageGet(versionId) {
   if (arguments.length !== 1) throw new TypeError('host.lineage.get accepts one versionId')
-  return validatedHostLineageVersion(await lineageRpc('get', { version_id: versionId }))
+  return camelCasedHostValue(
+    validatedHostLineageVersion(await lineageRpc('get', { version_id: versionId }))
+  )
 }
 
 const hostLineage = Object.freeze({ graph: hostLineageGraph, get: hostLineageGet })
@@ -2593,9 +2646,9 @@ async function hostFramesList(options = {}) {
   ) {
     throw new Error('host.frames.list returned an invalid result')
   }
-  return Object.freeze({
+  return camelCasedHostValue({
     project_id: result.project_id,
-    frames: Object.freeze(result.frames.map(validatedHostFrame)),
+    frames: result.frames.map(validatedHostFrame),
     total_count: result.total_count,
     ...(result.next_cursor !== undefined ? { next_cursor: result.next_cursor } : {})
   })
@@ -2627,13 +2680,13 @@ async function hostFramesGet(frameId, options = {}) {
   if (frame.frame_id !== frameId || frame.session_id !== session.session_id) {
     throw new Error('host.frames.get returned an invalid result')
   }
-  return Object.freeze({
+  return camelCasedHostValue({
     project_id: result.project_id,
     session,
     frame,
     branch: validatedHostFrameBranch(result.branch),
     transcript: validatedHostFrameTranscript(result.transcript),
-    runtime_segments: Object.freeze(result.runtime_segments.map(validatedHostRuntimeSegment))
+    runtime_segments: result.runtime_segments.map(validatedHostRuntimeSegment)
   })
 }
 
@@ -2703,12 +2756,27 @@ const hostSessions = Object.freeze({ list: hostSessionsList, inspect: hostSessio
 // token-isolation reasons documented on host.mcp above.
 async function computeRpc(params) {
   if (!RPC_ENDPOINT) throw new Error('host.compute is unavailable: connector RPC endpoint not set')
-  const res = await capturedRpcFetch(RPC_ENDPOINT, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
-    body: JSON.stringify({ method: 'computeCall', params })
-  })
-  const body = await res.json().catch(() => ({}))
+  const isRetryableSubmit = params?.op === 'submit_job' && typeof params.invocation_id === 'string'
+  const request = async () => {
+    const res = await capturedRpcFetch(RPC_ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+      body: JSON.stringify({ method: 'computeCall', params })
+    })
+    const body = await res.json().catch((error) => {
+      if (isRetryableSubmit && res.ok) throw error
+      return {}
+    })
+    return { res, body }
+  }
+  let response
+  try {
+    response = await request()
+  } catch (error) {
+    if (!isRetryableSubmit) throw error
+    response = await request()
+  }
+  const { res, body } = response
   if (!res.ok || body.error) {
     throw computeError(body.error || 'host.compute HTTP ' + res.status)
   }
@@ -2819,20 +2887,20 @@ async function delegateRpc(request, options = {}) {
   return {
     kind: outcome.kind,
     children: (outcome.children || []).map((child) => ({
-      frame_id: child.frameId,
-      attempt_id: child.attemptId,
+      frameId: child.frameId,
+      attemptId: child.attemptId,
       ...(child.name !== undefined ? { name: child.name } : {}),
-      ...(child.agentName !== undefined ? { agent_name: child.agentName } : {}),
+      ...(child.agentName !== undefined ? { agentName: child.agentName } : {}),
       status: child.status,
-      ...(child.terminalMessageId ? { terminal_message_id: child.terminalMessageId } : {}),
+      ...(child.terminalMessageId ? { terminalMessageId: child.terminalMessageId } : {}),
       ...(child.response !== undefined ? { response: child.response } : {}),
-      ...(child.status !== 'running' ? { artifacts_created: child.artifactsCreated || [] } : {}),
-      ...(child.cancellationReason ? { cancellation_reason: child.cancellationReason } : {}),
+      ...(child.status !== 'running' ? { artifactsCreated: child.artifactsCreated || [] } : {}),
+      ...(child.cancellationReason ? { cancellationReason: child.cancellationReason } : {}),
       ...(child.error ? { error: child.error } : {}),
       ...(child.structuredOutputUnsatisfied !== undefined
-        ? { structured_output_unsatisfied: child.structuredOutputUnsatisfied }
+        ? { structuredOutputUnsatisfied: child.structuredOutputUnsatisfied }
         : {}),
-      ...(child.structuredOutput !== undefined ? { structured_output: child.structuredOutput } : {})
+      ...(child.structuredOutput !== undefined ? { structuredOutput: child.structuredOutput } : {})
     }))
   }
 }
@@ -2890,7 +2958,7 @@ async function hostStopChild(frameIds) {
     throw hostDelegationError('stopChild', body.error || 'HTTP ' + res.status)
   }
   return (body.result || []).map((child) => ({
-    frame_id: child.frameId,
+    frameId: child.frameId,
     status: child.status
   }))
 }
@@ -2918,23 +2986,23 @@ async function delegatedObservationRpc(op, selectors = undefined, options = unde
     throw hostDelegationError(op, body.error || 'HTTP ' + res.status)
   }
   return (body.result || []).map((child) => ({
-    frame_id: child.frameId,
-    attempt_id: child.attemptId,
+    frameId: child.frameId,
+    attemptId: child.attemptId,
     ...(child.title !== undefined ? { title: child.title } : {}),
     ...(child.name !== undefined ? { name: child.name } : {}),
-    ...(child.agentName !== undefined ? { agent_name: child.agentName } : {}),
+    ...(child.agentName !== undefined ? { agentName: child.agentName } : {}),
     status: child.status,
-    ...(child.terminalMessageId ? { terminal_message_id: child.terminalMessageId } : {}),
+    ...(child.terminalMessageId ? { terminalMessageId: child.terminalMessageId } : {}),
     ...(child.response !== undefined ? { response: child.response } : {}),
     ...(op === 'collect' && child.status !== 'running'
-      ? { artifacts_created: child.artifactsCreated || [] }
+      ? { artifactsCreated: child.artifactsCreated || [] }
       : {}),
-    ...(child.cancellationReason ? { cancellation_reason: child.cancellationReason } : {}),
+    ...(child.cancellationReason ? { cancellationReason: child.cancellationReason } : {}),
     ...(child.error ? { error: child.error } : {}),
     ...(child.structuredOutputUnsatisfied !== undefined
-      ? { structured_output_unsatisfied: child.structuredOutputUnsatisfied }
+      ? { structuredOutputUnsatisfied: child.structuredOutputUnsatisfied }
       : {}),
-    ...(child.structuredOutput !== undefined ? { structured_output: child.structuredOutput } : {})
+    ...(child.structuredOutput !== undefined ? { structuredOutput: child.structuredOutput } : {})
   }))
 }
 
@@ -2973,7 +3041,8 @@ async function hostCollect(selectors, options = undefined) {
     options === undefined
       ? undefined
       : remappedHostObject(options, 'host.collect options', {
-          timeoutSeconds: 'timeout_seconds'
+          timeoutSeconds: 'timeout_seconds',
+          returnWhen: 'return_when'
         })
   return delegatedObservationRpc('collect', normalizedSelectors, normalizedOptions)
 }
@@ -3007,7 +3076,7 @@ async function hostSendFrameMessage(target, message, options = undefined) {
   if (!res.ok || body.error) {
     throw hostDelegationError('sendFrameMessage', body.error || 'HTTP ' + res.status)
   }
-  return body.result
+  return camelCasedHostValue(body.result)
 }
 
 async function hostMessageReceipt(selector, options = undefined) {
@@ -3045,7 +3114,7 @@ async function delegatedMessageRpc(op, publicMethod, params) {
   if (!res.ok || body.error) {
     throw hostDelegationError(publicMethod, body.error || 'HTTP ' + res.status)
   }
-  return body.result
+  return camelCasedHostValue(body.result)
 }
 
 // host.agents namespace. JavaScript methods, inputs, and returned records use camelCase. The private
@@ -3309,6 +3378,7 @@ const hostCompute = {
         }
         return computeRpc({
           op: 'submit_job',
+          invocation_id: randomUUID(),
           provider_id: providerId,
           intent,
           command,

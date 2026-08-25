@@ -11,7 +11,7 @@ import {
 
 describe('ApplicationEventHub', () => {
   it('binds known channels to their payload types', () => {
-    expectTypeOf<ApplicationEventMap['acp:event']>().toEqualTypeOf<AcpRuntimeEvent>()
+    expectTypeOf<ApplicationEventMap['acp:event']>().toEqualTypeOf<readonly AcpRuntimeEvent[]>()
     expectTypeOf<
       ApplicationEventMap['acp:agent-runtime-update']
     >().toEqualTypeOf<AcpAgentRuntimeUpdate>()
@@ -54,14 +54,14 @@ describe('ApplicationEventHub', () => {
       level: 'info',
       sessionId: 'session-1'
     }
-    hub.publish('acp:event', event)
+    hub.publish('acp:event', [event])
 
     expect(deliveries).toEqual(['first:acp:event', 'second:acp:event'])
-    expect(first).toHaveBeenCalledWith({ channel: 'acp:event', payload: event })
-    expect(second).toHaveBeenCalledWith({ channel: 'acp:event', payload: event })
+    expect(first).toHaveBeenCalledWith({ channel: 'acp:event', payload: [event] })
+    expect(second).toHaveBeenCalledWith({ channel: 'acp:event', payload: [event] })
   })
 
-  it('preserves live Set cancellation and failure propagation semantics', () => {
+  it('preserves live Set cancellation while isolating subscriber failures', () => {
     const hub = new ApplicationEventHub()
     const skipped = vi.fn()
     const removeSkipped = hub.subscribe(skipped)
@@ -77,9 +77,12 @@ describe('ApplicationEventHub', () => {
     removeSkipped()
     hub.subscribe(skipped)
 
-    expect(() => hub.publish('specialist:catalog-changed', undefined)).toThrow(failure)
+    expect(() => hub.publish('specialist:catalog-changed', undefined)).not.toThrow()
     expect(skipped).not.toHaveBeenCalled()
-    expect(afterFailure).not.toHaveBeenCalled()
+    expect(afterFailure).toHaveBeenCalledWith({
+      channel: 'specialist:catalog-changed',
+      payload: undefined
+    })
   })
 
   it('clears subscriptions and ignores late work after disposal', () => {

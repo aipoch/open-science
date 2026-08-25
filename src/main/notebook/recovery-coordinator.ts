@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { lstat, realpath, rm } from 'node:fs/promises'
+import { isAbsolute, join, relative, sep } from 'node:path'
 
 import {
   operationJournalPath,
@@ -9,8 +9,17 @@ import {
   RuntimeOperationJournal
 } from './operation-journal'
 import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
-import { addRepairRequired } from './runtime-paths'
+import { verifyExecutable } from './provisioner-runtime'
+import { addRepairRequired, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+
+const isPathInside = (root: string, candidate: string): boolean => {
+  const nested = relative(root, candidate)
+  return nested !== '' && !isAbsolute(nested) && nested !== '..' && !nested.startsWith(`..${sep}`)
+}
+
+const isDirectChild = (root: string, candidate: string): boolean =>
+  isPathInside(root, candidate) && !relative(root, candidate).includes(sep)
 
 export type NotebookRecoveryReadiness =
   'not-started' | 'recovering' | 'ready' | 'failed' | 'disposed'
@@ -187,9 +196,70 @@ export class NotebookRecoveryCoordinator {
         if (record.targetPath) await rm(record.targetPath, { recursive: true, force: true })
       },
       verifyOrRebuildEnv: async (record) => {
-        if (!record.targetPath || !existsSync(record.targetPath)) return
-        if (existsSync(join(record.targetPath, 'conda-meta'))) return
-        await rm(record.targetPath, { recursive: true, force: true })
+        const targetPath = record.targetPath
+        if (!targetPath) return
+        const rejectUnsafe = (message: string): never => {
+          nextStartupBlockedPrefixes.add(targetPath)
+          nextStartupBlockedRuntimeIds.add(record.runtimeId)
+          throw new Error(message)
+        }
+        const envsRoot = join(this.runtimeRoot, 'envs')
+        if (!isDirectChild(envsRoot, targetPath)) {
+          rejectUnsafe('Interrupted environment target is outside the managed runtime root.')
+        }
+        const targetStat = await lstat(targetPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return undefined
+          return rejectUnsafe('Interrupted environment target could not be validated.')
+        })
+        if (!targetStat) return
+        if (targetStat.isSymbolicLink()) {
+          rejectUnsafe('Interrupted environment target must not be a symbolic link.')
+        }
+        const [canonicalRuntimeRoot, canonicalEnvsRoot, canonicalPrefix] = await Promise.all([
+          realpath(this.runtimeRoot),
+          realpath(envsRoot),
+          realpath(targetPath)
+        ]).catch(() => rejectUnsafe('Interrupted environment paths could not be validated.'))
+        if (
+          canonicalEnvsRoot !== join(canonicalRuntimeRoot, 'envs') ||
+          !isDirectChild(canonicalEnvsRoot, canonicalPrefix)
+        ) {
+          rejectUnsafe('Interrupted environment target escapes the managed runtime root.')
+        }
+        const language =
+          record.phase.endsWith('-r') ||
+          (record.phase === 'restore' && record.runtimeId === DEFAULT_R_ENV)
+            ? 'r'
+            : record.phase.endsWith('-python') ||
+                (record.phase === 'restore' && record.runtimeId === DEFAULT_PY_ENV)
+              ? 'python'
+              : undefined
+        const expectedBin =
+          language === 'r'
+            ? rBin(targetPath)
+            : language === 'python'
+              ? pythonBin(targetPath)
+              : undefined
+        const bin = expectedBin
+          ? existsSync(expectedBin)
+            ? expectedBin
+            : undefined
+          : [pythonBin(targetPath), rBin(targetPath)].find((candidate) => existsSync(candidate))
+        if (existsSync(join(targetPath, 'conda-meta')) && bin) {
+          const canonicalBin = await realpath(bin).catch(() =>
+            rejectUnsafe('Interrupted environment executable could not be validated.')
+          )
+          if (!isPathInside(canonicalPrefix, canonicalBin)) {
+            rejectUnsafe('Interrupted environment executable escapes the managed runtime root.')
+          }
+          try {
+            await verifyExecutable(canonicalBin, { prefix: canonicalPrefix })
+            return
+          } catch {
+            // An interrupted mutation can leave an interpreter file before the prefix is runnable.
+          }
+        }
+        await rm(canonicalPrefix, { recursive: true, force: true })
       },
       markRepairRequired: async (record) => {
         if (!record.runtimeId) return

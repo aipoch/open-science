@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, forwardRef, useCallback, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { waitFor } from '@testing-library/react'
 import type { PropsWithChildren } from 'react'
 import {
   useSessionStore,
@@ -22,6 +23,11 @@ import type {
   HandoffLifecycleEventSource
 } from '../../../../shared/handoff-lifecycle'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
+import type {
+  NotebookRunRecord,
+  NotebookSessionReference,
+  NotebookSessionState
+} from '../../../../shared/notebook'
 import {
   createLinearConversationGraph,
   projectConversationMessage,
@@ -32,6 +38,8 @@ import {
   createInitialGrantedFoldersState,
   useGrantedFoldersStore
 } from '@/stores/granted-folders-store'
+import { createInitialSessionJobState, useSessionJobStore } from '@/stores/session-job-store'
+import type { JobSummary } from '../../../../shared/compute'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -83,6 +91,44 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   )
 }))
 
+vi.mock('./SessionMessageMarkdown', () => ({
+  SessionMessageMarkdown: ({
+    content,
+    isAnimating,
+    artifacts,
+    onPreviewArtifact,
+    onPreviewArtifactModal
+  }: {
+    content: string
+    isAnimating?: boolean
+    artifacts: NonNullable<ChatSession['artifacts']>
+    onPreviewArtifact: (artifact: NonNullable<ChatSession['artifacts']>[number]) => void
+    onPreviewArtifactModal: (artifact: NonNullable<ChatSession['artifacts']>[number]) => void
+  }) => (
+    <div data-testid="presented-agent-markdown" data-animating={isAnimating || undefined}>
+      {content}
+      {content === 'Markdown artifact controls' && artifacts[0] ? (
+        <>
+          <button
+            type="button"
+            data-testid="markdown-artifact-link"
+            onClick={() => onPreviewArtifact(artifacts[0]!)}
+          >
+            Open in panel
+          </button>
+          <button
+            type="button"
+            data-testid="markdown-artifact-image"
+            onClick={() => onPreviewArtifactModal(artifacts[0]!)}
+          >
+            Open in modal
+          </button>
+        </>
+      ) : null}
+    </div>
+  )
+}))
+
 vi.mock('@/components/ui/message-scroller', () => {
   const Wrapper = ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>
   const Viewport = forwardRef<
@@ -121,11 +167,14 @@ vi.mock('@/components/ui/message-scroller', () => {
   const Button = forwardRef<
     HTMLButtonElement,
     PropsWithChildren<
-      React.ButtonHTMLAttributes<HTMLButtonElement> & { direction?: 'start' | 'end' }
+      React.ButtonHTMLAttributes<HTMLButtonElement> & {
+        direction?: 'start' | 'end'
+        size?: string
+      }
     >
-  >(function MockMessageScrollerButton({ children, direction = 'end', ...props }, ref) {
+  >(function MockMessageScrollerButton({ children, direction = 'end', size, ...props }, ref) {
     return (
-      <button ref={ref} type="button" data-direction={direction} {...props}>
+      <button ref={ref} type="button" data-direction={direction} data-size={size} {...props}>
         {children ?? `Scroll to ${direction}`}
       </button>
     )
@@ -137,7 +186,12 @@ vi.mock('@/components/ui/message-scroller', () => {
     MessageScrollerViewport: Viewport,
     MessageScrollerContent: Content,
     MessageScrollerItem: Item,
-    MessageScrollerButton: Button
+    MessageScrollerButton: Button,
+    useMessageScroller: () => ({
+      scrollToEnd: vi.fn(),
+      scrollToMessage: vi.fn(),
+      scrollToStart: vi.fn()
+    })
   }
 })
 
@@ -148,6 +202,7 @@ vi.mock('@/lib/utils', () => ({
 }))
 
 const upsertAndActivateItem = vi.fn()
+const openFileDialog = vi.fn()
 const listGrantedRoots = vi.fn()
 const createSessionPlanPreviewItem = vi.fn((sessionId: string, projectId: string) => ({
   id: `tool:${sessionId}:plan`,
@@ -169,10 +224,25 @@ const createSessionSubagentsPreviewItem = vi.fn(
   })
 )
 const announceWindowFindReady = vi.fn(() => () => undefined)
+const announceWindowFindContentReady = vi.fn()
+let showWindowFindListener: (() => void) | undefined
+const onShowWindowFind = vi.fn((listener: () => void) => {
+  showWindowFindListener = listener
+  return () => {
+    if (showWindowFindListener === listener) showWindowFindListener = undefined
+  }
+})
+let hideWindowFindListener: (() => void) | undefined
+const onHideWindowFind = vi.fn((listener: () => void) => {
+  hideWindowFindListener = listener
+  return () => {
+    if (hideWindowFindListener === listener) hideWindowFindListener = undefined
+  }
+})
 
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
-    getState: () => ({ upsertAndActivateItem })
+    getState: () => ({ openFileDialog, upsertAndActivateItem })
   },
   createSessionPlanPreviewItem,
   createSessionSubagentsPreviewItem
@@ -280,10 +350,17 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
   beforeEach(() => {
     upsertAndActivateItem.mockClear()
+    openFileDialog.mockClear()
     listGrantedRoots.mockReset().mockResolvedValue([])
     useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
+    useSessionJobStore.setState(createInitialSessionJobState())
     createSessionSubagentsPreviewItem.mockClear()
     announceWindowFindReady.mockClear()
+    announceWindowFindContentReady.mockClear()
+    onShowWindowFind.mockClear()
+    showWindowFindListener = undefined
+    onHideWindowFind.mockClear()
+    hideWindowFindListener = undefined
     flushSessionPersistenceMock.mockReset().mockResolvedValue(undefined)
     useReviewStore.setState(createInitialReviewState())
     container = document.createElement('div')
@@ -322,7 +399,10 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         getForSession: vi.fn().mockResolvedValue([])
       },
       window: {
-        announceWindowFindReady
+        announceWindowFindReady,
+        announceWindowFindContentReady,
+        onShowWindowFind,
+        onHideWindowFind
       }
     } as unknown as Window['api']
   })
@@ -375,6 +455,97 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(userRow?.getAttribute('data-scroll-anchor')).toBe('true')
     const agentRow = content?.querySelector('[data-message-id="reply-structure"]')
     expect(agentRow?.getAttribute('data-scroll-anchor')).toBeNull()
+  })
+
+  it('keeps more than one targeted batch of near-viewport historical figures stable while rows stay collapsed', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const notebookReference: NotebookSessionReference = {
+      sessionId: 'session-1',
+      projectId: 'default',
+      workspaceCwd: '/workspace',
+      notebookSessionRoot: '/workspace/.notebook',
+      dataRoot: '/workspace/data',
+      runtimeRoot: '/workspace/runtime',
+      runJsonPath: '/workspace/run.json'
+    }
+    const historicalRuns: NotebookRunRecord[] = Array.from({ length: 21 }, (_, index) => ({
+      runId: `historical-run-${index + 1}`,
+      executionInvocationId: `invocation-${index + 1}`,
+      cellId: `cell-${index + 1}`,
+      source: 'agent',
+      kernelKind: 'r',
+      script: `plot(${index + 1})`,
+      status: 'completed',
+      startedAt: index + 1,
+      endedAt: index + 2,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }],
+      artifacts: [],
+      workingFiles: []
+    }))
+    const makeNotebookState = (runs: NotebookRunRecord[]): NotebookSessionState => ({
+      id: 'notebook-1',
+      sessionId: notebookReference.sessionId,
+      cwd: notebookReference.workspaceCwd,
+      notebookSessionRoot: notebookReference.notebookSessionRoot,
+      dataRoot: notebookReference.dataRoot,
+      runtimeRoot: notebookReference.runtimeRoot,
+      kernelStatus: 'idle',
+      runJsonPath: notebookReference.runJsonPath,
+      cells: [],
+      runCount: 101,
+      latestRunEnvironments: {},
+      runs,
+      recentRuns: runs,
+      environments: []
+    })
+    const loadNotebookState = vi.fn(
+      async (request: { runIds?: string[] }): Promise<NotebookSessionState> =>
+        makeNotebookState(
+          historicalRuns.filter((run) => request.runIds?.includes(run.runId) === true)
+        )
+    )
+    window.api = {
+      ...window.api,
+      notebook: {
+        state: loadNotebookState,
+        onChanged: vi.fn(() => vi.fn())
+      }
+    } as unknown as Window['api']
+    const activities = historicalRuns.map((run, index) =>
+      createActivity({
+        id: `notebook-tool-${index + 1}`,
+        status: 'completed',
+        providerToolName: 'mcp__open-science-notebook__notebook_execute',
+        executionInvocationId: run.executionInvocationId,
+        rawInput: { code: run.script, kernelKind: run.kernelKind },
+        rawOutput: { runId: run.runId, status: run.status }
+      })
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', activities })}
+          notebookReference={notebookReference}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    await waitFor(() => {
+      const targetedRunIds = loadNotebookState.mock.calls.flatMap(
+        ([request]) => request.runIds ?? []
+      )
+      expect(new Set(targetedRunIds)).toEqual(new Set(historicalRuns.map((run) => run.runId)))
+    })
+    await waitFor(() =>
+      expect(
+        container.querySelectorAll('[data-testid="notebook-tool-figure-button"]')
+      ).toHaveLength(21)
+    )
+    expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
   })
 
   it('renders later tools in real time while the assistant reply is still pacing', async () => {
@@ -1875,7 +2046,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(lifecycle?.textContent).toContain('Continued with Data analyst')
   })
 
-  it('upserts and activates the clicked artifact in the preview store, scoped to the active session', async () => {
+  it('opens a generated artifact from both its card and hover icon', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({
       id: 'session-42',
@@ -1933,6 +2104,69 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       size: 2048,
       mtimeMs: 1710000000100
     })
+
+    upsertAndActivateItem.mockClear()
+    const openIcon = card?.querySelector<HTMLElement>('[data-slot="generated-artifact-open-icon"]')
+    expect(openIcon).not.toBeNull()
+
+    await act(async () => {
+      openIcon?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(upsertAndActivateItem).toHaveBeenCalledTimes(1)
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'artifact-1', sessionId: 'session-42' })
+    )
+  })
+
+  it('routes Markdown artifact links to the panel and Markdown artifact images to the dialog', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'prompt-1' }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Markdown artifact controls',
+          artifactIds: ['artifact-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'artifact-1',
+          kind: 'managed-file',
+          path: '/workspace/report.png',
+          name: 'report.png',
+          mimeType: 'image/png',
+          size: 2048,
+          mtimeMs: 1710000000100
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="markdown-artifact-link"]')?.click()
+    })
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'artifact-1', sessionId: 'session-42' })
+    )
+    expect(openFileDialog).not.toHaveBeenCalled()
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="markdown-artifact-image"]')?.click()
+    })
+    expect(openFileDialog).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'artifact-1', sessionId: 'session-42' })
+    )
   })
 
   it('resolves copied generated Version metadata and previews the source Version owner', async () => {
@@ -2836,8 +3070,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       )
     })
 
-    // The find bar is an Electron overlay owned by main; the Workspace's only job is to announce it is
-    // mounted and searchable so main intercepts Cmd/Ctrl+F.
+    // The find bar is an Electron overlay owned by main; the Workspace announces that its transcript
+    // is mounted and searchable so main intercepts Cmd/Ctrl+F.
     expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
   })
 
@@ -2895,7 +3129,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(firstMessageButton?.getAttribute('aria-hidden')).toBe('true')
     expect(firstMessageButton?.getAttribute('tabindex')).toBe('-1')
     expect(firstMessageButton?.classList.contains('gap-1')).toBe(true)
+    expect(firstMessageButton?.classList.contains('px-3')).toBe(true)
+    expect(firstMessageButton?.classList.contains('min-h-11')).toBe(false)
     expect(lastMessageButton).not.toBeNull()
+    expect(lastMessageButton?.getAttribute('data-size')).toBe('icon-lg')
+    expect(lastMessageButton?.classList.contains('rounded-full')).toBe(true)
     for (const button of [firstMessageButton, lastMessageButton]) {
       expect(button?.classList.contains('border-transparent')).toBe(true)
       expect(button?.classList.contains('shadow-card')).toBe(true)
@@ -3311,6 +3549,385 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         indicator.classList.contains('scale-x-[0.4]')
       )
     ).toBe(true)
+  })
+
+  it('mounts a bounded long transcript and reveals an older run on demand', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `message-${index + 1}`,
+        role: index % 2 === 0 ? 'user' : 'agent',
+        content:
+          index === 0
+            ? 'oldest transcript sentinel'
+            : index === 239
+              ? 'newest transcript sentinel'
+              : `transcript message ${index + 1}`,
+        responseToMessageId: index % 2 === 0 ? undefined : `message-${index}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('newest transcript sentinel')
+    expect(container.textContent).not.toContain('oldest transcript sentinel')
+    expect(agentMarkdownRenderMock.mock.calls.length).toBeLessThan(80)
+
+    await act(async () => showWindowFindListener?.())
+    await act(async () => hideWindowFindListener?.())
+    expect(container.textContent).not.toContain('oldest transcript sentinel')
+
+    const appendedMessages = [
+      ...messages,
+      ...Array.from({ length: 80 }, (_, offset) => {
+        const index = messages.length + offset
+        return createMessage({
+          id: `message-${index + 1}`,
+          role: index % 2 === 0 ? 'user' : 'agent',
+          content:
+            index === 319
+              ? 'newest appended transcript sentinel'
+              : `transcript message ${index + 1}`,
+          responseToMessageId: index % 2 === 0 ? undefined : `message-${index}`,
+          createdAt: 1710000000000 + index,
+          updatedAt: 1710000000000 + index
+        })
+      })
+    ]
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages: appendedMessages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    expect(container.textContent).toContain('newest appended transcript sentinel')
+    expect(container.textContent).not.toContain('transcript message 161')
+
+    const firstRun = document.body.querySelector<HTMLButtonElement>('[aria-label^="Go to run 1:"]')
+    expect(firstRun).not.toBeNull()
+    await act(async () => firstRun?.click())
+
+    expect(container.textContent).toContain('oldest transcript sentinel')
+  })
+
+  it('binds a long session job feed without repeatedly scanning every activity', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const itemCount = 120
+    let rawOutputReads = 0
+    const activities = Array.from({ length: itemCount }, (_, index) => {
+      const activity = createActivity({
+        id: `job-activity-${index}`,
+        status: 'completed',
+        sortIndex: index,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+      Object.defineProperty(activity, 'rawOutput', {
+        enumerable: true,
+        get: () => {
+          rawOutputReads += 1
+          return { result: JSON.stringify({ job_id: `job-${index}` }) }
+        }
+      })
+      return activity
+    })
+    const jobs = Array.from({ length: itemCount }, (_, index): JobSummary => ({
+      job_id: `job-${index}`,
+      provider_id: 'ssh:test',
+      display_name: 'Test host',
+      shape: 'direct_ssh',
+      session_id: 'session-1',
+      status: 'success',
+      intent: `Job ${index}`,
+      created_at: 1710000000000 + index,
+      started_at: 1710000000000 + index,
+      finished_at: 1710000001000 + index,
+      exit_code: 0,
+      error_code: undefined,
+      remote_workdir: '/workspace',
+      stdout_tail: undefined,
+      stderr_tail: undefined,
+      notified_at: undefined,
+      notification_consumed_at: undefined
+    }))
+    useSessionJobStore.setState({
+      jobsById: new Map(jobs.map((job) => [job.job_id, job])),
+      hydratedSessionId: 'session-1',
+      isLoaded: true
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', activities })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    expect(rawOutputReads).toBeLessThanOrEqual(itemCount * 8)
+  })
+
+  it('renders a long conversation graph without rescanning it for every visible revision', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const itemCount = 240
+    const messages = Array.from({ length: itemCount }, (_, index) =>
+      createMessage({
+        id: `graph-message-${index}`,
+        role: index % 2 === 0 ? 'user' : 'agent',
+        content: `Graph message ${index}`,
+        responseToMessageId: index % 2 === 0 ? undefined : `graph-message-${index - 1}`,
+        sortIndex: index,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+    const conversationGraph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages,
+      frameworkId: 'codex',
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000 + itemCount
+    })
+    let graphRoleReads = 0
+    for (const message of conversationGraph.messages) {
+      const role = message.role
+      Object.defineProperty(message, 'role', {
+        enumerable: true,
+        get: () => {
+          graphRoleReads += 1
+          return role
+        }
+      })
+    }
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', conversationGraph, messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    expect(graphRoleReads).toBeLessThanOrEqual(itemCount * 4)
+  })
+
+  it('prefetches older transcript items before upward scrolling reaches the top edge', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `prefetch-message-${index + 1}`,
+        role: index % 2 === 0 ? 'user' : 'agent',
+        content:
+          index === 159 ? 'prefetched transcript sentinel' : `prefetch transcript ${index + 1}`,
+        responseToMessageId: index % 2 === 0 ? undefined : `prefetch-message-${index}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).not.toContain('prefetched transcript sentinel')
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, value: 10_000 },
+      scrollTop: { configurable: true, writable: true, value: 900 }
+    })
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+
+    if (viewport) viewport.scrollTop = 700
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+
+    expect(container.textContent).toContain('prefetched transcript sentinel')
+  })
+
+  it('reveals the full transcript only while whole-window find is open', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 120 }, (_, index) =>
+      createMessage({
+        id: `message-${index + 1}`,
+        role: index % 2 === 0 ? 'user' : 'agent',
+        content: index === 0 ? 'searchable oldest sentinel' : `transcript message ${index + 1}`,
+        responseToMessageId: index % 2 === 0 ? undefined : `message-${index}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).not.toContain('searchable oldest sentinel')
+    await act(async () => showWindowFindListener?.())
+    expect(container.textContent).toContain('searchable oldest sentinel')
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
+
+    const streamedMessages = [
+      ...messages,
+      createMessage({
+        id: 'message-121',
+        role: 'agent',
+        content: 'streamed searchable update',
+        responseToMessageId: 'message-119',
+        createdAt: 1710000000120,
+        updatedAt: 1710000000120
+      })
+    ]
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'running', messages: streamedMessages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    expect(container.textContent).toContain('streamed searchable update')
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
+
+    const nextSessionMessages = messages.map((message, index) => ({
+      ...message,
+      id: `next-${message.id}`,
+      content: index === 0 ? 'next session oldest sentinel' : message.content
+    }))
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({
+            id: 'session-2',
+            status: 'idle',
+            messages: nextSessionMessages
+          })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    expect(container.textContent).toContain('next session oldest sentinel')
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(2)
+
+    await act(async () => hideWindowFindListener?.())
+    expect(container.textContent).not.toContain('next session oldest sentinel')
+    expect(container.textContent).toContain('transcript message 120')
+  }, 30_000)
+
+  it('waits for the presentation barrier to clear before announcing find readiness', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const history = Array.from({ length: 120 }, (_, index) =>
+      createMessage({
+        id: `history-${index + 1}`,
+        role: index % 2 === 0 ? 'user' : 'agent',
+        content:
+          index === 0
+            ? 'presentation history oldest sentinel'
+            : `presentation history ${index + 1}`,
+        responseToMessageId: index % 2 === 0 ? undefined : `history-${index}`,
+        createdAt: index
+      })
+    )
+    const prompt = createMessage({ id: 'prompt-find-barrier', createdAt: 120 })
+    const streamingAnswer = createMessage({
+      id: 'answer-find-barrier',
+      role: 'agent',
+      content: 'Hold find readiness until this presentation finishes.',
+      status: 'streaming',
+      streamId: 'stream-find-barrier',
+      responseToMessageId: prompt.id,
+      createdAt: 121
+    })
+    const bufferedPrompt = createMessage({ id: 'prompt-behind-find-barrier', createdAt: 122 })
+    const bufferedAnswer = createMessage({
+      id: 'answer-behind-find-barrier',
+      role: 'agent',
+      content: 'Searchable only after the presentation barrier clears.',
+      responseToMessageId: bufferedPrompt.id,
+      createdAt: 123
+    })
+    const render = async (messages: ChatMessage[]): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({
+              messages,
+              activeRun: { promptMessageId: prompt.id, startedAt: 120 }
+            })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render(history)
+    await render([...history, prompt])
+    await render([...history, prompt, streamingAnswer])
+    await render([...history, prompt, streamingAnswer, bufferedPrompt, bufferedAnswer])
+
+    expect(container.textContent).not.toContain('presentation history oldest sentinel')
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, value: 10_000 },
+      scrollTop: { configurable: true, writable: true, value: 900 }
+    })
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    if (viewport) viewport.scrollTop = 700
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    expect(container.textContent).not.toContain('presentation history oldest sentinel')
+
+    const oldestRun = document.body.querySelector<HTMLButtonElement>('[aria-label^="Go to run 1:"]')
+    expect(oldestRun).not.toBeNull()
+    expect(oldestRun?.disabled).toBe(true)
+    await act(async () => showWindowFindListener?.())
+    expect(container.textContent).not.toContain('Searchable only after the presentation barrier')
+    expect(announceWindowFindContentReady).not.toHaveBeenCalled()
+
+    await act(async () => vi.advanceTimersByTimeAsync(5_000))
+    expect(container.textContent).toContain('presentation history oldest sentinel')
+    expect(container.textContent).toContain('Searchable only after the presentation barrier')
+    expect(oldestRun?.disabled).toBe(false)
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
   })
 
   it('does not leave the active Plan card in the transcript', async () => {

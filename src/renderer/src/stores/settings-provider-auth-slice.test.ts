@@ -30,6 +30,10 @@ type ProviderCommands = Pick<
   | 'cancelIsolatedClaudeLogin'
   | 'logoutIsolatedClaude'
   | 'refreshProviderModels'
+  | 'beginXaiOAuthLogin'
+  | 'waitXaiOAuthLogin'
+  | 'cancelXaiOAuthLogin'
+  | 'logoutXaiOAuth'
 >
 
 type CommandMocks = { [Command in keyof ProviderCommands]: Mock }
@@ -105,6 +109,15 @@ const createCommands = (): CommandMocks => ({
   loginIsolatedClaudeBrowser: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   cancelIsolatedClaudeLogin: vi.fn().mockResolvedValue(undefined),
   logoutIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
+  beginXaiOAuthLogin: vi.fn().mockResolvedValue({
+    userCode: 'ABCD-EFGH',
+    verificationUri: 'https://auth.x.ai/activate',
+    expiresAt: Date.now() + 60_000,
+    intervalSeconds: 5
+  }),
+  waitXaiOAuthLogin: vi.fn().mockResolvedValue({}),
+  cancelXaiOAuthLogin: vi.fn().mockResolvedValue(undefined),
+  logoutXaiOAuth: vi.fn().mockResolvedValue(snapshot()),
   refreshProviderModels: vi
     .fn()
     .mockResolvedValue({ ok: true, category: 'ok', models: ['model-1'] })

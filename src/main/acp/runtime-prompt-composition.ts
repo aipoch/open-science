@@ -1,3 +1,5 @@
+import * as acp from '@agentclientprotocol/sdk'
+
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
@@ -173,7 +175,17 @@ const composeAcpRuntimePromptOwners = (
       }),
     pushEvent: (event) => session.publication.pushEvent(event),
     emitState,
-    errorMessage
+    errorMessage,
+    cancelCompaction: async (sessionId) => {
+      const connection = base.connectionResources.connection
+      const active = activeSession(sessionId)
+      if (!connection || !active) {
+        throw new Error(`ACP session not found: ${sessionId}`)
+      }
+      await connection.agent.notify(acp.methods.agent.session.cancel, {
+        sessionId: active.sessionId
+      })
+    }
   })
   const promptTurnWorkflow = new AcpPromptTurnWorkflow({
     registry: session.sessionRegistry,
@@ -189,6 +201,7 @@ const composeAcpRuntimePromptOwners = (
       connectionGeneration: () => base.connectionResources.epoch,
       backend: () => base.backendGeneration.current,
       tooling: () => session.sessionEnvironment.toolingAvailability(),
+      role: () => session.sessionEnvironment.role(),
       bridgeSkillsAvailable: () => base.connectionResources.bridgeSkillsAvailable,
       skillImportEnabled: () => base.sessionCapabilities.isSkillImportEnabled(),
       contextEstimateInput: (sessionId) =>
@@ -238,7 +251,9 @@ const composeAcpRuntimePromptOwners = (
           sessionId,
           session: active,
           interaction
-        })
+        }),
+      compactIfIdle: (sessionId) => contextCompactionWorkflow.compactIfIdle(sessionId),
+      preemptCompaction: (sessionId) => contextCompactionWorkflow.preemptForPrompt(sessionId)
     },
     currentCwd: () => base.snapshotOwner.cwd,
     resolveProjectId: projectId,

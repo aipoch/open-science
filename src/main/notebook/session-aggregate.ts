@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import type {
   NotebookCell,
   NotebookEnvironmentManifest,
@@ -66,6 +68,9 @@ export type NotebookSessionExecutionResult = {
   environmentCapture?: NotebookRunEnvironmentCapture
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
+  // Internal execution evidence persisted onto data runs. Optional keeps injected/legacy executors
+  // source-compatible; the execution owner treats a missing value after dispatch conservatively.
+  kernelDispatched?: boolean
 }
 
 export type NotebookSessionExecutor<
@@ -185,6 +190,7 @@ export class NotebookSessionAggregate<
   private durableUnknownKernelTermination: boolean
   private readonly runtimeBindings = new Map<NotebookLanguage, NotebookSessionRuntimeBinding>()
   private readonly forceStoppedKeys = new Set<string>()
+  private readonly kernelEpochIds = new Map<string, string>()
 
   constructor(init: NotebookSessionAggregateInit<Request, Result>) {
     this.id = `notebook-session-${init.sessionId}`
@@ -398,6 +404,7 @@ export class NotebookSessionAggregate<
     this.kernelStatuses.delete(processKey)
     this.terminatedKernels.delete(processKey)
     this.executionQueues.delete(processKey)
+    this.kernelEpochIds.delete(processKey)
   }
 
   kernelStatus(processKey: string): NotebookKernelMetadata['lastKnownStatus'] | undefined {
@@ -477,6 +484,19 @@ export class NotebookSessionAggregate<
     return this.executorValue.execute(request)
   }
 
+  kernelEpochId(processKey: string, reset = false): string {
+    if (reset) this.kernelEpochIds.delete(processKey)
+    const existing = this.kernelEpochIds.get(processKey)
+    if (existing) return existing
+    const epochId = randomUUID()
+    this.kernelEpochIds.set(processKey, epochId)
+    return epochId
+  }
+
+  retireKernelEpoch(processKey: string): void {
+    this.kernelEpochIds.delete(processKey)
+  }
+
   ownsExecutorGeneration(generation: NotebookSessionExecutorGeneration): boolean {
     return this.executorGenerationActive && this.executorGenerationValue === generation
   }
@@ -499,7 +519,10 @@ export class NotebookSessionAggregate<
   }
 
   terminateExecutor(kind: 'python' | 'r' | 'repl', env: string): Promise<void> {
-    return this.executorValue.terminate?.(kind, env) ?? Promise.resolve()
+    const processKey = kind === 'repl' ? 'repl' : `${kind}:${env}`
+    return (this.executorValue.terminate?.(kind, env) ?? Promise.resolve()).then(() => {
+      this.kernelEpochIds.delete(processKey)
+    })
   }
 
   async restartExecutor(
@@ -507,6 +530,7 @@ export class NotebookSessionAggregate<
   ): Promise<void> {
     if (this.executorValue.restart) {
       await this.executorValue.restart()
+      this.kernelEpochIds.clear()
       return
     }
     this.executorGenerationActive = false
@@ -517,6 +541,7 @@ export class NotebookSessionAggregate<
     this.executorValue = next.executor
     this.executorGenerationValue = next.generation
     this.executorGenerationActive = true
+    this.kernelEpochIds.clear()
   }
 
   shutdownExecutor(): Promise<{ reaped: boolean }> {

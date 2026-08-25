@@ -1,5 +1,5 @@
 # Manually mirror a published GitHub Release to the website's S3-compatible storage + CDN after its
-# release notes are ready. GitHub Release stays the single source of truth. This workflow sends
+# repository-owned in-app release notes are ready. This workflow sends
 # installers to a fast, in-country endpoint and writes version.json (website + in-app update prompt).
 # Cache correctness is handled purely via Cache-Control headers at upload time (immutable installers,
 # no-cache manifest) — no CDN purge API is needed.
@@ -11,6 +11,11 @@ on:
       tag:
         description: 'Release tag to mirror (e.g. v0.1.2)'
         required: true
+      dry_run:
+        description: 'Run local release transforms without AWS credentials or uploads'
+        required: false
+        type: boolean
+        default: false
 
 # Only needs to read Release assets; it never writes back to the repo.
 permissions:
@@ -37,14 +42,40 @@ jobs:
 
       # Pull every installer + SHA256SUMS.txt for the tag. GH_TOKEN authenticates gh with the repo.
       - name: Download release assets
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release download "${{ steps.ref.outputs.tag }}" --repo "${{ github.repository }}" --dir dist-assets
+
+      # A dry-run exercises the real manifest/feed transforms without downloading every installer.
+      # SHA256SUMS and updater feeds are small; sparse files reproduce each installer's published name
+      # and size from GitHub's read-only asset metadata, which is all the manifest generator consumes.
+      - name: Stage release metadata for dry run
+        if: ${{ inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ref.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist-assets \
+            --pattern 'SHA256SUMS.txt' --pattern '*.yml'
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | [.name, (.size | tostring)] | @tsv' |
+          while IFS=$'\t' read -r name size; do
+            case "$name" in
+              *-mac-arm64.dmg|*-mac-x64.dmg|*-win-x64-setup.exe|*-linux-x64.AppImage|*_amd64.deb)
+                [ "$name" = "$(basename "$name")" ] || { echo "Unsafe asset name: $name" >&2; exit 1; }
+                truncate -s "$size" "dist-assets/$name"
+                ;;
+            esac
+          done
 
       # NsisUpdater replaces the version in the new installer URL to resolve the old blockmap. Stage all
       # published stable Windows blockmaps for their own immutable version directories so a backfill also
       # repairs releases mirrored before differential compatibility was enforced.
       - name: Collect historical Windows blockmaps
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
           CURRENT_TAG: ${{ steps.ref.outputs.tag }}
@@ -82,10 +113,9 @@ jobs:
         run: npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund
 
       # Build version.json from the downloaded files. Missing platforms warn (not fail) inside the
-      # script, so a partial release still yields a usable manifest. Notes/date are pulled from the
-      # release itself (via gh), not the event payload, so a manual workflow_dispatch backfill gets the
-      # real body/date too — not just the release-published event. The script condenses the body to the
-      # curated highlights sections.
+      # script, so a partial release still yields a usable manifest. In-app notes come from the
+      # checked-out repository revision; the publication date still comes from the Release so a
+      # manual workflow_dispatch backfill gets the authoritative timestamp.
       - name: Generate version.json
         env:
           DIST_DIR: dist-assets
@@ -93,12 +123,17 @@ jobs:
           VERSION: ${{ steps.ref.outputs.version }}
           CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
           S3_PREFIX: ${{ vars.S3_PREFIX }}
+          NOTES_DIR: release-notes/${{ steps.ref.outputs.version }}
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.ref.outputs.tag }}
         run: |
-          NOTES="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          if [ ! -d "$NOTES_DIR" ]; then
+            NOTES="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+            unset NOTES_DIR
+            export NOTES
+          fi
           RELEASE_DATE="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json publishedAt --jq .publishedAt)"
-          export NOTES RELEASE_DATE
+          export RELEASE_DATE
           node scripts/generate-version-manifest.mjs
 
       # electron-updater feed files (win latest.yml, linux latest-linux.yml, and the per-arch mac
@@ -145,9 +180,22 @@ jobs:
           fi
           node scripts/inject-feed-notes.mjs version.json "${feeds[@]}"
 
+      - name: Summarize dry run
+        if: ${{ inputs.dry_run }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const manifest = JSON.parse(fs.readFileSync("version.json", "utf8"));
+            const locales = Object.keys(manifest.localizedNotes ?? {}).sort();
+            console.log(`dry-run manifest: version=${manifest.version}`);
+            console.log(`dry-run downloads: ${Object.keys(manifest.downloads).sort().join(", ")}`);
+            console.log(`dry-run localized notes: ${locales.join(", ") || "none"}`);
+          '
+
       # Credentials + region are configured only after dependency installation and every local
       # manifest/feed transformation succeeds. The region lets aws-cli resolve the S3 endpoint.
       - name: Configure AWS credentials
+        if: ${{ !inputs.dry_run }}
         env:
           S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
@@ -158,6 +206,7 @@ jobs:
           aws configure set default.region "$S3_REGION"
 
       - name: Backfill historical Windows blockmaps
+        if: ${{ !inputs.dry_run }}
         env:
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
           S3_PREFIX: ${{ vars.S3_PREFIX }}
@@ -176,6 +225,7 @@ jobs:
       # as the one mutable object. Bucket is a secret so it stays masked in the public Actions log, and
       # --only-show-errors suppresses the per-file `upload: ... to s3://...` lines that would leak it.
       - name: Sync installers to versioned path
+        if: ${{ !inputs.dry_run }}
         env:
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
           S3_PREFIX: ${{ vars.S3_PREFIX }}
@@ -188,6 +238,7 @@ jobs:
       # The single mutable manifest, overwritten on every release; website + app read this path. no-cache
       # keeps the CDN/browsers revalidating so a new version is picked up immediately without a purge.
       - name: Upload version.json
+        if: ${{ !inputs.dry_run }}
         env:
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
           S3_PREFIX: ${{ vars.S3_PREFIX }}
@@ -199,6 +250,7 @@ jobs:
       # Publish the rewritten feeds to the channel root as mutable, no-cache objects (same policy as
       # version.json), so the updater always sees the latest version immediately.
       - name: Upload update feed to channel root
+        if: ${{ !inputs.dry_run }}
         env:
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
           S3_PREFIX: ${{ vars.S3_PREFIX }}

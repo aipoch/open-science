@@ -1,14 +1,15 @@
-import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn, formatByteSize } from '@/lib/utils'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
 import {
+  ArrowUpRight,
   Bot,
   Brain,
   Check,
@@ -22,6 +23,7 @@ import {
   GitBranch,
   Image as ImageIcon,
   MessageCircleMore,
+  Loader2,
   Pencil
 } from 'lucide-react'
 import {
@@ -69,6 +71,7 @@ import { FILE_MISSING_TAG_KEY, isUnavailableFileError } from './previews/preview
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 import { resolveSessionProviderId } from './error-report'
+import { SessionMessageMarkdown } from './SessionMessageMarkdown'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
@@ -87,6 +90,7 @@ type WorkspaceAssistantTurnCompletionProps = {
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   onPreviewArtifact: (artifact: MessageArtifact) => void
+  onPreviewArtifactModal?: (artifact: MessageArtifact) => void
   onPreviewUploadAttachment: (attachment: MessageUploadAttachment) => void
   onOpenSkillMention: (skillId: string, name: string) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
@@ -96,6 +100,8 @@ type WorkspaceMessageItemProps = {
   canEditMessage?: boolean
   // Immutable transcript surfaces can reuse the normal message renderer without live actions.
   showUserActions?: boolean
+  // Renderer-only optimistic Composer submission; never persisted in the Session graph.
+  sending?: boolean
   // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
   contentPaddingClassName?: string
   onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
@@ -122,6 +128,9 @@ type WorkspaceMessageItemProps = {
   onPresentationChange?: (messageId: string, presenting: boolean) => void
   presentationSourceOpen?: boolean
   presentationAnimateOnMount?: boolean
+  // A trailing buffered reply can reserve the loading-row geometry it replaces. When another
+  // live row remains below it, the message keeps only its natural text-line height.
+  reserveLoadingRowHeight?: boolean
   // True only while this application-authored correction is the current live Agent prompt and no
   // Agent response has appeared. Historical/reloaded rows stay settled and motionless.
   reviewerCorrectionActive?: boolean
@@ -444,7 +453,7 @@ const TurnTokenUsage = ({
 }
 
 const artifactCardClassName =
-  'h-[82px] w-[128px] shrink-0 overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left text-text-000 shadow-none transition-colors hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60'
+  'h-[82px] w-[128px] shrink-0 cursor-pointer overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left text-text-000 shadow-none transition-colors hover:bg-bg-200 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-200/60 disabled:cursor-not-allowed disabled:opacity-50'
 const artifactPreviewClassName = 'h-[56px] w-full overflow-hidden bg-bg-200'
 const artifactGalleryClassName = 'grid max-w-full grid-cols-[repeat(auto-fill,128px)] gap-2 pb-1'
 
@@ -627,6 +636,18 @@ const MessagePartsMeasurement = ({
               isStatic ? mentionPillClassName : artifactMentionPillClassName,
               measurementContentClassName
             )}
+          />
+        )
+      }
+
+      if (part.type === 'session') {
+        return (
+          <span
+            key={index}
+            data-slot="user-message-measurement-part"
+            data-part-type="session"
+            data-content={`#${part.title}`}
+            className={cn(mentionPillClassName, measurementContentClassName)}
           />
         )
       }
@@ -877,6 +898,13 @@ const ArtifactCard = ({
             {t(FILE_MISSING_TAG_KEY)}
           </span>
         ) : null}
+        <span
+          data-slot="generated-artifact-open-icon"
+          className="absolute right-1 top-1 flex size-7 items-center justify-center rounded-md bg-bg-000/90 text-text-100 opacity-0 shadow-sm transition-[opacity,background-color,color] duration-150 hover:bg-bg-300 hover:text-text-000 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
+          aria-hidden="true"
+        >
+          <ArrowUpRight className="size-4" strokeWidth={1.75} />
+        </span>
       </div>
       <div className="flex min-w-0 flex-1 items-center px-1.5">
         <ExtensionPreservingFileName
@@ -1088,6 +1116,25 @@ const MessagePartsContent = ({
           )
         }
 
+        if (part.type === 'session') {
+          return (
+            <button
+              key={index}
+              type="button"
+              className={cn(
+                mentionPillClassName,
+                mentionButtonClassName,
+                'bg-accent text-accent-foreground'
+              )}
+              onClick={() => useNavigationStore.getState().openSessionById(part.sessionId, 'user')}
+              aria-label={t('Open session {{title}}', { title: part.title })}
+              title={part.title}
+            >
+              #{part.title}
+            </button>
+          )
+        }
+
         return (
           <span key={index} className="whitespace-pre-wrap">
             {part.text}
@@ -1102,11 +1149,13 @@ const MessagePartsContent = ({
 const WorkspaceMessageItemImpl = ({
   message,
   onPreviewArtifact,
+  onPreviewArtifactModal = onPreviewArtifact,
   onPreviewUploadAttachment,
   onOpenSkillMention,
   onPreviewMentionArtifact,
   canEditMessage = false,
   showUserActions = true,
+  sending = false,
   contentPaddingClassName,
   onSendEditedMessage,
   canBranchInNewSession = false,
@@ -1121,6 +1170,7 @@ const WorkspaceMessageItemImpl = ({
   onPresentationChange,
   presentationSourceOpen,
   presentationAnimateOnMount = true,
+  reserveLoadingRowHeight = true,
   reviewerCorrectionActive = false
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -1148,7 +1198,7 @@ const WorkspaceMessageItemImpl = ({
   }, [isAssistantPresenting, message.id, onPresentationChange, presentsAssistantMessage])
 
   const uploads = message.uploads ?? []
-  const sentDate = toMessageDate(message.createdAt)
+  const sentDate = sending ? undefined : toMessageDate(message.createdAt)
   const showRevisionNavigation =
     showUserActions && isHumanUser && revisionNavigation && revisionNavigation.total > 1
   const [copied, setCopied] = useState(false)
@@ -1230,7 +1280,10 @@ const WorkspaceMessageItemImpl = ({
       <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{message.content}</p>
     ) : null
   const hasInteractiveUserMessageContent = Boolean(
-    !staticParts && message.parts?.some((part) => part.type === 'skill' || part.type === 'artifact')
+    !staticParts &&
+    message.parts?.some(
+      (part) => part.type === 'skill' || part.type === 'artifact' || part.type === 'session'
+    )
   )
 
   return (
@@ -1294,6 +1347,16 @@ const WorkspaceMessageItemImpl = ({
             <div className="flex justify-end">
               {/* Inline editing swaps the bubble for a multi-line editor; confirm resends the prompt. */}
               <div className={editCardClassName}>
+                <MessageUploadAttachmentList
+                  attachments={uploads}
+                  onPreviewUploadAttachment={onPreviewUploadAttachment}
+                />
+                {uploads.length > 0 ? (
+                  <hr
+                    role="separator"
+                    className="-mt-1.5 w-full border-0 border-t border-border-200"
+                  />
+                ) : null}
                 <ComposerEditor
                   doc={editDoc}
                   onDocChange={setEditDoc}
@@ -1378,11 +1441,20 @@ const WorkspaceMessageItemImpl = ({
                   )}
                 </div>
               </div>
-              {sentDate || message.interrupted || showRevisionNavigation ? (
+              {sending || sentDate || message.interrupted || showRevisionNavigation ? (
                 <div
                   data-slot="user-message-footer"
                   className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
                 >
+                  {sending ? (
+                    <span className="flex items-center gap-1" role="status" aria-live="polite">
+                      <Loader2
+                        className="size-3 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                      {t('Sending…')}
+                    </span>
+                  ) : null}
                   {message.interrupted ? (
                     <span
                       data-slot="user-message-interrupted"
@@ -1440,16 +1512,18 @@ const WorkspaceMessageItemImpl = ({
             className={cn(
               assistantMessageSurfaceClassName,
               'select-text overflow-visible',
-              // Match the tallest loading row while initial content is buffered so replacing it
-              // cannot collapse the workspace scroll extent. Side chat keeps its natural geometry.
-              isAssistantPresenting && 'min-h-14'
+              // Reserve the tallest loading-row geometry only when this reply replaces that row.
+              // If Thinking or a live tool remains below, the buffered message stays at line height.
+              isAssistantPresenting && (reserveLoadingRowHeight ? 'min-h-14' : 'min-h-5')
             )}
           >
             {message.content ? (
-              <PresentedAgentMarkdown
+              <SessionMessageMarkdown
                 content={assistantPresentation.content}
                 isAnimating={isAssistantPresenting}
-                sessionLinks
+                artifacts={artifacts}
+                onPreviewArtifact={onPreviewArtifact}
+                onPreviewArtifactModal={onPreviewArtifactModal}
               />
             ) : null}
             <MessageImageList images={message.images ?? []} />
@@ -1527,6 +1601,7 @@ const areWorkspaceMessageItemPropsEqual = (
 ): boolean =>
   previous.message === next.message &&
   previous.onPreviewArtifact === next.onPreviewArtifact &&
+  previous.onPreviewArtifactModal === next.onPreviewArtifactModal &&
   previous.onPreviewUploadAttachment === next.onPreviewUploadAttachment &&
   previous.onOpenSkillMention === next.onOpenSkillMention &&
   previous.onPreviewMentionArtifact === next.onPreviewMentionArtifact &&
@@ -1535,6 +1610,7 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.onBranchInNewSession === next.onBranchInNewSession &&
   (previous.canEditMessage ?? false) === (next.canEditMessage ?? false) &&
   (previous.showUserActions ?? true) === (next.showUserActions ?? true) &&
+  (previous.sending ?? false) === (next.sending ?? false) &&
   previous.contentPaddingClassName === next.contentPaddingClassName &&
   previous.turnStartedAt === next.turnStartedAt &&
   (previous.showAssistantFooter ?? true) === (next.showAssistantFooter ?? true) &&
@@ -1545,7 +1621,8 @@ const areWorkspaceMessageItemPropsEqual = (
   areRevisionNavigationsEqual(previous.revisionNavigation, next.revisionNavigation) &&
   previous.onPresentationChange === next.onPresentationChange &&
   (previous.presentationSourceOpen ?? true) === (next.presentationSourceOpen ?? true) &&
-  (previous.presentationAnimateOnMount ?? true) === (next.presentationAnimateOnMount ?? true)
+  (previous.presentationAnimateOnMount ?? true) === (next.presentationAnimateOnMount ?? true) &&
+  (previous.reserveLoadingRowHeight ?? true) === (next.reserveLoadingRowHeight ?? true)
 
 const WorkspaceMessageItem = memo(WorkspaceMessageItemImpl, areWorkspaceMessageItemPropsEqual)
 WorkspaceMessageItem.displayName = 'WorkspaceMessageItem'

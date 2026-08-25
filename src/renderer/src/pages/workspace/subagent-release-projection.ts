@@ -7,6 +7,7 @@ import {
   type PersistedAgentFrame
 } from '../../../../shared/conversation-graph'
 import {
+  hasAnswerableDelegatedQuestion,
   projectActiveRootDelegatedFrames,
   resolveActiveRootMessageIds
 } from '../../../../shared/delegated-work-projection'
@@ -26,6 +27,7 @@ type SessionSubagentChild = Readonly<{
   title: string
   agentLabel: string
   status: SubagentRawStatus
+  originUnavailable: boolean
   awaitingPermission?: boolean
 }>
 
@@ -39,6 +41,7 @@ type SubagentFrameProjection = Readonly<{
   title: string
   agentLabel: string
   status: SubagentRawStatus
+  originUnavailable: boolean
   attempt?: DelegatedWorkAttemptRecord
   messages: readonly PersistedChatMessage[]
 }>
@@ -102,6 +105,7 @@ const projectSessionSubagents = (
       title: titleForFrame(frame),
       agentLabel: agentLabelForFrame(session, frame),
       status: awaitingUser ? 'awaiting_user' : frame.status,
+      originUnavailable: frame.originBindingState === 'legacy-unavailable',
       ...(awaitingPermission ? { awaitingPermission: true } : {})
     }
   })
@@ -152,9 +156,6 @@ const projectAnswerableDelegatedQuestions = (
     )
   })
 }
-
-const hasAnswerableDelegatedQuestion = (session: PersistedChatSession | undefined): boolean =>
-  projectAnswerableDelegatedQuestions(session).length > 0
 
 const projectDelegatedQuestionQueue = (
   session: PersistedChatSession | undefined
@@ -242,6 +243,7 @@ const selectSubagentFrame = (
     )
       ? 'awaiting_user'
       : frame.status,
+    originUnavailable: frame.originBindingState === 'legacy-unavailable',
     attempt: latestAttempt(session, frameId),
     messages
   }

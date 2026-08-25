@@ -20,12 +20,59 @@ import { PrismaClient } from '@prisma/client'
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
     expect(MIGRATION_MANIFEST.at(-1)?.checksum).toBe(
-      'ed8b5f4ad1a326a98f844193ec182396cc486d86c90969b19996e9a485aaf6c7'
+      '74c880593a5dd434a4fe1f401f8015f9017773b9e833138355ca950e142ceb5d'
     )
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST.slice(0, -1))).toThrow(
       /expected application database migration ledger/
     )
+  })
+
+  it('adds Review query indexes without changing existing Review or Finding rows', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-review-indexes-'))
+    const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
+    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+
+    try {
+      await migrateApplicationDatabase(client)
+      const review = await client.review.create({
+        data: {
+          id: 'legacy-review',
+          projectId: 'legacy-project',
+          sessionId: 'legacy-session',
+          turnMessageId: 'legacy-turn'
+        }
+      })
+      const finding = await client.finding.create({
+        data: { id: 'legacy-finding', reviewId: review.id }
+      })
+      await client.$executeRawUnsafe('DROP INDEX "Review_projectId_sessionId_createdAt_idx"')
+      await client.$executeRawUnsafe('DROP INDEX "Review_sessionId_idx"')
+      await client.$executeRawUnsafe('DROP INDEX "Finding_reviewId_idx"')
+      await client.$executeRawUnsafe(
+        `DELETE FROM "_open_science_migrations"
+         WHERE "id" IN ('0014_review_query_indexes', '0015_managed_file_version_foundation')`
+      )
+
+      await migrateApplicationDatabase(client)
+
+      await expect(client.review.findUnique({ where: { id: review.id } })).resolves.toBeTruthy()
+      await expect(client.finding.findUnique({ where: { id: finding.id } })).resolves.toBeTruthy()
+      const indexes = await client.$queryRawUnsafe<Array<{ name: string }>>(
+        `SELECT "name" FROM "sqlite_schema"
+         WHERE "type" = 'index'
+           AND "name" IN ('Review_projectId_sessionId_createdAt_idx', 'Review_sessionId_idx', 'Finding_reviewId_idx')
+         ORDER BY "name"`
+      )
+      expect(indexes.map(({ name }) => name)).toEqual([
+        'Finding_reviewId_idx',
+        'Review_projectId_sessionId_createdAt_idx',
+        'Review_sessionId_idx'
+      ])
+    } finally {
+      await client.$disconnect()
+      await rm(root, { force: true, recursive: true })
+    }
   })
 
   it('accepts only an explicitly selected immutable released migration prefix', () => {

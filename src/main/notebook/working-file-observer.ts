@@ -21,7 +21,7 @@ type ActiveObservation = {
   conflicted: boolean
 }
 
-const activeByDataRoot = new Map<string, Set<ActiveObservation>>()
+const activeByObservedRoot = new Map<string, Set<ActiveObservation>>()
 const MAX_CHANGED_PATHS = 10_000
 const MAX_FALLBACK_SNAPSHOT_ENTRIES = 50_000
 const EVENT_SETTLE_MS = 20
@@ -40,18 +40,21 @@ const unavailableObservation = (): WorkingFileObservation => ({
   finish: async () => []
 })
 
-const registerObservation = (dataRoot: string, observation: ActiveObservation): (() => void) => {
-  const active = activeByDataRoot.get(dataRoot) ?? new Set<ActiveObservation>()
+const registerObservation = (
+  observedRoot: string,
+  observation: ActiveObservation
+): (() => void) => {
+  const active = activeByObservedRoot.get(observedRoot) ?? new Set<ActiveObservation>()
   if (active.size > 0) {
     observation.conflicted = true
     for (const existing of active) existing.conflicted = true
   }
   active.add(observation)
-  activeByDataRoot.set(dataRoot, active)
+  activeByObservedRoot.set(observedRoot, active)
 
   return () => {
     active.delete(observation)
-    if (active.size === 0) activeByDataRoot.delete(dataRoot)
+    if (active.size === 0) activeByObservedRoot.delete(observedRoot)
   }
 }
 
@@ -64,8 +67,8 @@ const waitForWatcherReady = (): Promise<void> =>
 type SnapshotEntry = NotebookWorkingFile & { ctimeMs: number }
 
 const resolveChangedFile = async (
-  dataRoot: string,
-  logicalDataRoot: string,
+  observedRoot: string,
+  logicalObservedRoot: string,
   logicalSessionRoot: string,
   candidatePath: string
 ): Promise<SnapshotEntry | undefined> => {
@@ -74,10 +77,10 @@ const resolveChangedFile = async (
     if (linkMetadata.isSymbolicLink()) return undefined
 
     const canonicalPath = await realpath(candidatePath)
-    if (!isPathInside(dataRoot, canonicalPath)) return undefined
+    if (!isPathInside(observedRoot, canonicalPath)) return undefined
     const metadata = await stat(canonicalPath)
     if (!metadata.isFile()) return undefined
-    const logicalPath = resolve(logicalDataRoot, relative(dataRoot, canonicalPath))
+    const logicalPath = resolve(logicalObservedRoot, relative(observedRoot, canonicalPath))
 
     return {
       path: logicalPath,
@@ -116,8 +119,8 @@ const diffSnapshots = (
     }))
 
 const captureFallbackSnapshot = async (
-  dataRoot: string,
-  logicalDataRoot: string,
+  observedRoot: string,
+  logicalObservedRoot: string,
   logicalSessionRoot: string
 ): Promise<Map<string, SnapshotEntry> | undefined> => {
   try {
@@ -142,10 +145,10 @@ const captureFallbackSnapshot = async (
         if (!entry.isFile()) continue
 
         const canonicalPath = await realpath(candidatePath)
-        if (!isPathInside(dataRoot, canonicalPath))
-          throw new Error('Working file escaped data root.')
+        if (!isPathInside(observedRoot, canonicalPath))
+          throw new Error('Working file escaped observed root.')
         const metadata = await stat(canonicalPath)
-        const logicalPath = resolve(logicalDataRoot, relative(dataRoot, canonicalPath))
+        const logicalPath = resolve(logicalObservedRoot, relative(observedRoot, canonicalPath))
         files.set(logicalPath, {
           path: logicalPath,
           relativePath: toPortableNotebookRelativePath(relative(logicalSessionRoot, logicalPath)),
@@ -157,7 +160,7 @@ const captureFallbackSnapshot = async (
       }
     }
 
-    await visit(dataRoot)
+    await visit(observedRoot)
     return files
   } catch {
     return undefined
@@ -165,20 +168,28 @@ const captureFallbackSnapshot = async (
 }
 
 const startFallbackObservation = async (
-  dataRoot: string,
-  logicalDataRoot: string,
+  observedRoot: string,
+  logicalObservedRoot: string,
   logicalSessionRoot: string
 ): Promise<WorkingFileObservation> => {
   const active: ActiveObservation = { conflicted: false }
-  const unregister = registerObservation(dataRoot, active)
-  const before = await captureFallbackSnapshot(dataRoot, logicalDataRoot, logicalSessionRoot)
+  const unregister = registerObservation(observedRoot, active)
+  const before = await captureFallbackSnapshot(
+    observedRoot,
+    logicalObservedRoot,
+    logicalSessionRoot
+  )
   let finished = false
 
   return {
     finish: async () => {
       if (finished) return []
       finished = true
-      const after = await captureFallbackSnapshot(dataRoot, logicalDataRoot, logicalSessionRoot)
+      const after = await captureFallbackSnapshot(
+        observedRoot,
+        logicalObservedRoot,
+        logicalSessionRoot
+      )
       unregister()
       if (active.conflicted || !before || !after) return []
 
@@ -187,19 +198,21 @@ const startFallbackObservation = async (
   }
 }
 
-const startWorkingFileObservation = async (
-  request: WorkingFileObservationRequest,
+const startRootObservation = async (
+  rootPath: string,
+  logicalRootPath: string,
+  logicalSessionRootPath: string,
   dependencies: WorkingFileObservationDependencies = {}
 ): Promise<WorkingFileObservation> => {
   let watcher: FSWatcher | undefined
   try {
-    const logicalDataRoot = resolve(request.dataRoot)
-    const logicalSessionRoot = resolve(request.notebookSessionRoot)
-    const [dataRoot, sessionRoot] = await Promise.all([
-      realpath(request.dataRoot),
-      realpath(request.notebookSessionRoot)
+    const logicalObservedRoot = resolve(logicalRootPath)
+    const logicalSessionRoot = resolve(logicalSessionRootPath)
+    const [observedRoot, sessionRoot] = await Promise.all([
+      realpath(rootPath),
+      realpath(logicalSessionRootPath)
     ])
-    if (!isPathInside(sessionRoot, dataRoot)) return unavailableObservation()
+    if (!isPathInside(sessionRoot, observedRoot)) return unavailableObservation()
 
     const active: ActiveObservation = { conflicted: false }
     const changedPaths = new Set<string>()
@@ -208,7 +221,7 @@ const startWorkingFileObservation = async (
 
     try {
       watcher = (dependencies.watchDirectory ?? watch)(
-        dataRoot,
+        observedRoot,
         { recursive: true },
         (_eventType, filename) => {
           if (invalid) return
@@ -222,8 +235,8 @@ const startWorkingFileObservation = async (
             invalid = true
             return
           }
-          const candidatePath = resolve(dataRoot, eventPath)
-          if (!isPathInside(dataRoot, candidatePath)) {
+          const candidatePath = resolve(observedRoot, eventPath)
+          if (!isPathInside(observedRoot, candidatePath)) {
             invalid = true
             return
           }
@@ -236,7 +249,7 @@ const startWorkingFileObservation = async (
         }
       )
     } catch {
-      return startFallbackObservation(dataRoot, logicalDataRoot, logicalSessionRoot)
+      return startFallbackObservation(observedRoot, logicalObservedRoot, logicalSessionRoot)
     }
     watcher.on('error', () => {
       invalid = true
@@ -244,17 +257,21 @@ const startWorkingFileObservation = async (
     await waitForWatcherReady()
     if (invalid) {
       watcher.close()
-      return startFallbackObservation(dataRoot, logicalDataRoot, logicalSessionRoot)
+      return startFallbackObservation(observedRoot, logicalObservedRoot, logicalSessionRoot)
     }
     // Recursive watchers can replay pre-existing paths while their initial scan settles. Execution
     // has not started yet, so those events cannot prove this run created or changed the files.
     changedPaths.clear()
-    const before = await captureFallbackSnapshot(dataRoot, logicalDataRoot, logicalSessionRoot)
+    const before = await captureFallbackSnapshot(
+      observedRoot,
+      logicalObservedRoot,
+      logicalSessionRoot
+    )
     if (!before) {
       watcher.close()
       return unavailableObservation()
     }
-    const unregister = registerObservation(dataRoot, active)
+    const unregister = registerObservation(observedRoot, active)
 
     return {
       finish: async () => {
@@ -270,7 +287,12 @@ const startWorkingFileObservation = async (
             Array.from(changedPaths)
               .sort((left, right) => left.localeCompare(right))
               .map((candidatePath) =>
-                resolveChangedFile(dataRoot, logicalDataRoot, logicalSessionRoot, candidatePath)
+                resolveChangedFile(
+                  observedRoot,
+                  logicalObservedRoot,
+                  logicalSessionRoot,
+                  candidatePath
+                )
               )
           )
           const changedFiles = candidates
@@ -296,7 +318,11 @@ const startWorkingFileObservation = async (
           // macOS can deliver recursive watcher events after the bounded settle window. A full diff
           // is reserved for the empty/no-op event path so correctness does not impose two tree scans
           // on normal runs.
-          const after = await captureFallbackSnapshot(dataRoot, logicalDataRoot, logicalSessionRoot)
+          const after = await captureFallbackSnapshot(
+            observedRoot,
+            logicalObservedRoot,
+            logicalSessionRoot
+          )
           return after ? diffSnapshots(before, after) : []
         } catch {
           return []
@@ -306,6 +332,37 @@ const startWorkingFileObservation = async (
   } catch {
     watcher?.close()
     return unavailableObservation()
+  }
+}
+
+const startWorkingFileObservation = async (
+  request: WorkingFileObservationRequest,
+  dependencies: WorkingFileObservationDependencies = {}
+): Promise<WorkingFileObservation> => {
+  const logicalSessionRoot = resolve(request.notebookSessionRoot)
+  const handoffRoot = join(logicalSessionRoot, 'handoff')
+  const roots = [
+    { path: request.dataRoot, logicalPath: request.dataRoot },
+    ...(await realpath(handoffRoot).then(
+      () => [{ path: handoffRoot, logicalPath: handoffRoot }],
+      () => []
+    ))
+  ]
+  const observations = await Promise.all(
+    roots.map((root) =>
+      startRootObservation(root.path, root.logicalPath, logicalSessionRoot, dependencies)
+    )
+  )
+  let finished = false
+
+  return {
+    finish: async () => {
+      if (finished) return []
+      finished = true
+      return (await Promise.all(observations.map((observation) => observation.finish())))
+        .flat()
+        .sort((left, right) => left.path.localeCompare(right.path))
+    }
   }
 }
 

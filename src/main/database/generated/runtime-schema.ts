@@ -9,8 +9,83 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "isExample" BOOLEAN NOT NULL DEFAULT false,
     "pinned" BOOLEAN NOT NULL DEFAULT false,
     "archivedAt" DATETIME,
+    "deletedAt" DATETIME,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
+);`,
+  `CREATE TABLE IF NOT EXISTS "SessionNumberSequence" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "nextNumber" INTEGER NOT NULL,
+    CONSTRAINT "SessionNumberSequence_identity_check" CHECK ("id" = 'global' AND "nextNumber" >= 1)
+);`,
+  `CREATE TABLE IF NOT EXISTS "Session" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "number" INTEGER NOT NULL,
+    "projectId" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "status" TEXT NOT NULL,
+    "presentedStatus" TEXT NOT NULL,
+    "pinned" BOOLEAN NOT NULL DEFAULT false,
+    "archivedAtMs" BIGINT,
+    "revision" BIGINT NOT NULL DEFAULT 0,
+    "activeMessageCount" INTEGER NOT NULL DEFAULT 0,
+    "artifactCount" INTEGER NOT NULL DEFAULT 0,
+    "filesRevision" INTEGER NOT NULL DEFAULT 0,
+    "createdAtMs" BIGINT NOT NULL,
+    "updatedAtMs" BIGINT NOT NULL,
+    "presentedActivityAtMs" BIGINT,
+    "needsStartupRecovery" BOOLEAN NOT NULL DEFAULT false,
+    "sourceByteLength" BIGINT,
+    "sourceMtimeMs" BIGINT,
+    "deletedAtMs" BIGINT,
+    CONSTRAINT "Session_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "Session_identity_check" CHECK ("number" >= 1 AND length(trim("id")) > 0 AND length(trim("projectId")) > 0),
+    CONSTRAINT "Session_status_check" CHECK ("status" IN ('idle', 'running', 'waiting-for-user', 'waiting-permission', 'waiting-plan-approval', 'error') AND "presentedStatus" IN ('idle', 'running', 'waiting-for-user', 'waiting-permission', 'waiting-plan-approval', 'error')),
+    CONSTRAINT "Session_nonnegative_check" CHECK ("revision" >= 0 AND "activeMessageCount" >= 0 AND "artifactCount" >= 0 AND "filesRevision" >= 0 AND "createdAtMs" >= 0 AND "updatedAtMs" >= 0 AND ("archivedAtMs" IS NULL OR "archivedAtMs" >= 0) AND ("presentedActivityAtMs" IS NULL OR "presentedActivityAtMs" >= 0) AND ("sourceByteLength" IS NULL OR "sourceByteLength" >= 0) AND ("sourceMtimeMs" IS NULL OR "sourceMtimeMs" >= 0) AND ("deletedAtMs" IS NULL OR "deletedAtMs" >= 0))
+);`,
+  `CREATE TABLE IF NOT EXISTS "SessionProjectionState" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectionVersion" INTEGER NOT NULL,
+    "completedAt" DATETIME NOT NULL,
+    CONSTRAINT "SessionProjectionState_identity_check" CHECK ("id" = 'session-projection' AND "projectionVersion" >= 1)
+);`,
+  `CREATE TABLE IF NOT EXISTS "PendingSessionReconciliation" (
+    "sessionId" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "operation" TEXT NOT NULL DEFAULT 'save',
+    "markedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "PendingSessionReconciliation_identity_check" CHECK (length(trim("sessionId")) > 0 AND length(trim("projectId")) > 0 AND "operation" IN ('save', 'delete'))
+);`,
+  `CREATE TABLE IF NOT EXISTS "SessionTurnUsage" (
+    "sessionId" TEXT NOT NULL,
+    "messageId" TEXT NOT NULL,
+    "completedAtMs" BIGINT NOT NULL,
+    "inputTokens" BIGINT NOT NULL,
+    "cacheTokens" BIGINT NOT NULL,
+    "outputTokens" BIGINT NOT NULL,
+    "isRootFrame" BOOLEAN NOT NULL,
+
+    PRIMARY KEY ("sessionId", "messageId"),
+    CONSTRAINT "SessionTurnUsage_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "Session" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "SessionTurnUsage_nonnegative_check" CHECK (length(trim("messageId")) > 0 AND "completedAtMs" >= 0 AND "inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0)
+);`,
+  `CREATE TABLE IF NOT EXISTS "SessionRun" (
+    "sessionId" TEXT NOT NULL,
+    "messageId" TEXT NOT NULL,
+    "createdAtMs" BIGINT NOT NULL,
+
+    PRIMARY KEY ("sessionId", "messageId"),
+    CONSTRAINT "SessionRun_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "Session" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "SessionRun_nonnegative_check" CHECK (length(trim("messageId")) > 0 AND "createdAtMs" >= 0)
+);`,
+  `CREATE TABLE IF NOT EXISTS "SessionArtifactRef" (
+    "sessionId" TEXT NOT NULL,
+    "artifactId" TEXT NOT NULL,
+    "artifactCreatedAtMs" BIGINT,
+
+    PRIMARY KEY ("sessionId", "artifactId"),
+    CONSTRAINT "SessionArtifactRef_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "Session" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "SessionArtifactRef_identity_check" CHECK (length(trim("artifactId")) > 0 AND ("artifactCreatedAtMs" IS NULL OR "artifactCreatedAtMs" >= 0))
 );`,
   `CREATE TABLE IF NOT EXISTS "PermissionGrant" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -527,6 +602,14 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 ] as const
 
 const RUNTIME_SCHEMA_INDEX_DDLS = [
+  `CREATE UNIQUE INDEX IF NOT EXISTS "Session_number_key" ON "Session"("number");`,
+  `CREATE INDEX IF NOT EXISTS "Session_projectId_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("projectId", "deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
+  `CREATE INDEX IF NOT EXISTS "Session_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
+  `CREATE INDEX IF NOT EXISTS "Session_createdAtMs_idx" ON "Session"("createdAtMs");`,
+  `CREATE INDEX IF NOT EXISTS "PendingSessionReconciliation_projectId_idx" ON "PendingSessionReconciliation"("projectId");`,
+  `CREATE INDEX IF NOT EXISTS "SessionTurnUsage_completedAtMs_idx" ON "SessionTurnUsage"("completedAtMs");`,
+  `CREATE INDEX IF NOT EXISTS "SessionRun_createdAtMs_idx" ON "SessionRun"("createdAtMs");`,
+  `CREATE INDEX IF NOT EXISTS "SessionArtifactRef_artifactId_artifactCreatedAtMs_idx" ON "SessionArtifactRef"("artifactId", "artifactCreatedAtMs");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "PermissionGrant_fingerprint_key" ON "PermissionGrant"("fingerprint");`,
   `CREATE INDEX IF NOT EXISTS "PermissionGrant_capabilityKind_capabilityKey_qualifierMode_qualifierValue_scopeKind_projectId_sessionId_idx" ON "PermissionGrant"("capabilityKind", "capabilityKey", "qualifierMode", "qualifierValue", "scopeKind", "projectId", "sessionId");`,
   `CREATE INDEX IF NOT EXISTS "PermissionGrant_projectId_sessionId_idx" ON "PermissionGrant"("projectId", "sessionId");`,
@@ -536,6 +619,9 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "NotificationInboxItem_readAt_sequence_idx" ON "NotificationInboxItem"("readAt", "sequence");`,
   `CREATE INDEX IF NOT EXISTS "NotificationInboxItem_sessionId_idx" ON "NotificationInboxItem"("sessionId");`,
   `CREATE INDEX IF NOT EXISTS "NotificationInboxItem_projectId_idx" ON "NotificationInboxItem"("projectId");`,
+  `CREATE INDEX IF NOT EXISTS "Review_projectId_sessionId_createdAt_idx" ON "Review"("projectId", "sessionId", "createdAt");`,
+  `CREATE INDEX IF NOT EXISTS "Review_sessionId_idx" ON "Review"("sessionId");`,
+  `CREATE INDEX IF NOT EXISTS "Finding_reviewId_idx" ON "Finding"("reviewId");`,
   `CREATE INDEX IF NOT EXISTS "ManagedFile_projectId_deletedAt_sortAtMs_seq_idx" ON "ManagedFile"("projectId", "deletedAt", "sortAtMs", "seq");`,
   `CREATE INDEX IF NOT EXISTS "ManagedFile_projectId_source_deletedAt_sortAtMs_seq_idx" ON "ManagedFile"("projectId", "source", "deletedAt", "sortAtMs", "seq");`,
   `CREATE INDEX IF NOT EXISTS "ManagedFile_projectId_sessionId_source_deletedAt_sortAtMs_seq_idx" ON "ManagedFile"("projectId", "sessionId", "source", "deletedAt", "sortAtMs", "seq");`,
@@ -604,6 +690,13 @@ const RUNTIME_SCHEMA_TARGET_SQL = [
 
 const RUNTIME_SCHEMA_TABLES = [
   'Project',
+  'SessionNumberSequence',
+  'Session',
+  'SessionProjectionState',
+  'PendingSessionReconciliation',
+  'SessionTurnUsage',
+  'SessionRun',
+  'SessionArtifactRef',
   'PermissionGrant',
   'PermissionGrantSeed',
   'ProjectPreviewState',

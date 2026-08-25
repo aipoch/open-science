@@ -14,6 +14,7 @@ const manifest: UpdateManifest = {
   version: '0.3.0',
   releaseDate: '',
   notes: 'release notes',
+  localizedNotes: { 'zh-Hans': '发行说明' },
   downloads: { 'mac-arm64': { url: 'https://cdn/x-mac-arm64.dmg', size: 5, sha256: 'h' } }
 }
 
@@ -75,6 +76,7 @@ describe('UpdateService.check', () => {
     expect(status.state).toBe('available')
     expect(status.latest).toBe('0.3.0')
     expect(status.notes).toBe('release notes')
+    expect(status.localizedNotes).toEqual({ 'zh-Hans': '发行说明' })
     expect(status.download?.url).toContain('mac-arm64')
     expect(broadcast).toHaveBeenCalledWith(
       'update:status',
@@ -159,6 +161,35 @@ describe('UpdateService.check', () => {
     expect(status.state).toBe('available')
     expect(status.totalBytes).toBe(5)
   })
+
+  it('coalesces overlapping manifest checks onto the in-flight fetch', async () => {
+    let releaseCheck: (() => void) | undefined
+    const checkGate = new Promise<void>((resolve) => {
+      releaseCheck = resolve
+    })
+    let fetches = 0
+    const fetchImpl = (async () => {
+      fetches += 1
+      await checkGate
+      return jsonResponse(manifest)
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      broadcast: vi.fn()
+    })
+
+    const first = service.check()
+    const second = service.check()
+    expect(fetches).toBe(1)
+    releaseCheck?.()
+    const [left, right] = await Promise.all([first, second])
+    expect(left).toBe(right)
+    expect(left.state).toBe('available')
+    expect(fetches).toBe(1)
+  })
 })
 
 describe('UpdateService.download', () => {
@@ -206,6 +237,47 @@ describe('UpdateService.download', () => {
     expect(status.state).toBe('ready')
     expect(status.localPath).toBe(target)
     expect(existsSync(target)).toBe(true)
+  })
+
+  it('waits for an in-flight check before starting a download', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'svc-wait-check-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    const manifestForCheck = downloadManifest(
+      body.byteLength,
+      createHash('sha256').update(body).digest('hex')
+    )
+    let releaseCheck: (() => void) | undefined
+    const checkGate = new Promise<void>((resolve) => {
+      releaseCheck = resolve
+    })
+    let installerFetches = 0
+    const fetchImpl = (async (input: unknown) => {
+      if (String(input).endsWith('version.json')) {
+        await checkGate
+        return jsonResponse(manifestForCheck)
+      }
+      installerFetches += 1
+      return new Response(body, { status: 200 })
+    }) as unknown as typeof fetch
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: () => Promise.resolve(target)
+    })
+
+    const checking = service.check()
+    expect(service.getStatus().state).toBe('checking')
+    const downloading = service.download()
+    expect(installerFetches).toBe(0)
+    releaseCheck?.()
+    expect((await checking).state).toBe('available')
+    expect((await downloading).state).toBe('ready')
+    expect(installerFetches).toBe(1)
   })
 
   it('uses the deterministic download path without opening a save dialog when non-interactive', async () => {

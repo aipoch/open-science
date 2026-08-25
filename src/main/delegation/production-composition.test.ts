@@ -46,9 +46,14 @@ import { finalizeDelegatedArtifactPublication } from './delegated-artifact-publi
 import { createProductionDelegatedFrameworks } from './production-frameworks'
 import type { AcpDelegateExecutionCallbacks, AcpDelegateRuntime } from './acp-execution'
 import type { DelegateExecutionInput } from './execution-port'
+import type { DelegationSettlementDispatch } from './delegation-settlement-wake-owner'
 import { claudeCodeFramework } from '../agent-framework'
 import { CODEX_ACP_VERSION, CODEX_VERSION } from '../settings/managed-codex'
 import { preS6ReaderSave } from '../../shared/pre-s6-session-reader.fixture'
+import type { AcpPromptRequest, AcpStateSnapshot } from '../../shared/acp'
+import { AcpRuntimeCoordinator } from '../acp/runtime-coordinator'
+import type { AcpRuntime, AcpRuntimeCallbacks } from '../acp/runtime'
+import { createDelegationSettlementContinuationDispatch } from './settlement-continuation-dispatch'
 
 let root: string | undefined
 let server: NotebookLocalRpcServer | undefined
@@ -100,7 +105,7 @@ const createCompositionHarness = async (
   admissionError?: Error,
   owners: Pick<
     ProductionDelegatedWorkOptions,
-    'artifactEvidence' | 'reviewEvidence' | 'parentMessages'
+    'artifactEvidence' | 'reviewEvidence' | 'parentMessages' | 'settlementContinuations'
   > = {},
   initialRootInvocations: readonly Readonly<{
     rootMessageId: string
@@ -549,6 +554,7 @@ const createFrameworkCompositionHarness = async (
 }
 
 afterEach(async () => {
+  vi.useRealTimers()
   await server?.close()
   server = undefined
   await disconnect?.()
@@ -558,6 +564,515 @@ afterEach(async () => {
 })
 
 describe('production delegated-work composition', () => {
+  it('wakes the root through application context when a background child settles', async () => {
+    vi.useFakeTimers()
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-settlement-wake-'))
+    const dispatch = vi.fn(async (request: DelegationSettlementDispatch) => {
+      void request
+    })
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      createDeterministicDelegateExecution(),
+      undefined,
+      { settlementContinuations: { dispatch } }
+    )
+    const leaseId = await harness.composition.root.rootTurnStarted?.({
+      sessionId: harness.session.id,
+      originatingPromptId: harness.caller.originMessageId
+    })
+    const delegated = await harness.composition.host.delegate(
+      harness.caller,
+      { task: 'finish later', name: 'Background check' },
+      { wait: false }
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    harness.execution.controls()[0].accept()
+    await harness.composition.root.rootTurnEnded?.({
+      sessionId: harness.session.id,
+      originatingPromptId: harness.caller.originMessageId,
+      clean: true,
+      leaseId
+    })
+
+    harness.execution.controls()[0].complete('canonical final')
+    await expect
+      .poll(() => harness.composition.host.children(harness.caller))
+      .toMatchObject([{ status: 'completed' }])
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(dispatch).toHaveBeenCalledOnce()
+    const request = dispatch.mock.calls[0]?.[0]
+    expect(request).toMatchObject({
+      projectId: harness.session.projectId,
+      sessionId: harness.session.id,
+      originatingPromptId: harness.caller.originMessageId
+    })
+    expect(request?.text).toContain(delegated.children[0].frameId)
+    expect(request?.text).toContain(delegated.children[0].attemptId)
+    expect(request?.text).not.toContain('canonical final')
+    expect(request?.text).toContain('application-owned context, not a user message')
+    vi.useRealTimers()
+  })
+
+  it('wakes when a detached child settles before the originating root turn ends', async () => {
+    vi.useFakeTimers()
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-early-settlement-wake-'))
+    const dispatch = vi.fn(async (request: DelegationSettlementDispatch) => {
+      void request
+    })
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      createDeterministicDelegateExecution(),
+      undefined,
+      { settlementContinuations: { dispatch } }
+    )
+    const leaseId = await harness.composition.root.rootTurnStarted?.({
+      sessionId: harness.session.id,
+      originatingPromptId: harness.caller.originMessageId
+    })
+    const receipt = await harness.composition.host.delegate(
+      harness.caller,
+      { task: 'finish before root end', name: 'Fast background check' },
+      { wait: false }
+    )
+    const detached = receipt.children[0]
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    harness.execution.control(detached.attemptId).accept()
+    harness.execution.control(detached.attemptId).complete('fast canonical final')
+    await expect
+      .poll(() => harness.composition.host.children(harness.caller))
+      .toMatchObject([{ status: 'completed' }])
+
+    await harness.composition.root.rootTurnEnded?.({
+      sessionId: harness.session.id,
+      originatingPromptId: harness.caller.originMessageId,
+      clean: true,
+      leaseId
+    })
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(dispatch).toHaveBeenCalledOnce()
+    expect(dispatch.mock.calls[0]?.[0]?.text).toContain(detached.attemptId)
+    expect(dispatch.mock.calls[0]?.[0]?.text).toContain('status=completed')
+    vi.useRealTimers()
+  })
+
+  it('does not wake for terminal child results already returned in the originating root turn', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-observed-settlement-'))
+    const dispatch = vi.fn(async (request: DelegationSettlementDispatch) => {
+      void request
+    })
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      createDeterministicDelegateExecution(),
+      undefined,
+      { settlementContinuations: { dispatch } }
+    )
+    const leaseId = await harness.composition.root.rootTurnStarted?.({
+      sessionId: harness.session.id,
+      originatingPromptId: harness.caller.originMessageId
+    })
+    const receipt = await harness.composition.host.delegate(
+      harness.caller,
+      { task: 'collect before root end', name: 'Collected child' },
+      { wait: false }
+    )
+    const collectedChild = receipt.children[0]
+    const collecting = harness.composition.host.collect(
+      { ...harness.caller, toolInvocationId: 'observe-terminal-child' },
+      [collectedChild]
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    harness.execution.control(collectedChild.attemptId).accept()
+    harness.execution.control(collectedChild.attemptId).complete('observed result')
+    await expect(collecting).resolves.toMatchObject([{ status: 'completed' }])
+
+    const waited = harness.composition.host.delegate(
+      { ...harness.caller, toolInvocationId: 'wait-for-terminal-child' },
+      { task: 'return normally', name: 'Waited child' },
+      {}
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(2)
+    const waitedControl = harness.execution.controls()[1]
+    waitedControl.accept()
+    waitedControl.complete('waited result')
+    await expect(waited).resolves.toMatchObject({ kind: 'results' })
+
+    vi.useFakeTimers()
+    await harness.composition.root.rootTurnEnded?.({
+      sessionId: harness.session.id,
+      originatingPromptId: harness.caller.originMessageId,
+      clean: true,
+      leaseId
+    })
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+    vi.useRealTimers()
+  })
+
+  it('batches three staggered children without overlapping Session wake continuations', async () => {
+    vi.useFakeTimers()
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-staggered-wake-'))
+    const dispatch = vi.fn(async (request: DelegationSettlementDispatch) => {
+      void request
+    })
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      createDeterministicDelegateExecution(),
+      undefined,
+      { settlementContinuations: { dispatch } }
+    )
+    const leaseId = await harness.composition.root.rootTurnStarted?.({
+      sessionId: harness.session.id,
+      originatingPromptId: harness.caller.originMessageId
+    })
+    const delegated = await harness.composition.host.delegate(
+      harness.caller,
+      [
+        { task: 'alpha', name: 'Alpha' },
+        { task: 'beta', name: 'Beta' },
+        { task: 'gamma', name: 'Gamma' }
+      ],
+      { wait: false }
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(3)
+    for (const { attemptId } of delegated.children) harness.execution.control(attemptId).accept()
+    await harness.composition.root.rootTurnEnded?.({
+      sessionId: harness.session.id,
+      originatingPromptId: harness.caller.originMessageId,
+      clean: true,
+      leaseId
+    })
+
+    harness.execution.control(delegated.children[0].attemptId).complete('alpha result')
+    harness.execution.control(delegated.children[1].attemptId).complete('beta result')
+    await expect
+      .poll(() => harness.composition.host.children(harness.caller))
+      .toMatchObject([{ status: 'completed' }, { status: 'completed' }, { status: 'running' }])
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(dispatch).toHaveBeenCalledOnce()
+    const first = dispatch.mock.calls[0]?.[0]
+    expect(first?.text).toContain(delegated.children[0].frameId)
+    expect(first?.text).toContain(delegated.children[1].frameId)
+    expect(first?.text).not.toContain(delegated.children[2].frameId)
+
+    harness.execution.control(delegated.children[2].attemptId).complete('gamma result')
+    await expect
+      .poll(() => harness.composition.host.children(harness.caller))
+      .toMatchObject([{ status: 'completed' }, { status: 'completed' }, { status: 'completed' }])
+    await vi.advanceTimersByTimeAsync(200)
+    expect(dispatch).toHaveBeenCalledOnce()
+
+    await harness.composition.root.settlementPromptEnded?.(harness.session.id, first!.promptId)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(dispatch).toHaveBeenCalledTimes(2)
+    expect(dispatch.mock.calls[1]?.[0]?.text).toContain(delegated.children[2].frameId)
+    expect(dispatch.mock.calls[1]?.[0]?.text).toContain(
+      'All watched Subagent Attempts have settled'
+    )
+    const second = dispatch.mock.calls[1]?.[0]
+    await harness.composition.root.settlementPromptEnded?.(harness.session.id, second!.promptId)
+    await vi.advanceTimersByTimeAsync(500)
+    await harness.composition.root.settlementPromptEnded?.(harness.session.id, first!.promptId)
+    expect(dispatch).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(0)
+    vi.useRealTimers()
+  })
+
+  it('runs same-turn collect and staggered settlement wakes through ACP admission and terminal callbacks', async () => {
+    vi.useFakeTimers()
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-acp-settlement-chain-'))
+    const productionDispatch: {
+      current?: (request: DelegationSettlementDispatch) => Promise<void>
+    } = {}
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      createDeterministicDelegateExecution(),
+      undefined,
+      { settlementContinuations: { dispatch: (request) => productionDispatch.current!(request) } }
+    )
+    const snapshot: AcpStateSnapshot = {
+      status: 'connected',
+      cwd: '/workspace',
+      sessionId: harness.session.id,
+      sessionIds: [harness.session.id],
+      events: [],
+      pendingPermissions: [],
+      permissionProfiles: {},
+      permissionGrants: {},
+      contextUsageBySession: {},
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    let callbacks!: AcpRuntimeCallbacks
+    let turn = 0
+    let modelTurnMode: 'same-turn' | 'background' | undefined
+    let sameTurnHandle: Readonly<{ frameId: string; attemptId: string }> | undefined
+    let sameTurnResult: Awaited<ReturnType<typeof harness.composition.host.collect>> | undefined
+    let staggered: Awaited<ReturnType<typeof harness.composition.host.delegate>> | undefined
+    const pendingContinuations: Array<{
+      request: AcpPromptRequest
+      resolve(response: { stopReason: 'end_turn' }): void
+    }> = []
+    const runTurn = (
+      request: AcpPromptRequest,
+      promptAttemptId: string | undefined,
+      completion: Promise<{ stopReason: 'end_turn' }>
+    ): Promise<{ stopReason: 'end_turn' }> => {
+      const turnToken = `model-turn-${++turn}`
+      callbacks.onPromptStarted?.(request.sessionId, turnToken, promptAttemptId)
+      callbacks.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
+      return completion.finally(() => callbacks.onPromptEnded?.(request.sessionId, turnToken))
+    }
+    const sendPrompt = vi.fn((request: AcpPromptRequest, promptAttemptId?: string) => {
+      const completion = (async (): Promise<{ stopReason: 'end_turn' }> => {
+        if (modelTurnMode === 'same-turn') {
+          const receipt = await harness.composition.host.delegate(
+            harness.caller,
+            { task: 'Collect inside the model turn', name: 'Same-turn model child' },
+            { wait: false }
+          )
+          sameTurnHandle = receipt.children[0]
+          sameTurnResult = await harness.composition.host.collect(
+            { ...harness.caller, toolInvocationId: 'model-same-turn-collect' },
+            [sameTurnHandle]
+          )
+        } else if (modelTurnMode === 'background') {
+          staggered = await harness.composition.host.delegate(
+            { ...harness.caller, toolInvocationId: 'model-staggered-delegate' },
+            [
+              { task: 'alpha model', name: 'Alpha model' },
+              { task: 'beta model', name: 'Beta model' },
+              { task: 'gamma model', name: 'Gamma model' }
+            ],
+            { wait: false }
+          )
+        }
+        return { stopReason: 'end_turn' }
+      })()
+      return runTurn(request, promptAttemptId, completion)
+    })
+    const sendAppContinuation = vi.fn((request: AcpPromptRequest, promptAttemptId?: string) => {
+      let resolve!: (response: { stopReason: 'end_turn' }) => void
+      const completion = new Promise<{ stopReason: 'end_turn' }>((done) => {
+        resolve = done
+      })
+      pendingContinuations.push({ request, resolve })
+      return runTurn(request, promptAttemptId, completion)
+    })
+    const runtime = {
+      getSnapshot: () => snapshot,
+      sendPrompt,
+      sendAppContinuation
+    } as unknown as AcpRuntime
+    const coordinator = new AcpRuntimeCoordinator(
+      (runtimeCallbacks) => {
+        callbacks = runtimeCallbacks
+        return runtime
+      },
+      {},
+      '',
+      undefined,
+      undefined,
+      undefined,
+      {},
+      undefined,
+      harness.composition.root
+    )
+    const promptEnded: Array<Readonly<{ sessionId: string; promptId: string }>> = []
+    productionDispatch.current = createDelegationSettlementContinuationDispatch({
+      sendAppContinuationObserved: (request, onProviderPromptAccepted) =>
+        coordinator.sendAppContinuationObserved(request, onProviderPromptAccepted),
+      onPromptEnded: (sessionId, promptId) => {
+        promptEnded.push({ sessionId, promptId })
+        return harness.composition.root.settlementPromptEnded?.(sessionId, promptId)
+      }
+    })
+
+    modelTurnMode = 'same-turn'
+    const rootPrompt = coordinator.sendPrompt({
+      sessionId: harness.session.id,
+      text: 'Coordinate and collect',
+      provenanceContext: { promptMessageId: harness.caller.originMessageId }
+    })
+    await expect.poll(() => sameTurnHandle).toBeDefined()
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    harness.execution.control(sameTurnHandle!.attemptId).accept()
+    harness.execution.control(sameTurnHandle!.attemptId).complete('same-turn model result')
+    await vi.advanceTimersByTimeAsync(100)
+    await rootPrompt
+    expect(sameTurnResult).toMatchObject([
+      { status: 'completed', response: 'same-turn model result' }
+    ])
+    sameTurnHandle = undefined
+
+    modelTurnMode = 'background'
+    await coordinator.sendPrompt({
+      sessionId: harness.session.id,
+      text: 'Start background model children',
+      provenanceContext: { promptMessageId: harness.caller.originMessageId }
+    })
+    if (!staggered) throw new Error('Background model turn did not delegate children.')
+    await expect.poll(() => harness.execution.controls()).toHaveLength(4)
+    for (const child of staggered.children) harness.execution.control(child.attemptId).accept()
+    let releaseAdmission!: () => void
+    const admission = new Promise<void>((resolve) => {
+      releaseAdmission = resolve
+    })
+    coordinator.setPromptDispatchAdmissionGuard(async (_sessionId, dispatch) => {
+      await admission
+      return dispatch()
+    })
+
+    harness.execution.control(staggered.children[0].attemptId).complete('alpha')
+    harness.execution.control(staggered.children[1].attemptId).complete('beta')
+    await expect
+      .poll(() => harness.composition.host.children(harness.caller))
+      .toMatchObject([
+        { status: 'completed' },
+        { status: 'completed' },
+        { status: 'completed' },
+        { status: 'running' }
+      ])
+    await vi.advanceTimersByTimeAsync(100)
+    expect(sendAppContinuation).not.toHaveBeenCalled()
+
+    releaseAdmission()
+    await expect.poll(() => pendingContinuations).toHaveLength(1)
+    const first = pendingContinuations[0]
+    expect(first.request).toMatchObject({
+      sessionId: harness.session.id,
+      suppressUserMessage: true,
+      provenanceContext: {
+        promptMessageId: harness.caller.originMessageId,
+        originMessageId: harness.caller.originMessageId,
+        rootFrameId: harness.caller.frameId,
+        agentFrameId: harness.caller.frameId,
+        messageAncestry: [harness.caller.originMessageId],
+        runtimeSegmentId: expect.stringMatching(/^delegation-settlement-/u)
+      }
+    })
+    harness.execution.control(staggered.children[2].attemptId).complete('gamma')
+    await expect
+      .poll(() => harness.composition.host.children(harness.caller))
+      .toMatchObject([
+        { status: 'completed' },
+        { status: 'completed' },
+        { status: 'completed' },
+        { status: 'completed' }
+      ])
+    await vi.advanceTimersByTimeAsync(200)
+    expect(pendingContinuations).toHaveLength(1)
+
+    first.resolve({ stopReason: 'end_turn' })
+    await expect
+      .poll(() => promptEnded)
+      .toContainEqual({
+        sessionId: harness.session.id,
+        promptId: first.request.provenanceContext!.runtimeSegmentId!
+      })
+    await vi.advanceTimersByTimeAsync(100)
+    await expect.poll(() => pendingContinuations).toHaveLength(2)
+    pendingContinuations[1].resolve({ stopReason: 'end_turn' })
+    await expect.poll(() => promptEnded).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(pendingContinuations).toHaveLength(2)
+    expect(vi.getTimerCount()).toBe(0)
+    vi.useRealTimers()
+  })
+
+  it('collects a background child to completion within the originating root turn', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-same-turn-collect-'))
+    const harness = await createCompositionHarness(root, 'codex')
+    const receipt = await harness.composition.host.delegate(
+      harness.caller,
+      { task: 'Return during this turn', name: 'Same-turn child' },
+      { wait: false }
+    )
+    const child = receipt.children[0]
+    const collecting = harness.composition.host.collect(
+      { ...harness.caller, toolInvocationId: 'same-turn-collect' },
+      [{ frameId: child.frameId, attemptId: child.attemptId }]
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    harness.execution.control(child.attemptId).accept()
+    harness.execution.control(child.attemptId).complete('same-turn result')
+
+    await expect(collecting).resolves.toMatchObject([
+      {
+        frameId: child.frameId,
+        attemptId: child.attemptId,
+        status: 'completed',
+        response: 'same-turn result'
+      }
+    ])
+  })
+
+  it.each(['branch', 'project', 'shutdown'] as const)(
+    'cancels a pending settlement wake on %s invalidation',
+    async (scope) => {
+      vi.useFakeTimers()
+      root = await mkdtemp(join(tmpdir(), `delegated-production-${scope}-wake-invalidation-`))
+      const dispatch = vi.fn(async (request: DelegationSettlementDispatch) => {
+        void request
+      })
+      const harness = await createCompositionHarness(
+        root,
+        'codex',
+        createDeterministicDelegateExecution(),
+        undefined,
+        { settlementContinuations: { dispatch } }
+      )
+      const leaseId = await harness.composition.root.rootTurnStarted?.({
+        sessionId: harness.session.id,
+        originatingPromptId: harness.caller.originMessageId
+      })
+      const receipt = await harness.composition.host.delegate(
+        harness.caller,
+        { task: `Invalidate ${scope} wake`, name: `${scope} invalidation child` },
+        { wait: false }
+      )
+      const child = receipt.children[0]
+      await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+      harness.execution.control(child.attemptId).accept()
+      await harness.composition.root.rootTurnEnded?.({
+        sessionId: harness.session.id,
+        originatingPromptId: harness.caller.originMessageId,
+        clean: true,
+        leaseId
+      })
+      harness.execution.control(child.attemptId).complete('terminal before invalidation')
+      await expect
+        .poll(() => harness.composition.host.children(harness.caller))
+        .toMatchObject([{ status: 'completed' }])
+
+      if (scope === 'branch') {
+        await harness.composition.root.cancelTurn?.(
+          harness.session.id,
+          harness.caller.originMessageId
+        )
+      } else if (scope === 'project') {
+        await harness.composition.root.deleteProject(harness.session.projectId)
+      } else {
+        await harness.composition.root.stopAll()
+      }
+      await vi.advanceTimersByTimeAsync(200)
+
+      expect(dispatch).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+      vi.useRealTimers()
+    }
+  )
+
   it('lets a legacy Session without delegated history establish its durable framework identity', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-legacy-identity-'))
     const harness = await createCompositionHarness(root, 'claude-code')
@@ -877,7 +1392,7 @@ describe('production delegated-work composition', () => {
       })
     ).rejects.toMatchObject({
       code: 'admission_rejection',
-      userFacingUnavailableReason: expect.stringContaining('Settings → Model → Subagent model')
+      userFacingUnavailableReason: expect.stringContaining('Settings → Model → Scenario models')
     })
     expect(execution.reservationCounts()).toEqual([])
     expect(harness.durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])
@@ -906,7 +1421,7 @@ describe('production delegated-work composition', () => {
       })
     ).rejects.toMatchObject({
       code: 'admission_rejection',
-      userFacingUnavailableReason: expect.stringContaining('Settings → Model → Subagent model')
+      userFacingUnavailableReason: expect.stringContaining('Settings → Model → Scenario models')
     })
     expect(execution.reservationCounts()).toEqual([])
     expect(harness.durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])

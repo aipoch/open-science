@@ -1,12 +1,17 @@
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
-import { formatNotebookRunFigureMeta } from './notebook-run-figures'
-import { NotebookRunFigureOutputs } from './NotebookRunOutputs'
+import {
+  formatNotebookRunFigureMeta,
+  formatNotebookRunOutputLineMeta
+} from './notebook-run-figures'
+import { NotebookToolFigureOutputs } from './NotebookToolFigureOutputs'
 import { notebookRunStatusLabel } from './notebook-cell-utils'
 import { usePreviewFileContent } from './previews/usePreviewFileContent'
+import { useNearViewport } from './previews/useNearViewport'
 
 // Byte cap for inline tool-output image previews. Co-located here (rather than in preview-support,
 // which #147 refactored into format detection) since it's specific to this panel's base64 read.
@@ -28,6 +33,7 @@ type WorkspaceToolDetailsRowProps = {
   details: ToolActivityDetails
   notebookRun?: NotebookRunRecord
   isExpanded: boolean
+  onNotebookRunNearViewport?: (runId: string, isNearViewport: boolean) => void
   onToggle: (activityId: string, nextExpanded: boolean) => void
 }
 
@@ -127,14 +133,45 @@ const WorkspaceToolDetailsRow = ({
   details,
   notebookRun,
   isExpanded,
+  onNotebookRunNearViewport,
   onToggle
 }: WorkspaceToolDetailsRowProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const [setRowElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
+  const notebookRunId = details.notebookRunId
   const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun, t) : undefined
+  const notebookOutputLineMeta = notebookRun
+    ? formatNotebookRunOutputLineMeta(notebookRun, t)
+    : undefined
   const notebookRunStatus = notebookRun ? notebookRunStatusLabel(notebookRun.status) : undefined
-  const notebookRunMeta = notebookRunStatus ? t(notebookRunStatus) : undefined
+  const notebookTerminalMeta = notebookRunStatus
+    ? t(notebookRunStatus)
+    : notebookRun?.status === 'completed'
+      ? t('done')
+      : details.metaLabel
+  const notebookRunMeta = notebookFigureMeta
+    ? [
+        notebookFigureMeta,
+        notebookRunStatus ? t(notebookRunStatus) : (notebookOutputLineMeta ?? notebookTerminalMeta)
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : notebookRunStatus
+      ? t(notebookRunStatus)
+      : undefined
   const translateKnownCopy = (value: string): string =>
     TRANSLATABLE_TOOL_DETAIL_COPY.has(value) ? t(value) : value
+
+  // Keep every near row registered even after hydration so the owner's LRU cannot evict a figure
+  // that remains visible. The owner batches targeted IPC reads and trims records after rows leave.
+  useEffect(() => {
+    if (!notebookRunId || !onNotebookRunNearViewport) return undefined
+
+    onNotebookRunNearViewport(notebookRunId, isNearViewport)
+    return () => {
+      if (isNearViewport) onNotebookRunNearViewport(notebookRunId, false)
+    }
+  }, [isNearViewport, notebookRunId, onNotebookRunNearViewport])
 
   const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
     if (section.kind === 'diff') {
@@ -176,36 +213,39 @@ const WorkspaceToolDetailsRow = ({
   }
 
   return (
-    <WorkspaceToolActivityRowButton
-      activity={activity}
-      phase={phase}
-      label={translateKnownCopy(details.displayName)}
-      subtitle={
-        details.displayName === 'Write file' && details.subtitle ? (
-          <ExtensionPreservingFileName name={details.subtitle} />
-        ) : (
-          details.subtitle
-        )
-      }
-      metaLabel={
-        phase === 'prepared'
-          ? t('code shown')
-          : phase === 'awaiting-approval'
-            ? t('waiting for your approval')
-            : phase === 'declined'
-              ? t('declined by you')
-              : phase === 'closed'
-                ? t('request ended')
-                : (notebookRunMeta ?? notebookFigureMeta ?? details.metaLabel)
-      }
-      isExpanded={isExpanded}
-      panelClassName="mx-1 mb-1.5 space-y-2.5 md:ml-[30px]"
-      panelTestId="tool-details"
-      onToggle={onToggle}
-    >
-      {details.sections.map(renderSection)}
-      {notebookRun ? <NotebookRunFigureOutputs run={notebookRun} align="start" /> : null}
-    </WorkspaceToolActivityRowButton>
+    <>
+      <WorkspaceToolActivityRowButton
+        activity={activity}
+        phase={phase}
+        label={translateKnownCopy(details.displayName)}
+        subtitle={
+          details.displayName === 'Write file' && details.subtitle ? (
+            <ExtensionPreservingFileName name={details.subtitle} />
+          ) : (
+            details.subtitle
+          )
+        }
+        metaLabel={
+          phase === 'prepared'
+            ? t('code shown')
+            : phase === 'awaiting-approval'
+              ? t('waiting for your approval')
+              : phase === 'declined'
+                ? t('declined by you')
+                : phase === 'closed'
+                  ? t('request ended')
+                  : (notebookRunMeta ?? details.metaLabel)
+        }
+        isExpanded={isExpanded}
+        panelClassName="mx-1 mb-1.5 space-y-2.5 md:ml-[30px]"
+        panelTestId="tool-details"
+        buttonRef={setRowElement}
+        onToggle={onToggle}
+      >
+        {details.sections.map(renderSection)}
+      </WorkspaceToolActivityRowButton>
+      {notebookRun ? <NotebookToolFigureOutputs run={notebookRun} /> : null}
+    </>
   )
 }
 

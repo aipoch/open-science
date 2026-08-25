@@ -143,8 +143,14 @@ test('shows context compaction loading and completion inside the Session transcr
   const conversation = page.getByRole('region', { name: 'Conversation' })
   const compaction = conversation.getByTestId('context-compaction-activity')
   await expect(compaction).toContainText('Compacting context')
+  await expect(compaction).toContainText('Summarizing earlier context')
+  await expect(compaction).toHaveAttribute('role', 'status')
   await expect(compaction).toContainText('Context compacted')
-  await expect(compaction.getByTestId('tool-chip')).not.toHaveAttribute('role', 'status')
+  await expect(compaction).toContainText(
+    'Earlier context was summarized so the session can continue.'
+  )
+  await expect(compaction).not.toHaveAttribute('role', 'status')
+  await expect(compaction.getByTestId('tool-chip')).toHaveCount(0)
 
   for (const width of [320, 375, 414, 768]) {
     await page.setViewportSize({ width, height: 900 })
@@ -167,17 +173,25 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   await page.setViewportSize({ width: 375, height: 900 })
   await page.getByRole('button', { name: 'Open navigation' }).click()
   await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
-  await page.getByRole('menuitem', { name: 'Export conversation' }).click()
-  const exportFormats = page.locator(
-    '[data-slot="dropdown-menu-sub-content"][aria-label="Export conversation formats"]'
-  )
-  const markdownExport = exportFormats.getByRole('menuitem', { name: 'Markdown' })
-  await expect(exportFormats).toBeVisible()
-  expect(await exportFormats.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBe(
+  // Chromium names a popup menu from its trigger, so the computed accessible name is the
+  // session-specific trigger label rather than the content aria-label "Session actions".
+  const sessionActions = page.getByRole('menu', {
+    name: `Open actions for ${USER_MESSAGE}`
+  })
+  await expect(sessionActions).toBeVisible()
+  expect(await sessionActions.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBe(
     80
   )
-  await expect(markdownExport).toBeVisible()
-  await markdownExport.hover()
+
+  await page.getByRole('menuitem', { name: 'Export conversation…' }).click()
+  const exportDialog = page.getByRole('dialog', { name: 'Export conversation' })
+  await expect(exportDialog).toBeVisible()
+  await expect(exportDialog.getByRole('radio', { name: 'Markdown' })).toBeVisible()
+  await exportDialog.getByRole('button', { name: 'Close' }).click()
+  await expect(exportDialog).toBeHidden()
+
+  await page.getByRole('button', { name: 'Open navigation' }).click()
+  await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
   const archive = page.getByRole('menuitem', { name: 'Archive' })
   await expect(archive).toBeEnabled()
   await archive.click()

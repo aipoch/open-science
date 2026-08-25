@@ -291,6 +291,64 @@ const koMessages: NativeMessages = {
   'Connector configuration': '커넥터 구성'
 }
 
+const ruMessages: NativeMessages = {
+  'Open Web UI': 'Открыть веб-интерфейс',
+  'Copy URL': 'Копировать URL',
+  Quit: 'Выйти',
+  Show: 'Показать',
+  Hide: 'Скрыть',
+  'Return to tasks': 'Вернуться к задачам',
+  'Minimize to tray': 'Свернуть в трей',
+  'Subagents are still running': 'Субагенты всё ещё работают',
+  'Return to the running tasks and stop their subagents before quitting Open Science.':
+    'Вернитесь к выполняющимся задачам и остановите их субагентов перед выходом из Open Science.',
+  Cancel: 'Отмена',
+  'Quit Open Science?': 'Выйти из Open Science?',
+  'Work is still running and will be interrupted if you quit.':
+    'Выполнение ещё не завершено. При выходе работа будет прервана.',
+  'Minimize to tray or quit?': 'Свернуть в трей или выйти?',
+  'Background work may still be running.': 'Фоновые задачи могут всё ещё выполняться.',
+  "Don't ask again": 'Больше не спрашивать',
+  'Keep waiting': 'Продолжить ожидание',
+  'Quit anyway': 'Всё равно выйти',
+  'Move in progress': 'Перенос выполняется',
+  'Open Science is still moving your data.': 'Open Science всё ещё переносит ваши данные.',
+  'Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.':
+    'Ваши данные в любом случае в безопасности, но при выходе сейчас перенос останется незавершённым и его, возможно, придётся начать заново. Не закрывайте приложение до завершения переноса.',
+  Reload: 'Перезагрузить',
+  'Close window': 'Закрыть окно',
+  'The app window stopped responding repeatedly.':
+    'Окно приложения несколько раз переставало отвечать.',
+  'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.':
+    'Автоматическое восстановление приостановлено. После перезагрузки это окно вернётся на главный экран; фоновые задачи могут продолжать выполняться.',
+  'Save file': 'Сохранить файл',
+  'Save artifact': 'Сохранить артефакт',
+  'Choose where to save artifacts': 'Выберите, куда сохранить артефакты',
+  'Download project artifacts': 'Скачать артефакты проекта',
+  'Export conversation': 'Экспортировать диалог',
+  Markdown: 'Markdown',
+  PDF: 'PDF',
+  'Export notebook': 'Экспортировать Notebook',
+  'Jupyter Notebook': 'Jupyter Notebook',
+  'Export notebooks by kernel': 'Экспортировать Notebook по ядрам',
+  'Overwrite existing notebooks?': 'Перезаписать существующие Notebook?',
+  '{{count}} notebook already exists in the chosen directory.':
+    'В выбранной папке уже существует {{count}} Notebook.',
+  '{{count}} notebooks already exist in the chosen directory.':
+    'В выбранной папке уже существуют {{count}} Notebook.',
+  Overwrite: 'Перезаписать',
+  'Save the update installer': 'Сохранить установщик обновления',
+  'Export Skill': 'Экспортировать навык',
+  'Skill ZIP': 'ZIP-архив навыка',
+  'ZIP archive': 'ZIP-архив',
+  'Save contribution template': 'Сохранить шаблон вклада',
+  'Specialist ZIP': 'ZIP-архив специалиста',
+  'JSON report': 'Отчёт JSON',
+  'Import Connector configuration': 'Импортировать конфигурацию коннектора',
+  'Export Connector configuration': 'Экспортировать конфигурацию коннектора',
+  'Connector configuration': 'Конфигурация коннектора'
+}
+
 const frMessages: NativeMessages = {
   'Open Web UI': "Ouvrir l'interface Web",
   'Copy URL': "Copier l'URL",
@@ -355,18 +413,27 @@ const messages: Record<Locale, NativeMessages> = {
   'zh-Hans': zhHansMessages,
   'zh-Hant': zhHantMessages,
   ja: jaMessages,
-  ko: koMessages
+  ko: koMessages,
+  ru: ruMessages
 }
 
 export const translateNativeMessage = (
   locale: Locale,
   key: NativeMessageKey,
   values: Record<string, string | number> = {}
-): string =>
-  Object.entries(values).reduce(
+): string => {
+  const selectedKey =
+    key === '{{count}} notebooks already exist in the chosen directory.' &&
+    typeof values.count === 'number' &&
+    new Intl.PluralRules(locale).select(values.count) === 'one'
+      ? '{{count}} notebook already exists in the chosen directory.'
+      : key
+
+  return Object.entries(values).reduce(
     (message, [name, value]) => message.replaceAll(`{{${name}}}`, String(value)),
-    messages[locale][key]
+    messages[locale][selectedKey]
   )
+}
 
 export const englishNativeTranslator: NativeTranslator = (key, values) =>
   translateNativeMessage('en', key, values)

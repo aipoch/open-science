@@ -1,4 +1,18 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const loggerSpies = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }))
+vi.mock('../logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../logger')>()
+  return {
+    ...actual,
+    createLogger: () => ({
+      debug: vi.fn(),
+      info: loggerSpies.info,
+      warn: vi.fn(),
+      error: loggerSpies.error
+    })
+  }
+})
 
 import type { SpecialistProfileView } from '../../shared/specialist'
 import type { ProfileService } from './service'
@@ -31,6 +45,46 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
 }
 
 describe('SessionSpecialistReconfiguration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('records phase timings for a Session Specialist switch', async () => {
+    const owner = new SessionSpecialistReconfiguration({
+      sessionBinding: bindingService(),
+      loadBinding: async () => undefined,
+      persistBinding: async () => undefined,
+      applyRuntime: async () => ({ contextReset: true })
+    })
+
+    await owner.requestSwitch('session-1', profile.id)
+
+    const events = loggerSpies.info.mock.calls.filter(
+      ([, data]) => data?.operation === 'specialist-session-switch'
+    )
+    expect(
+      events.map(([message, data]) => ({
+        message,
+        phase: data?.phase,
+        outcome: data?.outcome
+      }))
+    ).toEqual([
+      { message: 'operation started', phase: undefined, outcome: 'started' },
+      { message: 'operation phase', phase: 'queued', outcome: undefined },
+      { message: 'operation phase', phase: 'validate-target', outcome: undefined },
+      { message: 'operation phase', phase: 'persist-pending', outcome: undefined },
+      { message: 'operation phase', phase: 'apply-runtime', outcome: undefined },
+      { message: 'operation phase', phase: 'persist-applied', outcome: undefined },
+      { message: 'operation completed', phase: 'persist-applied', outcome: 'completed' }
+    ])
+    expect(events.slice(1, -1).every(([, data]) => typeof data?.elapsedMs === 'number')).toBe(true)
+    expect(events.at(-1)?.[1]).toMatchObject({
+      status: 'applied',
+      contextReset: true,
+      durationMs: expect.any(Number)
+    })
+  })
+
   it('commits pending before runtime application and clears it only after success', async () => {
     const binding = bindingService()
     let persisted: { specialistId?: string; specialistBindingPending?: true } = {}
@@ -154,6 +208,17 @@ describe('SessionSpecialistReconfiguration', () => {
       status: 'pending',
       reason: 'runtime-application-failed'
     })
+    expect(loggerSpies.info).toHaveBeenCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'specialist-session-switch',
+        phase: 'apply-runtime',
+        outcome: 'completed',
+        status: 'pending',
+        reason: 'runtime-application-failed',
+        durationMs: expect.any(Number)
+      })
+    )
     expect(persisted).toEqual({
       specialistId: profile.id,
       specialistBindingPending: true

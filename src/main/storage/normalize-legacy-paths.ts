@@ -48,9 +48,11 @@ const normalizePreviewStates = async (
   const projects = await projectRepository.list()
 
   for (const project of projects) {
-    const state = await previewStateRepository.get(project.id)
+    const snapshot = await previewStateRepository.get(project.id)
 
-    if (state) await previewStateRepository.save(project.id, state)
+    if (snapshot) {
+      await previewStateRepository.save(project.id, snapshot.state, snapshot.revision)
+    }
   }
 }
 

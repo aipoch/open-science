@@ -1,15 +1,12 @@
-import { BrowserWindow } from 'electron'
-
 import type { NotebookLanguage } from '../../shared/notebook'
 import { ipcMainHandle } from '../ipc-handler-registry'
+import { broadcastToRenderers } from '../renderer-broadcast'
 import type { NotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
 import type { ProvisionProgress } from './provisioner'
 
-// Broadcasts a progress event to every live renderer window.
+// Publishes progress through the application event hub so Electron and Web share one ordered event.
 export const broadcastNotebookEnvProgress = (progress: ProvisionProgress): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send('notebook-env:progress', progress)
-  }
+  broadcastToRenderers('notebook-env:progress', progress)
 }
 
 // Registers the stable renderer surface while lifecycle ordering and state stay behind the workflow

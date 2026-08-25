@@ -78,6 +78,27 @@ describe('registerNotebookEnvIpcHandlers', () => {
     )
   })
 
+  it('rejects an unknown provision language instead of installing Python', async () => {
+    const provisioner = fakeProvisioner()
+    registerNotebookEnvIpcHandlers(createLifecycle(provisioner))
+
+    await expect(registered.get('notebook-env:provision')?.({}, 'julia')).rejects.toThrow(
+      /python or r/i
+    )
+    expect(provisioner.provisionPython).not.toHaveBeenCalled()
+    expect(provisioner.provisionR).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unknown repair language instead of rebuilding Python', async () => {
+    const provisioner = fakeProvisioner()
+    registerNotebookEnvIpcHandlers(createLifecycle(provisioner))
+
+    await expect(registered.get('notebook-env:repair')?.({}, 'julia')).rejects.toThrow(
+      /python or r/i
+    )
+    expect(provisioner.repair).not.toHaveBeenCalled()
+  })
+
   it('projects scoped progress only through live Electron BrowserWindows', async () => {
     const provisioner = fakeProvisioner({
       provisionR: vi.fn().mockImplementation(async (report) => {

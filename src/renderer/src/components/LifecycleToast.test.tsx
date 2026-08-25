@@ -45,4 +45,34 @@ describe('LifecycleToast', () => {
     await act(async () => vi.advanceTimersByTime(6000))
     expect(onDismiss).toHaveBeenCalledOnce()
   })
+
+  it('restarts automatic dismissal for a newer notice', async () => {
+    const onDismiss = vi.fn()
+    const onView = vi.fn()
+    await act(async () =>
+      root.render(
+        <LifecycleToast
+          notice={{ projectId: 'project-1', sessionId: 'session-1', title: 'First session' }}
+          onDismiss={onDismiss}
+          onView={onView}
+        />
+      )
+    )
+
+    await act(async () => vi.advanceTimersByTime(3000))
+    await act(async () =>
+      root.render(
+        <LifecycleToast
+          notice={{ projectId: 'project-1', sessionId: 'session-2', title: 'Second session' }}
+          onDismiss={onDismiss}
+          onView={onView}
+        />
+      )
+    )
+    await act(async () => vi.advanceTimersByTime(3000))
+    expect(onDismiss).not.toHaveBeenCalled()
+
+    await act(async () => vi.advanceTimersByTime(3000))
+    expect(onDismiss).toHaveBeenCalledOnce()
+  })
 })

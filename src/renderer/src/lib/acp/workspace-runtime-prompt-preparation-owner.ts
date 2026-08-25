@@ -1,5 +1,5 @@
 import type { AcpMessageImage, AcpStateSnapshot } from '../../../../shared/acp'
-import type { AgentFrameworkId } from '../../../../shared/settings'
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import {
   RESUME_MODEL_INCOMPATIBLE_MESSAGE,
@@ -47,6 +47,8 @@ type PrepareExistingWorkspacePromptRequest = {
   selectedRuntime: {
     frameworkId?: AgentFrameworkId
     backendId?: string
+    agentModel?: string
+    agentConfiguration?: SessionAgentConfiguration
     supportsImageInput?: boolean
     supportsImageRelay?: boolean
   }
@@ -101,6 +103,41 @@ const canPrepareExistingWorkspacePrompt = ({
         session.isPending && (session.status !== 'idle' || !session.branchSource)
       )
     }).actions.startTurn.allowed)
+
+const canAdmitExistingWorkspacePrompt = (
+  runtimeState: ExistingWorkspacePromptAdmission['runtimeState'],
+  command: { sessionId?: string; allowCompactionRecovery?: boolean }
+): boolean => {
+  const sessionId = command.sessionId
+  return Boolean(
+    sessionId &&
+    canPrepareExistingWorkspacePrompt({
+      sessionId,
+      session: useSessionStore.getState().sessions.find((session) => session.id === sessionId),
+      runtimeState,
+      allowCompactionRecovery: command.allowCompactionRecovery === true
+    })
+  )
+}
+
+const sessionAgentTargetMatches = (
+  selected: PrepareExistingWorkspacePromptRequest['selectedRuntime'],
+  session: ChatSession | undefined
+): boolean => {
+  const selectedConfiguration = selected.agentConfiguration
+  const sessionConfiguration = session?.agentConfiguration
+  if (!selected.frameworkId || !selectedConfiguration || !session || !sessionConfiguration) {
+    return false
+  }
+  return (
+    selected.frameworkId === session.agentFrameworkId &&
+    (selected.backendId === undefined || selected.backendId === session.agentBackendId) &&
+    selected.agentModel === session.agentModel &&
+    selectedConfiguration.providerId === sessionConfiguration.providerId &&
+    selectedConfiguration.model === sessionConfiguration.model &&
+    selectedConfiguration.reasoningEffort === sessionConfiguration.reasoningEffort
+  )
+}
 
 const isReplayImage = (attachment: Pick<UploadedAttachment, 'name' | 'mimeType'>): boolean =>
   imageAttachmentMimeType(attachment.name, attachment.mimeType) !== undefined
@@ -193,13 +230,28 @@ const prepareExistingWorkspacePrompt = async (
       currentSession?.agentBackendId &&
       request.selectedRuntime.backendId !== currentSession.agentBackendId)
   )
-  const runtimeDetached = !runtime.state.sessionIds.includes(sessionId)
-  const runtimeMustAdoptSession = selectedRuntimeChanged || runtimeDetached
+  const selectedModelChanged = Boolean(
+    request.selectedRuntime.agentConfiguration &&
+    request.selectedRuntime.agentModel !== currentSession?.agentModel
+  )
+  const runtimeDetached =
+    !runtime.state.sessionIds.includes(sessionId) ||
+    Boolean(runtime.state.sessionResumeRequiredIds?.includes(sessionId))
+  // Resume when the explicit target differs or the visible Session belongs to a retiring runtime.
+  // Same-target Send now must not resume while the selected runtime still owns the Session.
+  const runtimeMustAdoptSession =
+    Boolean(
+      request.selectedRuntime.frameworkId &&
+      request.selectedRuntime.agentConfiguration &&
+      !sessionAgentTargetMatches(request.selectedRuntime, currentSession)
+    ) ||
+    selectedRuntimeChanged ||
+    runtimeDetached
   const branchResetRequired = Boolean(
     request.replay.cutMessageId || currentSession?.branchContextResetRequired
   )
   const resumeNeedsImageFiltering =
-    runtimeMustAdoptSession &&
+    (selectedRuntimeChanged || selectedModelChanged || runtimeDetached) &&
     request.selectedRuntime.supportsImageInput === false &&
     hasHistoryImages(currentSession?.messages ?? [])
   const replaySupportsImageInput = supportsReplayImages(request.selectedRuntime)
@@ -228,7 +280,7 @@ const prepareExistingWorkspacePrompt = async (
       }
 
       await shutdownNotebookForBranchChange(sessionId, resetCwd, request.projectId)
-      if (!selectedRuntimeChanged && !runtimeDetached) {
+      if (!runtimeMustAdoptSession) {
         const reset = await runtime.resetSessionContext(
           sessionId,
           resetCwd,
@@ -259,7 +311,7 @@ const prepareExistingWorkspacePrompt = async (
         return undefined
       }
 
-      const resumeResult = await runtime.resumeSession(
+      const resumeArguments = [
         sessionId,
         resumeCwd,
         request.projectId,
@@ -270,7 +322,17 @@ const prepareExistingWorkspacePrompt = async (
         currentSession?.providerSessionId,
         currentSession?.providerContinuityToken,
         currentSession?.specialistBindingPending
-      )
+      ] as const
+      const target =
+        request.selectedRuntime.frameworkId && request.selectedRuntime.agentConfiguration
+          ? {
+              frameworkId: request.selectedRuntime.frameworkId,
+              ...request.selectedRuntime.agentConfiguration
+            }
+          : undefined
+      const resumeResult = target
+        ? await runtime.resumeSession(...resumeArguments, target)
+        : await runtime.resumeSession(...resumeArguments)
       contextResetFromResume = Boolean(resumeResult?.contextReset)
       useSessionStore.getState().markResumed(
         sessionId,
@@ -418,6 +480,7 @@ const prepareExistingWorkspacePrompt = async (
 
 export {
   acquireWorkspacePromptPreparation,
+  canAdmitExistingWorkspacePrompt,
   canPrepareExistingWorkspacePrompt,
   getResumeFailureMessage,
   isWorkspacePromptPreparationInFlight,

@@ -6,7 +6,7 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 import { PreviewErrorCard, PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import { createPreviewResourceKey } from '../preview-resource-key'
 import type { PreviewFileRendererProps } from '../preview-types'
-import { useManagedPreviewResource } from '../useManagedPreviewResource'
+import { useCachedPreviewImage } from '../useCachedPreviewImage'
 import { ZoomablePreview } from './ZoomablePreview'
 
 const ZoomableImage = ({
@@ -69,7 +69,7 @@ export const PreviewImageContent = ({
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
   const hasFailed = failedRequestKey === requestKey
   // A decode failure disables the hook, which releases the protocol capability immediately.
-  const state = useManagedPreviewResource(
+  const state = useCachedPreviewImage(
     {
       projectId,
       sessionId,
@@ -81,7 +81,8 @@ export const PreviewImageContent = ({
       size,
       mtimeMs
     },
-    !hasFailed
+    !hasFailed,
+    hasFailed
   )
 
   if (state.status === 'loading') return <PreviewLoadingContent />
@@ -110,11 +111,7 @@ export const PreviewImageContent = ({
 
   return (
     <div className="relative size-full overflow-hidden p-4">
-      <ZoomableImage
-        url={state.resource.url}
-        name={name}
-        onError={() => setFailedRequestKey(requestKey)}
-      />
+      <ZoomableImage url={state.url} name={name} onError={() => setFailedRequestKey(requestKey)} />
     </div>
   )
 }

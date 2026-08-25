@@ -6,6 +6,7 @@ import { Dialog } from 'radix-ui'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
+import { APP } from '../../../../shared/app-config'
 import type { ProviderView } from '../../../../shared/settings'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
@@ -638,21 +639,24 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to archived"]')).toBeNull()
   })
 
-  it('anchors Archived at the bottom of Settings navigation', async () => {
+  it('anchors Feedback above Archived at the bottom of Settings navigation', async () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
 
     const archived = navButton('Archived')
-    const remoteControl = navButton('Remote control')
+    const feedback = document.body.querySelector<HTMLAnchorElement>(
+      `nav[aria-label="Settings"] a[href="${APP.links.githubFeedback}"]`
+    )
+    const remote = navButton('Remote')
+    const navItems = Array.from(document.body.querySelectorAll('nav[aria-label="Settings"] li'))
 
     expect(archived?.parentElement?.parentElement?.parentElement?.className).toContain('mt-auto')
-    expect(
-      Array.from(document.body.querySelectorAll('nav[aria-label="Settings"] button')).indexOf(
-        archived as HTMLButtonElement
-      )
-    ).toBeGreaterThan(
-      Array.from(document.body.querySelectorAll('nav[aria-label="Settings"] button')).indexOf(
-        remoteControl as HTMLButtonElement
-      )
+    expect(feedback?.textContent?.trim()).toBe('Feedback')
+    expect(feedback?.target).toBe('_blank')
+    expect(navItems.indexOf(feedback?.parentElement as HTMLLIElement)).toBeGreaterThan(
+      navItems.indexOf(remote?.parentElement as HTMLLIElement)
+    )
+    expect(navItems.indexOf(feedback?.parentElement as HTMLLIElement)).toBeLessThan(
+      navItems.indexOf(archived?.parentElement as HTMLLIElement)
     )
   })
 
@@ -718,19 +722,21 @@ describe('SettingsPage layout', () => {
     expect(dialog?.className).toContain('overscroll-contain')
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
-    // and Workspace (Model, Agent, Tags, Permissions, Runtimes, Storage, Usage, General).
-    // Remote access stays isolated and Archived is anchored at the navigation bottom.
+    // and Workspace (Model, Agent, Tags, Permissions, Runtimes, Storage, Remote, Usage, General).
+    // Feedback and Archived are anchored at the navigation bottom.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
     expect(nav?.className).toContain('md:w-48')
     expect(nav?.className).toContain('w-[min(86vw,320px)]')
+    expect(nav?.className).toContain('overflow-y-auto')
+    expect(nav?.className).toContain('md:overflow-y-visible')
     expect(nav?.parentElement?.nextElementSibling?.className).toContain('bg-card')
     expect(nav?.textContent).toContain('Capabilities')
     expect(nav?.textContent).toContain('Workspace')
-    expect(nav?.textContent).toContain('Remote access')
+    expect(nav?.textContent).not.toContain('Remote access')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(15)
+    expect(navItems).toHaveLength(16)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')
@@ -742,10 +748,11 @@ describe('SettingsPage layout', () => {
     expect(navItems[8]?.textContent).toContain('Permissions')
     expect(navItems[9]?.textContent).toContain('Runtimes')
     expect(navItems[10]?.textContent).toContain('Storage')
-    expect(navItems[11]?.textContent).toContain('Usage')
-    expect(navItems[12]?.textContent).toContain('General')
-    expect(navItems[13]?.textContent).toContain('Remote control')
-    expect(navItems[14]?.textContent).toContain('Archived')
+    expect(navItems[11]?.textContent?.trim()).toBe('Remote')
+    expect(navItems[12]?.textContent).toContain('Usage')
+    expect(navItems[13]?.textContent).toContain('General')
+    expect(navItems[14]?.textContent).toContain('Feedback')
+    expect(navItems[15]?.textContent).toContain('Archived')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
     expect(modelNavButton?.querySelector('.lucide-brain')).not.toBeNull()
@@ -766,30 +773,33 @@ describe('SettingsPage layout', () => {
       'button'
     )
 
-    // The Model panel splits Active model, Reasoning effort, Subagent, Reviewer, and Vision models
-    // (their own sections) from provider management; agent framework moved to the Agent sub-panel.
-    expect(document.body.textContent).toContain('Active model')
+    // The Model panel splits the Main model section (model + reasoning effort on one row),
+    // the Scenario models accordion card (Subagent / Reviewer / Vision), and provider management;
+    // agent framework moved to the Agent sub-panel.
+    expect(document.body.textContent).toContain('Main model')
     expect(document.body.textContent).toContain('Reasoning effort')
     expect(document.body.textContent).toContain('preserve relative strength when models change')
     expect(document.body.textContent).toContain('may approximate unsupported levels')
     expect(document.body.textContent).toContain('Providers')
     expect(document.body.textContent).not.toContain('Agent framework')
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(6)
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
     expect(
       Array.from(document.body.querySelectorAll('[data-slot="settings-section"]')).map((section) =>
         section.getAttribute('aria-label')
       )
-    ).toEqual([
-      'Active model',
-      'Reasoning effort',
-      'Subagent model',
-      'Reviewer model',
-      'Vision model',
-      'Providers'
-    ])
-    expect(document.body.textContent).toContain('Model used by subagents when Delegation is on.')
+    ).toEqual(['Main model', 'Scenario models', 'Providers'])
+    const mainModel = Array.from(
+      document.body.querySelectorAll('[data-slot="settings-section"]')
+    ).find((section) => section.getAttribute('aria-label') === 'Main model')
+    expect(mainModel?.querySelector('[aria-label="Reasoning effort"]')).not.toBeNull()
+    expect(mainModel?.querySelector('[data-slot="settings-row"]')?.className).toContain(
+      'grid-cols-1'
+    )
+    expect(mainModel?.querySelector('[data-slot="settings-row"]')?.className).toContain(
+      'lg:grid-cols-[minmax(0,1fr)_auto]'
+    )
     expect(document.body.textContent).toContain(
-      'Model used for manual, automatic, and re-run Reviews.'
+      'Models for subagents, review, and image understanding.'
     )
     // The add action lives with the list as a dashed ghost row, not a section-header button.
     const addRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -1621,12 +1631,12 @@ describe('SettingsPage layout', () => {
     ).toHaveBeenCalledTimes(1)
   })
 
-  it('opens the isolated Remote control panel with three scenario-based access modes', async () => {
+  it('opens the Remote panel with three scenario-based access modes', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
 
-    const remoteTab = navButton('Remote control')
+    const remoteTab = navButton('Remote')
     expect(remoteTab).not.toBeUndefined()
 
     await act(async () => remoteTab?.click())
@@ -1712,7 +1722,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(document.body.textContent).not.toContain('Loading remote access')
     expect(document.body.textContent).toContain('Remote access is unavailable.')
@@ -1742,7 +1752,7 @@ describe('SettingsPage layout', () => {
     )
   })
 
-  it('does not detect after leaving Remote control during the initial snapshot load', async () => {
+  it('does not detect after leaving the Remote panel during the initial snapshot load', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
@@ -1772,7 +1782,7 @@ describe('SettingsPage layout', () => {
     )
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     expect(document.body.textContent).toContain('Loading remote access')
 
     act(() => navButton('Model')?.click())
@@ -1785,7 +1795,7 @@ describe('SettingsPage layout', () => {
     expect(remoteAccess.detect).not.toHaveBeenCalled()
   })
 
-  it('does not detect after leaving Remote control during an initial-load retry', async () => {
+  it('does not detect after leaving the Remote panel during an initial-load retry', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
@@ -1817,7 +1827,7 @@ describe('SettingsPage layout', () => {
       )
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     const retryButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
       button.textContent?.includes('Try again')
     )
@@ -1833,7 +1843,7 @@ describe('SettingsPage layout', () => {
     expect(remoteAccess.detect).not.toHaveBeenCalled()
   })
 
-  it('reuses the Remote control snapshot when the panel is reopened within 60 seconds', async () => {
+  it('reuses the remote access snapshot when the panel is reopened within 60 seconds', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
@@ -1858,15 +1868,15 @@ describe('SettingsPage layout', () => {
     remoteAccess.detect.mockResolvedValue(manageableSnapshot)
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     await act(async () => navButton('Model')?.click())
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(remoteAccess.getSnapshot).toHaveBeenCalledOnce()
     expect(remoteAccess.detect).toHaveBeenCalledOnce()
   })
 
-  it('invalidates the Remote control cache when a pairing request arrives while the panel is closed', async () => {
+  it('invalidates the remote access cache when a pairing request arrives while the panel is closed', async () => {
     const remoteAccess = (
       window as unknown as {
         api: {
@@ -1905,12 +1915,12 @@ describe('SettingsPage layout', () => {
       .mockResolvedValueOnce(updatedSnapshot)
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     await act(async () => navButton('Model')?.click())
 
     const lifecycleListener = remoteAccess.onChanged.mock.calls[0]?.[0] as (() => void) | undefined
     act(() => lifecycleListener?.())
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(remoteAccess.getSnapshot).toHaveBeenCalledTimes(2)
     expect(document.body.textContent).toContain('Safari · macOS')
@@ -1958,7 +1968,7 @@ describe('SettingsPage layout', () => {
     )
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     expect(remoteAccess.detect).toHaveBeenCalledOnce()
 
     const lifecycleListener = remoteAccess.onChanged.mock.calls[0]?.[0] as (() => void) | undefined
@@ -2027,7 +2037,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     const remoteItMode = document.body.querySelector<HTMLInputElement>(
       'input[name="remote-access-mode"][aria-label="App access"]'
     )
@@ -2138,7 +2148,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(document.body.textContent).toContain('The remote access app is not connected')
     expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
@@ -2174,7 +2184,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(
       document.body.querySelector<HTMLInputElement>(
@@ -2249,7 +2259,7 @@ describe('SettingsPage layout', () => {
       await act(async () => {
         root.render(<SettingsPage open onClose={vi.fn()} />)
       })
-      await act(async () => navButton('Remote control')?.click())
+      await act(async () => navButton('Remote')?.click())
 
       expect(document.body.textContent).toContain('Chrome on iOS · iOS/iPadOS')
       expect(document.body.textContent).toContain('Google Chrome · Windows')
@@ -2306,7 +2316,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(document.body.textContent).toContain('Remote App Access')
     expect(document.body.textContent).not.toContain('127.0.0.1:44100')
@@ -2372,7 +2382,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     const readyBadge = Array.from(
       settingsSection('Remote App Access')?.querySelectorAll('[data-slot="badge"]') ?? []
@@ -2424,7 +2434,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(document.body.textContent).toContain('Browser access is on')
     expect(document.body.textContent).toContain('Remote Browser Access')
@@ -2486,7 +2496,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
     const copyButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Copy'
     )
@@ -2535,7 +2545,7 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
-    await act(async () => navButton('Remote control')?.click())
+    await act(async () => navButton('Remote')?.click())
 
     expect(document.body.textContent).toContain('Detect again')
     expect(document.body.textContent).toContain('added once')
@@ -3321,10 +3331,10 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
     await act(async () => {
-      const marketplaceTab = Array.from(
-        document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')
-      ).find((button) => button.textContent?.trim() === 'Marketplace')
-      if (marketplaceTab) fireEvent.mouseDown(marketplaceTab, { button: 0 })
+      const marketplaceEntry = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('button')
+      ).find((button) => button.textContent?.trim() === 'Browse Marketplace')
+      marketplaceEntry?.click()
       await Promise.resolve()
     })
     await act(async () => {
@@ -3840,7 +3850,7 @@ describe('SettingsPage Codex framework', () => {
       opencode: {},
       codex: {
         resolvedPath: '/data/codex-managed/adapter/dist/index.js',
-        version: '1.1.4',
+        version: '1.6.2',
         nativeVersion: '0.144.6'
       },
       providers: [],
@@ -3875,7 +3885,7 @@ describe('SettingsPage Codex framework', () => {
     const codexRadio = document.body.querySelector<HTMLButtonElement>('[aria-label="Use Codex"]')
     expect(codexRadio).not.toBeNull()
     // The adapter version shows as a muted v-tag after the name; the repo link points at the ACP adapter.
-    expect(document.body.textContent).toContain('v1.1.4')
+    expect(document.body.textContent).toContain('v1.6.2')
     expect(document.body.textContent).toContain('agentclientprotocol/codex-acp')
 
     await act(async () => codexRadio?.click())
@@ -3999,6 +4009,45 @@ describe('SettingsPage Codex framework', () => {
     expect(checkEnvironment).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps an outdated Codex ACP install in Installed and offers an update', async () => {
+    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+    api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      opencode: {},
+      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      providers: [],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: true,
+      opencodeManaged: false,
+      codexManaged: true
+    })
+    api.settings.getPreflight = vi.fn().mockResolvedValue({
+      claudeReady: true,
+      opencodeReady: false,
+      codexReady: false,
+      agentFrameworkId: 'codex',
+      agentReady: false,
+      activeProviderReady: false
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await openAgentPanel()
+
+    expect(document.body.textContent).toContain('Installed · 2')
+    expect(document.body.textContent).toContain('Available · 1')
+    expect(document.body.textContent).toContain('Update required')
+    expect(document.body.querySelector('[aria-label="Update Codex"]')).not.toBeNull()
+    const frameworkRadios = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="radio"][aria-label^="Use "]')
+    )
+    expect(frameworkRadios).toHaveLength(1)
+    expect(frameworkRadios[0]?.getAttribute('aria-label')).toBe('Use Claude Agent')
+    expect(frameworkRadios[0]?.tabIndex).toBe(0)
+  })
+
   it('routes isolated subscription sign-out from the provider list', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const provider = {
@@ -4015,7 +4064,7 @@ describe('SettingsPage Codex framework', () => {
     const snapshot = {
       claude: {},
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       providers: [provider],
       activeProviderId: provider.id,
       activeModel: 'gpt-5.6-sol',
@@ -4063,7 +4112,7 @@ describe('SettingsPage Codex framework', () => {
     const snapshot = {
       claude: {},
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       providers: [provider],
       activeProviderId: provider.id,
       activeModel: 'gpt-5.6-sol',
@@ -4096,7 +4145,7 @@ describe('SettingsPage Codex framework', () => {
     expect(errorAlert?.textContent).toBe('Codex sign-out timed out.')
   })
 
-  it('shows Codex login-check IPC failures instead of leaving an unhandled rejection', async () => {
+  it('summarizes Codex login-check IPC failures and keeps their diagnostics available', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const provider = {
       id: 'builtin-codex-subscription',
@@ -4111,7 +4160,7 @@ describe('SettingsPage Codex framework', () => {
     api.settings.getSettings = vi.fn().mockResolvedValue({
       claude: {},
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       providers: [provider],
       activeProviderId: provider.id,
       agentFrameworkId: 'codex',
@@ -4138,7 +4187,12 @@ describe('SettingsPage Codex framework', () => {
     )
     await act(async () => testLogin?.click())
 
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not test the provider connection.'
+    )
+    const details = document.body.querySelector('details')
+    expect(details?.open).toBe(false)
+    expect(details?.textContent).toContain(
       'The Codex adapter does not support authentication status.'
     )
   })
@@ -4158,7 +4212,7 @@ describe('SettingsPage Codex framework', () => {
     api.settings.getSettings = vi.fn().mockResolvedValue({
       claude: {},
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       providers: [provider],
       agentFrameworkId: 'codex',
       agentFrameworks: frameworks,
@@ -4184,7 +4238,7 @@ describe('SettingsPage Codex framework', () => {
     expect(api.settings.cancelCodexLogin).toHaveBeenCalledOnce()
   })
 
-  it('surfaces isolated sign-in failures instead of leaving an unhandled rejection', async () => {
+  it('summarizes isolated sign-in failures and keeps their diagnostics available', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const provider = {
       id: 'builtin-codex-subscription',
@@ -4199,7 +4253,7 @@ describe('SettingsPage Codex framework', () => {
     api.settings.getSettings = vi.fn().mockResolvedValue({
       claude: {},
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
+      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       providers: [provider],
       agentFrameworkId: 'codex',
       agentFrameworks: frameworks,
@@ -4217,8 +4271,11 @@ describe('SettingsPage Codex framework', () => {
     const signIn = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign in"]')
     await act(async () => signIn?.click())
 
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-      'The Codex adapter failed to spawn.'
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not sign in to Codex.'
     )
+    const details = document.body.querySelector('details')
+    expect(details?.open).toBe(false)
+    expect(details?.textContent).toContain('The Codex adapter failed to spawn.')
   })
 })

@@ -41,7 +41,9 @@ describe('NetworkPanel offline retry', () => {
       root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
     })
 
-    expect(container.textContent).toContain('Could not check whether the internet is reachable.')
+    expect(container.textContent).toContain(
+      'Could not check whether package registries are reachable.'
+    )
     expect(buttonWithText('Check again')).not.toBeUndefined()
     expect(container.textContent).not.toContain('Checking…')
   })
@@ -83,7 +85,7 @@ describe('NetworkPanel offline retry', () => {
       root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
     })
     expect(container.textContent).toContain(
-      'The network link is up, but the internet is unreachable.'
+      'The network link is up, but package registries are unreachable.'
     )
 
     await act(async () => {
@@ -95,9 +97,74 @@ describe('NetworkPanel offline retry', () => {
       await vi.advanceTimersByTimeAsync(500)
     })
     expect(container.textContent).toContain(
-      'The network link is up, but the internet is unreachable.'
+      'The network link is up, but package registries are unreachable.'
     )
     expect(buttonWithText('Check again')).not.toBeUndefined()
     expect(checkConnectivity).toHaveBeenCalledOnce()
+  })
+
+  it('shows an explicit error when local network info cannot be loaded', async () => {
+    const getInfo = vi.fn().mockRejectedValue(new Error('ipc down'))
+    ;(window as unknown as { api: unknown }).api = {
+      network: {
+        getInfo,
+        checkConnectivity: vi.fn().mockResolvedValue(true)
+      }
+    }
+    Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true })
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+
+    await act(async () => {
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('Could not load local network details.')
+    expect(container.textContent).toContain('Package registries are reachable.')
+    expect(getInfo).toHaveBeenCalledOnce()
+  })
+
+  it('does not let a stale getInfo rejection overwrite a newer success', async () => {
+    let rejectFirst!: (reason: Error) => void
+    const firstResult = new Promise<never>((_resolve, reject) => {
+      rejectFirst = reject
+    })
+    const getInfo = vi
+      .fn()
+      .mockReturnValueOnce(firstResult)
+      .mockResolvedValueOnce({ connectionType: 'wifi', ipAddress: '192.168.1.42' })
+    ;(window as unknown as { api: unknown }).api = {
+      network: {
+        getInfo,
+        checkConnectivity: vi.fn().mockResolvedValue(true)
+      }
+    }
+    const noop = (): void => {}
+    Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true })
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+
+    await act(async () => {
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={noop} />)
+    })
+    await act(async () => {
+      root.render(<NetworkPanel view={{ kind: 'mirror' }} onNavigate={noop} />)
+    })
+    await act(async () => {
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={noop} />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('Wi-Fi · 192.168.1.42')
+
+    await act(async () => {
+      rejectFirst(new Error('stale'))
+      await Promise.resolve()
+    })
+    expect(container.textContent).toContain('Wi-Fi · 192.168.1.42')
+    expect(container.textContent).not.toContain('Could not load local network details.')
+    expect(getInfo).toHaveBeenCalledTimes(2)
   })
 })

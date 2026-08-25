@@ -72,10 +72,12 @@ describe('notification attention metadata migration', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ],
       from: '0006_database_domain_constraints',
-      to: '0013_managed_file_version_foundation'
+      to: '0015_managed_file_version_foundation'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
@@ -83,9 +85,17 @@ describe('notification attention metadata migration', () => {
     await expect(
       access(`${databasePath}.before-0011_cross_resource_tags.backup`)
     ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).resolves.toBeUndefined()
+    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
     await expect(
-      access(`${databasePath}.before-0013_managed_file_version_foundation.backup`)
+      access(`${databasePath}.before-0013_session_projection.backup`)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(`${databasePath}.before-0014_review_query_indexes.backup`)
+    ).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0015_managed_file_version_foundation.backup`)
     ).resolves.toBeUndefined()
 
     await expect(

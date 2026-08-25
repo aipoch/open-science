@@ -315,7 +315,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
       - name: Check Markdown formatting
         id: docs
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'docs') }}
@@ -482,7 +482,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
       - name: Test complete suite shard
         id: unit_macos_shard
         continue-on-error: true
@@ -529,7 +529,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
       - name: Test affected Modules
         id: unit_macos_related
         if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
@@ -611,7 +611,7 @@ jobs:
           cache: npm
       - name: Install dependencies for coverage-only legacy plan
         if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
       - name: Test coverage-only legacy plan
         if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
         run: npm run test:coverage
@@ -644,7 +644,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
       - name: Test Windows-specific behavior
         id: windows_runtime
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
@@ -749,7 +749,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
       - name: Build Electron application
         id: build_electron
         continue-on-error: true
@@ -881,7 +881,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install dependencies
-        run: npm ci --prefer-offline --no-audit --fund=false
+        run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
       - name: Build Electron application
         id: build_electron
         continue-on-error: true

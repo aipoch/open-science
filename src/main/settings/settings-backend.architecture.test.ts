@@ -1,4 +1,3 @@
-import { readFileSync, readdirSync } from 'node:fs'
 import { basename, dirname, extname, relative, resolve } from 'node:path'
 
 import {
@@ -34,6 +33,11 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import {
+  listProductionSources,
+  readProductionSource
+} from '../../../test/architecture-source-index'
+
 const projectRoot = resolve(__dirname, '../../..')
 const settingsRoot = resolve(projectRoot, 'src/main/settings')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
@@ -62,14 +66,7 @@ const settingsPaths = {
   types: resolve(settingsRoot, 'types.ts'),
   notebookLocalRpcServer: resolve(projectRoot, 'src/main/notebook/local-rpc-server.ts')
 } as const
-const sourceCache = new Map<string, string>()
-const readSource = (path: string): string => {
-  const cached = sourceCache.get(path)
-  if (cached) return cached
-  const source = readFileSync(path, 'utf8')
-  sourceCache.set(path, source)
-  return source
-}
+const readSource = (path: string): string => readProductionSource(path, projectRoot)
 const rawLineCount = (source: string): number =>
   source.split(/\r?\n/).length - Number(source.endsWith('\n'))
 const modulePath = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, '')
@@ -89,24 +86,7 @@ const sourceFileFor = (path: string): SourceFile => {
   sourceFileCache.set(path, sourceFile)
   return sourceFile
 }
-const productionSources = (): string[] => {
-  const sources: string[] = []
-  const visit = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = resolve(directory, entry.name)
-      if (entry.isDirectory()) visit(path)
-      else if (
-        ['.ts', '.tsx'].includes(extname(path)) &&
-        !/\.(?:test|spec)\.[cm]?tsx?$/.test(entry.name)
-      ) {
-        sources.push(path)
-      }
-    }
-  }
-  visit(resolve(projectRoot, 'src'))
-  visit(resolve(projectRoot, 'packages'))
-  return sources.sort()
-}
+const productionSources = (): readonly string[] => listProductionSources(projectRoot)
 const importSpecifiersCache = new Map<string, string[]>()
 const importSpecifiersFrom = (sourcePath: string): string[] => {
   const cached = importSpecifiersCache.get(sourcePath)
@@ -307,8 +287,9 @@ describe('Settings backend ownership architecture', () => {
     expect(rawLineCount(readSource(settingsPaths.reviewerModelOwner))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.subagentModelOwner))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.visionModelOwner))).toBeLessThanOrEqual(660)
-    // Main's facade plus typed Subagent/Reviewer/Vision forwarding, proxy projection, and owner composition.
-    expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1050)
+    // Main's facade plus typed provider-auth, Subagent/Reviewer/Vision forwarding, proxy projection,
+    // and owner composition.
+    expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1070)
   })
 
   it('locks the stable module export inventories', () => {
@@ -443,12 +424,15 @@ describe('Settings backend ownership architecture', () => {
       'upsertProvider'
     ])
     expect(publicOperationsOf(settingsPaths.providerAccounts, 'ProviderAccountsModule')).toEqual([
+      'beginXaiOAuthLogin',
       'cancelClaudeIsolatedLogin',
       'cancelClaudeLogin',
       'cancelCodexLogin',
+      'cancelXaiOAuthLogin',
       'deleteProvider',
       'getClaudeIsolatedStatus',
       'getClaudeSharedStatus',
+      'getXaiOAuthAccessToken',
       'isProviderKeyUsable',
       'loginClaudeShared',
       'loginIsolatedClaude',
@@ -457,6 +441,7 @@ describe('Settings backend ownership architecture', () => {
       'logoutClaudeShared',
       'logoutIsolatedClaude',
       'logoutIsolatedCodex',
+      'logoutXaiOAuth',
       'migrateLegacyKeyRefs',
       'refreshProviderModels',
       'resolveActiveModel',
@@ -468,7 +453,8 @@ describe('Settings backend ownership architecture', () => {
       'setActiveProvider',
       'toProviderView',
       'upsertProvider',
-      'validateProvider'
+      'validateProvider',
+      'waitXaiOAuthLogin'
     ])
   })
 
@@ -507,7 +493,7 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
         addCustomServer addManualInterpreter admitReviewerExecutionModel admitSubagentExecutionModel admitVisionModel authenticateCustomServer buildCustomServerTemplateExport
-        buildSkillExport cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codexSkillCatalog
+        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codexSkillCatalog
         codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodex
         detectOpencode dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getManualInterpreters getNotificationsEnabled getPackageMirror
@@ -516,7 +502,7 @@ describe('Settings backend ownership architecture', () => {
         importSkillZipBatch installClaude installCodex installOpencode isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
         loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
-        logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex markOnboardingComplete
+        logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
         markPathsNormalized previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
         provisionedConnectorSkillNames publishHostSkill refreshProviderModels removeCustomServer removeGitHubToken
@@ -529,7 +515,7 @@ describe('Settings backend ownership architecture', () => {
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotificationsEnabled
         setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodex
-        uninstallOpencode updateCustomServer updateSkill upsertProvider validateProvider withHostSkillRead
+        uninstallOpencode updateCustomServer updateSkill upsertProvider validateProvider waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
         .split(/\s+/)
@@ -549,11 +535,13 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/preferences.ts',
       'src/main/settings/provider-accounts.ts',
       'src/main/settings/provider-auth-lifecycle.ts',
+      'src/main/settings/provider-model-catalog-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
       'src/main/settings/skill-catalog.ts',
       'src/main/settings/subagent-model-owner.ts',
-      'src/main/settings/vision-model-owner.ts'
+      'src/main/settings/vision-model-owner.ts',
+      'src/main/settings/xai-provider-account-owner.ts'
     ])
     expect(importersOf(settingsPaths.recordCodec)).toEqual([
       'src/main/settings/document-codec.ts',
@@ -720,6 +708,7 @@ describe('Settings backend ownership architecture', () => {
       'visionModel'
     ])
     expect(typePropertyNames(settingsPaths.types, 'StoredProvider')).toEqual([
+      'accountEmail',
       'apiEndpoints',
       'baseUrl',
       'codexAuthMode',
@@ -732,6 +721,8 @@ describe('Settings backend ownership architecture', () => {
       'keyRef',
       'lastValidatedAt',
       'lastValidationFailure',
+      'maxInputTokens',
+      'maxOutputTokens',
       'model',
       'name',
       'reasoningEffortPreset',
@@ -782,6 +773,7 @@ describe('Settings backend ownership architecture', () => {
     expect(manifest.modules.settings_repository.ownerPaths).toEqual([
       'src/main/settings/repository.ts',
       'src/main/settings/record-codec.ts',
+      'src/main/settings/provider-token-limits.ts',
       'src/main/settings/document-codec.ts',
       'src/main/settings/document-store.ts',
       'src/main/settings/compute-grant-port.ts',
@@ -790,12 +782,17 @@ describe('Settings backend ownership architecture', () => {
     expect(manifest.modules.settings_repository.interfacePaths).toEqual([
       'src/main/settings/repository.ts',
       'src/shared/network-proxy.ts',
-      'src/main/settings/compute-grant-port.ts'
+      'src/main/settings/compute-grant-port.ts',
+      'src/main/settings/provider-token-limits.ts'
     ])
     expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
       'src/main/settings/provider-accounts.ts',
       'src/main/settings/provider-auth-lifecycle.ts',
-      'src/main/settings/provider-runtime-projection.ts'
+      'src/main/settings/provider-draft-projection.ts',
+      'src/main/settings/provider-model-catalog-owner.ts',
+      'src/main/settings/provider-runtime-projection.ts',
+      'src/main/settings/xai-oauth.ts',
+      'src/main/settings/xai-provider-account-owner.ts'
     ])
     expect(manifest.modules.settings_provider_accounts.interfacePaths).toEqual([
       'src/main/settings/provider-accounts.ts'
@@ -810,6 +807,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/native-responses-compatibility.ts',
       'src/main/settings/anthropic-provider-bridge.ts',
       'src/main/settings/openai-provider-bridge.ts',
+      'src/main/settings/xai-oauth-provider-bridge.ts',
+      'src/main/settings/xai-protocol.ts',
       'src/main/settings/provider-error-replay.ts',
       'src/main/settings/provider-loopback-http-host.ts',
       'src/main/settings/provider-transport-owner.ts',

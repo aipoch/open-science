@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Variable } from 'lucide-react'
 
-import type { PreviewToolItem } from '@/stores/preview-workbench-store'
+import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useSessionStore } from '@/stores/session-store'
 import { cn } from '@/lib/utils'
@@ -13,12 +14,14 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 import type {
   NotebookEnvironmentStatus,
   NotebookKernelKind,
   NotebookLanguage,
   NotebookRunRecord,
+  NotebookRunStaleness,
   NotebookSessionReference,
   NotebookSessionState
 } from '../../../../shared/notebook'
@@ -29,6 +32,8 @@ import { notebookGated } from './provisioning-view'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
+import { isCurrentSessionNotebookView } from './follow-notebook-scroll'
+import { useFollowScrollBottom } from './use-follow-scroll-bottom'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 import {
   resolveRunErrorLine,
@@ -43,6 +48,7 @@ import {
 import {
   createNotebookFrameFilterOptions,
   notebookFrameLabels,
+  normalizeNotebookRootFrameRuns,
   projectNotebookRunsForFrame,
   type NotebookFrameFilterValue
 } from './session-notebook-projection'
@@ -103,14 +109,61 @@ const getRunOutputText = (run: NotebookRunRecord | undefined): string => {
     .join('\n')
 }
 
+const DependencyStatusBadge = ({
+  staleness,
+  causedByRunIndex
+}: {
+  staleness: Exclude<NotebookRunStaleness, { state: 'clear' }>
+  causedByRunIndex?: number
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const isStale = staleness.state === 'stale'
+  const label = isStale ? t('Variable changed after this run') : t('Variable tracking is limited')
+  const detail = isStale
+    ? t(
+        'Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.',
+        { names: staleness.names.join(', '), index: causedByRunIndex }
+      )
+    : t(
+        'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
+      )
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              'inline-flex cursor-help items-center gap-1 rounded px-1.5 py-0.5',
+              isStale ? 'bg-warning-100 text-warning-900' : 'bg-bg-300 text-text-200'
+            )}
+            data-testid={isStale ? 'notebook-cell-stale' : 'notebook-cell-dependency-unknown'}
+          >
+            <Variable className="size-3 shrink-0" aria-hidden="true" />
+            {label}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-[320px] px-3 py-2 leading-5">
+          {detail}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
 // Displays one durable execution record from run.json in chronological order. The zero-based index
 // is the cell number shown in [n], and a failed run marks the offending line.
 const NotebookRunCell = ({
   run,
-  index
+  index,
+  staleness,
+  causedByRunIndex
 }: {
   run: NotebookRunRecord
   index: number
+  staleness?: NotebookRunStaleness
+  causedByRunIndex?: number
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
@@ -126,7 +179,7 @@ const NotebookRunCell = ({
           <span className="font-mono text-text-300">[{index}]</span>
           <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{kind}</span>
           {run.source === 'user' ? (
-            <span className="rounded bg-accent px-1.5 py-0.5 font-medium text-accent">
+            <span className="rounded bg-blue-500/10 px-1.5 py-0.5 font-medium text-blue-700 dark:text-blue-300">
               {t('you')}
             </span>
           ) : null}
@@ -142,6 +195,11 @@ const NotebookRunCell = ({
             )
           ) : statusLabel ? (
             <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{t(statusLabel)}</span>
+          ) : null}
+          {staleness?.state === 'stale' ? (
+            <DependencyStatusBadge staleness={staleness} causedByRunIndex={causedByRunIndex} />
+          ) : staleness?.state === 'unknown' ? (
+            <DependencyStatusBadge staleness={staleness} />
           ) : null}
         </div>
         {originLabel ? (
@@ -165,38 +223,57 @@ const NotebookRunCell = ({
 }
 
 // Mirrors terminal-originated runs in the bottom terminal scrollback.
-const TerminalScrollback = ({ runs }: { runs: NotebookRunRecord[] }): React.JSX.Element => (
-  <div
-    className="min-h-0 flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-5"
-    data-testid="kernel-terminal-scrollback"
-  >
-    {runs
-      .filter((run) => run.inputKind === 'terminal')
-      .map((run) => (
-        <div key={run.runId} className="whitespace-pre-wrap">
-          <div>
-            <span className="text-text-300">&gt;&gt;&gt; </span>
-            <span className="text-text-100">{run.script}</span>
-          </div>
-          {getRunOutputText(run) ? (
-            <div className={isProblemRunStatus(run.status) ? 'text-danger-000' : 'text-text-200'}>
-              {getRunOutputText(run)}
+const TerminalScrollback = ({
+  runs,
+  language,
+  viewportRef
+}: {
+  runs: NotebookRunRecord[]
+  language: NotebookLanguage
+  viewportRef: RefObject<HTMLDivElement | null>
+}): React.JSX.Element => {
+  const prompt = language === 'r' ? '>' : '>>>'
+
+  return (
+    <div
+      ref={viewportRef}
+      className="min-h-0 flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-5"
+      data-testid="kernel-terminal-scrollback"
+    >
+      <div>
+        {runs
+          .filter((run) => run.inputKind === 'terminal')
+          .map((run) => (
+            <div key={run.runId} className="whitespace-pre-wrap">
+              <div>
+                <span className="text-text-300">{prompt} </span>
+                <span className="text-text-100">{run.script}</span>
+              </div>
+              {getRunOutputText(run) ? (
+                <div
+                  className={isProblemRunStatus(run.status) ? 'text-danger-000' : 'text-text-200'}
+                >
+                  {getRunOutputText(run)}
+                </div>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-      ))}
-  </div>
-)
+          ))}
+      </div>
+    </div>
+  )
+}
 
 // Captures one-line terminal code and submits on Enter while Shift+Enter keeps editing.
 const TerminalInput = ({
   code,
   disabled,
+  language,
   onChange,
   onSubmit
 }: {
   code: string
   disabled: boolean
+  language: NotebookLanguage
   onChange: (value: string) => void
   onSubmit: () => void
 }): React.JSX.Element => {
@@ -211,7 +288,9 @@ const TerminalInput = ({
 
   return (
     <div className="flex items-start gap-2 border-t border-border-100/60 px-3 py-2">
-      <span className="pt-0.5 font-mono text-xs text-primary">&gt;&gt;&gt;</span>
+      <span className="pt-0.5 font-mono text-xs text-primary">
+        {language === 'r' ? '>' : '>>>'}
+      </span>
       <textarea
         rows={1}
         value={code}
@@ -237,7 +316,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const [notebookState, setNotebookState] = useState<NotebookSessionState | undefined>()
   const [terminalCode, setTerminalCode] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submittingTarget, setSubmittingTarget] = useState<string | undefined>()
   const [actionError, setActionError] = useState<string | null>(null)
   const [isRestarting, setIsRestarting] = useState(false)
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
@@ -245,10 +324,27 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const session = useSessionStore((state) =>
     state.sessions.find((candidate) => candidate.id === item.notebook.sessionId)
   )
+  const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
+  const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
+  const previewActiveItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
+  const notebookItemInWorkbench = usePreviewWorkbenchStore((state) =>
+    state.items.some((entry) => entry.id === item.id)
+  )
+  const followEnabled = isCurrentSessionNotebookView({
+    notebookSessionId: item.notebook.sessionId,
+    selectedSessionId,
+    notebookItemId: item.id,
+    previewPanelState,
+    previewActiveItemId,
+    notebookItemInWorkbench
+  })
+  const cellsViewportRef = useFollowScrollBottom(followEnabled)
+  const terminalViewportRef = useFollowScrollBottom(followEnabled)
   // Selected environment within the active python/r pane; undefined lets the effective-env
   // computation below default to the first (canonical-default-first) environment.
   const [activeEnv, setActiveEnv] = useState<string | undefined>(undefined)
-  const stateLoadInFlight = useRef(false)
+  const latestNotebookState = useRef<NotebookSessionState | undefined>(undefined)
+  const stateLoadInFlight = useRef<Promise<boolean> | undefined>(undefined)
   const stateReloadQueued = useRef(false)
   const notebookRequest = createNotebookRequest(item.notebook)
   const notebookRequestKey = JSON.stringify(notebookRequest)
@@ -277,40 +373,55 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
 
   // Keeps state assignment isolated so load paths and event paths share the same update hook.
   const applyNotebookState = useCallback((nextState: NotebookSessionState): void => {
+    latestNotebookState.current = nextState
     setNotebookState(nextState)
   }, [])
 
   // Reads the latest notebook state from main, including its bounded recent run window.
-  const loadNotebookState = useCallback(async (): Promise<void> => {
+  const loadNotebookState = useCallback(async (): Promise<boolean> => {
     if (stateLoadInFlight.current) {
       stateReloadQueued.current = true
-      return
+      return stateLoadInFlight.current
     }
-    stateLoadInFlight.current = true
-    setIsLoading(true)
-
-    do {
-      stateReloadQueued.current = false
-      const requested = latestNotebookRequest.current
+    const load = (async (): Promise<boolean> => {
+      let succeeded = false
+      setIsLoading(true)
       try {
-        const nextState = await window.api.notebook.state(requested.request)
+        do {
+          stateReloadQueued.current = false
+          const requested = latestNotebookRequest.current
+          try {
+            const nextState = await window.api.notebook.state(requested.request)
 
-        if (latestNotebookRequest.current.key === requested.key) {
-          applyNotebookState(nextState)
-          setActionError(null)
-        } else {
-          stateReloadQueued.current = true
-        }
-      } catch (error) {
-        if (latestNotebookRequest.current.key === requested.key) {
-          setActionError(getErrorMessage(error))
-        } else {
-          stateReloadQueued.current = true
-        }
+            if (latestNotebookRequest.current.key === requested.key) {
+              applyNotebookState(nextState)
+              setActionError(null)
+              succeeded = true
+            } else {
+              stateReloadQueued.current = true
+            }
+          } catch (error) {
+            if (latestNotebookRequest.current.key === requested.key) {
+              setActionError(getErrorMessage(error))
+              succeeded = false
+            } else {
+              stateReloadQueued.current = true
+            }
+          }
+        } while (stateReloadQueued.current)
+        return succeeded
+      } finally {
+        setIsLoading(false)
       }
-    } while (stateReloadQueued.current)
-    stateLoadInFlight.current = false
-    setIsLoading(false)
+    })()
+    stateLoadInFlight.current = load
+    try {
+      return await load
+    } finally {
+      if (stateLoadInFlight.current === load) {
+        stateLoadInFlight.current = undefined
+      }
+    }
   }, [applyNotebookState])
 
   // Defer the initial state load until after the component has mounted.
@@ -333,71 +444,55 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     })
   }, [item.notebook.sessionId, loadNotebookState])
 
-  // Sends terminal code through the same notebook interpreter and history path as agent code.
-  const submitTerminalCode = async (): Promise<void> => {
-    const code = terminalCode.trim()
-
-    if (!code || notebookState?.activeWrite?.source === 'agent' || notebookState?.activeRunId) {
-      return
-    }
-
-    // Clear optimistically so a running terminal command feels like a REPL submission.
-    setTerminalCode('')
-    setIsSubmitting(true)
-    setActionError(null)
-
-    try {
-      await window.api.notebook.execute({
-        ...createNotebookRequest(item.notebook),
-        code,
-        source: 'user',
-        inputKind: 'terminal'
-      })
-
-      await loadNotebookState()
-    } catch (error) {
-      setTerminalCode(code)
-      setActionError(getErrorMessage(error))
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  // Agent writes and active executions lock terminal input to avoid interleaving code streams.
-  const isAgentWriting = notebookState?.activeWrite?.source === 'agent'
-  const isNotebookBusy = isSubmitting || Boolean(notebookState?.activeRunId)
-  const isTerminalLocked =
-    isLoading || isSubmitting || isAgentWriting || Boolean(notebookState?.activeRunId) || gated
   const runs = notebookState?.runs ?? notebookState?.recentRuns ?? []
+  const frameRuns = session ? normalizeNotebookRootFrameRuns(runs, session) : runs
   const frameOptions = createNotebookFrameFilterOptions(
-    runs,
+    frameRuns,
     session ? notebookFrameLabels(session, t) : {}
   )
   const effectiveFrameFilter = frameOptions.some((option) => option.value === frameFilter)
     ? frameFilter
     : frameOptions[0]?.value
   const projectedRuns = effectiveFrameFilter
-    ? projectNotebookRunsForFrame(runs, effectiveFrameFilter)
+    ? projectNotebookRunsForFrame(frameRuns, effectiveFrameFilter)
     : []
 
-  // Surface a tab only for kernel kinds that actually produced a run — no default python/r tabs on a
-  // fresh notebook; a kernel's tab appears once it has been used.
+  // Kernels appear only after producing a run in the current projected history.
   const kindsWithRuns = new Set(projectedRuns.map(resolveRunKernelKind))
   const visibleKinds = KERNEL_KIND_ORDER.filter((kind) => kindsWithRuns.has(kind))
-  // Default to the first kind (in fixed order) that actually has runs; fall back to python only when
-  // there are no runs at all (so an empty notebook doesn't render a blank non-python pane).
   const effectiveActiveKind = visibleKinds.includes(activeKind)
     ? activeKind
-    : (KERNEL_KIND_ORDER.find((kind) => kindsWithRuns.has(kind)) ?? visibleKinds[0] ?? 'python')
+    : (visibleKinds[0] ?? 'python')
   const kindRuns = projectedRuns.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
+  const activeRuntimeBinding =
+    effectiveActiveKind === 'python' || effectiveActiveKind === 'r'
+      ? notebookState?.runtimeBindings?.[effectiveActiveKind]
+      : undefined
+  const activeRuntimeDetails = activeRuntimeBinding
+    ? [activeRuntimeBinding.label, activeRuntimeBinding.version].filter(Boolean).join(' · ')
+    : undefined
 
   // Per-environment selector (design D6): only python/r are env-scoped. Distinct env names among
   // this kind's runs, canonical default first, so the selector (when shown) reads default-first.
-  const isEnvScopedKind = effectiveActiveKind === 'python' || effectiveActiveKind === 'r'
-  const envNames = isEnvScopedKind
+  const activeDataLanguage: NotebookLanguage | undefined =
+    effectiveActiveKind === 'python' || effectiveActiveKind === 'r'
+      ? effectiveActiveKind
+      : undefined
+  const executionEnvironment = activeDataLanguage
+    ? (notebookState?.executionEnvironments?.[activeDataLanguage] ??
+      (activeDataLanguage === 'r' ? 'default-r' : 'default-python'))
+    : undefined
+  const envNames = activeDataLanguage
     ? Array.from(
         new Set(
-          kindRuns.map(resolveRunEnvironment).filter((env): env is string => env !== undefined)
+          [
+            ...kindRuns.map(resolveRunEnvironment),
+            ...(notebookState?.environments.flatMap((entry) =>
+              entry.kind === activeDataLanguage && entry.environment ? [entry.environment] : []
+            ) ?? []),
+            notebookState?.latestRunEnvironments?.[activeDataLanguage],
+            executionEnvironment
+          ].filter((env): env is string => env !== undefined)
         )
       ).sort((a, b) => {
         const aIsDefault = a === 'default-python' || a === 'default-r'
@@ -409,14 +504,24 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // Hide the selector entirely when there's at most one environment — zero visual change for the
   // common single-default-env case.
   const showEnvSelector = envNames.length > 1
-  const effectiveActiveEnv = showEnvSelector
+  const effectiveActiveEnv = activeDataLanguage
     ? envNames.includes(activeEnv ?? '')
       ? (activeEnv as string)
-      : envNames[0]
+      : (executionEnvironment ?? envNames[0])
     : undefined
-  const visibleRuns = showEnvSelector
+  const visibleRuns = activeDataLanguage
     ? kindRuns.filter((run) => resolveRunEnvironment(run) === effectiveActiveEnv)
     : kindRuns
+  const visibleRunIndexById = new Map(visibleRuns.map((run, index) => [run.runId, index]))
+  const visibleStalenessForRun = (run: NotebookRunRecord): NotebookRunStaleness | undefined => {
+    const staleness = notebookState?.runStaleness?.[run.runId]
+    if (staleness?.state !== 'stale') return staleness
+    const runIndex = visibleRunIndexById.get(run.runId)
+    const causeIndex = visibleRunIndexById.get(staleness.causedByRunId)
+    return runIndex !== undefined && causeIndex !== undefined && causeIndex > runIndex
+      ? staleness
+      : undefined
+  }
 
   // Live status for one env option in the selector, matched by (kind, env) against the per-env
   // status view (defaulting the env name the same way resolveRunEnvironment does).
@@ -429,15 +534,100 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     })?.status
 
   // R-only restart prompt: an R install/uninstall flags the active R env until its kernel restarts.
-  const activeEnvName =
-    effectiveActiveEnv ?? (effectiveActiveKind === 'r' ? 'default-r' : 'default-python')
+  const activeEnvName = effectiveActiveEnv
   const restartRecommended =
-    effectiveActiveKind === 'r' &&
+    activeDataLanguage === 'r' &&
     (notebookState?.environments.find((entry) => {
       if (entry.kind !== 'r') return false
-      return (entry.environment ?? 'default-r') === activeEnvName
+      return (entry.environment ?? 'default-r') === (activeEnvName ?? 'default-r')
     })?.restartRecommended ??
       false)
+  const selectedTarget =
+    activeDataLanguage && activeEnvName ? `${activeDataLanguage}:${activeEnvName}` : undefined
+  const activeRun = runs.find((run) => run.runId === notebookState?.activeRunId)
+  const activeRunTarget =
+    activeRun?.kernelKind === 'python' || activeRun?.kernelKind === 'r'
+      ? `${activeRun.kernelKind}:${resolveRunEnvironment(activeRun)}`
+      : undefined
+  const activeKernelStatus = activeEnvName ? envOptionStatus(activeEnvName) : undefined
+  const hasActiveKernelHistory =
+    activeDataLanguage !== undefined &&
+    activeEnvName !== undefined &&
+    kindRuns.some((run) => resolveRunEnvironment(run) === activeEnvName)
+  // A persisted `idle` status only describes the last app process. The per-environment status list is
+  // populated from kernels known to this process. Without an entry the kernel is inactive, even when
+  // this language has no history yet; only an Agent execution may activate user input.
+  const isKernelInactive =
+    activeDataLanguage !== undefined &&
+    activeEnvName !== undefined &&
+    activeKernelStatus === undefined &&
+    activeRunTarget !== selectedTarget &&
+    submittingTarget !== selectedTarget
+  const isNamespaceLost =
+    activeDataLanguage !== undefined &&
+    (isKernelInactive ||
+      activeKernelStatus === 'terminated' ||
+      (activeDataLanguage === 'python' &&
+        activeEnvName === 'default-python' &&
+        notebookState?.kernelStatus === 'terminated'))
+  const isHistoricalEnvironmentView =
+    activeDataLanguage !== undefined &&
+    activeEnvName !== undefined &&
+    executionEnvironment !== undefined &&
+    activeEnvName !== executionEnvironment
+  const isSubmitting = submittingTarget !== undefined
+  const isSelectedKernelRunning =
+    (submittingTarget !== undefined && submittingTarget === selectedTarget) ||
+    (activeRunTarget !== undefined && activeRunTarget === selectedTarget) ||
+    activeKernelStatus === 'starting' ||
+    activeKernelStatus === 'running' ||
+    activeKernelStatus === 'restarting'
+  // The Session Aggregate owns one active write and run, so input stays globally locked even when a
+  // different persistent data kernel is selected.
+  const isTerminalLocked =
+    (isLoading && !notebookState) ||
+    isSubmitting ||
+    Boolean(notebookState?.activeWrite) ||
+    Boolean(notebookState?.activeRunId) ||
+    gated ||
+    isSelectedKernelRunning ||
+    (activeDataLanguage === 'r' && (!envStatus.rReady || isPreparingR))
+  const cellCount = notebookState?.runCount ?? runs.length
+
+  // Sends terminal code through the same notebook interpreter and history path as agent code.
+  const submitTerminalCode = async (): Promise<void> => {
+    const code = terminalCode.trim()
+
+    if (!code || !activeDataLanguage || !activeEnvName || isHistoricalEnvironmentView) {
+      return
+    }
+
+    const target = `${activeDataLanguage}:${activeEnvName}`
+    setSubmittingTarget(target)
+    setActionError(null)
+
+    try {
+      if (stateLoadInFlight.current && !(await stateLoadInFlight.current)) return
+      const executionState = latestNotebookState.current
+      if (executionState?.activeWrite || executionState?.activeRunId) return
+
+      setTerminalCode('')
+      await window.api.notebook.execute({
+        ...createNotebookRequest(item.notebook),
+        code,
+        source: 'user',
+        inputKind: 'terminal',
+        language: activeDataLanguage
+      })
+
+      await loadNotebookState()
+    } catch (error) {
+      setTerminalCode(code)
+      setActionError(getErrorMessage(error))
+    } finally {
+      setSubmittingTarget(undefined)
+    }
+  }
 
   // Restarts the shared interpreter, replacing state with the fresh snapshot so the banner clears.
   const handleRestart = async (): Promise<void> => {
@@ -452,6 +642,32 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       setIsRestarting(false)
     }
   }
+  const notebookCells = (
+    <div
+      ref={cellsViewportRef}
+      className="h-full min-h-0 overflow-y-auto overscroll-contain"
+      data-testid="notebook-cells"
+    >
+      <div className="divide-y divide-border-100">
+        {visibleRuns.map((run, index) => {
+          const staleness = visibleStalenessForRun(run)
+          return (
+            <NotebookRunCell
+              key={run.runId}
+              run={run}
+              index={index}
+              staleness={staleness}
+              causedByRunIndex={
+                staleness?.state === 'stale'
+                  ? visibleRunIndexById.get(staleness.causedByRunId)
+                  : undefined
+              }
+            />
+          )
+        })}
+      </div>
+    </div>
+  )
 
   return (
     <section
@@ -541,6 +757,25 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             )
           )}
         </div>
+        {activeRuntimeBinding && activeRuntimeDetails ? (
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={activeRuntimeDetails}
+                  className="ml-2 flex min-w-0 max-w-40 shrink-0 rounded-md bg-bg-300 px-2 py-1 text-[11px] text-text-200"
+                  data-testid="notebook-runtime-binding"
+                >
+                  <span className="min-w-0 truncate">{activeRuntimeBinding.label}</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-[320px] break-words">
+                {activeRuntimeDetails}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : null}
       </header>
 
       {showEnvSelector ? (
@@ -593,61 +828,94 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </div>
       ) : null}
 
-      <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 flex-col">
-        <ResizablePanel
-          id="notebook-cells-panel"
-          defaultSize="80%"
-          minSize="35%"
-          className="min-h-0 overflow-hidden"
-        >
-          <div
-            className="h-full min-h-0 overflow-y-auto overscroll-contain"
-            data-testid="notebook-cells"
+      {!activeDataLanguage || isNamespaceLost || isHistoricalEnvironmentView ? (
+        <div className="min-h-0 flex-1 overflow-hidden">{notebookCells}</div>
+      ) : (
+        <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 flex-col">
+          <ResizablePanel
+            id="notebook-cells-panel"
+            defaultSize="80%"
+            minSize="35%"
+            className="min-h-0 overflow-hidden"
           >
-            <div className="divide-y divide-border-100">
-              {visibleRuns.map((run, index) => (
-                <NotebookRunCell key={run.runId} run={run} index={index} />
-              ))}
-            </div>
-          </div>
-        </ResizablePanel>
+            {notebookCells}
+          </ResizablePanel>
 
-        <ResizableHandle
-          aria-label={t('Resize notebook and terminal')}
-          className="shrink-0 bg-border-200"
-        />
-
-        <ResizablePanel
-          id="notebook-terminal-panel"
-          defaultSize="20%"
-          minSize="15%"
-          className="min-h-0 overflow-hidden"
-        >
-          <div className="flex h-full min-h-0 flex-col bg-bg-200" data-testid="kernel-terminal">
+          <ResizableHandle
+            aria-label={t('Resize notebook and terminal')}
+            className="z-10 shrink-0 border-y border-border-200 bg-bg-200/70 aria-[orientation=horizontal]:h-7 aria-[orientation=horizontal]:before:h-1 aria-[orientation=horizontal]:before:w-10 before:opacity-60 hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100"
+          >
             <div
-              className="flex shrink-0 items-center justify-between gap-2 border-b border-border-200 bg-bg-200/70 px-3 py-1 text-[11px] text-text-300"
+              className="pointer-events-none absolute inset-0 flex items-center justify-between gap-2 px-3 text-[11px] text-text-300"
               data-testid="notebook-terminal-header"
             >
-              <span>{t('Python kernel · shared with the agent')}</span>
-              <span>{isNotebookBusy ? t('running') : t('idle')}</span>
+              <span>
+                {activeDataLanguage === 'r'
+                  ? t('R kernel · shared with the agent')
+                  : t('Python kernel · shared with the agent')}
+              </span>
+              <span>{isSelectedKernelRunning ? t('running') : t('idle')}</span>
             </div>
-            {actionError ? (
-              <div className="border-b border-border-100/60 px-3 py-2 font-mono text-xs text-danger-000">
-                {actionError}
-              </div>
-            ) : null}
-            <TerminalScrollback runs={projectedRuns} />
-            <TerminalInput
-              code={terminalCode}
-              disabled={isTerminalLocked}
-              onChange={setTerminalCode}
-              onSubmit={() => {
-                void submitTerminalCode()
-              }}
-            />
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+          </ResizableHandle>
+
+          <ResizablePanel
+            id="notebook-terminal-panel"
+            defaultSize="20%"
+            minSize="15%"
+            className="min-h-0 overflow-hidden"
+          >
+            <div className="flex h-full min-h-0 flex-col bg-bg-000" data-testid="kernel-terminal">
+              {actionError ? (
+                <div className="border-b border-border-100/60 px-3 py-2 font-mono text-xs text-danger-000">
+                  {actionError}
+                </div>
+              ) : null}
+              <TerminalScrollback
+                runs={visibleRuns}
+                language={activeDataLanguage}
+                viewportRef={terminalViewportRef}
+              />
+              <TerminalInput
+                code={terminalCode}
+                disabled={isTerminalLocked}
+                language={activeDataLanguage}
+                onChange={setTerminalCode}
+                onSubmit={() => {
+                  void submitTerminalCode()
+                }}
+              />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      )}
+
+      {isNamespaceLost || isHistoricalEnvironmentView ? (
+        <footer
+          className="flex h-7 shrink-0 items-center justify-between gap-3 border-t border-border-200 bg-bg-000 px-2 text-[11px] text-text-300"
+          data-testid="notebook-read-only-status"
+        >
+          <span className="min-w-0 truncate">
+            {isHistoricalEnvironmentView
+              ? t('{{environment}} · history only; new code runs in {{activeEnvironment}}', {
+                  environment: activeEnvName,
+                  activeEnvironment: executionEnvironment
+                })
+              : isKernelInactive && !hasActiveKernelHistory
+                ? t('{{kernel}} · view only; the agent must activate this kernel first', {
+                    kernel: activeDataLanguage === 'r' ? 'R' : 'Python'
+                  })
+                : activeDataLanguage === 'r'
+                  ? t("R · view only; this kernel's namespace no longer exists")
+                  : t("Python · view only; this kernel's namespace no longer exists")}
+          </span>
+          <span className="shrink-0 tabular-nums">
+            {t('{{count}} cells', {
+              defaultValue_one: '{{count}} cell',
+              count: cellCount
+            })}
+          </span>
+        </footer>
+      ) : null}
     </section>
   )
 }

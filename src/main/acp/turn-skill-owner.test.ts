@@ -1,7 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { codexFramework, opencodeFramework } from '../agent-framework'
-import { AcpTurnSkillOwner } from './turn-skill-owner'
+import { AcpTurnSkillOwner, followUpPromptText } from './turn-skill-owner'
+
+const reloadTestScope = {
+  kind: 'specialist' as const,
+  skillIds: [
+    'first',
+    'successor',
+    'older',
+    'newer',
+    'first-session',
+    'second-session',
+    'disabled',
+    'personal-research'
+  ],
+  frameworkNames: [],
+  missingSkillIds: []
+}
 
 describe('AcpTurnSkillOwner', () => {
   it('keeps ordinary Main turns synchronous when no Skill work can yield', () => {
@@ -11,6 +27,69 @@ describe('AcpTurnSkillOwner', () => {
 
     expect(handle).not.toBeInstanceOf(Promise)
     expect(handle).toMatchObject({ reloadDecision: { kind: 'continue' } })
+  })
+
+  it.each([codexFramework, opencodeFramework])(
+    'revokes earlier Specialist scope on every Main %s turn without reloading',
+    async (framework) => {
+      const requestSkillsReload = vi.fn()
+      const owner = new AcpTurnSkillOwner({ requestSkillsReload })
+
+      const handle = owner.authorize({})
+      if (handle instanceof Promise) throw new Error('Main authorization must stay synchronous.')
+      const prepared = await handle.prepareProvider({
+        frameworkId: framework.id,
+        selectionText: 'continue',
+        promptText: 'continue'
+      })
+
+      expect(prepared.skillScopeGuidance).toContain('Current agent: Main Agent.')
+      expect(prepared.skillScopeGuidance).toContain(
+        'earlier Specialist identity and Specialist-specific Skill or Connector scope'
+      )
+      expect(requestSkillsReload).not.toHaveBeenCalled()
+    }
+  )
+
+  it('does not label a restricted session as Main Agent or authorize Skills', async () => {
+    const owner = new AcpTurnSkillOwner({ requestSkillsReload: vi.fn() })
+    const handle = owner.authorize({ role: 'side-chat' })
+    if (handle instanceof Promise)
+      throw new Error('Restricted authorization must stay synchronous.')
+
+    const prepared = await handle.prepareProvider({
+      frameworkId: codexFramework.id,
+      selectionText: 'continue',
+      promptText: 'continue'
+    })
+
+    expect(prepared.skillScopeGuidance).toBeUndefined()
+    expect(prepared.text).toBe('continue')
+    expect(() =>
+      owner.authorize({ role: 'reviewer', selectedSkillIds: ['unexpected-skill'] })
+    ).toThrow('Skills are not available to this session.')
+  })
+
+  it('rejects a Main-disabled Skill instead of force-loading it for Main Agent', async () => {
+    const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => reloadTestScope,
+      skills: {
+        needForceLoad: async (ids) => [...ids],
+        namesForIds: async (ids) => [...ids]
+      },
+      requestSkillsReload: vi.fn()
+    })
+
+    await expect(owner.authorize({ selectedSkillIds: ['specialist-only'] })).rejects.toThrow(
+      'Skill "specialist-only" is not available to Main Agent.'
+    )
+    await expect(
+      owner.presentFollowUp({
+        frameworkId: codexFramework.id,
+        text: 'continue',
+        selectedSkillIds: ['specialist-only']
+      })
+    ).rejects.toThrow('Skill "specialist-only" is not available to Main Agent.')
   })
 
   it('re-resolves Specialist scope and rejects a stale selected Skill fail-closed', async () => {
@@ -53,11 +132,17 @@ describe('AcpTurnSkillOwner', () => {
     })
     ownerRef.current = owner
 
-    const first = await owner.authorize({ selectedSkillIds: ['first'] })
+    const first = await owner.authorize({
+      specialistId: 'specialist-1',
+      selectedSkillIds: ['first']
+    })
     expect(first.reloadDecision).toEqual({ kind: 'reload' })
     expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['first'] })
 
-    const successor = await owner.authorize({ selectedSkillIds: ['successor'] })
+    const successor = await owner.authorize({
+      specialistId: 'specialist-1',
+      selectedSkillIds: ['successor']
+    })
     expect(successor.reloadDecision).toEqual({ kind: 'reload' })
     expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['successor'] })
 
@@ -76,6 +161,7 @@ describe('AcpTurnSkillOwner', () => {
     const requestSkillsReload = vi.fn()
     const olderReservation = new AbortController()
     const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => reloadTestScope,
       skills: {
         needForceLoad: (ids) =>
           new Promise((resolve) => {
@@ -87,11 +173,16 @@ describe('AcpTurnSkillOwner', () => {
     })
 
     const olderAuthorization = owner.authorize({
+      specialistId: 'specialist-1',
       selectedSkillIds: ['older'],
       signal: olderReservation.signal
     })
     olderReservation.abort()
-    const newerAuthorization = owner.authorize({ selectedSkillIds: ['newer'] })
+    const newerAuthorization = owner.authorize({
+      specialistId: 'specialist-1',
+      selectedSkillIds: ['newer']
+    })
+    await vi.waitFor(() => expect(completions.has('newer')).toBe(true))
     completions.get('newer')?.(['newer'])
     const newer = await newerAuthorization
     expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['newer'] })
@@ -110,6 +201,7 @@ describe('AcpTurnSkillOwner', () => {
   it('keeps an independent forced authorization valid when it finishes last', async () => {
     const completions = new Map<string, (disabled: string[]) => void>()
     const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => reloadTestScope,
       skills: {
         needForceLoad: (ids) =>
           new Promise((resolve) => {
@@ -120,8 +212,15 @@ describe('AcpTurnSkillOwner', () => {
       requestSkillsReload: vi.fn()
     })
 
-    const firstSession = owner.authorize({ selectedSkillIds: ['first-session'] })
-    const secondSession = owner.authorize({ selectedSkillIds: ['second-session'] })
+    const firstSession = owner.authorize({
+      specialistId: 'specialist-1',
+      selectedSkillIds: ['first-session']
+    })
+    const secondSession = owner.authorize({
+      specialistId: 'specialist-1',
+      selectedSkillIds: ['second-session']
+    })
+    await vi.waitFor(() => expect(completions.has('second-session')).toBe(true))
     completions.get('second-session')?.(['second-session'])
     const second = await secondSession
     expect(second.reloadDecision).toEqual({ kind: 'reload' })
@@ -140,6 +239,7 @@ describe('AcpTurnSkillOwner', () => {
         expect(ownerRef.current?.backendPreparation()).toEqual({ forcedSkillIds: [] })
       })
       const owner = new AcpTurnSkillOwner({
+        resolveSpecialistSkills: async () => reloadTestScope,
         skills: {
           needForceLoad: async (ids) => [...ids],
           namesForIds: async (ids) => [...ids]
@@ -148,7 +248,10 @@ describe('AcpTurnSkillOwner', () => {
       })
       ownerRef.current = owner
 
-      const handle = await owner.authorize({ selectedSkillIds: ['disabled'] })
+      const handle = await owner.authorize({
+        specialistId: 'specialist-1',
+        selectedSkillIds: ['disabled']
+      })
       expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['disabled'] })
       expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['disabled'] })
 
@@ -160,13 +263,17 @@ describe('AcpTurnSkillOwner', () => {
 
   it('retains forced IDs across backend reconnect preparations until the turn closes', async () => {
     const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => reloadTestScope,
       skills: {
         needForceLoad: async (ids) => [...ids],
         namesForIds: async (ids) => [...ids]
       },
       requestSkillsReload: vi.fn()
     })
-    const handle = await owner.authorize({ selectedSkillIds: ['disabled'] })
+    const handle = await owner.authorize({
+      specialistId: 'specialist-1',
+      selectedSkillIds: ['disabled']
+    })
 
     const firstConnect = owner.backendPreparation()
     const reconnect = owner.backendPreparation()
@@ -203,9 +310,120 @@ describe('AcpTurnSkillOwner', () => {
     })
 
     expect(prepared.text).toBe('Use the following skill(s) for this task: Research.\n\nfind papers')
-    expect(prepared.specialistSkillGuidance).toContain('Allowed Specialist Skills for this session')
-    expect(prepared.specialistSkillGuidance).toContain('mcp-pubmed')
+    expect(prepared.skillScopeGuidance).toContain('<open_science_specialist_skill_scope>')
+    expect(prepared.skillScopeGuidance).toContain(
+      'supersedes and revokes every earlier Specialist Skill or Connector scope'
+    )
+    expect(prepared.skillScopeGuidance).toContain(
+      'This list does not grant tool or Connector permissions.'
+    )
+    expect(prepared.skillScopeGuidance).toContain('mcp-pubmed')
     expect(prepared.codexSkillInputs).toEqual([])
+  })
+
+  it('presents mid-turn Skills without force-loading or requesting a reload', async () => {
+    const needForceLoad = vi.fn(async (ids: string[]) => [...ids])
+    const requestSkillsReload = vi.fn()
+    const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => reloadTestScope,
+      skills: {
+        needForceLoad,
+        namesForIds: async () => ['Research']
+      },
+      requestSkillsReload
+    })
+
+    const presented = await owner.presentFollowUp({
+      frameworkId: opencodeFramework.id,
+      text: 'find papers',
+      selectedSkillIds: ['personal-research'],
+      specialistId: 'specialist-1'
+    })
+
+    expect(needForceLoad).not.toHaveBeenCalled()
+    expect(requestSkillsReload).not.toHaveBeenCalled()
+    expect(owner.backendPreparation()).toEqual({ forcedSkillIds: [] })
+    expect(presented.text).toBe(
+      'Use the following skill(s) for this task: Research.\n\nfind papers'
+    )
+  })
+
+  it('includes Specialist skill allowlist guidance in mid-turn follow-up text', async () => {
+    const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => ({
+        kind: 'specialist' as const,
+        skillIds: ['personal-research'],
+        frameworkNames: ['Research', 'mcp-pubmed'],
+        missingSkillIds: []
+      }),
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => ['Research']
+      },
+      requestSkillsReload: vi.fn()
+    })
+
+    const presented = await owner.presentFollowUp({
+      frameworkId: opencodeFramework.id,
+      text: 'find papers',
+      selectedSkillIds: ['personal-research'],
+      specialistId: 'specialist-1'
+    })
+
+    expect(presented.skillScopeGuidance).toContain('<open_science_specialist_skill_scope>')
+    expect(presented.skillScopeGuidance).toContain('mcp-pubmed')
+    expect(followUpPromptText(presented)).toContain('<open_science_specialist_skill_scope>')
+    expect(followUpPromptText(presented)).toContain(
+      'Use the following skill(s) for this task: Research.\n\nfind papers'
+    )
+  })
+
+  it('propagates follow-up Skill preparation failures instead of dropping selected Skills', async () => {
+    const owner = new AcpTurnSkillOwner({
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => {
+          throw new Error('catalog unavailable')
+        }
+      },
+      requestSkillsReload: vi.fn()
+    })
+
+    await expect(
+      owner.presentFollowUp({
+        frameworkId: opencodeFramework.id,
+        text: 'find papers',
+        selectedSkillIds: ['personal-research']
+      })
+    ).rejects.toThrow('catalog unavailable')
+  })
+
+  it('rejects out-of-scope follow-up Skills without force-loading', async () => {
+    const needForceLoad = vi.fn(async (ids: string[]) => [...ids])
+    const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => ({
+        kind: 'specialist' as const,
+        skillIds: ['current-skill'],
+        frameworkNames: ['Current Skill'],
+        missingSkillIds: []
+      }),
+      skills: {
+        needForceLoad,
+        namesForIds: async () => ['Stale']
+      },
+      requestSkillsReload: vi.fn()
+    })
+
+    await expect(
+      owner.presentFollowUp({
+        frameworkId: opencodeFramework.id,
+        text: 'find papers',
+        selectedSkillIds: ['stale-skill'],
+        specialistId: 'specialist-1'
+      })
+    ).rejects.toThrow('Skill "stale-skill" is not available to the active specialist.')
+    expect(needForceLoad).not.toHaveBeenCalled()
+    expect(owner.backendPreparation()).toEqual({ forcedSkillIds: [] })
   })
 
   it('prepares an explicit Codex Skill as native input without changing prompt text', async () => {

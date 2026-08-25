@@ -104,6 +104,9 @@ describe('Side chat relay instructions', () => {
       'Do not call it again on a later turn unless the user explicitly asks again.'
     )
     expect(SIDE_CHAT_SYSTEM_PROMPT).toContain(
+      'While Main is running, it tries to inject advisory context into that turn'
+    )
+    expect(SIDE_CHAT_SYSTEM_PROMPT).toContain(
       'Send only the advisory content; do not prepend a Side chat source or relay label.'
     )
   })
@@ -325,6 +328,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       }
     }
     const relay = createRelayOwner()
+    const deliverRelay = vi.fn(async (_parentSessionId, queued) => queued)
     const setParentInteractionsPaused = vi.fn()
     let runtimeOptions: AcpRuntimeOptions | undefined
     const createSession = vi.fn(async () => ({
@@ -374,9 +378,11 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       captureTarget: vi.fn(async () => target),
       resolveTarget: vi.fn(async (_target, context) => {
         expect(context.forceCodexNativeResponsesCompatibility).toBe(true)
+        expect(context.includeSkillAndConnectorContext).toBe(false)
         return resolved
       }),
       relay,
+      deliverRelay,
       persistence: createPersistence(),
       onEvent: vi.fn(),
       setParentInteractionsPaused,
@@ -423,6 +429,10 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       requestId: 'host-message-permission',
       optionId: 'allow-once'
     })
+    expect(deliverRelay).toHaveBeenCalledWith(
+      'main-session-1',
+      expect.objectContaining({ status: 'queued', delivery: 'next-user-turn' })
+    )
     const queuedRelay = relay.claim('main-session-1')
     expect(queuedRelay?.messages).toEqual([
       expect.objectContaining({ text: 'Use a black line.', sideSessionId: 'trusted-routing-1' })

@@ -1,4 +1,8 @@
-import { isDurableAgentUserChoiceRequest, type ElicitationResponse } from '../../../../shared/acp'
+import {
+  isDurableAgentUserChoiceRequest,
+  type AcpSessionAgentTarget,
+  type ElicitationResponse
+} from '../../../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
 import type { AgentFrameworkId } from '../../../../shared/settings'
@@ -24,6 +28,7 @@ type WorkspaceElicitationOptions = {
   agentFrameworkId?: AgentFrameworkId
   agentBackendId?: string
   agentModel?: string
+  agentTarget?: AcpSessionAgentTarget
   historyReplayDescriptor?: HistoryReplayDescriptor
   onSendPreparationStateChange?: (sessionId: string, inFlight: boolean) => void
   drainRuntimeEvents?: (sessionId?: string) => Promise<void>
@@ -130,6 +135,7 @@ const reviseWorkspaceElicitation = async (
     assertElicitationRevisionIdle(runtime, session)
 
     const selectedRuntimeChanged = Boolean(
+      options.agentTarget ||
       (options.agentFrameworkId && options.agentFrameworkId !== session.agentFrameworkId) ||
       (options.agentBackendId && options.agentBackendId !== session.agentBackendId)
     )
@@ -150,7 +156,8 @@ const reviseWorkspaceElicitation = async (
         session.specialistId,
         session.providerSessionId,
         session.providerContinuityToken,
-        session.specialistBindingPending
+        session.specialistBindingPending,
+        options.agentTarget
       )
       contextResetFromResume = Boolean(resumed?.contextReset)
       useSessionStore.getState().markResumed(
@@ -314,7 +321,8 @@ const respondToWorkspaceElicitation = async (
       session.specialistId,
       session.providerSessionId,
       session.providerContinuityToken,
-      session.specialistBindingPending
+      session.specialistBindingPending,
+      options.agentTarget
     )
     useSessionStore.getState().markResumed(
       session.id,

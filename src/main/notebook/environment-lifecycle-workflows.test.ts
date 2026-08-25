@@ -99,6 +99,26 @@ describe('createNotebookEnvironmentLifecycle', () => {
     expect(provisioner.provisionR).toHaveBeenCalledOnce()
   })
 
+  it('rejects an unknown language instead of falling through to Python', async () => {
+    const provisioner = fakeProvisioner()
+    const lifecycle = createLifecycle(provisioner)
+
+    await expect(lifecycle.provision('julia' as 'python')).rejects.toThrow(/python or r/i)
+    await expect(lifecycle.repair('julia' as 'python')).rejects.toThrow(/python or r/i)
+    expect(() => lifecycle.cancel('julia' as 'python')).toThrow(/python or r/i)
+    expect(provisioner.provisionPython).not.toHaveBeenCalled()
+    expect(provisioner.provisionR).not.toHaveBeenCalled()
+    expect(provisioner.repair).not.toHaveBeenCalled()
+    expect(provisioner.cancel).not.toHaveBeenCalled()
+  })
+
+  it('treats a JSON-null optional language as omit-all cancel', () => {
+    const provisioner = fakeProvisioner()
+    const lifecycle = createLifecycle(provisioner)
+    lifecycle.cancel(null as unknown as undefined)
+    expect(provisioner.cancel).toHaveBeenCalledWith(undefined)
+  })
+
   it('tags a failure that occurs before provision progress is emitted', async () => {
     const failure = new Error('provision rejected before startup')
     const provisioner = fakeProvisioner({ provisionPython: vi.fn().mockRejectedValue(failure) })

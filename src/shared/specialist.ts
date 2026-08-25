@@ -151,7 +151,9 @@ export type EffectiveSpecialistSkills =
     }
 
 export type SpecialistMarketplaceProvenance = {
+  sourceId: string
   publisher: string
+  version: string
 }
 
 // Resolve against the live catalog; callers must not snapshot catalog contents into a profile or
@@ -224,7 +226,7 @@ export type SpecialistProfileView = {
   selectedCapabilities: SpecialistSelectedConfig
   revision: number
   packageVersion?: string
-  origin?: 'local' | 'imported'
+  origin?: 'local' | 'imported' | 'marketplace'
   // Derived from the current portable profile and importBaseline; never persisted.
   modifiedSinceImport?: boolean
   // Derived from exact Marketplace provenance plus the current import archive digest; never

@@ -46,6 +46,20 @@ describe('AppVersionSection', () => {
     expect(container.textContent).toContain('© 2026 AIPOCH')
   })
 
+  it('links help and release history to the canonical external resources', () => {
+    act(() => {
+      root.render(<AppVersionSection />)
+    })
+
+    const links = Array.from(container.querySelectorAll('a'))
+    expect(links).toHaveLength(2)
+    expect(links.map((link) => link.getAttribute('href'))).toEqual([
+      'https://www.aipoch.com/docs/',
+      'https://github.com/aipoch/open-science/releases'
+    ])
+    expect(links.every((link) => link.target === '_blank' && link.rel === 'noreferrer')).toBe(true)
+  })
+
   it('switches the About logo with an explicit app Theme', () => {
     act(() => {
       root.render(<AppVersionSection />)

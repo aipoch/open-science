@@ -534,6 +534,10 @@ def _run(code):
 
 
 def main():
+    # The Node host always frames requests as UTF-8 JSON. On Windows, a piped stdin otherwise uses
+    # the active ANSI code page (for example GBK with surrogateescape), which corrupts non-ASCII
+    # source before it reaches ast.parse.
+    sys.stdin.reconfigure(encoding="utf-8", errors="strict")
     for line in sys.stdin:
         line = line.strip()
         if not line:

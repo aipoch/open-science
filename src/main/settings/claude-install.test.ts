@@ -176,6 +176,72 @@ describe('claude-install: run', () => {
     expect(logs.some((e) => e.kind === 'log' && e.stream === 'stderr')).toBe(true)
   })
 
+  it('coalesces a same-tick stdout burst into one log event before settle', async () => {
+    const child = new FakeChild()
+    const events: ClaudeInstallEvent[] = []
+    const promise = runInstall({
+      source: 'npm',
+      installId: 'install-burst',
+      onEvent: (event) => events.push(event),
+      spawnImpl: () => child as never,
+      npmPrefixWritable: () => Promise.resolve(true)
+    })
+
+    setImmediate(() => {
+      for (let index = 0; index < 10_000; index += 1) {
+        child.stdout.emit('data', Buffer.from('x'))
+      }
+      child.emit('exit', 0)
+    })
+
+    await expect(promise).resolves.toMatchObject({ installId: 'install-burst', ok: true })
+
+    const stdout = events.filter(
+      (event): event is Extract<ClaudeInstallEvent, { kind: 'log' }> =>
+        event.kind === 'log' && event.stream === 'stdout'
+    )
+    expect(events).toHaveLength(3)
+    expect(stdout).toEqual([
+      { kind: 'log', installId: 'install-burst', stream: 'stdout', chunk: 'x'.repeat(10_000) }
+    ])
+  })
+
+  it('flushes coalesced stdout on the presentation-frame timer while the install is still running', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    const events: ClaudeInstallEvent[] = []
+    const promise = runInstall({
+      source: 'npm',
+      installId: 'install-live',
+      onEvent: (event) => events.push(event),
+      timeoutMs: 60_000,
+      spawnImpl: () => child as never,
+      npmPrefixWritable: () => Promise.resolve(true)
+    })
+
+    try {
+      await Promise.resolve()
+      await Promise.resolve()
+
+      for (let index = 0; index < 100; index += 1) {
+        child.stdout.emit('data', Buffer.from('a'))
+      }
+      expect(events.filter((event) => event.kind === 'log' && event.stream === 'stdout')).toEqual(
+        []
+      )
+
+      await vi.advanceTimersByTimeAsync(33)
+      expect(events.filter((event) => event.kind === 'log' && event.stream === 'stdout')).toEqual([
+        { kind: 'log', installId: 'install-live', stream: 'stdout', chunk: 'a'.repeat(100) }
+      ])
+
+      child.emit('exit', 0)
+      await expect(promise).resolves.toMatchObject({ installId: 'install-live', ok: true })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('resolves not ok on a non-zero exit', async () => {
     const child = new FakeChild()
     const promise = runInstall({

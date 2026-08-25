@@ -9,7 +9,9 @@
 #   __MASK_SYS_SLEEP__  simulate user code masking Sys.sleep in the persistent R namespace
 #   __CANCEL_CAUGHT_INTERRUPT__  simulate user code catching SIGINT before the outer R handler
 #   __FIGURE__         write a real 1x1 PNG into the figures dir and reference it in the response
+#   __OVERSIZED_LINE__:<bytes>  write an unframed stdout line of the requested size
 #   __WRITE_FILE__      write an output file into the kernel working directory
+#   __WRITE_HANDOFF_FILE__ write an output file into the shared handoff directory
 #   __OVERWRITE_FILE__  replace a pre-existing output in the kernel working directory
 #   __WRITE_DELAYED_A__ / __WRITE_DELAYED_B__ overlap two kernels writing the same data root
 import base64
@@ -35,6 +37,10 @@ def _respond(req_id, code, error=None, interrupt_ack=False):
         figures = [{"mime": "image/png", "path": path}]
     if code == "__WRITE_FILE__":
         with open("generated.csv", "w", encoding="utf-8") as handle:
+            handle.write("x,y\n1,2\n")
+    if code == "__WRITE_HANDOFF_FILE__":
+        handoff_dir = os.environ["OPEN_SCIENCE_HANDOFF_DIR"]
+        with open(os.path.join(handoff_dir, "generated.csv"), "w", encoding="utf-8") as handle:
             handle.write("x,y\n1,2\n")
     if code == "__OVERWRITE_FILE__":
         previous = os.stat("generated.csv")
@@ -101,6 +107,15 @@ def main():
         if code == "__IGNORE_SIGINT__":
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             time.sleep(30)
+            continue
+        if code.startswith("__OVERSIZED_LINE__:"):
+            remaining = int(code.split(":", 1)[1])
+            chunk = "x" * (64 * 1024)
+            while remaining > 0:
+                written = min(remaining, len(chunk))
+                sys.stdout.write(chunk[:written])
+                sys.stdout.flush()
+                remaining -= written
             continue
         if code == "__CANCEL_RESPONSE_BEFORE_ACK__":
             time.sleep(0.1)

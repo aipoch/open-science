@@ -78,7 +78,6 @@ import {
   type SessionUpdatePublisher
 } from './session-update-publication'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
-
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
@@ -234,7 +233,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,
       assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
-      recordSession: (session) => this.stateOwner.recordSession(session)
+      recordSession: (session) => this.stateOwner.recordSession(session),
+      notifySessionUpdated: (session) => publishSessionUpdate(session, 'runtime-context')
     })
     this.deletionOwner = new SessionPersistenceDeletionOwner({
       repository,
@@ -243,6 +243,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       provenance,
       uploads,
       computeJobs,
+      log,
       assertArchiveMutable: (projectId, sessionId) => {
         if (this.deletedProjects.has(projectId)) {
           throw new Error('Cannot archive a Session whose project has been deleted.')
@@ -296,8 +297,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
-  // Binds unread cleanup to authoritative Session mutations. Reconciliation is called only with a
-  // complete live Session catalog, while commit runs only after deletion succeeds.
   setSessionDeletionHandlers(handlers: SessionDeletionHandlers): void {
     this.sessionDeletionHandlers = handlers
   }
@@ -306,11 +305,13 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     return this.operationScheduler.runGlobal(async () => this.stateOwner.metadataSnapshot())
   }
 
-  /**
-   * Reads the Session authority without running recovery or derived-state reconciliation. This is
-   * the degraded path used when an earlier startup prerequisite failed: healthy transcripts remain
-   * navigable, while the incomplete marker keeps writes blocked until a full retry succeeds.
-   */
+  replaceSessionMetadata(sessions: readonly SessionMetadata[], isComplete: boolean): Promise<void> {
+    return this.operationScheduler.runGlobal(async () => {
+      this.stateOwner.replaceMetadata(sessions, isComplete)
+    })
+  }
+
+  // Degraded authority read: keeps healthy transcripts navigable while writes remain blocked.
   loadAllReadOnly(): Promise<LoadAllSessionsResult> {
     return this.operationScheduler.runGlobal(async () => {
       this.stateOwner.beginHydration()
@@ -983,7 +984,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     }
   }
 }
-
 const sessionKey = (projectId: string, sessionId: string): string => `${projectId}:${sessionId}`
 
 export { SessionPersistenceCoordinator, SessionRuntimeContextRevisionConflictError }

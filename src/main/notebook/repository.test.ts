@@ -117,6 +117,65 @@ describe('notebook run repository', () => {
     expect(document.runs[0]?.agentFrameId).toBe('root-frame-session-1')
   })
 
+  it('round-trips optional kernel dispatch and external runtime evidence', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    const document = await repository.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane
+    })
+    await repository.appendRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: {
+        runId: 'external-run',
+        cellId: 'cell-external-run',
+        source: 'agent',
+        kernelKind: 'python',
+        kernelEpochId: 'epoch-1',
+        kernelDispatched: true,
+        runtimeId: '/external/python',
+        script: 'x = 1',
+        status: 'completed',
+        startedAt: 1,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: []
+      }
+    })
+
+    await expect(
+      new NotebookRunRepository(root).findExisting('default-project', 'session-1')
+    ).resolves.toMatchObject({
+      runs: [
+        expect.objectContaining({
+          runId: 'external-run',
+          kernelEpochId: 'epoch-1',
+          kernelDispatched: true,
+          runtimeId: '/external/python'
+        })
+      ]
+    })
+
+    const malformed = JSON.parse(
+      await readFile(join(document.notebookSessionRoot, 'run.json'), 'utf8')
+    ) as { runs: Array<Record<string, unknown>> }
+    malformed.runs[0]!.kernelEpochId = ''
+    await writeFile(
+      join(document.notebookSessionRoot, 'run.json'),
+      JSON.stringify(malformed),
+      'utf8'
+    )
+    await expect(
+      new NotebookRunRepository(root).findExisting('default-project', 'session-1')
+    ).rejects.toThrow('Notebook document is corrupt.')
+  })
+
   it('isolates Frame workspaces while root keeps the legacy Session work surface', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)
@@ -208,7 +267,11 @@ describe('notebook run repository', () => {
     ).resolves.toEqual({
       runs: [expect.objectContaining({ runId: 'child' })],
       total: 3,
-      latestRunEnvironments: { python: 'historical-python' }
+      latestRunEnvironments: { python: 'historical-python' },
+      historyPage: {
+        hasEarlierRuns: true,
+        oldestCursor: { startedAt: 2, runId: 'child' }
+      }
     })
     await expect(
       repository.readSessionRunWindow('default-project', 'session-1', 1, ['legacy'])
@@ -218,7 +281,11 @@ describe('notebook run repository', () => {
         expect.objectContaining({ runId: 'child' })
       ],
       total: 3,
-      latestRunEnvironments: { python: 'historical-python' }
+      latestRunEnvironments: { python: 'historical-python' },
+      historyPage: {
+        hasEarlierRuns: true,
+        oldestCursor: { startedAt: 2, runId: 'child' }
+      }
     })
     await expect(
       repository.readSessionRunWindow('default-project', 'session-1', 1, [], 'child-frame-1')
@@ -226,11 +293,29 @@ describe('notebook run repository', () => {
       runs: [expect.objectContaining({ runId: 'child' })],
       total: 3,
       latestRunEnvironments: { python: 'historical-python' },
+      historyPage: {
+        hasEarlierRuns: true,
+        oldestCursor: { startedAt: 2, runId: 'child' }
+      },
       historySummary: {
         agentFrameId: 'child-frame-1',
         runCount: 2,
         kernelCounts: { python: 1, r: 1, repl: 0, bash: 0 },
         latestDataKernel: 'python'
+      }
+    })
+    await expect(
+      repository.readSessionRunWindow('default-project', 'session-1', 1, [], undefined, {
+        startedAt: 2,
+        runId: 'child'
+      })
+    ).resolves.toEqual({
+      runs: [expect.objectContaining({ runId: 'legacy' })],
+      total: 3,
+      latestRunEnvironments: { python: 'historical-python' },
+      historyPage: {
+        hasEarlierRuns: true,
+        oldestCursor: { startedAt: 1, runId: 'legacy' }
       }
     })
   })

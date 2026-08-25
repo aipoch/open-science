@@ -48,6 +48,8 @@ const createDatabaseStartupOwner = (deps: DatabaseStartupOwnerDeps): DatabaseSta
       .then(() => {
         verified = true
         resolveVerified?.()
+        // `ready` still waits for runtime composition; this only leaves the database-checking copy.
+        publish({ phase: 'starting' })
         return state
       })
       .catch((error: unknown) => {

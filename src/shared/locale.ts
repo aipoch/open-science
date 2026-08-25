@@ -5,7 +5,7 @@
 // The locales that actually paint. Script subtags are the canonical form: 'zh-Hans' / 'zh-Hant'
 // rather than 'zh-CN' / 'zh-TW', because the script is what selects the catalog — a Traditional
 // reader in Singapore and one in Taiwan get the same copy.
-export const LOCALES = ['en', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr'] as const
+export const LOCALES = ['en', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'ru'] as const
 export type Locale = (typeof LOCALES)[number]
 
 // The fallback when nothing matches, and the source language every catalog is authored against.
@@ -59,6 +59,7 @@ const matchTag = (tag: string): Locale | undefined => {
   if (language === 'fr') return 'fr'
   if (language === 'ja') return 'ja'
   if (language === 'ko') return 'ko'
+  if (language === 'ru') return 'ru'
   if (language !== 'zh') return undefined
 
   if (rest.includes('hant') || rest.includes('cht')) return 'zh-Hant'

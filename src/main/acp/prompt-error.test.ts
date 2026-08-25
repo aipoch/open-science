@@ -137,6 +137,17 @@ describe('isProviderPromptError', () => {
     }
   )
 
+  it.each(['ConnectionRefused', 'ECONNREFUSED', 'ENOTFOUND'])(
+    'flags a Claude Code RequestError when the provider API is unreachable (%s)',
+    (code) => {
+      const error = agentError(`Internal error: API Error: Unable to connect to API (${code})`, {
+        errorKind: 'unknown'
+      })
+
+      expect(isProviderPromptError(error)).toBe(true)
+    }
+  )
+
   it('does not infer a provider error from nearby but non-equivalent text', () => {
     expect(
       isProviderPromptError(
@@ -154,6 +165,20 @@ describe('isProviderPromptError', () => {
     ).toBe(false)
     expect(
       isProviderPromptError(
+        agentError('Internal error: unable to connect to API (ConnectionRefused)', {
+          errorKind: 'unknown'
+        })
+      )
+    ).toBe(false)
+    expect(
+      isProviderPromptError(
+        agentError('Internal error: Unable to connect to workspace (ConnectionRefused)', {
+          errorKind: 'unknown'
+        })
+      )
+    ).toBe(false)
+    expect(
+      isProviderPromptError(
         Object.assign(new Error('Internal error: API Error: 400 Invalid request'), {
           code: -32002,
           data: { errorKind: 'unknown' },
@@ -164,6 +189,11 @@ describe('isProviderPromptError', () => {
     expect(isProviderPromptError(new Error('Internal error: API Error: 400 Invalid request'))).toBe(
       false
     )
+    expect(
+      isProviderPromptError(
+        new Error('Internal error: API Error: Unable to connect to API (ConnectionRefused)')
+      )
+    ).toBe(false)
   })
 
   it('flags a provider resource-not-found (wrong model id / endpoint)', () => {

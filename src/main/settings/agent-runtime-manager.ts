@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access } from 'node:fs/promises'
+import { access, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createServer } from 'node:net'
 import { promisify } from 'node:util'
@@ -17,6 +17,11 @@ import type {
   ValidateProviderResult
 } from '../../shared/settings'
 import { isProviderUsableByFramework } from '../../shared/settings'
+import {
+  buildUnsupportedCodexAcpVersionMessage,
+  isSupportedCodexAcpVersion,
+  MINIMUM_CODEX_ACP_VERSION
+} from '../../shared/codex-runtime'
 import { isModelBridgeSupported } from '../../shared/provider-registry'
 import { CLAUDE_EXECUTABLE_MISSING_MESSAGE } from '../../shared/run-error-classification'
 import { buildAgentSpawnEnv } from '../acp/agent-process'
@@ -252,7 +257,9 @@ const codexVersionsFromProbe = (
 ): Pick<StoredCodexInfo, 'version' | 'nativeVersion'> | undefined => {
   const version = probe.adapter?.output ? parseCodexVersion(probe.adapter.output) : undefined
   const nativeVersion = probe.native?.output ? parseCodexVersion(probe.native.output) : undefined
-  return version && nativeVersion ? { version, nativeVersion } : undefined
+  return version && nativeVersion && isSupportedCodexAcpVersion(version)
+    ? { version, nativeVersion }
+    : undefined
 }
 
 export type AgentRuntimeManagerOptions = {
@@ -550,10 +557,23 @@ export class AgentRuntimeManager {
     const installId = `install-codex-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
     if (request.source === 'managed') {
+      const settings = await this.repository.getSettings()
+      const configuredCodexPath = settings.codex?.nativePath
+      const managedCodexPath =
+        this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.storageRoot)
+      const externalCodexPath =
+        configuredCodexPath && configuredCodexPath !== managedCodexPath
+          ? configuredCodexPath
+          : undefined
+      const existingCodexPath =
+        externalCodexPath && (await this.codexDetectDeps.getCodexVersion(externalCodexPath))
+          ? externalCodexPath
+          : undefined
       const outcome = await this.installManagedCodexImpl({
         installId,
         onEvent,
-        dataRoot: this.storageRoot
+        dataRoot: this.storageRoot,
+        ...(existingCodexPath ? { existingCodexPath } : {})
       })
       if (
         outcome.result.ok &&
@@ -695,7 +715,8 @@ export class AgentRuntimeManager {
   async provisionClaudeRuntimeConfig(
     settings: StoredSettings,
     forcedSkillIds: ReadonlySet<string> = new Set(),
-    modelConfig?: ClaudeRuntimeModelConfig | null
+    modelConfig?: ClaudeRuntimeModelConfig | null,
+    includeSkillAndConnectorContext = true
   ): Promise<ClaudeRuntimeAssets> {
     return provisionClaudeRuntime({
       storageRoot: this.storageRoot,
@@ -703,6 +724,10 @@ export class AgentRuntimeManager {
         provisionAppClaudePrivateProfile(privateProfileDir, modelConfig),
       materializeProjection: async (projectionRoot) => {
         const claudeProjectConfigRoot = join(projectionRoot, '.claude')
+        if (!includeSkillAndConnectorContext) {
+          await mkdir(join(claudeProjectConfigRoot, 'skills'), { recursive: true })
+          return
+        }
         const connectors = await this.connectors.getConnectors()
         await this.materializeSkillProjection(
           settings,
@@ -747,6 +772,17 @@ export class AgentRuntimeManager {
       this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.storageRoot)
     if (!(await this.pathExists(adapterPath))) {
       throw new Error('Open Science Codex ACP adapter not found. Install Codex in settings.')
+    }
+
+    const adapterOutput = await this.codexDetectDeps
+      .getAdapterVersion(adapterPath)
+      .catch(() => undefined)
+    const adapterVersion = adapterOutput ? parseCodexVersion(adapterOutput) : undefined
+    if (!adapterVersion) {
+      throw new Error('Open Science could not determine the Codex ACP adapter version.')
+    }
+    if (!isSupportedCodexAcpVersion(adapterVersion)) {
+      throw new Error(buildUnsupportedCodexAcpVersionMessage(adapterVersion))
     }
 
     await ensureManagedCodexContextUsage(adapterPath)
@@ -965,10 +1001,14 @@ export class AgentRuntimeManager {
       diagnostic =
         components.adapterFailureReason === 'smoke-test-failed'
           ? `Codex ACP adapter ${components.adapterVersion} is installed at ${components.adapterPath}, but it failed to initialize (native Codex CLI may be missing or incompatible).`
-          : `Codex ACP adapter is installed at ${components.adapterPath}, but version detection failed.`
+          : components.adapterFailureReason === 'unsupported-version'
+            ? `Codex ACP adapter ${components.adapterVersion} is installed at ${components.adapterPath}, but Open Science requires ${MINIMUM_CODEX_ACP_VERSION} or later.`
+            : `Codex ACP adapter is installed at ${components.adapterPath}, but version detection failed.`
     } else if (components.nativeCliFound && components.adapterFound) {
       if (components.adapterFailureReason === 'smoke-test-failed') {
         diagnostic = `Both native Codex ${components.nativeCliVersion} and ACP adapter ${components.adapterVersion} are installed, but the adapter failed to initialize with the native CLI.`
+      } else if (components.adapterFailureReason === 'unsupported-version') {
+        diagnostic = `Native Codex ${components.nativeCliVersion} and ACP adapter ${components.adapterVersion} are installed, but Open Science requires ACP adapter ${MINIMUM_CODEX_ACP_VERSION} or later.`
       } else if (components.adapterFailureReason === 'version-probe-failed') {
         diagnostic = `Native Codex ${components.nativeCliVersion} is installed, and an ACP adapter exists at ${components.adapterPath}, but the adapter's version could not be determined.`
       }
@@ -1154,7 +1194,14 @@ export class AgentRuntimeManager {
           : candidate === 'opencode'
             ? await this.opencodeDetectDeps.getVersion(path)
             : await this.codexDetectDeps.getAdapterVersion(path)
-      if (version) {
+      const ready =
+        candidate === 'codex'
+          ? !!version &&
+            isSupportedCodexAcpVersion(parseCodexVersion(version) ?? '') &&
+            !!settings.codex?.nativePath &&
+            !!(await this.codexDetectDeps.getCodexVersion(settings.codex.nativePath))
+          : !!version
+      if (ready) {
         await this.repository.setAgentFramework(candidate)
         return
       }

@@ -21,6 +21,7 @@ import {
 type WorkspaceRunMarksProps = {
   items: readonly WorkspaceConversationTimelineItem[]
   viewport: HTMLDivElement | null
+  onRevealMessage?: (messageId: string) => void
 }
 
 const RUN_MARK_HOVER_DELAY_MS = 200
@@ -37,7 +38,8 @@ type RunMarkRailPosition = {
 
 const WorkspaceRunMarks = ({
   items,
-  viewport
+  viewport,
+  onRevealMessage
 }: WorkspaceRunMarksProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const marks = useMemo(() => createRunMarks(items), [items])
@@ -137,7 +139,11 @@ const WorkspaceRunMarks = ({
   const scrollToRun = (mark: RunMark, index: number): void => {
     if (!viewport) return
     const target = findMessageTarget(viewport, mark.id)
-    if (!target) return
+    if (!target) {
+      onRevealMessage?.(mark.id)
+      setCurrentIndex(index)
+      return
+    }
 
     const viewportTop = viewport.getBoundingClientRect().top
     const targetTop = target.getBoundingClientRect().top
@@ -174,7 +180,7 @@ const WorkspaceRunMarks = ({
         <ol className="pointer-events-auto grid w-full" style={railStyle}>
           {marks.map((mark, index) => {
             const isCurrent = index === currentIndex
-            const disabled = !availableMessageIds.has(mark.id)
+            const disabled = !onRevealMessage && !availableMessageIds.has(mark.id)
             const userPreview = normalizePreviewText(mark.userMessage, previewFallback)
             const agentPreview = mark.agentMessage
               ? normalizePreviewText(mark.agentMessage, previewFallback)

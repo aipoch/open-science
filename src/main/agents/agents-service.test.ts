@@ -55,19 +55,22 @@ const catalog = (overrides: Partial<AgentsCatalogSource> = {}): AgentsCatalogSou
 })
 
 describe('AgentsService read surface', () => {
-  it('list() returns custom profiles and never synthesizes the Reviewer row', async () => {
+  it('list() returns summary records without system prompts or a synthetic Reviewer row', async () => {
     const service = new AgentsService({
       profileService: profileService([profile()]),
       catalog: catalog()
     })
     const result = (await service.list()) as Awaited<ReturnType<typeof service.list>>
     expect(result).toHaveLength(1)
+    expect(Object.keys(result[0]).sort()).toEqual(
+      ['id', 'name', 'displayName', 'description', 'enabled'].sort()
+    )
     expect(result[0].id).toBe('sp-1')
-    expect(result[0].revision).toBe(3)
+    expect(JSON.stringify(result)).not.toContain('SECRET INSTRUCTIONS')
     expect(result.some((item) => item.id === 'reviewer')).toBe(false)
   })
 
-  it('get(name) resolves the public name and returns id + revision', async () => {
+  it('get(name) returns detail including the system prompt', async () => {
     const service = new AgentsService({
       profileService: profileService([profile()]),
       catalog: catalog()
@@ -75,6 +78,23 @@ describe('AgentsService read surface', () => {
     const got = await service.get({ name: 'Bio Expert' })
     expect(got.id).toBe('sp-1')
     expect(got.revision).toBe(3)
+    expect(got.systemPrompt).toBe('SECRET INSTRUCTIONS')
+    expect(Object.keys(got).sort()).toEqual(
+      [
+        'id',
+        'name',
+        'displayName',
+        'description',
+        'enabled',
+        'systemPrompt',
+        'iconKey',
+        'colorKey',
+        'capabilityMode',
+        'fullAccess',
+        'selectedCapabilities',
+        'revision'
+      ].sort()
+    )
   })
 
   it('get() rejects a missing name with a host.agents.get-prefixed error', async () => {

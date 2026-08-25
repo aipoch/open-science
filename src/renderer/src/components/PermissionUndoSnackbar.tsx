@@ -1,5 +1,11 @@
-import { Archive, KeyRound, LoaderCircle, RotateCcw, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+/* Hallmark · pre-emit critique: P5 H4 E5 S5 R5 V4 */
+/* Hallmark · component: snackbar · genre: modern-minimal · theme: Open Science semantic tokens
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * contrast: pass (46–50)
+ */
+import { Archive, KeyRound, LoaderCircle, X } from 'lucide-react'
+import { AnimatePresence, motion, useIsPresent, useReducedMotion } from 'motion/react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -7,6 +13,51 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import type { PermissionUndo } from '@/stores/permission-grants-store'
 import { useArchiveUndoStore, type ArchiveUndo } from '@/stores/archive-undo-store'
+
+const EDITABLE_SHORTCUT_TARGET =
+  'input, textarea, select, [role="textbox"], [contenteditable]:not([contenteditable="false"])'
+
+const UNDO_ENTER_TRANSITION = { duration: 0.4, ease: [0.16, 1, 0.3, 1] } as const
+const UNDO_EXIT_TRANSITION = { duration: 0.28, ease: [0.7, 0, 0.84, 0] } as const
+const UNDO_LAYOUT_TRANSITION = { duration: 0.22, ease: [0.16, 1, 0.3, 1] } as const
+const UNDO_REDUCED_TRANSITION = { duration: 0.12, ease: 'linear' } as const
+
+const archiveUndoShortcut = (): { aria: string; label: string } =>
+  window.api.platform === 'darwin'
+    ? { aria: 'Meta+Z', label: '⌘Z' }
+    : { aria: 'Control+Z', label: 'Ctrl+Z' }
+
+const isEditableShortcutTarget = (target: EventTarget | null): boolean =>
+  target instanceof Element && target.closest(EDITABLE_SHORTCUT_TARGET) !== null
+
+const UndoItemPresence = ({ children }: { children: ReactNode }): React.JSX.Element => {
+  const isPresent = useIsPresent()
+  const shouldReduceMotion = useReducedMotion()
+
+  return (
+    <motion.div
+      data-testid="undo-snackbar-presence"
+      aria-hidden={isPresent ? undefined : true}
+      inert={isPresent ? undefined : true}
+      layout={shouldReduceMotion ? false : 'position'}
+      initial={{ opacity: 0, y: shouldReduceMotion ? 0 : -8 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        transition: shouldReduceMotion ? UNDO_REDUCED_TRANSITION : UNDO_ENTER_TRANSITION
+      }}
+      exit={{
+        opacity: 0,
+        y: shouldReduceMotion ? 0 : -6,
+        transition: shouldReduceMotion ? UNDO_REDUCED_TRANSITION : UNDO_EXIT_TRANSITION
+      }}
+      transition={{ layout: UNDO_LAYOUT_TRANSITION }}
+      style={{ pointerEvents: isPresent ? 'auto' : 'none' }}
+    >
+      {children}
+    </motion.div>
+  )
+}
 
 const PermissionUndoItem = ({
   undo,
@@ -77,7 +128,7 @@ const PermissionUndoItem = ({
       onKeyDown={(event) => {
         if (event.key === 'Escape') dismiss(undo.token)
       }}
-      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl border border-border/80 bg-popover px-3 py-2 text-sm text-popover-foreground shadow-lg shadow-black/10"
+      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl bg-popover px-3 py-2 text-sm text-popover-foreground shadow-card"
     >
       <KeyRound className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="max-w-[min(28rem,55vw)] truncate">{t(undo.messageKey, messageParams)}</span>
@@ -86,7 +137,7 @@ const PermissionUndoItem = ({
           type="button"
           variant="ghost"
           size="sm"
-          className="relative ml-1 h-8 gap-1.5 whitespace-nowrap px-2 font-medium before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']"
+          className="relative ml-1 h-8 whitespace-nowrap px-2 font-medium text-primary hover:text-primary before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']"
           disabled={isRestoring}
           onClick={() => void restore(undo.token)}
         >
@@ -95,9 +146,7 @@ const PermissionUndoItem = ({
               className="size-4 animate-spin motion-reduce:animate-none"
               aria-hidden="true"
             />
-          ) : (
-            <RotateCcw className="size-4" aria-hidden="true" />
-          )}
+          ) : null}
           {isRestoring
             ? undo.retry
               ? t('Retrying…')
@@ -107,7 +156,7 @@ const PermissionUndoItem = ({
               : t('Undo')}
         </Button>
       ) : null}
-      <TooltipProvider delayDuration={200}>
+      <TooltipProvider delayDuration={800}>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -133,14 +182,17 @@ const ArchiveUndoItem = ({
   undo,
   dismiss,
   restore,
-  isRestoring
+  isRestoring,
+  isShortcutTarget
 }: {
   undo: ArchiveUndo
   dismiss: (key: string) => void
   restore: (key: string) => Promise<void>
   isRestoring: boolean
+  isShortcutTarget: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const shortcut = archiveUndoShortcut()
 
   const [pointerPaused, setPointerPaused] = useState(false)
   const [focusPaused, setFocusPaused] = useState(false)
@@ -167,7 +219,7 @@ const ArchiveUndoItem = ({
       onKeyDown={(event) => {
         if (event.key === 'Escape') dismiss(undo.key)
       }}
-      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl border border-border/80 bg-popover px-3 py-2 text-sm text-popover-foreground shadow-lg shadow-black/10"
+      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl bg-popover px-3 py-2 text-sm text-popover-foreground shadow-card"
     >
       <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="max-w-[min(28rem,55vw)] truncate">
@@ -177,7 +229,8 @@ const ArchiveUndoItem = ({
         type="button"
         variant="ghost"
         size="sm"
-        className="relative ml-1 h-8 gap-1.5 whitespace-nowrap px-2 font-medium before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']"
+        className="relative ml-1 h-8 whitespace-nowrap px-2 font-medium text-primary hover:text-primary before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']"
+        aria-keyshortcuts={isShortcutTarget ? shortcut.aria : undefined}
         disabled={isRestoring}
         onClick={() => void restore(undo.key)}
       >
@@ -186,9 +239,7 @@ const ArchiveUndoItem = ({
             className="size-4 animate-spin motion-reduce:animate-none"
             aria-hidden="true"
           />
-        ) : (
-          <RotateCcw className="size-4" aria-hidden="true" />
-        )}
+        ) : null}
         {isRestoring
           ? undo.retry
             ? t('Retrying…')
@@ -196,8 +247,16 @@ const ArchiveUndoItem = ({
           : undo.retry
             ? t('Retry')
             : t('Undo')}
+        {isShortcutTarget && !isRestoring ? (
+          <kbd
+            aria-hidden="true"
+            className="rounded border border-border/80 bg-muted px-1 py-0.5 font-mono text-[10px] leading-none text-muted-foreground"
+          >
+            {shortcut.label}
+          </kbd>
+        ) : null}
       </Button>
-      <TooltipProvider delayDuration={200}>
+      <TooltipProvider delayDuration={800}>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -221,7 +280,11 @@ const ArchiveUndoItem = ({
 
 // App-root ownership keeps Undo available when Settings closes. The Registry receipt remains the
 // authority; this component only owns its short-lived renderer presentation.
-const PermissionUndoSnackbar = (): React.JSX.Element | null => {
+const PermissionUndoSnackbar = ({
+  allowsArchiveShortcut
+}: {
+  allowsArchiveShortcut: () => boolean
+}): React.JSX.Element => {
   const undo = usePermissionGrantsStore((state) => state.undo)
   const undoQueue = usePermissionGrantsStore((state) => state.undoQueue)
   const restore = usePermissionGrantsStore((state) => state.restore)
@@ -232,41 +295,98 @@ const PermissionUndoSnackbar = (): React.JSX.Element | null => {
   const restoreArchive = useArchiveUndoStore((state) => state.undo)
   const dismissArchive = useArchiveUndoStore((state) => state.dismiss)
   const archiveRestoringKey = useArchiveUndoStore((state) => state.restoringKey)
+  const [archiveProjectionTime, setArchiveProjectionTime] = useState(() => Date.now())
+  const archiveShortcutTargetKey = archiveNotices.find(
+    (notice) => notice.expiresAt > archiveProjectionTime
+  )?.key
+
+  useEffect(() => {
+    const nextExpiry = archiveNotices
+      .filter((notice) => notice.expiresAt > archiveProjectionTime)
+      .reduce<number | undefined>(
+        (earliest, notice) =>
+          earliest === undefined ? notice.expiresAt : Math.min(earliest, notice.expiresAt),
+        undefined
+      )
+    if (nextExpiry === undefined) return
+    const timer = window.setTimeout(
+      () => setArchiveProjectionTime(Date.now()),
+      Math.max(0, nextExpiry - Date.now())
+    )
+    return () => window.clearTimeout(timer)
+  }, [archiveNotices, archiveProjectionTime])
+
+  useEffect(() => {
+    const undoLatestArchive = (event: KeyboardEvent): void => {
+      const primaryModifier =
+        window.api.platform === 'darwin'
+          ? event.metaKey && !event.ctrlKey
+          : event.ctrlKey && !event.metaKey
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.repeat ||
+        event.key.toLowerCase() !== 'z' ||
+        !primaryModifier ||
+        event.altKey ||
+        event.shiftKey ||
+        isEditableShortcutTarget(event.target) ||
+        !allowsArchiveShortcut()
+      ) {
+        return
+      }
+
+      const archiveUndo = useArchiveUndoStore.getState()
+      const target = archiveUndo.notices.find(
+        (notice) => notice.key === archiveShortcutTargetKey && notice.expiresAt > Date.now()
+      )
+      if (!target || archiveUndo.restoringKey !== undefined) return
+
+      event.preventDefault()
+      void archiveUndo.undo(target.key)
+    }
+
+    window.addEventListener('keydown', undoLatestArchive)
+    return () => window.removeEventListener('keydown', undoLatestArchive)
+  }, [allowsArchiveShortcut, archiveShortcutTargetKey])
 
   const items = useMemo(
     () => [undo, ...undoQueue].filter((item): item is PermissionUndo => Boolean(item)),
     [undo, undoQueue]
   )
-  if (items.length === 0 && archiveNotices.length === 0) return null
-
   // The shared stack sizes to its receipts; separate Permission and Archive domains only share this
   // app-root presentation shell, not their timeout or restore authority.
   return (
     <div
       aria-live="polite"
       data-testid="permission-undo-stack"
-      className="pointer-events-auto z-toast fixed top-[max(1.5rem,env(safe-area-inset-top))] left-1/2 max-h-[min(70svh,32rem)] -translate-x-1/2 overflow-y-auto overscroll-contain"
+      className="pointer-events-none z-toast fixed top-[max(1.5rem,env(safe-area-inset-top))] left-1/2 max-h-[min(70svh,32rem)] -translate-x-1/2 overflow-y-auto overscroll-contain"
     >
-      <div className="flex flex-col items-center gap-2 p-1 pr-3">
-        {items.map((item) => (
-          <PermissionUndoItem
-            key={item.token}
-            undo={item}
-            extend={extend}
-            restore={restore}
-            dismiss={dismiss}
-            isRestoring={isRestoring}
-          />
-        ))}
-        {archiveNotices.map((item) => (
-          <ArchiveUndoItem
-            key={item.key}
-            undo={item}
-            dismiss={dismissArchive}
-            restore={restoreArchive}
-            isRestoring={archiveRestoringKey === item.key}
-          />
-        ))}
+      <div className="flex flex-col items-center gap-2 p-1">
+        <AnimatePresence>
+          {items.map((item) => (
+            <UndoItemPresence key={`permission:${item.token}`}>
+              <PermissionUndoItem
+                undo={item}
+                extend={extend}
+                restore={restore}
+                dismiss={dismiss}
+                isRestoring={isRestoring}
+              />
+            </UndoItemPresence>
+          ))}
+          {archiveNotices.map((item) => (
+            <UndoItemPresence key={`archive:${item.key}`}>
+              <ArchiveUndoItem
+                undo={item}
+                dismiss={dismissArchive}
+                restore={restoreArchive}
+                isRestoring={archiveRestoringKey === item.key}
+                isShortcutTarget={item.key === archiveShortcutTargetKey}
+              />
+            </UndoItemPresence>
+          ))}
+        </AnimatePresence>
       </div>
     </div>
   )

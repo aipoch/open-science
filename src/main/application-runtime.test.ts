@@ -245,18 +245,20 @@ describe('application runtime composition', () => {
     const runtime = await composeApplicationRuntime(async (modules) => {
       const events = await modules.add((installedEvents) => {
         emitTerminalEvent = () =>
-          installedEvents.publish('acp:event', {
-            id: 'event-1',
-            timestamp: 100,
-            kind: 'stop',
-            level: 'info',
-            sessionId: 'session-1',
-            turnUsage: { inputTokens: 3, cacheTokens: 2, outputTokens: 1 }
-          })
+          installedEvents.publish('acp:event', [
+            {
+              id: 'event-1',
+              timestamp: 100,
+              kind: 'stop',
+              level: 'info',
+              sessionId: 'session-1',
+              turnUsage: { inputTokens: 3, cacheTokens: 2, outputTokens: 1 }
+            }
+          ])
         return () => order.push('uninstall:application-events')
       }, createApplicationEventModule)
       events.subscribe((event) => {
-        if (event.channel === 'acp:event') order.push(`event:${event.payload.kind}`)
+        if (event.channel === 'acp:event') order.push(`event:${event.payload[0]?.kind}`)
       })
       await modules.add(undefined, () => ({
         capability: undefined,

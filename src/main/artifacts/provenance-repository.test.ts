@@ -1726,7 +1726,13 @@ describe('artifact provenance repository', () => {
           versionStatus: 'known',
           ecosystem: 'python',
           evidenceSources: ['python-importlib-metadata', 'python-kernel-modules'],
-          loadedState: 'loaded'
+          loadedState: 'loaded',
+          source: {
+            type: 'github',
+            repository: 'numpy/numpy',
+            ref: 'v2.2.0',
+            commit: 'abc123'
+          }
         }
       ],
       // Persisted manifests from before structured installer evidence contain only these five
@@ -1756,7 +1762,13 @@ describe('artifact provenance repository', () => {
               relationship: 'requested',
               change: 'updated',
               beforeVersion: '2.1.0',
-              afterVersion: '2.2.0'
+              afterVersion: '2.2.0',
+              source: {
+                type: 'github',
+                repository: 'numpy/numpy',
+                ref: 'v2.2.0',
+                commit: 'abc123'
+              }
             }
           ]
         }
@@ -1988,7 +2000,13 @@ describe('artifact provenance repository', () => {
           expect.objectContaining({
             name: 'numpy',
             version: '2.2.0',
-            loaded_state: 'loaded'
+            loaded_state: 'loaded',
+            source: {
+              type: 'github',
+              repository: 'numpy/numpy',
+              ref: 'v2.2.0',
+              commit: 'abc123'
+            }
           })
         ],
         op_log: [
@@ -2007,7 +2025,13 @@ describe('artifact provenance repository', () => {
                 relationship: 'requested',
                 change: 'updated',
                 before_version: '2.1.0',
-                after_version: '2.2.0'
+                after_version: '2.2.0',
+                source: {
+                  type: 'github',
+                  repository: 'numpy/numpy',
+                  ref: 'v2.2.0',
+                  commit: 'abc123'
+                }
               })
             ]
           })
@@ -2471,7 +2495,7 @@ describe('artifact provenance repository', () => {
     ).rejects.toThrow(/execution snapshot input metadata mismatch/i)
   })
 
-  it('does not infer an omitted producer from source mtime alone', async () => {
+  it('rejects an omitted Notebook producer when mtime is the only association', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-auto-producer-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -2549,46 +2573,32 @@ describe('artifact provenance repository', () => {
       source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
     })
 
-    const version = await repository.createVersion({
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-auto-producer',
-      writeRequestChecksum: 'f'.repeat(64),
-      ...graph,
-      notebookSessionId: 'session-1',
-      sourceFileObservation: {
-        path: resolvedSourcePath,
-        sizeBytes: sourceStat.size,
-        mtimeMs: sourceStat.mtimeMs
-      },
-      filename: 'sin.png',
-      contentType: 'image/png'
-    })
-    const row = requireAgentArtifactVersion(
-      await client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
-    )
-
-    expect(row).toMatchObject({ producerRunId: null, producerRunIndex: null })
-    expect(JSON.parse(row.evidenceJson)).toMatchObject({
-      producer: {
-        state: 'unavailable',
-        reason: 'producer-source-unverifiable'
-      },
-      execution_status: { state: 'unavailable', reason: 'producer-source-unverifiable' }
-    })
     await expect(
-      repository.replayVersion({
+      repository.createVersion({
         projectId: 'project-1',
         appSessionId: 'session-1',
         artifactStorageSessionId: 'artifact-session-1',
         artifactRunId: 'artifact-run-1',
         writeOperationId: 'write-auto-producer',
+        writeRequestChecksum: 'f'.repeat(64),
+        ...graph,
+        notebookSessionId: 'session-1',
+        sourceFileObservation: {
+          path: resolvedSourcePath,
+          sizeBytes: sourceStat.size,
+          mtimeMs: sourceStat.mtimeMs
+        },
         filename: 'sin.png',
         contentType: 'image/png'
       })
-    ).resolves.toMatchObject({ versionId: version.versionId })
+    ).rejects.toThrow('Notebook source must have exactly one eligible Run owner.')
+    await expect(
+      repository.listRunVersions({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactRunId: 'artifact-run-1'
+      })
+    ).resolves.toEqual([])
   })
 
   it('bounds execution evidence while retaining the producer run', async () => {
@@ -2890,29 +2900,29 @@ describe('artifact provenance repository', () => {
       filename: 'spoof.png',
       source: createPngInlineSource('different artifact bytes')
     })
-    const spoofedObservation = await repository.createVersion({
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-spoofed-source-observation',
-      writeRequestChecksum: 'e'.repeat(64),
-      ...graph,
-      notebookSessionId: 'session-1',
-      producerRunId: 'notebook-run-owner',
-      sourceFileObservation,
-      filename: 'spoof.png',
-      contentType: 'image/png'
-    })
-    const spoofedRow = requireAgentArtifactVersion(
-      await client.artifactVersion.findUniqueOrThrow({
-        where: { id: spoofedObservation.versionId }
+    await expect(
+      repository.createVersion({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-spoofed-source-observation',
+        writeRequestChecksum: 'e'.repeat(64),
+        ...graph,
+        notebookSessionId: 'session-1',
+        producerRunId: 'notebook-run-owner',
+        sourceFileObservation,
+        filename: 'spoof.png',
+        contentType: 'image/png'
       })
-    )
-    expect(spoofedRow).toMatchObject({ producerRunId: null, producerRunIndex: null })
-    expect(JSON.parse(spoofedRow.evidenceJson)).toMatchObject({
-      producer: { state: 'unavailable', reason: 'producer-source-unverifiable' }
-    })
+    ).rejects.toThrow('Notebook producer source could not be verified: notebook-run-owner')
+    await expect(
+      repository.listRunVersions({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactRunId: 'artifact-run-1'
+      })
+    ).resolves.toHaveLength(1)
 
     await compatibilityRepository.writePendingFile({
       projectId: 'project-1',
@@ -2958,28 +2968,29 @@ describe('artifact provenance repository', () => {
       filename: 'unobserved-local.png',
       source: createPngInlineSource('unobserved local bytes')
     })
-    const unobservedLocal = await repository.createVersion({
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-unobserved-local-producer',
-      writeRequestChecksum: 'c'.repeat(64),
-      ...graph,
-      notebookSessionId: 'session-1',
-      producerRunId: 'notebook-run-owner',
-      sourceKind: 'localPath',
-      filename: 'unobserved-local.png',
-      contentType: 'image/png'
-    })
-    const unobservedLocalRow = requireAgentArtifactVersion(
-      await client.artifactVersion.findUniqueOrThrow({ where: { id: unobservedLocal.versionId } })
-    )
-    expect(unobservedLocalRow).toMatchObject({ producerRunId: null, producerRunIndex: null })
-    expect(JSON.parse(unobservedLocalRow.evidenceJson)).toMatchObject({
-      producer: { state: 'unavailable', reason: 'producer-source-unverifiable' },
-      execution_status: { state: 'unavailable', reason: 'producer-source-unverifiable' }
-    })
+    await expect(
+      repository.createVersion({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-unobserved-local-producer',
+        writeRequestChecksum: 'c'.repeat(64),
+        ...graph,
+        notebookSessionId: 'session-1',
+        producerRunId: 'notebook-run-owner',
+        sourceKind: 'localPath',
+        filename: 'unobserved-local.png',
+        contentType: 'image/png'
+      })
+    ).rejects.toThrow('Notebook producer source observation is required: notebook-run-owner')
+    await expect(
+      repository.listRunVersions({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactRunId: 'artifact-run-1'
+      })
+    ).resolves.toHaveLength(2)
   })
 
   it('rejects a renderer-supplied message that the durable Conversation Graph does not own', async () => {
@@ -3543,7 +3554,7 @@ describe('artifact provenance repository', () => {
     ).resolves.toHaveLength(2)
   })
 
-  it('replays the compatibility-marker crash window only with durable Branch ownership', async () => {
+  it('replays the default compatibility repository crash window only with durable Branch ownership', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-marker-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -3551,8 +3562,7 @@ describe('artifact provenance repository', () => {
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
-      getClient: () => Promise.resolve(client),
-      compatibilityRepository
+      getClient: () => Promise.resolve(client)
     })
     const prompt = {
       id: 'prompt-1',
@@ -3625,6 +3635,12 @@ describe('artifact provenance repository', () => {
       messageId: 'message-1',
       provenanceContext: context
     })
+    await expect(
+      new ArtifactRepository(storageRoot).findRunFinalizationMarker(
+        request.projectId,
+        request.artifactRunId
+      )
+    ).resolves.toMatchObject({ messageId: 'message-1' })
 
     const session: PersistedChatSession = {
       id: 'session-1',

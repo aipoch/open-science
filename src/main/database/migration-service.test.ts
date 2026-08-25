@@ -25,7 +25,7 @@ import {
 } from './migration-service'
 
 const futureTestMigration = (): MigrationManifestEntry => {
-  const id = '0014_test_suffix'
+  const id = '0016_test_suffix'
   const statements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
   const verifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
   return {
@@ -41,16 +41,27 @@ const futureTestMigration = (): MigrationManifestEntry => {
 const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID = '0009_managed_file_version_foundation'
 const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM =
   '54d50c127428b47efcea83e18c30f1dd7b94bfe7f37a3b2aae29a1a7ac43a1f8'
+const LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID = '0013_managed_file_version_foundation'
+const LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM =
+  'ed8b5f4ad1a326a98f844193ec182396cc486d86c90969b19996e9a485aaf6c7'
 
 const legacyDraftMigrationManifest = (): readonly MigrationManifestEntry[] => {
   const managedIndex = MIGRATION_MANIFEST.findIndex(
-    ({ id }) => id === '0013_managed_file_version_foundation'
+    ({ id }) => id === '0015_managed_file_version_foundation'
   )
   const upstreamSuffixIndex = MIGRATION_MANIFEST.findIndex(
     ({ id }) => id === '0009_vision_evidence'
   )
+  const sessionProjectionIndex = MIGRATION_MANIFEST.findIndex(
+    ({ id }) => id === '0013_session_projection'
+  )
   const managedMigration = MIGRATION_MANIFEST[managedIndex]
-  if (managedIndex < 0 || upstreamSuffixIndex < 0 || !managedMigration) {
+  if (
+    managedIndex < 0 ||
+    upstreamSuffixIndex < 0 ||
+    sessionProjectionIndex < 0 ||
+    !managedMigration
+  ) {
     throw new Error('Managed migration test fixture is unavailable.')
   }
   return [
@@ -60,7 +71,28 @@ const legacyDraftMigrationManifest = (): readonly MigrationManifestEntry[] => {
       id: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID,
       checksum: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
     },
-    ...MIGRATION_MANIFEST.slice(upstreamSuffixIndex, managedIndex)
+    ...MIGRATION_MANIFEST.slice(upstreamSuffixIndex, sessionProjectionIndex)
+  ]
+}
+
+const legacyCanonicalMigrationManifest = (): readonly MigrationManifestEntry[] => {
+  const managedIndex = MIGRATION_MANIFEST.findIndex(
+    ({ id }) => id === '0015_managed_file_version_foundation'
+  )
+  const sessionProjectionIndex = MIGRATION_MANIFEST.findIndex(
+    ({ id }) => id === '0013_session_projection'
+  )
+  const managedMigration = MIGRATION_MANIFEST[managedIndex]
+  if (managedIndex < 0 || sessionProjectionIndex < 0 || !managedMigration) {
+    throw new Error('Managed migration test fixture is unavailable.')
+  }
+  return [
+    ...MIGRATION_MANIFEST.slice(0, sessionProjectionIndex),
+    {
+      ...managedMigration,
+      id: LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
+      checksum: LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
+    }
   ]
 }
 
@@ -307,10 +339,12 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ],
       from: null,
-      to: '0013_managed_file_version_foundation'
+      to: '0015_managed_file_version_foundation'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -323,8 +357,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0013_managed_file_version_foundation',
-      to: '0013_managed_file_version_foundation'
+      from: '0015_managed_file_version_foundation',
+      to: '0015_managed_file_version_foundation'
     })
   })
 
@@ -443,7 +477,7 @@ describe('application database migrations', () => {
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
-      WHERE "id" IN ('0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_managed_file_version_foundation')`)
+      WHERE "id" IN ('0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_managed_file_version_foundation')`)
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     await removeComputePasswordAuthSchema(client)
     await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
@@ -456,10 +490,12 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ],
       from: '0008_database_json_constraints',
-      to: '0013_managed_file_version_foundation'
+      to: '0015_managed_file_version_foundation'
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })
@@ -467,7 +503,7 @@ describe('application database migrations', () => {
   it('upgrades the real upstream ledger and repairs VisionEvidence after the managed rebuild', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-upstream-ledger-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0013_managed_file_version_foundation.backup`
+    const backupPath = `${databasePath}.before-0015_managed_file_version_foundation.backup`
     client = createProjectDbClient(storageRoot)
     const upstreamManifest = MIGRATION_MANIFEST.slice(0, -1)
     await createDatabaseAtReleasedManifest(client, upstreamManifest)
@@ -508,9 +544,9 @@ describe('application database migrations', () => {
     `
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0013_managed_file_version_foundation'],
-      from: '0012_tag_ordering',
-      to: '0013_managed_file_version_foundation'
+      applied: ['0015_managed_file_version_foundation'],
+      from: '0014_review_query_indexes',
+      to: '0015_managed_file_version_foundation'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`
@@ -535,7 +571,7 @@ describe('application database migrations', () => {
   it('normalizes the exact legacy Draft managed ledger and retains its recovery backup', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-draft-ledger-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0013_managed_file_version_foundation.backup`
+    const backupPath = `${databasePath}.before-0015_managed_file_version_foundation.backup`
     client = createProjectDbClient(storageRoot)
     await createDatabaseAtReleasedManifest(client, legacyDraftMigrationManifest())
     await client.$executeRawUnsafe(
@@ -545,9 +581,13 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0013_managed_file_version_foundation'],
+      applied: [
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
+      ],
       from: '0012_tag_ordering',
-      to: '0013_managed_file_version_foundation'
+      to: '0015_managed_file_version_foundation'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ id: string; checksum: string }>>(
@@ -567,10 +607,49 @@ describe('application database migrations', () => {
     await expect(access(backupPath)).resolves.toBeUndefined()
   })
 
+  it('normalizes the exact former 0013 managed ledger through the upstream suffix', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-former-managed-ledger-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0015_managed_file_version_foundation.backup`
+    client = createProjectDbClient(storageRoot)
+    await createDatabaseAtReleasedManifest(client, legacyCanonicalMigrationManifest())
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Project" ("id", "name", "updatedAt")
+       VALUES ('former-managed-project', 'Preserved former managed project', CURRENT_TIMESTAMP)`
+    )
+
+    await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
+      adoptedLegacy: false,
+      applied: [
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
+      ],
+      from: LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
+      to: '0015_managed_file_version_foundation'
+    })
+    await expect(
+      client.$queryRawUnsafe<Array<{ id: string; checksum: string }>>(
+        'SELECT "id", "checksum" FROM "_open_science_migrations" ORDER BY "id"'
+      )
+    ).resolves.toEqual(MIGRATION_MANIFEST.map(({ id, checksum }) => ({ id, checksum })))
+    await expect(
+      client.$queryRawUnsafe<Array<{ name: string }>>(
+        `SELECT "name" FROM "Project" WHERE "id" = 'former-managed-project'`
+      )
+    ).resolves.toEqual([{ name: 'Preserved former managed project' }])
+    await expect(access(backupPath)).resolves.toBeUndefined()
+
+    await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toMatchObject({
+      applied: []
+    })
+    await expect(access(backupPath)).resolves.toBeUndefined()
+  })
+
   it('upgrades the shortest exact legacy Draft managed prefix through the canonical suffix', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-draft-prefix-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0013_managed_file_version_foundation.backup`
+    const backupPath = `${databasePath}.before-0015_managed_file_version_foundation.backup`
     client = createProjectDbClient(storageRoot)
     const legacyDraftPrefix = legacyDraftMigrationManifest().slice(0, 9)
     await createDatabaseAtReleasedManifest(client, legacyDraftPrefix)
@@ -582,10 +661,12 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ],
       from: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID,
-      to: '0013_managed_file_version_foundation'
+      to: '0015_managed_file_version_foundation'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ id: string; checksum: string }>>(
@@ -655,26 +736,26 @@ describe('application database migrations', () => {
   it('keeps the legacy Draft ledger identity when canonical registration fails', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-draft-rollback-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0013_managed_file_version_foundation.backup`
+    const backupPath = `${databasePath}.before-0015_managed_file_version_foundation.backup`
     client = createProjectDbClient(storageRoot)
     await createDatabaseAtReleasedManifest(client, legacyDraftMigrationManifest())
     await client.$executeRawUnsafe(`CREATE TRIGGER "reject_canonical_managed_ledger"
       BEFORE INSERT ON "_open_science_migrations"
-      WHEN NEW."id" = '0013_managed_file_version_foundation'
+      WHEN NEW."id" = '0015_managed_file_version_foundation'
       BEGIN
         SELECT RAISE(ABORT, 'canonical ledger registration rejected');
       END`)
 
     await expect(migrateApplicationDatabase(client, { databasePath })).rejects.toMatchObject({
       code: 'database_migration_failed',
-      migrationId: '0013_managed_file_version_foundation'
+      migrationId: '0015_managed_file_version_foundation'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ id: string }>>(
         `SELECT "id" FROM "_open_science_migrations"
          WHERE "id" IN (
            '0009_managed_file_version_foundation',
-           '0013_managed_file_version_foundation'
+           '0015_managed_file_version_foundation'
          )
          ORDER BY "id"`
       )
@@ -734,7 +815,9 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -779,7 +862,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0013_managed_file_version_foundation'
+      to: '0015_managed_file_version_foundation'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -801,7 +884,7 @@ describe('application database migrations', () => {
     await client.$executeRawUnsafe('DROP INDEX "ComputeJob_status_idx"')
     await removeComputePasswordAuthSchema(client)
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
-      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_managed_file_version_foundation')`)
+      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_managed_file_version_foundation')`)
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: [
@@ -812,10 +895,12 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0013_managed_file_version_foundation'
+      to: '0015_managed_file_version_foundation'
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })
@@ -911,10 +996,12 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0013_managed_file_version_foundation'
+      to: '0015_managed_file_version_foundation'
     })
     await expect(
       client.$queryRaw<
@@ -1033,7 +1120,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0013_managed_file_version_foundation'
+      migrationId: '0015_managed_file_version_foundation'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1049,9 +1136,9 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0014_test_suffix'],
-      from: '0013_managed_file_version_foundation',
-      to: '0014_test_suffix'
+      applied: ['0016_test_suffix'],
+      from: '0015_managed_file_version_foundation',
+      to: '0016_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
@@ -1070,8 +1157,10 @@ describe('application database migrations', () => {
       { id: '0010_compute_password_auth' },
       { id: '0011_cross_resource_tags' },
       { id: '0012_tag_ordering' },
-      { id: '0013_managed_file_version_foundation' },
-      { id: '0014_test_suffix' }
+      { id: '0013_session_projection' },
+      { id: '0014_review_query_indexes' },
+      { id: '0015_managed_file_version_foundation' },
+      { id: '0016_test_suffix' }
     ])
   })
 
@@ -1136,10 +1225,12 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0013_managed_file_version_foundation'
+      to: '0015_managed_file_version_foundation'
     })
     expect(backupEvents).toEqual([
       {
@@ -1198,19 +1289,37 @@ describe('application database migrations', () => {
         reused: false
       },
       {
-        migrationId: '0013_managed_file_version_foundation',
-        path: `${databasePath}.before-0013_managed_file_version_foundation.backup`,
+        migrationId: '0013_session_projection',
+        path: `${databasePath}.before-0013_session_projection.backup`,
+        reused: false
+      },
+      {
+        migrationId: '0014_review_query_indexes',
+        path: `${databasePath}.before-0014_review_query_indexes.backup`,
+        reused: false
+      },
+      {
+        migrationId: '0015_managed_file_version_foundation',
+        path: `${databasePath}.before-0015_managed_file_version_foundation.backup`,
         reused: false
       }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
-      access(`${databasePath}.before-0013_managed_file_version_foundation.backup`)
+      access(`${databasePath}.before-0013_session_projection.backup`)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(`${databasePath}.before-0014_review_query_indexes.backup`)
     ).resolves.toBeUndefined()
-    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0015_managed_file_version_foundation.backup`)
+    ).resolves.toBeUndefined()
     await expect(
       access(`${databasePath}.before-0011_cross_resource_tags.backup`)
     ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
     await expect(
       client.$queryRaw<Array<{ agentContext: string; name: string }>>`
         SELECT "agentContext", "name" FROM "Project" WHERE "id" = 'project-1'
@@ -1240,7 +1349,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0014_test_suffix'
+      migrationId: '0016_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -1265,7 +1374,9 @@ describe('application database migrations', () => {
       { id: '0010_compute_password_auth' },
       { id: '0011_cross_resource_tags' },
       { id: '0012_tag_ordering' },
-      { id: '0013_managed_file_version_foundation' }
+      { id: '0013_session_projection' },
+      { id: '0014_review_query_indexes' },
+      { id: '0015_managed_file_version_foundation' }
     ])
   })
 
@@ -1333,7 +1444,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0014_test_suffix'
+      migrationId: '0016_test_suffix'
     })
   })
 
@@ -1371,10 +1482,12 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation',
-        '0014_test_suffix'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation',
+        '0016_test_suffix'
       ],
-      to: '0014_test_suffix'
+      to: '0016_test_suffix'
     })
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
@@ -1495,7 +1608,7 @@ describe('application database migrations', () => {
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
 
     const managedFileMigrationIndex = MIGRATION_MANIFEST.findIndex(
-      (migration) => migration.id === '0013_managed_file_version_foundation'
+      (migration) => migration.id === '0015_managed_file_version_foundation'
     )
 
     await expect(
@@ -1611,7 +1724,9 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -1682,7 +1797,9 @@ describe('application database migrations', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-retired-columns-'))
     client = createProjectDbClient(storageRoot)
     await createDatabaseAtMigration0005(client)
-    await client.project.create({ data: { id: 'legacy-project', name: 'Preserved' } })
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Project" ("id", "name", "updatedAt") VALUES ('legacy-project', 'Preserved', CURRENT_TIMESTAMP)`
+    )
     await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "summary" TEXT')
     await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "checks" TEXT')
     await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "reasoning" TEXT')
@@ -1719,7 +1836,9 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1781,7 +1900,9 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -1846,7 +1967,9 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ]
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
@@ -1945,7 +2068,9 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -1963,7 +2088,9 @@ describe('application database migrations', () => {
     const computePasswordAuthBackupPath = `${databasePath}.before-0010_compute_password_auth.backup`
     const crossResourceTagsBackupPath = `${databasePath}.before-0011_cross_resource_tags.backup`
     const tagOrderingBackupPath = `${databasePath}.before-0012_tag_ordering.backup`
-    const managedFileBackupPath = `${databasePath}.before-0013_managed_file_version_foundation.backup`
+    const sessionProjectionBackupPath = `${databasePath}.before-0013_session_projection.backup`
+    const reviewQueryIndexesBackupPath = `${databasePath}.before-0014_review_query_indexes.backup`
+    const managedFileBackupPath = `${databasePath}.before-0015_managed_file_version_foundation.backup`
     const backupEvents: unknown[] = []
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -2002,7 +2129,9 @@ describe('application database migrations', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ]
     })
     expect(backupEvents).toEqual([
@@ -2067,7 +2196,17 @@ describe('application database migrations', () => {
         reused: false
       },
       {
-        migrationId: '0013_managed_file_version_foundation',
+        migrationId: '0013_session_projection',
+        path: sessionProjectionBackupPath,
+        reused: false
+      },
+      {
+        migrationId: '0014_review_query_indexes',
+        path: reviewQueryIndexesBackupPath,
+        reused: false
+      },
+      {
+        migrationId: '0015_managed_file_version_foundation',
         path: managedFileBackupPath,
         reused: false
       }
@@ -2077,20 +2216,22 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0012_tag_ordering.backup',
-      'open-science.db.before-0013_managed_file_version_foundation.backup'
+      'open-science.db.before-0014_review_query_indexes.backup',
+      'open-science.db.before-0015_managed_file_version_foundation.backup'
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(agentContextBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(visionEvidenceBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(computePasswordAuthBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(crossResourceTagsBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(tagOrderingBackupPath)).resolves.toBeUndefined()
+    await expect(access(tagOrderingBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(sessionProjectionBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(reviewQueryIndexesBackupPath)).resolves.toBeUndefined()
     await expect(access(managedFileBackupPath)).resolves.toBeUndefined()
     await expect(client.project.count()).resolves.toBe(1)
 
     const backupClient = new PrismaClient({
-      datasources: { db: { url: `file:${tagOrderingBackupPath.replaceAll('\\', '/')}` } }
+      datasources: { db: { url: `file:${reviewQueryIndexesBackupPath.replaceAll('\\', '/')}` } }
     })
     try {
       await expect(
@@ -2102,7 +2243,7 @@ describe('application database migrations', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0011_cross_resource_tags' }])
+      ).resolves.toEqual([{ id: '0013_session_projection' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -2512,8 +2653,18 @@ describe('application database migrations', () => {
         reused: false
       }),
       expect.objectContaining({
-        migrationId: '0013_managed_file_version_foundation',
-        path: `${databasePath}.before-0013_managed_file_version_foundation.backup`,
+        migrationId: '0013_session_projection',
+        path: `${databasePath}.before-0013_session_projection.backup`,
+        reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0014_review_query_indexes',
+        path: `${databasePath}.before-0014_review_query_indexes.backup`,
+        reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0015_managed_file_version_foundation',
+        path: `${databasePath}.before-0015_managed_file_version_foundation.backup`,
         reused: false
       })
     ])
@@ -2561,8 +2712,16 @@ describe('application database migrations', () => {
         path: `${databasePath}.before-0012_tag_ordering.backup`
       },
       {
-        migrationId: '0013_managed_file_version_foundation',
-        path: `${databasePath}.before-0013_managed_file_version_foundation.backup`
+        migrationId: '0013_session_projection',
+        path: `${databasePath}.before-0013_session_projection.backup`
+      },
+      {
+        migrationId: '0014_review_query_indexes',
+        path: `${databasePath}.before-0014_review_query_indexes.backup`
+      },
+      {
+        migrationId: '0015_managed_file_version_foundation',
+        path: `${databasePath}.before-0015_managed_file_version_foundation.backup`
       }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -2596,11 +2755,11 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0012_tag_ordering.backup',
-      'open-science.db.before-0013_managed_file_version_foundation.backup',
+      'open-science.db.before-0014_review_query_indexes.backup',
+      'open-science.db.before-0015_managed_file_version_foundation.backup',
       unknownBackupName
     ])
-    expect(retired).toHaveLength(11)
+    expect(retired).toHaveLength(13)
     expect(retired).toEqual(
       expect.arrayContaining(
         MIGRATION_MANIFEST.slice(0, -2).map((migration) =>

@@ -5,7 +5,8 @@ import type { ReasoningEffort } from '../../shared/settings'
 import {
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_REASONING_EFFORT,
-  isCodexSubscriptionProvider
+  isCodexSubscriptionProvider,
+  usesAppProviderTransport
 } from '../../shared/settings'
 import {
   buildActiveModelIncompatibleMessage,
@@ -60,6 +61,7 @@ export type AdmittedAgentBackendTarget = ExplicitAgentBackendTarget &
 export type AgentBackendResolutionContext = {
   forcedSkillIds?: string[]
   systemPromptAppends?: string[]
+  includeSkillAndConnectorContext?: boolean
   forceCodexNativeResponsesCompatibility?: boolean
 }
 
@@ -172,7 +174,8 @@ export class AgentBackendResolver {
       target,
       new Set(context.forcedSkillIds ?? []),
       executablePath,
-      plan.claudeModelConfig
+      plan.claudeModelConfig,
+      context.includeSkillAndConnectorContext !== false
     )
   }
 
@@ -307,9 +310,12 @@ export class AgentBackendResolver {
       )
     }
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
-    const userSkillDirectoryGuidance = userSkillDirectorySystemPromptAppend(this.storageRoot)
+    const includeSkillAndConnectorContext = context.includeSkillAndConnectorContext !== false
+    const userSkillDirectoryGuidance = includeSkillAndConnectorContext
+      ? userSkillDirectorySystemPromptAppend(this.storageRoot)
+      : undefined
     let connectorInstructions =
-      framework.id === 'claude-code'
+      includeSkillAndConnectorContext && framework.id === 'claude-code'
         ? renderConnectorInstructions(this.connectors.connectorSkillNames(settings.connectors))
         : ''
     const executablePath =
@@ -356,7 +362,8 @@ export class AgentBackendResolver {
         target,
         forcedSkillIds,
         executablePath,
-        plan.claudeModelConfig
+        plan.claudeModelConfig,
+        includeSkillAndConnectorContext
       )
       const transport = await this.transports.acquire({ activeTarget: target, plan })
       return {
@@ -370,10 +377,9 @@ export class AgentBackendResolver {
         contextWindow,
         ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
         contextUsageModel: target.effectiveModel,
-        systemPromptAppends: [
-          userSkillDirectoryGuidance,
-          ...(connectorInstructions ? [connectorInstructions] : [])
-        ],
+        systemPromptAppends: [userSkillDirectoryGuidance, connectorInstructions].filter(
+          (append): append is string => Boolean(append)
+        ),
         ...(transport.anthropicBridgeLease
           ? { anthropicBridgeLease: transport.anthropicBridgeLease }
           : {})
@@ -390,20 +396,20 @@ export class AgentBackendResolver {
           ? codexSubscriptionStorageDir(this.storageRoot)
           : codexStorageDir(this.storageRoot)
         : opencodeConfigDir(this.storageRoot)
-    const materializedConnectorSkillNames = await this.runtime.materializeAgentSkills(
-      settings,
-      skillsRoot,
-      forcedSkillIds
-    )
-    connectorInstructions = renderConnectorInstructions(materializedConnectorSkillNames)
+    const materializedConnectorSkillNames = includeSkillAndConnectorContext
+      ? await this.runtime.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
+      : []
+    connectorInstructions = includeSkillAndConnectorContext
+      ? renderConnectorInstructions(materializedConnectorSkillNames)
+      : ''
 
     const transport = await this.transports.acquire({ activeTarget: target, plan })
     const provider = transport.provider ?? target.provider
     const providerModelCatalog = transport.providerModelCatalog ?? plan.providerModelCatalog
     const responsesBridge = transport.responsesBridge
     const persistentSystemPromptAppends = [
-      userSkillDirectoryGuidance,
       ...(context.systemPromptAppends ?? []),
+      ...(userSkillDirectoryGuidance ? [userSkillDirectoryGuidance] : []),
       ...(framework.id === 'codex' && connectorInstructions ? [connectorInstructions] : [])
     ]
 
@@ -495,7 +501,8 @@ export class AgentBackendResolver {
     target: ProviderRuntimeTarget,
     forcedSkillIds: ReadonlySet<string>,
     resolvedExecutablePath?: string,
-    modelConfig?: ClaudeRuntimeModelConfig
+    modelConfig?: ClaudeRuntimeModelConfig,
+    includeSkillAndConnectorContext = true
   ): Promise<AgentSpawnConfig> {
     const executablePath =
       resolvedExecutablePath ??
@@ -507,7 +514,8 @@ export class AgentBackendResolver {
     const runtimeConfig = await this.runtime.provisionClaudeRuntimeConfig(
       settings,
       forcedSkillIds,
-      modelConfig ?? null
+      modelConfig ?? null,
+      includeSkillAndConnectorContext
     )
     const envOverrides = buildProviderEnv(provider, {
       storageRoot: this.storageRoot,
@@ -539,7 +547,7 @@ export class AgentBackendResolver {
             settings: runtimeConfig.privateSettings,
             ...skillProjectionOptions
           }
-        : provider.type === 'custom'
+        : usesAppProviderTransport(provider.type)
           ? {
               settings: {
                 skipWebFetchPreflight: true,

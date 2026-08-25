@@ -84,6 +84,7 @@ import type {
 } from './host-view-image-service'
 
 const log = createLogger('notebook:local-rpc')
+const MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION = 100
 
 type NotebookLocalRpcServerOptions = {
   token?: string
@@ -509,6 +510,10 @@ class NotebookLocalRpcServer {
     Map<NotebookExecutionRpcMethod, NotebookExecutionAuthorization | 'ambiguous'>
   >()
   private readonly consumedExecutionToolCalls = new Map<string, Set<string>>()
+  private readonly computeSubmissionInvocations = new Map<
+    string,
+    Map<string, { fingerprint: string; submission: Promise<unknown>; completed: boolean }>
+  >()
 
   constructor(
     private readonly service: NotebookLocalRpcCapability,
@@ -665,6 +670,7 @@ class NotebookLocalRpcServer {
     this.skillImportRpcTokens.clear()
     this.executionAuthorizations.clear()
     this.consumedExecutionToolCalls.clear()
+    this.computeSubmissionInvocations.clear()
 
     if (!server || !lifecycle) {
       return this.artifactProvenance?.releaseAllWriteReservations?.() ?? Promise.resolve()
@@ -816,6 +822,7 @@ class NotebookLocalRpcServer {
       this.sessionSpecialists.delete(ownedSessionId)
       this.executionAuthorizations.delete(ownedSessionId)
       this.consumedExecutionToolCalls.delete(ownedSessionId)
+      this.computeSubmissionInvocations.delete(ownedSessionId)
     }
     for (const [aliasSessionId, targetSessionId] of this.sessionAliases) {
       if (ownedSessionIds.has(aliasSessionId) || ownedSessionIds.has(targetSessionId)) {
@@ -2012,8 +2019,11 @@ class NotebookLocalRpcServer {
     // handler can attribute side effects to the session that invoked it.
     if (method === 'mcpCall') {
       if (!this.connectorService) throw new Error('Connector service is not configured.')
-      const server = typeof params.server === 'string' ? params.server : ''
-      const toolMethod = typeof params.method === 'string' ? params.method : ''
+      if (typeof params.server !== 'string' || typeof params.method !== 'string') {
+        throw new Error('mcpCall requires string server and method names.')
+      }
+      const server = params.server
+      const toolMethod = params.method
       const args = isRecord(params.args) ? params.args : {}
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
       const projectId = typeof params.projectId === 'string' ? params.projectId : undefined
@@ -2139,6 +2149,7 @@ class NotebookLocalRpcServer {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const intent = typeof params.intent === 'string' ? params.intent : ''
         const command = typeof params.command === 'string' ? params.command : ''
+        const invocationId = typeof params.invocation_id === 'string' ? params.invocation_id : ''
         const options = {
           environment: typeof params.environment === 'string' ? params.environment : undefined,
           resourceRequest: isRecord(params.resources)
@@ -2154,7 +2165,67 @@ class NotebookLocalRpcServer {
           workspaceCwd: typeof params.workspace_cwd === 'string' ? params.workspace_cwd : undefined
         }
         try {
-          return await this.computeService.submitJob(context, providerId, intent, command, options)
+          if (!invocationId) {
+            return await this.computeService.submitJob(
+              context,
+              providerId,
+              intent,
+              command,
+              options
+            )
+          }
+
+          const sessionInvocations = this.computeSubmissionInvocations.get(sessionId) ?? new Map()
+          const fingerprint = createHash('sha256')
+            .update(JSON.stringify([providerId, intent, command, options]))
+            .digest('hex')
+          const existing = sessionInvocations.get(invocationId)
+          if (existing) {
+            if (existing.fingerprint !== fingerprint) {
+              throw new RpcHttpError(
+                409,
+                'invocation_id was already used with a different submit_job request.'
+              )
+            }
+            return await existing.submission
+          }
+
+          const submission = this.computeService.submitJob(
+            context,
+            providerId,
+            intent,
+            command,
+            options
+          )
+          const invocation = { fingerprint, submission, completed: false }
+          sessionInvocations.set(invocationId, invocation)
+          this.computeSubmissionInvocations.set(sessionId, sessionInvocations)
+          try {
+            const result = await submission
+            invocation.completed = true
+            let completedCount = 0
+            for (const cached of sessionInvocations.values()) {
+              if (cached.completed) completedCount += 1
+            }
+            for (const [cachedInvocationId, cached] of sessionInvocations) {
+              if (completedCount <= MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION) break
+              if (!cached.completed) continue
+              sessionInvocations.delete(cachedInvocationId)
+              completedCount -= 1
+            }
+            return result
+          } catch (error) {
+            if (sessionInvocations.get(invocationId)?.submission === submission) {
+              sessionInvocations.delete(invocationId)
+              if (
+                sessionInvocations.size === 0 &&
+                this.computeSubmissionInvocations.get(sessionId) === sessionInvocations
+              ) {
+                this.computeSubmissionInvocations.delete(sessionId)
+              }
+            }
+            throw error
+          }
         } catch (err) {
           // Re-throw compute call errors as structured error objects so the JS shim can parse them.
           if (err instanceof Error && 'computeCallError' in err) {

@@ -53,8 +53,11 @@ export type StoredProvider = {
   apiEndpoints?: ChatApiEndpoint[]
   baseUrl?: string
   model?: string
-  // Optional custom-model override. Absence is meaningful and resolves to the shared 200k default.
+  // Optional custom-model token limits. Context is the shared request/response budget; input/output
+  // are independent provider-reported caps and stay absent when unknown.
   contextWindow?: number
+  maxInputTokens?: number
+  maxOutputTokens?: number
   supportsImageInput?: boolean
   // Custom-model effort capability. Absence resolves to the standard five-level preset.
   reasoningEffortPreset?: ReasoningEffortPresetSetting
@@ -66,6 +69,8 @@ export type StoredProvider = {
   // Model ids fetched live from the vendor (via "refresh from vendor"). When present, these take
   // precedence over the bundled registry catalog for this provider.
   fetchedModels?: string[]
+  // Non-secret identity returned by xAI after device authorization.
+  accountEmail?: string
   keyRef?: string
   keyMask?: string
   // Timestamp of the last successful connectivity/key check on the provider's first model.
@@ -89,6 +94,7 @@ export type StoredCustomMcpOAuthConfig = {
   authorizationServerUrl?: string
   scopes?: string[]
   clientId?: string
+  redirectUri?: string
 }
 
 // The OAuth state is serialized into one encrypted safeStorage value. `oauthState` is a transient
@@ -232,7 +238,7 @@ export type StoredSettings = {
   notebookRuntimes?: Partial<Record<NotebookLanguage, RuntimeSelection>>
   // Per-language v4 environment enablement: an explicit per-env enabled override map plus the separate
   // per-env package-install authorization, both keyed by envId (interpreter real path). Absent means
-  // "use the provenance default" (app-managed ON, user-own/agent-created OFF). See RuntimeEnablement.
+  // "use the provenance default" (app-managed/agent-created ON, user-own OFF). See RuntimeEnablement.
   notebookRuntimeEnablement?: Partial<Record<NotebookLanguage, RuntimeEnablement>>
   // Per-language catalog of interpreter paths the user added manually via "Add interpreter…". These
   // are merged into environment discovery (probed + classified user-own) so a manually-picked

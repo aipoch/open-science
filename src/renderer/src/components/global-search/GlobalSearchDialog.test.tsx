@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
@@ -14,6 +15,7 @@ import { createInitialSessionState, useSessionStore } from '@/stores/session-sto
 import { useNavigationStore } from '@/stores/navigation-store'
 import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 
+import { createCachedImageFetchResponse } from '../../pages/workspace/previews/cached-preview-image.test-support'
 import { GlobalSearchDialog } from './GlobalSearchDialog'
 
 let container: HTMLDivElement
@@ -106,6 +108,7 @@ beforeEach(() => {
     artifactMentionAvailability: { projectId: 'project-a', canMention: true }
   })
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(createCachedImageFetchResponse()))
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
@@ -165,6 +168,7 @@ afterEach(() => {
   Reflect.deleteProperty(window.HTMLElement.prototype, 'scrollIntoView')
   vi.restoreAllMocks()
   void i18next.changeLanguage('en')
+  vi.unstubAllGlobals()
 })
 
 describe('GlobalSearchDialog', () => {
@@ -189,9 +193,11 @@ describe('GlobalSearchDialog', () => {
     ) as HTMLElement
     expect(artifactRow.classList).toContain('cursor-pointer')
     expect(artifactRow.classList).toContain('select-none')
-    expect(
-      artifactRow.querySelector<HTMLImageElement>('img[alt="Preview of sin.png"]')
-    ).not.toBeNull()
+    await waitFor(() => {
+      expect(
+        artifactRow.querySelector<HTMLImageElement>('img[alt="Preview of sin.png"]')
+      ).not.toBeNull()
+    })
     expect(artifactRow.textContent).toContain('Python 绘制 sin 函数图 · 3 days ago')
     act(() => artifactRow.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })))
     const mention = document.body.querySelector<HTMLElement>('[aria-label="Mention sin.png"]')
@@ -753,6 +759,43 @@ describe('GlobalSearchDialog', () => {
             messageId: 'message-a',
             path: '/workspace/sin.png',
             sortAtMs: Date.now()
+          }
+        ],
+        totalCount: 1
+      },
+      other: [],
+      isIndexComplete: true
+    })
+
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const artifactRow = [...document.body.querySelectorAll('[role="option"]')].find((element) =>
+      element.textContent?.includes('sin.png')
+    )
+    expect(artifactRow?.textContent).toContain('Python 绘制 sin 函数图 · 4 days ago')
+  })
+
+  it('uses indexed artifact time when legacy Session messages are not loaded', async () => {
+    const createdAt = Date.now() - 4 * 24 * 60 * 60 * 1_000
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-a'
+          ? { ...session, contentLoaded: false, messages: [], conversationGraph: undefined }
+          : session
+      )
+    }))
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValueOnce({
+      primary: {
+        items: [
+          {
+            ...artifact,
+            sourceVersionId: undefined,
+            messageId: 'message-a',
+            path: '/workspace/sin.png',
+            sortAtMs: createdAt
           }
         ],
         totalCount: 1

@@ -8,6 +8,7 @@ import {
   docFromMessageParts,
   docFromText,
   docIsEmpty,
+  docSessionCount,
   docToArtifactRefs,
   docToSkillIds,
   docToText,
@@ -68,6 +69,12 @@ describe('docToText', () => {
       ]
     }
     expect(docToText(doc)).toBe('analyze @data/study.csv')
+  })
+
+  it('renders Session nodes as #<snapshot title>', () => {
+    expect(
+      docToText({ nodes: [{ type: 'session', sessionId: 'session-2', title: 'Earlier result' }] })
+    ).toBe('#Earlier result')
   })
 
   it('returns an empty string for the empty doc', () => {
@@ -171,6 +178,20 @@ describe('docArtifactCount', () => {
       ]
     }
     expect(docArtifactCount(doc)).toBe(2)
+  })
+})
+
+describe('docSessionCount', () => {
+  it('counts Session chips', () => {
+    expect(
+      docSessionCount({
+        nodes: [
+          { type: 'session', sessionId: 'session-1', title: 'One' },
+          { type: 'text', text: ' ' },
+          { type: 'session', sessionId: 'session-2', title: 'Two' }
+        ]
+      })
+    ).toBe(2)
   })
 })
 
@@ -375,6 +396,32 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(domToDoc(root)).toEqual(doc)
   })
 
+  it('round-trips a Session chip without Project or Frame identity', () => {
+    const title = 'A very long prior Session title that stays available to the tooltip'
+    const doc: ComposerDoc = {
+      nodes: [
+        {
+          type: 'session',
+          sessionId: 'session-2',
+          title
+        }
+      ]
+    }
+    const root = document.createElement('div')
+
+    applyDocToDom(root, doc)
+
+    const chip = root.querySelector('[data-mention-type="session"]')
+    expect(chip?.getAttribute('data-session-id')).toBe('session-2')
+    expect(chip?.getAttribute('data-project-id')).toBeNull()
+    expect(chip?.getAttribute('data-frame-id')).toBeNull()
+    expect(chip?.getAttribute('title')).toBe(title)
+    expect(chip?.className).toContain('truncate')
+    expect(chip?.className).toContain('bg-accent')
+    expect(chip?.className).toContain('text-accent-foreground')
+    expect(domToDoc(root)).toEqual(doc)
+  })
+
   it('round-trips a future linked-folder chip without an absolute path', () => {
     const doc: ComposerDoc = {
       nodes: [
@@ -464,7 +511,7 @@ describe('applyDocToDom + domToDoc round-trip', () => {
 })
 
 describe('docFromMessageParts', () => {
-  it('restores text, skill, and artifact chips from a sent message parts list', () => {
+  it('restores text, skill, artifact, and Session chips from sent message parts', () => {
     const doc = docFromMessageParts([
       { type: 'text', text: 'Run ' },
       { type: 'skill', id: 'skill-forecast', name: 'forecast' },
@@ -476,7 +523,9 @@ describe('docFromMessageParts', () => {
         path: '/p/clinical trial03.pdf',
         source: 'artifact',
         versionId: 'v2'
-      }
+      },
+      { type: 'text', text: ' using ' },
+      { type: 'session', sessionId: 'session-2', title: 'Prior analysis' }
     ])
 
     expect(doc).toEqual({
@@ -491,7 +540,9 @@ describe('docFromMessageParts', () => {
           path: '/p/clinical trial03.pdf',
           source: 'artifact',
           versionId: 'v2'
-        }
+        },
+        { type: 'text', text: ' using ' },
+        { type: 'session', sessionId: 'session-2', title: 'Prior analysis' }
       ]
     })
   })

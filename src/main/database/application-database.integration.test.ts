@@ -114,7 +114,9 @@ describe('application database (integration)', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ]
     })
 
@@ -733,7 +735,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0012_tag_ordering.backup`
+    const backupPath = `${databasePath}.before-0014_review_query_indexes.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -773,7 +775,7 @@ describe('application database (integration)', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0011_cross_resource_tags' }])
+      ).resolves.toEqual([{ id: '0013_session_projection' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -1047,7 +1049,9 @@ describe('application database (integration)', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_managed_file_version_foundation'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_managed_file_version_foundation'
       ]
     })
 

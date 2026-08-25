@@ -11,6 +11,7 @@
 import fr from '../locales/fr.json'
 import ja from '../locales/ja.json'
 import ko from '../locales/ko.json'
+import ru from '../locales/ru.json'
 import zhHans from '../locales/zh-Hans.json'
 import zhHant from '../locales/zh-Hant.json'
 
@@ -124,6 +125,7 @@ export const resources = {
   fr: { [DEFAULT_NAMESPACE]: sanitizeCatalog(fr) },
   ja: { [DEFAULT_NAMESPACE]: sanitizeCatalog(ja) },
   ko: { [DEFAULT_NAMESPACE]: sanitizeCatalog(ko) },
+  ru: { [DEFAULT_NAMESPACE]: sanitizeCatalog(ru) },
   'zh-Hans': { [DEFAULT_NAMESPACE]: sanitizeCatalog(zhHans) },
   'zh-Hant': { [DEFAULT_NAMESPACE]: sanitizeCatalog(zhHant) }
 } as const

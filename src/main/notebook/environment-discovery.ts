@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { DiscoveredInterpreter, EnvProvenance } from '../../shared/notebook-runtime'
-import { probeInterpreterVersion } from './python-command'
+import { isMacOSDeveloperToolsPythonStub, probeInterpreterVersion } from './python-command'
 import { parseRVersion, rHasJsonlite } from './r-command'
 import {
   condaActivatedPath,
@@ -50,6 +50,8 @@ export type DiscoveryDeps = {
   // App runtime root (<storageRoot>/runtime); used to classify provenance of an interpreter by whether
   // it lives under runtime/envs and whether it is a default (app-managed) vs a named (agent-created) env.
   runtimeRoot: string
+  // Platform policy used before probing OS-owned interpreter stubs.
+  platform?: NodeJS.Platform
 }
 
 const safeRealpath = (p: string): string => {
@@ -379,6 +381,7 @@ export const discoverInterpreters = async (
   const unique: { path: string; envId: string }[] = []
   for (const path of await deps.candidatePaths(language)) {
     const envId = deps.realpath(path)
+    if (language === 'python' && isMacOSDeveloperToolsPythonStub(envId, deps.platform)) continue
     if (seen.has(envId)) continue
     seen.add(envId)
     unique.push({ path, envId })
@@ -504,6 +507,7 @@ export const defaultDiscoveryDeps = (
         }
       }),
     realpath: safeRealpath,
-    runtimeRoot
+    runtimeRoot,
+    platform
   }
 }

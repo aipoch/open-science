@@ -73,6 +73,12 @@ type SessionProjectionResult = {
   shouldCommit?: boolean
 }
 
+type SessionBatchProjectionResult = {
+  session: ChatSession
+  results: Array<AppendMessageResult | undefined>
+  shouldCommit: boolean
+}
+
 const createPersistedArtifact = (
   artifact: ArtifactFile,
   fallbackCreatedAt?: number
@@ -165,114 +171,184 @@ const appendUniqueStrings = (
   incomingItems: string[]
 ): string[] => Array.from(new Set([...(existingItems ?? []), ...incomingItems]))
 
-export const projectAgentMessageChunk = (
+// A presentation tick can contain several deltas for one stream. Index durable replay and current
+// messages once, then advance the batch locally so long Session history is not rescanned per delta.
+export const projectAgentMessageChunks = (
   session: ChatSession,
-  input: AppendAgentMessageChunkInput
-): SessionProjectionResult => {
-  let sanitizedImage = sanitizeAcpMessageImage(input.image)
-  const content = input.content ?? ''
-  if (!input.streamId || !input.eventId || (content.length === 0 && !sanitizedImage)) {
-    return { session }
-  }
-  const responseToMessageId = input.promptMessageId ?? session.activeRun?.promptMessageId
-  const replayedGraphMessage = session.conversationGraph?.messages.find(
-    (message) =>
-      message.role === 'agent' &&
-      message.responseToMessageId === responseToMessageId &&
-      message.eventIds.includes(input.eventId)
+  inputs: AppendAgentMessageChunkInput[]
+): SessionBatchProjectionResult => {
+  const preparedInputs = inputs.map((input) => ({
+    input,
+    content: input.content ?? '',
+    image: sanitizeAcpMessageImage(input.image)
+  }))
+  const streamIds = new Set(
+    preparedInputs.flatMap(({ input, content, image }) =>
+      input.streamId && input.eventId && (content.length > 0 || image) ? [input.streamId] : []
+    )
   )
-  if (replayedGraphMessage) {
-    return { session, result: { sessionId: input.sessionId, messageId: replayedGraphMessage.id } }
-  }
-
-  const sessionImageBytes = session.messages.reduce(
-    (total, message) =>
-      total + (message.images ?? []).reduce((sum, candidate) => sum + candidate.byteLength, 0),
-    0
+  const incomingEventIds = new Set(
+    preparedInputs.flatMap(({ input, content, image }) =>
+      input.streamId && input.eventId && (content.length > 0 || image) ? [input.eventId] : []
+    )
   )
-  if (
-    sanitizedImage &&
-    sessionImageBytes + sanitizedImage.byteLength > MAX_ACP_SESSION_IMAGE_BYTES
-  ) {
-    sanitizedImage = undefined
-    if (content.length === 0) return { session }
+  if (streamIds.size === 0) {
+    return { session, results: inputs.map(() => undefined), shouldCommit: false }
   }
-
-  const hasVisibleOutput = content.trim().length > 0 || Boolean(sanitizedImage)
-  const existingMessage = session.messages.find(
-    (message) => message.role === 'agent' && message.streamId === input.streamId
-  )
-  const mergedContent = (current = ''): string => {
-    const text = `${current}${content}`
-    return session.agentFrameworkId === 'claude-code' ? normalizeClaudeCodeRefusalText(text) : text
-  }
-  const messageId =
-    existingMessage?.id ??
-    createRuntimeAgentMessageId(input.sessionId, input.streamId, responseToMessageId)
-  const result = { sessionId: input.sessionId, messageId }
-  const now = Date.now()
-
-  if (existingMessage) {
-    if (existingMessage.eventIds.includes(input.eventId)) {
-      return { session, result, shouldCommit: true }
+  const replayedGraphMessages = new Map<string, ChatMessage[]>()
+  for (const message of session.conversationGraph?.messages ?? []) {
+    if (message.role !== 'agent') continue
+    for (const eventId of message.eventIds) {
+      if (!incomingEventIds.has(eventId)) continue
+      const matches = replayedGraphMessages.get(eventId)
+      if (matches) matches.push(message)
+      else replayedGraphMessages.set(eventId, [message])
     }
-    return {
-      result,
-      shouldCommit: true,
-      session: {
-        ...session,
-        status:
-          session.status === 'waiting-for-user' || session.status === 'waiting-permission'
-            ? session.status
-            : 'running',
-        awaitingFirstAgentOutput: hasVisibleOutput ? undefined : session.awaitingFirstAgentOutput,
-        messages: session.messages.map((message) =>
-          message.id === existingMessage.id
-            ? {
-                ...message,
-                content: mergedContent(message.content),
-                images: sanitizedImage
-                  ? sanitizeMessageImages([
-                      ...(message.images ?? []),
-                      { id: input.eventId, ...sanitizedImage }
-                    ])
-                  : message.images,
-                eventIds: [...message.eventIds, input.eventId],
-                updatedAt: now
-              }
-            : message
-        ),
-        updatedAt: now
+  }
+
+  const hasIncomingImage = preparedInputs.some(({ input, content, image }) =>
+    Boolean(input.streamId && input.eventId && (content.length > 0 || image) && image)
+  )
+  let sessionImageBytes = 0
+  const messageByStreamId = new Map<string, { index: number; message: ChatMessage }>()
+  for (let index = 0; index < session.messages.length; index += 1) {
+    const message = session.messages[index]
+    if (hasIncomingImage) {
+      sessionImageBytes += (message.images ?? []).reduce(
+        (total, image) => total + image.byteLength,
+        0
+      )
+    }
+    if (
+      message.role === 'agent' &&
+      message.streamId &&
+      streamIds.has(message.streamId) &&
+      !messageByStreamId.has(message.streamId)
+    ) {
+      messageByStreamId.set(message.streamId, { index, message })
+    }
+  }
+
+  const results: Array<AppendMessageResult | undefined> = []
+  let messages = session.messages
+  let changed = false
+  let shouldCommit = false
+  let awaitingFirstAgentOutput = session.awaitingFirstAgentOutput
+  let updatedAt = session.updatedAt
+
+  for (const prepared of preparedInputs) {
+    const { input, content } = prepared
+    let sanitizedImage = prepared.image
+    if (!input.streamId || !input.eventId || (content.length === 0 && !sanitizedImage)) {
+      results.push(undefined)
+      continue
+    }
+    const responseToMessageId = input.promptMessageId ?? session.activeRun?.promptMessageId
+    const replayedGraphMessage = replayedGraphMessages
+      .get(input.eventId)
+      ?.find((message) => message.responseToMessageId === responseToMessageId)
+    if (replayedGraphMessage) {
+      results.push({ sessionId: input.sessionId, messageId: replayedGraphMessage.id })
+      continue
+    }
+
+    if (
+      sanitizedImage &&
+      sessionImageBytes + sanitizedImage.byteLength > MAX_ACP_SESSION_IMAGE_BYTES
+    ) {
+      sanitizedImage = undefined
+      if (content.length === 0) {
+        results.push(undefined)
+        continue
       }
     }
+
+    const existing = messageByStreamId.get(input.streamId)
+    const messageId =
+      existing?.message.id ??
+      createRuntimeAgentMessageId(input.sessionId, input.streamId, responseToMessageId)
+    const result = { sessionId: input.sessionId, messageId }
+    results.push(result)
+
+    if (existing?.message.eventIds.includes(input.eventId)) {
+      shouldCommit = true
+      continue
+    }
+
+    const hasVisibleOutput = content.trim().length > 0 || Boolean(sanitizedImage)
+    const now = Date.now()
+    const mergeContent = (current = ''): string => {
+      const text = `${current}${content}`
+      return session.agentFrameworkId === 'claude-code'
+        ? normalizeClaudeCodeRefusalText(text)
+        : text
+    }
+    const nextMessage: ChatMessage = existing
+      ? {
+          ...existing.message,
+          content: mergeContent(existing.message.content),
+          images: sanitizedImage
+            ? sanitizeMessageImages([
+                ...(existing.message.images ?? []),
+                { id: input.eventId, ...sanitizedImage }
+              ])
+            : existing.message.images,
+          eventIds: [...existing.message.eventIds, input.eventId],
+          updatedAt: now
+        }
+      : {
+          id: messageId,
+          role: 'agent',
+          content: mergeContent(),
+          status: 'streaming',
+          streamId: input.streamId,
+          responseToMessageId,
+          eventIds: [input.eventId],
+          images: sanitizedImage ? [{ id: input.eventId, ...sanitizedImage }] : undefined,
+          sortIndex: createSortIndex(),
+          createdAt: now,
+          updatedAt: now
+        }
+
+    if (!changed) messages = session.messages.slice()
+    if (existing) messages[existing.index] = nextMessage
+    else messages.push(nextMessage)
+    messageByStreamId.set(input.streamId, {
+      index: existing?.index ?? messages.length - 1,
+      message: nextMessage
+    })
+    if (sanitizedImage) {
+      const previousImageBytes = (existing?.message.images ?? []).reduce(
+        (total, image) => total + image.byteLength,
+        0
+      )
+      const nextImageBytes = (nextMessage.images ?? []).reduce(
+        (total, image) => total + image.byteLength,
+        0
+      )
+      sessionImageBytes += nextImageBytes - previousImageBytes
+    }
+    if (hasVisibleOutput) awaitingFirstAgentOutput = undefined
+    updatedAt = now
+    changed = true
+    shouldCommit = true
   }
 
-  const agentMessage: ChatMessage = {
-    id: messageId,
-    role: 'agent',
-    content: mergedContent(),
-    status: 'streaming',
-    streamId: input.streamId,
-    responseToMessageId,
-    eventIds: [input.eventId],
-    images: sanitizedImage ? [{ id: input.eventId, ...sanitizedImage }] : undefined,
-    sortIndex: createSortIndex(),
-    createdAt: now,
-    updatedAt: now
-  }
   return {
-    result,
-    shouldCommit: true,
-    session: {
-      ...session,
-      status:
-        session.status === 'waiting-for-user' || session.status === 'waiting-permission'
-          ? session.status
-          : 'running',
-      awaitingFirstAgentOutput: hasVisibleOutput ? undefined : session.awaitingFirstAgentOutput,
-      messages: [...session.messages, agentMessage],
-      updatedAt: now
-    }
+    results,
+    shouldCommit,
+    session: changed
+      ? {
+          ...session,
+          status:
+            session.status === 'waiting-for-user' || session.status === 'waiting-permission'
+              ? session.status
+              : 'running',
+          awaitingFirstAgentOutput,
+          messages,
+          updatedAt
+        }
+      : session
   }
 }
 

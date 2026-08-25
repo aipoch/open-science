@@ -49,6 +49,7 @@ const AGENT_SVG_ALLOWED_TAGS: AllowedTags = {
 /** Media / semantic HTML common in agent replies (ChatGPT, Claude, Cursor, etc.). */
 const AGENT_MEDIA_AND_SEMANTIC_TAGS: AllowedTags = {
   aside: ['data-agent-alert'],
+  'session-artifact-image': ['artifact_ref', 'alt_text'],
   figure: [],
   figcaption: [],
   img: ['src', 'alt', 'width', 'height', 'loading', 'decoding'],

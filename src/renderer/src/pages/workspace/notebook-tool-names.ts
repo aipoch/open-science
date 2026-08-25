@@ -69,6 +69,9 @@ const matchNotebookRunTool = (toolName: string | undefined | null): string | und
 const matchNotebookControlTool = (toolName: string | undefined | null): string | undefined =>
   matchNotebookTool(toolName, NOTEBOOK_CONTROL_TOOL_SUFFIXES)
 
+const isNotebookManagePackagesToolName = (toolName: string | undefined | null): boolean =>
+  matchNotebookControlTool(toolName) === 'manage_packages'
+
 // True when a tool name is any of the notebook server's kernel-run tools.
 const isNotebookExecuteToolName = (toolName: string | undefined | null): boolean =>
   matchNotebookRunTool(toolName) !== undefined
@@ -144,6 +147,7 @@ export {
   NOTEBOOK_CONTROL_TOOL_SUFFIXES,
   NOTEBOOK_SERVER_SEGMENT,
   matchNotebookControlTool,
+  isNotebookManagePackagesToolName,
   matchNotebookRunTool,
   isNotebookExecuteToolName,
   resolveNotebookRunToolName,

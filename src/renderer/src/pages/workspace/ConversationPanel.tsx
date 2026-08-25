@@ -1,5 +1,6 @@
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
+import type { SessionAgentConfiguration } from '../../../../shared/settings'
 
 import type {
   AcpPermissionGrant,
@@ -46,6 +47,7 @@ import {
 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
+import { isUnsupportedCodexAcpVersionError } from '../../../../shared/codex-runtime'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { RemoteJobBadge } from '@/components/RemoteJobBadge'
@@ -89,6 +91,7 @@ import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
+import { SessionSwitchSkeleton } from './SessionSwitchSkeleton'
 import { PlanProgressChip, WorkspacePlanCard } from './session-plan/SessionPlanSurfaces'
 import { projectDelegatedQuestionQueue } from './subagent-release-projection'
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
@@ -241,7 +244,7 @@ type ConversationPanelSpecialist = {
   }
   actions: Pick<
     WorkspaceSessionController['actions'],
-    'selectSpecialist' | 'chooseOtherSpecialist' | 'useMainAgent'
+    'selectSpecialist' | 'retrySpecialistSelection' | 'chooseOtherSpecialist' | 'useMainAgent'
   >
 }
 
@@ -270,6 +273,9 @@ type ConversationPanelElicitation = {
 
 type ConversationPanelAgentControls = {
   canChange: boolean
+  modelConfiguration?: SessionAgentConfiguration
+  modelUnavailable?: boolean
+  changeModelConfiguration?: (configuration: SessionAgentConfiguration) => void
   autoReviewEnabled: boolean
   enabledComputeHosts: string[]
   selectedComputeHosts?: string[]
@@ -387,7 +393,8 @@ const ConversationPanel = ({
       resume: onResumeSession,
       cancel: onCancelRun
     },
-    queue: messageQueue
+    queue: messageQueue,
+    optimisticMessage
   } = conversation
   const {
     view: sideChat,
@@ -417,6 +424,9 @@ const ConversationPanel = ({
   const { requests: pendingElicitations, respond: onRespondToElicitation } = elicitation
   const {
     canChange: canChangeAgentControls,
+    modelConfiguration,
+    modelUnavailable = false,
+    changeModelConfiguration = () => undefined,
     autoReviewEnabled,
     enabledComputeHosts,
     selectedComputeHosts = [],
@@ -445,7 +455,9 @@ const ConversationPanel = ({
   const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
   const { unavailableReason: subagentUnavailableReason, stop: onStopSubagents } = subagents
   const specialistId = activeSession
-    ? activeSession.specialistId
+    ? specialist.view.specialist.barrierInFlight
+      ? (specialist.view.specialist.historyId ?? activeSession.specialistId)
+      : activeSession.specialistId
     : specialist.view.specialist.newConversationId
   const specialistUnavailable = specialist.view.specialist.unavailable
   const specialistHasPendingSwitch = specialist.view.specialist.hasPendingSwitch
@@ -459,8 +471,10 @@ const ConversationPanel = ({
   const onBranchInNewSession = activeSession
     ? (forcedSkillIds: string[]): void => submitDraft({ forcedSkillIds, mode: 'branch' })
     : undefined
-  const onReconfigureRetry = (): void =>
+  const onReconfigureRetry = (): void => {
+    if (specialist.actions.retrySpecialistSelection()) return
     submitDraft({ forcedSkillIds: docToSkillIds(draftDoc), mode: 'retry-reconfigure' })
+  }
 
   const specialistItems = useSpecialistStore((state) => state.items)
   const catalogSkills = useSettingsStore((state) => state.skills)
@@ -573,12 +587,16 @@ const ConversationPanel = ({
   const showVisionModelSettings =
     visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
     visionRunFailureMessage(activeSession?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
+  const hasUnsupportedCodexAcpRunError = isUnsupportedCodexAcpVersionError(activeSession?.error)
+  const showCodexAcpSettings =
+    isUnsupportedCodexAcpVersionError(actionError) || hasUnsupportedCodexAcpRunError
   // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
   // reportability is resolved at failure time and persisted on the session: a model-provider error is
   // tagged non-reportable at the ACP layer, and an app-crafted reminder is recognized by its own text.
   // Fall back to classifying the raw error for sessions persisted before the flag existed (undefined).
   const isRunErrorReportable =
-    activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error)
+    !hasUnsupportedCodexAcpRunError &&
+    (activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error))
 
   const activeSpecialist = specialistId
     ? specialistItems.find((item) => item.kind === 'custom' && item.id === specialistId)
@@ -845,20 +863,25 @@ const ConversationPanel = ({
           </button>
         </header>
 
-        <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage && !sideChat}>
-          <WorkspaceMessageScroller
-            activeSession={activeSession}
-            isResumingSession={isResuming}
-            notebookReference={notebookReference}
-            onSendEditedMessage={onSendEditedMessage}
-            canBranchInNewSession={canBranchInNewSession}
-            onBranchInNewSession={onBranchFromAgentMessage}
-            pendingElicitations={sideChat ? [] : sessionPendingElicitations}
-            handoffLifecycleSource={workspaceHandoffLifecycleClient}
-            onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
-            reportPresentationRevealing
-          />
-        </WorkspaceMessageEditStateProvider>
+        {activeSession?.contentLoaded === false ? (
+          <SessionSwitchSkeleton />
+        ) : (
+          <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage && !sideChat}>
+            <WorkspaceMessageScroller
+              activeSession={activeSession}
+              optimisticMessage={optimisticMessage}
+              isResumingSession={isResuming}
+              notebookReference={notebookReference}
+              onSendEditedMessage={onSendEditedMessage}
+              canBranchInNewSession={canBranchInNewSession}
+              onBranchInNewSession={onBranchFromAgentMessage}
+              pendingElicitations={sideChat ? [] : sessionPendingElicitations}
+              handoffLifecycleSource={workspaceHandoffLifecycleClient}
+              onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
+              reportPresentationRevealing
+            />
+          </WorkspaceMessageEditStateProvider>
+        )}
 
         <div className="relative shrink-0">
           <div
@@ -876,7 +899,7 @@ const ConversationPanel = ({
               <div className="px-1 md:px-3">
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
-                {!sideChat && activeSession?.interrupted ? (
+                {!sideChat && activeSession?.interrupted && !hasUnsupportedCodexAcpRunError ? (
                   <SessionInterruptedBanner
                     message={activeSession.error ?? t('This session was interrupted.')}
                     isDisabled={!canResumeSession}
@@ -917,14 +940,16 @@ const ConversationPanel = ({
                         ) : null}
                       </div>
                     ) : null}
-                    {showVisionModelSettings ? (
+                    {showVisionModelSettings || showCodexAcpSettings ? (
                       <div>
                         <button
                           type="button"
-                          onClick={() => openSettingsToPanel('model')}
+                          onClick={() =>
+                            openSettingsToPanel(showVisionModelSettings ? 'model' : 'agent')
+                          }
                           className="inline-flex h-6 items-center rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
                         >
-                          {t('Model settings')}
+                          {showVisionModelSettings ? t('Model settings') : t('Agent settings')}
                         </button>
                       </div>
                     ) : null}
@@ -1399,7 +1424,7 @@ const ConversationPanel = ({
                           onPaste={handleMessageDraftPaste}
                           disabled={!canEditDraft}
                           placeholder={t(
-                            'Ask anything — / skills · @ files · {{shortcut}} search · ↑↓ history',
+                            'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
                             {
                               shortcut: globalSearchShortcut
                             }
@@ -1718,7 +1743,12 @@ const ConversationPanel = ({
 
                         {/* Model/provider switcher; hides itself unless more than one is configured.
                             Grouped on the right with Send, mirroring the reference composer layout. */}
-                        <ComposerModelPicker />
+                        <ComposerModelPicker
+                          configuration={modelConfiguration}
+                          unavailable={modelUnavailable}
+                          includeAllClaudeSubscriptions={activeSession !== undefined}
+                          onChange={changeModelConfiguration}
+                        />
 
                         {rootTurnBusy ? (
                           // Running sessions expose cancel instead of send to prevent overlapping turns.

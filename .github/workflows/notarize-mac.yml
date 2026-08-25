@@ -104,7 +104,7 @@ jobs:
       # @prisma/client at runtime. Install dependencies so the smoke script can resolve them.
       - name: Install dependencies
         if: steps.gate.outputs.enabled == 'true'
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
 
       # Call path (from_run): pull this run's signed artifacts for the arch (uploaded by build.yml).
       - name: Download signed mac artifact (from this run)

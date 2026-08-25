@@ -55,6 +55,7 @@ import { SettingsSearchInput } from './SettingsSearchInput'
 import { specialistsUsingConnector, type SpecialistUsage } from './specialist-resource-scope'
 import { ResourceTagBadges, ResourceTagMenu, TagFilter } from './ResourceTagControls'
 import { SkillUsageAgents } from './SkillUsageAgents'
+import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
 // are separate components owned by SettingsPage; this panel only renders the list + contact-email section.
@@ -127,7 +128,6 @@ export function ConnectorsPanel({
   const setCustomServerEnabled = useSettingsStore((state) => state.setCustomServerEnabled)
   const retryCustomServer = useSettingsStore((state) => state.retryCustomServer)
   const removeCustomServer = useSettingsStore((state) => state.removeCustomServer)
-  const authenticateCustomServer = useSettingsStore((state) => state.authenticateCustomServer)
   const setNcbiCredentials = useSettingsStore((state) => state.setNcbiCredentials)
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
@@ -143,9 +143,8 @@ export function ConnectorsPanel({
   const [editing, setEditing] = useState(false)
   const [emailField, setEmailField] = useState('')
   const [keyField, setKeyField] = useState('')
-  const [authenticatingIds, setAuthenticatingIds] = useState<Set<string>>(() => new Set())
   const [retryingIds, setRetryingIds] = useState<Set<string>>(() => new Set())
-  const [authError, setAuthError] = useState<string | null>(null)
+  const [oauthSignInServer, setOAuthSignInServer] = useState<CustomServerView>()
   const [removal, setRemoval] = useState<{
     server: CustomServerView
     specialistNames?: string[]
@@ -279,30 +278,15 @@ export function ConnectorsPanel({
     setKeyField('')
   }
 
-  const signIn = async (id: string): Promise<void> => {
-    setAuthenticatingIds((current) => new Set(current).add(id))
-    setAuthError(null)
-    try {
-      await authenticateCustomServer({ id })
-    } catch (error) {
-      await loadCatalog()
-      setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
-    } finally {
-      setAuthenticatingIds((current) => {
-        const next = new Set(current)
-        next.delete(id)
-        return next
-      })
-    }
-  }
-
   const retry = async (id: string): Promise<void> => {
     setRetryingIds((current) => new Set(current).add(id))
-    setAuthError(null)
+    setOperationError(null)
     try {
       await retryCustomServer(id)
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : 'Could not reconnect this Connector.')
+      setOperationError(
+        error instanceof Error ? error.message : 'Could not reconnect this Connector.'
+      )
     } finally {
       setRetryingIds((current) => {
         const next = new Set(current)
@@ -676,13 +660,13 @@ export function ConnectorsPanel({
       </div>
 
       <div className="flex flex-col gap-4">
-        {authError || operationError ? (
+        {operationError ? (
           <div
             className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
             role="alert"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{operationError ?? t(authError ?? '')}</span>
+            <span>{t(operationError)}</span>
           </div>
         ) : null}
         {showFeatured
@@ -824,24 +808,20 @@ export function ConnectorsPanel({
                             type="button"
                             size="sm"
                             variant={
-                              authenticatingIds.has(server.id) ||
-                              (server.oauth.hasTokens && server.availability !== 'unauthenticated')
+                              server.oauth.hasTokens && server.availability !== 'unauthenticated'
                                 ? 'outline'
                                 : 'default'
                             }
                             disabled={
-                              authenticatingIds.has(server.id) ||
-                              (server.oauth.hasTokens && server.availability !== 'unauthenticated')
+                              server.oauth.hasTokens && server.availability !== 'unauthenticated'
                             }
-                            onClick={() => void signIn(server.id)}
+                            onClick={() => setOAuthSignInServer(server)}
                           >
-                            {authenticatingIds.has(server.id)
-                              ? t('Connecting…')
-                              : server.oauth.hasTokens && server.availability !== 'unauthenticated'
-                                ? t('Connected')
-                                : server.availability === 'unauthenticated'
-                                  ? t('Retry')
-                                  : t('Sign in')}
+                            {server.oauth.hasTokens && server.availability !== 'unauthenticated'
+                              ? t('Connected')
+                              : server.availability === 'unauthenticated'
+                                ? t('Retry')
+                                : t('Sign in')}
                           </Button>
                         ) : null}
                         <ResourceTagMenu
@@ -1029,6 +1009,13 @@ export function ConnectorsPanel({
           </AlertDialog.Content>
         </AlertDialog.Portal>
       </AlertDialog.Root>
+      {oauthSignInServer ? (
+        <ConnectorOAuthSignInDialog
+          server={oauthSignInServer}
+          onAuthenticated={() => setOAuthSignInServer(undefined)}
+          onFinish={() => setOAuthSignInServer(undefined)}
+        />
+      ) : null}
     </div>
   )
 }

@@ -8,6 +8,7 @@ import type {
 import type { Project } from '../../../../shared/projects'
 import {
   buildTokenUsageAnalytics,
+  buildTokenUsageAnalyticsFromProjection,
   selectTokenUsageSummary,
   tokenUsageMetricValue
 } from './token-usage-analytics'
@@ -58,6 +59,27 @@ const project = (id: string, createdAt: number): Project => ({
 })
 
 describe('token usage analytics', () => {
+  it('counts retained Projects supplied by the SQLite Usage projection', () => {
+    const now = localTime(2026, 8, 15, 18)
+    const yesterday = localTime(2026, 8, 14, 10)
+    const analytics = buildTokenUsageAnalyticsFromProjection(
+      {
+        projectCreatedAt: [yesterday, now],
+        sessionCreatedAt: [],
+        artifactCreatedAt: [],
+        runsAt: [],
+        usageEvents: [],
+        totalArtifacts: 0
+      },
+      now
+    )
+
+    expect(selectTokenUsageSummary(analytics, 'all')).toMatchObject({
+      totalProjects: 2,
+      newProjects: 2
+    })
+  })
+
   it('uses the conversation graph as authority and includes usage from inactive branches', () => {
     const now = localTime(2026, 8, 15)
     const firstRunAt = localTime(2026, 8, 14)

@@ -12,6 +12,7 @@ type ApplicationDiagnosticMetadata = {
   arch: string
   electronVersion: string
   nodeVersion: string
+  cpuUsage?: () => { user: number; system: number }
 }
 
 export type ApplicationDiagnostics = {
@@ -35,7 +36,8 @@ export const initializeApplicationDiagnostics = (
       platform: metadata.platform,
       arch: metadata.arch,
       isPackaged: metadata.isPackaged
-    }
+    },
+    ...(metadata.cpuUsage ? { cpuUsage: metadata.cpuUsage } : {})
   })
   log.info('app starting', {
     logSchemaVersion: 1,

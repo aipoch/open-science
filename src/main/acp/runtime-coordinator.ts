@@ -12,10 +12,13 @@ import type {
   AcpPermissionResponse,
   ElicitationResponse,
   AcpPromptRequest,
+  AcpSteerFollowUpRequest,
+  AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
   AcpRuntimeEvent,
   AcpSetPermissionProfileRequest,
+  AcpSessionAgentTarget,
   AcpStateSnapshot
 } from '../../shared/acp'
 import type { AcpHandoffFailure } from '../../shared/acp'
@@ -46,7 +49,8 @@ const hasArtifactProvenance = (event: AcpRuntimeEvent): boolean =>
 
 type RuntimeFactory = (
   callbacks: AcpRuntimeCallbacks,
-  permissionGrantStore: ConversationPermissionGrantStore
+  permissionGrantStore: ConversationPermissionGrantStore,
+  target?: AcpSessionAgentTarget
 ) => AcpRuntime
 
 type AcpRuntimeCoordinatorTeardownCallbacks = {
@@ -133,6 +137,9 @@ class AcpRuntimeCoordinator {
   private readonly permissionRuntimes = new Map<string, AcpRuntime>()
   private readonly reviewerRuntimes = new WeakMap<ActiveSession, AcpRuntime>()
   private readonly runtimeIds = new WeakMap<AcpRuntime, string>()
+  private readonly runtimeTargetKeys = new WeakMap<AcpRuntime, string>()
+  private readonly runtimeTargets = new WeakMap<AcpRuntime, AcpSessionAgentTarget>()
+  private readonly targetedRuntimes = new Map<string, AcpRuntime>()
   private readonly publishedRuntimeEventIds = new WeakMap<AcpRuntime, Set<string>>()
   private readonly applicationEvents: AcpRuntimeEvent[] = []
   private readonly durableQuitDetachedSessionIds = new Set<string>()
@@ -219,6 +226,17 @@ class AcpRuntimeCoordinator {
         snapshots.flatMap(({ runtime, snapshot }) => this.visibleSessionIds(runtime, snapshot))
       )
     )
+    const sessionResumeRequiredIds = Array.from(
+      new Set(
+        snapshots.flatMap(({ runtime, snapshot }) =>
+          this.retiredRuntimes.has(runtime)
+            ? this.visibleSessionIds(runtime, snapshot).filter(
+                (sessionId) => this.sessionRuntimes.get(sessionId) === runtime
+              )
+            : []
+        )
+      )
+    )
     // A retired generation may keep draining after the same logical session was resumed by a fresh
     // runtime. Only its current owner may publish interaction state to the renderer.
     const ownedSessionIds = (select: (snapshot: AcpStateSnapshot) => readonly string[]): string[] =>
@@ -268,6 +286,7 @@ class AcpRuntimeCoordinator {
         ? { sessionId: primary.sessionId }
         : {}),
       sessionIds,
+      sessionResumeRequiredIds,
       ...(primary?.error ? { error: primary.error } : {}),
       events,
       pendingPermissions: [
@@ -342,6 +361,14 @@ class AcpRuntimeCoordinator {
 
   liveSessionProjectId(sessionId: string): string | undefined {
     return this.sessionRuntimes.get(sessionId)?.liveSessionProjectId(sessionId)
+  }
+
+  isSessionReferenceAllowed(sessionId: string, referencedSessionId: string): boolean {
+    return (
+      this.sessionRuntimes
+        .get(sessionId)
+        ?.isSessionReferenceAllowed(sessionId, referencedSessionId) ?? false
+    )
   }
 
   getSessionFramework(sessionId: string): AgentFrameworkId | undefined {
@@ -477,8 +504,14 @@ class AcpRuntimeCoordinator {
 
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
-    const runtime = this.getActiveRuntime()
-    const response = await runtime.createSession(request)
+    const runtime = this.runtimeForTarget(request.agentTarget)
+    let response: AcpCreateSessionResponse
+    try {
+      response = await runtime.createSession(request)
+    } catch (error) {
+      await this.retireUnusedTargetedRuntime(runtime)
+      throw error
+    }
     this.sessionRuntimes.set(response.sessionId, runtime)
     this.lastRuntime = runtime
     return response
@@ -502,7 +535,12 @@ class AcpRuntimeCoordinator {
       return pendingReconciliation.response
     }
     if (pendingReconciliation) this.pendingResumeReconciliations.delete(request.sessionId)
-    const runtime = owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime()
+    const targetedRuntime = request.agentTarget
+      ? this.runtimeForTarget(request.agentTarget)
+      : undefined
+    const runtime =
+      targetedRuntime ??
+      (owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime())
     const transfersOwnership = runtime !== owner
 
     // Keep the prior owner authoritative until adoption finishes. The renderer does not create the
@@ -517,6 +555,7 @@ class AcpRuntimeCoordinator {
       if (transfersOwnership && this.pendingSessionAdoptions.get(request.sessionId) === runtime) {
         this.pendingSessionAdoptions.delete(request.sessionId)
       }
+      await this.retireUnusedTargetedRuntime(runtime)
       throw error
     }
 
@@ -556,6 +595,7 @@ class AcpRuntimeCoordinator {
     // draining owner cannot classify later prompt failures as disconnects.
     this.sessionConnectionStatuses.set(response.sessionId, runtime.getSnapshot().status)
     this.lastRuntime = runtime
+    if (transfersOwnership) await this.retireUnusedTargetedRuntime(owner)
     if (transfersOwnership) this.callbacks.onStateChanged?.(this.getSnapshot())
     try {
       await this.sessionResumeObserver?.(request, response)
@@ -801,6 +841,19 @@ class AcpRuntimeCoordinator {
     )
   }
 
+  sendAppContinuationObserved(
+    request: AcpPromptRequest,
+    onProviderPromptAccepted: () => void
+  ): ReturnType<AcpRuntime['sendAppContinuation']> {
+    return this.linearizeRootAdmission(request.sessionId, () =>
+      this.dispatchPrompt(
+        request,
+        observePromptAcceptance(onProviderPromptAccepted),
+        'sendAppContinuation'
+      )
+    )
+  }
+
   private linearizeRootAdmission<Result>(
     sessionId: string,
     operation: () => Promise<Result>
@@ -927,8 +980,10 @@ class AcpRuntimeCoordinator {
     attribution?: MessageAttribution,
     onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
-    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
-      this.dispatchAdmittedPrompt(
+    let dispatchStarted = false
+    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> => {
+      dispatchStarted = true
+      return this.dispatchAdmittedPrompt(
         request,
         acceptance,
         operation,
@@ -937,9 +992,15 @@ class AcpRuntimeCoordinator {
         attribution,
         onApplicationPromptAdmitted
       )
-    return this.promptDispatchAdmissionGuard
-      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
-      : dispatch()
+    }
+    if (!this.promptDispatchAdmissionGuard) return dispatch()
+    return this.promptDispatchAdmissionGuard(request.sessionId, dispatch).catch((error) => {
+      if (dispatchStarted || error instanceof DelegateMessagePreAcceptanceError) throw error
+      throw new DelegateMessagePreAcceptanceError(
+        error instanceof Error ? error.message : String(error),
+        error
+      )
+    })
   }
 
   private dispatchAdmittedPrompt(
@@ -985,13 +1046,51 @@ class AcpRuntimeCoordinator {
     }
     this.activePromptRequests.set(request.sessionId, activePrompt)
     if (retainAsLatestUserPrompt) this.latestPromptRequests.set(request.sessionId, taskRequest)
-    const prompt =
-      operation === 'sendApplicationPrompt'
+    const originatingPromptId = taskRequest.provenanceContext?.promptMessageId
+    let settlementLeaseId: string | undefined
+    const endRootTurn = async (clean: boolean): Promise<void> => {
+      if (!originatingPromptId) return
+      await this.delegatedWork
+        ?.rootTurnEnded?.({
+          sessionId: request.sessionId,
+          originatingPromptId,
+          clean,
+          ...(settlementLeaseId ? { leaseId: settlementLeaseId } : {})
+        })
+        .catch(() => undefined)
+    }
+    const settlementStart = originatingPromptId
+      ? this.delegatedWork
+          ?.rootTurnStarted?.({
+            sessionId: request.sessionId,
+            originatingPromptId
+          })
+          .catch(() => undefined)
+      : undefined
+    const prompt = Promise.resolve(settlementStart).then((leaseId) => {
+      settlementLeaseId = leaseId
+      if (
+        attempt.globalCancellationGeneration !== this.globalCancellationGeneration ||
+        attempt.sessionCancellationGeneration !==
+          (this.sessionCancellationGenerations.get(request.sessionId) ?? 0) ||
+        this.activePromptRequests.get(request.sessionId) !== activePrompt
+      ) {
+        throw new DelegateMessagePreAcceptanceError(
+          'ACP prompt start was superseded before provider dispatch'
+        )
+      }
+      return operation === 'sendApplicationPrompt'
         ? runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
         : runtime[operation](taskRequest, attempt.id)
+    })
     onApplicationPromptAdmitted?.(prompt)
     return prompt
-      .catch((error: unknown) => {
+      .then(async (response) => {
+        await endRootTurn(response?.stopReason !== 'cancelled')
+        return response
+      })
+      .catch(async (error: unknown) => {
+        await endRootTurn(false)
         if (
           operation === 'sendPrompt' &&
           this.promptAdmissionClosedForQuit &&
@@ -1009,6 +1108,32 @@ class AcpRuntimeCoordinator {
           this.activePromptRequests.delete(request.sessionId)
         }
       })
+  }
+
+  async steerFollowUp(request: AcpSteerFollowUpRequest): Promise<AcpSteerFollowUpResult> {
+    this.assertPromptAdmissionOpen()
+    await this.waitForInitialization()
+    this.assertPromptAdmissionOpen()
+    await this.promptAdmissionGuard?.(request.sessionId)
+    this.assertPromptAdmissionOpen()
+    const dispatch = (): Promise<AcpSteerFollowUpResult> =>
+      this.runtimeForSession(request.sessionId).steerFollowUp(request)
+    return this.promptDispatchAdmissionGuard
+      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
+      : dispatch()
+  }
+
+  async steerSideChatAdvisory(
+    request: AcpSteerFollowUpRequest
+  ): ReturnType<AcpRuntime['steerSideChatAdvisory']> {
+    this.assertPromptAdmissionOpen()
+    await this.waitForInitialization()
+    this.assertPromptAdmissionOpen()
+    const dispatch = (): ReturnType<AcpRuntime['steerSideChatAdvisory']> =>
+      this.runtimeForSession(request.sessionId).steerSideChatAdvisory(request)
+    return this.promptDispatchAdmissionGuard
+      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
+      : dispatch()
   }
 
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
@@ -1080,6 +1205,7 @@ class AcpRuntimeCoordinator {
       this.clearApplicationSessionEvents(request.sessionId)
       this.onSessionUnavailable?.(request.sessionId)
     }
+    await this.retireUnusedTargetedRuntime(runtime)
     return this.getSnapshot()
   }
 
@@ -1146,50 +1272,54 @@ class AcpRuntimeCoordinator {
     this.callbacks.onStateChanged?.(this.getSnapshot())
   }
 
-  // A framework change takes effect for every future turn and workflow. The old generation stays alive
-  // until its active prompts and workflow leases finish; idle sessions resume on demand.
-  async requestAgentFrameworkSwitch(): Promise<void> {
-    const retiring = this.activeRuntime
-    if (!retiring) return
+  // A framework change takes effect for every future turn and workflow. The old generations stay alive
+  // until their active prompts and workflow leases finish; idle sessions resume on demand. Managed
+  // runtime removal can scope this invalidation to the removed framework while still rotating the
+  // default generation whose selected backend changed.
+  async requestAgentFrameworkSwitch(frameworkId?: AgentFrameworkId): Promise<void> {
+    if (!frameworkId) {
+      await this.retireRuntimeGenerations(this.runtimes)
+      return
+    }
 
-    this.retiredRuntimes.add(retiring)
-    this.rotateActiveRuntime()
-    await retiring.requestRetirement()
+    const affected = new Set(this.runtimeGenerationsForFramework(frameworkId))
+    if (this.activeRuntime) affected.add(this.activeRuntime)
+    await this.retireRuntimeGenerations(affected)
   }
 
-  // Reconnect-triggering settings target the generation that owns future turns. Retiring generations
-  // stay pinned to the backend of the workflow they are finishing; reconnecting them here can strand a
-  // later workflow operation behind a barrier that its own activity lease prevents from resolving.
-  requestProviderReconnect(): Promise<void> {
-    return this.getActiveRuntime().requestProviderReconnect()
+  // Provider edits reconnect the default generation only when it uses the affected default, plus every
+  // live targeted generation pinned to that provider. Retiring generations stay on their old settings
+  // while active workflows drain.
+  async requestProviderReconnect(
+    providerIds?: readonly string[],
+    includeDefault = true
+  ): Promise<void> {
+    const affected = new Set<AcpRuntime>()
+    if (includeDefault) affected.add(this.getActiveRuntime())
+    if (providerIds) {
+      for (const runtime of this.runtimes) {
+        if (
+          !this.retiredRuntimes.has(runtime) &&
+          providerIds.includes(this.runtimeTargets.get(runtime)?.providerId ?? '')
+        ) {
+          affected.add(runtime)
+        }
+      }
+    }
+    await Promise.all(Array.from(affected, (runtime) => runtime.requestProviderReconnect()))
   }
 
   async requestSkillsReload(): Promise<void> {
-    const retiring = this.activeRuntime
-    if (!retiring) return
-
-    // Skills are part of a runtime generation's tool list and context. Retire that generation
-    // immediately so idle conversations detach before the settings call returns; active turns finish
-    // on the old generation, while every later turn resumes through a freshly provisioned runtime.
-    this.retiredRuntimes.add(retiring)
-    this.rotateActiveRuntime()
-    this.callbacks.onStateChanged?.(this.getSnapshot())
-    await retiring.requestRetirement()
+    // Skills and connector tools are captured by every runtime generation, including generations
+    // pinned to an explicit Session target.
+    await this.retireRuntimeGenerations(this.runtimes)
   }
 
   async requestSkillsReloadForFramework(frameworkId: AgentFrameworkId): Promise<void> {
-    const active = this.activeRuntime
-    if (!active) return
-
     // A framework-scoped derived asset must not rotate an unrelated backend generation. An empty
     // generation has no session holding stale assets; its first Session will provision from the
     // current source of truth without an explicit reload.
-    const ownsFrameworkSession = active
-      .getSnapshot()
-      .sessionIds.some((sessionId) => active.isSessionUsingFramework(sessionId, frameworkId))
-    if (!ownsFrameworkSession) return
-
-    await this.requestSkillsReload()
+    await this.retireRuntimeGenerations(this.runtimeGenerationsForFramework(frameworkId))
   }
 
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
@@ -1215,7 +1345,7 @@ class AcpRuntimeCoordinator {
     work: (runtime: AcpRuntimeActivity) => Promise<T>
   ): Promise<T> {
     this.assertPromptAdmissionOpen()
-    const runtime = this.getActiveRuntime()
+    const runtime = this.runtimeForTarget(options.session?.agentTarget)
     const scopedRuntime = this.createScopedActivityRuntime(runtime, options)
 
     return runtime.withActivity(options, () => {
@@ -1262,7 +1392,8 @@ class AcpRuntimeCoordinator {
           ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}),
           ...(session.providerContinuityToken
             ? { providerContinuityToken: session.providerContinuityToken }
-            : {})
+            : {}),
+          ...(session.agentTarget ? { agentTarget: session.agentTarget } : {})
         }
         resumeInFlight = runtime.resumeSession(resumeRequest).then(async (response) => {
           this.sessionRuntimes.set(response.sessionId, runtime)
@@ -1448,7 +1579,25 @@ class AcpRuntimeCoordinator {
     return undefined
   }
 
-  private addRuntime(): AcpRuntime {
+  private runtimeForTarget(target: AcpSessionAgentTarget | undefined): AcpRuntime {
+    if (!target) return this.getActiveRuntime()
+    const key = JSON.stringify([
+      target.frameworkId,
+      target.providerId,
+      target.model ?? null,
+      target.reasoningEffort
+    ])
+    const existing = this.targetedRuntimes.get(key)
+    if (existing && this.runtimes.has(existing) && !this.retiredRuntimes.has(existing)) {
+      return existing
+    }
+    const runtime = this.addRuntime(target)
+    this.runtimeTargetKeys.set(runtime, key)
+    this.targetedRuntimes.set(key, runtime)
+    return runtime
+  }
+
+  private addRuntime(target?: AcpSessionAgentTarget): AcpRuntime {
     const runtime = this.createRuntime(
       {
         onStateChanged: (snapshot) => this.handleRuntimeState(runtime, snapshot),
@@ -1495,6 +1644,7 @@ class AcpRuntimeCoordinator {
           const remaining = (this.activePromptCounts.get(sessionId) ?? 1) - 1
           if (remaining > 0) this.activePromptCounts.set(sessionId, remaining)
           else this.activePromptCounts.delete(sessionId)
+          this.activeRootAdmissions.get(sessionId)?.release()
           this.notifyInteractionRelease(sessionId)
           this.teardownCallbacks.onSessionTurnEnded?.(sessionId, turnToken)
           this.callbacks.onPromptEnded?.(sessionId, turnToken)
@@ -1509,12 +1659,52 @@ class AcpRuntimeCoordinator {
         },
         onRetired: () => this.handleRuntimeRetired(runtime)
       },
-      this.permissionGrantStore
+      this.permissionGrantStore,
+      target
     )
     this.runtimeSequence += 1
     this.runtimeIds.set(runtime, `runtime-${this.runtimeSequence}-${this.eventNamespace}`)
+    if (target) this.runtimeTargets.set(runtime, target)
     this.runtimes.add(runtime)
     return runtime
+  }
+
+  private async retireUnusedTargetedRuntime(runtime: AcpRuntime | undefined): Promise<void> {
+    if (
+      !runtime ||
+      !this.runtimeTargets.has(runtime) ||
+      this.retiredRuntimes.has(runtime) ||
+      Array.from(this.sessionRuntimes.values()).includes(runtime)
+    ) {
+      return
+    }
+    this.retiredRuntimes.add(runtime)
+    await runtime.requestRetirement()
+  }
+
+  private runtimeGenerationsForFramework(frameworkId: AgentFrameworkId): AcpRuntime[] {
+    return Array.from(this.runtimes).filter(
+      (runtime) =>
+        !this.retiredRuntimes.has(runtime) &&
+        (this.runtimeTargets.get(runtime)?.frameworkId === frameworkId ||
+          runtime
+            .getSnapshot()
+            .sessionIds.some((sessionId) =>
+              runtime.isSessionUsingFramework(sessionId, frameworkId)
+            ))
+    )
+  }
+
+  private async retireRuntimeGenerations(runtimes: Iterable<AcpRuntime>): Promise<void> {
+    const retiring = [...new Set(runtimes)].filter(
+      (runtime) => this.runtimes.has(runtime) && !this.retiredRuntimes.has(runtime)
+    )
+    if (retiring.length === 0) return
+
+    for (const runtime of retiring) this.retiredRuntimes.add(runtime)
+    if (this.activeRuntime && retiring.includes(this.activeRuntime)) this.rotateActiveRuntime()
+    this.callbacks.onStateChanged?.(this.getSnapshot())
+    await Promise.all(retiring.map((runtime) => runtime.requestRetirement()))
   }
 
   private handleRuntimeState(runtime: AcpRuntime, snapshot: AcpStateSnapshot): void {
@@ -1536,7 +1726,11 @@ class AcpRuntimeCoordinator {
       const owner = this.sessionRuntimes.get(sessionId)
       // A late state emission from a retiring runtime must not steal back a session already adopted by
       // the current generation.
-      if (!owner || !this.retiredRuntimes.has(runtime) || this.retiredRuntimes.has(owner)) {
+      if (
+        !owner ||
+        owner === runtime ||
+        (this.retiredRuntimes.has(owner) && !this.retiredRuntimes.has(runtime))
+      ) {
         this.sessionRuntimes.set(sessionId, runtime)
         this.sessionConnectionStatuses.set(sessionId, snapshot.status)
       }
@@ -1572,6 +1766,10 @@ class AcpRuntimeCoordinator {
   }
 
   private releaseRuntimeOwnership(runtime: AcpRuntime): void {
+    const targetKey = this.runtimeTargetKeys.get(runtime)
+    if (targetKey && this.targetedRuntimes.get(targetKey) === runtime) {
+      this.targetedRuntimes.delete(targetKey)
+    }
     const retiredStatus = runtime.getSnapshot().status
     this.runtimes.delete(runtime)
     this.retiredRuntimes.delete(runtime)
@@ -1728,6 +1926,7 @@ class AcpRuntimeCoordinator {
   private clearRuntimeOwnership(): void {
     this.runtimes.clear()
     this.retiredRuntimes.clear()
+    this.targetedRuntimes.clear()
     this.sessionRuntimes.clear()
     this.pendingSessionAdoptions.clear()
     this.pendingResumeReconciliations.clear()

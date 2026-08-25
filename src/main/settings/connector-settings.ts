@@ -20,6 +20,7 @@ import type {
   UpdateCustomServerRequest
 } from '../../shared/settings'
 import { inferResourceId, validateResourceId } from '../../shared/resource-id'
+import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
 import {
   customConnectorNameFromSkillName,
   isCustomConnectorName
@@ -56,7 +57,10 @@ const normalizeOAuthConfig = (
   ...(oauth.scopes?.length
     ? { scopes: [...new Set(oauth.scopes.map((scope) => scope.trim()).filter(Boolean))] }
     : {}),
-  ...(oauth.clientId?.trim() ? { clientId: oauth.clientId.trim() } : {})
+  ...(oauth.clientId?.trim() ? { clientId: oauth.clientId.trim() } : {}),
+  ...(oauth.redirectUri?.trim()
+    ? { redirectUri: normalizeLoopbackOAuthRedirectUri(oauth.redirectUri.trim()) }
+    : {})
 })
 
 const validateOAuthRegistration = (
@@ -68,6 +72,9 @@ const validateOAuthRegistration = (
   }
   if (oauth.clientId && oauth.clientMetadataUrl) {
     throw new Error('Client metadata URL cannot be combined with a pre-registered client.')
+  }
+  if (oauth.redirectUri && !oauth.clientId) {
+    throw new Error('OAuth redirect URI requires a pre-registered client ID.')
   }
   if (hasClientSecret && !oauth.clientId) {
     throw new Error('Client ID is required when a client secret is configured.')
@@ -633,6 +640,7 @@ class ConnectorSettingsModule {
                     : {}),
                   ...(server.oauth.scopes ? { scopes: server.oauth.scopes } : {}),
                   ...(server.oauth.clientId ? { clientId: server.oauth.clientId } : {}),
+                  ...(server.oauth.redirectUri ? { redirectUri: server.oauth.redirectUri } : {}),
                   hasTokens: Boolean(server.oauthState?.tokens?.access_token),
                   hasClientSecret: Boolean(server.oauthClientSecretRef)
                 }

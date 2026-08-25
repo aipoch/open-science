@@ -140,6 +140,8 @@ describe('checkInternetReachability', () => {
     const probe = vi.fn(() => Promise.resolve(5))
 
     await expect(checkInternetReachability(probe as never)).resolves.toBe(true)
+    expect(probe).toHaveBeenCalledWith('npmjs')
+    expect(probe).toHaveBeenCalledWith('npmmirror')
     expect(probe).toHaveBeenCalledTimes(2)
   })
 })

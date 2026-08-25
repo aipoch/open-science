@@ -19,6 +19,10 @@ type RuntimeSettingsCommandWorkflows = Pick<
   | 'logoutClaudeShared'
   | 'logoutIsolatedClaude'
   | 'logoutIsolatedCodex'
+  | 'beginXaiOAuthLogin'
+  | 'waitXaiOAuthLogin'
+  | 'cancelXaiOAuthLogin'
+  | 'logoutXaiOAuth'
   | 'setActiveProvider'
   | 'setAgentFramework'
   | 'setReasoningEffort'
@@ -111,7 +115,27 @@ const settingsRuntimeApplicationCommands = Object.freeze({
     'settings:logout-isolated-codex',
     readonly [],
     WorkflowResult<'logoutIsolatedCodex'>
-  >('settings:logout-isolated-codex')
+  >('settings:logout-isolated-codex'),
+  beginXaiOAuthLogin: defineApplicationCommand<
+    'settings:begin-xai-oauth-login',
+    readonly [],
+    WorkflowResult<'beginXaiOAuthLogin'>
+  >('settings:begin-xai-oauth-login'),
+  waitXaiOAuthLogin: defineApplicationCommand<
+    'settings:wait-xai-oauth-login',
+    readonly [],
+    WorkflowResult<'waitXaiOAuthLogin'>
+  >('settings:wait-xai-oauth-login'),
+  cancelXaiOAuthLogin: defineApplicationCommand<
+    'settings:cancel-xai-oauth-login',
+    readonly [],
+    void
+  >('settings:cancel-xai-oauth-login'),
+  logoutXaiOAuth: defineApplicationCommand<
+    'settings:logout-xai-oauth',
+    readonly [],
+    WorkflowResult<'logoutXaiOAuth'>
+  >('settings:logout-xai-oauth')
 })
 
 const settingsRuntimeApplicationCommandGroup = defineApplicationCommandGroup('settings-runtime', [
@@ -129,7 +153,11 @@ const settingsRuntimeApplicationCommandGroup = defineApplicationCommandGroup('se
   settingsRuntimeApplicationCommands.loginIsolatedClaudeBrowser,
   settingsRuntimeApplicationCommands.logoutIsolatedClaude,
   settingsRuntimeApplicationCommands.loginIsolatedCodex,
-  settingsRuntimeApplicationCommands.logoutIsolatedCodex
+  settingsRuntimeApplicationCommands.logoutIsolatedCodex,
+  settingsRuntimeApplicationCommands.beginXaiOAuthLogin,
+  settingsRuntimeApplicationCommands.waitXaiOAuthLogin,
+  settingsRuntimeApplicationCommands.cancelXaiOAuthLogin,
+  settingsRuntimeApplicationCommands.logoutXaiOAuth
 ] as const)
 
 type RuntimeSettingsApplicationCommandDependencies = Readonly<{
@@ -197,6 +225,22 @@ const registerRuntimeSettingsApplicationCommands = (
       'settings:logout-isolated-codex': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:logout-isolated-codex')
         return dependencies.workflows.logoutIsolatedCodex()
+      },
+      'settings:begin-xai-oauth-login': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:begin-xai-oauth-login')
+        return dependencies.workflows.beginXaiOAuthLogin()
+      },
+      'settings:wait-xai-oauth-login': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:wait-xai-oauth-login')
+        return dependencies.workflows.waitXaiOAuthLogin()
+      },
+      'settings:cancel-xai-oauth-login': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:cancel-xai-oauth-login')
+        dependencies.workflows.cancelXaiOAuthLogin()
+      },
+      'settings:logout-xai-oauth': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:logout-xai-oauth')
+        return dependencies.workflows.logoutXaiOAuth()
       }
     })
     return scope.complete()

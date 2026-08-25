@@ -2332,6 +2332,29 @@ describe('PreviewFileSurface View in context entry', () => {
     expect(menu?.textContent).not.toContain('View in context')
   })
 
+  it('hides View in context while the origin session is deleting', async () => {
+    seedWorkspaceStores()
+    // Until a newer lineage projection resolves, the item snapshot is the only lifecycle signal.
+    window.api.artifacts.getLineage = vi.fn().mockRejectedValue(new Error('lineage unavailable'))
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, originSession: { state: 'deleting' } }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+
+    const menu = document.body.querySelector('[role="menu"]')
+    expect(menu?.textContent).toContain('Provenance')
+    expect(menu?.textContent).not.toContain('View in context')
+  })
+
   it('lets the lineage report of a deleted origin session override the stale item snapshot', async () => {
     seedWorkspaceStores()
     // The preview tab still carries its creation-time snapshot; the refetched lineage is the
@@ -2359,6 +2382,101 @@ describe('PreviewFileSurface View in context entry', () => {
     const menu = document.body.querySelector('[role="menu"]')
     expect(menu?.textContent).toContain('Provenance')
     expect(menu?.textContent).not.toContain('View in context')
+  })
+
+  it('lets the lineage report of a deleting origin session override the stale item snapshot', async () => {
+    seedWorkspaceStores()
+    window.api.artifacts.getLineage = vi.fn().mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'deleting', title: 'Sine' },
+      versions: [descriptor, secondDescriptor]
+    })
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, originSession: { state: 'active' } }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+
+    const menu = document.body.querySelector('[role="menu"]')
+    expect(menu?.textContent).toContain('Provenance')
+    expect(menu?.textContent).not.toContain('View in context')
+  })
+
+  it('lets active lineage restore View in context after a deleting item snapshot is compensated', async () => {
+    seedWorkspaceStores()
+    window.api.artifacts.getLineage = vi.fn().mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+      versions: [descriptor, secondDescriptor]
+    })
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, originSession: { state: 'deleting' } }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+
+    expect(document.body.querySelector('[role="menu"]')?.textContent).toContain('View in context')
+  })
+
+  it('stops using active lineage while a newer deleting item snapshot is refreshing', async () => {
+    seedWorkspaceStores()
+    const getLineage = vi
+      .fn()
+      .mockResolvedValueOnce({
+        artifactId: 'artifact-1',
+        filename: 'sin.png',
+        originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+        versions: [descriptor, secondDescriptor]
+      })
+      .mockImplementationOnce(() => new Promise(() => undefined))
+    window.api.artifacts.getLineage = getLineage
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, originSession: { state: 'active' } }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, originSession: { state: 'deleting' } }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+
+    expect(getLineage).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[role="menu"]')?.textContent).not.toContain(
+      'View in context'
+    )
   })
 
   it('does not notify View in context consumers when the guard rejects the navigation', async () => {

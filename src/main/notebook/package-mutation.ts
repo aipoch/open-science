@@ -167,7 +167,8 @@ class NotebookPackageMutationOwner {
                 ...mutation,
                 result: installResult?.ok ? 'success' : 'failure',
                 attempts: installResult?.attempts ?? [],
-                fallbackUsed: installResult?.fallbackUsed ?? false
+                fallbackUsed: installResult?.fallbackUsed ?? false,
+                ...(installResult?.source ? { source: installResult.source } : {})
               })
               .catch((error: unknown) => {
                 inventoryRefreshError = error
@@ -176,8 +177,10 @@ class NotebookPackageMutationOwner {
           if (installResult && verification?.packageChanges) {
             installResult = {
               ...installResult,
-              packageChanges: verification.packageChanges.filter(
-                (change) => change.relationship === 'requested'
+              packageChanges: verification.packageChanges.map((change) =>
+                change.relationship === 'requested' && installResult?.source && !change.source
+                  ? { ...change, source: installResult.source }
+                  : change
               )
             }
           }

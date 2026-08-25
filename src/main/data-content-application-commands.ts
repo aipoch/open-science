@@ -72,8 +72,8 @@ const invocationCommandFor =
 type PreviewApplicationCommandOwner = Readonly<{
   load(
     request: PreviewState.LoadPreviewStateRequest
-  ): Promise<PreviewState.PersistedPreviewState | null>
-  save(request: PreviewState.SavePreviewStateRequest): Promise<void>
+  ): Promise<PreviewState.PreviewStateSnapshot | null>
+  save(request: PreviewState.SavePreviewStateRequest): Promise<PreviewState.SavePreviewStateResult>
   delete(request: PreviewState.DeletePreviewStateRequest): Promise<void>
 }>
 
@@ -260,8 +260,10 @@ const dataContentApplicationCommands = Object.freeze({
     'sessions:export-conversation',
     'exportConversationFromInvokingWindow'
   ),
+  sessionList: sessionCommand('sessions:list', 'list'),
   sessionLoadAll: sessionCommand('sessions:load-all', 'loadAll'),
   sessionLoadOne: sessionCommand('sessions:load-one', 'loadOne'),
+  sessionLoadUsage: sessionCommand('sessions:load-usage', 'loadUsage'),
   sessionSaveManifest: sessionCommand('sessions:save-manifest', 'saveManifest'),
   sessionUpdateArchive: sessionCommand('sessions:update-archive', 'updateArchive'),
   sessionSave: defineApplicationCommand<
@@ -337,8 +339,10 @@ const dataContentApplicationCommandGroups = Object.freeze([
   defineApplicationCommandGroup('sessions', [
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionExportConversation,
+    dataContentApplicationCommands.sessionList,
     dataContentApplicationCommands.sessionLoadAll,
     dataContentApplicationCommands.sessionLoadOne,
+    dataContentApplicationCommands.sessionLoadUsage,
     dataContentApplicationCommands.sessionSaveManifest,
     dataContentApplicationCommands.sessionUpdateArchive,
     dataContentApplicationCommands.sessionSave,
@@ -523,8 +527,11 @@ const registerDataContentApplicationCommands = (
       },
       'sessions:load-all': () =>
         dependencies.withDataRootWrite(() => dependencies.sessions.loadAll()),
+      'sessions:list': () => dependencies.withDataRootWrite(() => dependencies.sessions.list()),
       'sessions:load-one': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.sessions.loadOne(args[0])),
+      'sessions:load-usage': () =>
+        dependencies.withDataRootWrite(() => dependencies.sessions.loadUsage()),
       'sessions:save-manifest': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.sessions.saveManifest(args[0])),
       'sessions:update-archive': (invocation) => {

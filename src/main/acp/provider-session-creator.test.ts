@@ -255,7 +255,7 @@ describe('AcpProviderSessionCreator', () => {
     expect(enabledHarness.sessionSetupAppends.flat()).toContain(SKILL_IMPORT_SYSTEM_PROMPT_APPEND)
   })
 
-  it('appends the project Agent Context after the specialist append', async () => {
+  it('appends Specialist identity after Project Agent Context', async () => {
     const harness = createHarness({
       projectAgentContext: 'Always cite DOIs.',
       specialistIdentity: {
@@ -266,10 +266,11 @@ describe('AcpProviderSessionCreator', () => {
 
     await harness.creator.create({ projectId: 'project-1', specialistId: 'specialist-1' })
 
-    expect(harness.sessionSetupAppends.at(-1)?.slice(-2)).toEqual([
-      'specialist identity append',
-      'Always cite DOIs.'
-    ])
+    const appends = harness.sessionSetupAppends.at(-1) ?? []
+    expect(appends.at(-2)).toContain('<open_science_project_agent_context>')
+    expect(appends.at(-2)).toContain('Always cite DOIs.')
+    expect(appends.at(-2)).toContain('</open_science_project_agent_context>')
+    expect(appends.at(-1)).toBe('specialist identity append')
   })
 
   it.each([

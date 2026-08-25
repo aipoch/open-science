@@ -255,6 +255,7 @@ class ArtifactProvenanceRepository {
     this.producerCapture = new ArtifactProvenanceProducerCapture({
       inputAuthority,
       notebookRepository,
+      storageRoot: options.storageRoot,
       createId: this.createId
     })
     this.messageFinalizer = new ArtifactProvenanceMessageFinalizer({
@@ -266,7 +267,7 @@ class ArtifactProvenanceRepository {
     })
     this.finalizationRecovery = new ArtifactProvenanceFinalizationRecovery({
       getClient: options.getClient,
-      compatibilityRepository: options.compatibilityRepository,
+      compatibilityRepository: this.compatibilityRepository,
       messageFinalizer: this.messageFinalizer
     })
     this.stagingRecovery = new ArtifactProvenanceStagingRecovery({

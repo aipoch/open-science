@@ -1,5 +1,7 @@
 import type {
+  PersistedChatMessage,
   PersistedChatSession,
+  PersistedUploadedAttachment,
   SessionDelegatedWorkRuntimeContext,
   SessionRuntimeContext
 } from '../../../shared/session-persistence'
@@ -266,6 +268,55 @@ type PersistedIdentityState = Pick<
   'artifacts' | 'conversationGraph' | 'filesRevision' | 'messages' | 'runtimeContext'
 >
 
+const isSameSubmittedUpload = (
+  current: PersistedUploadedAttachment,
+  submitted: PersistedUploadedAttachment
+): boolean =>
+  current.id === submitted.id &&
+  current.versionId === submitted.versionId &&
+  current.sessionId === submitted.sessionId &&
+  current.name === submitted.name &&
+  current.originalName === submitted.originalName &&
+  current.path === submitted.path &&
+  current.mimeType === submitted.mimeType &&
+  current.size === submitted.size
+
+export const mergeDurableUploadProjection = <Message extends PersistedChatMessage>(
+  currentMessages: Message[],
+  submittedMessages: PersistedChatMessage[],
+  durableMessages: PersistedChatMessage[]
+): { messages: Message[]; changed: boolean } => {
+  const submittedById = new Map(submittedMessages.map((message) => [message.id, message]))
+  const durableById = new Map(durableMessages.map((message) => [message.id, message]))
+  let changed = false
+  const messages = currentMessages.map((message) => {
+    const submitted = submittedById.get(message.id)
+    const durable = durableById.get(message.id)
+    if (!message.uploads || !submitted?.uploads || !durable?.uploads) return message
+    const submittedUploads = new Map(submitted.uploads.map((upload) => [upload.id, upload]))
+    const durableUploads = new Map(durable.uploads.map((upload) => [upload.id, upload]))
+    let uploadsChanged = false
+    const uploads = message.uploads.map((upload) => {
+      const submittedUpload = submittedUploads.get(upload.id)
+      const durableUpload = durableUploads.get(upload.id)
+      if (
+        !submittedUpload ||
+        !durableUpload?.versionId ||
+        submittedUpload.versionId ||
+        !isSameSubmittedUpload(upload, submittedUpload)
+      ) {
+        return upload
+      }
+      uploadsChanged = true
+      return durableUpload
+    })
+    if (!uploadsChanged) return message
+    changed = true
+    return { ...message, uploads } as Message
+  })
+  return { messages, changed }
+}
+
 export const mergeRuntimeConversationAuthority = (
   current: Pick<PersistedChatSession, 'conversationGraph' | 'messages'>,
   incoming: Pick<PersistedChatSession, 'conversationGraph' | 'messages'>
@@ -311,12 +362,14 @@ export const retainRuntimePlanProjection = (
   incoming: Pick<PersistedChatSession, 'runtimeContext'>
 ): ActivePlanProjection | undefined => {
   const projection = current.activePlanProjection
-  const currentPlan = current.runtimeContext?.plan
   const incomingPlan = incoming.runtimeContext?.plan
-  return planProjectionMatchesRuntimePlan(projection, currentPlan) &&
-    JSON.stringify(currentPlan) === JSON.stringify(incomingPlan)
+  const incomingRevision = incoming.runtimeContext?.revision
+  if (!projection || incomingRevision === undefined) return undefined
+  if (projection.revision > incomingRevision) return projection
+  if (!planProjectionMatchesRuntimePlan(projection, incomingPlan)) return undefined
+  return projection.revision === incomingRevision
     ? projection
-    : undefined
+    : { ...projection, revision: incomingRevision }
 }
 
 export const mergePersistedRuntimeIdentityProjection = (

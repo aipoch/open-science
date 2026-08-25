@@ -233,8 +233,7 @@ const asService = (fake: FakeSettingsService): SettingsService => fake as unknow
 type TestSettingsIpcOptions = {
   service: SettingsService
   onActiveProviderChanged?: () => void
-  onAgentFrameworkChanged?: () => void
-  onReasoningEffortChanged?: SettingsWorkflowEffects['runtime']['applyReasoningEffort']
+  onAgentFrameworkChanged?: SettingsWorkflowEffects['runtime']['requestAgentFrameworkSwitch']
   onSkillsChanged?: () => void
   onConnectorsChanged?: () => void
   onCustomServerRemoved?: (serverId: string) => Promise<void>
@@ -250,7 +249,6 @@ const registerTestSettingsIpcHandlers = ({
   service,
   onActiveProviderChanged,
   onAgentFrameworkChanged,
-  onReasoningEffortChanged,
   onSkillsChanged,
   onConnectorsChanged,
   onCustomServerRemoved,
@@ -265,9 +263,7 @@ const registerTestSettingsIpcHandlers = ({
     workflows: createSettingsWorkflows(service, {
       runtime: {
         requestProviderReconnect: onActiveProviderChanged ?? (() => undefined),
-        requestAgentFrameworkSwitch: onAgentFrameworkChanged ?? (() => undefined),
-        applyReasoningEffort: onReasoningEffortChanged ?? (async () => false),
-        applyModelChange: async () => false
+        requestAgentFrameworkSwitch: onAgentFrameworkChanged ?? (() => undefined)
       },
       skills: {
         requestSkillsReload: onSkillsChanged ?? (() => undefined),
@@ -586,7 +582,7 @@ describe('settings IPC handlers', () => {
     expect(onConnectorsChanged).toHaveBeenCalledOnce()
   })
 
-  it('drops the agent connection when the active provider changes', async () => {
+  it('persists an active provider as the default without reconnecting live Sessions', async () => {
     handlers.clear()
     const service = createFakeService()
     service.getSettingsView.mockResolvedValue({ activeProviderId: 'p0', providers: [] })
@@ -597,7 +593,7 @@ describe('settings IPC handlers', () => {
     await invoke('settings:set-active-provider', { id: 'p1' })
 
     expect(service.setActiveProvider).toHaveBeenCalledWith('p1', undefined)
-    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 
   it('drops the agent connection when the active provider is deleted', async () => {
@@ -629,7 +625,10 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:delete-provider', { id: CLAUDE_ISOLATED_PROVIDER_ID })
 
-    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    expect(onActiveProviderChanged).toHaveBeenCalledWith(
+      [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID],
+      true
+    )
   })
 
   it('drops the agent connection when the edited provider is the active one', async () => {
@@ -676,7 +675,7 @@ describe('settings IPC handlers', () => {
     }
   )
 
-  it('does not drop the connection when editing a non-active provider', async () => {
+  it('targets Sessions using an edited non-active provider without reconnecting the default', async () => {
     handlers.clear()
     const service = createFakeService()
     service.upsertProvider.mockResolvedValue({ claude: {}, activeProviderId: 'p1', providers: [] })
@@ -685,7 +684,7 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:upsert-provider', { id: 'p2', type: 'custom', name: 'Other' })
 
-    expect(onActiveProviderChanged).not.toHaveBeenCalled()
+    expect(onActiveProviderChanged).toHaveBeenCalledWith(['p2'], false)
   })
 
   it('does not drop the connection when creating a new provider', async () => {
@@ -735,7 +734,7 @@ describe('settings IPC handlers', () => {
     }
   )
 
-  it('reconnects after uninstalling the active runtime when no fallback is ready', async () => {
+  it('retires matching generations after uninstalling the active runtime without a fallback', async () => {
     handlers.clear()
     const service = createFakeService()
     service.uninstallClaude.mockResolvedValue({
@@ -752,8 +751,9 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:uninstall-claude')
 
-    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
-    expect(onAgentFrameworkChanged).not.toHaveBeenCalled()
+    expect(onAgentFrameworkChanged).toHaveBeenCalledOnce()
+    expect(onAgentFrameworkChanged).toHaveBeenCalledWith('claude-code')
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 
   it('does not reconnect after uninstalling the inactive runtime', async () => {
@@ -958,7 +958,12 @@ describe('settings IPC handlers', () => {
     handlers.clear()
     const service = createFakeService()
     const onActiveProviderChanged = vi.fn()
-    registerTestSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+    const onAgentFrameworkChanged = vi.fn()
+    registerTestSettingsIpcHandlers({
+      service: asService(service),
+      onActiveProviderChanged,
+      onAgentFrameworkChanged
+    })
 
     expect(handlers.has('settings:detect-codex')).toBe(true)
     expect(handlers.has('settings:install-codex')).toBe(true)
@@ -971,7 +976,9 @@ describe('settings IPC handlers', () => {
     expect(service.detectCodex).toHaveBeenCalledOnce()
     expect(service.installCodex).toHaveBeenCalledWith({ source: 'managed' }, expect.any(Function))
     expect(service.uninstallCodex).toHaveBeenCalledOnce()
-    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    expect(onAgentFrameworkChanged).toHaveBeenCalledOnce()
+    expect(onAgentFrameworkChanged).toHaveBeenCalledWith('codex')
+    expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 
   it('routes detect-opencode to the service and forwards its snapshot', async () => {
@@ -1038,48 +1045,22 @@ describe('settings IPC handlers', () => {
     expect(result).toBe(snapshot)
   })
 
-  it('applies the level live without respawning when the framework supports it', async () => {
+  it('persists reasoning effort as the default for new Sessions', async () => {
     handlers.clear()
     const service = createFakeService()
     const snapshot = { claude: {}, providers: [], reasoningEffort: 'high' }
     service.setReasoningEffort.mockResolvedValue(snapshot)
-    service.resolveActiveReasoningEffort.mockResolvedValue('max')
     const onActiveProviderChanged = vi.fn()
-    const onReasoningEffortChanged = vi.fn().mockResolvedValue(true)
     registerTestSettingsIpcHandlers({
       service: asService(service),
-      onActiveProviderChanged,
-      onReasoningEffortChanged
+      onActiveProviderChanged
     })
 
     const result = await invoke('settings:set-reasoning-effort', { effort: 'high' })
 
-    // A live ACP application (Claude Code, Codex) makes the level stick without a respawn.
     expect(service.setReasoningEffort).toHaveBeenCalledWith('high')
-    expect(service.resolveActiveReasoningEffort).toHaveBeenCalledWith('high')
-    expect(onReasoningEffortChanged).toHaveBeenCalledWith('max')
+    expect(service.resolveActiveReasoningEffort).not.toHaveBeenCalled()
     expect(onActiveProviderChanged).not.toHaveBeenCalled()
-    expect(result).toBe(snapshot)
-  })
-
-  it('respawns the agent when the framework cannot apply the level live', async () => {
-    handlers.clear()
-    const service = createFakeService()
-    const snapshot = { claude: {}, providers: [], reasoningEffort: 'high' }
-    service.setReasoningEffort.mockResolvedValue(snapshot)
-    const onActiveProviderChanged = vi.fn()
-    const onReasoningEffortChanged = vi.fn().mockResolvedValue(false)
-    registerTestSettingsIpcHandlers({
-      service: asService(service),
-      onActiveProviderChanged,
-      onReasoningEffortChanged
-    })
-
-    const result = await invoke('settings:set-reasoning-effort', { effort: 'high' })
-
-    // opencode bakes effort into its spawn config, so the provider-switch reconnect delivers it.
-    expect(service.setReasoningEffort).toHaveBeenCalledWith('high')
-    expect(onActiveProviderChanged).toHaveBeenCalledOnce()
     expect(result).toBe(snapshot)
   })
 

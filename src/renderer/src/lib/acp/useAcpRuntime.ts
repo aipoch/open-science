@@ -1,9 +1,12 @@
 import type {
   AcpContinueInterruptedTurnRequest,
   AcpCreateSessionResponse,
+  AcpSessionAgentTarget,
   ElicitationResponse,
   AcpPermissionResponse,
   AcpPromptRequest,
+  AcpSteerFollowUpRequest,
+  AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
   AcpRuntimeEvent,
@@ -59,7 +62,8 @@ const useAcpRuntime = (): {
     cwd?: string,
     projectId?: string,
     permissionProfile?: PermissionProfileId,
-    specialistId?: string
+    specialistId?: string,
+    agentTarget?: AcpSessionAgentTarget
   ) => Promise<AcpCreateSessionResponse>
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -71,7 +75,8 @@ const useAcpRuntime = (): {
     specialistId?: AcpResumeSessionRequest['specialistId'],
     providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
     providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
-    specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending']
+    specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending'],
+    agentTarget?: AcpSessionAgentTarget
   ) => Promise<AcpCreateSessionResponse>
   continueInterruptedTurn: (request: AcpContinueInterruptedTurnRequest) => Promise<AcpStateSnapshot>
   resetSessionContext: (
@@ -86,6 +91,7 @@ const useAcpRuntime = (): {
   ) => Promise<AcpStateSnapshot | undefined>
   deleteSession: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
   cancel: (sessionId: string) => Promise<AcpStateSnapshot | undefined>
+  steerFollowUp: (request: AcpSteerFollowUpRequest) => Promise<AcpSteerFollowUpResult>
   sendPrompt: (
     sessionId: string,
     text: string,
@@ -99,7 +105,8 @@ const useAcpRuntime = (): {
     provenanceContext?: AcpPromptRequest['provenanceContext'],
     contextReset?: AcpPromptRequest['contextReset'],
     planContinuation?: AcpPromptRequest['planContinuation'],
-    turnIntent?: AcpPromptRequest['turnIntent']
+    turnIntent?: AcpPromptRequest['turnIntent'],
+    referencedSessions?: AcpPromptRequest['referencedSessions']
   ) => Promise<AcpStateSnapshot>
   respondToPermission: (
     requestId: string,
@@ -173,9 +180,9 @@ const useAcpRuntime = (): {
       hasPushedSnapshot = true
       applyMountedSnapshot(snapshot)
     })
-    const removeEventListener = onRuntimeEvent?.((event: AcpRuntimeEvent) => {
+    const removeEventListener = onRuntimeEvent?.((events: readonly AcpRuntimeEvent[]) => {
       if (!isMounted) return
-      runtimeEventOwner.observeEvent(event)
+      runtimeEventOwner.observeEvents(events)
     })
 
     void loadInitialState()
@@ -271,10 +278,17 @@ const useAcpRuntime = (): {
       cwd?: string,
       projectId?: string,
       permissionProfile?: PermissionProfileId,
-      specialistId?: string
+      specialistId?: string,
+      agentTarget?: AcpSessionAgentTarget
     ) =>
       runValueAction(setIsConnecting, () =>
-        window.api.acp.createSession({ cwd, projectId, permissionProfile, specialistId })
+        window.api.acp.createSession({
+          cwd,
+          projectId,
+          permissionProfile,
+          specialistId,
+          ...(agentTarget ? { agentTarget } : {})
+        })
       ),
     [runValueAction]
   )
@@ -291,7 +305,8 @@ const useAcpRuntime = (): {
       specialistId?: AcpResumeSessionRequest['specialistId'],
       providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
       providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
-      specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending']
+      specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending'],
+      agentTarget?: AcpSessionAgentTarget
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.resumeSession({
@@ -304,7 +319,8 @@ const useAcpRuntime = (): {
           specialistId,
           providerSessionId,
           providerContinuityToken,
-          specialistBindingPending
+          specialistBindingPending,
+          ...(agentTarget ? { agentTarget } : {})
         })
       ),
     [runValueAction]
@@ -353,6 +369,11 @@ const useAcpRuntime = (): {
     [runSnapshotAction]
   )
 
+  const steerFollowUp = useCallback(
+    (request: AcpSteerFollowUpRequest) => window.api.acp.steerFollowUp(request),
+    []
+  )
+
   // Sends a prompt turn plus any finalized upload references to one runtime session.
   const sendPrompt = useCallback(
     (
@@ -368,7 +389,8 @@ const useAcpRuntime = (): {
       provenanceContext?: AcpPromptRequest['provenanceContext'],
       contextReset?: AcpPromptRequest['contextReset'],
       planContinuation?: AcpPromptRequest['planContinuation'],
-      turnIntent?: AcpPromptRequest['turnIntent']
+      turnIntent?: AcpPromptRequest['turnIntent'],
+      referencedSessions?: AcpPromptRequest['referencedSessions']
     ) =>
       runSendPromptAction(() =>
         window.api.acp.sendPrompt({
@@ -379,6 +401,7 @@ const useAcpRuntime = (): {
           ...(forcedSkillIds && forcedSkillIds.length > 0 ? { forcedSkillIds } : {}),
           // Same minimal-request rule for `@`-mentioned artifacts.
           ...(referencedArtifacts && referencedArtifacts.length > 0 ? { referencedArtifacts } : {}),
+          ...(referencedSessions && referencedSessions.length > 0 ? { referencedSessions } : {}),
           // Only present right after a context reset, when a transcript is replayed for continuity.
           ...(historyPreamble ? { historyPreamble } : {}),
           ...(historyAttachments && historyAttachments.length > 0 ? { historyAttachments } : {}),
@@ -470,6 +493,7 @@ const useAcpRuntime = (): {
     compactSession,
     deleteSession,
     cancel,
+    steerFollowUp,
     sendPrompt,
     respondToPermission,
     respondToElicitation,

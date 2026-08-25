@@ -6,6 +6,7 @@ import type {
   NotebookKernelInstanceIdentity,
   NotebookRunDocument,
   NotebookRunHistorySummary,
+  NotebookRunCursor,
   NotebookRunRecord,
   NotebookWorkingFile
 } from '../../shared/notebook'
@@ -129,6 +130,10 @@ const notebookRunCandidate = (value: unknown): boolean => {
     ) ||
     typeof value.startedAt !== 'number' ||
     !Number.isFinite(value.startedAt) ||
+    (value.kernelEpochId !== undefined &&
+      (typeof value.kernelEpochId !== 'string' || value.kernelEpochId.length === 0)) ||
+    (value.kernelDispatched !== undefined && typeof value.kernelDispatched !== 'boolean') ||
+    (value.runtimeId !== undefined && typeof value.runtimeId !== 'string') ||
     (value.kernelKind !== undefined &&
       value.kernelKind !== 'python' &&
       value.kernelKind !== 'r' &&
@@ -359,8 +364,13 @@ const withoutTerminatedKernelInstances = (
 }
 
 const ownRun = (lane: NotebookLaneIdentity, run: NotebookRunRecord): NotebookRunRecord => {
-  const { agentFrameId } = notebookLaneScope(lane)
-  if (run.agentFrameId && run.agentFrameId !== agentFrameId) {
+  const scope = notebookLaneScope(lane)
+  const agentFrameId = run.agentFrameId ?? scope.agentFrameId
+  // Root lanes share one durable document across their provisional and conversation Frame ids. Keep
+  // the Run's self-consistent root provenance; child lanes must still match their exact Frame owner.
+  const matchesRootRunProvenance =
+    scope.kind === 'root' && run.rootFrameId !== undefined && agentFrameId === run.rootFrameId
+  if (agentFrameId !== scope.agentFrameId && !matchesRootRunProvenance) {
     throw new Error('Notebook Run Frame owner does not match its lane.')
   }
   return { ...run, agentFrameId }
@@ -721,12 +731,14 @@ class NotebookRunRepository {
     sessionId: string,
     limit: number,
     includeRunIds: readonly string[] = [],
-    historySummaryFrameId?: string
+    historySummaryFrameId?: string,
+    historyBefore?: NotebookRunCursor
   ): Promise<{
     runs: NotebookRunRecord[]
     total: number
     latestRunEnvironments: Partial<Record<'python' | 'r', string>>
     historySummary?: NotebookRunHistorySummary
+    historyPage?: { hasEarlierRuns: boolean; oldestCursor?: NotebookRunCursor }
   }> {
     const documents = await this.readSessionDocuments(projectId, sessionId)
     const runs: NotebookRunRecord[] = []
@@ -742,6 +754,7 @@ class NotebookRunRepository {
       : undefined
     let latestSummaryDataRun: NotebookRunRecord | undefined
     let total = 0
+    let eligibleTotal = 0
     const compareRuns = (left: NotebookRunRecord, right: NotebookRunRecord): number =>
       left.startedAt - right.startedAt || left.runId.localeCompare(right.runId)
 
@@ -769,6 +782,15 @@ class NotebookRunRepository {
           latestEnvironmentRuns.set(run.kernelKind, run)
         }
         if (limit <= 0) continue
+        if (
+          historyBefore &&
+          (run.startedAt > historyBefore.startedAt ||
+            (run.startedAt === historyBefore.startedAt &&
+              run.runId.localeCompare(historyBefore.runId) >= 0))
+        ) {
+          continue
+        }
+        eligibleTotal += 1
         let low = 0
         let high = runs.length
         while (low < high) {
@@ -781,7 +803,8 @@ class NotebookRunRepository {
       }
     }
 
-    const mergedRuns = new Map(runs.map((run) => [run.runId, run]))
+    const pageRuns = [...runs]
+    const mergedRuns = new Map(pageRuns.map((run) => [run.runId, run]))
     for (const run of requestedRuns.values()) mergedRuns.set(run.runId, run)
     return {
       runs: [...mergedRuns.values()].sort(compareRuns),
@@ -789,6 +812,12 @@ class NotebookRunRepository {
       latestRunEnvironments: Object.fromEntries(
         [...latestEnvironmentRuns.entries()].map(([kind, run]) => [kind, run.environment!])
       ),
+      historyPage: {
+        hasEarlierRuns: eligibleTotal > pageRuns.length,
+        ...(pageRuns[0]
+          ? { oldestCursor: { startedAt: pageRuns[0].startedAt, runId: pageRuns[0].runId } }
+          : {})
+      },
       ...(historySummary ? { historySummary } : {})
     }
   }

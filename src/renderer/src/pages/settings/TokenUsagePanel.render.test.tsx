@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   PersistedChatMessage,
-  PersistedChatSession
+  PersistedChatSession,
+  SessionUsageProjection
 } from '../../../../shared/session-persistence'
 import type { Project } from '../../../../shared/projects'
 import { TokenUsagePanel } from './TokenUsagePanel'
@@ -67,6 +68,7 @@ const createProject = (now: number): Project => ({
 
 let container: HTMLDivElement
 let root: Root
+const originalApi = window.api
 
 beforeEach(() => {
   container = document.createElement('div')
@@ -77,11 +79,301 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   vi.useRealTimers()
+  window.api = originalApi
   container.remove()
   document.body.innerHTML = ''
 })
 
 describe('TokenUsagePanel', () => {
+  it('waits for the SQLite projection before displaying initial usage totals', async () => {
+    const now = localTime(2026, 8, 15, 18)
+    let resolveUsage: ((projection: SessionUsageProjection) => void) | undefined
+    const loadUsage = vi.fn(
+      () =>
+        new Promise<SessionUsageProjection>((resolve) => {
+          resolveUsage = resolve
+        })
+    )
+    window.api = { sessions: { loadUsage } } as unknown as Window['api']
+
+    act(() => {
+      root.render(
+        <TokenUsagePanel
+          sessions={[createSession(now)]}
+          projects={[createProject(now)]}
+          now={now}
+        />
+      )
+    })
+
+    expect(document.body.querySelector('[data-slot="token-usage-loading"]')?.textContent).toBe(
+      'Loading…'
+    )
+    expect(document.body.querySelectorAll('[data-slot="token-usage-skeleton-stat"]')).toHaveLength(
+      8
+    )
+    expect(document.body.querySelectorAll('[data-slot="token-usage-skeleton-chart"]')).toHaveLength(
+      2
+    )
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')).toBeNull()
+
+    await act(async () => {
+      resolveUsage?.({
+        sessionCreatedAt: [now],
+        projectCreatedAt: [now],
+        artifactCreatedAt: [],
+        runsAt: [now],
+        usageEvents: [
+          {
+            timestamp: now,
+            inputTokens: 900,
+            cacheTokens: 90,
+            outputTokens: 9,
+            rootRunUsage: true
+          }
+        ],
+        totalArtifacts: 0
+      })
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[data-slot="token-usage-loading"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
+      'Total tokens999'
+    )
+  })
+
+  it('shows a retryable error instead of partial hydrated usage when the projection fails', async () => {
+    const now = localTime(2026, 8, 15, 18)
+    const projection: SessionUsageProjection = {
+      sessionCreatedAt: [now],
+      projectCreatedAt: [now],
+      artifactCreatedAt: [],
+      runsAt: [],
+      usageEvents: [],
+      totalArtifacts: 0
+    }
+    const loadUsage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('projection unavailable'))
+      .mockResolvedValueOnce(projection)
+    window.api = { sessions: { loadUsage } } as unknown as Window['api']
+
+    await act(async () => {
+      root.render(
+        <TokenUsagePanel
+          sessions={[createSession(now)]}
+          projects={[createProject(now)]}
+          now={now}
+        />
+      )
+    })
+
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')).toBeNull()
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not load token usage.'
+    )
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button')?.click()
+    })
+
+    expect(loadUsage).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
+      'Total sessions1'
+    )
+  })
+
+  it('keeps the loaded projection stable while Session revisions change', async () => {
+    const now = localTime(2026, 8, 15, 18)
+    const projection = (inputTokens: number): SessionUsageProjection => ({
+      sessionCreatedAt: [now],
+      projectCreatedAt: [now],
+      artifactCreatedAt: [],
+      runsAt: [now],
+      usageEvents: [
+        {
+          timestamp: now,
+          inputTokens,
+          cacheTokens: 0,
+          outputTokens: 0,
+          rootRunUsage: true
+        }
+      ],
+      totalArtifacts: 0
+    })
+    const loadUsage = vi.fn().mockResolvedValue(projection(10))
+    window.api = { sessions: { loadUsage } } as unknown as Window['api']
+    const persisted = { ...createSession(now), revision: 1 }
+
+    await act(async () => {
+      root.render(
+        <TokenUsagePanel sessions={[persisted]} projects={[createProject(now)]} now={now} />
+      )
+    })
+    expect(loadUsage).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      root.render(
+        <TokenUsagePanel
+          sessions={[{ ...persisted, revision: 2 }]}
+          projects={[createProject(now)]}
+          now={now}
+        />
+      )
+    })
+
+    expect(loadUsage).toHaveBeenCalledOnce()
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
+      'Total tokens10'
+    )
+  })
+
+  it('keeps the loaded projection stable while the Project catalog changes', async () => {
+    const now = localTime(2026, 8, 15, 18)
+    const projection = (projectCreatedAt: number[]): SessionUsageProjection => ({
+      sessionCreatedAt: [],
+      projectCreatedAt,
+      artifactCreatedAt: [],
+      runsAt: [],
+      usageEvents: [],
+      totalArtifacts: 0
+    })
+    const loadUsage = vi.fn().mockResolvedValue(projection([now]))
+    window.api = { sessions: { loadUsage } } as unknown as Window['api']
+
+    await act(async () => {
+      root.render(<TokenUsagePanel sessions={[]} projects={[createProject(now)]} now={now} />)
+    })
+    expect(loadUsage).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      root.render(
+        <TokenUsagePanel
+          sessions={[]}
+          projects={[
+            createProject(now),
+            { ...createProject(now), id: 'project-2', name: 'Second project' }
+          ]}
+          now={now}
+        />
+      )
+    })
+
+    expect(loadUsage).toHaveBeenCalledOnce()
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
+      'Total projects1'
+    )
+  })
+
+  it('refreshes on demand without replacing the loaded projection with a loading state', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 15, 18))
+    const now = Date.now()
+    const projection = (inputTokens: number): SessionUsageProjection => ({
+      sessionCreatedAt: [now],
+      projectCreatedAt: [now],
+      artifactCreatedAt: [],
+      runsAt: [now],
+      usageEvents: [
+        {
+          timestamp: now,
+          inputTokens,
+          cacheTokens: 0,
+          outputTokens: 0,
+          rootRunUsage: true
+        }
+      ],
+      totalArtifacts: 0
+    })
+    let resolveRefresh: ((value: SessionUsageProjection) => void) | undefined
+    const loadUsage = vi
+      .fn()
+      .mockResolvedValueOnce(projection(10))
+      .mockImplementationOnce(
+        () =>
+          new Promise<SessionUsageProjection>((resolve) => {
+            resolveRefresh = resolve
+          })
+      )
+    window.api = { sessions: { loadUsage } } as unknown as Window['api']
+
+    await act(async () => {
+      root.render(
+        <TokenUsagePanel sessions={[createSession(now)]} projects={[createProject(now)]} />
+      )
+    })
+
+    expect(document.body.textContent).toContain('Updated now')
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')?.click()
+    })
+
+    expect(loadUsage).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[data-slot="token-usage-loading"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
+      'Total tokens10'
+    )
+    expect(document.body.textContent).toContain('Refreshing…')
+
+    await act(async () => {
+      resolveRefresh?.(projection(20))
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).not.toContain('Refreshing…')
+    expect(document.body.textContent).toContain('Updated now')
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
+      'Total tokens20'
+    )
+
+    await act(async () => {
+      vi.advanceTimersByTime(2 * 60_000)
+    })
+
+    expect(document.body.textContent).toContain('Updated 2 minutes ago')
+  })
+
+  it('reuses a recent projection across panel remounts and reloads it after ten minutes', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 15, 18))
+    const now = Date.now()
+    const projection: SessionUsageProjection = {
+      sessionCreatedAt: [now],
+      projectCreatedAt: [now],
+      artifactCreatedAt: [],
+      runsAt: [],
+      usageEvents: [],
+      totalArtifacts: 0
+    }
+    const loadUsage = vi.fn().mockResolvedValue(projection)
+    window.api = { sessions: { loadUsage } } as unknown as Window['api']
+    const panel = (
+      <TokenUsagePanel sessions={[createSession(now)]} projects={[createProject(now)]} />
+    )
+
+    await act(async () => {
+      root.render(panel)
+    })
+    expect(loadUsage).toHaveBeenCalledOnce()
+
+    act(() => root.render(<div />))
+    vi.advanceTimersByTime(9 * 60_000)
+    await act(async () => {
+      root.render(panel)
+    })
+    expect(loadUsage).toHaveBeenCalledOnce()
+
+    act(() => root.render(<div />))
+    vi.advanceTimersByTime(2 * 60_000)
+    await act(async () => {
+      root.render(panel)
+    })
+    expect(loadUsage).toHaveBeenCalledTimes(2)
+  })
+
   it('renders the stat strip, 30-day charts, coverage, and period controls', () => {
     const now = localTime(2026, 8, 15, 18)
 

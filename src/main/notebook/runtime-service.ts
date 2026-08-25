@@ -24,7 +24,9 @@ import type {
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import {
+  isNotebookRunCursor,
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
+  NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT
 } from '../../shared/notebook'
 import type {
@@ -66,9 +68,9 @@ import {
 } from './runtime-paths'
 import type {
   DiscoveredInterpreter,
-  NotebookRuntimeBinding,
   NotebookRuntimeBindings,
   NotebookRuntimeListing,
+  RuntimeBindingOperationResult,
   RuntimeEnablement,
   RuntimeUsage
 } from '../../shared/notebook-runtime'
@@ -107,6 +109,7 @@ import {
   type NotebookExecutorLifecycleCallbacks,
   type NotebookSessionLifecycleCallbacks
 } from './session-lifecycle'
+import { NotebookDependencyAnalyzer } from './dependency-analysis'
 import {
   assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit
@@ -219,6 +222,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
     | 'markPackageMutationDirty'
     | 'refreshAfterPackageMutation'
   >
+  dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
 }
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
@@ -315,6 +319,7 @@ class NotebookRuntimeService {
   private readonly exportReader: NotebookExportReader
   private readonly runTerminalization: NotebookRunTerminalizationOwner
   private readonly executionOwner: NotebookExecutionOwner
+  private readonly dependencyAnalyzer: Pick<NotebookDependencyAnalyzer, 'project'>
   private readonly dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   private readonly packageOperations: NotebookPackageOperations
   private readonly repairPolicy: NotebookRuntimeRepairPolicy
@@ -376,6 +381,16 @@ class NotebookRuntimeService {
       discoverRuntimes: options.discoverRuntimes,
       platform: options.platform
     })
+    this.dependencyAnalyzer =
+      options.dependencyAnalyzer ??
+      new NotebookDependencyAnalyzer({
+        storageRoot: options.dataRoot,
+        repository: this.repository,
+        resolveInterpreter: (run) =>
+          run.runtimeId && (run.kernelKind === 'python' || run.kernelKind === 'r')
+            ? this.runtimeBindingOwner.dependencyInterpreter(run.kernelKind, run.runtimeId)
+            : Promise.resolve(undefined)
+      })
     this.runtimeLogger =
       options.logger ?? (getLogFilePath() ? createLogger('notebook:runtime') : undefined)
     this.environmentOperations = new NotebookEnvironmentOperations({
@@ -394,8 +409,10 @@ class NotebookRuntimeService {
       storageRoot: options.dataRoot,
       defaultProjectId,
       repository: this.repository,
+      dependencyAnalyzer: this.dependencyAnalyzer,
       findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
       runtimeBindings: (session) => this.runtimeBindingOwner.snapshot(session),
+      runtimeEnvironment: (session, language) => this.resolveRunEnv(session, language),
       isRestartRecommended: (processKey) =>
         this.environmentOperations.isRestartRecommended(processKey)
     })
@@ -496,6 +513,13 @@ class NotebookRuntimeService {
       getMcpRpcConnectionResolver: () => this.mcpRpcConnectionResolver,
       notifyAvailable: (session, source) =>
         this.sessionLifecycle.notifyAvailable(session as RuntimeSession, source),
+      projectDependencies: (session, run, interpreter) =>
+        this.dependencyAnalyzer.project({
+          projectId: session.projectId,
+          sessionId: session.sessionId,
+          completedRun: run,
+          ...(interpreter ? { interpreter } : {})
+        }),
       platform: options.platform,
       shellProcess: options.shellProcess
     })
@@ -606,13 +630,26 @@ class NotebookRuntimeService {
   // runtime; refuses re-binding a different runtime (use notebook_switch_runtime to change).
   async bindRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
-  ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
+  ): Promise<RuntimeBindingOperationResult> {
     return this.sessionLifecycle.runProjectOperation(request, () =>
       this.runtimeBindingOwner.runWrite(
         notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
         async () => {
           const session = await this.sessionLifecycle.ensure(request)
-          return this.runtimeBindingOwner.bind(session, request.language, request.runtimeId)
+          return this.runtimeBindingOwner.bind(
+            session,
+            request.language,
+            request.runtimeId,
+            async (binding) => {
+              if (binding.source !== 'external') return
+              const oldEnv = this.resolveRunEnv(session, request.language)
+              const processKey = dataProcessKey(request.language, oldEnv)
+              if (session.kernelStatus(processKey) === undefined) return
+              const kind = request.language === 'r' ? 'r' : 'python'
+              await session.terminateExecutor(kind, oldEnv)
+              await this.tearDownLanguageBinding(session, request.language, oldEnv)
+            }
+          )
         }
       )
     )
@@ -622,7 +659,7 @@ class NotebookRuntimeService {
   // state, then rebind. Refuses a disabled/unknown runtime (same MAIN-process gate as bind).
   async switchRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
-  ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
+  ): Promise<RuntimeBindingOperationResult> {
     return this.sessionLifecycle.runProjectOperation(request, () =>
       this.runtimeBindingOwner.runWrite(
         notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
@@ -641,7 +678,7 @@ class NotebookRuntimeService {
               await this.tearDownLanguageBinding(session, request.language, oldEnv)
             }
           )
-          this.sessionLifecycle.notifyChanged(session)
+          if ('bound' in result) this.sessionLifecycle.notifyChanged(session)
           return result
         }
       )
@@ -778,12 +815,12 @@ class NotebookRuntimeService {
   ): Promise<NotebookRunSummary> {
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       const session = await this.sessionLifecycle.ensure(request)
-      const run = await this.executionOwner.executeDataCell(
+      const { run, dependencyProjection } = await this.executionOwner.executeDataCell(
         session,
         request,
         signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
       )
-      return this.sessionReadModel.toRunSummary(session, run)
+      return this.sessionReadModel.toRunSummary(session, run, dependencyProjection)
     })
   }
 
@@ -864,9 +901,20 @@ class NotebookRuntimeService {
         )
       }
       const runIds = [...new Set(requestedRunIds)]
+      const historyLimit = request.historyLimit ?? NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
+      if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 100)
+        throw new Error('Notebook history limit must be 1-100.')
+      if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
+        throw new Error('Notebook state history cursor is invalid.')
       const session = await this.sessionLifecycle.ensure(request)
       await this.runTerminalization.reconcilePending(session)
-      return this.sessionReadModel.state(session, runIds, request.historySummaryFrameId)
+      return this.sessionReadModel.state(
+        session,
+        runIds,
+        request.historySummaryFrameId,
+        request.historyBefore,
+        historyLimit
+      )
     })
   }
 
@@ -987,9 +1035,10 @@ class NotebookRuntimeService {
   }
 
   // Named-environment management (design D2), delegating to the injected provisioner-backed manager.
-  // create/list return the full current env set; remove REFUSES if any session currently has a live
+  // Only list returns the full current env set; remove REFUSES if any session currently has a live
   // executor process bound to that env name (locked decision — the on-disk env can't be rm-rf'd out
-  // from under a running kernel). Create returns on completion (progress streaming is out of scope).
+  // from under a running kernel). Mutations return bounded operation receipts, and create returns on
+  // completion (progress streaming is out of scope).
   async manageEnvironments(request: ManageEnvironmentsRequest): Promise<ManageEnvironmentsResult> {
     return this.environmentManagement.manage(request)
   }

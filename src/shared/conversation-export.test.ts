@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   createConversationExportDocument,
+  createConversationExportTurns,
   renderConversationHtml,
   renderConversationMarkdown,
   sanitizeExportFilename,
@@ -125,6 +126,100 @@ describe('conversation export projection', () => {
     expect(document.title).toBe('Question Use **Markdown**.')
     expect(document.messages).toHaveLength(2)
     expect(JSON.stringify(document)).not.toContain('Save as skill')
+  })
+
+  it('groups visible messages into prompt-owned turns without relying on response metadata', () => {
+    const session = createSession()
+    session.messages.push(
+      {
+        id: 'message-user-2',
+        role: 'user',
+        content: 'Follow-up question',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1_710_000_004_000,
+        updatedAt: 1_710_000_004_000
+      },
+      {
+        id: 'message-agent-2',
+        role: 'agent',
+        content: 'Follow-up answer',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1_710_000_005_000,
+        updatedAt: 1_710_000_005_000
+      }
+    )
+
+    expect(createConversationExportTurns(session.messages)).toMatchObject([
+      {
+        promptMessageId: 'message-user-id',
+        messages: [{ id: 'message-user-id' }, { id: 'message-agent-id' }]
+      },
+      {
+        promptMessageId: 'message-user-2',
+        messages: [{ id: 'message-user-2' }, { id: 'message-agent-2' }]
+      }
+    ])
+  })
+
+  it('exports selected turns in conversation order and rejects stale prompt ids', () => {
+    const session = createSession()
+    session.messages.push(
+      {
+        id: 'message-user-2',
+        role: 'user',
+        content: 'Follow-up question',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1_710_000_004_000,
+        updatedAt: 1_710_000_004_000
+      },
+      {
+        id: 'message-agent-2',
+        role: 'agent',
+        content: 'Follow-up answer',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1_710_000_005_000,
+        updatedAt: 1_710_000_005_000
+      }
+    )
+
+    const document = createConversationExportDocument(session, 1_710_000_006_000, [
+      'message-user-2'
+    ])
+
+    expect(document.messages.map((message) => message.markdown)).toEqual([
+      'Follow-up question',
+      'Follow-up answer'
+    ])
+    expect(() =>
+      createConversationExportDocument(session, 1_710_000_006_000, ['missing-prompt'])
+    ).toThrow('Selected conversation turns are no longer available.')
+  })
+
+  it('keeps the complete conversation title when the first turn is not selected', () => {
+    const session = createSession()
+    const firstPrompt =
+      'Create a detailed reproducible research note comparing three open-science data management approaches.'
+    session.messages[0].content = firstPrompt
+    session.title = `${firstPrompt.slice(0, 48)}...`
+    session.messages.push({
+      id: 'message-user-2',
+      role: 'user',
+      content: 'Only export this follow-up',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1_710_000_004_000,
+      updatedAt: 1_710_000_004_000
+    })
+
+    const document = createConversationExportDocument(session, 1_710_000_005_000, [
+      'message-user-2'
+    ])
+
+    expect(document.title).toBe(firstPrompt)
   })
 
   it('preserves think tags supplied by the user while removing assistant reasoning blocks', () => {

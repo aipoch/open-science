@@ -1,7 +1,11 @@
-import { readFileSync, readdirSync } from 'node:fs'
-import { extname, relative, resolve } from 'node:path'
+import { relative, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
+
+import {
+  listProductionSources,
+  readProductionSource
+} from '../../../test/architecture-source-index'
 
 const projectRoot = resolve(__dirname, '../../..')
 const hostPath = resolve(__dirname, 'provider-loopback-http-host.ts')
@@ -9,29 +13,12 @@ const adapterPaths = [
   resolve(__dirname, 'anthropic-provider-bridge.ts'),
   resolve(__dirname, 'native-responses-compatibility.ts'),
   resolve(__dirname, 'openai-provider-bridge.ts'),
-  resolve(__dirname, 'responses-bridge.ts')
+  resolve(__dirname, 'responses-bridge.ts'),
+  resolve(__dirname, 'xai-oauth-provider-bridge.ts')
 ]
-const readSource = (path: string): string => readFileSync(path, 'utf8')
+const readSource = (path: string): string => readProductionSource(path, projectRoot)
 const portablePath = (path: string): string => relative(projectRoot, path).replaceAll('\\', '/')
-
-const productionSources = (): string[] => {
-  const sources: string[] = []
-  const visit = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = resolve(directory, entry.name)
-      if (entry.isDirectory()) visit(path)
-      else if (
-        ['.ts', '.tsx'].includes(extname(path)) &&
-        !/\.(?:test|spec)\.[cm]?tsx?$/.test(entry.name)
-      ) {
-        sources.push(path)
-      }
-    }
-  }
-  visit(resolve(projectRoot, 'src'))
-  visit(resolve(projectRoot, 'packages'))
-  return sources
-}
+const productionSources = (): readonly string[] => listProductionSources(projectRoot)
 
 describe('Provider loopback HTTP ownership', () => {
   it('keeps the fixed lifecycle and security envelope in one bounded module', () => {
@@ -51,7 +38,7 @@ describe('Provider loopback HTTP ownership', () => {
     }
   })
 
-  it('keeps the internal host seam limited to the four Provider adapters', () => {
+  it('keeps the internal host seam limited to the declared Provider adapters', () => {
     expect(
       productionSources()
         .filter((path) => path !== hostPath)

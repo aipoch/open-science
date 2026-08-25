@@ -25,6 +25,11 @@ type HostFramesRepository = {
   readSession(projectId: string, sessionId: string): Promise<HostFramesSessionDiagnostic>
 }
 
+type HostFramesReferencedSessionResolver = (
+  context: HostFrameReadContext,
+  sessionId: string
+) => Promise<{ projectId: string } | undefined>
+
 type ArchivedFilter = 'exclude' | 'include' | 'only'
 
 type NormalizedListOptions = {
@@ -363,14 +368,20 @@ const frameProjection = (
 })
 
 class HostFramesService {
-  constructor(private readonly repository: HostFramesRepository) {}
+  constructor(
+    private readonly repository: HostFramesRepository,
+    private readonly resolveReferencedSession?: HostFramesReferencedSessionResolver
+  ) {}
 
   async list(options: unknown, context: HostFrameReadContext): Promise<unknown> {
     const normalized = normalizeListOptions(options)
-    const sessions = normalized.sessionId
-      ? await this.readNarrowedSession(context.projectId, normalized.sessionId)
-      : (await this.repository.readProject(context.projectId)).sessions
-    const frames = sessions.flatMap((session) => {
+    const target = normalized.sessionId
+      ? await this.readNarrowedSession(context, normalized.sessionId)
+      : {
+          projectId: context.projectId,
+          sessions: (await this.repository.readProject(context.projectId)).sessions
+        }
+    const frames = target.sessions.flatMap((session) => {
       if (
         (normalized.archived === 'exclude' && session.archivedAt !== undefined) ||
         (normalized.archived === 'only' && session.archivedAt === undefined)
@@ -405,7 +416,7 @@ class HostFramesService {
         compareOrdinal(left.frame_id, right.frame_id)
     )
     const queryKey = JSON.stringify({
-      projectId: context.projectId,
+      projectId: target.projectId,
       sessionId: normalized.sessionId,
       rootsOnly: normalized.rootsOnly,
       kind: normalized.kind,
@@ -424,7 +435,7 @@ class HostFramesService {
     const page = frames.slice(offset, offset + normalized.limit)
     const nextOffset = offset + page.length
     return {
-      project_id: context.projectId,
+      project_id: target.projectId,
       total_count: frames.length,
       ...(nextOffset < frames.length
         ? {
@@ -441,15 +452,28 @@ class HostFramesService {
   }
 
   private async readNarrowedSession(
-    projectId: string,
+    context: HostFrameReadContext,
     sessionId: string
-  ): Promise<PersistedChatSession[]> {
-    const diagnostic = await this.repository.readSession(projectId, sessionId)
-    if (diagnostic.status === 'found') return [diagnostic.session]
+  ): Promise<{ projectId: string; sessions: PersistedChatSession[] }> {
+    const diagnostic = await this.repository.readSession(context.projectId, sessionId)
+    if (diagnostic.status === 'found') {
+      return { projectId: context.projectId, sessions: [diagnostic.session] }
+    }
     if (diagnostic.status === 'unreadable') {
       throw new Error(`Session is unreadable in the current Project: ${sessionId}`)
     }
-    return []
+    const referenced = await this.resolveReferencedSession?.(context, sessionId)
+    if (!referenced || referenced.projectId === context.projectId) {
+      return { projectId: context.projectId, sessions: [] }
+    }
+    const referencedDiagnostic = await this.repository.readSession(referenced.projectId, sessionId)
+    if (referencedDiagnostic.status === 'unreadable') {
+      throw new Error(`Referenced Session is unreadable: ${sessionId}`)
+    }
+    return {
+      projectId: referenced.projectId,
+      sessions: referencedDiagnostic.status === 'found' ? [referencedDiagnostic.session] : []
+    }
   }
 
   async get(frameId: unknown, options: unknown, context: HostFrameReadContext): Promise<unknown> {
@@ -459,9 +483,9 @@ class HostFramesService {
       )
     }
     const normalized = normalizeGetOptions(options)
-    let sessions: PersistedChatSession[]
+    let target: { projectId: string; sessions: PersistedChatSession[] }
     if (normalized.sessionId) {
-      sessions = await this.readNarrowedSession(context.projectId, normalized.sessionId)
+      target = await this.readNarrowedSession(context, normalized.sessionId)
     } else {
       const project = await this.repository.readProject(context.projectId)
       if (!project.isComplete) {
@@ -469,9 +493,9 @@ class HostFramesService {
           'host.frames.get cannot complete because a current Project Session is unreadable.'
         )
       }
-      sessions = project.sessions
+      target = { projectId: context.projectId, sessions: project.sessions }
     }
-    const matches = sessions.flatMap((session) => {
+    const matches = target.sessions.flatMap((session) => {
       const graph = session.conversationGraph
       const frame = graph?.frames.find((candidate) => candidate.id === frameId)
       return graph && frame ? [{ session, graph, frame }] : []
@@ -488,7 +512,7 @@ class HostFramesService {
     if (!branch) throw new Error(`Frame Branch not found in the current Project: ${branchId}`)
     const path = resolveMessageBranchPath(match.graph, branch.id)
     const binding = {
-      projectId: context.projectId,
+      projectId: target.projectId,
       sessionId: match.session.id,
       frameId: match.frame.id,
       branchId: branch.id
@@ -516,7 +540,7 @@ class HostFramesService {
       (match.session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
     )
     return {
-      project_id: context.projectId,
+      project_id: target.projectId,
       session: {
         session_id: match.session.id,
         session_title: match.session.title,

@@ -11,7 +11,6 @@ import { DATABASE_STARTUP_CHANNELS } from './database-startup'
 const WEB = 'web'
 const LOCAL = 'local'
 const EVENT = 'event'
-const DORMANT_EVENT = 'dormant-event'
 const CLOSE_PANE_EVENT = 'close-pane-event'
 const ELECTRON = 'electron'
 const MAPPED_ELECTRON = 'mapped-electron'
@@ -40,7 +39,7 @@ const SESSION_SAVE_JSON = 'session-save-json-undefined'
 const RUNTIME_VALIDATED = 'runtime-validated'
 
 // prettier-ignore
-type ContractProfile = typeof WEB | typeof LOCAL | typeof EVENT | typeof DORMANT_EVENT | typeof CLOSE_PANE_EVENT | typeof ELECTRON | typeof MAPPED_ELECTRON | typeof SEND | typeof WINDOW_FIND_READY | typeof ELECTRON_EVENT | typeof NATIVE | typeof MAPPED_NATIVE | typeof DELEGATED_NATIVE
+type ContractProfile = typeof WEB | typeof LOCAL | typeof EVENT | typeof CLOSE_PANE_EVENT | typeof ELECTRON | typeof MAPPED_ELECTRON | typeof SEND | typeof WINDOW_FIND_READY | typeof ELECTRON_EVENT | typeof NATIVE | typeof MAPPED_NATIVE | typeof DELEGATED_NATIVE
 
 // prettier-ignore
 type ContractEntry = readonly [member: string, channel: string | null, profile?: ContractProfile, electronCodec?: RendererParameterCodec, webCodec?: RendererParameterCodec, applicationCommand?: typeof RUNTIME_VALIDATED]
@@ -61,9 +60,8 @@ const expandEntry = (
   [member, channel, profile = WEB, electronCodec, webCodec, applicationCommand]: ContractEntry
 ): RendererContractSeed => {
   const isWebRequest = profile === WEB || profile === LOCAL
-  const isDormantEvent = profile === DORMANT_EVENT || profile === CLOSE_PANE_EVENT
-  const isWebEvent = profile === EVENT || isDormantEvent
-  const isElectronEvent = profile === ELECTRON_EVENT
+  const isWebEvent = profile === EVENT
+  const isElectronEvent = profile === ELECTRON_EVENT || profile === CLOSE_PANE_EVENT
   const isNative = profile === NATIVE || profile === MAPPED_NATIVE || profile === DELEGATED_NATIVE
   const kind = isWebEvent || isElectronEvent ? 'event' : 'method'
   const defaultElectronCodec =
@@ -114,20 +112,8 @@ const expandEntry = (
     ),
     eventDeliverability: surface(
       kind === 'event' ? 'electron-ipc' : 'not-event',
-      profile === EVENT
-        ? 'application-event'
-        : isDormantEvent
-          ? 'installed-undelivered'
-          : kind === 'event'
-            ? 'unavailable'
-            : 'not-event',
-      profile === EVENT
-        ? 'application-event'
-        : isDormantEvent
-          ? 'installed-undelivered'
-          : kind === 'event'
-            ? 'unavailable'
-            : 'not-event'
+      profile === EVENT ? 'application-event' : kind === 'event' ? 'unavailable' : 'not-event',
+      profile === EVENT ? 'application-event' : kind === 'event' ? 'unavailable' : 'not-event'
     ),
     authorityFlow: surface(
       kind === 'event' || profile === NATIVE ? 'none' : 'electron-sender',
@@ -172,7 +158,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['compactSession', 'acp:compact-session'], ['connect', 'acp:connect', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY], ['createSession', 'acp:create-session', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY],
     ['continueInterruptedTurn', 'acp:continue-interrupted-turn'], ['deleteSession', 'acp:delete-session'], ['disconnect', 'acp:disconnect'], ['getState', 'acp:get-state'], ['getPlanProjection', 'acp:get-plan-projection'],
     ['resetSessionContext', 'acp:reset-session-context'], ['respondToPermission', 'acp:respond-permission'], ['resumeSession', 'acp:resume-session'],
-    ['respondPlan', 'acp:respond-plan'], ['respondToElicitation', 'acp:respond-elicitation'], ['revokePermissionGrant', 'acp:revoke-permission-grant'], ['saveAsSkill', 'acp:save-as-skill'], ['sendPrompt', 'acp:send-prompt'], ['setPermissionProfile', 'acp:set-permission-profile'],
+    ['respondPlan', 'acp:respond-plan'], ['respondToElicitation', 'acp:respond-elicitation'], ['revokePermissionGrant', 'acp:revoke-permission-grant'], ['saveAsSkill', 'acp:save-as-skill'], ['sendPrompt', 'acp:send-prompt'], ['setPermissionProfile', 'acp:set-permission-profile'], ['steerFollowUp', 'acp:steer-follow-up'],
   ]),
   group('artifacts', 'artifacts', [
     ['finalizeRunArtifacts', 'artifacts:finalize-run'], ['generateCodeReconstruction', 'artifacts:generate-code-reconstruction'], ['getCodeReconstruction', 'artifacts:get-code-reconstruction'],
@@ -235,14 +221,14 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['state', 'notebook:state'],
   ]),
   group('notebook-environment', 'notebookEnv', [
-    ['onProgress', 'notebook-env:progress', DORMANT_EVENT], ['cancel', 'notebook-env:cancel', LOCAL, OPTIONAL_ARGUMENT_SLOT, POSITIONAL], ['getStatus', 'notebook-env:status'],
+    ['onProgress', 'notebook-env:progress', EVENT], ['cancel', 'notebook-env:cancel', LOCAL, OPTIONAL_ARGUMENT_SLOT, POSITIONAL], ['getStatus', 'notebook-env:status'],
     ['provision', 'notebook-env:provision', LOCAL], ['repair', 'notebook-env:repair', LOCAL],
   ]),
   group('notifications', 'notifications', [
     ['getSnapshot', 'notifications:get-snapshot'], ['markAllRead', 'notifications:mark-all-read'], ['markRead', 'notifications:mark-read'],
     ['markSessionCompletionsRead', 'notifications:mark-session-completions-read'],
-    ['onChanged', 'notifications:changed', EVENT], ['onOpenSession', 'notifications:open-session', DORMANT_EVENT],
-    ['onViewProbe', 'notifications:probe-unread-view', DORMANT_EVENT], ['peekPendingOpenSession', 'notifications:peek-pending-open-session'],
+    ['onChanged', 'notifications:changed', EVENT], ['onOpenSession', 'notifications:open-session', ELECTRON_EVENT],
+    ['onViewProbe', 'notifications:probe-unread-view', ELECTRON_EVENT], ['peekPendingOpenSession', 'notifications:peek-pending-open-session'],
     ['syncViewState', 'notifications:sync-unread-view', SEND], ['takePendingOpenSession', 'notifications:take-pending-open-session'],
   ]),
   group('office-preview', 'officePreview', [
@@ -316,13 +302,13 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('sessions', 'sessions', [
     ['exportConversation', 'sessions:export-conversation', MAPPED_ELECTRON], ['onCreated', 'session:created', EVENT], ['onDeleted', 'session:deleted', EVENT],
     ['onFlushAborted', 'sessions:flush-aborted', ELECTRON_EVENT], ['onFlushRequest', 'sessions:flush-request', ELECTRON_EVENT], ['onUpdated', 'session:updated', EVENT], ['deleteSession', 'sessions:delete-session', WEB, undefined, undefined, RUNTIME_VALIDATED],
-    ['loadAll', 'sessions:load-all'], ['loadOne', 'sessions:load-one'], ['saveManifest', 'sessions:save-manifest'],
+    ['list', 'sessions:list'], ['loadAll', 'sessions:load-all'], ['loadOne', 'sessions:load-one'], ['loadUsage', 'sessions:load-usage'], ['saveManifest', 'sessions:save-manifest'],
     ['saveSession', 'sessions:save-session', WEB, SESSION_SAVE, SESSION_SAVE_JSON], ['updateArchive', 'sessions:update-archive'], ['sendFlushResponse', 'sessions:flush-response', SEND],
   ]),
   group('settings', 'settings', [
     ['onChanged', 'settings:changed', EVENT],
     ['addCustomServer', 'settings:add-custom-server'], ['authenticateCustomServer', 'settings:authenticate-custom-server', LOCAL], ['cancelCustomServerAuthentication', 'settings:cancel-custom-server-authentication', LOCAL], ['cancelClaudeLogin', 'settings:cancel-claude-login', LOCAL],
-    ['cancelCodexLogin', 'settings:cancel-codex-login', LOCAL], ['cancelIsolatedClaudeLogin', 'settings:cancel-isolated-claude-login', LOCAL],
+    ['cancelCodexLogin', 'settings:cancel-codex-login', LOCAL], ['cancelIsolatedClaudeLogin', 'settings:cancel-isolated-claude-login', LOCAL], ['beginXaiOAuthLogin', 'settings:begin-xai-oauth-login', LOCAL], ['waitXaiOAuthLogin', 'settings:wait-xai-oauth-login', LOCAL], ['cancelXaiOAuthLogin', 'settings:cancel-xai-oauth-login', LOCAL],
     ['checkEnvironment', 'settings:check-environment'], ['createSkill', 'settings:create-skill'], ['deleteProvider', 'settings:delete-provider'],
     ['deleteSkill', 'settings:delete-skill'], ['detectClaude', 'settings:detect-claude'], ['detectCodex', 'settings:detect-codex'],
     ['detectOpencode', 'settings:detect-opencode'], ['exportCustomServerTemplate', 'settings:export-custom-server-template', ELECTRON], ['exportSkill', 'settings:export-skill', ELECTRON], ['getConnectorDetail', 'settings:get-connector-detail'],
@@ -336,7 +322,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['loginIsolatedClaude', 'settings:login-isolated-claude', LOCAL], ['loginIsolatedClaudeBrowser', 'settings:login-isolated-claude-browser', LOCAL],
     ['loginIsolatedCodex', 'settings:login-isolated-codex', LOCAL], ['loginSharedClaude', 'settings:login-shared-claude', LOCAL],
     ['logoutIsolatedClaude', 'settings:logout-isolated-claude', LOCAL], ['logoutIsolatedCodex', 'settings:logout-isolated-codex', LOCAL],
-    ['logoutSharedClaude', 'settings:logout-shared-claude', LOCAL], ['markOnboardingComplete', 'settings:mark-onboarding-complete'],
+    ['logoutSharedClaude', 'settings:logout-shared-claude', LOCAL], ['logoutXaiOAuth', 'settings:logout-xai-oauth', LOCAL], ['markOnboardingComplete', 'settings:mark-onboarding-complete'],
     ['onConnectorApprovalRequest', 'connectors:approval-request', EVENT], ['onConnectorApprovalSettled', 'connectors:approval-settled', EVENT], ['onConnectorRuntimeChanged', 'settings:connector-runtime-changed', EVENT], ['onInstallLog', 'settings:install-log', EVENT],
     ['onSkillCatalogChanged', 'skills:catalog-changed', EVENT],
     ['onSkillImportApprovalRequest', 'skills:conversation-import-request', EVENT],
@@ -394,15 +380,17 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['abortTransfer', 'uploads:abort-transfer'], ['appendTransfer', 'uploads:append-transfer'], ['beginTransfer', 'uploads:begin-transfer'],
     ['claimLocalFile', 'uploads:claim-local-file'], ['deleteUpload', 'uploads:delete'], ['finalizeSession', 'uploads:finalize-session'],
     ['finishTransfer', 'uploads:finish-transfer'], ['getTransferStatus', 'uploads:transfer-status'],
-    ['onTransferProgress', 'uploads:transfer-progress', DORMANT_EVENT], ['readPreview', 'uploads:read-preview'],
+    ['onTransferProgress', 'uploads:transfer-progress', ELECTRON_EVENT], ['readPreview', 'uploads:read-preview'],
     ['stageLocalFile', 'uploads:stage-local-file', MAPPED_ELECTRON, NATIVE_FILE_UPLOAD], ['stageLocalPath', 'uploads:stage-local-path', LOCAL],
   ]),
   group('window', 'window', [
-    ['announceWindowFindAppearance', 'window:find-appearance-changed', SEND], ['announceWindowFindReady', 'shortcut:window-find-ready', WINDOW_FIND_READY],
+    ['announceWindowFindAppearance', 'window:find-appearance-changed', SEND], ['announceWindowFindContentReady', 'shortcut:window-find-content-ready', SEND],
+    ['announceWindowFindReady', 'shortcut:window-find-ready', WINDOW_FIND_READY],
     ['clearFind', 'window:clear-find-in-page', SEND], ['close', 'window:close', MAPPED_NATIVE], ['closeFind', 'window:find-close', SEND],
     ['findInPage', 'window:find-in-page', SEND], ['onCloseActivePane', 'shortcut:close-active-pane', CLOSE_PANE_EVENT],
     ['onCloseConfirmRequest', 'window:close-confirm-request', ELECTRON_EVENT], ['onFindInPageResult', 'window:find-in-page-result', ELECTRON_EVENT],
-    ['onShowWindowFind', 'window:find-show', ELECTRON_EVENT], ['onWindowFindAppearance', 'window:find-appearance', ELECTRON_EVENT],
+    ['onHideWindowFind', 'window:find-hide', ELECTRON_EVENT], ['onShowWindowFind', 'window:find-show', ELECTRON_EVENT],
+    ['onWindowFindAppearance', 'window:find-appearance', ELECTRON_EVENT],
     ['sendCloseConfirmResponse', 'window:close-confirm-response', SEND],
   ]),
 ])

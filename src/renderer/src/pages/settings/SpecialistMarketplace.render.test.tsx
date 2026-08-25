@@ -160,6 +160,11 @@ describe('Specialist Marketplace settings', () => {
       root.render(<SpecialistMarketplace view={{ kind: 'marketplace' }} onNavigate={onNavigate} />)
     })
 
+    expect(container.querySelector('h2')?.textContent).toBe('Marketplace')
+    expect(container.textContent).toContain(
+      'Browse and install Specialists from configured sources.'
+    )
+    expect(container.querySelector('[role="tablist"]')).toBeNull()
     expect(container.textContent).toContain('Example Specialist')
     expect(container.textContent).toContain('Community')
     expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)

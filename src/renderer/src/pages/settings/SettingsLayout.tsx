@@ -43,10 +43,10 @@ const SettingsSection = ({
     <div
       className={cn('flex flex-wrap items-start justify-between gap-3 sm:gap-4', headerClassName)}
     >
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <h3
           id={titleId}
-          className="flex items-center gap-2 text-base font-semibold text-foreground"
+          className="flex min-w-0 items-center gap-2 break-words text-base font-semibold text-foreground"
         >
           {icon ? (
             <span
@@ -59,14 +59,14 @@ const SettingsSection = ({
           {title}
         </h3>
         {description ? (
-          <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-muted-foreground">
+          <p className="mt-0.5 max-w-2xl break-words text-[13px] leading-5 text-muted-foreground">
             {description}
           </p>
         ) : null}
       </div>
       {action ? <div className={cn('shrink-0', actionClassName)}>{action}</div> : null}
     </div>
-    <div className={cn('mt-3', contentClassName)}>{children}</div>
+    <div className={cn('mt-3 min-w-0', contentClassName)}>{children}</div>
   </section>
 )
 
@@ -92,7 +92,7 @@ const SettingsRow = ({
     className={cn(
       layout === 'standard'
         ? 'grid min-h-14 grid-cols-1 items-center gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,20rem)] sm:gap-6'
-        : 'grid grid-cols-1 gap-3 py-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]',
+        : 'grid grid-cols-1 gap-3 py-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]',
       className
     )}
     {...props}

@@ -582,6 +582,65 @@ describe('SessionPersistenceCoordinator', () => {
     })
   })
 
+  it('publishes the parent Session after every Side chat mutation', async () => {
+    let durable = createSession()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const publishSession = vi.fn()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      publishSession
+    )
+
+    await coordinator.saveSideChatProjection({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      sideChat: createSideChatProjection()
+    })
+    await coordinator.appendSideChatRelay({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      sideChatId: 'side-chat-1',
+      relay: { id: 'relay-1', text: 'Use a black line.', createdAt: 11 }
+    })
+    await coordinator.commitSideChatRelays({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      relayIds: ['relay-1'],
+      promptMessageId: 'main-prompt-1'
+    })
+    await coordinator.clearSideChat({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      sideChatId: 'side-chat-1'
+    })
+
+    expect(publishSession.mock.calls).toEqual(
+      [1, 2, 3, 4].map((revision) => [
+        expect.objectContaining({
+          id: 'session-1',
+          runtimeContext: expect.objectContaining({ revision })
+        }),
+        'runtime-context'
+      ])
+    )
+  })
+
   it('keeps durable relays deliverable after clearing their producer Side chat', async () => {
     let durable = createSession({
       runtimeContext: {
@@ -969,7 +1028,29 @@ describe('SessionPersistenceCoordinator', () => {
       revision: 2,
       plan: createRuntimePlan()
     })
-    expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+    expect(durable.updatedAt).toBe(previousUpdatedAt)
+  })
+
+  it('does not turn an unchanged runtime-context merge into Session activity', async () => {
+    const activityAt = Date.now() - 24 * 60 * 60 * 1_000
+    let durable = createSession({
+      updatedAt: activityAt,
+      runtimeContext: { version: 1, revision: 4 }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.saveSession(structuredClone(durable))
+
+    expect(durable.updatedAt).toBe(activityAt)
   })
 
   it('rejects a stale whole-session snapshot before it replaces newer renderer-owned fields', async () => {
@@ -1567,7 +1648,7 @@ describe('SessionPersistenceCoordinator', () => {
     })
     expect(durable.enabledComputeHosts).toEqual(['ssh:authoritative'])
     expect(durable.selectedComputeHosts).toEqual([])
-    expect(durable.updatedAt).toBeGreaterThan(authorityUpdatedAt)
+    expect(durable.updatedAt).toBe(authorityUpdatedAt)
   })
 
   it('prunes missing Compute Hosts across a complete durable Session catalog', async () => {
@@ -1926,6 +2007,23 @@ describe('SessionPersistenceCoordinator', () => {
       isComplete: true
     })
     expect(loadAllWithDiagnostics).toHaveBeenCalledOnce()
+  })
+
+  it('hydrates complete Session metadata from the SQLite projection', async () => {
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository(),
+      createFileIndex()
+    )
+
+    await coordinator.replaceSessionMetadata(
+      [{ id: 'session-1', projectId: 'project-1', title: 'Projected session' }],
+      true
+    )
+
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Projected session' }],
+      isComplete: true
+    })
   })
 
   it('updates cached Session metadata after a durable save', async () => {
@@ -5438,6 +5536,160 @@ describe('SessionPersistenceCoordinator', () => {
     expect(computeJobs.abortSessionJobDeletion).toHaveBeenCalledWith('project-1', 'session-1')
   })
 
+  it('logs the privacy-safe phase when Session authority deletion fails', async () => {
+    const log = createTestLogger()
+    const coordinator = createDeletionDiagnosticCoordinator(log, {
+      repository: {
+        deleteSession: vi
+          .fn()
+          .mockRejectedValue(
+            new Error('database locked at C:\\Users\\example\\private-study\\open-science.db')
+          )
+      }
+    })
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow(
+      'database locked'
+    )
+    expect(log.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'session-persistence-deletion',
+        operationId: expect.any(String),
+        phase: 'delete-authority',
+        failurePhase: 'delete-authority',
+        outcome: 'failed',
+        errorCategory: 'error',
+        durationMs: expect.any(Number)
+      })
+    )
+    const diagnosticPayload = JSON.stringify(log.error.mock.calls)
+    expect(diagnosticPayload).not.toContain('database locked')
+    expect(diagnosticPayload).not.toContain('private-study')
+    expect(diagnosticPayload).not.toContain('open-science.db')
+  })
+
+  it('distinguishes Session deletion participant failure phases', async () => {
+    const failure = (): Promise<never> => Promise.reject(new Error('participant unavailable'))
+    const session = createSession()
+    const computeJobs = (overrides: {
+      prepareSessionJobDeletion?: () => Promise<void>
+      commitSessionJobDeletion?: () => Promise<void>
+    }): NonNullable<ConstructorParameters<typeof SessionPersistenceCoordinator>[8]> => ({
+      prepareSessionJobDeletion: vi.fn(
+        overrides.prepareSessionJobDeletion ?? (async () => undefined)
+      ),
+      commitSessionJobDeletion: vi.fn(
+        overrides.commitSessionJobDeletion ?? (async () => undefined)
+      ),
+      prepareProjectJobDeletion: vi.fn(async () => undefined),
+      commitProjectJobDeletion: vi.fn(async () => undefined)
+    })
+    const cases: Array<{ phase: string; overrides: DeletionDiagnosticOverrides }> = [
+      {
+        phase: 'prepare-compute-cleanup',
+        overrides: { computeJobs: computeJobs({ prepareSessionJobDeletion: failure }) }
+      },
+      {
+        phase: 'load-authority',
+        overrides: { repository: { loadSessionWithDiagnostics: vi.fn(failure) } }
+      },
+      {
+        phase: 'prepare-upload-cleanup',
+        overrides: {
+          repository: {
+            loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'found' as const, session }))
+          },
+          uploads: { upgradeLegacySessionUploads: vi.fn(failure) }
+        }
+      },
+      {
+        phase: 'prepare-provenance',
+        overrides: {
+          repository: {
+            loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'found' as const, session }))
+          },
+          provenance: { prepareSessionDeletion: vi.fn(failure) }
+        }
+      },
+      {
+        phase: 'soft-delete-file-index',
+        overrides: {
+          repository: {
+            loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'found' as const, session }))
+          },
+          fileIndex: { softDeleteSession: vi.fn(failure) }
+        }
+      },
+      {
+        phase: 'commit-compute-cleanup',
+        overrides: { computeJobs: computeJobs({ commitSessionJobDeletion: failure }) }
+      },
+      {
+        phase: 'complete-provenance',
+        overrides: {
+          repository: {
+            loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'found' as const, session }))
+          },
+          provenance: { completeSessionDeletion: vi.fn(failure) }
+        }
+      }
+    ]
+
+    for (const testCase of cases) {
+      const log = createTestLogger()
+      await expect(
+        createDeletionDiagnosticCoordinator(log, testCase.overrides).deleteSession(
+          'project-1',
+          'session-1'
+        )
+      ).rejects.toThrow('participant unavailable')
+      expect(log.error).toHaveBeenCalledWith(
+        'operation failed',
+        expect.objectContaining({
+          operation: 'session-persistence-deletion',
+          failurePhase: testCase.phase,
+          outcome: 'failed'
+        })
+      )
+    }
+  })
+
+  it('logs the failed recovery phase without losing the original deletion phase', async () => {
+    const session = createSession()
+    const log = createTestLogger()
+    const coordinator = createDeletionDiagnosticCoordinator(log, {
+      repository: {
+        loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'found' as const, session })),
+        deleteSession: vi.fn().mockRejectedValue(new Error('authority unavailable'))
+      },
+      fileIndex: {
+        restoreSession: vi.fn().mockRejectedValue(new Error('file index unavailable'))
+      },
+      computeJobs: {
+        prepareSessionJobDeletion: vi.fn(async () => undefined),
+        commitSessionJobDeletion: vi.fn(async () => undefined),
+        prepareProjectJobDeletion: vi.fn(async () => undefined),
+        commitProjectJobDeletion: vi.fn(async () => undefined),
+        abortSessionJobDeletion: vi.fn(async () => undefined)
+      }
+    })
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow(
+      'file index unavailable'
+    )
+    expect(log.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'session-persistence-deletion',
+        phase: 'delete-authority',
+        failurePhase: 'delete-authority',
+        recoveryPhase: 'restore-file-index',
+        outcome: 'failed'
+      })
+    )
+  })
+
   it('keeps Session authority deleted when post-authority Compute cleanup fails', async () => {
     const session = createSession()
     const repository = createSessionRepository({
@@ -5627,6 +5879,30 @@ const createProvenancePersistence = (
   abortSessionDeletion: vi.fn().mockResolvedValue(undefined),
   ...overrides
 })
+
+type DeletionDiagnosticOverrides = {
+  repository?: Partial<SessionMutationRepository>
+  fileIndex?: Partial<SessionFileIndex>
+  provenance?: Partial<SessionProvenancePersistence>
+  uploads?: ConstructorParameters<typeof SessionPersistenceCoordinator>[4]
+  computeJobs?: ConstructorParameters<typeof SessionPersistenceCoordinator>[8]
+}
+
+const createDeletionDiagnosticCoordinator = (
+  log: Logger,
+  overrides: DeletionDiagnosticOverrides = {}
+): SessionPersistenceCoordinator =>
+  new SessionPersistenceCoordinator(
+    createSessionRepository(overrides.repository),
+    createFileIndex(overrides.fileIndex),
+    undefined,
+    overrides.provenance ? createProvenancePersistence(overrides.provenance) : undefined,
+    overrides.uploads,
+    undefined,
+    undefined,
+    log,
+    overrides.computeJobs
+  )
 
 const createDeferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
   let resolve!: (value: T) => void

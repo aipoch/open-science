@@ -148,14 +148,13 @@ describe('AcpPromptOutcomeFinalizer', () => {
       'state',
       'artifact:publish',
       'event:stop',
-      'compact',
       'prepared:close',
       'artifact:dispose',
       'interaction:before-release',
       'permission:clear',
       'context:supersede',
-      'interaction:after-release',
       'prompt:end',
+      'interaction:after-release',
       'state',
       'skill:completed',
       'activity'
@@ -341,6 +340,19 @@ describe('AcpPromptOutcomeFinalizer', () => {
       providerError: true
     },
     {
+      name: 'Claude Code API connection refused with an unknown error kind',
+      error: Object.assign(
+        new Error('Internal error: API Error: Unable to connect to API (ConnectionRefused)'),
+        {
+          code: -32603,
+          data: { errorKind: 'unknown' },
+          name: 'RequestError'
+        }
+      ),
+      recoverable: undefined,
+      providerError: true
+    },
+    {
       name: 'ACP error',
       error: new Error('protocol failed'),
       recoverable: undefined,
@@ -398,6 +410,28 @@ describe('AcpPromptOutcomeFinalizer', () => {
     expect(harness.context.supersede).toHaveBeenCalledOnce()
     expect(harness.handles.prepared?.close).toHaveBeenCalledOnce()
   })
+
+  it.each([
+    { stopReason: 'end_turn' as const, terminal: 'stop' as const },
+    { stopReason: 'cancelled' as const, terminal: 'cancelled' as const }
+  ])(
+    'does not wait on automatic compaction after a $stopReason provider stop',
+    async ({ stopReason, terminal }) => {
+      const harness = createHarness()
+      const compact = deferred()
+      harness.handles.autoCompactIfNeeded = vi.fn(async () => compact.promise)
+      expect(harness.interactions.captureTerminal(harness.interaction, terminal)).toBe(true)
+
+      const finalization = new AcpPromptOutcomeFinalizer().finalize(
+        harness.handles,
+        stopped({ stopReason })
+      )
+      await finalization
+      expect(harness.handles.autoCompactIfNeeded).not.toHaveBeenCalled()
+      expect(harness.interactions.current('s1')).toBeUndefined()
+      compact.resolve()
+    }
+  )
 
   it('publishes a cancelled stop for a current prompt that was not dispatched', async () => {
     const harness = createHarness({ now: () => 456 })

@@ -49,9 +49,10 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   const networkProxy = useSettingsStore((state) => state.networkProxy)
   const setPackageMirror = useSettingsStore((state) => state.setPackageMirror)
   const isOnline = useNetworkStore((state) => state.isOnline)
-  // End-to-end reachability is owned by the network store (probed on startup, recovery, a
-  // background cadence, and Retry), so this panel and the header/sidebar indicators never
-  // disagree. 'unknown' renders as Checking…; 'probe-failed' remains retryable.
+  // End-to-end reachability is owned by the network store (probed on startup, recovery,
+  // returning to the window while a previous probe is still failing, and Retry), so this
+  // panel and the header/sidebar indicators never disagree. 'unknown' renders as Checking…;
+  // 'probe-failed' remains retryable.
   const connectivity = useNetworkStore((state) => state.connectivity)
   const probeConnectivity = useNetworkStore((state) => state.probeConnectivity)
 
@@ -60,14 +61,30 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   const [isSaving, setIsSaving] = useState(false)
   const [message, setMessage] = useState<string | undefined>(undefined)
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null)
+  const [networkInfoError, setNetworkInfoError] = useState(false)
+  const networkInfoRequestRef = useRef(0)
 
   // Local interface details come from the main process; window.api.network is Electron-only,
-  // so stay with placeholders when the preload bridge is unavailable.
+  // so stay with placeholders when the preload bridge is unavailable. A rejected IPC call is
+  // an explicit load failure, not "no interface". Overlapping refreshes (list remount, Retry)
+  // keep only the latest response so a stale rejection cannot wipe a newer success.
   const refreshNetworkInfo = useCallback((): void => {
     const getInfo = window.api?.network?.getInfo
     if (!getInfo) return
+    const request = ++networkInfoRequestRef.current
 
-    void getInfo().then((info) => setNetworkInfo(info))
+    void getInfo().then(
+      (info) => {
+        if (request !== networkInfoRequestRef.current) return
+        setNetworkInfo(info)
+        setNetworkInfoError(false)
+      },
+      () => {
+        if (request !== networkInfoRequestRef.current) return
+        setNetworkInfo(null)
+        setNetworkInfoError(true)
+      }
+    )
   }, [])
 
   // Pull local interface details when the list view mounts while online, and re-pull whenever
@@ -126,16 +143,18 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   // Connection type + IP fold into the check row's detail line, e.g. "Wi-Fi · 192.168.1.42".
   const typeSource = networkInfo ? CONNECTION_TYPE_LABELS[networkInfo.connectionType] : undefined
   const typeLabel = typeSource ? t(typeSource) : undefined
-  const interfaceDetail =
-    [typeLabel ?? null, networkInfo?.ipAddress ?? null]
-      .filter((part) => part !== null)
-      .join(' · ') || undefined
+  const interfaceDetail = networkInfoError
+    ? t('Could not load local network details.')
+    : [typeLabel ?? null, networkInfo?.ipAddress ?? null]
+        .filter((part) => part !== null)
+        .join(' · ') || undefined
 
   const networkLabel = t('Internet connection')
 
   // The Network status row is an EnvironmentCheckItem so it renders with the exact same row
   // component as the onboarding environment step's network check. A live link with unreachable
-  // internet is amber (warning) rather than red — the machine is connected, the path out is not.
+  // package registries is amber (warning) rather than red — the machine is connected, the
+  // path to npmjs / npmmirror is not.
   const networkCheck: EnvironmentCheckItem = !isOnline
     ? {
         id: NETWORK_CHECK_ID,
@@ -148,7 +167,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
           id: NETWORK_CHECK_ID,
           label: networkLabel,
           status: 'warning',
-          summary: t('The network link is up, but the internet is unreachable.'),
+          summary: t('The network link is up, but package registries are unreachable.'),
           detail: interfaceDetail
         }
       : connectivity === 'probe-failed'
@@ -156,14 +175,14 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
             id: NETWORK_CHECK_ID,
             label: networkLabel,
             status: 'warning',
-            summary: t('Could not check whether the internet is reachable.'),
+            summary: t('Could not check whether package registries are reachable.'),
             detail: interfaceDetail
           }
         : {
             id: NETWORK_CHECK_ID,
             label: networkLabel,
             status: 'passed',
-            summary: t('The internet is reachable.'),
+            summary: t('Package registries are reachable.'),
             detail: interfaceDetail
           }
 
@@ -186,7 +205,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
         <section aria-label={t('Network status')}>
           <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Network status')}</h3>
           <p className="mb-3 text-xs text-muted-foreground">
-            {t('Whether this machine can currently reach the internet.')}
+            {t('Whether this machine can currently reach the package registries.')}
           </p>
 
           <div className="rounded-xl border border-border px-4">

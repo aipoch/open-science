@@ -141,14 +141,14 @@ When `caps.lineage === true`, start with
 Artifact content. `options` accepts only `direction` (`'up'` by default or `'down'`), `maxDepth`
 (default 5, maximum 20), and `maxNodes` (default 100, maximum 500). Graphs use stable BFS order;
 an Upload is an upstream leaf and may be a downstream root. A truncated result includes a reason
-and `frontier_version_ids` for a narrower follow-up query.
+and `frontierVersionIds` for a narrower follow-up query.
 
 ```javascript
 const caps = await host.capabilities()
 if (caps.lineage === true) {
   const graph = await host.lineage.graph(versionId)
-  const generated = graph.nodes.find((node) => !node.is_user_upload)
-  const provenance = generated ? await host.lineage.get(generated.version_id) : undefined
+  const generated = graph.nodes.find((node) => !node.isUserUpload)
+  const provenance = generated ? await host.lineage.get(generated.versionId) : undefined
 }
 ```
 
@@ -170,13 +170,13 @@ When `caps.frames === true`, use `await host.frames.list(options)` for a metadat
 Sessions in the token-owned current Project. It never searches message bodies. Optional camelCase
 fields are `search`, `sessionId`, `rootsOnly` (default `true`), `kind`, `archived`
 (`exclude`/`include`/`only`, default `exclude`), `after`, `before`, `cursor`, and `limit` (default 20,
-maximum 100). Metadata search fuzzily matches Session title, `agent_name`, and `delegate_name`.
+maximum 100). Metadata search fuzzily matches Session title, `agentName`, and `delegateName`.
 
 Use `await host.frames.get(frameId, options)` with an exact full Frame ID to read one visible
 conversation path. `sessionId` may narrow or disambiguate within the current Project. `branchId`
 selects a specific Branch; without it, the Frame's active Branch is used. The latest 40 messages are
 returned chronologically by default, with a maximum of 100. Pass `before` with the returned
-`previous_cursor` to page backward through older messages.
+`previousCursor` to page backward through older messages.
 
 The result contains frozen Project, Session, Frame, Branch, visible transcript, and sanitized runtime
 segment projections. Messages follow the selected Branch graph rather than stored array order. The

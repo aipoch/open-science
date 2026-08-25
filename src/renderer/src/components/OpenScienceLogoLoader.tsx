@@ -14,6 +14,12 @@ const MIN_FRAME_INTERVAL_MS = 1000 / MAX_ANIMATION_FPS
 // The startup surface is short-lived; 2x keeps the logo crisp without allocating a 3x/4x canvas.
 const MAX_DEVICE_PIXEL_RATIO = 2
 const FALLBACK_CANVAS_SIZE = 448
+let animationStartedAt: number | undefined
+
+const resolveAnimationTime = (now: number): number => {
+  animationStartedAt ??= now
+  return now - animationStartedAt
+}
 
 const OpenScienceLogoLoader = (): React.JSX.Element => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -31,7 +37,6 @@ const OpenScienceLogoLoader = (): React.JSX.Element => {
     let metrics: LogoCanvasMetrics = { width: 1, height: 1, dpr: 1 }
     let particles: LogoParticle[] = []
     let color = getComputedStyle(canvas).color
-    let animationStartedAt = performance.now()
     let lastDrawnAt: number | undefined
 
     const draw = (time: number): void => {
@@ -47,21 +52,24 @@ const OpenScienceLogoLoader = (): React.JSX.Element => {
 
     const animate = (now: number): void => {
       if (lastDrawnAt === undefined || now - lastDrawnAt >= MIN_FRAME_INTERVAL_MS) {
-        draw(now - animationStartedAt)
+        draw(resolveAnimationTime(now))
         lastDrawnAt = now
       }
       animationFrame = requestAnimationFrame(animate)
     }
 
-    const restartAnimation = (): void => {
+    const restartLoop = (): void => {
       if (animationFrame !== undefined) cancelAnimationFrame(animationFrame)
 
       animationFrame = undefined
-      animationStartedAt = performance.now()
-      lastDrawnAt = undefined
+      const now = performance.now()
+      lastDrawnAt = now
 
       if (prefersReducedMotion) draw(0)
-      else animationFrame = requestAnimationFrame(animate)
+      else {
+        draw(resolveAnimationTime(now))
+        animationFrame = requestAnimationFrame(animate)
+      }
     }
 
     const resize = (): void => {
@@ -79,12 +87,12 @@ const OpenScienceLogoLoader = (): React.JSX.Element => {
       metrics = { width, height, dpr }
       particles = createLogoParticles(metrics)
       color = getComputedStyle(canvas).color
-      restartAnimation()
+      restartLoop()
     }
 
     const handleMotionPreferenceChange = (event: MediaQueryListEvent): void => {
       prefersReducedMotion = event.matches
-      restartAnimation()
+      restartLoop()
     }
 
     const handleDevicePixelRatioChange = (): void => {

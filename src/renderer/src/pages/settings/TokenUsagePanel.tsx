@@ -1,15 +1,21 @@
-import { ChartNoAxesCombined, Info } from 'lucide-react'
+import { ChartNoAxesCombined, Info, Loader2, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import type {
+  PersistedChatSession,
+  SessionUsageProjection
+} from '../../../../shared/session-persistence'
 import type { Project } from '../../../../shared/projects'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useRelativeTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
+import { SettingsIconAction } from './SettingsLayout'
 import {
   buildTokenUsageAnalytics,
+  buildTokenUsageAnalyticsFromProjection,
   selectTokenUsageSummary,
   tokenUsageMetricValue,
   type TokenUsageDailyPoint,
@@ -24,6 +30,32 @@ type TokenUsagePanelProps = {
   sessions: readonly PersistedChatSession[]
   projects: readonly Project[]
   now?: number
+}
+
+type UsageProjectionLoadResult = Readonly<{
+  projection?: SessionUsageProjection
+  failed?: boolean
+  lastRefreshedAt?: number
+}>
+
+type LoadUsage = () => Promise<SessionUsageProjection>
+
+const USAGE_PROJECTION_CACHE_TTL_MS = 10 * 60_000
+const usageProjectionCache = new WeakMap<LoadUsage, UsageProjectionLoadResult>()
+
+const readCachedUsageProjection = (
+  loadUsage: LoadUsage | undefined
+): UsageProjectionLoadResult | undefined => {
+  if (!loadUsage) return undefined
+  const cached = usageProjectionCache.get(loadUsage)
+  if (
+    cached?.lastRefreshedAt !== undefined &&
+    Date.now() - cached.lastRefreshedAt < USAGE_PROJECTION_CACHE_TTL_MS
+  ) {
+    return cached
+  }
+  usageProjectionCache.delete(loadUsage)
+  return undefined
 }
 
 const PERIODS: ReadonlyArray<{ value: TokenUsagePeriod; label: string; shortLabel: string }> = [
@@ -76,10 +108,57 @@ function TokenUsagePanel({
   now: providedNow
 }: TokenUsagePanelProps): React.JSX.Element {
   const { t, i18n } = useTranslation()
+  const formatRelative = useRelativeTimeFormat()
   const [currentTime, setCurrentTime] = useState(() => Date.now())
+  const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now())
   const now = providedNow ?? currentTime
   const [period, setPeriod] = useState<TokenUsagePeriod>('30-days')
   const [heatmapMetric, setHeatmapMetric] = useState<TokenUsageHeatmapMetric>('totalTokens')
+  const loadUsage = window.api?.sessions?.loadUsage
+  const [initialCachedUsageProjection] = useState(() => readCachedUsageProjection(loadUsage))
+  const [usageProjectionLoadResult, setUsageProjectionLoadResult] = useState<
+    UsageProjectionLoadResult | undefined
+  >(initialCachedUsageProjection)
+  const [usageProjectionLoadAttempt, setUsageProjectionLoadAttempt] = useState(0)
+  const canLoadUsageProjection = typeof loadUsage === 'function'
+  const [isUsageProjectionRefreshing, setIsUsageProjectionRefreshing] = useState(
+    canLoadUsageProjection && initialCachedUsageProjection === undefined
+  )
+  const usageProjection = usageProjectionLoadResult?.projection
+  const usageProjectionLoadSettled = usageProjectionLoadResult !== undefined
+  const usageProjectionLoadFailed = usageProjectionLoadResult?.failed === true
+  const lastRefreshedAt = usageProjectionLoadResult?.lastRefreshedAt
+
+  useEffect(() => {
+    if (typeof loadUsage !== 'function') return
+    if (usageProjectionLoadAttempt === 0 && initialCachedUsageProjection !== undefined) return
+    let active = true
+    void loadUsage()
+      .then((projection) => {
+        if (!active) return
+        const refreshedAt = Date.now()
+        const result = { projection, lastRefreshedAt: refreshedAt }
+        usageProjectionCache.set(loadUsage, result)
+        setUsageProjectionLoadResult(result)
+        setCurrentTime(refreshedAt)
+        setRelativeTimeNow(refreshedAt)
+      })
+      .catch(() => {
+        if (active) setUsageProjectionLoadResult((current) => ({ ...current, failed: true }))
+      })
+      .finally(() => {
+        if (active) setIsUsageProjectionRefreshing(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [initialCachedUsageProjection, loadUsage, usageProjectionLoadAttempt])
+
+  useEffect(() => {
+    if (lastRefreshedAt === undefined) return
+    const intervalId = window.setInterval(() => setRelativeTimeNow(Date.now()), 60_000)
+    return () => window.clearInterval(intervalId)
+  }, [lastRefreshedAt])
 
   useEffect(() => {
     if (providedNow !== undefined) return
@@ -103,8 +182,11 @@ function TokenUsagePanel({
   }, [providedNow])
 
   const analytics = useMemo(
-    () => buildTokenUsageAnalytics(sessions, now, projects),
-    [sessions, now, projects]
+    () =>
+      usageProjection
+        ? buildTokenUsageAnalyticsFromProjection(usageProjection, now)
+        : buildTokenUsageAnalytics(sessions, now, projects),
+    [sessions, usageProjection, now, projects]
   )
   const summary = useMemo(() => selectTokenUsageSummary(analytics, period), [analytics, period])
   const numberFormatter = useMemo(
@@ -220,11 +302,102 @@ function TokenUsagePanel({
       output: formatNumber(point.outputTokens)
     })
 
+  const refreshUsageProjection = (): void => {
+    setIsUsageProjectionRefreshing(true)
+    setUsageProjectionLoadResult((current) =>
+      current?.projection ? { ...current, failed: false } : undefined
+    )
+    setUsageProjectionLoadAttempt((attempt) => attempt + 1)
+  }
+
+  if (canLoadUsageProjection && usageProjectionLoadFailed && usageProjection === undefined) {
+    return (
+      <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
+        <div role="alert" data-slot="token-usage-load-error" className="px-4 py-6 sm:px-5">
+          <p className="text-sm text-destructive">{t('Could not load token usage.')}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={refreshUsageProjection}
+          >
+            {t('Try again')}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  if (canLoadUsageProjection && usageProjection === undefined && !usageProjectionLoadSettled) {
+    return (
+      <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
+        <section
+          role="status"
+          aria-busy="true"
+          data-slot="token-usage-loading"
+          className="animate-pulse px-4 pb-6 pt-6 motion-reduce:animate-none sm:px-5"
+        >
+          <span className="sr-only">{t('Loading…')}</span>
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+            <div className="space-y-3">
+              <div className="h-7 w-40 rounded-md bg-muted" />
+              <div className="h-4 w-full max-w-md rounded bg-muted" />
+            </div>
+            <div className="h-11 w-full rounded-lg bg-muted lg:w-96" />
+          </div>
+
+          <div className="mt-5 flex min-h-7 items-center justify-between">
+            <div className="h-3 w-24 rounded bg-muted" />
+            <div className="size-7 rounded-md bg-muted" />
+          </div>
+
+          <div className="mt-3 border-y border-border py-5">
+            <div className="grid grid-cols-2 gap-x-5 gap-y-5 lg:grid-cols-4">
+              {Array.from({ length: 4 }, (_, index) => (
+                <div key={index} data-slot="token-usage-skeleton-stat" className="space-y-2">
+                  <div className="h-3 w-20 rounded bg-muted" />
+                  <div className="h-7 w-28 rounded-md bg-muted" />
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 grid grid-cols-2 gap-x-5 gap-y-5 lg:grid-cols-4">
+              {Array.from({ length: 4 }, (_, index) => (
+                <div key={index} data-slot="token-usage-skeleton-stat" className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="h-3 w-20 rounded bg-muted" />
+                    <div className="h-6 w-16 rounded-md bg-muted" />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="h-3 w-24 rounded bg-muted" />
+                    <div className="h-6 w-20 rounded-md bg-muted" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-8 pt-7">
+            <div data-slot="token-usage-skeleton-chart" className="space-y-4">
+              <div className="h-5 w-36 rounded bg-muted" />
+              <div className="h-36 rounded-xl bg-muted/70" />
+            </div>
+            <div data-slot="token-usage-skeleton-chart" className="space-y-4">
+              <div className="h-5 w-44 rounded bg-muted" />
+              <div className="h-40 rounded-xl bg-muted/70" />
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+  }
+
   return (
     <TooltipProvider delayDuration={200}>
       <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
         <section className="flex flex-col gap-5 px-4 pb-5 pt-6 sm:px-5">
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <div className="min-w-0 max-w-xl">
               <h1 className="min-w-0 text-xl font-semibold tracking-tight text-foreground [overflow-wrap:anywhere]">
                 {t('Token usage')}
@@ -236,7 +409,7 @@ function TokenUsagePanel({
             <div
               role="group"
               aria-label={t('Time range')}
-              className="grid w-full grid-cols-4 gap-1 rounded-lg bg-muted p-1 sm:w-auto"
+              className="grid w-full grid-cols-4 gap-1 rounded-lg bg-muted p-1 lg:w-auto"
             >
               {PERIODS.map((item) => (
                 <Button
@@ -260,8 +433,59 @@ function TokenUsagePanel({
             </div>
           </div>
 
+          {canLoadUsageProjection ? (
+            <div className="-mt-2 flex min-h-7 items-center justify-between gap-3">
+              <p
+                role="status"
+                aria-live="polite"
+                className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+              >
+                {isUsageProjectionRefreshing ? (
+                  <>
+                    <Loader2
+                      className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                    <span className="font-medium text-foreground">{t('Refreshing…')}</span>
+                    {lastRefreshedAt ? (
+                      <span className="truncate">
+                        ·{' '}
+                        {t('Updated {{time}}', {
+                          time: formatRelative(lastRefreshedAt, relativeTimeNow)
+                        })}
+                      </span>
+                    ) : null}
+                  </>
+                ) : lastRefreshedAt ? (
+                  <span>
+                    {t('Updated {{time}}', {
+                      time: formatRelative(lastRefreshedAt, relativeTimeNow)
+                    })}
+                  </span>
+                ) : null}
+              </p>
+              <SettingsIconAction
+                label={t('Refresh')}
+                icon={RefreshCw}
+                disabled={isUsageProjectionRefreshing}
+                className={
+                  isUsageProjectionRefreshing
+                    ? '[&_svg]:animate-spin motion-reduce:[&_svg]:animate-none'
+                    : ''
+                }
+                onClick={refreshUsageProjection}
+              />
+            </div>
+          ) : null}
+
+          {usageProjectionLoadFailed ? (
+            <p role="alert" className="-mt-2 text-xs text-destructive">
+              {t('Could not load token usage.')}
+            </p>
+          ) : null}
+
           <div data-slot="token-usage-summary" className="border-y border-border py-5">
-            <div className="grid grid-cols-2 gap-x-5 gap-y-5 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-x-5 gap-y-5 lg:grid-cols-4">
               {tokenSummaryItems.map((item) => (
                 <div key={item.label} className="min-w-0">
                   <p
@@ -291,7 +515,7 @@ function TokenUsagePanel({
               ))}
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-x-5 gap-y-5 sm:grid-cols-4">
+            <div className="mt-5 grid grid-cols-2 gap-x-5 gap-y-5 lg:grid-cols-4">
               {entitySummaryItems.map((item) => (
                 <div key={item.totalLabel} className="grid min-w-0 gap-5">
                   {item.newLabel && item.newValue ? (

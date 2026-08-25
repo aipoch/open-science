@@ -1,9 +1,9 @@
 import * as acp from '@agentclientprotocol/sdk'
-import type { ClientConnection } from '@agentclientprotocol/sdk'
+import type { ClientConnection, SetProviderRequest } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 
 import type { AcpConnectRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
-import type { AgentFramework } from '../agent-framework'
+import type { AgentFramework, AgentProviderConfiguration } from '../agent-framework'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type { AcpAgentConnectionCandidate } from './agent-connection-adapter'
 import type {
@@ -11,9 +11,27 @@ import type {
   AcpConnectionResourceOwner,
   AcpConnectionResourceReadyHandle
 } from './connection-resource-owner'
+import { retainInitializeCapabilities } from './native-follow-up'
 
 type LifecycleEvent = Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
 type TransferredConnection = ReturnType<AcpAgentConnectionCandidate['transferTo']>
+
+const resolveFallbackProviderConfiguration = async (
+  connection: TransferredConnection,
+  requested: AgentProviderConfiguration
+): Promise<SetProviderRequest | undefined> => {
+  const { providers } = await connection.listProviders()
+  const exact = providers.find(
+    (provider) =>
+      provider.providerId === requested.providerId && provider.supported.includes(requested.apiType)
+  )
+  if (exact) return undefined
+
+  const compatible = providers.filter((provider) => provider.supported.includes(requested.apiType))
+  return compatible.length === 1
+    ? { ...requested, providerId: compatible[0].providerId }
+    : undefined
+}
 
 type AcpConnectionLifecycleWorkflowOptions = Readonly<{
   appVersion: string
@@ -161,20 +179,32 @@ class AcpConnectionLifecycleWorkflow {
         attempt.assertCurrent()
       }
       if (initializeMaterial?.providerConfiguration) {
-        await transferred.setProvider(initializeMaterial.providerConfiguration)
-        attempt.assertCurrent()
+        try {
+          await transferred.setProvider(initializeMaterial.providerConfiguration)
+          attempt.assertCurrent()
+        } catch (cause) {
+          if (!(cause instanceof acp.RequestError) || cause.code !== -32602) throw cause
+          attempt.assertCurrent()
+          // Codex ACP 1.1.4 advertises `custom-gateway`; 1.6.2 advertises `openai`.
+          // Retry only when the adapter itself exposes one unambiguous compatible slot.
+          const fallback = await resolveFallbackProviderConfiguration(
+            transferred,
+            initializeMaterial.providerConfiguration
+          )
+          if (!fallback) throw cause
+          attempt.assertCurrent()
+          await transferred.setProvider(fallback)
+          attempt.assertCurrent()
+        }
       }
 
-      const handle = attempt.publish({
-        close: Boolean(initResult.agentCapabilities?.sessionCapabilities?.close),
-        delete: Boolean(initResult.agentCapabilities?.sessionCapabilities?.delete),
-        resume: Boolean(initResult.agentCapabilities?.sessionCapabilities?.resume)
-      })
+      const handle = attempt.publish(retainInitializeCapabilities(initResult))
       log.info('agent initialized', {
         protocolVersion: initResult.protocolVersion,
         supportsSessionClose: handle.capabilities.close,
         supportsSessionDelete: handle.capabilities.delete,
-        supportsSessionResume: handle.capabilities.resume
+        supportsSessionResume: handle.capabilities.resume,
+        supportsSteering: handle.capabilities.steering
       })
       this.options.pushEvent({
         kind: 'system',

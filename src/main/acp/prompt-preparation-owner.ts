@@ -20,7 +20,9 @@ import type {
   AcpSessionPresentationPolicy,
   AcpSessionToolingAvailability
 } from './session-presentation-policy'
+import type { SessionCapabilityPolicy } from './session-capability-owner'
 import type { TurnSkillHandle } from './turn-skill-owner'
+import { buildSessionReferencePrompt } from './session-reference-prompt'
 
 const log = createLogger('acp-prompt-preparation-owner')
 type SelectBridgeSkills = NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
@@ -66,6 +68,7 @@ type AcpPromptPreparationInput = Readonly<{
   connectionGeneration?: number
   backend: AcpBackendGenerationView
   tooling: AcpSessionToolingAvailability
+  role?: SessionCapabilityPolicy['role']
   specialistPrefix?: string
   sessionSetupPromptPrefix?: string
   projectId: string
@@ -181,15 +184,14 @@ class AcpPromptPreparationOwner {
       const promptPrefix = this.options.presentation.buildTurnPromptPrefix({
         framework: input.backend.framework,
         tooling: input.tooling,
+        role: input.role,
         backendSystemPromptAppends: input.backend.prompt.systemPromptAppends,
         persistentSystemPrompt: input.backend.prompt.persistentSystemPrompt,
         sessionOptions: input.backend.session.options,
         specialistPrefix: input.specialistPrefix,
         sessionSetupPromptPrefix: input.sessionSetupPromptPrefix,
         turnPromptReminders: [
-          ...(skillPreparation.specialistSkillGuidance
-            ? [skillPreparation.specialistSkillGuidance]
-            : []),
+          ...(skillPreparation.skillScopeGuidance ? [skillPreparation.skillScopeGuidance] : []),
           ...(computeExecutionTargetReminder ? [computeExecutionTargetReminder] : []),
           ...(input.turnPromptReminders ?? [])
         ]
@@ -206,6 +208,7 @@ class AcpPromptPreparationOwner {
         input.request.historyPreamble,
         notebookHandoff ? notebookHandoffPrompt(notebookHandoff) : undefined,
         promptPrefix,
+        buildSessionReferencePrompt(input.request.referencedSessions),
         skillPreparation.text
       ]
         .filter((segment): segment is string => Boolean(segment))
@@ -265,7 +268,7 @@ class AcpPromptPreparationOwner {
           promptMessageId:
             input.request.provenanceContext?.promptMessageId ??
             input.fallbackPromptMessageId ??
-            `prompt-unbound-${input.request.sessionId}`,
+            `prompt-unbound-${input.request.sessionId}-${input.skillImportTurnToken}`,
           uploads: prepared.turnInputs.uploads,
           references: prepared.turnInputs.references
         })

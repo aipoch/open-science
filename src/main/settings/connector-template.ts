@@ -10,6 +10,7 @@ import type {
 } from '../../shared/settings'
 import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings'
 import { isCustomConnectorName } from '../../shared/custom-connector'
+import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
 
 export type ConnectorTemplateSource = {
   id: string
@@ -49,7 +50,8 @@ const OAUTH_FIELDS = new Set([
   'client_metadata_url',
   'authorization_server_url',
   'scopes',
-  'client_id'
+  'client_id',
+  'redirect_uri'
 ])
 const TRANSPORTS = new Set<CustomServerTransport>(['stdio', 'streamable_http', 'sse'])
 const SUSPICIOUS_QUERY_KEYS = new Set([
@@ -277,11 +279,27 @@ const readOAuth = (
     maxLength: 128
   })
   const clientId = readString(value.client_id, diagnostics, 'oauth.client_id', { max: 2_048 })
+  const rawRedirectUri = readHttpUrl(value.redirect_uri, diagnostics, 'oauth.redirect_uri')
+  let redirectUri: string | undefined
+  if (rawRedirectUri) {
+    try {
+      redirectUri = normalizeLoopbackOAuthRedirectUri(rawRedirectUri)
+    } catch (error) {
+      diagnostic(
+        diagnostics,
+        'error',
+        'connector-template.oauth-redirect-uri',
+        error instanceof Error ? error.message : 'Invalid OAuth redirect URI.',
+        'oauth.redirect_uri'
+      )
+    }
+  }
   return {
     ...(clientMetadataUrl ? { clientMetadataUrl } : {}),
     ...(authorizationServerUrl ? { authorizationServerUrl } : {}),
     ...(scopes ? { scopes } : {}),
-    ...(clientId ? { clientId } : {})
+    ...(clientId ? { clientId } : {}),
+    ...(redirectUri ? { redirectUri } : {})
   }
 }
 
@@ -556,6 +574,15 @@ export const parseConnectorTemplate = (
       'oauth.client_id'
     )
   }
+  if (oauth?.redirectUri && !oauth.clientId) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.oauth-redirect-uri-client',
+      'OAuth redirect URI requires a pre-registered client ID.',
+      'oauth.redirect_uri'
+    )
+  }
   if (requiredSecrets?.oauthClientSecret && !oauth?.clientId) {
     diagnostic(
       diagnostics,
@@ -643,7 +670,10 @@ const templateJson = (definition: ConnectorTemplateDefinition): string =>
                 ? { authorization_server_url: definition.oauth.authorizationServerUrl }
                 : {}),
               ...(definition.oauth.scopes ? { scopes: definition.oauth.scopes } : {}),
-              ...(definition.oauth.clientId ? { client_id: definition.oauth.clientId } : {})
+              ...(definition.oauth.clientId ? { client_id: definition.oauth.clientId } : {}),
+              ...(definition.oauth.redirectUri
+                ? { redirect_uri: definition.oauth.redirectUri }
+                : {})
             }
           }
         : {})

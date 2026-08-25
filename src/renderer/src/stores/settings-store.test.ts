@@ -795,6 +795,28 @@ describe('settings store: onboarding completion', () => {
 })
 
 describe('settings store: startup loading', () => {
+  it('publishes the settings snapshot before startup probes finish', async () => {
+    let resolvePreflight:
+      ((value: { claudeReady: boolean; activeProviderReady: boolean }) => void) | undefined
+    api.getPreflight.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePreflight = resolve
+      })
+    )
+
+    const loading = useSettingsStore.getState().load()
+    await vi.waitFor(() => expect(useSettingsStore.getState().isLoaded).toBe(true))
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      isLoaded: true,
+      isLoading: true,
+      loadError: undefined
+    })
+
+    resolvePreflight?.({ claudeReady: true, activeProviderReady: true })
+    await expect(loading).resolves.toBe(true)
+  })
+
   it('deduplicates concurrent StrictMode startup loads', async () => {
     let resolveSettings: ((value: SettingsSnapshot) => void) | undefined
     api.getSettings.mockReturnValue(
@@ -839,12 +861,12 @@ describe('settings store: startup loading', () => {
     expect(useSettingsStore.getState().onboardingCompletedAt).toBe(222)
   })
 
-  it('keeps startup blocked after an IPC failure and recovers on retry', async () => {
+  it('keeps startup blocked after a Settings authority failure and recovers on retry', async () => {
     const rawError = new Error(
       'EACCES: /Users/private/.open-science/settings.json could not be read'
     )
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    api.getPreflight.mockRejectedValueOnce(rawError)
+    api.getSettings.mockRejectedValueOnce(rawError)
 
     await expect(useSettingsStore.getState().load()).resolves.toBe(false)
     expect(useSettingsStore.getState()).toMatchObject({
@@ -861,6 +883,21 @@ describe('settings store: startup loading', () => {
       isLoading: false,
       loadError: undefined
     })
+  })
+
+  it('keeps valid Settings available when a runtime probe fails', async () => {
+    const rawError = new Error('runtime probe unavailable')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    api.getPreflight.mockRejectedValueOnce(rawError)
+
+    await expect(useSettingsStore.getState().load()).resolves.toBe(true)
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      isLoaded: true,
+      isLoading: false,
+      loadError: undefined
+    })
+    expect(warn).toHaveBeenCalledWith('Settings loading failed', rawError)
   })
 
   it('keeps the newest retry result when an older load finishes later', async () => {
@@ -1963,6 +2000,116 @@ describe('settings store: setNotificationsEnabled', () => {
     await useSettingsStore.getState().load()
 
     expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+  })
+})
+
+describe('settings store: acceptCommittedSnapshot vs in-flight optimistic preference', () => {
+  it('does not let a foreign committed snapshot clobber an in-flight optimistic preference', async () => {
+    let resolveNotifications: (value: SettingsSnapshot) => void = () => undefined
+    api.setNotificationsEnabled.mockImplementation(
+      () =>
+        new Promise<SettingsSnapshot>((resolve) => {
+          resolveNotifications = resolve
+        })
+    )
+
+    const pending = useSettingsStore.getState().setNotificationsEnabled(false)
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+
+    try {
+      useSettingsStore.getState().acceptCommittedSnapshot({
+        ...snapshot([]),
+        notificationsEnabled: true,
+        appIconVariant: 'dark'
+      })
+
+      expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+      expect(useSettingsStore.getState().appIconVariant).toBe('dark')
+    } finally {
+      resolveNotifications({
+        ...snapshot([]),
+        notificationsEnabled: false,
+        appIconVariant: 'dark'
+      })
+      await pending
+    }
+
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+  })
+
+  it('rolls back a failed optimistic preference to the last confirmed value after a foreign snapshot', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let rejectNotifications: (reason?: unknown) => void = () => undefined
+    api.setNotificationsEnabled.mockImplementation(
+      () =>
+        new Promise<SettingsSnapshot>((_resolve, reject) => {
+          rejectNotifications = reject
+        })
+    )
+
+    const pending = useSettingsStore.getState().setNotificationsEnabled(false)
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+
+    useSettingsStore.getState().acceptCommittedSnapshot({
+      ...snapshot([]),
+      notificationsEnabled: false,
+      appIconVariant: 'dark'
+    })
+
+    rejectNotifications(new Error('ipc down'))
+    await pending
+
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(true)
+    expect(useSettingsStore.getState().appIconVariant).toBe('dark')
+    expect(useSettingsStore.getState().settingsWriteError).toBe(
+      'Could not save notification preference. Try again.'
+    )
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to set notifications enabled',
+      expect.any(Error)
+    )
+  })
+
+  it('applies a committed snapshot when no preference write is in flight', () => {
+    useSettingsStore.getState().acceptCommittedSnapshot({
+      ...snapshot([]),
+      notificationsEnabled: false,
+      appIconVariant: 'dark',
+      reasoningEffort: 'high'
+    })
+
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+    expect(useSettingsStore.getState().appIconVariant).toBe('dark')
+    expect(useSettingsStore.getState().reasoningEffort).toBe('high')
+  })
+
+  it('does not let a foreign committed snapshot clobber an in-flight non-boolean optimistic preference', async () => {
+    let resolveEffort: (value: SettingsSnapshot) => void = () => undefined
+    api.setReasoningEffort.mockImplementation(
+      () =>
+        new Promise<SettingsSnapshot>((resolve) => {
+          resolveEffort = resolve
+        })
+    )
+
+    const pending = useSettingsStore.getState().setReasoningEffort('max')
+    expect(useSettingsStore.getState().reasoningEffort).toBe('max')
+
+    try {
+      useSettingsStore.getState().acceptCommittedSnapshot({
+        ...snapshot([]),
+        reasoningEffort: 'high',
+        notificationsEnabled: false
+      })
+
+      expect(useSettingsStore.getState().reasoningEffort).toBe('max')
+      expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+    } finally {
+      resolveEffort({ ...snapshot([]), reasoningEffort: 'max', notificationsEnabled: false })
+      await pending
+    }
+
+    expect(useSettingsStore.getState().reasoningEffort).toBe('max')
   })
 })
 
