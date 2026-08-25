@@ -158,6 +158,7 @@ export class RemoteSessionPairingManager {
   private readonly pending = new Map<string, PendingPairing>()
   private readonly oneTimeSessions = new Map<string, OneTimeSession>()
   private readonly pendingRevocations = new Set<string>()
+  private readonly unclaimedTrustedBrowserCleanup = new Set<string>()
   private readonly now: () => number
   private storedMutationQueue: Promise<void> = Promise.resolve()
   private authorizationGeneration = 0
@@ -299,7 +300,7 @@ export class RemoteSessionPairingManager {
         this.pending.get(requestId) !== request
       ) {
         if (decision === 'once') this.oneTimeSessions.delete(sessionId)
-        else await this.removeStoredTrustedBrowsers(new Set([sessionId]))
+        else await this.cleanupUnclaimedTrustedBrowsers([sessionId])
         throw new Error('This pairing request has expired or is no longer pending.')
       }
 
@@ -359,8 +360,7 @@ export class RemoteSessionPairingManager {
     this.pending.clear()
     this.oneTimeSessions.clear()
     this.options.onChanged()
-    if (unclaimedTrustedBrowsers.size === 0) return
-    const changed = await this.removeStoredTrustedBrowsers(unclaimedTrustedBrowsers)
+    const changed = await this.cleanupUnclaimedTrustedBrowsers(unclaimedTrustedBrowsers)
     if (changed) this.options.onChanged()
   }
 
@@ -605,6 +605,16 @@ export class RemoteSessionPairingManager {
         ? undefined
         : { ...stored, trustedBrowsers }
     })
+  }
+
+  private async cleanupUnclaimedTrustedBrowsers(browserIds: Iterable<string>): Promise<boolean> {
+    for (const browserId of browserIds) this.unclaimedTrustedBrowserCleanup.add(browserId)
+    if (this.unclaimedTrustedBrowserCleanup.size === 0) return false
+
+    const cleanup = new Set(this.unclaimedTrustedBrowserCleanup)
+    const changed = await this.removeStoredTrustedBrowsers(cleanup)
+    for (const browserId of cleanup) this.unclaimedTrustedBrowserCleanup.delete(browserId)
+    return changed
   }
 
   private pruneExpired(): void {

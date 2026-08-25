@@ -213,17 +213,27 @@ export class RemoteAccessService {
       if (this.activeMode !== 'off') this.assertProviderReady()
     } catch (error) {
       if (this.shutdownStarted) return this.snapshot(true)
-      await this.invalidateExternalAccess()
+      let failure = error
+      try {
+        await this.invalidateExternalAccess()
+      } catch (cleanupError) {
+        failure = cleanupError
+      }
       this.lifecycle = 'error'
-      this.error = error instanceof Error ? error.message : String(error)
+      this.error = failure instanceof Error ? failure.message : String(failure)
       this.notifyChanged()
       return this.snapshot(true)
     }
 
     if (this.activeMode === 'off') {
-      await this.invalidateExternalAccess()
-      this.lifecycle = 'disabled'
-      this.error = undefined
+      try {
+        await this.invalidateExternalAccess()
+        this.lifecycle = 'disabled'
+        this.error = undefined
+      } catch (error) {
+        this.lifecycle = 'error'
+        this.error = error instanceof Error ? error.message : String(error)
+      }
       this.notifyChanged()
       return this.snapshot(true)
     }
@@ -278,11 +288,12 @@ export class RemoteAccessService {
     const webStopGeneration = this.webStopGeneration
 
     this.lifecycle = 'starting'
-    await this.invalidateExternalAccess(this.runtimeEnabled)
+    const invalidation = this.invalidateExternalAccess(this.runtimeEnabled)
     this.error = undefined
     this.notifyChanged()
 
     try {
+      await invalidation
       await this.refreshInstallation()
       if (this.shutdownStarted) return this.snapshot(true)
       this.assertProviderReady()
@@ -440,7 +451,13 @@ export class RemoteAccessService {
     this.lifecycle = 'stopping'
     const invalidation = this.invalidateExternalAccess()
     this.notifyChanged()
-    await invalidation
+
+    let failure: unknown
+    try {
+      await invalidation
+    } catch (error) {
+      failure = error
+    }
 
     if (this.activeMode !== 'off') {
       this.log.info('Provider route kept configured while local remote access is disabled', {
@@ -449,7 +466,20 @@ export class RemoteAccessService {
     }
     this.activeMode = 'off'
     this.accessUrl = undefined
-    if (persistPreference) await this.pairing.setModePreference('off')
+    if (persistPreference) {
+      try {
+        await this.pairing.setModePreference('off')
+      } catch (error) {
+        failure ??= error
+      }
+    }
+    if (failure) {
+      this.lifecycle = 'error'
+      this.error = failure instanceof Error ? failure.message : String(failure)
+      this.log.error('Remote access disable failed', failure)
+      this.notifyChanged()
+      return this.snapshot(true)
+    }
     this.lifecycle = 'disabled'
     this.error = undefined
     this.log.info('Remote access disabled locally')

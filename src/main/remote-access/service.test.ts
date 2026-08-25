@@ -406,6 +406,79 @@ describe('RemoteAccessService', () => {
     expect((await repository.load()).trustedBrowsers).toHaveLength(0)
   })
 
+  it('retries unclaimed trusted-browser cleanup after disable persistence fails', async () => {
+    const repository = await createRepository()
+    const service = await RemoteAccessService.create({
+      repository,
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+    service.attachWebController(webController())
+    await service.setMode('remoteit')
+    await service.webAccess.authorizeHttp(
+      remoteRequest('private-app.r3proxy.com'),
+      remoteResponse(),
+      new URL('https://private-app.r3proxy.com/')
+    )
+    const [pending] = service.snapshot(true).pendingRequests
+    await service.approve({ requestId: pending.id, decision: 'always' })
+
+    const persist = repository.save.bind(repository)
+    vi.spyOn(repository, 'save')
+      .mockRejectedValueOnce(new Error('cleanup persistence failed'))
+      .mockImplementation((value) => persist(value))
+
+    await expect(service.disable()).resolves.toMatchObject({
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'error',
+      error: 'cleanup persistence failed'
+    })
+    expect(await repository.load()).toMatchObject({
+      mode: 'off',
+      trustedBrowsers: [expect.objectContaining({ id: expect.any(String) })]
+    })
+
+    await expect(service.disable()).resolves.toMatchObject({
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled'
+    })
+    expect((await repository.load()).trustedBrowsers).toHaveLength(0)
+  })
+
+  it('reports a lifecycle error when setup invalidation cleanup fails', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn()
+    })
+    service.attachWebController(webController())
+    await service.setMode('remoteit')
+    await service.webAccess.authorizeHttp(
+      remoteRequest('private-app.r3proxy.com'),
+      remoteResponse(),
+      new URL('https://private-app.r3proxy.com/')
+    )
+    const [pending] = service.snapshot(true).pendingRequests
+    await service.approve({ requestId: pending.id, decision: 'always' })
+
+    const persist = repository.save.bind(repository)
+    vi.spyOn(repository, 'save')
+      .mockRejectedValueOnce(new Error('cleanup persistence failed'))
+      .mockImplementation((value) => persist(value))
+
+    await expect(service.setMode('remoteit-public')).resolves.toMatchObject({
+      mode: 'remoteit-public',
+      enabled: false,
+      lifecycle: 'error',
+      error: 'cleanup persistence failed'
+    })
+    expect(deps.enableRemoteIt).toHaveBeenCalledTimes(1)
+  })
+
   it('soft-disables access without deleting either provider service', async () => {
     const repository = await createRepository()
     const deps = createReadyDeps()
