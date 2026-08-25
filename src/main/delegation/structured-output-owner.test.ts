@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { createDeterministicDelegateExecution } from './deterministic-execution'
 import {
@@ -155,6 +155,44 @@ describe('DurableDelegatedWork structured output', () => {
       )
     ).rejects.toMatchObject({ code: 'conflict' })
     await expect(work.submitOutput(parent, null)).rejects.toMatchObject({ code: 'authorization' })
+  })
+
+  it('rejects an invalid schema before resolving Specialists or validating inputs', async () => {
+    const resolveSpecialist = vi.fn(async () => ({
+      id: 'specialist-1',
+      name: 'EVIDENCE_ANALYST',
+      displayName: 'Evidence Analyst',
+      enabled: true,
+      setupPending: false,
+      revision: 1
+    }))
+    const validateInput = vi.fn(async () => true)
+    const work = createStructuredOutputWork({
+      execution: createDeterministicDelegateExecution(),
+      records: createInMemoryDelegatedWorkRecords({
+        session: parent.session,
+        rootFrameId: parent.frameId,
+        originMessageId: parent.originMessageId
+      }),
+      resolveSpecialist,
+      validateInput
+    })
+
+    await expect(
+      work.delegate(
+        parent,
+        {
+          task: 'Extract',
+          name: 'Extract',
+          profile: 'specialist-1',
+          inputs: ['upload-version-1'],
+          outputSchema: { format: 'email' }
+        },
+        { wait: false }
+      )
+    ).rejects.toMatchObject({ code: 'unsupported_schema' })
+    expect(resolveSpecialist).not.toHaveBeenCalled()
+    expect(validateInput).not.toHaveBeenCalled()
   })
 
   it('retains a submission committed before stop and rejects the terminal-first race order', async () => {

@@ -32,7 +32,7 @@ describe('Agent-facing delegate contract', () => {
         })
       }
     })
-    expect(requestArray).toEqual({ type: 'array', minItems: 1, items: singleRequest })
+    expect(requestArray).toEqual({ type: 'array', minItems: 1, maxItems: 4, items: singleRequest })
     expect(singleRequest.properties).not.toHaveProperty('context')
     expect(singleRequest.properties).not.toHaveProperty('output_schema')
     expect(singleRequest.additionalProperties).toBe(false)
@@ -70,7 +70,9 @@ describe('Agent-facing delegate contract', () => {
       request: [{ task: 'Audit', inputs: ['upload-version-1'] }],
       options: { wait: false }
     })
-    expect(parseDelegateRpcCall({ request: [] })).toEqual({ request: [], options: {} })
+    expect(() => parseDelegateRpcCall({ request: [] })).toThrow(
+      'host.delegate request must be one object or a non-empty object array'
+    )
     expect(
       parseDelegateRpcCall({
         request: { task: 'Observe' },
