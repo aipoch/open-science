@@ -79,6 +79,7 @@ import {
   appendArtifactMention,
   docToSkillIds,
   pastedTextAttachmentDomId,
+  pastedTextPreviewName,
   type ComposerPastedTextNode
 } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
@@ -1395,7 +1396,7 @@ const ConversationPanel = ({
                                     onClick={() => onRestorePastedText(pastedText.id)}
                                   >
                                     <span className="w-full truncate whitespace-nowrap text-[12px] leading-4">
-                                      {attachmentName}
+                                      {pastedTextPreviewName(pastedText.text)}
                                     </span>
                                     <span className="flex items-center gap-0.5 whitespace-nowrap text-[11px] leading-3 text-text-300">
                                       {t('Show in text field')}
@@ -1470,10 +1471,16 @@ const ConversationPanel = ({
                                   aria-hidden="true"
                                 />
                                 <div className="min-w-0 flex-1">
-                                  <ExtensionPreservingFileName
-                                    name={transfer.name}
-                                    className="text-[12px] leading-4"
-                                  />
+                                  {pastedText ? (
+                                    <div className="truncate text-[12px] leading-4">
+                                      {pastedTextPreviewName(pastedText.text)}
+                                    </div>
+                                  ) : (
+                                    <ExtensionPreservingFileName
+                                      name={transfer.name}
+                                      className="text-[12px] leading-4"
+                                    />
+                                  )}
                                   <div
                                     className={`truncate text-[11px] leading-3 ${
                                       transfer.status === 'error' ? 'text-red-600' : 'text-text-300'
