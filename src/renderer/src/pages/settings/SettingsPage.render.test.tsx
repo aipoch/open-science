@@ -1665,6 +1665,39 @@ describe('SettingsPage layout', () => {
     await waitFor(() => expect(document.body.textContent).not.toContain('Testing…'))
   })
 
+  it('ignores post-save Provider validation after the provider disappears', async () => {
+    installCustomProviderSnapshot()
+    let rejectValidation: ((error: Error) => void) | undefined
+    const validateProvider = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectValidation = reject
+        })
+    )
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
+      validateProvider
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+    await waitFor(() => expect(validateProvider).toHaveBeenCalledOnce())
+
+    act(() => useSettingsStore.setState({ providers: [] }))
+    await act(async () => rejectValidation?.(new Error('deleted provider validation failure')))
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent ?? '').not.toContain(
+      'Could not test the provider connection.'
+    )
+  })
+
   it('switches to the General panel and shows the diagnostic log file', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)

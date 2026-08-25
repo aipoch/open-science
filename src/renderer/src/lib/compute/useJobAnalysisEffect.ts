@@ -111,7 +111,8 @@ export const useJobAnalysisEffect = ({
         .jobsPendingNotification(sessionId)
         .then((jobs) => {
           if (!isActive) return
-          for (const job of jobs) trigger.onJobDone(job)
+          const jobStore = useSessionJobStore.getState()
+          for (const job of jobs) jobStore.applyUpdate(job)
         })
         .catch((error) => {
           if (!isActive || useSessionJobStore.getState().hydratedSessionId !== sessionId) return

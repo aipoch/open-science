@@ -230,6 +230,16 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     expect(sendMessage).toHaveBeenCalledOnce()
   })
 
+  it('adds pending-scan jobs to the local store before dispatching analysis', async () => {
+    await act(async () => {
+      root.render(<Probe enabled />)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(useSessionJobStore.getState().jobsById.get('job-1')).toEqual(makeCompletedJob())
+    expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
   it('retries a pending-analysis scan after a transient transport failure', async () => {
     vi.useFakeTimers()
     jobsPendingNotification
