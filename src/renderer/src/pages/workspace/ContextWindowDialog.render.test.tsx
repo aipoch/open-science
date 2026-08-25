@@ -235,7 +235,7 @@ describe('ContextWindowDialog', () => {
     ).toContain('34K / 128K')
   })
 
-  it('switches to exact Session calls and shows reported coverage without summing context', () => {
+  const sessionWithCalls = (): ChatSession => {
     const withCalls = session()
     withCalls.messages.push({
       id: 'answer-1',
@@ -253,7 +253,7 @@ describe('ContextWindowDialog', () => {
           cacheTokens: 2,
           outputTokens: 3,
           contextUsedTokens: 12,
-          contextWindowSize: 100
+          contextWindowSize: 25
         },
         {
           id: 'answer-1:model-call:1',
@@ -262,7 +262,7 @@ describe('ContextWindowDialog', () => {
           cacheTokens: 4,
           outputTokens: 5,
           contextUsedTokens: 24,
-          contextWindowSize: 100
+          contextWindowSize: 25
         }
       ],
       createdAt: 2,
@@ -283,37 +283,145 @@ describe('ContextWindowDialog', () => {
       createdAt: 2,
       updatedAt: 3
     })
+    return withCalls
+  }
 
-    act(() => {
-      root.render(<ContextWindowDialog open session={withCalls} onOpenChange={vi.fn()} />)
-    })
+  const switchToCalls = (): void => {
     const callsToggle = [
       ...document.body.querySelectorAll<HTMLButtonElement>('[role="radio"]')
     ].find((button) => button.textContent === 'Calls')
     act(() => callsToggle?.click())
+  }
+
+  it('summarizes exact Session calls and charts one stacked bar per call inside a turn band', () => {
+    act(() => {
+      root.render(<ContextWindowDialog open session={sessionWithCalls()} onOpenChange={vi.fn()} />)
+    })
+    switchToCalls()
 
     const summary = document.body.querySelector('[data-slot="context-call-summary"]')
     expect(summary?.className).toContain('bg-card')
     expect(summary?.querySelector('[data-slot="context-call-metrics"]')?.className).toContain(
-      'grid-cols-2'
+      'lg:grid-cols-3'
     )
-    expect(summary?.textContent).toContain('Reported calls2')
-    expect(summary?.textContent).toContain('Detailed calls2')
-    expect(summary?.textContent).toContain('Coverage100%')
-    expect(summary?.textContent).toContain('Peak window24 / 100')
-    expect(document.body.querySelectorAll('[data-slot="context-call-row"]')).toHaveLength(2)
-    expect(document.body.querySelectorAll('[data-slot="context-call-window-meter"]')).toHaveLength(
-      2
+    expect(summary?.textContent).toContain('Total calls2 calls')
+    expect(summary?.textContent).toContain('Total tokens44')
+    expect(summary?.textContent).toContain('In 30 · Cache 6 · Out 8')
+    expect(summary?.textContent).toContain('Peak window24 / 25 · 96%')
+
+    const chart = document.body.querySelector('[data-slot="context-call-chart"]')
+    expect(chart?.querySelector('[role="group"]')?.getAttribute('aria-label')).toBe(
+      'Call usage chart across 2 model calls'
+    )
+    expect(chart?.querySelectorAll('[data-slot="context-call-point"]')).toHaveLength(2)
+    expect(chart?.querySelectorAll('[data-slot="context-call-bar"]')).toHaveLength(2)
+    const bands = chart?.querySelectorAll('[data-slot="context-call-band"]')
+    expect(bands).toHaveLength(1)
+    expect(bands?.[0]?.textContent).toContain('T1')
+    expect(chart?.querySelector('[data-slot="context-call-capacity"]')).not.toBeNull()
+
+    const history = document.body.querySelector('[data-slot="context-call-history"]')
+    for (const chip of ['Input', 'Cache read', 'Cache write', 'Output', 'Capacity']) {
+      expect(history?.textContent).toContain(chip)
+    }
+
+    const details = document.body.querySelector('[data-slot="context-call-details"]')
+    expect(details?.querySelector('[data-slot="context-call-details-title"]')?.textContent).toBe(
+      'Turn 1 · Call 2'
+    )
+    expect(details?.textContent).toContain('Compare the papers')
+    expect(details?.textContent).toContain('Agent: Main Agent · Codex')
+    expect(details?.textContent).toContain('Model: gpt-5.6-codex · provider-b')
+    expect(details?.textContent).toContain('Window used24 / 25')
+    expect(details?.textContent).toContain('Message 2')
+    expect(details?.querySelector('[data-slot="context-call-window-meter"]')).not.toBeNull()
+    const mix = details?.querySelector('[data-slot="context-call-token-mix"]')
+    expect(mix?.textContent).toContain('Input20 69%')
+    expect(mix?.textContent).toContain('Cache4 14%')
+    expect(mix?.textContent).toContain('Output5 17%')
+  })
+
+  it('previews on hover and pins a selected call on activation', () => {
+    act(() => {
+      root.render(<ContextWindowDialog open session={sessionWithCalls()} onOpenChange={vi.fn()} />)
+    })
+    switchToCalls()
+    const bars = document.body.querySelectorAll<HTMLButtonElement>(
+      '[data-slot="context-call-point"]'
     )
 
-    const groupToggle = document.body.querySelector<HTMLButtonElement>(
-      '[data-slot="context-call-group-toggle"]'
-    )
-    expect(groupToggle?.getAttribute('aria-expanded')).toBe('true')
+    act(() => {
+      bars[0]?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+    })
+    expect(
+      document.body.querySelector('[data-slot="context-call-details-title"]')?.textContent
+    ).toBe('Turn 1 · Call 1')
 
-    act(() => groupToggle?.click())
-    expect(groupToggle?.getAttribute('aria-expanded')).toBe('false')
-    expect(document.body.querySelectorAll('[data-slot="context-call-row"]')).toHaveLength(0)
+    act(() => {
+      bars[0]?.click()
+      bars[0]?.dispatchEvent(new MouseEvent('pointerout', { bubbles: true }))
+    })
+    expect(bars[0]?.getAttribute('aria-pressed')).toBe('true')
+    expect(
+      document.body.querySelector('[data-slot="context-call-details-title"]')?.textContent
+    ).toBe('Turn 1 · Call 1')
+
+    act(() => bars[0]?.click())
+    expect(bars[0]?.getAttribute('aria-pressed')).toBe('false')
+    expect(
+      document.body.querySelector('[data-slot="context-call-details-title"]')?.textContent
+    ).toBe('Turn 1 · Call 2')
+  })
+
+  it('renders — for calls without context or cache-split data', () => {
+    const withoutContext = session()
+    withoutContext.messages.push({
+      id: 'answer-1',
+      role: 'agent',
+      responseToMessageId: 'prompt-1',
+      content: 'Done',
+      eventIds: [],
+      status: 'complete',
+      turnUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3, turnCount: 1 },
+      modelCallUsage: [
+        { id: 'answer-1:model-call:0', index: 0, inputTokens: 10, cacheTokens: 2, outputTokens: 3 }
+      ],
+      createdAt: 2,
+      updatedAt: 3,
+      completedAt: 3
+    })
+
+    act(() => {
+      root.render(<ContextWindowDialog open session={withoutContext} onOpenChange={vi.fn()} />)
+    })
+    switchToCalls()
+
+    const summary = document.body.querySelector('[data-slot="context-call-summary"]')
+    expect(summary?.textContent).toContain('Peak window—')
+    expect(document.body.querySelector('[data-slot="context-call-capacity"]')).toBeNull()
+
+    const details = document.body.querySelector('[data-slot="context-call-details"]')
+    expect(details?.textContent).toContain('Window used—')
+    expect(details?.querySelector('[data-slot="context-call-window-meter"]')).toBeNull()
+    const mix = details?.querySelector('[data-slot="context-call-token-mix"]')
+    expect(mix?.textContent).toContain('Cache2')
+    expect(mix?.textContent).not.toContain('Cache read')
+    expect(details?.textContent).not.toContain('undefined')
+    expect(details?.textContent).not.toContain('NaN')
+  })
+
+  it('keeps the dashed empty state when the session has no tracked calls', () => {
+    act(() => {
+      root.render(<ContextWindowDialog open session={session()} onOpenChange={vi.fn()} />)
+    })
+    switchToCalls()
+
+    expect(document.body.textContent).toContain('No call details yet')
+    expect(document.body.textContent).toContain('This Session may predate call tracking')
+    const summary = document.body.querySelector('[data-slot="context-call-summary"]')
+    expect(summary?.textContent).toContain('Total calls0 calls')
+    expect(summary?.textContent).toContain('Peak window—')
+    expect(document.body.querySelector('[data-slot="context-call-chart"]')).toBeNull()
   })
 
   it('previews on hover and pins a selected run on activation', () => {

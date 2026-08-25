@@ -1,13 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-/* Hallmark · component: context-window dialog · genre: modern-minimal · theme: product tokens · contrast: pass (40–41) · mobile: pass (34, 49, 50–57) · slop: pass (1–58) */
+/* Hallmark · component: context-window dialog · turns: composition + pinned run history; calls: 3-metric summary + stacked per-call chart with turn bands and pinned call details · genre: modern-minimal · theme: product tokens · contrast: pass (40–41) · mobile: pass (34, 49, 50–57) · slop: pass (1–58) */
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
 import {
   dialogBodyClassName,
   dialogCloseButtonClassName,
@@ -27,7 +20,6 @@ import {
   Bot,
   Brain,
   CheckCircle2,
-  ChevronDown,
   CircleStop,
   Minimize2,
   X,
@@ -42,17 +34,17 @@ import type {
   AcpContextUsage,
   AcpContextUsageCategory,
   AcpContextUsageCategoryKey,
+  AcpModelCallUsage,
   AcpPromptStopReason
 } from '../../../../shared/acp'
 import {
-  groupContextWindowCallPoints,
-  selectContextWindowCallCoverage,
+  groupContextWindowCallsByTurn,
   selectContextWindowCallPoints,
   selectContextWindowTrendPoints,
-  type ContextWindowCallCoverage,
-  type ContextWindowCallGroup,
-  type ContextWindowCallGroupBy,
+  summarizeContextWindowCallPoints,
   type ContextWindowCallPoint,
+  type ContextWindowCallSummary,
+  type ContextWindowCallTurnBand,
   type ContextWindowTrendPoint
 } from './context-window-trend'
 import { resolveSessionProviderId } from './error-report'
@@ -93,6 +85,38 @@ const categoryPresentation: Record<AcpContextUsageCategoryKey, { label: string; 
 
 const visibleCategories = (usage: AcpContextUsage): AcpContextUsageCategory[] =>
   usage.breakdown?.categories.filter((category) => category.tokens > 0) ?? []
+
+// Per-call stacked-bar segments, bottom to top. When the adapter does not split cache into
+// read/write, a single Cache segment spans both (cache-read color).
+type CallSegmentKey = 'input' | 'cache-read' | 'cache-write' | 'cache' | 'output'
+
+// Catalog keys stay unresolved at module scope so changing locale updates every render site.
+const callSegmentPresentation: Record<CallSegmentKey, { label: string; color: string }> = {
+  input: { label: 'Input', color: 'bg-blue-500' },
+  'cache-read': { label: 'Cache read', color: 'bg-cyan-400' },
+  'cache-write': { label: 'Cache write', color: 'bg-emerald-500' },
+  cache: { label: 'Cache', color: 'bg-cyan-400' },
+  output: { label: 'Output', color: 'bg-amber-400' }
+}
+
+type CallTokenSegment = Readonly<{ key: CallSegmentKey; tokens: number }>
+
+const callTokenSegments = (call: AcpModelCallUsage): CallTokenSegment[] => {
+  const segments: CallTokenSegment[] = [{ key: 'input', tokens: call.inputTokens }]
+  if (call.cachedReadTokens !== undefined && call.cachedWriteTokens !== undefined) {
+    segments.push(
+      { key: 'cache-read', tokens: call.cachedReadTokens },
+      { key: 'cache-write', tokens: call.cachedWriteTokens }
+    )
+  } else {
+    segments.push({ key: 'cache', tokens: call.cacheTokens })
+  }
+  segments.push({ key: 'output', tokens: call.outputTokens })
+  return segments
+}
+
+const callTotalTokens = (call: AcpModelCallUsage): number =>
+  call.inputTokens + call.cacheTokens + call.outputTokens
 
 const signedTokens = (tokens: number): string => `${tokens > 0 ? '+' : ''}${formatTokens(tokens)}`
 
@@ -192,7 +216,7 @@ const CategoryLegend = ({ usage }: { usage: AcpContextUsage }): React.JSX.Elemen
           key={category.key}
           className="flex min-w-0 items-center justify-between gap-3 text-[11px]"
         >
-          <span className="flex min-w-0 items-center gap-2">
+          <span className="flex min-w-0 flex-1 items-center gap-2">
             <span
               className={cn(
                 'size-2.5 shrink-0 rounded-[2px]',
@@ -200,8 +224,22 @@ const CategoryLegend = ({ usage }: { usage: AcpContextUsage }): React.JSX.Elemen
               )}
               aria-hidden="true"
             />
-            <span className="truncate text-foreground">
+            <span className="min-w-0 truncate text-foreground">
               {t(categoryPresentation[category.key].label)}
+            </span>
+            <span
+              className="h-1 min-w-6 flex-1 overflow-hidden rounded-full bg-muted"
+              aria-hidden="true"
+            >
+              <span
+                className={cn(
+                  'block h-full rounded-full',
+                  categoryPresentation[category.key].color
+                )}
+                style={{
+                  width: `${categoryTotal ? (category.tokens / categoryTotal) * 100 : 0}%`
+                }}
+              />
             </span>
           </span>
           <span className="shrink-0 tabular-nums text-muted-foreground">
@@ -462,13 +500,9 @@ const ContextHistoryChart = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const scrollerRef = useRef<HTMLDivElement>(null)
-  const maximum = Math.max(
-    1,
-    ...points.flatMap((point) => [
-      point.sample.contextWindow.used,
-      point.sample.contextWindow.size ?? 0
-    ])
-  )
+  // Scale to the usage data, never to capacity: a window far larger than every run would squash
+  // all bars onto the baseline. Capacity dashes render only when they land inside this range.
+  const maximum = Math.max(1, ...points.map((point) => point.sample.contextWindow.used))
   const chartWidth = Math.max(560, points.length * 38 + 16)
 
   useEffect(() => {
@@ -535,10 +569,10 @@ const ContextHistoryChart = ({
                       'group relative flex h-full w-9 items-end justify-center rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50'
                     )}
                   >
-                    {usage.size ? (
+                    {usage.size !== undefined && usage.size <= maximum ? (
                       <span
                         className="pointer-events-none absolute inset-x-1 border-t border-dashed border-success-000"
-                        style={{ bottom: `${Math.min(100, (usage.size / maximum) * 100)}%` }}
+                        style={{ bottom: `${(usage.size / maximum) * 100}%` }}
                         aria-hidden="true"
                       />
                     ) : null}
@@ -600,6 +634,13 @@ const ContextHistory = ({ points }: { points: ContextWindowTrendPoint[] }): Reac
   const pinnedIndex = selectedIndex >= 0 ? selectedIndex : points.length - 1
   const activeIndex = previewIndex ?? pinnedIndex
   const activePoint = points[activeIndex] ?? points.at(-1)
+  // Match the chart: the Capacity chip only makes sense when a capacity dash can render inside
+  // the data-scaled range.
+  const maxUsed = Math.max(1, ...points.map((point) => point.sample.contextWindow.used))
+  const capacityVisible = points.some((point) => {
+    const size = point.sample.contextWindow.size
+    return size !== undefined && size <= maxUsed
+  })
 
   return (
     <section aria-labelledby="context-window-history-title" data-slot="context-window-history">
@@ -619,7 +660,7 @@ const ContextHistory = ({ points }: { points: ContextWindowTrendPoint[] }): Reac
             <span className="h-2.5 w-4 rounded-[2px] bg-primary" aria-hidden="true" />
             {t('Window used')}
           </span>
-          {points.some((point) => point.sample.contextWindow.size) ? (
+          {capacityVisible ? (
             <span className="flex items-center gap-1.5 whitespace-nowrap">
               <span className="w-4 border-t border-dashed border-success-000" aria-hidden="true" />
               {t('Capacity')}
@@ -654,26 +695,47 @@ const ContextHistory = ({ points }: { points: ContextWindowTrendPoint[] }): Reac
 type ContextWindowGranularity = 'turn' | 'call'
 
 const ContextCallSummary = ({
-  coverage,
-  points
+  summary
 }: {
-  coverage: ContextWindowCallCoverage
-  points: readonly ContextWindowCallPoint[]
+  summary: ContextWindowCallSummary
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const contextualCalls = points.filter((point) => point.call.contextUsedTokens !== undefined)
-  const peakCall = contextualCalls.reduce<ContextWindowCallPoint | undefined>(
-    (peak, point) =>
-      !peak || point.call.contextUsedTokens! > peak.call.contextUsedTokens! ? point : peak,
-    undefined
-  )
-  const coveragePercent =
-    coverage.reportedCallCountComplete && coverage.reportedCallCount > 0
-      ? Math.round((coverage.detailedCallCount / coverage.reportedCallCount) * 100)
+  const totalTokens = summary.inputTokens + summary.cacheTokens + summary.outputTokens
+  const peakPercent =
+    summary.peakContextUsedTokens !== undefined &&
+    summary.contextWindowSize !== undefined &&
+    summary.contextWindowSize > 0
+      ? Math.round((summary.peakContextUsedTokens / summary.contextWindowSize) * 100)
       : undefined
-  const reportedCalls = coverage.reportedCallCountComplete
-    ? formatDisplayNumber(coverage.reportedCallCount)
-    : `≥${formatDisplayNumber(coverage.reportedCallCount)}`
+  const metrics: { label: string; value: string; hint?: string }[] = [
+    {
+      label: t('Total calls'),
+      value: t('{{count}} calls', {
+        count: summary.callCount,
+        defaultValue_one: '{{count}} call'
+      })
+    },
+    {
+      label: t('Total tokens'),
+      value: formatTokens(totalTokens),
+      hint: t('In {{in}} · Cache {{cache}} · Out {{out}}', {
+        in: formatTokens(summary.inputTokens),
+        cache: formatTokens(summary.cacheTokens),
+        out: formatTokens(summary.outputTokens)
+      })
+    },
+    {
+      label: t('Peak window'),
+      value:
+        summary.peakContextUsedTokens === undefined
+          ? '—'
+          : `${formatTokens(summary.peakContextUsedTokens)}${
+              summary.contextWindowSize === undefined
+                ? ''
+                : ` / ${formatTokens(summary.contextWindowSize)}`
+            }${peakPercent === undefined ? '' : ` · ${peakPercent}%`}`
+    }
+  ]
 
   return (
     <section
@@ -683,33 +745,20 @@ const ContextCallSummary = ({
     >
       <h3 className="text-sm font-medium text-foreground">{t('Session call summary')}</h3>
       <div
-        className="mt-3 grid grid-cols-2 gap-x-5 gap-y-4 border-t border-border pt-3 lg:grid-cols-4"
+        className="mt-3 grid grid-cols-2 gap-x-5 gap-y-4 border-t border-border pt-3 lg:grid-cols-3"
         data-slot="context-call-metrics"
       >
-        {[
-          { label: t('Reported calls'), value: reportedCalls },
-          { label: t('Detailed calls'), value: formatDisplayNumber(coverage.detailedCallCount) },
-          {
-            label: t('Coverage'),
-            value: coveragePercent === undefined ? t('Partial') : `${coveragePercent}%`
-          },
-          {
-            label: t('Peak window'),
-            value:
-              peakCall?.call.contextUsedTokens === undefined
-                ? '—'
-                : `${formatTokens(peakCall.call.contextUsedTokens)}${
-                    peakCall.call.contextWindowSize === undefined
-                      ? ''
-                      : ` / ${formatTokens(peakCall.call.contextWindowSize)}`
-                  }`
-          }
-        ].map((metric) => (
+        {metrics.map((metric) => (
           <div key={metric.label} className="min-w-0">
             <div className="text-[11px] text-muted-foreground">{metric.label}</div>
             <div className="mt-1 truncate text-base font-semibold tracking-tight tabular-nums text-foreground sm:text-xl">
               {metric.value}
             </div>
+            {metric.hint === undefined ? null : (
+              <div className="mt-0.5 truncate text-[11px] tabular-nums text-muted-foreground">
+                {metric.hint}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -717,185 +766,370 @@ const ContextCallSummary = ({
   )
 }
 
-const callGroupTitle = (
-  group: ContextWindowCallGroup,
-  groupBy: ContextWindowCallGroupBy,
-  t: ReturnType<typeof useTranslation>['t']
-): string => {
-  const first = group.calls[0]
-  if (groupBy === 'turn') return t('Turn {{turn}}', { turn: first?.turnNumber ?? 0 })
-  if (groupBy === 'none') return t('Call {{call}}', { call: first?.callNumber ?? 0 })
-  if (groupBy === 'model' && group.label === 'Unknown model') return t('Unknown model')
-  if (groupBy === 'framework' && group.label === 'Unknown framework') return t('Unknown framework')
-  return group.label
+const ContextCallChart = ({
+  bands,
+  capacity,
+  activeCallId,
+  pinnedCallId,
+  onPreview,
+  onSelect
+}: {
+  bands: readonly ContextWindowCallTurnBand[]
+  // Already visibility-filtered by the caller: 0 hides the line.
+  capacity: number
+  activeCallId?: string
+  pinnedCallId?: string
+  onPreview: (callId: string | undefined) => void
+  onSelect: (callId: string) => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const points = bands.flatMap((band) => band.calls)
+  const callCount = points.length
+  // Scale to the call data, never to capacity: a window far larger than every call would squash
+  // all bars onto the baseline.
+  const maximum = Math.max(1, ...points.map((point) => callTotalTokens(point.call)))
+  const chartWidth = Math.max(560, callCount * 38 + bands.length * 24 + 16)
+
+  useEffect(() => {
+    const scroller = scrollerRef.current
+    if (scroller) scroller.scrollLeft = scroller.scrollWidth
+  }, [callCount])
+
+  return (
+    <div className="flex min-w-0" data-slot="context-call-chart">
+      <div
+        className="flex h-60 w-12 shrink-0 flex-col justify-between border-r border-border py-2 pr-2 text-right text-[10px] tabular-nums text-muted-foreground"
+        aria-hidden="true"
+      >
+        <span>{formatTokens(maximum)}</span>
+        <span>{formatTokens(maximum / 2)}</span>
+        <span>0</span>
+      </div>
+      <div ref={scrollerRef} className="min-w-0 flex-1 overflow-x-auto pb-1">
+        <div
+          className="relative h-60 min-w-full"
+          style={{ width: `${chartWidth}px` }}
+          role="group"
+          aria-label={t('Call usage chart across {{count}} model calls', {
+            count: callCount,
+            defaultValue_one: 'Call usage chart across {{count}} model call'
+          })}
+        >
+          <div
+            className="pointer-events-none absolute inset-x-0 inset-y-2 flex flex-col justify-between"
+            aria-hidden="true"
+          >
+            <span className="border-t border-border" />
+            <span className="border-t border-border" />
+            <span className="border-t border-border" />
+          </div>
+          {capacity > 0 ? (
+            <div
+              className="pointer-events-none absolute inset-x-0 bottom-7 top-2"
+              aria-hidden="true"
+            >
+              <span
+                className="absolute inset-x-2 border-t border-dashed border-success-000"
+                data-slot="context-call-capacity"
+                style={{ bottom: `${Math.min(100, (capacity / maximum) * 100)}%` }}
+              />
+            </div>
+          ) : null}
+          <div className="absolute inset-0 flex items-end justify-start px-2">
+            {bands.map((band, bandIndex) => (
+              <div
+                key={band.turnNumber}
+                className={cn(
+                  'relative flex h-full items-end gap-0.5 pb-7 pt-2',
+                  bandIndex > 0 && 'ml-3 border-l border-border pl-3'
+                )}
+                data-slot="context-call-band"
+              >
+                {band.calls.map((point) => {
+                  const total = callTotalTokens(point.call)
+                  const isActive = activeCallId === point.call.id
+                  const isPinned = pinnedCallId === point.call.id
+                  return (
+                    <div
+                      key={point.call.id}
+                      className="relative flex h-full w-9 shrink-0 items-end justify-center"
+                    >
+                      <button
+                        type="button"
+                        data-slot="context-call-point"
+                        data-active={isActive ? 'true' : undefined}
+                        aria-pressed={isPinned}
+                        aria-label={t('Turn {{turn}} · Call {{call}}, {{tokens}} tokens', {
+                          turn: point.turnNumber,
+                          call: point.callNumber,
+                          tokens: formatDisplayNumber(total)
+                        })}
+                        onPointerEnter={() => onPreview(point.call.id)}
+                        onPointerLeave={() => onPreview(undefined)}
+                        onFocus={() => onPreview(point.call.id)}
+                        onBlur={() => onPreview(undefined)}
+                        onClick={() => onSelect(point.call.id)}
+                        className={cn(
+                          'group relative flex h-full w-9 items-end justify-center rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50'
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'relative flex min-h-0 w-8 flex-col-reverse overflow-hidden rounded-t-[2px] ring-2 ring-transparent transition-shadow duration-150 motion-reduce:transition-none group-hover:ring-ring/40 group-focus-visible:ring-ring/60',
+                            isActive && 'ring-ring/60',
+                            isPinned && 'ring-foreground'
+                          )}
+                          data-slot="context-call-bar"
+                          style={{ height: `${Math.max(2, (total / maximum) * 100)}%` }}
+                          aria-hidden="true"
+                        >
+                          {callTokenSegments(point.call).map((segment) => (
+                            <span
+                              key={segment.key}
+                              className={cn('w-full', callSegmentPresentation[segment.key].color)}
+                              style={{ height: `${total ? (segment.tokens / total) * 100 : 0}%` }}
+                            />
+                          ))}
+                        </span>
+                      </button>
+                    </div>
+                  )
+                })}
+                <span className="pointer-events-none absolute inset-x-0 bottom-1 text-center text-[10px] tabular-nums text-muted-foreground">
+                  {t('T{{turn}}', { turn: band.turnNumber })}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const ContextCallDetails = ({ point }: { point: ContextWindowCallPoint }): React.JSX.Element => {
+  const { t } = useTranslation()
+  const frameworks = useSettingsStore((state) => state.agentFrameworks)
+  const providers = useSettingsStore((state) => state.providers)
+  const framework = frameworks.find((candidate) => candidate.id === point.runtime?.frameworkId)
+  const providerId = resolveSessionProviderId(point.runtime?.backendId)
+  const provider = providers.find((candidate) => candidate.id === providerId)
+  const frameworkLabel = framework?.displayName ?? point.runtime?.frameworkId
+  const providerLabel = provider?.name ?? point.runtime?.backendId
+  const used = point.call.contextUsedTokens
+  const size = point.call.contextWindowSize
+  const occupancy =
+    used !== undefined && size !== undefined && size > 0
+      ? Math.min(100, Math.round((used / size) * 100))
+      : undefined
+  const segments = callTokenSegments(point.call)
+  const total = callTotalTokens(point.call)
+  const cachedReadTokens = point.call.cachedReadTokens
+  const modelInputTokens =
+    cachedReadTokens === undefined ? undefined : cachedReadTokens + point.call.inputTokens
+  const cacheReadPercent =
+    cachedReadTokens !== undefined && modelInputTokens !== undefined && modelInputTokens > 0
+      ? Math.round((cachedReadTokens / modelInputTokens) * 100)
+      : undefined
+
+  return (
+    <section className="min-w-0 bg-card p-4 text-xs sm:p-5" data-slot="context-call-details">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-medium text-foreground" data-slot="context-call-details-title">
+            {t('Turn {{turn}} · Call {{call}}', {
+              turn: point.turnNumber,
+              call: point.callNumber
+            })}
+          </h3>
+          <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={point.prompt}>
+            {point.prompt || t('Empty prompt')}
+          </div>
+        </div>
+        <div className="shrink-0 space-y-1 text-[11px] leading-4 text-muted-foreground">
+          {frameworkLabel || point.agentName ? (
+            <div className="flex items-center justify-end gap-1.5">
+              <Bot className="size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
+              <span className="max-w-56 truncate">
+                {t('Agent:')} {point.agentName ?? frameworkLabel}
+                {point.agentName && frameworkLabel ? ` · ${frameworkLabel}` : ''}
+              </span>
+            </div>
+          ) : null}
+          {point.runtime?.model || providerLabel ? (
+            <div className="flex items-center justify-end gap-1.5">
+              <Brain className="size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
+              <span className="max-w-56 truncate" title={point.runtime?.model}>
+                {t('Model:')} {point.runtime?.model ?? t('Unknown')}
+                {providerLabel ? ` · ${providerLabel}` : ''}
+              </span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-3 grid min-w-0 gap-4 border-y border-border py-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(15rem,0.65fr)]">
+        <div className="min-w-0">
+          <div className="flex items-baseline justify-between gap-4">
+            <span className="text-muted-foreground">{t('Window used')}</span>
+            <span className="font-medium tabular-nums text-foreground">
+              {used === undefined ? '—' : formatTokens(used)}
+              {used !== undefined && size ? (
+                <span className="font-normal text-muted-foreground"> / {formatTokens(size)}</span>
+              ) : null}
+            </span>
+          </div>
+          {occupancy === undefined ? null : (
+            <div
+              className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
+              data-slot="context-call-window-meter"
+              aria-hidden="true"
+            >
+              <span
+                className="block h-full rounded-full bg-primary"
+                style={{ width: `${occupancy}%` }}
+              />
+            </div>
+          )}
+          <div className="mt-3 space-y-1.5" data-slot="context-call-token-mix">
+            {segments.map((segment) => {
+              const presentation = callSegmentPresentation[segment.key]
+              const share = total > 0 ? (segment.tokens / total) * 100 : 0
+              return (
+                <div key={segment.key} className="flex items-center gap-2 text-[11px]">
+                  <span
+                    className={cn('size-2.5 shrink-0 rounded-[2px]', presentation.color)}
+                    aria-hidden="true"
+                  />
+                  <span className="w-20 shrink-0 truncate text-muted-foreground">
+                    {t(presentation.label)}
+                  </span>
+                  <span
+                    className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
+                    aria-hidden="true"
+                  >
+                    <span
+                      className={cn('block h-full rounded-full', presentation.color)}
+                      style={{ width: `${share}%` }}
+                    />
+                  </span>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">
+                    <span className="text-foreground">{formatTokens(segment.tokens)}</span>{' '}
+                    {Math.round(share)}%
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="min-w-0 space-y-1 text-[11px] leading-4 text-muted-foreground">
+          <div className="tabular-nums">
+            {cacheReadPercent === undefined
+              ? '—'
+              : t('cache-read {{cached}}% · uncached {{uncached}}%', {
+                  cached: cacheReadPercent,
+                  uncached: 100 - cacheReadPercent
+                })}
+          </div>
+          <div className="tabular-nums">
+            {t('Message {{messageNumber}}', { messageNumber: point.messageNumber })}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+const ContextCallEmptyState = (): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <div
+      className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center"
+      data-slot="context-call-empty"
+    >
+      <div className="max-w-md">
+        <Activity className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
+        <h3 className="mt-3 text-sm font-medium text-foreground">{t('No call details yet')}</h3>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          {t(
+            'This Session may predate call tracking, or its framework reported only aggregate turn usage.'
+          )}
+        </p>
+      </div>
+    </div>
+  )
 }
 
 const ContextCallHistory = ({
-  points,
-  groupBy
+  points
 }: {
   points: readonly ContextWindowCallPoint[]
-  groupBy: ContextWindowCallGroupBy
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const groups = useMemo(() => groupContextWindowCallPoints(points, groupBy), [groupBy, points])
-  const [groupExpansion, setGroupExpansion] = useState<Record<string, boolean>>({})
-
-  if (groups.length === 0) {
-    return (
-      <div className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center">
-        <div className="max-w-md">
-          <Activity className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
-          <h3 className="mt-3 text-sm font-medium text-foreground">{t('No call details yet')}</h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {t(
-              'This Session may predate call tracking, or its framework reported only aggregate turn usage.'
-            )}
-          </p>
-        </div>
-      </div>
-    )
-  }
+  const bands = useMemo(() => groupContextWindowCallsByTurn(points), [points])
+  const [pinnedCallId, setPinnedCallId] = useState<string>()
+  const [previewCallId, setPreviewCallId] = useState<string>()
+  const pinnedPoint = points.find((point) => point.call.id === pinnedCallId) ?? points.at(-1)
+  const activePoint =
+    (previewCallId === undefined
+      ? undefined
+      : points.find((point) => point.call.id === previewCallId)) ?? pinnedPoint
+  // The capacity line is only shown when it lands inside the data-scaled chart range.
+  const maxCallTotal = Math.max(1, ...points.map((point) => callTotalTokens(point.call)))
+  const knownCapacity = Math.max(0, ...points.map((point) => point.call.contextWindowSize ?? 0))
+  const capacity = knownCapacity > 0 && knownCapacity <= maxCallTotal ? knownCapacity : 0
 
   return (
     <section aria-labelledby="context-call-history-title" data-slot="context-call-history">
-      <div className="pb-3">
-        <h3 id="context-call-history-title" className="text-sm font-medium text-foreground">
-          {t('Call history')}
-        </h3>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {t('Token totals are summed; context window values show peak and latest snapshots.')}
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3 pb-3">
+        <div className="min-w-0">
+          <h3 id="context-call-history-title" className="text-sm font-medium text-foreground">
+            {t('Call history')}
+          </h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t(
+              'One bar per model call; hover or focus to preview, then select to keep details visible.'
+            )}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+          {(['input', 'cache-read', 'cache-write', 'output'] as const).map((key) => (
+            <span key={key} className="flex items-center gap-1.5 whitespace-nowrap">
+              <span
+                className={cn('h-2.5 w-4 rounded-[2px]', callSegmentPresentation[key].color)}
+                aria-hidden="true"
+              />
+              {t(callSegmentPresentation[key].label)}
+            </span>
+          ))}
+          {capacity > 0 ? (
+            <span className="flex items-center gap-1.5 whitespace-nowrap">
+              <span className="w-4 border-t border-dashed border-success-000" aria-hidden="true" />
+              {t('Capacity')}
+            </span>
+          ) : null}
+        </div>
       </div>
-      <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
-        {groups.map((group, groupIndex) => {
-          const expansionKey = `${groupBy}:${group.key}`
-          const isExpanded = groupExpansion[expansionKey] ?? groupIndex === groups.length - 1
-          return (
-            <article key={group.key} data-slot="context-call-group">
-              <button
-                type="button"
-                className="flex min-h-11 w-full items-start justify-between gap-4 px-3 py-3 text-left outline-none transition-colors duration-150 hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/50 active:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none sm:px-4"
-                data-slot="context-call-group-toggle"
-                aria-expanded={isExpanded}
-                onClick={() =>
-                  setGroupExpansion((current) => ({
-                    ...current,
-                    [expansionKey]: !isExpanded
-                  }))
-                }
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-medium text-foreground">
-                    {callGroupTitle(group, groupBy, t)}
-                  </span>
-                  <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                    {group.calls[0]?.prompt || t('Empty prompt')}
-                  </span>
-                </span>
-                <span className="flex shrink-0 items-center gap-2 text-[10px] tabular-nums text-muted-foreground">
-                  <span className="whitespace-nowrap">
-                    {t('{{count}} calls', {
-                      count: group.callCount,
-                      defaultValue_one: '{{count}} call'
-                    })}
-                  </span>
-                  {group.peakContextUsedTokens === undefined ? null : (
-                    <span className="hidden sm:inline">
-                      {t('Peak {{tokens}}', { tokens: formatTokens(group.peakContextUsedTokens) })}
-                    </span>
-                  )}
-                  <ChevronDown
-                    className={cn(
-                      'size-4 transition-transform duration-150 motion-reduce:transition-none',
-                      isExpanded && 'rotate-180'
-                    )}
-                    aria-hidden="true"
-                  />
-                </span>
-              </button>
-              {isExpanded ? (
-                <div className="border-t border-border" data-slot="context-call-group-content">
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 bg-muted/25 px-3 py-2 text-[10px] tabular-nums text-muted-foreground sm:px-4">
-                    <span>
-                      {t('Input {{tokens}}', { tokens: formatTokens(group.inputTokens) })}
-                    </span>
-                    <span>
-                      {t('Cache {{tokens}}', { tokens: formatTokens(group.cacheTokens) })}
-                    </span>
-                    <span>
-                      {t('Output {{tokens}}', { tokens: formatTokens(group.outputTokens) })}
-                    </span>
-                  </div>
-                  <div className="divide-y divide-border">
-                    {group.calls.map((point) => {
-                      const used = point.call.contextUsedTokens
-                      const size = point.call.contextWindowSize
-                      const percent =
-                        used !== undefined && size !== undefined && size > 0
-                          ? Math.min(100, Math.round((used / size) * 100))
-                          : undefined
-                      return (
-                        <div
-                          key={point.call.id}
-                          className="min-w-0 px-3 py-3 text-[11px] sm:px-4"
-                          data-slot="context-call-row"
-                        >
-                          <div className="flex min-w-0 items-center justify-between gap-3">
-                            <span className="shrink-0 font-medium tabular-nums text-foreground">
-                              {t('Call {{call}}', { call: point.callNumber })}
-                            </span>
-                            <span className="shrink-0 tabular-nums text-foreground">
-                              {used === undefined
-                                ? '—'
-                                : `${formatTokens(used)}${
-                                    size === undefined ? '' : ` / ${formatTokens(size)}`
-                                  }${percent === undefined ? '' : ` · ${percent}%`}`}
-                            </span>
-                          </div>
-                          <div className="mt-1 truncate text-muted-foreground">
-                            {point.runtime?.model ?? point.agentName ?? t('Unknown model')}
-                          </div>
-                          <div className="min-w-0">
-                            {percent === undefined ? null : (
-                              <div
-                                className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
-                                data-slot="context-call-window-meter"
-                                aria-hidden="true"
-                              >
-                                <span
-                                  className="block h-full rounded-full bg-primary"
-                                  style={{ width: `${percent}%` }}
-                                />
-                              </div>
-                            )}
-                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 tabular-nums text-muted-foreground">
-                              <span>
-                                {t('In {{tokens}}', {
-                                  tokens: formatTokens(point.call.inputTokens)
-                                })}
-                              </span>
-                              <span>
-                                {t('Cache {{tokens}}', {
-                                  tokens: formatTokens(point.call.cacheTokens)
-                                })}
-                              </span>
-                              <span>
-                                {t('Out {{tokens}}', {
-                                  tokens: formatTokens(point.call.outputTokens)
-                                })}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              ) : null}
-            </article>
-          )
-        })}
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <ContextCallChart
+          bands={bands}
+          capacity={capacity}
+          activeCallId={activePoint?.call.id}
+          pinnedCallId={pinnedPoint?.call.id}
+          onPreview={setPreviewCallId}
+          onSelect={(callId) =>
+            setPinnedCallId((current) =>
+              current === callId || callId === points.at(-1)?.call.id ? undefined : callId
+            )
+          }
+        />
+        {activePoint ? (
+          <div className="border-t border-border">
+            <ContextCallDetails point={activePoint} />
+          </div>
+        ) : null}
       </div>
     </section>
   )
@@ -909,7 +1143,6 @@ const ContextWindowDialog = ({
 }: ContextWindowDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [granularity, setGranularity] = useState<ContextWindowGranularity>('turn')
-  const [callGroupBy, setCallGroupBy] = useState<ContextWindowCallGroupBy>('turn')
   const messages = session?.messages
   const activities = session?.activities
   const conversationGraph = session?.conversationGraph
@@ -929,14 +1162,7 @@ const ContextWindowDialog = ({
         : selectContextWindowCallPoints({ activities, conversationGraph, messages }),
     [activities, conversationGraph, messages]
   )
-  const callCoverage = useMemo(
-    () =>
-      selectContextWindowCallCoverage(
-        messages === undefined ? undefined : { activities, conversationGraph, messages },
-        callPoints
-      ),
-    [activities, callPoints, conversationGraph, messages]
-  )
+  const callSummary = useMemo(() => summarizeContextWindowCallPoints(callPoints), [callPoints])
   const contentRef = useRef<HTMLDivElement>(null)
 
   return (
@@ -1012,22 +1238,6 @@ const ContextWindowDialog = ({
                 </RadioGroup.Item>
               ))}
             </RadioGroup.Root>
-            {granularity === 'call' ? (
-              <Select
-                value={callGroupBy}
-                onValueChange={(value) => setCallGroupBy(value as ContextWindowCallGroupBy)}
-              >
-                <SelectTrigger className="h-11 w-full sm:w-44" aria-label={t('Group calls by')}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="turn">{t('Group by turn')}</SelectItem>
-                  <SelectItem value="model">{t('Group by model')}</SelectItem>
-                  <SelectItem value="framework">{t('Group by framework')}</SelectItem>
-                  <SelectItem value="none">{t('No grouping')}</SelectItem>
-                </SelectContent>
-              </Select>
-            ) : null}
           </div>
 
           <div
@@ -1066,8 +1276,12 @@ const ContextWindowDialog = ({
                 </>
               ) : (
                 <>
-                  <ContextCallSummary coverage={callCoverage} points={callPoints} />
-                  <ContextCallHistory points={callPoints} groupBy={callGroupBy} />
+                  <ContextCallSummary summary={callSummary} />
+                  {callPoints.length ? (
+                    <ContextCallHistory points={callPoints} />
+                  ) : (
+                    <ContextCallEmptyState />
+                  )}
                 </>
               )}
             </div>

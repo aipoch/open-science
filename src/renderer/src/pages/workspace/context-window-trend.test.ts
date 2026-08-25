@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest'
 import type { ChatSession } from '@/stores/session-store'
 import type { AcpContextWindowSample } from '../../../../shared/acp'
 import {
-  groupContextWindowCallPoints,
-  selectContextWindowCallCoverage,
+  groupContextWindowCallsByTurn,
   selectContextWindowCallPoints,
-  selectContextWindowTrendPoints
+  selectContextWindowTrendPoints,
+  summarizeContextWindowCallPoints
 } from './context-window-trend'
 
 const sample = (
@@ -24,7 +24,7 @@ const sample = (
 })
 
 describe('context window trend selector', () => {
-  it('selects exact calls from Agent messages and groups without summing context snapshots', () => {
+  it('selects exact calls from Agent messages and summarizes without summing context snapshots', () => {
     const session = {
       id: 'session-1',
       projectId: 'project-1',
@@ -152,16 +152,97 @@ describe('context window trend selector', () => {
       { callNumber: 1, turnNumber: 1, prompt: 'Inspect calls', runtime: { model: 'gpt-5' } },
       { callNumber: 2, turnNumber: 1, prompt: 'Inspect calls', runtime: { model: 'gpt-5' } }
     ])
-    expect(groupContextWindowCallPoints(calls, 'turn')).toMatchObject([
-      {
-        callCount: 2,
-        inputTokens: 30,
-        cacheTokens: 6,
-        outputTokens: 8,
-        peakContextUsedTokens: 24,
-        latestContextUsedTokens: 24
-      }
+    expect(summarizeContextWindowCallPoints(calls)).toEqual({
+      callCount: 2,
+      inputTokens: 30,
+      cacheTokens: 6,
+      outputTokens: 8,
+      peakContextUsedTokens: 24,
+      contextWindowSize: 100
+    })
+    expect(groupContextWindowCallsByTurn(calls)).toMatchObject([
+      { turnNumber: 1, messageNumber: 2, calls: [{ callNumber: 1 }, { callNumber: 2 }] }
     ])
+  })
+
+  it('groups consecutive calls into one band per turn and reports no peak without context data', () => {
+    const agentMessage = (
+      id: string,
+      promptId: string,
+      createdAt: number,
+      calls: {
+        id: string
+        index: number
+        inputTokens: number
+        cacheTokens: number
+        outputTokens: number
+      }[]
+    ): ChatSession['messages'][number] => ({
+      id,
+      role: 'agent' as const,
+      responseToMessageId: promptId,
+      content: 'Done',
+      eventIds: [],
+      status: 'complete' as const,
+      turnUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3, turnCount: calls.length },
+      modelCallUsage: calls,
+      createdAt,
+      updatedAt: createdAt,
+      completedAt: createdAt
+    })
+    const session = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Bands',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'First',
+          eventIds: [],
+          status: 'complete',
+          createdAt: 1,
+          updatedAt: 1
+        },
+        agentMessage('answer-1', 'prompt-1', 2, [
+          { id: 'call-1', index: 0, inputTokens: 5, cacheTokens: 1, outputTokens: 2 },
+          { id: 'call-2', index: 1, inputTokens: 6, cacheTokens: 1, outputTokens: 2 }
+        ]),
+        {
+          id: 'prompt-2',
+          role: 'user',
+          content: 'Second',
+          eventIds: [],
+          status: 'complete',
+          createdAt: 3,
+          updatedAt: 3
+        },
+        agentMessage('answer-2', 'prompt-2', 4, [
+          { id: 'call-3', index: 0, inputTokens: 7, cacheTokens: 2, outputTokens: 1 }
+        ])
+      ],
+      createdAt: 1,
+      updatedAt: 4
+    } satisfies ChatSession
+
+    const calls = selectContextWindowCallPoints(session)
+    expect(
+      groupContextWindowCallsByTurn(calls).map((band) => ({
+        turnNumber: band.turnNumber,
+        callIds: band.calls.map((point) => point.call.id)
+      }))
+    ).toEqual([
+      { turnNumber: 1, callIds: ['call-1', 'call-2'] },
+      { turnNumber: 2, callIds: ['call-3'] }
+    ])
+    expect(summarizeContextWindowCallPoints(calls)).toEqual({
+      callCount: 3,
+      inputTokens: 18,
+      cacheTokens: 4,
+      outputTokens: 5
+    })
   })
 
   it('reads only the active message projection while resolving historical runtime segments', () => {
@@ -355,12 +436,11 @@ describe('context window trend selector', () => {
     expect(selectContextWindowCallPoints(session)).toMatchObject([
       { callNumber: 1, turnNumber: 1, messageId: 'active-answer', prompt: 'Active prompt' }
     ])
-    expect(selectContextWindowCallCoverage(session)).toEqual({
-      turnCount: 1,
-      reportedCallCount: 1,
-      reportedCallCountComplete: true,
-      detailedTurnCount: 1,
-      detailedCallCount: 1
+    expect(summarizeContextWindowCallPoints(selectContextWindowCallPoints(session))).toEqual({
+      callCount: 1,
+      inputTokens: 10,
+      cacheTokens: 2,
+      outputTokens: 3
     })
   })
 

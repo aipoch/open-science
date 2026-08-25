@@ -19,8 +19,6 @@ export type ContextWindowTrendPoint = Readonly<{
   compactedAfter: boolean
 }>
 
-export type ContextWindowCallGroupBy = 'turn' | 'model' | 'framework' | 'none'
-
 export type ContextWindowCallPoint = Readonly<{
   callNumber: number
   turnNumber: number
@@ -33,25 +31,19 @@ export type ContextWindowCallPoint = Readonly<{
   agentName?: string
 }>
 
-export type ContextWindowCallGroup = Readonly<{
-  key: string
-  label: string
+export type ContextWindowCallTurnBand = Readonly<{
+  turnNumber: number
+  messageNumber: number
   calls: ContextWindowCallPoint[]
+}>
+
+export type ContextWindowCallSummary = Readonly<{
   callCount: number
   inputTokens: number
   cacheTokens: number
   outputTokens: number
   peakContextUsedTokens?: number
-  latestContextUsedTokens?: number
   contextWindowSize?: number
-}>
-
-export type ContextWindowCallCoverage = Readonly<{
-  turnCount: number
-  reportedCallCount: number
-  reportedCallCountComplete: boolean
-  detailedTurnCount: number
-  detailedCallCount: number
 }>
 
 const resolveAgentName = (
@@ -193,82 +185,49 @@ export const selectContextWindowCallPoints = (
   return points
 }
 
-export const selectContextWindowCallCoverage = (
-  session: ContextWindowTrendSession | undefined,
-  points = selectContextWindowCallPoints(session)
-): ContextWindowCallCoverage => {
-  const turnMessages = session
-    ? session.messages.filter((message) => message.role === 'agent' && message.turnUsage)
-    : []
-  return {
-    turnCount: turnMessages.length,
-    reportedCallCount: turnMessages.reduce(
-      (sum, message) => sum + (message.turnUsage?.turnCount ?? 0),
-      0
-    ),
-    reportedCallCountComplete: turnMessages.every(
-      (message) => message.turnUsage?.turnCount !== undefined
-    ),
-    detailedTurnCount: new Set(points.map((point) => point.messageId)).size,
-    detailedCallCount: points.length
-  }
-}
-
-const callGroupIdentity = (
-  point: ContextWindowCallPoint,
-  groupBy: ContextWindowCallGroupBy
-): { key: string; label: string } => {
-  switch (groupBy) {
-    case 'turn':
-      return { key: `turn:${point.messageId}`, label: `Turn ${point.turnNumber}` }
-    case 'model': {
-      const model = point.runtime?.model ?? 'Unknown model'
-      return { key: `model:${model}`, label: model }
-    }
-    case 'framework': {
-      const framework = point.runtime?.frameworkId ?? 'Unknown framework'
-      return { key: `framework:${framework}`, label: framework }
-    }
-    case 'none':
-      return { key: `call:${point.call.id}`, label: `Call ${point.callNumber}` }
-  }
-}
-
-export const groupContextWindowCallPoints = (
-  points: readonly ContextWindowCallPoint[],
-  groupBy: ContextWindowCallGroupBy
-): ContextWindowCallGroup[] => {
-  const grouped = new Map<string, { label: string; calls: ContextWindowCallPoint[] }>()
+// Bands are runs of consecutive calls sharing one turn. selectContextWindowCallPoints emits calls in
+// session order and turn numbers never decrease, so equal turn numbers are always adjacent.
+export const groupContextWindowCallsByTurn = (
+  points: readonly ContextWindowCallPoint[]
+): ContextWindowCallTurnBand[] => {
+  const bands: { turnNumber: number; messageNumber: number; calls: ContextWindowCallPoint[] }[] = []
   for (const point of points) {
-    const identity = callGroupIdentity(point, groupBy)
-    const group = grouped.get(identity.key)
-    if (group) group.calls.push(point)
-    else grouped.set(identity.key, { label: identity.label, calls: [point] })
-  }
-  return [...grouped].map(([key, group]) => {
-    const contextualCalls = group.calls.filter(
-      (point) => point.call.contextUsedTokens !== undefined
-    )
-    const latestContextualCall = contextualCalls.at(-1)
-    return {
-      key,
-      label: group.label,
-      calls: group.calls,
-      callCount: group.calls.length,
-      inputTokens: group.calls.reduce((sum, point) => sum + point.call.inputTokens, 0),
-      cacheTokens: group.calls.reduce((sum, point) => sum + point.call.cacheTokens, 0),
-      outputTokens: group.calls.reduce((sum, point) => sum + point.call.outputTokens, 0),
-      ...(contextualCalls.length > 0
-        ? {
-            peakContextUsedTokens: Math.max(
-              ...contextualCalls.map((point) => point.call.contextUsedTokens!)
-            ),
-            latestContextUsedTokens: latestContextualCall!.call.contextUsedTokens,
-            ...(latestContextualCall!.call.contextWindowSize !== undefined
-              ? { contextWindowSize: latestContextualCall!.call.contextWindowSize }
-              : {})
-          }
-        : {})
+    const band = bands.at(-1)
+    if (band && band.turnNumber === point.turnNumber) {
+      band.calls.push(point)
+    } else {
+      bands.push({
+        turnNumber: point.turnNumber,
+        messageNumber: point.messageNumber,
+        calls: [point]
+      })
     }
-  })
+  }
+  return bands
+}
+
+// Peak is the maximum reported contextUsedTokens; on ties the latest call wins. The window size
+// comes from that peak call, falling back to the latest call that reported any size when the peak
+// call did not report one.
+export const summarizeContextWindowCallPoints = (
+  points: readonly ContextWindowCallPoint[]
+): ContextWindowCallSummary => {
+  let peak: ContextWindowCallPoint | undefined
+  let latestKnownSize: number | undefined
+  for (const point of points) {
+    if (point.call.contextWindowSize !== undefined) latestKnownSize = point.call.contextWindowSize
+    const used = point.call.contextUsedTokens
+    if (used !== undefined && (peak?.call.contextUsedTokens ?? -1) <= used) peak = point
+  }
+  const contextWindowSize = peak?.call.contextWindowSize ?? latestKnownSize
+  return {
+    callCount: points.length,
+    inputTokens: points.reduce((sum, point) => sum + point.call.inputTokens, 0),
+    cacheTokens: points.reduce((sum, point) => sum + point.call.cacheTokens, 0),
+    outputTokens: points.reduce((sum, point) => sum + point.call.outputTokens, 0),
+    ...(peak?.call.contextUsedTokens !== undefined
+      ? { peakContextUsedTokens: peak.call.contextUsedTokens }
+      : {}),
+    ...(contextWindowSize !== undefined ? { contextWindowSize } : {})
+  }
 }
