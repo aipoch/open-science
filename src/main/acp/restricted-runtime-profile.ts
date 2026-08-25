@@ -1,7 +1,8 @@
-import { chmod, copyFile, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { ResolvedAgentBackend } from '../agent-framework'
+import { projectSafeCodexProviderRoute } from '../settings/codex-auth'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 
 type RestrictedRuntimeProfile = Readonly<{
@@ -60,18 +61,14 @@ const copyCodexAuthentication = async (
   }
 }
 
-const copyCodexConfig = async (
-  sourceHome: string | undefined,
-  targetHome: string
-): Promise<boolean> => {
-  if (!sourceHome || sourceHome === targetHome) return false
+const readCodexProviderRoute = async (
+  sourceHome: string | undefined
+): Promise<string | undefined> => {
+  if (!sourceHome) return undefined
   try {
-    const target = join(targetHome, 'config.toml')
-    await copyFile(join(sourceHome, 'config.toml'), target)
-    await chmod(target, 0o600)
-    return true
+    return projectSafeCodexProviderRoute(await readFile(join(sourceHome, 'config.toml'), 'utf8'))
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
   }
 }
@@ -160,17 +157,15 @@ const prepareCodexBackend = async (
 ): Promise<ResolvedAgentBackend> => {
   const codexHome = join(profileRoot, 'codex')
   await mkdir(codexHome, { recursive: true })
-  const [hasFileAuthentication, hasAppOwnedConfig] = await Promise.all([
+  const [hasFileAuthentication, providerRoute] = await Promise.all([
     copyCodexAuthentication(backend.env.CODEX_HOME, codexHome),
-    copyCodexConfig(backend.env.CODEX_HOME, codexHome)
+    readCodexProviderRoute(backend.env.CODEX_HOME)
   ])
-  if (!hasAppOwnedConfig) {
-    await writeFile(
-      join(codexHome, 'config.toml'),
-      `cli_auth_credentials_store = "${hasFileAuthentication ? 'file' : 'ephemeral'}"\n`,
-      { encoding: 'utf8', mode: 0o600 }
-    )
-  }
+  await writeFile(
+    join(codexHome, 'config.toml'),
+    `cli_auth_credentials_store = "${hasFileAuthentication ? 'file' : 'ephemeral'}"\n${providerRoute ? `\n${providerRoute}` : ''}`,
+    { encoding: 'utf8', mode: 0o600 }
+  )
   const codexConfig = record(JSON.parse(backend.env.CODEX_CONFIG ?? '{}'))
   delete codexConfig.developer_instructions
   codexConfig.experimental_use_unified_exec_tool = false
@@ -181,7 +176,13 @@ const prepareCodexBackend = async (
   codexConfig.tools = { ...record(codexConfig.tools), web_search: false }
   return {
     ...backend,
-    env: { ...backend.env, CODEX_HOME: codexHome, CODEX_CONFIG: JSON.stringify(codexConfig) },
+    env: {
+      ...backend.env,
+      CODEX_HOME: codexHome,
+      HOME: codexHome,
+      ...(backend.env.USERPROFILE === undefined ? {} : { USERPROFILE: codexHome }),
+      CODEX_CONFIG: JSON.stringify(codexConfig)
+    },
     systemPromptAppends: [profile.systemPrompt],
     persistentSystemPrompt: undefined
   }

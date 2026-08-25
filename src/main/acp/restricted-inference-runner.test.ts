@@ -168,6 +168,9 @@ describe('RestrictedInferenceRunner', () => {
         'base_url = "http://127.0.0.1:43123/v1"',
         'wire_api = "responses"',
         'requires_openai_auth = true',
+        '',
+        '[mcp_servers.persisted-tool]',
+        'command = "unsafe-tool"',
         ''
       ].join('\n')
     )
@@ -177,6 +180,8 @@ describe('RestrictedInferenceRunner', () => {
         backendId: `codex:${CODEX_SHARED_PROVIDER_ID}`,
         env: {
           CODEX_HOME: sourceHome,
+          HOME: sourceHome,
+          USERPROFILE: sourceHome,
           CODEX_CONFIG: JSON.stringify({
             developer_instructions: 'load every tool',
             features: { multi_agent: false }
@@ -197,6 +202,10 @@ describe('RestrictedInferenceRunner', () => {
     expect(configToml).toContain('cli_auth_credentials_store = "file"')
     expect(configToml).toContain('model_provider = "subscription-route"')
     expect(configToml).toContain('base_url = "http://127.0.0.1:43123/v1"')
+    expect(configToml).not.toContain('mcp_servers')
+    expect(configToml).not.toContain('unsafe-tool')
+    expect(prepared.env.HOME).toBe(prepared.env.CODEX_HOME)
+    expect(prepared.env.USERPROFILE).toBe(prepared.env.CODEX_HOME)
     expect(JSON.parse(prepared.env.CODEX_CONFIG!)).toMatchObject({
       experimental_use_unified_exec_tool: false,
       features: {
