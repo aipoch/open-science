@@ -419,6 +419,67 @@ describe('SettingsPage layout', () => {
     expect(panel?.parentElement?.className.split(/\s+/)).toContain('h-full')
   })
 
+  it('refreshes Memory from the backend every time its navigation option opens', async () => {
+    const readMemory = vi.mocked(window.api.memory.snapshot)
+    readMemory.mockResolvedValue({
+      revision: 2,
+      enabled: true,
+      categories: [
+        {
+          id: 'memory-category-about-you',
+          systemKey: 'about-you',
+          autoRecall: true,
+          revision: 2,
+          createdAt: 1,
+          updatedAt: 2,
+          entries: [
+            {
+              id: 'memory-entry-first',
+              content: 'First server memory',
+              origin: 'agent',
+              revision: 1,
+              createdAt: 2,
+              updatedAt: 2
+            }
+          ]
+        }
+      ]
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Memory')?.click())
+    await waitFor(() => expect(document.body.textContent).toContain('First server memory'))
+    await act(async () => navButton('General')?.click())
+
+    readMemory.mockResolvedValue({
+      revision: 3,
+      enabled: true,
+      categories: [
+        {
+          id: 'memory-category-about-you',
+          systemKey: 'about-you',
+          autoRecall: true,
+          revision: 3,
+          createdAt: 1,
+          updatedAt: 3,
+          entries: [
+            {
+              id: 'memory-entry-latest',
+              content: 'Latest agent-created memory',
+              origin: 'agent',
+              revision: 1,
+              createdAt: 3,
+              updatedAt: 3
+            }
+          ]
+        }
+      ]
+    })
+    await act(async () => navButton('Memory')?.click())
+
+    await waitFor(() => expect(document.body.textContent).toContain('Latest agent-created memory'))
+  })
+
   it('opens a resource Tag through Settings history and returns to the catalog with Back', async () => {
     vi.mocked(window.api.tags.snapshot).mockResolvedValue({
       revision: 2,

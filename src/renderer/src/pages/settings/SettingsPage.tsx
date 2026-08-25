@@ -138,10 +138,7 @@ const SpecialistsPanel = lazy(async () => {
   return { default: module.SpecialistsPanel }
 })
 const MemoryPanel = lazy(async () => {
-  const module = await loadSettingsPanel(
-    () => import('./MemoryPanel'),
-    () => useMemoryStore.getState().load()
-  )
+  const module = await import('./MemoryPanel')
   return { default: module.MemoryPanel }
 })
 const TagsPanel = lazy(async () => {
@@ -387,6 +384,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadTags = useTagStore((state) => state.load)
   const listenForTagChanges = useTagStore((state) => state.listen)
+  const loadMemory = useMemoryStore((state) => state.load)
   const listenForMemoryChanges = useMemoryStore((state) => state.listen)
   const browserSelectedTagId = useTagStore((state) => state.browserSelectedId)
   const setSelectedTagId = useTagStore((state) => state.setBrowserSelectedId)
@@ -456,6 +454,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const currentRoute = history[historyIndex]
   const activePanel = currentRoute.panel
+
+  useEffect(() => {
+    if (open && activePanel === 'memory') void loadMemory()
+  }, [activePanel, loadMemory, open])
 
   // Auto-detect opencode the first time its detection card is shown without a known path, so the card
   // reflects reality without a manual re-detect. Guarded on path + in-flight to run at most once.
