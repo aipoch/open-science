@@ -3342,6 +3342,16 @@
     "Session details": "会话详情",
     "Session details model Model": "会话详情模型",
     "Session details model Reasoning effort": "会话详情模型推理强度",
-    "Title": "标题"
+    "Title": "标题",
+    "Provider name must not exceed {{limit}} characters.": "服务商名称不得超过 {{limit}} 个字符。",
+    "Base URL must not exceed {{limit}} characters.": "基础 URL 不得超过 {{limit}} 个字符。",
+    "Model ID must not exceed {{limit}} characters.": "模型 ID 不得超过 {{limit}} 个字符。",
+    "API key must not exceed {{limit}} bytes.": "API 密钥不得超过 {{limit}} 字节。",
+    "Provider limit of {{limit}} reached.": "服务商数量已达到 {{limit}} 个的上限。",
+    "Model list response exceeded {{limit}} bytes.": "模型列表响应超过 {{limit}} 字节。",
+    "Provider validation response exceeded {{limit}} bytes.": "服务商校验响应超过 {{limit}} 字节。",
+    "The vendor returned more than {{limit}} models.": "服务商返回了超过 {{limit}} 个模型。",
+    "The vendor returned a model ID longer than {{limit}} characters.": "服务商返回了长度超过 {{limit}} 个字符的模型 ID。",
+    "Claude token must not exceed {{limit}} bytes.": "Claude 令牌不得超过 {{limit}} 字节。"
   }
 }

@@ -480,6 +480,38 @@ type LocalResponsesValidationAdapter = {
   missingToolCallMessage: string
 }
 
+const createBoundedValidationFetch =
+  (fetchImpl: typeof fetch): typeof fetch =>
+  async (input, init) => {
+    const response = await fetchImpl(input, init)
+
+    try {
+      const bodyText = await readBoundedResponseText(
+        response,
+        PROVIDER_RESOURCE_LIMITS.validationResponseBytes,
+        'Provider validation response'
+      )
+      const headers = new Headers(response.headers)
+      headers.delete('content-encoding')
+      headers.set('content-length', String(Buffer.byteLength(bodyText, 'utf8')))
+      return new Response(bodyText, {
+        status: response.status,
+        statusText: response.statusText,
+        headers
+      })
+    } catch (error) {
+      if (!(error instanceof ResponseBodyLimitError)) throw error
+      const bodyText = JSON.stringify({ error: { message: error.message } })
+      return new Response(bodyText, {
+        status: 413,
+        headers: {
+          'content-type': 'application/json',
+          'content-length': String(Buffer.byteLength(bodyText, 'utf8'))
+        }
+      })
+    }
+  }
+
 const validateProviderThroughLocalResponsesAdapter = async (
   adapter: LocalResponsesValidationAdapter,
   timeoutMs: number
@@ -585,7 +617,7 @@ const validateProviderThroughNativeResponsesCompatibility = async (
 
   const proxy = new NativeResponsesCompatibilityProxy(
     { baseUrl: targetBaseUrl, key: provider.key, model: provider.model },
-    fetchImpl
+    createBoundedValidationFetch(fetchImpl)
   )
   return validateProviderThroughLocalResponsesAdapter(
     {

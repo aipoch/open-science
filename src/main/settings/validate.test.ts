@@ -544,6 +544,67 @@ describe('validate: provider dispatch', () => {
     })
   })
 
+  it('stops native Responses compatibility validation at the upstream response limit', async () => {
+    let chunk = 0
+    let releaseThirdPull: (() => void) | undefined
+    let reportThirdPull: (() => void) | undefined
+    const thirdPull = new Promise<'third-pull'>((resolve) => {
+      reportThirdPull = () => resolve('third-pull')
+    })
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          chunk += 1
+          if (chunk <= 2) {
+            controller.enqueue(new Uint8Array(600 * 1024).fill(120))
+            return
+          }
+          reportThirdPull?.()
+          return new Promise<void>((resolve) => {
+            releaseThirdPull = () => {
+              controller.close()
+              resolve()
+            }
+          })
+        },
+        cancel() {
+          releaseThirdPull?.()
+        }
+      },
+      { highWaterMark: 0 }
+    )
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+
+    const validation = validateProvider(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.x.ai/v1',
+        key: 'k',
+        model: 'm'
+      },
+      {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        requireNativeResponsesCompatibility: true
+      }
+    )
+    const winner = await Promise.race([validation.then(() => 'validation' as const), thirdPull])
+    releaseThirdPull?.()
+    const result = await validation
+
+    expect(winner).toBe('validation')
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'unknown',
+      message: 'Provider validation response exceeded 1048576 bytes.'
+    })
+  })
+
   it('keeps the friendly auth guidance and does not surface a raw 401 body', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       status: 401,

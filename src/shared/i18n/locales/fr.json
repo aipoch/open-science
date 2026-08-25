@@ -3626,6 +3626,16 @@
     "Session details": "Détails de la session",
     "Session details model Model": "Modèle des détails de session",
     "Session details model Reasoning effort": "Effort de raisonnement du modèle des détails de session",
-    "Title": "Titre"
+    "Title": "Titre",
+    "Provider name must not exceed {{limit}} characters.": "Le nom du fournisseur ne doit pas dépasser {{limit}} caractères.",
+    "Base URL must not exceed {{limit}} characters.": "L’URL de base ne doit pas dépasser {{limit}} caractères.",
+    "Model ID must not exceed {{limit}} characters.": "L’identifiant du modèle ne doit pas dépasser {{limit}} caractères.",
+    "API key must not exceed {{limit}} bytes.": "La clé API ne doit pas dépasser {{limit}} octets.",
+    "Provider limit of {{limit}} reached.": "La limite de {{limit}} fournisseurs a été atteinte.",
+    "Model list response exceeded {{limit}} bytes.": "La réponse de la liste des modèles a dépassé {{limit}} octets.",
+    "Provider validation response exceeded {{limit}} bytes.": "La réponse de validation du fournisseur a dépassé {{limit}} octets.",
+    "The vendor returned more than {{limit}} models.": "Le fournisseur a renvoyé plus de {{limit}} modèles.",
+    "The vendor returned a model ID longer than {{limit}} characters.": "Le fournisseur a renvoyé un identifiant de modèle de plus de {{limit}} caractères.",
+    "Claude token must not exceed {{limit}} bytes.": "Le jeton Claude ne doit pas dépasser {{limit}} octets."
   }
 }

@@ -11,6 +11,7 @@ import {
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import { isPermissionProfileId, type PermissionProfileId } from '../../shared/permission-profiles'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 const readField = (value: unknown, field: string): unknown =>
   typeof value === 'object' && value !== null
@@ -192,6 +193,11 @@ const readDefaultPermissionProfile = (request: unknown): PermissionProfileId => 
 const readIsolatedClaudeToken = (token: unknown): string => {
   if (typeof token !== 'string') {
     throw new Error('Claude sign-in token must be a string.')
+  }
+  if (Buffer.byteLength(token, 'utf8') > PROVIDER_RESOURCE_LIMITS.apiKeyBytes) {
+    throw new Error(
+      `Claude sign-in token must not exceed ${PROVIDER_RESOURCE_LIMITS.apiKeyBytes} bytes.`
+    )
   }
   return token
 }

@@ -3340,6 +3340,16 @@
     "Session details": "세션 세부 정보",
     "Session details model Model": "세션 세부 정보 모델",
     "Session details model Reasoning effort": "세션 세부 정보 모델 추론 강도",
-    "Title": "제목"
+    "Title": "제목",
+    "Provider name must not exceed {{limit}} characters.": "모델 제공업체 이름은 {{limit}}자를 초과할 수 없습니다.",
+    "Base URL must not exceed {{limit}} characters.": "기본 URL은 {{limit}}자를 초과할 수 없습니다.",
+    "Model ID must not exceed {{limit}} characters.": "모델 ID는 {{limit}}자를 초과할 수 없습니다.",
+    "API key must not exceed {{limit}} bytes.": "API 키는 {{limit}}바이트를 초과할 수 없습니다.",
+    "Provider limit of {{limit}} reached.": "모델 제공업체 수가 {{limit}}개 제한에 도달했습니다.",
+    "Model list response exceeded {{limit}} bytes.": "모델 목록 응답이 {{limit}}바이트를 초과했습니다.",
+    "Provider validation response exceeded {{limit}} bytes.": "모델 제공업체 검증 응답이 {{limit}}바이트를 초과했습니다.",
+    "The vendor returned more than {{limit}} models.": "공급업체에서 {{limit}}개보다 많은 모델을 반환했습니다.",
+    "The vendor returned a model ID longer than {{limit}} characters.": "공급업체에서 {{limit}}자보다 긴 모델 ID를 반환했습니다.",
+    "Claude token must not exceed {{limit}} bytes.": "Claude 토큰은 {{limit}}바이트를 초과할 수 없습니다."
   }
 }

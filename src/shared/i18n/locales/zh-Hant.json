@@ -3342,6 +3342,16 @@
     "Session details": "工作階段詳細資訊",
     "Session details model Model": "工作階段詳細資訊模型",
     "Session details model Reasoning effort": "工作階段詳細資訊模型推理強度",
-    "Title": "標題"
+    "Title": "標題",
+    "Provider name must not exceed {{limit}} characters.": "服務商名稱不得超過 {{limit}} 個字元。",
+    "Base URL must not exceed {{limit}} characters.": "基礎 URL 不得超過 {{limit}} 個字元。",
+    "Model ID must not exceed {{limit}} characters.": "模型 ID 不得超過 {{limit}} 個字元。",
+    "API key must not exceed {{limit}} bytes.": "API 金鑰不得超過 {{limit}} 位元組。",
+    "Provider limit of {{limit}} reached.": "服務商數量已達 {{limit}} 個的上限。",
+    "Model list response exceeded {{limit}} bytes.": "模型清單回應超過 {{limit}} 位元組。",
+    "Provider validation response exceeded {{limit}} bytes.": "服務商驗證回應超過 {{limit}} 位元組。",
+    "The vendor returned more than {{limit}} models.": "服務商傳回了超過 {{limit}} 個模型。",
+    "The vendor returned a model ID longer than {{limit}} characters.": "服務商傳回了長度超過 {{limit}} 個字元的模型 ID。",
+    "Claude token must not exceed {{limit}} bytes.": "Claude 權杖不得超過 {{limit}} 位元組。"
   }
 }

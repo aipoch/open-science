@@ -3743,6 +3743,16 @@
     "Session details": "Сведения о сессии",
     "Session details model Model": "Модель для сведений о сессии",
     "Session details model Reasoning effort": "Глубина рассуждений модели для сведений о сессии",
-    "Title": "Название"
+    "Title": "Название",
+    "Provider name must not exceed {{limit}} characters.": "Имя поставщика не должно превышать {{limit}} символов.",
+    "Base URL must not exceed {{limit}} characters.": "Базовый URL не должен превышать {{limit}} символов.",
+    "Model ID must not exceed {{limit}} characters.": "Идентификатор модели не должен превышать {{limit}} символов.",
+    "API key must not exceed {{limit}} bytes.": "API-ключ не должен превышать {{limit}} байт.",
+    "Provider limit of {{limit}} reached.": "Достигнут предел количества поставщиков: {{limit}}.",
+    "Model list response exceeded {{limit}} bytes.": "Размер ответа со списком моделей превысил {{limit}} байт.",
+    "Provider validation response exceeded {{limit}} bytes.": "Размер ответа при проверке поставщика превысил {{limit}} байт.",
+    "The vendor returned more than {{limit}} models.": "Поставщик вернул более {{limit}} моделей.",
+    "The vendor returned a model ID longer than {{limit}} characters.": "Поставщик вернул идентификатор модели длиннее {{limit}} символов.",
+    "Claude token must not exceed {{limit}} bytes.": "Токен Claude не должен превышать {{limit}} байт."
   }
 }

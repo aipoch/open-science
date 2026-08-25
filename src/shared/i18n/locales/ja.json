@@ -3342,6 +3342,16 @@
     "Session details": "セッションの詳細",
     "Session details model Model": "セッション詳細モデル",
     "Session details model Reasoning effort": "セッション詳細モデルの推論強度",
-    "Title": "タイトル"
+    "Title": "タイトル",
+    "Provider name must not exceed {{limit}} characters.": "プロバイダー名は {{limit}} 文字以内である必要があります。",
+    "Base URL must not exceed {{limit}} characters.": "ベース URL は {{limit}} 文字以内である必要があります。",
+    "Model ID must not exceed {{limit}} characters.": "モデル ID は {{limit}} 文字以内である必要があります。",
+    "API key must not exceed {{limit}} bytes.": "API キーは {{limit}} バイト以内である必要があります。",
+    "Provider limit of {{limit}} reached.": "プロバイダー数が上限の {{limit}} 件に達しました。",
+    "Model list response exceeded {{limit}} bytes.": "モデル一覧のレスポンスが {{limit}} バイトを超えました。",
+    "Provider validation response exceeded {{limit}} bytes.": "プロバイダー検証レスポンスが {{limit}} バイトを超えました。",
+    "The vendor returned more than {{limit}} models.": "ベンダーから {{limit}} 件を超えるモデルが返されました。",
+    "The vendor returned a model ID longer than {{limit}} characters.": "ベンダーから {{limit}} 文字を超えるモデル ID が返されました。",
+    "Claude token must not exceed {{limit}} bytes.": "Claude トークンは {{limit}} バイト以内である必要があります。"
   }
 }

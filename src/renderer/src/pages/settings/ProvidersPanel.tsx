@@ -19,6 +19,7 @@ import { ScenarioModelList } from './ScenarioModelList'
 import { SettingsField, SettingsRow, SettingsSection } from './SettingsLayout'
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
 import { XaiOAuthSignInDialog } from './XaiOAuthSignInDialog'
+import { localizeProviderResourceMessage } from './validation-message'
 
 type ProvidersPanelProps = {
   // Navigation callbacks into the page-level history: the add/edit provider form is a breadcrumb
@@ -469,7 +470,11 @@ const ProvidersPanel = ({
               {providerErrorCopy(providerTestError, t)}
             </p>
             <DiagnosticDetails
-              detail={typeof providerTestError === 'string' ? undefined : providerTestError.detail}
+              detail={
+                typeof providerTestError === 'string' || !providerTestError.detail
+                  ? undefined
+                  : localizeProviderResourceMessage(providerTestError.detail, t)
+              }
             />
           </div>
         ) : null}

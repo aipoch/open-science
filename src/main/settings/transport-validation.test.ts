@@ -177,4 +177,10 @@ describe('Settings transport validation', () => {
       'Claude sign-in token must be a string.'
     )
   })
+
+  it('rejects an isolated Claude token larger than 16 KiB in UTF-8', () => {
+    expect(() => readIsolatedClaudeToken('é'.repeat(8_193))).toThrow(
+      'Claude sign-in token must not exceed 16384 bytes.'
+    )
+  })
 })
