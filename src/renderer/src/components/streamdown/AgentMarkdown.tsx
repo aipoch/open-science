@@ -345,65 +345,75 @@ const SessionMessageLink = ({
             }
           }}
         >
-          <div data-source-preview-hover-summary="" className="flex min-w-0 items-start gap-2.5">
+          <div
+            data-source-preview-hover-layout=""
+            className={cn(
+              'grid min-w-0 items-stretch',
+              faviconUrl ? 'grid-cols-[auto_minmax(0,1fr)] gap-x-2.5' : 'grid-cols-1'
+            )}
+          >
             {faviconUrl ? (
-              <SessionLinkFavicon className="mt-0.5 me-0 size-5 shrink-0" src={faviconUrl} />
+              <div data-source-preview-hover-icon-column="" className="flex items-start">
+                <SessionLinkFavicon className="mt-0.5 me-0 size-5 shrink-0" src={faviconUrl} />
+              </div>
             ) : null}
-            <div className="min-w-0 flex-1">
-              <div
-                id={sourcePreviewTitleId}
-                data-source-preview-hover-title=""
-                className="break-words text-sm font-medium leading-5 text-text-000"
-              >
-                {sourceItem.title}
+            <div data-source-preview-hover-content-column="" className="min-w-0">
+              <div data-source-preview-hover-summary="" className="min-w-0">
+                <div
+                  id={sourcePreviewTitleId}
+                  data-source-preview-hover-title=""
+                  className="break-words text-sm font-medium leading-5 text-text-000"
+                >
+                  {sourceItem.title}
+                </div>
+                <div
+                  data-source-preview-hover-hostname=""
+                  className="truncate text-xs leading-4 text-text-000/70"
+                >
+                  {hostname}
+                </div>
               </div>
               <div
-                data-source-preview-hover-hostname=""
-                className="truncate text-xs leading-4 text-text-000/70"
+                data-source-preview-hover-actions=""
+                className="mt-3 flex min-w-0 items-center gap-2"
               >
-                {hostname}
+                <a
+                  href={sourceItem.url}
+                  data-source-preview-hover-url=""
+                  title={sourceItem.url}
+                  className="min-w-0 flex-1 break-all text-xs leading-4 text-text-000 underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    dismissSourcePreview(true)
+                    upsertAndActivateItem(sourceItem)
+                  }}
+                >
+                  {sourceItem.url}
+                </a>
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        data-source-preview-hover-external=""
+                        aria-label={t('Open source in browser')}
+                        className="text-text-100 hover:text-text-000"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          dismissSourcePreview(true)
+                          window.open(sourceItem.url, '_blank', 'noreferrer')
+                        }}
+                      >
+                        <ExternalLink className="size-3.5" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t('Open source in browser')}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
             </div>
-          </div>
-          <div
-            data-source-preview-hover-actions=""
-            className="mt-3 flex min-w-0 items-center gap-2"
-          >
-            <a
-              href={sourceItem.url}
-              data-source-preview-hover-url=""
-              title={sourceItem.url}
-              className="min-w-0 flex-1 break-all text-xs leading-4 text-text-000 underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
-              onClick={(event) => {
-                event.preventDefault()
-                dismissSourcePreview(true)
-                upsertAndActivateItem(sourceItem)
-              }}
-            >
-              {sourceItem.url}
-            </a>
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    data-source-preview-hover-external=""
-                    aria-label={t('Open source in browser')}
-                    className="text-text-100 hover:text-text-000"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      dismissSourcePreview(true)
-                      window.open(sourceItem.url, '_blank', 'noreferrer')
-                    }}
-                  >
-                    <ExternalLink className="size-3.5" aria-hidden="true" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('Open source in browser')}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
           </div>
         </PopoverContent>
       </Popover>

@@ -18,7 +18,9 @@ import { createFrameNavigationGuard, isAllowedExternalNavigation } from './navig
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
 import { createLogger } from './logger'
+import { createSourcePreviewLoadMonitor } from './source-preview-load-monitor'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
+import { SOURCE_PREVIEW_LOAD_STATE_CHANNEL } from '../shared/source-preview'
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
@@ -55,6 +57,9 @@ const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
   'launch-failed',
   'integrity-failure'
 ])
+const sourcePreviewLoadMonitors = new WeakMap<BrowserWindow, SourcePreviewLoadMonitor>()
+
+type SourcePreviewLoadMonitor = ReturnType<typeof createSourcePreviewLoadMonitor>
 
 const loadRenderer = (window: BrowserWindow): void => {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -100,7 +105,14 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   window.webContents.session.setPermissionCheckHandler(
     (_webContents, _permission, _requestingOrigin, details) => details.isMainFrame
   )
-  const isAllowedFrameNavigation = createFrameNavigationGuard(window.webContents.mainFrame)
+  const sourcePreviewLoadMonitor = createSourcePreviewLoadMonitor((state) => {
+    window.webContents.send(SOURCE_PREVIEW_LOAD_STATE_CHANNEL, state)
+  })
+  sourcePreviewLoadMonitors.set(window, sourcePreviewLoadMonitor)
+  const isAllowedFrameNavigation = createFrameNavigationGuard(
+    window.webContents.mainFrame,
+    sourcePreviewLoadMonitor.registerRoot
+  )
   type FrameNavigationDetails = {
     url: string
     isMainFrame: boolean
@@ -151,6 +163,17 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     (details, _url, _isInPlace, _isMainFrame, frameProcessId, frameRoutingId) => {
       const frame = resolveNavigationFrame(details, frameProcessId, frameRoutingId)
       enforceFrameNavigationPolicy(details, frame)
+    }
+  )
+  window.webContents.on(
+    'did-frame-navigate',
+    (_event, url, httpResponseCode, httpStatusText, _isMainFrame, processId, routingId) => {
+      sourcePreviewLoadMonitor.finishNavigation(
+        webFrameMain.fromId(processId, routingId) ?? { processId, routingId },
+        url,
+        httpResponseCode,
+        httpStatusText
+      )
     }
   )
 
@@ -264,6 +287,9 @@ const createMainWindow = (
   // frame and a real document change so a dynamic preview iframe loading (or a same-document hash /
   // pushState navigation) — neither of which remounts the hook — does not falsely disarm the forward.
   window.webContents.on('did-start-navigation', (details) => {
+    sourcePreviewLoadMonitors
+      .get(window)
+      ?.startNavigation(details.frame, details.url, details.isSameDocument)
     if (details.isMainFrame && !details.isSameDocument) {
       rendererListenerReady = false
       windowFindListenerReady = false
@@ -275,7 +301,24 @@ const createMainWindow = (
   // error message (all of which can contain local paths or Session-derived data).
   window.webContents.on(
     'did-fail-load',
-    (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+    (
+      _event,
+      errorCode,
+      errorDescription,
+      validatedURL,
+      isMainFrame,
+      frameProcessId,
+      frameRoutingId
+    ) => {
+      sourcePreviewLoadMonitors.get(window)?.failNavigation(
+        webFrameMain.fromId(frameProcessId, frameRoutingId) ?? {
+          processId: frameProcessId,
+          routingId: frameRoutingId
+        },
+        validatedURL,
+        errorCode,
+        errorDescription
+      )
       if (!isMainFrame) return
       log.error('renderer document failed to load', { errorCode, errorDescription })
     }

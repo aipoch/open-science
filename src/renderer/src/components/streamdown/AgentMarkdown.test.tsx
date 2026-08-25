@@ -424,6 +424,12 @@ describe('AgentMarkdown renderer recovery', () => {
     const hoverActions = hoverCard?.querySelector<HTMLElement>(
       '[data-source-preview-hover-actions]'
     )
+    const hoverIconColumn = hoverCard?.querySelector<HTMLElement>(
+      '[data-source-preview-hover-icon-column]'
+    )
+    const hoverContentColumn = hoverCard?.querySelector<HTMLElement>(
+      '[data-source-preview-hover-content-column]'
+    )
     const hoverTitle = hoverCard?.querySelector<HTMLElement>('[data-source-preview-hover-title]')
     expect(hoverTitle?.textContent).toBe('Genome study')
     expect(hoverTitle?.className).toContain('text-text-000')
@@ -452,7 +458,9 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(externalButton?.getAttribute('aria-label')).toBe('Open source in browser')
     expect(hoverSummary?.contains(hoverTitle ?? null)).toBe(true)
     expect(hoverSummary?.contains(hoverHostname ?? null)).toBe(true)
-    expect(hoverSummary?.contains(hoverFavicon ?? null)).toBe(true)
+    expect(hoverIconColumn?.contains(hoverFavicon ?? null)).toBe(true)
+    expect(hoverContentColumn?.contains(hoverSummary ?? null)).toBe(true)
+    expect(hoverContentColumn?.contains(hoverActions ?? null)).toBe(true)
     expect(hoverActions?.contains(hoverCardUrl ?? null)).toBe(true)
     expect(hoverActions?.contains(externalButton ?? null)).toBe(true)
     expect(

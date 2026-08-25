@@ -1,4 +1,27 @@
 const SOURCE_PREVIEW_FRAME_NAME = 'open-science-source-preview'
+const SOURCE_PREVIEW_LOAD_STATE_CHANNEL = 'source-preview:load-state'
+
+type SourcePreviewLoadBase = {
+  navigationId: number
+  sourceUrl: string
+  currentUrl: string
+}
+
+type SourcePreviewLoadState =
+  | (SourcePreviewLoadBase & { phase: 'loading' })
+  | (SourcePreviewLoadBase & {
+      phase: 'loaded'
+      httpStatusCode: number
+      httpStatusText: string
+    })
+  | (SourcePreviewLoadBase & {
+      phase: 'failed'
+      failure: 'blocked' | 'certificate' | 'http' | 'network'
+      errorCode?: number
+      errorDescription?: string
+      httpStatusCode?: number
+      httpStatusText?: string
+    })
 
 const parseHttpsSourceUrl = (value: string): URL | undefined => {
   try {
@@ -11,4 +34,5 @@ const parseHttpsSourceUrl = (value: string): URL | undefined => {
   }
 }
 
-export { SOURCE_PREVIEW_FRAME_NAME, parseHttpsSourceUrl }
+export { SOURCE_PREVIEW_FRAME_NAME, SOURCE_PREVIEW_LOAD_STATE_CHANNEL, parseHttpsSourceUrl }
+export type { SourcePreviewLoadState }

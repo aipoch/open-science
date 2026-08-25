@@ -7,6 +7,7 @@ import {
   type RendererSurfaceProfile
 } from './renderer-contract'
 import { DATABASE_STARTUP_CHANNELS } from './database-startup'
+import { SOURCE_PREVIEW_LOAD_STATE_CHANNEL } from './source-preview'
 
 const WEB = 'web'
 const LOCAL = 'local'
@@ -231,6 +232,9 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('office-preview', 'officePreview', [
     ['attachFrame', 'office-preview:attach-frame', ELECTRON], ['close', 'office-preview:close', ELECTRON], ['onState', 'office-preview:state', ELECTRON_EVENT],
     ['open', 'office-preview:open', ELECTRON], ['reportState', 'office-preview:report-state', SEND],
+  ]),
+  group('source-preview', 'sourcePreview', [
+    ['onLoadState', SOURCE_PREVIEW_LOAD_STATE_CHANNEL, ELECTRON_EVENT],
   ]),
   group('permissions', 'permissions', [
     ['onChanged', 'permissions:changed', EVENT], ['extendUndo', 'permissions:extend-undo'], ['list', 'permissions:list'], ['restore', 'permissions:restore'],

@@ -294,6 +294,8 @@ describe('window navigation policy', () => {
     const guard = policy?.createFrameNavigationGuard(mainFrame)
     const sourceFrame = {
       frameTreeNodeId: 2,
+      processId: 7,
+      routingId: 8,
       name: 'open-science-source-preview',
       url: 'about:blank',
       parent: mainFrame
@@ -397,6 +399,128 @@ describe('window navigation policy', () => {
     }
     redirectHandler?.(blockedRedirect, blockedRedirect.url, false, false, 7, 8)
     expect(blockedRedirect.preventDefault).toHaveBeenCalledOnce()
+  })
+
+  it('reports source root loading and HTTP failures without observing unrelated subframes', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    const initialUrl = 'https://citation.example/missing'
+    const initialNavigation = {
+      url: initialUrl,
+      isMainFrame: false,
+      processId: 7,
+      routingId: 8,
+      frame: sourceFrame,
+      preventDefault: vi.fn()
+    }
+
+    window.webContentsHandlers.get('will-frame-navigate')?.(initialNavigation)
+    window.webContentsHandlers.get('did-start-navigation')?.({
+      url: initialUrl,
+      isSameDocument: false,
+      isMainFrame: false,
+      frame: sourceFrame
+    })
+
+    expect(window.sendMock).toHaveBeenLastCalledWith('source-preview:load-state', {
+      navigationId: 1,
+      sourceUrl: initialUrl,
+      currentUrl: initialUrl,
+      phase: 'loading'
+    })
+
+    const unrelatedFrame = {
+      frameTreeNodeId: 3,
+      name: '',
+      url: 'https://unrelated.example/frame',
+      parent: window.mainFrame
+    }
+    webFrameMainFromIdMock.mockReturnValue(unrelatedFrame)
+    window.webContentsHandlers.get('did-frame-navigate')?.(
+      {},
+      unrelatedFrame.url,
+      200,
+      'OK',
+      false,
+      9,
+      10
+    )
+    expect(window.sendMock).toHaveBeenCalledTimes(1)
+
+    webFrameMainFromIdMock.mockReturnValue(sourceFrame)
+    window.webContentsHandlers.get('did-frame-navigate')?.(
+      {},
+      initialUrl,
+      404,
+      'Not Found',
+      false,
+      7,
+      8
+    )
+
+    expect(window.sendMock).toHaveBeenLastCalledWith('source-preview:load-state', {
+      navigationId: 1,
+      sourceUrl: initialUrl,
+      currentUrl: initialUrl,
+      phase: 'failed',
+      failure: 'http',
+      httpStatusCode: 404,
+      httpStatusText: 'Not Found'
+    })
+  })
+
+  it('reports the Chromium failure reason for a blocked source root', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      processId: 7,
+      routingId: 8,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    const initialUrl = 'https://citation.example/blocked'
+    window.webContentsHandlers.get('will-frame-navigate')?.({
+      url: initialUrl,
+      isMainFrame: false,
+      frame: sourceFrame,
+      preventDefault: vi.fn()
+    })
+    window.webContentsHandlers.get('did-start-navigation')?.({
+      url: initialUrl,
+      isSameDocument: false,
+      isMainFrame: false,
+      frame: sourceFrame
+    })
+    window.sendMock.mockClear()
+    webFrameMainFromIdMock.mockReturnValue(undefined)
+
+    window.webContentsHandlers.get('did-fail-load')?.(
+      {},
+      -27,
+      'ERR_BLOCKED_BY_RESPONSE',
+      initialUrl,
+      false,
+      7,
+      8
+    )
+
+    expect(window.sendMock).toHaveBeenCalledWith('source-preview:load-state', {
+      navigationId: 1,
+      sourceUrl: initialUrl,
+      currentUrl: initialUrl,
+      phase: 'failed',
+      failure: 'blocked',
+      errorCode: -27,
+      errorDescription: 'ERR_BLOCKED_BY_RESPONSE'
+    })
   })
 
   it('denies every subframe permission request while preserving trusted main-frame checks', () => {

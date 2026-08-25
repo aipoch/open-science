@@ -68,11 +68,20 @@ const createSourceItem = (overrides: Partial<PreviewSourceItem> = {}): PreviewSo
 describe('PreviewPanel', () => {
   let container: HTMLDivElement
   let root: Root
+  let sourcePreviewListener: ((state: Record<string, unknown>) => void) | undefined
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     window.api = {
-      saveManagedFile: vi.fn().mockResolvedValue({ saved: true })
+      saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      sourcePreview: {
+        onLoadState: (listener: (state: Record<string, unknown>) => void) => {
+          sourcePreviewListener = listener
+          return () => {
+            sourcePreviewListener = undefined
+          }
+        }
+      }
     } as unknown as Window['api']
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -251,7 +260,9 @@ describe('PreviewPanel', () => {
 
     const progress = container.querySelector<HTMLElement>('[data-source-preview-progress]')
     const progressFill = progress?.querySelector<HTMLElement>('[data-source-preview-progress-fill]')
+    const skeleton = container.querySelector<HTMLElement>('[data-source-preview-skeleton]')
     expect(progress).not.toBeNull()
+    expect(skeleton).not.toBeNull()
     expect(progress?.className).toContain('h-0.5')
     expect(progress?.getAttribute('role')).toBe('progressbar')
     expect(progress?.getAttribute('aria-valuenow')).toBeNull()
@@ -267,14 +278,54 @@ describe('PreviewPanel', () => {
     expect(progressFill?.style.transform).toBe('scaleX(0.9)')
     expect(vi.getTimerCount()).toBe(0)
 
-    const iframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
     await act(async () => {
-      iframe?.dispatchEvent(new Event('load'))
+      sourcePreviewListener?.({
+        navigationId: 1,
+        sourceUrl: 'https://example.com/paper',
+        currentUrl: 'https://example.com/paper',
+        phase: 'loaded',
+        httpStatusCode: 200,
+        httpStatusText: 'OK'
+      })
     })
 
     expect(progressFill?.style.transform).toBe('scaleX(1)')
     await act(async () => vi.advanceTimersByTimeAsync(250))
     expect(container.querySelector('[data-source-preview-progress]')).toBeNull()
+    expect(container.querySelector('[data-source-preview-skeleton]')).toBeNull()
+  })
+
+  it('shows a retryable ErrorNotice with the blocked-frame failure reason', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+
+    await renderPanel()
+    const firstIframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
+
+    await act(async () => {
+      sourcePreviewListener?.({
+        navigationId: 1,
+        sourceUrl: 'https://example.com/paper',
+        currentUrl: 'https://example.com/paper',
+        phase: 'failed',
+        failure: 'blocked',
+        errorCode: -27,
+        errorDescription: 'ERR_BLOCKED_BY_RESPONSE'
+      })
+    })
+
+    const alert = container.querySelector<HTMLElement>('[data-source-preview-error]')
+    expect(alert?.textContent).toContain('Could not load this source')
+    expect(alert?.textContent).toContain('This source does not allow embedded previews.')
+    expect(alert?.textContent).toContain('ERR_BLOCKED_BY_RESPONSE (-27)')
+    expect(container.querySelector('[data-source-preview-progress]')).toBeNull()
+
+    const retryButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Try again'
+    )
+    await act(async () => retryButton?.click())
+
+    expect(container.querySelector('[data-source-preview-skeleton]')).not.toBeNull()
+    expect(container.querySelector('[data-source-preview-frame]')).not.toBe(firstIframe)
   })
 
   it('restarts source loading progress when the active URL changes', async () => {

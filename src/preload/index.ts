@@ -78,6 +78,7 @@ import type {
   SideChatSessionRequest,
   SideChatStartRequest
 } from '../shared/side-chat'
+import type { SourcePreviewLoadState } from '../shared/source-preview'
 import { announceWindowFindReady, subscribeCloseActivePane } from '../shared/window-controls'
 
 type RemoveListener = () => void
@@ -654,6 +655,10 @@ const api: OpenScienceAPI = {
       electronRendererContracts.send('officePreview.reportState', sessionId, state),
     close: (sessionId) => electronRendererContracts.invoke('officePreview.close', sessionId),
     onState: (listener) => electronRendererContracts.subscribe('officePreview.onState', listener)
+  },
+  sourcePreview: {
+    onLoadState: (listener: (state: SourcePreviewLoadState) => void) =>
+      electronRendererContracts.subscribe('sourcePreview.onLoadState', listener)
   },
   artifacts: {
     // Keep generated file movement in the main process where filesystem trust checks live.

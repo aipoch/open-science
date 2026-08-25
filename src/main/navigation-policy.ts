@@ -21,6 +21,8 @@ type FrameNavigationGuard = (
   frame?: NavigationFrame | null
 ) => boolean
 
+type SourcePreviewRootListener = (frame: NavigationFrame, sourceUrl: string) => void
+
 const getProtocol = (url: string): string | undefined => {
   try {
     return new URL(url).protocol
@@ -54,7 +56,10 @@ const isAllowedMainFrameNavigation = (url: string, currentUrl: string): boolean 
   }
 }
 
-const createFrameNavigationGuard = (mainFrame: NavigationFrame): FrameNavigationGuard => {
+const createFrameNavigationGuard = (
+  mainFrame: NavigationFrame,
+  onSourcePreviewRoot?: SourcePreviewRootListener
+): FrameNavigationGuard => {
   const sourcePreviewRootIds = new Set<number>()
 
   return (url, isMainFrame, currentUrl = '', frame): boolean => {
@@ -79,6 +84,7 @@ const createFrameNavigationGuard = (mainFrame: NavigationFrame): FrameNavigation
     if (!isNewSourceRoot) return false
 
     sourcePreviewRootIds.add(frame.frameTreeNodeId)
+    onSourcePreviewRoot?.(frame, url)
     return true
   }
 }

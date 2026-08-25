@@ -95,6 +95,7 @@ const closeElectronApplicationForCleanup = async (
 
 type ElectronApp = {
   readonly page: Page
+  allowRendererConsoleError: (text: string) => void
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
   beginResourceProfile: (options?: RuntimeResourceProfilerOptions) => Promise<void>
   completeOnboarding: () => Promise<Page>
@@ -305,6 +306,10 @@ class ElectronAppHarness implements ElectronApp {
   get page(): Page {
     if (!this.currentPage) throw new Error('Electron application is not running.')
     return this.currentPage
+  }
+
+  allowRendererConsoleError(text: string): void {
+    this.rendererFailures.allowConsoleError(text)
   }
 
   async beginResourceProfile(options: RuntimeResourceProfilerOptions = {}): Promise<void> {

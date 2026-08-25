@@ -245,19 +245,39 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
     const hostname = card.querySelector<HTMLElement>('[data-source-preview-hover-hostname]')
     const url = card.querySelector<HTMLElement>('[data-source-preview-hover-url]')
     const external = card.querySelector<HTMLElement>('[data-source-preview-hover-external]')
-    if (!summary || !actions || !title || !hostname || !url || !external) {
+    const iconColumn = card.querySelector<HTMLElement>('[data-source-preview-hover-icon-column]')
+    const contentColumn = card.querySelector<HTMLElement>(
+      '[data-source-preview-hover-content-column]'
+    )
+    if (
+      !summary ||
+      !actions ||
+      !title ||
+      !hostname ||
+      !url ||
+      !external ||
+      !iconColumn ||
+      !contentColumn
+    ) {
       throw new Error('Source hover layout is incomplete')
     }
     const cardRect = card.getBoundingClientRect()
+    const titleRect = title.getBoundingClientRect()
     const hostnameRect = hostname.getBoundingClientRect()
     const actionsRect = actions.getBoundingClientRect()
     const urlRect = url.getBoundingClientRect()
     const externalRect = external.getBoundingClientRect()
+    const iconColumnRect = iconColumn.getBoundingClientRect()
+    const contentColumnRect = contentColumn.getBoundingClientRect()
+    const contentStarts = [titleRect.left, hostnameRect.left, urlRect.left]
     return {
       width: cardRect.width,
       titleColor: getComputedStyle(title).color,
       descriptionColor: getComputedStyle(hostname).color,
       actionGap: actionsRect.top - hostnameRect.bottom,
+      contentStartDelta: Math.max(...contentStarts) - Math.min(...contentStarts),
+      iconColumnPrecedesContent: iconColumnRect.right <= contentColumnRect.left,
+      iconColumnHeightDelta: Math.abs(iconColumnRect.height - contentColumnRect.height),
       actionCenterDelta: Math.abs(
         urlRect.top + urlRect.height / 2 - (externalRect.top + externalRect.height / 2)
       )
@@ -266,6 +286,9 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   expect(hoverLayout.width).toBeLessThan(320)
   expect(hoverLayout.titleColor).not.toBe(hoverLayout.descriptionColor)
   expect(hoverLayout.actionGap).toBeGreaterThanOrEqual(8)
+  expect(hoverLayout.contentStartDelta).toBeLessThanOrEqual(1)
+  expect(hoverLayout.iconColumnPrecedesContent).toBe(true)
+  expect(hoverLayout.iconColumnHeightDelta).toBeLessThanOrEqual(1)
   expect(hoverLayout.actionCenterDelta).toBeLessThanOrEqual(1)
   await expect(hoverCard.locator('[data-session-link-favicon-skeleton]')).toHaveCount(0)
   expect(sourceDocumentRequestCount).toBe(0)
@@ -304,14 +327,15 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(sourceFrame).toHaveAttribute('src', 'https://citation.example/paper')
   await expect.poll(() => sourceDocumentRequestCount).toBe(1)
   const sourceProgress = page.locator('[data-source-preview-progress]')
+  const sourceSkeleton = page.locator('[data-source-preview-skeleton]')
   await expect(sourceProgress).toBeVisible()
+  await expect(sourceSkeleton).toBeVisible()
   expect(await sourceProgress.evaluate((element) => getComputedStyle(element).height)).toBe('2px')
   await page.screenshot({ path: testInfo.outputPath('source-preview-loading.png') })
   await expect(sourceFrame).toHaveAttribute('sandbox', 'allow-same-origin allow-scripts')
   await expect(sourceFrame).toHaveAttribute('referrerpolicy', 'no-referrer')
   await expect(sourceFrame).toHaveAttribute('name', 'open-science-source-preview')
-  const sourcePreview = sourceFrame.locator('..')
-  const sourceHeader = sourcePreview.locator('[data-source-preview-header]')
+  const sourceHeader = page.locator('[data-source-preview-header]')
   const sourceHeaderTitle = sourceHeader.locator('[data-source-preview-header-title]')
   const sourceHeaderUrl = sourceHeader.locator('[data-source-preview-header-url]')
   await expect(sourceHeader.locator('.lucide-link-2')).toHaveCount(0)
@@ -341,8 +365,49 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
     })
   ).toBeVisible()
   await expect(sourceProgress).toHaveCount(0)
+  await expect(sourceSkeleton).toHaveCount(0)
 
   await page.screenshot({ path: testInfo.outputPath('citation-source-preview.png') })
+})
+
+test('shows the Electron failure reason when a source returns an HTTP error', async ({
+  app
+}, testInfo) => {
+  let page = await app.completeOnboarding()
+  page = await app.configureFakeAgent()
+  app.allowRendererConsoleError(
+    'Failed to load resource: the server responded with a status of 503 (Service Unavailable)'
+  )
+  let sourceDocumentRequestCount = 0
+  await page.route('https://citation.example/paper', async (route) => {
+    sourceDocumentRequestCount += 1
+    await route.fulfill({
+      status: 503,
+      contentType: 'text/html',
+      body: '<!doctype html><html><body><h1>Unavailable source</h1></body></html>'
+    })
+  })
+  await createProject(page)
+
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(CITATION_PREVIEW_PROMPT)
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  const sourceLink = page.getByRole('link', { name: 'Torre et al. 2026' })
+  await sourceLink.hover()
+  await page.locator('[data-source-preview-hover-url]').click()
+
+  const sourceError = page.locator('[data-source-preview-error]')
+  await expect(sourceError).toContainText('Could not load this source')
+  await expect(sourceError).toContainText('The source returned an HTTP error.')
+  await expect(sourceError).toContainText('HTTP 503 Service Unavailable')
+  await expect(page.locator('[data-source-preview-skeleton]')).toHaveCount(0)
+  await expect(page.locator('[data-source-preview-progress]')).toHaveCount(0)
+  expect(sourceDocumentRequestCount).toBe(1)
+  await page.screenshot({ path: testInfo.outputPath('source-preview-error.png') })
+
+  await sourceError.getByRole('button', { name: 'Try again' }).click()
+  await expect.poll(() => sourceDocumentRequestCount).toBe(2)
+  await expect(sourceError).toContainText('HTTP 503 Service Unavailable')
 })
 
 test('archives a completed session from its mobile sidebar actions', async ({ app }) => {
