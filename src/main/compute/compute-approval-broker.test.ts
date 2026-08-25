@@ -373,6 +373,71 @@ describe('ComputeApprovalBroker', () => {
     broker.completeProviderInvalidation('ssh:biowulf')
   })
 
+  it('does not allow a remembered grant when the request aborts during lookup', async () => {
+    let finishGrantLookup: ((scope: 'project') => void) | undefined
+    const resolveGrant = vi.fn(
+      () =>
+        new Promise<'project'>((resolve) => {
+          finishGrantLookup = resolve
+        })
+    )
+    const broadcast = vi.fn()
+    const controller = new AbortController()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast,
+      permissionGrants: { resolve: resolveGrant, remember: vi.fn() } as never
+    })
+
+    const decision = broker.requestWithContext(
+      makeRequest(),
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        operation: 'call_command',
+        ownerId: 'host-row-1'
+      },
+      controller.signal
+    )
+    await vi.waitFor(() => expect(resolveGrant).toHaveBeenCalledOnce())
+
+    controller.abort()
+    finishGrantLookup?.('project')
+
+    await expect(decision).rejects.toMatchObject({ name: 'AbortError' })
+    expect(broadcast).not.toHaveBeenCalled()
+  })
+
+  it('does not allow a remembered grant after its Session is deleted during lookup', async () => {
+    let finishGrantLookup: ((scope: 'project') => void) | undefined
+    const resolveGrant = vi.fn(
+      () =>
+        new Promise<'project'>((resolve) => {
+          finishGrantLookup = resolve
+        })
+    )
+    const broadcast = vi.fn()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast,
+      permissionGrants: { resolve: resolveGrant, remember: vi.fn() } as never
+    })
+
+    const decision = broker.requestWithContext(makeRequest(), {
+      sessionId: 'session-deleted',
+      projectId: 'project-1',
+      operation: 'call_command',
+      ownerId: 'host-row-1'
+    })
+    await vi.waitFor(() => expect(resolveGrant).toHaveBeenCalledOnce())
+
+    broker.cancelSession('session-deleted')
+    finishGrantLookup?.('project')
+
+    await expect(decision).resolves.toBe('deny')
+    expect(broadcast).not.toHaveBeenCalled()
+  })
+
   it('does not remember approval when the provider id belongs to a recreated host', async () => {
     const timer = makeTimer()
     const remember = vi.fn()
