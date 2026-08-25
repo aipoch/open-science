@@ -602,8 +602,8 @@ describe('ConnectorsPanel (groups)', () => {
     })
 
     openDropdownByText('Add connector')
-    expect(document.body.textContent).toContain('Import a configuration file')
-    clickItemByText('menuitem', 'Connector or MCP')
+    expect(document.body.textContent).toContain('Import a Connector or MCP client configuration')
+    clickItemByText('menuitem', 'Import configuration')
 
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'import' })
   })
