@@ -20,6 +20,7 @@ import {
   docArtifactCount,
   docSessionCount,
   domToDoc,
+  isPastedTextCaretHost,
   MAX_COMPOSER_ARTIFACT_MENTIONS,
   MAX_COMPOSER_SESSION_MENTIONS,
   PASTED_TEXT_CARET_MARKER,
@@ -123,20 +124,30 @@ const insertPlainTextAtCaret = (text: string): void => {
   selection.addRange(range)
 }
 
+const caretNodeAfterPastedText = (anchor: ChildNode, splitOwnedHost: boolean): Text => {
+  const sibling = anchor.nextSibling
+  if (
+    sibling?.nodeType === Node.TEXT_NODE &&
+    sibling.textContent !== '' &&
+    (!splitOwnedHost || sibling.textContent !== PASTED_TEXT_CARET_MARKER)
+  ) {
+    return sibling as Text
+  }
+  const host = createPastedTextCaretHost()
+  if (sibling?.nodeType === Node.TEXT_NODE) sibling.replaceWith(host)
+  else anchor.after(host)
+  return host
+}
+
 const insertPastedTextAtCaret = (node: ComposerPastedTextNode): void => {
   const selection = window.getSelection()
   if (!selection || selection.rangeCount === 0) return
   const range = selection.getRangeAt(0)
+  const splitOwnedHost = isPastedTextCaretHost(range.startContainer)
   range.deleteContents()
   const inserted = createPastedTextAnchor(node)
   range.insertNode(inserted)
-  let caretHost = inserted.nextSibling
-  if (caretHost?.nodeType !== Node.TEXT_NODE || caretHost.textContent === '') {
-    const drawableHost = createPastedTextCaretHost()
-    if (caretHost?.nodeType === Node.TEXT_NODE) caretHost.replaceWith(drawableHost)
-    else inserted.after(drawableHost)
-    caretHost = drawableHost
-  }
+  const caretHost = caretNodeAfterPastedText(inserted, splitOwnedHost)
   range.setStart(caretHost, 0)
   range.collapse(true)
   selection.removeAllRanges()
@@ -253,6 +264,7 @@ const insertComposerClipboardFragmentAtCaret = (
   const selection = window.getSelection()
   if (!selection || selection.rangeCount === 0) return []
   const range = selection.getRangeAt(0)
+  const splitOwnedHost = isPastedTextCaretHost(range.startContainer)
   range.deleteContents()
   const inserted = document.createDocumentFragment()
   const pastedTextNodes: ComposerPastedTextNode[] = []
@@ -272,8 +284,7 @@ const insertComposerClipboardFragmentAtCaret = (
   range.insertNode(inserted)
   if (!lastInserted) return []
   if (lastInserted.nodeType === Node.ELEMENT_NODE) {
-    const caretHost = createPastedTextCaretHost()
-    lastInserted.after(caretHost)
+    const caretHost = caretNodeAfterPastedText(lastInserted, splitOwnedHost)
     range.setStart(caretHost, 0)
   } else {
     range.setStartAfter(lastInserted)

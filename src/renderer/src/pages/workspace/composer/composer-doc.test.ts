@@ -408,6 +408,12 @@ describe('domToDoc', () => {
     expect(domToDoc(root)).toEqual({ nodes: [{ type: 'text', text: 'ab' }] })
   })
 
+  it('preserves user-entered word-joiner characters', () => {
+    const root = document.createElement('div')
+    root.appendChild(document.createTextNode('a\u2060b'))
+    expect(domToDoc(root)).toEqual({ nodes: [{ type: 'text', text: 'a\u2060b' }] })
+  })
+
   it('returns the empty doc for an empty root', () => {
     const root = document.createElement('div')
     expect(domToDoc(root)).toEqual(emptyDoc)
