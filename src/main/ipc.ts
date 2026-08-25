@@ -1506,6 +1506,7 @@ const createApplicationModules = async (
         name: 'compute-job-runtime',
         capability: undefined,
         start: () => jobPoller.start(),
+        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         dispose: () => jobPoller.stop()
       }
     }

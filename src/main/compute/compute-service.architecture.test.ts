@@ -340,6 +340,17 @@ describe('Compute service architecture', () => {
     expect(backgroundProjectRecovery).toBeGreaterThan(backgroundSessionRecovery)
   })
 
+  it('gives Compute Job shutdown the transport cancellation budget', () => {
+    const source = readSource(computePaths.mainIpc)
+    const runtimeStart = source.indexOf('const jobPoller = createComputeJobRuntime')
+    const runtimeEnd = source.indexOf('const agentComputeService', runtimeStart)
+    const runtimeRegistration = source.slice(runtimeStart, runtimeEnd)
+
+    expect(runtimeStart).toBeGreaterThan(-1)
+    expect(runtimeEnd).toBeGreaterThan(runtimeStart)
+    expect(runtimeRegistration).toContain('disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS')
+  })
+
   it('awaits Compute Job barrier rollback when a new Project deletion aborts', () => {
     const source = readSource(computePaths.mainIpc)
     const abortStart = source.indexOf('abortProjectDeletion: async (projectId) => {')
