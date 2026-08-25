@@ -916,6 +916,7 @@ describe('ComposerEditor', () => {
 
     const lastCall = onDocChange.mock.calls.at(-1)?.[0] as ComposerDoc
     expect(lastCall.nodes.some((node) => node.type === 'skill' && node.id === 'lit')).toBe(true)
+    expect(onDocChange.mock.calls.at(-1)?.[1]).toEqual({ nodeIndex: 0, offset: 4 })
   })
 
   it('exposes the active skill suggestion from the focused editor', () => {

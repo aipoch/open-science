@@ -765,12 +765,16 @@ export const ComposerEditor = ({
 
   // Replace the active `/query` token with a skill chip, then close the popup.
   const handleSelectSkill = (skill: SkillView): void => {
+    const root = editorRef.current
+    undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.displayName })
     mention.cancel()
   }
 
   // Replace the active `@query` token with an artifact chip, then close the popup.
   const handleSelectArtifact = (ref: PickedArtifact): void => {
+    const root = editorRef.current
+    undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     artifactMention.replaceTokenWith({
       type: 'artifact',
       id: ref.id,
@@ -784,6 +788,8 @@ export const ComposerEditor = ({
   }
 
   const handleSelectSession = (session: PickedSession): void => {
+    const root = editorRef.current
+    undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     sessionMention.replaceTokenWith(session)
     sessionMention.cancel()
   }
