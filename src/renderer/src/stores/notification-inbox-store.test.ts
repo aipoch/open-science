@@ -137,4 +137,24 @@ describe('notification inbox store', () => {
     expect(getSnapshot).toHaveBeenCalledTimes(2)
     expect(useNotificationInboxStore.getState().revision).toBe(2)
   })
+
+  it('reports snapshot failures without rejecting refresh callers', async () => {
+    const getSnapshot = vi
+      .fn()
+      .mockRejectedValueOnce('offline')
+      .mockRejectedValueOnce(new Error('network unavailable'))
+    vi.stubGlobal('window', { api: { notifications: { getSnapshot } } })
+
+    await useNotificationInboxStore.getState().refresh()
+    expect(useNotificationInboxStore.getState()).toMatchObject({
+      status: 'error',
+      error: 'Messages could not be loaded.'
+    })
+
+    await useNotificationInboxStore.getState().refresh()
+    expect(useNotificationInboxStore.getState()).toMatchObject({
+      status: 'error',
+      error: 'network unavailable'
+    })
+  })
 })
