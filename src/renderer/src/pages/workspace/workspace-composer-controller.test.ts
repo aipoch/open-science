@@ -270,6 +270,9 @@ describe('workspace composer controller', () => {
     })
     expect(docToText(hook.result.current.view.doc)).toBe('before  after')
     expect(hook.result.current.view.attachments[0]?.id).toBe('upload-paste-restaged')
+
+    hook.selectDraft('session-b')
+    expect(hook.result.current.view.caretRequest).toBeUndefined()
   })
 
   it('restores the original text inline when staging a converted paste fails', async () => {
@@ -399,6 +402,49 @@ describe('workspace composer controller', () => {
     act(() => hook.result.current.actions.removeAttachment(hook.result.current.view.attachments[0]))
     act(() => hook.result.current.actions.changeDoc(textDoc('new typing')))
     expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(false)
+  })
+
+  it('undoes an atomic pasted-text anchor deletion emitted by the editor', async () => {
+    const stageLocalFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'upload-first',
+        sessionId: '.pending',
+        name: 'Pastedtext-payload.txt',
+        originalName: 'Pastedtext-payload.txt',
+        path: '/uploads/first.txt',
+        mimeType: 'text/plain',
+        size: 7
+      })
+      .mockResolvedValueOnce({
+        id: 'upload-restaged',
+        sessionId: '.pending',
+        name: 'Pastedtext-payload.txt',
+        originalName: 'Pastedtext-payload.txt',
+        path: '/uploads/restaged.txt',
+        mimeType: 'text/plain',
+        size: 7
+      })
+    const hook = renderController(uploads(stageLocalFile))
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = {
+      type: 'pasted-text',
+      id: 'paste-1',
+      text: 'payload'
+    }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    await flushAsyncWork()
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('before  after')))
+    expect(hook.result.current.view.attachments).toEqual([])
+
+    act(() => expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(true))
+    await flushAsyncWork()
+    expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
+      type: 'pasted-text',
+      id: 'paste-1',
+      attachmentId: 'upload-restaged'
+    })
   })
 
   it('undoes only the closed paste when another staged paste falls back inline', async () => {

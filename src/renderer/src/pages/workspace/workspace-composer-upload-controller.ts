@@ -569,6 +569,18 @@ export const useWorkspaceComposerUploadController = ({
   const changeDoc = useCallback(
     (nextDoc: ComposerDoc): void => {
       const draftKey = activeDraftKeyRef.current
+      const serializedNextDoc = JSON.stringify(nextDoc)
+      // Backspace/Delete emits the current doc with exactly one atomic marker removed. Reuse the
+      // attachment-close path so Cmd/Ctrl-Z receives the same restaging receipt.
+      const atomicallyRemovedPastedText = docRef.current.nodes.find(
+        (node): node is ComposerPastedTextNode =>
+          node.type === 'pasted-text' &&
+          JSON.stringify(removePastedTextNode(docRef.current, node.id)) === serializedNextDoc
+      )
+      if (atomicallyRemovedPastedText) {
+        removePastedText(atomicallyRemovedPastedText)
+        return
+      }
       clearPastedTextUndo(draftKey)
       clearHistory(draftKey)
       reconcileRemovedPastedTextUploads(nextDoc, draftKey)
@@ -579,8 +591,10 @@ export const useWorkspaceComposerUploadController = ({
       activeDraftKeyRef,
       clearHistory,
       clearPastedTextUndo,
+      docRef,
       markChanged,
       reconcileRemovedPastedTextUploads,
+      removePastedText,
       setActiveDoc
     ]
   )

@@ -225,6 +225,7 @@ const useWorkspaceComposerController = ({
     delete historyRef.current[previousDraftKey]
     setHistoryBrowsingKey(undefined)
     setHistoryStatus('')
+    setCaretRequest(undefined)
 
     const customizePrefillPending =
       currentDraftKey === newConversationDraftKey &&
