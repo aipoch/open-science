@@ -74,7 +74,7 @@ type WorkspaceComposerController = {
     cancelTransfer: (transfer: ComposerUploadTransfer) => void
     removeAttachment: (attachment: UploadedAttachment) => void
     restorePastedText: (pastedTextId: string) => void
-    undoPastedTextRemoval: () => boolean
+    undo: () => boolean
     setError: (error: string | null) => void
   }
   lifecycle: {
@@ -159,9 +159,10 @@ const useWorkspaceComposerController = ({
     cancelTransfer,
     removeAttachment,
     restorePastedText,
-    undoPastedTextRemoval,
+    undo,
     setError,
-    clearPastedTextUndo
+    clearPastedTextUndo,
+    clearUndo
   } = uploadController.actions
   const {
     activateDraftAttachments,
@@ -400,19 +401,21 @@ const useWorkspaceComposerController = ({
 
   const captureSend = useCallback((): ComposerSendSnapshot => {
     clearPastedTextUndo()
+    clearUndo()
     return {
       draftKey: activeDraftKeyRef.current,
       version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
       doc,
       attachments
     }
-  }, [attachments, clearPastedTextUndo, doc])
+  }, [attachments, clearPastedTextUndo, clearUndo, doc])
   const clearDraft = useCallback(
     (draftKey: string, expectedVersion?: number): boolean => {
       const currentVersion = versionsRef.current[draftKey] ?? 0
       if (expectedVersion !== undefined && currentVersion !== expectedVersion) return false
       clearHistory(draftKey)
       clearPastedTextUndo(draftKey)
+      clearUndo(draftKey)
       delete draftsRef.current[draftKey]
       if (activeDraftKeyRef.current !== draftKey) return true
       setActiveDoc(emptyDoc)
@@ -420,7 +423,7 @@ const useWorkspaceComposerController = ({
       setError(null)
       return true
     },
-    [clearActiveAttachments, clearHistory, clearPastedTextUndo, setActiveDoc, setError]
+    [clearActiveAttachments, clearHistory, clearPastedTextUndo, clearUndo, setActiveDoc, setError]
   )
   const restoreFailedSend = useCallback(
     (snapshot: ComposerSendSnapshot, preserveOnConflict = false): boolean => {
@@ -477,7 +480,7 @@ const useWorkspaceComposerController = ({
       cancelTransfer,
       removeAttachment,
       restorePastedText,
-      undoPastedTextRemoval,
+      undo,
       setError
     },
     lifecycle: {

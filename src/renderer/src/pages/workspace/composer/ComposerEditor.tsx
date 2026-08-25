@@ -53,7 +53,7 @@ type ComposerEditorProps = {
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
   onLongTextPaste?: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
   onLocatePastedText?: (pastedTextId: string) => void
-  onUndoPastedTextRemoval?: () => boolean
+  onUndo?: () => boolean
   disabled?: boolean
   placeholder: string
   className?: string
@@ -392,7 +392,7 @@ export const ComposerEditor = ({
   onPaste,
   onLongTextPaste,
   onLocatePastedText,
-  onUndoPastedTextRemoval,
+  onUndo,
   disabled = false,
   placeholder,
   className,
@@ -596,7 +596,7 @@ export const ComposerEditor = ({
       !event.shiftKey &&
       !event.repeat &&
       !event.nativeEvent.isComposing &&
-      onUndoPastedTextRemoval?.()
+      onUndo?.()
     ) {
       event.preventDefault()
       return

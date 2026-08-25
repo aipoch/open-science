@@ -210,7 +210,7 @@ type Overrides = Partial<{
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
   onLongTextPaste: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
   onLocatePastedText: (pastedTextId: string) => void
-  onUndoPastedTextRemoval: () => boolean
+  onUndo: () => boolean
   disabled: boolean
   isHistoryBrowsing: boolean
   historyStatus: string
@@ -231,7 +231,7 @@ const renderEditor = (overrides: Overrides = {}): void => {
         onPaste={overrides.onPaste ?? noop}
         onLongTextPaste={overrides.onLongTextPaste}
         onLocatePastedText={overrides.onLocatePastedText}
-        onUndoPastedTextRemoval={overrides.onUndoPastedTextRemoval}
+        onUndo={overrides.onUndo}
         disabled={overrides.disabled}
         placeholder="Ask anything"
         ariaLabel="Ask anything"
@@ -762,9 +762,9 @@ describe('ComposerEditor', () => {
     expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'before  after' }] })
   })
 
-  it('uses custom Cmd+Z only while a pasted-text removal is undoable', () => {
-    const onUndoPastedTextRemoval = vi.fn(() => true)
-    renderEditor({ onUndoPastedTextRemoval })
+  it('routes Cmd+Z through Composer undo and yields when there is nothing to undo', () => {
+    const onUndo = vi.fn(() => true)
+    renderEditor({ onUndo })
     const handled = new KeyboardEvent('keydown', {
       key: 'z',
       metaKey: true,
@@ -773,9 +773,9 @@ describe('ComposerEditor', () => {
     })
     act(() => editor().dispatchEvent(handled))
     expect(handled.defaultPrevented).toBe(true)
-    expect(onUndoPastedTextRemoval).toHaveBeenCalledOnce()
+    expect(onUndo).toHaveBeenCalledOnce()
 
-    onUndoPastedTextRemoval.mockReturnValue(false)
+    onUndo.mockReturnValue(false)
     const native = new KeyboardEvent('keydown', {
       key: 'z',
       metaKey: true,

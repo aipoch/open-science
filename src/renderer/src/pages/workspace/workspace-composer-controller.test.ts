@@ -6,7 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 
 import type { UploadStagingApi } from './composer-upload-transfer'
-import { docToText, type ComposerDoc, type ComposerPastedTextNode } from './composer/composer-doc'
+import {
+  docToText,
+  emptyDoc,
+  type ComposerDoc,
+  type ComposerPastedTextNode
+} from './composer/composer-doc'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -115,6 +120,88 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
+  it('undoes typed text through the current Composer draft', () => {
+    const hook = renderController()
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('draft')))
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+  })
+
+  it('undoes a pasted image after its attachment finishes staging', async () => {
+    const image = {
+      id: 'upload-image',
+      sessionId: '.pending',
+      name: 'figure.png',
+      originalName: 'figure.png',
+      path: '/uploads/figure.png',
+      mimeType: 'image/png',
+      size: 5
+    }
+    const uploadApi = uploads(vi.fn().mockResolvedValue(image))
+    const hook = renderController(uploadApi)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['image'], 'figure.png', { type: 'image/png' })
+      ])
+    )
+    await flushAsyncWork()
+    expect(hook.result.current.view.attachments).toEqual([image])
+
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+
+    expect(hook.result.current.view.attachments).toEqual([])
+    expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/figure.png' })
+  })
+
+  it('undoes a pasted image while its upload is still pending', () => {
+    const pending = deferred<UploadedAttachment | null>()
+    const uploadApi = uploads(vi.fn(() => pending.promise))
+    const hook = renderController(uploadApi)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['image'], 'figure.png', { type: 'image/png' })
+      ])
+    )
+    expect(hook.result.current.view.transfers).toHaveLength(1)
+
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+
+    expect(hook.result.current.view.transfers).toEqual([])
+    expect(uploadApi.abortTransfer).toHaveBeenCalledOnce()
+  })
+
+  it('undoes a long paste as one Composer edit', async () => {
+    const uploadApi = uploads(
+      vi.fn().mockResolvedValue({
+        id: 'upload-paste',
+        sessionId: '.pending',
+        name: 'Pastedtext-payload.txt',
+        originalName: 'Pastedtext-payload.txt',
+        path: '/uploads/paste.txt',
+        mimeType: 'text/plain',
+        size: 7
+      })
+    )
+    const hook = renderController(uploadApi)
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-1', text: 'payload' }
+
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    await flushAsyncWork()
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+    expect(hook.result.current.view.attachments).toEqual([])
+    expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/paste.txt' })
+  })
+
   it('stages a long pasted text node and binds the managed attachment back to its anchor', async () => {
     const pastedTextName = 'Pastedtext-div-data-pane-body-l.txt'
     const stageLocalFile = vi.fn().mockResolvedValue({
@@ -260,7 +347,7 @@ describe('workspace composer controller', () => {
     })
     expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/Pasted text.txt' })
 
-    act(() => expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(true))
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
     await flushAsyncWork()
 
     expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
@@ -351,7 +438,7 @@ describe('workspace composer controller', () => {
     })
   })
 
-  it('undoes a pasted attachment close by re-staging it, but yields after ordinary typing', async () => {
+  it('undoes a pasted attachment close by re-staging it, then undoes ordinary typing', async () => {
     const stageLocalFile = vi
       .fn()
       .mockResolvedValueOnce({
@@ -389,7 +476,7 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.doc).toEqual(textDoc('before  after'))
     expect(hook.result.current.view.attachments).toEqual([])
 
-    act(() => expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(true))
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
     await flushAsyncWork()
     expect(hook.result.current.view.attachments[0]?.id).toBe('upload-restaged')
     expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
@@ -401,7 +488,8 @@ describe('workspace composer controller', () => {
 
     act(() => hook.result.current.actions.removeAttachment(hook.result.current.view.attachments[0]))
     act(() => hook.result.current.actions.changeDoc(textDoc('new typing')))
-    expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(false)
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(hook.result.current.view.doc).toEqual(textDoc('before  after'))
   })
 
   it('undoes an atomic pasted-text anchor deletion emitted by the editor', async () => {
@@ -438,7 +526,7 @@ describe('workspace composer controller', () => {
     act(() => hook.result.current.actions.changeDoc(textDoc('before  after')))
     expect(hook.result.current.view.attachments).toEqual([])
 
-    act(() => expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(true))
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
     await flushAsyncWork()
     expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
       type: 'pasted-text',
@@ -503,7 +591,7 @@ describe('workspace composer controller', () => {
     )
     expect(docToText(hook.result.current.view.doc)).toBe('before  middle bravo after')
 
-    act(() => expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(true))
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
     await flushAsyncWork()
     expect(docToText(hook.result.current.view.doc)).toBe('before  middle bravo after')
     expect(hook.result.current.view.doc.nodes).toContainEqual(
