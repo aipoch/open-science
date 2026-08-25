@@ -203,6 +203,38 @@ describe('PersistentOAuthClientProvider', () => {
     expect(saveState).toHaveBeenLastCalledWith({})
   })
 
+  it('opens only HTTPS and loopback HTTP authorization URLs', async () => {
+    const openExternal = vi.fn(async () => undefined)
+    const provider = new PersistentOAuthClientProvider({
+      serverId: 'server-1',
+      redirectUrl: 'http://127.0.0.1:4000/oauth/callback',
+      config: {},
+      openExternal
+    })
+
+    for (const authorizationUrl of [
+      'https://auth.example.test/authorize',
+      'http://127.0.0.1:4000/authorize'
+    ]) {
+      await provider.redirectToAuthorization(new URL(authorizationUrl))
+    }
+    expect(openExternal.mock.calls).toEqual([
+      ['https://auth.example.test/authorize'],
+      ['http://127.0.0.1:4000/authorize']
+    ])
+
+    openExternal.mockClear()
+    for (const authorizationUrl of [
+      'http://auth.example.test/authorize',
+      'file:///tmp/oauth-authorization'
+    ]) {
+      await expect(provider.redirectToAuthorization(new URL(authorizationUrl))).rejects.toThrow(
+        'OAuth authorization URL must use HTTPS or loopback HTTP.'
+      )
+    }
+    expect(openExternal).not.toHaveBeenCalled()
+  })
+
   it('retains tokens until auth reads a dynamic registration tied to an old callback', async () => {
     const saveState = vi.fn(async () => undefined)
     const provider = new PersistentOAuthClientProvider({

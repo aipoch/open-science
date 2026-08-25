@@ -257,6 +257,12 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    if (
+      authorizationUrl.protocol !== 'https:' &&
+      !(authorizationUrl.protocol === 'http:' && authorizationUrl.hostname === '127.0.0.1')
+    ) {
+      throw new Error('OAuth authorization URL must use HTTPS or loopback HTTP.')
+    }
     // The SDK only redirects after the current token cannot authorize the connection. Clear that
     // proven-stale token before opening the browser so a fast Cancel cannot preserve it by racing
     // the manager's generation guard. A valid token never reaches this method.
