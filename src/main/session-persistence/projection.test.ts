@@ -323,6 +323,57 @@ describe('Session projection', () => {
     await expect(projection.pending()).resolves.toEqual([])
   })
 
+  it('validates the incremented Session revision before writing authority', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-revision-validation-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const authorityPath = join(storageRoot, 'sessions', 'project-1', 'revision-overflow.json')
+
+    const saveError = await repository
+      .saveSession({ ...session('revision-overflow'), revision: Number.MAX_SAFE_INTEGER })
+      .then(() => undefined)
+      .catch((error: unknown) => error)
+    const authority = await readFile(authorityPath, 'utf8').catch(() => undefined)
+
+    expect.soft(authority).toBeUndefined()
+    expect(saveError).toEqual(
+      expect.objectContaining({
+        message: 'Session revision cannot be incremented safely.'
+      })
+    )
+    await expect(projection.pending()).resolves.toEqual([])
+  })
+
+  it('rejects a zero context-window size before replacing Session authority', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-context-window-validation-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const saved = await repository.saveSession(session('context-window'))
+    const authorityPath = join(storageRoot, 'sessions', 'project-1', 'context-window.json')
+    const originalAuthority = await readFile(authorityPath, 'utf8')
+    const invalid = { ...session('context-window'), number: saved.number, revision: saved.revision }
+    invalid.messages[1].modelCallUsage![0].contextWindowSize = 0
+
+    const saveError = await repository
+      .saveSession(invalid)
+      .then(() => undefined)
+      .catch((error: unknown) => error)
+
+    expect.soft(await readFile(authorityPath, 'utf8')).toBe(originalAuthority)
+    expect(saveError).toEqual(
+      expect.objectContaining({
+        message: 'Session projection modelCall.contextWindowSize must be a positive safe integer.'
+      })
+    )
+    await expect(projection.pending()).resolves.toEqual([])
+  })
+
   it('rejects an invalid Session save while projection publication is suspended', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-suspended-validation-'))
     client = createProjectDbClient(storageRoot)

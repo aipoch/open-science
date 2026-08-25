@@ -83,6 +83,11 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
   const assertNullableBigInt = (value: bigint | null, field: string): void => {
     if (value !== null) assertBigInt(value, field)
   }
+  const assertNullablePositiveBigInt = (value: bigint | null, field: string): void => {
+    if (value !== null && (value <= 0n || value > MAX_SAFE_INTEGER_BIGINT)) {
+      throw new Error(`Session projection ${field} must be a positive safe integer.`)
+    }
+  }
   const assertUnique = (values: string[], field: string): void => {
     if (new Set(values).size !== values.length) {
       throw new Error(`Session projection ${field} must be unique.`)
@@ -133,7 +138,7 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
     assertNullableBigInt(call.cachedWriteTokens, 'modelCall.cachedWriteTokens')
     assertBigInt(call.outputTokens, 'modelCall.outputTokens')
     assertNullableBigInt(call.contextUsedTokens, 'modelCall.contextUsedTokens')
-    assertNullableBigInt(call.contextWindowSize, 'modelCall.contextWindowSize')
+    assertNullablePositiveBigInt(call.contextWindowSize, 'modelCall.contextWindowSize')
   }
   assertUnique(
     projection.modelCalls.map(({ callId }) => callId),
