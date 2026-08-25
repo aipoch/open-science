@@ -137,7 +137,7 @@ describe('RemoteAccessService', () => {
     await expect(service.approve({ requestId: 'request-1', decision: 'always' })).rejects.toThrow(
       'Remote access configuration could not be loaded'
     )
-    expect(() => service.reject('request-1')).toThrow(
+    await expect(service.reject('request-1')).rejects.toThrow(
       'Remote access configuration could not be loaded'
     )
     await expect(service.revoke('browser-1')).rejects.toThrow(
@@ -361,9 +361,49 @@ describe('RemoteAccessService', () => {
 
     const revocation = service.revoke('trusted-browser')
 
-    expect(controller.closeExternalConnections).toHaveBeenCalledWith('trusted-browser')
+    await vi.waitFor(() =>
+      expect(controller.closeExternalConnections).toHaveBeenCalledWith('trusted-browser')
+    )
     releaseSave?.()
     await revocation
+  })
+
+  it('does not retain an unclaimed trusted browser when access is disabled during approval', async () => {
+    const repository = await createRepository()
+    const service = await RemoteAccessService.create({
+      repository,
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+    service.attachWebController(webController())
+    await service.setMode('remoteit')
+    await service.webAccess.authorizeHttp(
+      remoteRequest('private-app.r3proxy.com'),
+      remoteResponse(),
+      new URL('https://private-app.r3proxy.com/')
+    )
+    const [pending] = service.snapshot(true).pendingRequests
+    let releaseSave: (() => void) | undefined
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve
+    })
+    const persist = repository.save.bind(repository)
+    const save = vi.spyOn(repository, 'save')
+    save
+      .mockImplementationOnce(async (value) => {
+        await saveGate
+        await persist(value)
+      })
+      .mockImplementation((value) => persist(value))
+
+    const approval = service.approve({ requestId: pending.id, decision: 'always' })
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+    const disabling = service.disable()
+    await Promise.resolve()
+    releaseSave?.()
+    await Promise.all([approval, disabling])
+
+    expect((await repository.load()).trustedBrowsers).toHaveLength(0)
   })
 
   it('soft-disables access without deleting either provider service', async () => {

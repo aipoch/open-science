@@ -2264,6 +2264,8 @@ describe('SettingsPage layout', () => {
       expect(document.body.textContent).toContain('Chrome on iOS · iOS/iPadOS')
       expect(document.body.textContent).toContain('Google Chrome · Windows')
       expect(document.body.textContent).toContain('123456')
+      expect(document.body.textContent).toContain('Allow for up to 12 hours')
+      expect(document.body.textContent).not.toContain('Allow once')
       expect(document.body.textContent).toContain(
         'Two-step verification requests and trusted browsers can be managed below'
       )

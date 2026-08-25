@@ -170,6 +170,7 @@
     "Allow external request?": "外部リクエストを許可しますか？",
     "Allow for this conversation": "この会話で許可",
     "Allow for this project": "このプロジェクトで許可",
+    "Allow for up to 12 hours": "最長12時間許可",
     "Allow globally": "すべてのプロジェクトで許可",
     "Allow once": "今回のみ許可",
     "Allow package install": "パッケージのインストールを許可",

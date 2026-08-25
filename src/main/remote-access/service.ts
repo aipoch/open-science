@@ -163,7 +163,9 @@ export class RemoteAccessService {
       this.webStopGeneration += 1
       if (this.shutdownStarted) return
       const shouldReportFailure = this.runtimeEnabled && this.activeMode !== 'off'
-      this.invalidateExternalAccess(false)
+      void this.invalidateExternalAccess(false).catch((error) => {
+        this.log.error('Remote access invalidation cleanup failed', error)
+      })
       if (!shouldReportFailure) return
       this.lifecycle = 'error'
       this.error = 'The local web service stopped. Detect again to restore remote access.'
@@ -211,7 +213,7 @@ export class RemoteAccessService {
       if (this.activeMode !== 'off') this.assertProviderReady()
     } catch (error) {
       if (this.shutdownStarted) return this.snapshot(true)
-      this.invalidateExternalAccess()
+      await this.invalidateExternalAccess()
       this.lifecycle = 'error'
       this.error = error instanceof Error ? error.message : String(error)
       this.notifyChanged()
@@ -219,7 +221,7 @@ export class RemoteAccessService {
     }
 
     if (this.activeMode === 'off') {
-      this.invalidateExternalAccess()
+      await this.invalidateExternalAccess()
       this.lifecycle = 'disabled'
       this.error = undefined
       this.notifyChanged()
@@ -276,7 +278,7 @@ export class RemoteAccessService {
     const webStopGeneration = this.webStopGeneration
 
     this.lifecycle = 'starting'
-    this.invalidateExternalAccess(this.runtimeEnabled)
+    await this.invalidateExternalAccess(this.runtimeEnabled)
     this.error = undefined
     this.notifyChanged()
 
@@ -361,20 +363,28 @@ export class RemoteAccessService {
     return this.setMode('off')
   }
 
-  async approve(
+  approve(
     request: ApproveRemotePairingRequest,
     canManage = true,
     canManagePairing = canManage
   ): Promise<RemoteAccessSnapshot> {
-    this.assertConfigurationAvailable()
-    await this.pairing.approve(request.requestId, request.decision)
-    return this.snapshot(canManage, canManagePairing)
+    return this.serialize(async () => {
+      this.assertConfigurationAvailable()
+      await this.pairing.approve(request.requestId, request.decision)
+      return this.snapshot(canManage, canManagePairing)
+    })
   }
 
-  reject(requestId: string, canManage = true, canManagePairing = canManage): RemoteAccessSnapshot {
-    this.assertConfigurationAvailable()
-    this.pairing.reject(requestId)
-    return this.snapshot(canManage, canManagePairing)
+  reject(
+    requestId: string,
+    canManage = true,
+    canManagePairing = canManage
+  ): Promise<RemoteAccessSnapshot> {
+    return this.serialize(async () => {
+      this.assertConfigurationAvailable()
+      this.pairing.reject(requestId)
+      return this.snapshot(canManage, canManagePairing)
+    })
   }
 
   async revoke(
@@ -382,12 +392,14 @@ export class RemoteAccessService {
     canManage = true,
     canManagePairing = canManage
   ): Promise<RemoteAccessSnapshot> {
-    this.assertConfigurationAvailable()
-    const revocation = this.pairing.revoke(browserId)
-    this.authorizationGeneration += 1
-    this.webController?.closeExternalConnections(browserId)
-    await revocation
-    return this.snapshot(canManage, canManagePairing)
+    return this.serialize(async () => {
+      this.assertConfigurationAvailable()
+      const revocation = this.pairing.revoke(browserId)
+      this.authorizationGeneration += 1
+      this.webController?.closeExternalConnections(browserId)
+      await revocation
+      return this.snapshot(canManage, canManagePairing)
+    })
   }
 
   shutdown(): Promise<void> {
@@ -395,12 +407,13 @@ export class RemoteAccessService {
     this.shutdownStarted = true
     this.detachWebController?.()
     this.detachWebController = undefined
-    this.invalidateExternalAccess()
+    const invalidation = this.invalidateExternalAccess()
     this.activeMode = 'off'
     this.lifecycle = 'disabled'
     this.error = undefined
     this.notifyChanged()
     this.shutdownPromise = this.serialize(async () => {
+      await invalidation
       this.webController = undefined
     })
     return this.shutdownPromise
@@ -414,19 +427,20 @@ export class RemoteAccessService {
     if (this.configurationError) throw this.configurationError
   }
 
-  private invalidateExternalAccess(closeConnections = true): void {
+  private invalidateExternalAccess(closeConnections = true): Promise<void> {
     this.authorizationGeneration += 1
     this.runtimeEnabled = false
     this.remoteHost = undefined
     this.accessUrl = undefined
     if (closeConnections) this.webController?.closeExternalConnections()
-    this.pairing.clearTransientAccess()
+    return this.pairing.clearTransientAccess()
   }
 
   private async stopActiveRoute(persistPreference: boolean): Promise<RemoteAccessSnapshot> {
     this.lifecycle = 'stopping'
-    this.invalidateExternalAccess()
+    const invalidation = this.invalidateExternalAccess()
     this.notifyChanged()
+    await invalidation
 
     if (this.activeMode !== 'off') {
       this.log.info('Provider route kept configured while local remote access is disabled', {
