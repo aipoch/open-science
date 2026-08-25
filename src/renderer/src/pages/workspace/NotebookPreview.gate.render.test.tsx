@@ -1090,7 +1090,8 @@ describe('NotebookPreview per-environment selector', () => {
   const mountWithRuns = async (
     runs: NotebookRunRecord[],
     environments: NotebookEnvironmentStatus[] = [],
-    executionEnvironments: NotebookSessionState['executionEnvironments'] = undefined
+    executionEnvironments: NotebookSessionState['executionEnvironments'] = undefined,
+    runtimeBindings: NotebookSessionState['runtimeBindings'] = undefined
   ): Promise<void> => {
     const readyStatus: ProvisionStatus = {
       pythonReady: true,
@@ -1142,7 +1143,8 @@ describe('NotebookPreview per-environment selector', () => {
             runs,
             recentRuns: runs,
             environments: liveEnvironments,
-            executionEnvironments
+            executionEnvironments,
+            runtimeBindings
           })
         ),
         execute: vi.fn(() => Promise.resolve({})),
@@ -1183,6 +1185,122 @@ describe('NotebookPreview per-environment selector', () => {
 
     expect(container.querySelector('[data-testid="env-selector"]')).toBeNull()
     expect(container.querySelectorAll('[data-testid="notebook-cell"]').length).toBe(2)
+    expect(container.querySelector('[data-testid="kernel-switcher-python"]')?.textContent).toBe(
+      'Python'
+    )
+  })
+
+  it('shows the current python runtime binding while keeping a single environment selector hidden', async () => {
+    await mountWithRuns(
+      [
+        makeRun({
+          runId: 'p1',
+          kernelKind: 'python',
+          environment: 'default-python'
+        })
+      ],
+      [],
+      { python: 'default-python', r: 'default-r' },
+      {
+        python: {
+          runtimeId: '/runtime/envs/pandas-demo2/bin/python',
+          language: 'python',
+          label: 'pandas-demo2',
+          source: 'external',
+          provenance: 'user-own',
+          interpreterPath: '/runtime/envs/pandas-demo2/bin/python',
+          version: 'Python 3.12.7',
+          status: 'active'
+        }
+      }
+    )
+
+    expect(container.querySelector('[data-testid="env-selector"]')).toBeNull()
+    expect(container.querySelector('[data-testid="kernel-switcher-python"]')?.textContent).toBe(
+      'Python'
+    )
+    const badge = container.querySelector<HTMLButtonElement>(
+      '[data-testid="notebook-runtime-binding"]'
+    )
+    expect(badge?.textContent).toBe('pandas-demo2')
+    expect(badge?.className).toContain('max-w-')
+    expect(badge?.querySelector('.truncate')).not.toBeNull()
+    fireEvent.focus(badge as HTMLButtonElement)
+    expect((await screen.findByRole('tooltip')).textContent).toBe('pandas-demo2 · Python 3.12.7')
+    expect(container.querySelector('[data-testid="notebook-cell"]')?.textContent).not.toContain(
+      'pandas-demo2'
+    )
+  })
+
+  it('shows the current R runtime binding on the R kernel tab', async () => {
+    await mountWithRuns(
+      [
+        makeRun({
+          runId: 'r1',
+          kernelKind: 'r',
+          environment: 'analysis'
+        })
+      ],
+      [],
+      { python: 'default-python', r: 'analysis' },
+      {
+        r: {
+          runtimeId: '/runtime/envs/renv-analysis/bin/R',
+          language: 'r',
+          label: 'renv-analysis',
+          source: 'managed',
+          provenance: 'agent-created',
+          interpreterPath: '/runtime/envs/renv-analysis/bin/R',
+          status: 'active'
+        }
+      }
+    )
+
+    expect(container.querySelector('[data-testid="kernel-switcher-r"]')?.textContent).toBe('R')
+    expect(container.querySelector('[data-testid="notebook-runtime-binding"]')?.textContent).toBe(
+      'renv-analysis'
+    )
+  })
+
+  it('does not apply data runtime bindings to Agent SDK or Bash tabs', async () => {
+    await mountWithRuns(
+      [makeRun({ runId: 'x1', kernelKind: 'repl' }), makeRun({ runId: 'b1', kernelKind: 'bash' })],
+      [],
+      undefined,
+      {
+        python: {
+          runtimeId: '/runtime/python',
+          language: 'python',
+          label: 'bound-python',
+          source: 'managed',
+          provenance: 'app-managed',
+          interpreterPath: '/runtime/python',
+          status: 'active'
+        },
+        r: {
+          runtimeId: '/runtime/R',
+          language: 'r',
+          label: 'bound-r',
+          source: 'managed',
+          provenance: 'app-managed',
+          interpreterPath: '/runtime/R',
+          status: 'active'
+        }
+      }
+    )
+
+    expect(container.querySelector('[data-testid="kernel-switcher-repl"]')?.textContent).toBe(
+      'Agent SDK'
+    )
+    expect(container.querySelector('[data-testid="kernel-switcher-bash"]')?.textContent).toBe(
+      'Bash'
+    )
+    expect(container.querySelector('[data-testid="notebook-runtime-binding"]')).toBeNull()
+
+    fireEvent.click(
+      container.querySelector('[data-testid="kernel-switcher-bash"]') as HTMLButtonElement
+    )
+    expect(container.querySelector('[data-testid="notebook-runtime-binding"]')).toBeNull()
   })
 
   it('submits through the current custom runtime binding even when its selector is hidden', async () => {

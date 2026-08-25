@@ -1,6 +1,9 @@
 import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
 import type { ArtifactFile } from '../../shared/artifacts'
-import { stageAttemptRuntimeTranscript } from './attempt-runtime-transcript'
+import {
+  selectRuntimeScopeUpdates,
+  stageAttemptRuntimeTranscript
+} from './attempt-runtime-transcript'
 import type { DurableMessage, DelegatedWorkDurableRecords } from './delegated-work-record-types'
 import type { DelegateExecutionInput } from './execution-port'
 
@@ -58,6 +61,7 @@ const createDelegatedTurnLifecycle = (options: {
   openInitial(context: TurnContext): Promise<void>
   currentArtifact(): DelegatedArtifactHandle | undefined
   lastTurnMessage(): DurableMessage | undefined
+  unstagedRuntimeScope(context: TurnContext | undefined): TurnContext | undefined
   create(context: TurnContext, initial: boolean): NonNullable<DelegateExecutionInput['turn']>
   finalizeFallback(terminalMessageId: string): Promise<void>
   dispose(): Promise<void>
@@ -67,6 +71,9 @@ const createDelegatedTurnLifecycle = (options: {
   let artifactHandoffFile: string | undefined
   let stagedRuntimeUpdateCount = 0
   let completedTurnMessage: DurableMessage | undefined
+  const stagedRuntimeScopes = new Set<string>()
+  const runtimeScopeKey = (context: TurnContext): string =>
+    `${context.runtimeSegmentId}\u0000${context.promptMessageId}`
 
   const openArtifact = async (context: TurnContext, executionId: string): Promise<void> => {
     const artifact = await options.artifactEvidence?.open({
@@ -91,6 +98,8 @@ const createDelegatedTurnLifecycle = (options: {
     openInitial: (context) => openArtifact(context, options.attemptId),
     currentArtifact: () => currentArtifact,
     lastTurnMessage: () => completedTurnMessage,
+    unstagedRuntimeScope: (context) =>
+      context && !stagedRuntimeScopes.has(runtimeScopeKey(context)) ? context : undefined,
     create: (context, initial) => ({
       promptMessageId: context.promptMessageId,
       messageBranchId: context.messageBranchId,
@@ -102,7 +111,10 @@ const createDelegatedTurnLifecycle = (options: {
         : {}),
       async complete(response, turnUsage, turnUsageUnavailable) {
         const completedAt = options.now()
-        const turnUpdates = options.runtimeUpdates.slice(stagedRuntimeUpdateCount)
+        const turnUpdates = selectRuntimeScopeUpdates(
+          options.runtimeUpdates.slice(stagedRuntimeUpdateCount),
+          context
+        )
         stagedRuntimeUpdateCount = options.runtimeUpdates.length
         const transcript = await stageAttemptRuntimeTranscript(
           options.records,
@@ -124,6 +136,7 @@ const createDelegatedTurnLifecycle = (options: {
             createMessageId: options.createMessageId
           }
         )
+        stagedRuntimeScopes.add(runtimeScopeKey(context))
         const message = transcript.terminalMessage
         if (!message) throw new Error('Completed child Turn has no final agent Message.')
         await currentArtifact?.finalize(message.id)

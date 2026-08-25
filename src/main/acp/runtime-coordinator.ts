@@ -367,6 +367,14 @@ class AcpRuntimeCoordinator {
     return this.sessionRuntimes.get(sessionId)?.liveSessionProjectId(sessionId)
   }
 
+  isSessionReferenceAllowed(sessionId: string, referencedSessionId: string): boolean {
+    return (
+      this.sessionRuntimes
+        .get(sessionId)
+        ?.isSessionReferenceAllowed(sessionId, referencedSessionId) ?? false
+    )
+  }
+
   getSessionFramework(sessionId: string): AgentFrameworkId | undefined {
     return this.findRuntimeForSession(sessionId)?.getSessionFramework(sessionId)
   }
@@ -837,6 +845,19 @@ class AcpRuntimeCoordinator {
     )
   }
 
+  sendAppContinuationObserved(
+    request: AcpPromptRequest,
+    onProviderPromptAccepted: () => void
+  ): ReturnType<AcpRuntime['sendAppContinuation']> {
+    return this.linearizeRootAdmission(request.sessionId, () =>
+      this.dispatchPrompt(
+        request,
+        observePromptAcceptance(onProviderPromptAccepted),
+        'sendAppContinuation'
+      )
+    )
+  }
+
   private linearizeRootAdmission<Result>(
     sessionId: string,
     operation: () => Promise<Result>
@@ -963,8 +984,10 @@ class AcpRuntimeCoordinator {
     attribution?: MessageAttribution,
     onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendPrompt']> {
-    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
-      this.dispatchAdmittedPrompt(
+    let dispatchStarted = false
+    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> => {
+      dispatchStarted = true
+      return this.dispatchAdmittedPrompt(
         request,
         acceptance,
         operation,
@@ -973,9 +996,15 @@ class AcpRuntimeCoordinator {
         attribution,
         onApplicationPromptAdmitted
       )
-    return this.promptDispatchAdmissionGuard
-      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
-      : dispatch()
+    }
+    if (!this.promptDispatchAdmissionGuard) return dispatch()
+    return this.promptDispatchAdmissionGuard(request.sessionId, dispatch).catch((error) => {
+      if (dispatchStarted || error instanceof DelegateMessagePreAcceptanceError) throw error
+      throw new DelegateMessagePreAcceptanceError(
+        error instanceof Error ? error.message : String(error),
+        error
+      )
+    })
   }
 
   private dispatchAdmittedPrompt(
@@ -1021,13 +1050,51 @@ class AcpRuntimeCoordinator {
     }
     this.activePromptRequests.set(request.sessionId, activePrompt)
     if (retainAsLatestUserPrompt) this.latestPromptRequests.set(request.sessionId, taskRequest)
-    const prompt =
-      operation === 'sendApplicationPrompt'
+    const originatingPromptId = taskRequest.provenanceContext?.promptMessageId
+    let settlementLeaseId: string | undefined
+    const endRootTurn = async (clean: boolean): Promise<void> => {
+      if (!originatingPromptId) return
+      await this.delegatedWork
+        ?.rootTurnEnded?.({
+          sessionId: request.sessionId,
+          originatingPromptId,
+          clean,
+          ...(settlementLeaseId ? { leaseId: settlementLeaseId } : {})
+        })
+        .catch(() => undefined)
+    }
+    const settlementStart = originatingPromptId
+      ? this.delegatedWork
+          ?.rootTurnStarted?.({
+            sessionId: request.sessionId,
+            originatingPromptId
+          })
+          .catch(() => undefined)
+      : undefined
+    const prompt = Promise.resolve(settlementStart).then((leaseId) => {
+      settlementLeaseId = leaseId
+      if (
+        attempt.globalCancellationGeneration !== this.globalCancellationGeneration ||
+        attempt.sessionCancellationGeneration !==
+          (this.sessionCancellationGenerations.get(request.sessionId) ?? 0) ||
+        this.activePromptRequests.get(request.sessionId) !== activePrompt
+      ) {
+        throw new DelegateMessagePreAcceptanceError(
+          'ACP prompt start was superseded before provider dispatch'
+        )
+      }
+      return operation === 'sendApplicationPrompt'
         ? runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
         : runtime[operation](taskRequest, attempt.id)
+    })
     onApplicationPromptAdmitted?.(prompt)
     return prompt
-      .catch((error: unknown) => {
+      .then(async (response) => {
+        await endRootTurn(response?.stopReason !== 'cancelled')
+        return response
+      })
+      .catch(async (error: unknown) => {
+        await endRootTurn(false)
         if (
           operation === 'sendPrompt' &&
           this.promptAdmissionClosedForQuit &&
@@ -1055,6 +1122,19 @@ class AcpRuntimeCoordinator {
     this.assertPromptAdmissionOpen()
     const dispatch = (): Promise<AcpSteerFollowUpResult> =>
       this.runtimeForSession(request.sessionId).steerFollowUp(request)
+    return this.promptDispatchAdmissionGuard
+      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
+      : dispatch()
+  }
+
+  async steerSideChatAdvisory(
+    request: AcpSteerFollowUpRequest
+  ): ReturnType<AcpRuntime['steerSideChatAdvisory']> {
+    this.assertPromptAdmissionOpen()
+    await this.waitForInitialization()
+    this.assertPromptAdmissionOpen()
+    const dispatch = (): ReturnType<AcpRuntime['steerSideChatAdvisory']> =>
+      this.runtimeForSession(request.sessionId).steerSideChatAdvisory(request)
     return this.promptDispatchAdmissionGuard
       ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
       : dispatch()

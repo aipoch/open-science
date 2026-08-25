@@ -812,30 +812,33 @@ describe('SettingsPage layout', () => {
       'button'
     )
 
-    // The Model panel splits Active model, Reasoning effort, Subagent, Reviewer, and Vision models
-    // (their own sections) from provider management; agent framework moved to the Agent sub-panel.
-    expect(document.body.textContent).toContain('Active model')
+    // The Model panel splits the Main model section (model + reasoning effort on one row),
+    // the Scenario models accordion card (Subagent / Reviewer / Vision), and provider management;
+    // agent framework moved to the Agent sub-panel.
+    expect(document.body.textContent).toContain('Main model')
     expect(document.body.textContent).toContain('Reasoning effort')
     expect(document.body.textContent).toContain('preserve relative strength when models change')
     expect(document.body.textContent).toContain('may approximate unsupported levels')
     expect(document.body.textContent).toContain('Providers')
     expect(document.body.textContent).not.toContain('Agent framework')
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(6)
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
     expect(
       Array.from(document.body.querySelectorAll('[data-slot="settings-section"]')).map((section) =>
         section.getAttribute('aria-label')
       )
-    ).toEqual([
-      'Active model',
-      'Reasoning effort',
-      'Subagent model',
-      'Reviewer model',
-      'Vision model',
-      'Providers'
-    ])
-    expect(document.body.textContent).toContain('Model used by subagents when Delegation is on.')
+    ).toEqual(['Main model', 'Scenario models', 'Providers'])
+    const mainModel = Array.from(
+      document.body.querySelectorAll('[data-slot="settings-section"]')
+    ).find((section) => section.getAttribute('aria-label') === 'Main model')
+    expect(mainModel?.querySelector('[aria-label="Reasoning effort"]')).not.toBeNull()
+    expect(mainModel?.querySelector('[data-slot="settings-row"]')?.className).toContain(
+      'grid-cols-1'
+    )
+    expect(mainModel?.querySelector('[data-slot="settings-row"]')?.className).toContain(
+      'lg:grid-cols-[minmax(0,1fr)_auto]'
+    )
     expect(document.body.textContent).toContain(
-      'Model used for manual, automatic, and re-run Reviews.'
+      'Models for subagents, review, and image understanding.'
     )
     // The add action lives with the list as a dashed ghost row, not a section-header button.
     const addRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -3367,10 +3370,10 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
     await act(async () => {
-      const marketplaceTab = Array.from(
-        document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')
-      ).find((button) => button.textContent?.trim() === 'Marketplace')
-      if (marketplaceTab) fireEvent.mouseDown(marketplaceTab, { button: 0 })
+      const marketplaceEntry = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('button')
+      ).find((button) => button.textContent?.trim() === 'Browse Marketplace')
+      marketplaceEntry?.click()
       await Promise.resolve()
     })
     await act(async () => {

@@ -176,6 +176,27 @@ describe('AcpSessionInteractionOwner', () => {
     await expect(owner.cancellationCheckpoint(scope)).resolves.toBe('cancelled')
   })
 
+  it('limits Session reference authority to the active prompt and supports live follow-ups', () => {
+    const owner = new AcpSessionInteractionOwner()
+    const scope = owner.reservePrompt({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      referencedSessionIds: ['session-2']
+    })
+
+    expect(owner.isSessionReferenceAllowed('session-1', 'session-2')).toBe(false)
+    owner.activatePrompt(scope)
+    expect(owner.isSessionReferenceAllowed('session-1', 'session-2')).toBe(true)
+    expect(owner.isSessionReferenceAllowed('session-1', 'session-3')).toBe(false)
+
+    owner.authorizeSessionReferences('session-1', ['session-3'])
+    expect(owner.isSessionReferenceAllowed('session-1', 'session-3')).toBe(true)
+
+    owner.release(scope)
+    expect(owner.isSessionReferenceAllowed('session-1', 'session-2')).toBe(false)
+    expect(owner.isSessionReferenceAllowed('session-1', 'session-3')).toBe(false)
+  })
+
   it('keeps cancellation inactive and clears its timer when notify fails', async () => {
     const clearTimer = vi.fn()
     const owner = new AcpSessionInteractionOwner({

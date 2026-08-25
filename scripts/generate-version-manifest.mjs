@@ -12,7 +12,8 @@
 //     VERSION       required  release version without a leading 'v' (e.g. 0.1.2)
 //     CDN_BASE_URL  required  public base URL used to build each download url
 //     S3_PREFIX     required  path prefix inside the bucket (e.g. open-science)
-//     NOTES         optional  release notes (GitHub Release body)
+//     NOTES         optional  legacy release notes input (GitHub Release body)
+//     NOTES_DIR     optional  directory of already-condensed <locale>.md release notes; en.md required
 //     RELEASE_DATE  optional  ISO timestamp (GitHub Release published_at)
 
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
@@ -31,6 +32,34 @@ const KEY_RULES = [
 
 // Non-installer files that legitimately live in the release dir; skipped without a warning.
 const IGNORED = [/\.zip$/, /^SHA256SUMS\.txt$/, /^version\.json$/, /\.ya?ml$/, /\.blockmap$/]
+
+const LOCALIZED_NOTE_LOCALES = ['zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'ru']
+const NOTE_LOCALES = new Set(['en', ...LOCALIZED_NOTE_LOCALES])
+
+// Read the repository-owned, already-condensed notes for one release. English is the stable fallback
+// consumed by old clients and updater feeds, so it is required; translated files are optional.
+export function readReleaseNotes(notesDir) {
+  const files = readdirSync(notesDir)
+  const notesByLocale = {}
+
+  for (const filename of files) {
+    const match = /^(.+)\.md$/.exec(filename)
+    if (!match || !NOTE_LOCALES.has(match[1])) {
+      throw new Error(`[version-manifest] unsupported release-note file: ${filename}`)
+    }
+    const content = readFileSync(join(notesDir, filename), 'utf8').trim()
+    if (!content) throw new Error(`[version-manifest] empty release-note file: ${filename}`)
+    notesByLocale[match[1]] = content
+  }
+
+  if (!notesByLocale.en) throw new Error('[version-manifest] release notes require en.md')
+  const localizedNotes = Object.fromEntries(
+    LOCALIZED_NOTE_LOCALES.flatMap((locale) =>
+      notesByLocale[locale] ? [[locale, notesByLocale[locale]]] : []
+    )
+  )
+  return { notes: notesByLocale.en, localizedNotes }
+}
 
 // Parse a `<hex>  <filename>` per-line SHA256SUMS.txt into { filename: hex }. Tolerates 1+ spaces
 // and an optional leading '*' binary marker that some sha256sum variants emit.
@@ -51,7 +80,15 @@ function keyForFile(filename) {
 // Build the version.json manifest object from a directory of installers + SHA256SUMS.txt.
 // Pure: reads the filesystem but performs no network I/O. Only keys whose installer actually exists
 // (and has a checksum) are emitted; unrecognized files and files missing from SHA256SUMS warn.
-export function buildManifest({ dir, version, notes, releaseDate, cdnBase, prefix }) {
+export function buildManifest({
+  dir,
+  version,
+  notes,
+  localizedNotes,
+  releaseDate,
+  cdnBase,
+  prefix
+}) {
   const sums = parseSha256Sums(readFileSync(join(dir, 'SHA256SUMS.txt'), 'utf8'))
   const base = `${cdnBase}/${prefix}/releases/${version}`
 
@@ -78,7 +115,13 @@ export function buildManifest({ dir, version, notes, releaseDate, cdnBase, prefi
     }
   }
 
-  return { version, releaseDate, notes, downloads }
+  return {
+    version,
+    releaseDate,
+    notes,
+    ...(localizedNotes && Object.keys(localizedNotes).length > 0 ? { localizedNotes } : {}),
+    downloads
+  }
 }
 
 // --- Release-notes condensation -----------------------------------------------------------------
@@ -143,10 +186,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(1)
   }
 
+  const releaseNotes = process.env.NOTES_DIR
+    ? readReleaseNotes(process.env.NOTES_DIR)
+    : { notes: extractHighlights(process.env.NOTES ?? ''), localizedNotes: undefined }
+
   const manifest = buildManifest({
     dir,
     version,
-    notes: extractHighlights(process.env.NOTES ?? ''),
+    ...releaseNotes,
     releaseDate: process.env.RELEASE_DATE ?? '',
     cdnBase,
     prefix

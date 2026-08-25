@@ -106,6 +106,7 @@ export class OpenAiProviderBridge {
     this.target = initial
     this.wire = initial.wire
     this.host = new ProviderLoopbackHttpHost({
+      diagnosticName: 'openai',
       credentialMode: 'bearer-or-api-key',
       createConnection: (origin, token) => Object.freeze({ baseUrl: origin, token }),
       onUnauthorized: (response) =>

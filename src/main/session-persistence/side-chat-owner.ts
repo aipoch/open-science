@@ -59,6 +59,7 @@ type SessionSideChatPersistenceOwnerOptions = Readonly<{
   repository: SideChatStateRepository
   assertMutable(projectId: string, sessionId: string): void
   recordSession(session: PersistedChatSession): void
+  notifySessionUpdated(session: PersistedChatSession): void
 }>
 
 const emptyRuntimeContext = (): SessionRuntimeContext => ({ version: 1, revision: 0 })
@@ -195,6 +196,7 @@ class SessionSideChatPersistenceOwner {
     })
     const persisted = await saveSessionWithRevision(this.options.repository, durable)
     this.options.recordSession(persisted)
+    this.options.notifySessionUpdated(persisted)
     return messages
   }
 
@@ -245,6 +247,7 @@ class SessionSideChatPersistenceOwner {
     }
     const persisted = await saveSessionWithRevision(this.options.repository, durable)
     this.options.recordSession(persisted)
+    this.options.notifySessionUpdated(persisted)
   }
 }
 

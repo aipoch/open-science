@@ -795,6 +795,28 @@ describe('settings store: onboarding completion', () => {
 })
 
 describe('settings store: startup loading', () => {
+  it('publishes the settings snapshot before startup probes finish', async () => {
+    let resolvePreflight:
+      ((value: { claudeReady: boolean; activeProviderReady: boolean }) => void) | undefined
+    api.getPreflight.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePreflight = resolve
+      })
+    )
+
+    const loading = useSettingsStore.getState().load()
+    await vi.waitFor(() => expect(useSettingsStore.getState().isLoaded).toBe(true))
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      isLoaded: true,
+      isLoading: true,
+      loadError: undefined
+    })
+
+    resolvePreflight?.({ claudeReady: true, activeProviderReady: true })
+    await expect(loading).resolves.toBe(true)
+  })
+
   it('deduplicates concurrent StrictMode startup loads', async () => {
     let resolveSettings: ((value: SettingsSnapshot) => void) | undefined
     api.getSettings.mockReturnValue(
@@ -839,12 +861,12 @@ describe('settings store: startup loading', () => {
     expect(useSettingsStore.getState().onboardingCompletedAt).toBe(222)
   })
 
-  it('keeps startup blocked after an IPC failure and recovers on retry', async () => {
+  it('keeps startup blocked after a Settings authority failure and recovers on retry', async () => {
     const rawError = new Error(
       'EACCES: /Users/private/.open-science/settings.json could not be read'
     )
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    api.getPreflight.mockRejectedValueOnce(rawError)
+    api.getSettings.mockRejectedValueOnce(rawError)
 
     await expect(useSettingsStore.getState().load()).resolves.toBe(false)
     expect(useSettingsStore.getState()).toMatchObject({
@@ -861,6 +883,21 @@ describe('settings store: startup loading', () => {
       isLoading: false,
       loadError: undefined
     })
+  })
+
+  it('keeps valid Settings available when a runtime probe fails', async () => {
+    const rawError = new Error('runtime probe unavailable')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    api.getPreflight.mockRejectedValueOnce(rawError)
+
+    await expect(useSettingsStore.getState().load()).resolves.toBe(true)
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      isLoaded: true,
+      isLoading: false,
+      loadError: undefined
+    })
+    expect(warn).toHaveBeenCalledWith('Settings loading failed', rawError)
   })
 
   it('keeps the newest retry result when an older load finishes later', async () => {

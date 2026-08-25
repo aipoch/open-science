@@ -183,7 +183,7 @@ describe('workspace page architecture', () => {
       'pages/workspace/workspace-message-queue-owner.ts'
     ])
     expect(importersOf(ownerPaths.messageQueue)).toEqual([
-      'App.tsx',
+      'ApplicationPresentationHost.tsx',
       'pages/workspace/ComposerMessageQueue.tsx',
       'pages/workspace/workspace-conversation-controller.ts'
     ])
@@ -225,6 +225,7 @@ describe('workspace page architecture', () => {
     ])
     expect(importersOf(ownerPaths.sideChat)).toEqual([
       'App.tsx',
+      'hooks/useApplicationEventBindings.ts',
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/SideChatPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',

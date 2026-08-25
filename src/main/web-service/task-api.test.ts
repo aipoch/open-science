@@ -4,7 +4,10 @@ import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
-import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
+import {
+  attachEnabledComputeHosts,
+  EnabledComputeHostsRegistry
+} from '../compute/enabled-hosts-registry'
 import {
   sessionComputeHostAccess,
   transitionSessionComputeHostAccess,
@@ -221,6 +224,112 @@ describe('HeadlessTaskApi adapter', () => {
     expect(registry.getSelected('session-created')).toEqual(['ssh:alpha'])
     await api.dispose()
   }, 1_000)
+
+  it('keeps the selected Compute Host visible to five Sessions initialized concurrently', async () => {
+    const concurrency = 5
+    const durableSessions = new Map<string, PersistedChatSession>()
+    const registry = new EnabledComputeHostsRegistry()
+    const ownerRef: { current?: SessionEnabledComputeHostsOwner } = {}
+    const creationIndexBySessionId = new Map<string, number>()
+
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+        if (channel === 'projects:list') return [project]
+        if (channel === 'sessions:load-all') {
+          return ownerRef.current!.hydrateFromSessionCatalog(async () => ({
+            sessions: [...durableSessions.values()].map((session) => structuredClone(session)),
+            manifest: { version: 1 as const },
+            diagnostics: {
+              isComplete: true,
+              warnings: [],
+              isProjectDeletionRecoveryComplete: true
+            }
+          }))
+        }
+        if (channel === 'sessions:save-session') {
+          const session = args[0] as PersistedChatSession
+          const sessionIndex = creationIndexBySessionId.get(session.id)
+          if (sessionIndex === undefined) throw new Error(`Unknown Session: ${session.id}`)
+          const committed = await ownerRef.current!.createSession(session, async (candidate) => {
+            durableSessions.set(candidate.id, structuredClone(candidate))
+            return candidate
+          })
+          return committed
+        }
+        throw new Error(`Unexpected Task command: ${channel}`)
+      }
+    )
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry,
+      hostExists: async (providerId) => providerId === 'ssh:alpha',
+      listHostIds: async () => ['ssh:alpha'],
+      sessionAuthority: {
+        sessionProjectId: async (sessionId) => durableSessions.get(sessionId)?.projectId,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('Unexpected existing Session update.')
+        },
+        mutateSessionComputeHostAccess: async () => {
+          throw new Error('Unexpected existing Session mutation.')
+        },
+        pruneSessionEnabledComputeHosts: async () => ({ sessions: [], previousSelections: [] })
+      },
+      withDataRootWrite: (operation) => operation()
+    })
+    ownerRef.current = owner
+    const compute = attachEnabledComputeHosts({}, registry)
+    const allPromptsEntered = Promise.withResolvers<void>()
+    let promptCount = 0
+    const visibleHosts = new Map<string, string[]>()
+    let nextSessionId = 0
+    const agent = createAgent({
+      createSession: vi.fn(async () => {
+        const creationIndex = nextSessionId++
+        const sessionId = `session-${creationIndex + 1}`
+        creationIndexBySessionId.set(sessionId, creationIndex)
+        return { sessionId, cwd: '/workspace' }
+      }),
+      prompt: vi.fn(async ({ sessionId }) => {
+        promptCount += 1
+        if (promptCount === concurrency) allPromptsEntered.resolve()
+        await allPromptsEntered.promise
+        visibleHosts.set(sessionId, compute.getSelectedComputeHosts(sessionId))
+      })
+    })
+    let nextId = 0
+    const api = new HeadlessTaskApi(
+      { commands: commandsFrom(invoke), agent, computePreferences: owner },
+      { createId: () => `task-id-${++nextId}`, now: () => 10 }
+    )
+
+    const started = await Promise.all(
+      Array.from({ length: concurrency }, (_, index) =>
+        api.startRun({
+          project: project.id,
+          prompt: `Research stream ${index + 1}.`,
+          computeHostIds: ['ssh:alpha']
+        })
+      )
+    )
+    await Promise.all(started.map(({ id }) => api.waitForRun(id)))
+    await api.dispose()
+
+    expect({
+      durable: started.map(({ sessionId }) => {
+        const persisted = durableSessions.get(sessionId)
+        return {
+          enabledComputeHosts: persisted?.enabledComputeHosts,
+          selectedComputeHosts: persisted?.selectedComputeHosts
+        }
+      }),
+      runtime: started.map(({ sessionId }) => visibleHosts.get(sessionId))
+    }).toEqual({
+      durable: Array.from({ length: concurrency }, () => ({
+        enabledComputeHosts: ['ssh:alpha'],
+        selectedComputeHosts: ['ssh:alpha']
+      })),
+      runtime: Array.from({ length: concurrency }, () => ['ssh:alpha'])
+    })
+  })
 
   it('dispatches façade operations through the narrow Task command view', async () => {
     const commandInvoke = vi.fn(async () => [

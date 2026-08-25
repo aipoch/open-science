@@ -14,6 +14,7 @@ import type {
   SessionUpsertEvent
 } from '../shared/lifecycle-events'
 import type { NotebookAvailableEvent, NotebookChangedEvent } from '../shared/notebook'
+import type { ProvisionProgress } from '../shared/notebook-env'
 import type { NotificationInboxChanged } from '../shared/notifications'
 import type { PermissionGrantsChangedEvent } from '../shared/permission-grants'
 import type { ProjectFilesChangedEvent } from '../shared/project-files'
@@ -35,6 +36,9 @@ import type { UpdateStatus } from '../shared/update'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
 import type { TagsChangedEvent } from '../shared/tags'
 import type { MemoryChangedEvent } from '../shared/memory'
+import { createLogger, errorLogFields } from './logger'
+
+const log = createLogger('application-events')
 
 // This catalog describes only events that already flow through renderer-broadcast. Window-only
 // signals and generated Web-only channels stay on their existing transports until their owner moves
@@ -48,6 +52,7 @@ export type ApplicationEventMap = {
   'side-chat:relay-delivered': SideChatRelayDeliveredEvent
   'notebook:available': NotebookAvailableEvent
   'notebook:changed': NotebookChangedEvent
+  'notebook-env:progress': ProvisionProgress
   'notifications:changed': NotificationInboxChanged
   'project:created': Project
   'project:updated': Project
@@ -132,10 +137,27 @@ export class ApplicationEventHub implements ApplicationEvents {
     if (this.disposed) return
     const event = Object.freeze({ channel, payload }) as ApplicationEvent
 
-    // Iterate the live Set deliberately. The compatibility broadcaster used the same semantics:
-    // removing a not-yet-called listener skips it in the active publication, and listener failures
-    // stop later delivery and propagate to the publisher.
-    for (const listener of this.listeners) listener(event)
+    // Iterate the live Set deliberately so removing a not-yet-called listener still skips it in the
+    // active publication. Isolate subscriber failures because notification delivery cannot roll back
+    // an already-committed owner mutation or suppress healthy later projections.
+    let failures: unknown[] | undefined
+    for (const listener of this.listeners) {
+      try {
+        listener(event)
+      } catch (error) {
+        if (failures) failures.push(error)
+        else failures = [error]
+      }
+    }
+    if (failures) {
+      log.warn('Application event subscriber delivery failed (non-fatal)', {
+        channel,
+        subscriberFailureCount: failures.length,
+        ...errorLogFields(
+          new AggregateError(failures, 'One or more application event subscribers failed.')
+        )
+      })
+    }
   }
 
   subscribe(listener: ApplicationEventListener): () => void {

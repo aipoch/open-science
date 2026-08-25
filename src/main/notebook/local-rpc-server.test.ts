@@ -3040,7 +3040,17 @@ describe('notebook local RPC server', () => {
       const payload = (await response.json()) as { result: { ok: boolean; log: string } }
 
       expect(response.status).toBe(200)
-      expect(payload.result).toEqual({ ok: true, needsRestart: false, log: 'installed' })
+      expect(payload.result).toMatchObject({
+        ok: true,
+        needsRestart: false,
+        log: 'installed',
+        target: {
+          language: 'python',
+          selection: 'implicit-default',
+          runtimeSource: 'managed',
+          environmentName: DEFAULT_PY_ENV
+        }
+      })
       expect(calls).toEqual([expect.objectContaining({ language: 'python', packages: ['numpy'] })])
     } finally {
       await server.close()

@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUpRight, AtSign, Hash, LoaderCircle, MessageCircle, Search, Zap } from 'lucide-react'
+import { ArrowUpRight, AtSign, LoaderCircle, MessageCircle, Search, Zap } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -234,6 +234,7 @@ export const GlobalSearchDialog = ({
               id: session.id,
               projectId: session.projectId,
               title: session.title,
+              number: session.number,
               updatedAt: session.updatedAt,
               artifactCount: session.artifacts?.length ?? session.artifactCount ?? 0,
               isPending: session.isPending
@@ -262,6 +263,7 @@ export const GlobalSearchDialog = ({
               id: session.id,
               projectId: session.projectId,
               title: session.title,
+              number: session.number,
               updatedAt: session.updatedAt,
               artifactCount: session.artifacts?.length ?? session.artifactCount ?? 0,
               isPending: session.isPending
@@ -610,7 +612,13 @@ export const GlobalSearchDialog = ({
         onMouseEnter={() => setActiveIndex(rowIndex)}
         onClick={() => activate({ kind: 'session', session })}
       >
-        <MessageCircle className="size-5 shrink-0 text-primary" aria-hidden="true" />
+        <span
+          data-testid="global-search-session-icon"
+          className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border-300/50 bg-bg-200 text-primary"
+          aria-hidden="true"
+        >
+          <MessageCircle className="size-5" />
+        </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-foreground">
             {session.title}
@@ -626,13 +634,13 @@ export const GlobalSearchDialog = ({
             · {relativeTime(session.updatedAt)}
           </span>
         </span>
-        {active ? (
-          <Hash className="size-5 shrink-0 text-foreground" aria-label={t('Session')} />
-        ) : (
-          <span className="rounded bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
-            {t('Session')}
+        {session.number !== undefined &&
+        Number.isSafeInteger(session.number) &&
+        session.number > 0 ? (
+          <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
+            #{session.number}
           </span>
-        )}
+        ) : null}
       </div>
     )
   }
@@ -940,11 +948,17 @@ export const GlobalSearchDialog = ({
                       activate({ kind: isProjectScope ? 'new-session' : 'new-project' })
                     }
                   >
-                    {isProjectScope ? (
-                      <MessageCircle className="size-5 text-primary" aria-hidden="true" />
-                    ) : (
-                      <Zap className="size-5 text-primary" aria-hidden="true" />
-                    )}
+                    <span
+                      data-testid="global-search-command-icon"
+                      className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border-300/50 bg-bg-200 text-primary"
+                      aria-hidden="true"
+                    >
+                      {isProjectScope ? (
+                        <MessageCircle className="size-5" />
+                      ) : (
+                        <Zap className="size-5" />
+                      )}
+                    </span>
                     <span className="text-sm font-medium">
                       {isProjectScope ? t('New session') : t('New project')}
                     </span>

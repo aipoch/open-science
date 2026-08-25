@@ -8,55 +8,55 @@ import { MAX_DELEGATE_NAME_CODE_POINTS } from '../delegation/delegated-work-admi
 
 const RUNNING_OBSERVATION_SCHEMA = {
   type: 'object',
-  required: ['frame_id', 'attempt_id', 'name', 'agent_name', 'status'],
+  required: ['frameId', 'attemptId', 'name', 'agentName', 'status'],
   optional: [],
   properties: {
-    frame_id: { type: 'string' },
-    attempt_id: { type: 'string' },
+    frameId: { type: 'string' },
+    attemptId: { type: 'string' },
     name: { type: 'string' },
-    agent_name: { type: 'string' },
+    agentName: { type: 'string' },
     status: { type: 'string', enum: ['running'] }
   }
 } as const
 
 const AWAITING_USER_OBSERVATION_SCHEMA = {
   type: 'object',
-  required: ['frame_id', 'attempt_id', 'name', 'agent_name', 'status'],
+  required: ['frameId', 'attemptId', 'name', 'agentName', 'status'],
   optional: ['title'],
   properties: {
-    frame_id: { type: 'string' },
-    attempt_id: { type: 'string' },
+    frameId: { type: 'string' },
+    attemptId: { type: 'string' },
     title: { type: 'string' },
     name: { type: 'string' },
-    agent_name: { type: 'string' },
+    agentName: { type: 'string' },
     status: { type: 'string', enum: ['awaiting_user'] }
   }
 } as const
 
 const TERMINAL_RESULT_SCHEMA = {
   type: 'object',
-  required: ['frame_id', 'attempt_id', 'name', 'agent_name', 'status', 'artifacts_created'],
+  required: ['frameId', 'attemptId', 'name', 'agentName', 'status', 'artifactsCreated'],
   optional: [
-    'terminal_message_id',
+    'terminalMessageId',
     'response',
-    'cancellation_reason',
+    'cancellationReason',
     'error',
-    'structured_output',
-    'structured_output_unsatisfied'
+    'structuredOutput',
+    'structuredOutputUnsatisfied'
   ],
   properties: {
-    frame_id: { type: 'string' },
-    attempt_id: { type: 'string' },
+    frameId: { type: 'string' },
+    attemptId: { type: 'string' },
     name: { type: 'string', description: 'Child delegation name.' },
-    agent_name: { type: 'string', description: 'Resolved Attempt agent display name.' },
+    agentName: { type: 'string', description: 'Resolved Attempt agent display name.' },
     status: { type: 'string', enum: ['completed', 'cancelled', 'error'] },
-    terminal_message_id: { type: 'string' },
+    terminalMessageId: { type: 'string' },
     response: { type: 'string' },
-    artifacts_created: {
+    artifactsCreated: {
       type: 'array',
       items: { type: 'object', description: 'Finalized Artifact Version metadata.' }
     },
-    cancellation_reason: {
+    cancellationReason: {
       type: 'string',
       enum: ['main_agent_stop', 'session_stop', 'runtime_interrupted']
     },
@@ -65,8 +65,8 @@ const TERMINAL_RESULT_SCHEMA = {
       required: ['code', 'message'],
       properties: { code: { type: 'string' }, message: { type: 'string' } }
     },
-    structured_output: { description: 'Accepted JSON value for the exact Attempt.' },
-    structured_output_unsatisfied: { type: 'boolean' }
+    structuredOutput: { description: 'Accepted JSON value for the exact Attempt.' },
+    structuredOutputUnsatisfied: { type: 'boolean' }
   }
 } as const
 
@@ -100,7 +100,8 @@ const COLLECT_AGENT_CONTRACT = {
     type: 'object',
     additionalProperties: false,
     properties: {
-      timeoutSeconds: { type: 'number', minimum: 0, maximum: 1800, default: 30 }
+      timeoutSeconds: { type: 'number', minimum: 0, maximum: 1800, default: 30 },
+      returnWhen: { type: 'string', enum: ['all', 'any'], default: 'all' }
     }
   },
   returns: { type: 'array', items: DELEGATE_OBSERVATION_SCHEMA },
@@ -193,13 +194,13 @@ const DELEGATE_AGENT_CONTRACT = {
             type: 'array',
             items: {
               type: 'object',
-              required: ['frame_id', 'attempt_id', 'name', 'agent_name', 'status'],
+              required: ['frameId', 'attemptId', 'name', 'agentName', 'status'],
               optional: [],
               properties: {
-                frame_id: { type: 'string' },
-                attempt_id: { type: 'string' },
+                frameId: { type: 'string' },
+                attemptId: { type: 'string' },
                 name: { type: 'string', description: 'Child delegation name.' },
-                agent_name: { type: 'string', description: 'Resolved Attempt agent display name.' },
+                agentName: { type: 'string', description: 'Resolved Attempt agent display name.' },
                 status: { type: 'string', enum: ['running'] }
               }
             }
@@ -358,7 +359,13 @@ const parseCollectRpcCall = (params: Readonly<Record<string, unknown>>): Collect
       'host.collect private RPC options use timeout_seconds; caller-facing timeoutSeconds must be remapped before transport.'
     )
   }
+  if (hasOwn(requestedOptions, 'returnWhen')) {
+    throw new Error(
+      'host.collect private RPC options use return_when; caller-facing returnWhen must be remapped before transport.'
+    )
+  }
   const timeoutSeconds = requestedOptions.timeout_seconds
+  const returnWhen = requestedOptions.return_when
   if (
     timeoutSeconds !== undefined &&
     (typeof timeoutSeconds !== 'number' ||
@@ -370,9 +377,15 @@ const parseCollectRpcCall = (params: Readonly<Record<string, unknown>>): Collect
       'host.collect options.timeout_seconds must be a finite number from 0 through 1800; choose a value in that range or omit it.'
     )
   }
+  if (returnWhen !== undefined && returnWhen !== 'all' && returnWhen !== 'any') {
+    throw new Error('host.collect options.return_when must be all or any; omit it to use all.')
+  }
   return {
     selectors,
-    options: timeoutSeconds === undefined ? {} : { timeoutSeconds }
+    options: {
+      ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
+      ...(returnWhen === undefined ? {} : { returnWhen })
+    }
   }
 }
 

@@ -894,7 +894,7 @@ describe('Session Store architecture', () => {
       const lines = source.split(/\r?\n/).length - Number(source.endsWith('\n'))
       const completionGate =
         file === 'session-store-persistence-owner.ts'
-          ? 780
+          ? 785
           : file === 'session-store-message-graph-owner.ts'
             ? 715
             : 710

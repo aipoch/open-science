@@ -5253,12 +5253,12 @@ describe('session store public contract', () => {
 
   it('keeps production consumers on the public store facade', () => {
     expect(directConsumerPaths()).toEqual([
-      'src/renderer/src/App.tsx',
       'src/renderer/src/components/NotificationBell.tsx',
       'src/renderer/src/components/NotificationLiveToast.tsx',
       'src/renderer/src/components/global-search/GlobalSearchDialog.tsx',
       'src/renderer/src/components/job-binding-utils.ts',
       'src/renderer/src/components/notification-inbox-presentation.ts',
+      'src/renderer/src/hooks/useApplicationEventBindings.ts',
       'src/renderer/src/hooks/useLifecycleSync.ts',
       'src/renderer/src/hooks/useUnreadTaskViewSync.ts',
       'src/renderer/src/lib/acp/history-preamble.ts',
@@ -5300,6 +5300,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/WorkspaceAgentLoadingRow.tsx',
       'src/renderer/src/pages/workspace/WorkspaceArtifactVisibility.tsx',
       'src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceManagePackagesActivityRow.tsx',
       'src/renderer/src/pages/workspace/WorkspaceMessageItem.tsx',
       'src/renderer/src/pages/workspace/WorkspaceMessageScroller.tsx',
       'src/renderer/src/pages/workspace/WorkspacePage.tsx',
@@ -5313,6 +5314,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/agent-loading-message.ts',
       'src/renderer/src/pages/workspace/artifact-preview-utils.ts',
       'src/renderer/src/pages/workspace/artifact-preview.tsx',
+      'src/renderer/src/pages/workspace/composer/SessionMentionPopup.tsx',
       'src/renderer/src/pages/workspace/composer/composer-history.ts',
       'src/renderer/src/pages/workspace/context-window-trend.ts',
       'src/renderer/src/pages/workspace/generate-plan-activity-projection.ts',

@@ -4,15 +4,24 @@ import { describe, expect, it } from 'vitest'
 import {
   appendArtifactMention,
   applyDocToDom,
+  createPastedTextAnchor,
   docArtifactCount,
   docFromMessageParts,
   docFromText,
   docIsEmpty,
+  docSessionCount,
   docToArtifactRefs,
+  docToMessageParts,
   docToSkillIds,
   docToText,
   domToDoc,
   emptyDoc,
+  insertPastedTextNodeAtLogicalOffset,
+  LONG_PASTE_CHARACTER_THRESHOLD,
+  LONG_PASTE_LINE_THRESHOLD,
+  pastedTextLogicalOffset,
+  restorePastedTextNode,
+  shouldAttachPastedText,
   type ComposerDoc
 } from './composer-doc'
 
@@ -70,8 +79,103 @@ describe('docToText', () => {
     expect(docToText(doc)).toBe('analyze @data/study.csv')
   })
 
+  it('renders Session nodes as #<snapshot title>', () => {
+    expect(
+      docToText({ nodes: [{ type: 'session', sessionId: 'session-2', title: 'Earlier result' }] })
+    ).toBe('#Earlier result')
+  })
+
   it('returns an empty string for the empty doc', () => {
     expect(docToText(emptyDoc)).toBe('')
+  })
+
+  it('omits live pasted-text anchors from message text and durable parts', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'before' },
+        { type: 'pasted-text', id: 'paste-1', text: 'large payload', attachmentId: 'upload-1' },
+        { type: 'text', text: 'after' }
+      ]
+    }
+
+    expect(docToText(doc)).toBe('beforeafter')
+    expect(docToMessageParts(doc)).toEqual([
+      { type: 'text', text: 'before' },
+      { type: 'text', text: 'after' }
+    ])
+  })
+})
+
+describe('long pasted text', () => {
+  it('uses the confirmed character and line thresholds', () => {
+    expect(shouldAttachPastedText('x'.repeat(LONG_PASTE_CHARACTER_THRESHOLD))).toBe(false)
+    expect(shouldAttachPastedText('x'.repeat(LONG_PASTE_CHARACTER_THRESHOLD + 1))).toBe(true)
+    expect(shouldAttachPastedText('x\n'.repeat(LONG_PASTE_LINE_THRESHOLD - 1) + 'x')).toBe(false)
+    expect(shouldAttachPastedText('x\n'.repeat(LONG_PASTE_LINE_THRESHOLD) + 'x')).toBe(true)
+  })
+
+  it('restores the text between surrounding runs and returns the exact caret offset', () => {
+    const restored = restorePastedTextNode(
+      {
+        nodes: [
+          { type: 'text', text: 'before ' },
+          { type: 'pasted-text', id: 'paste-1', text: 'payload' },
+          { type: 'text', text: ' after' }
+        ]
+      },
+      'paste-1'
+    )
+
+    expect(restored).toEqual({
+      doc: { nodes: [{ type: 'text', text: 'before payload after' }] },
+      caret: { nodeIndex: 0, offset: 'before payload'.length }
+    })
+  })
+
+  it('reinserts only the removed anchor after another paste has become inline text', () => {
+    const removed = { type: 'pasted-text' as const, id: 'paste-a', text: 'alpha' }
+    const original: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'before ' },
+        removed,
+        { type: 'text', text: ' middle ' },
+        { type: 'pasted-text', id: 'paste-b', text: 'bravo' },
+        { type: 'text', text: ' after' }
+      ]
+    }
+    const offset = pastedTextLogicalOffset(original, removed.id)
+
+    expect(
+      insertPastedTextNodeAtLogicalOffset(
+        { nodes: [{ type: 'text', text: 'before  middle bravo after' }] },
+        removed,
+        offset ?? 0
+      )
+    ).toEqual({
+      nodes: [
+        { type: 'text', text: 'before ' },
+        removed,
+        { type: 'text', text: ' middle bravo after' }
+      ]
+    })
+  })
+
+  it('round-trips a compact visible marker without putting the payload in the DOM', () => {
+    const root = document.createElement('div')
+    const node = { type: 'pasted-text' as const, id: 'paste-1', text: 'private payload' }
+    const anchor = createPastedTextAnchor(node)
+    root.append(anchor)
+
+    expect(anchor.textContent).not.toContain(node.text)
+    expect(Array.from(anchor.attributes).map((attribute) => attribute.value)).not.toContain(
+      node.text
+    )
+    expect(anchor.textContent).toBe('…')
+    expect(anchor.getAttribute('role')).toBe('button')
+    expect(anchor.getAttribute('aria-controls')).toBe('composer-pasted-text-attachment-paste-1')
+    expect(anchor.className).toContain('h-5')
+    expect(anchor.className).not.toContain('h-0')
+    expect(domToDoc(root)).toEqual({ nodes: [node] })
   })
 })
 
@@ -172,6 +276,20 @@ describe('docArtifactCount', () => {
   })
 })
 
+describe('docSessionCount', () => {
+  it('counts Session chips', () => {
+    expect(
+      docSessionCount({
+        nodes: [
+          { type: 'session', sessionId: 'session-1', title: 'One' },
+          { type: 'text', text: ' ' },
+          { type: 'session', sessionId: 'session-2', title: 'Two' }
+        ]
+      })
+    ).toBe(2)
+  })
+})
+
 describe('appendArtifactMention', () => {
   it('appends one separating space only when the preceding node is not whitespace', () => {
     const reference = {
@@ -256,6 +374,12 @@ describe('docIsEmpty', () => {
   it('is false when text has non-whitespace content', () => {
     expect(docIsEmpty(docFromText('x'))).toBe(false)
   })
+
+  it('is false when a pasted-text attachment anchor exists', () => {
+    expect(docIsEmpty({ nodes: [{ type: 'pasted-text', id: 'paste-1', text: 'payload' }] })).toBe(
+      false
+    )
+  })
 })
 
 describe('domToDoc', () => {
@@ -284,6 +408,12 @@ describe('domToDoc', () => {
     expect(domToDoc(root)).toEqual({ nodes: [{ type: 'text', text: 'ab' }] })
   })
 
+  it('preserves user-entered word-joiner characters', () => {
+    const root = document.createElement('div')
+    root.appendChild(document.createTextNode('a\u2060b'))
+    expect(domToDoc(root)).toEqual({ nodes: [{ type: 'text', text: 'a\u2060b' }] })
+  })
+
   it('returns the empty doc for an empty root', () => {
     const root = document.createElement('div')
     expect(domToDoc(root)).toEqual(emptyDoc)
@@ -303,6 +433,22 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     const root = document.createElement('div')
     applyDocToDom(root, doc)
     expect(domToDoc(root)).toEqual(doc)
+  })
+
+  it('renders a drawable caret host after a trailing pasted-text anchor without serializing it', () => {
+    const doc: ComposerDoc = {
+      nodes: [{ type: 'pasted-text', id: 'paste-1', text: 'private payload' }]
+    }
+    const root = document.createElement('div')
+
+    applyDocToDom(root, doc)
+
+    expect(root.lastChild?.nodeType).toBe(Node.TEXT_NODE)
+    expect(root.lastChild?.textContent).toBe('\u2060')
+    expect(domToDoc(root)).toEqual(doc)
+
+    root.lastChild!.textContent = 'after\u2060'
+    expect(domToDoc(root)).toEqual({ nodes: [...doc.nodes, { type: 'text', text: 'after' }] })
   })
 
   it('clears prior content before rendering', () => {
@@ -345,6 +491,32 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     }
     const root = document.createElement('div')
     applyDocToDom(root, doc)
+    expect(domToDoc(root)).toEqual(doc)
+  })
+
+  it('round-trips a Session chip without Project or Frame identity', () => {
+    const title = 'A very long prior Session title that stays available to the tooltip'
+    const doc: ComposerDoc = {
+      nodes: [
+        {
+          type: 'session',
+          sessionId: 'session-2',
+          title
+        }
+      ]
+    }
+    const root = document.createElement('div')
+
+    applyDocToDom(root, doc)
+
+    const chip = root.querySelector('[data-mention-type="session"]')
+    expect(chip?.getAttribute('data-session-id')).toBe('session-2')
+    expect(chip?.getAttribute('data-project-id')).toBeNull()
+    expect(chip?.getAttribute('data-frame-id')).toBeNull()
+    expect(chip?.getAttribute('title')).toBe(title)
+    expect(chip?.className).toContain('truncate')
+    expect(chip?.className).toContain('bg-accent')
+    expect(chip?.className).toContain('text-accent-foreground')
     expect(domToDoc(root)).toEqual(doc)
   })
 
@@ -437,7 +609,7 @@ describe('applyDocToDom + domToDoc round-trip', () => {
 })
 
 describe('docFromMessageParts', () => {
-  it('restores text, skill, and artifact chips from a sent message parts list', () => {
+  it('restores text, skill, artifact, and Session chips from sent message parts', () => {
     const doc = docFromMessageParts([
       { type: 'text', text: 'Run ' },
       { type: 'skill', id: 'skill-forecast', name: 'forecast' },
@@ -449,7 +621,9 @@ describe('docFromMessageParts', () => {
         path: '/p/clinical trial03.pdf',
         source: 'artifact',
         versionId: 'v2'
-      }
+      },
+      { type: 'text', text: ' using ' },
+      { type: 'session', sessionId: 'session-2', title: 'Prior analysis' }
     ])
 
     expect(doc).toEqual({
@@ -464,7 +638,9 @@ describe('docFromMessageParts', () => {
           path: '/p/clinical trial03.pdf',
           source: 'artifact',
           versionId: 'v2'
-        }
+        },
+        { type: 'text', text: ' using ' },
+        { type: 'session', sessionId: 'session-2', title: 'Prior analysis' }
       ]
     })
   })

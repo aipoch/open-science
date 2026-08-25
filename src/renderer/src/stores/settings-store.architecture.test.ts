@@ -308,24 +308,31 @@ const importBoundaryViolations = (path: string, source = readSource(path)): read
   return violations
 }
 
-const allowedFacadeVariables = new Set([
-  'createInitialSettingsState',
-  'applySnapshot',
-  'DEFAULT_FRAMEWORK_API_ENDPOINTS',
-  'selectFrameworkApiEndpoints',
-  'selectVisionRelayAvailable',
-  'configuration',
-  'selectedKey',
-  'selectProviderModelOptions',
-  'settingsLoadPromise',
-  'SAFE_SETTINGS_LOAD_ERROR',
-  'reportSettingsLoadError',
-  'createSettingsStoreState',
-  'generation',
-  '[snapshot, preflight, encryptionAvailable, npmAvailable]',
-  'loadPromise',
-  'error',
-  'useSettingsStore'
+// Exact declaration counts for every facade binding. `load` now publishes the Settings snapshot
+// before runtime probes finish, so its locals (and the two `catch (error)` bindings) must stay
+// inventoried here instead of being treated as new facade state.
+const allowedFacadeVariableCounts = new Map<string, number>([
+  ['createInitialSettingsState', 1],
+  ['applySnapshot', 1],
+  ['DEFAULT_FRAMEWORK_API_ENDPOINTS', 1],
+  ['selectFrameworkApiEndpoints', 1],
+  ['selectVisionRelayAvailable', 1],
+  ['configuration', 1],
+  ['selectedKey', 1],
+  ['selectProviderModelOptions', 1],
+  ['settingsLoadPromise', 1],
+  ['SAFE_SETTINGS_LOAD_ERROR', 1],
+  ['reportSettingsLoadError', 1],
+  ['createSettingsStoreState', 1],
+  ['generation', 1],
+  ['shouldInitializeRuntime', 1],
+  ['settingsPromise', 1],
+  ['runtimeInitialization', 1],
+  ['snapshot', 1],
+  ['[preflight, encryptionAvailable, npmAvailable]', 1],
+  ['loadPromise', 1],
+  ['error', 2],
+  ['useSettingsStore', 1]
 ])
 
 const staticMemberPath = (node: Node): readonly string[] | undefined => {
@@ -361,7 +368,7 @@ const settingsAccessAudit = (source: string): SettingsAccessAudit => {
     if (isVariableDeclaration(node)) {
       const name = node.name.getText(sourceFile)
       variableCounts.set(name, (variableCounts.get(name) ?? 0) + 1)
-      if (!allowedFacadeVariables.has(name)) violations.push(`${name} is new facade state`)
+      if (!allowedFacadeVariableCounts.has(name)) violations.push(`${name} is new facade state`)
       const directPath = node.initializer
         ? staticMemberPath(node.initializer)?.join('.')
         : undefined
@@ -419,8 +426,8 @@ const settingsAccessAudit = (source: string): SettingsAccessAudit => {
     forEachChild(node, visit)
   }
   visit(sourceFile)
-  for (const name of allowedFacadeVariables) {
-    if (variableCounts.get(name) !== 1) {
+  for (const [name, expectedCount] of allowedFacadeVariableCounts) {
+    if (variableCounts.get(name) !== expectedCount) {
       violations.push(`${name} declared ${variableCounts.get(name) ?? 0} times`)
     }
   }

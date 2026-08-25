@@ -2631,6 +2631,94 @@ describe('ACP runtime restored permission continuation', () => {
     )
   })
 
+  it('does not present a cancelled restored permission as an explicit user denial', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['restored-session'])
+    let runtimeContext: SessionRuntimeContext = {
+      version: 1,
+      revision: 1,
+      permission: {
+        state: 'pending',
+        request: {
+          requestId: 'permission-restored',
+          sessionId: 'restored-session',
+          toolCallId: 'tool-restored',
+          title: 'Run npm test',
+          options: [
+            { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
+          ]
+        },
+        originatingPromptMessageId: 'prompt-1',
+        fingerprint: 'a'.repeat(64),
+        createdAt: 1
+      }
+    }
+    const messages: PersistedChatSession['messages'] = [
+      {
+        id: 'prompt-1',
+        role: 'user',
+        content: 'Run the requested test command.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    const persistedSession: PersistedChatSession = {
+      id: 'restored-session',
+      projectId: 'project-1',
+      title: 'Restored permission',
+      cwd: '/workspace',
+      status: 'waiting-permission',
+      messages,
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'restored-session',
+        messages,
+        frameworkId: 'claude-code',
+        backendId: 'claude-code:provider-a',
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      framework: claudeCodeFramework,
+      spawnAgent: () => asAgentProcess(process),
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
+          patchSessionRuntimeContext: vi.fn(async (command) => {
+            runtimeContext = {
+              ...runtimeContext,
+              ...command.patch,
+              revision: runtimeContext.revision + 1
+            }
+            return structuredClone(runtimeContext)
+          }),
+          containsMessageOnActiveBranch: vi.fn(async () => true),
+          loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession))
+        }
+      }
+    })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+
+    await runtime.respondToPermission({
+      requestId: 'permission-restored',
+      cancelled: true,
+      restored: { sessionId: 'restored-session', projectId: 'project-1' }
+    })
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    expect(fakeAgent.prompts[0]?.text).toContain(
+      'The pending permission interaction was cancelled without granting authorization'
+    )
+    expect(fakeAgent.prompts[0]?.text).not.toContain('The user explicitly denied this operation')
+  })
+
   it.each(RESTORED_CONTINUATION_FRAMEWORKS)(
     'continues an approved restored wait through %s and then clears its authority',
     async (_name, framework, modelRoute, backendId) => {
@@ -5961,6 +6049,62 @@ describe('ACP runtime session management', () => {
         })
       ])
     )
+  })
+
+  it('preserves Session reference guidance and authority across an app-owned choice', async () => {
+    const process = new FakeAgentProcess()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    let appSessionId = ''
+    let continuationAuthorized = false
+    const fakeAgent = startFakeAgent(process, ['referenced-user-choice-session'], {
+      onPrompt: async ({ text }) => {
+        if (text.includes('start the referenced workflow')) {
+          await runtime.requestUserInput({
+            sessionId: appSessionId,
+            questions: [
+              {
+                question: 'Which implementation should I use?',
+                options: [{ label: 'Minimal' }, { label: 'Expanded' }]
+              }
+            ]
+          })
+          return
+        }
+        continuationAuthorized = (
+          runtime as unknown as {
+            sessionInteractions: {
+              isSessionReferenceAllowed(sessionId: string, referencedSessionId: string): boolean
+            }
+          }
+        ).sessionInteractions.isSessionReferenceAllowed(appSessionId, 'referenced-session')
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    appSessionId = session.sessionId
+    await runtime.sendPrompt({
+      sessionId: appSessionId,
+      text: 'start the referenced workflow',
+      referencedSessions: [
+        { type: 'session', sessionId: 'referenced-session', title: 'Prior analysis' }
+      ]
+    })
+
+    const request = runtime.getSnapshot().pendingElicitations?.[0]
+    expect(request).toBeDefined()
+    await runtime.respondToElicitation({
+      requestId: request!.requestId,
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+    })
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
+    expect(fakeAgent.prompts[1].text).toContain('sessionId="referenced-session"')
+    expect(continuationAuthorized).toBe(true)
   })
 
   it('preserves the originating Agent Frame when an app-owned choice continues the turn', async () => {
@@ -21249,7 +21393,7 @@ describe('ACP runtime session management', () => {
     expect(permissionResponses).toEqual([{ outcome: { outcome: 'selected', optionId: 'reject' } }])
   })
 
-  it('continues a Claude turn after a rejected permission cancels the provider prompt', async () => {
+  it('continues a Claude turn with an explicit authorization boundary after permission denial', async () => {
     const process = new FakeAgentProcess()
     const continuationGate = createDeferred<PromptResponse>()
     const prompts: string[] = []
@@ -21325,7 +21469,12 @@ describe('ACP runtime session management', () => {
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'inspect the workspace' })
 
     await vi.waitFor(() => expect(prompts).toHaveLength(2))
-    expect(prompts[1]).toContain('permission')
+    expect(prompts[1]).toContain('The user explicitly denied this operation')
+    expect(prompts[1]).toContain('You do not have authorization to perform it')
+    expect(prompts[1]).toContain(
+      'Do not retry or approximate the denied operation with a different command, tool, or route'
+    )
+    expect(prompts[1]).toContain('Continue only with independent work that is already permitted')
     expect(runtime.getSnapshot().events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

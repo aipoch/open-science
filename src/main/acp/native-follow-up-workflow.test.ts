@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { createMainPromptSideChatRelay } from '../side-chat/main-prompt-relay'
 import {
   AcpNativeFollowUpWorkflow,
   finalizeNativeFollowUpPreparedContent,
   type NativeFollowUpUserMessage
 } from './native-follow-up-workflow'
 import { ACP_STEERING_METHOD } from './native-follow-up'
+import { SideChatRelayOwner } from './side-chat-relay-owner'
 
 const published: NativeFollowUpUserMessage[] = []
 
@@ -16,7 +18,8 @@ const createWorkflow = (
     advertised?: boolean
     livePrompt?: boolean | (() => boolean)
     pendingPermission?: boolean | (() => boolean)
-    livePromptTurn?: () => { turnToken: string; signal: AbortSignal } | undefined
+    livePromptTurn?: () =>
+      { turnToken: string; signal: AbortSignal; promptMessageId?: string } | undefined
     frameworkId?: 'claude-code' | 'opencode' | 'codex'
     openCodeHttp?: boolean
     providerSessionId?: string | null
@@ -78,7 +81,13 @@ const createWorkflow = (
           typeof overrides.livePrompt === 'function'
             ? overrides.livePrompt()
             : (overrides.livePrompt ?? true)
-        return isLive ? { turnToken: 'turn-1', signal: new AbortController().signal } : undefined
+        return isLive
+          ? {
+              turnToken: 'turn-1',
+              signal: new AbortController().signal,
+              promptMessageId: 'prompt-live'
+            }
+          : undefined
       },
       sessionCwd: () => '/workspace',
       publishUserMessage: (input) => {
@@ -117,6 +126,127 @@ describe('AcpNativeFollowUpWorkflow', () => {
     expect(published).toEqual([
       { sessionId: 'app-1', messageId: 'message-steer-1', text: 'focus on tests' }
     ])
+  })
+
+  it('injects an advisory without publishing an ordinary user message', async () => {
+    const { workflow } = createWorkflow()
+
+    await expect(
+      workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'Context-only advisory' })
+    ).resolves.toEqual({
+      injected: true,
+      promptMessageId: 'prompt-live'
+    })
+    expect(published).toEqual([])
+  })
+
+  it('refuses an advisory when the live prompt has no durable message identity', async () => {
+    const { workflow } = createWorkflow({
+      livePromptTurn: () => ({
+        turnToken: 'turn-1',
+        signal: new AbortController().signal
+      })
+    })
+
+    await expect(
+      workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'Context-only advisory' })
+    ).resolves.toEqual({ injected: false })
+    expect(published).toEqual([])
+  })
+
+  it('refuses an advisory when Main changes turns while the advisory is prepared', async () => {
+    let livePromptReads = 0
+    const request = vi.fn(async () => ({ outcome: 'injected' }))
+    const { workflow } = createWorkflow({
+      request,
+      livePromptTurn: () => {
+        livePromptReads += 1
+        return {
+          turnToken: livePromptReads === 1 ? 'turn-1' : 'turn-2',
+          signal: new AbortController().signal,
+          promptMessageId: livePromptReads === 1 ? 'prompt-1' : 'prompt-2'
+        }
+      },
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text' as const, text: 'Context-only advisory' }],
+        uploads: []
+      })
+    })
+
+    await expect(
+      workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'Context-only advisory' })
+    ).resolves.toEqual({ injected: false })
+    expect(request).not.toHaveBeenCalled()
+    expect(published).toEqual([])
+  })
+
+  it('does not requeue an advisory after steering consumes it into a new Main turn', async () => {
+    let originalTurnRunning = true
+    const { workflow } = createWorkflow({
+      request: vi.fn(async () => {
+        originalTurnRunning = false
+        return { outcome: 'startedNewTurn' }
+      }),
+      livePromptTurn: () =>
+        originalTurnRunning
+          ? {
+              turnToken: 'turn-1',
+              signal: new AbortController().signal,
+              promptMessageId: 'prompt-live'
+            }
+          : undefined
+    })
+    const relay = new SideChatRelayOwner({
+      targetState: () => 'running',
+      appendRelay: async () => undefined
+    })
+    relay.bind({
+      sideSessionId: 'side-1',
+      sideChatId: 'chat-1',
+      parentSessionId: 'app-1',
+      projectId: 'project-1'
+    })
+    const queued = await relay.send({
+      sideSessionId: 'side-1',
+      target: 'main',
+      text: 'Context-only advisory'
+    })
+    const commitSideChatRelays = vi.fn(async () => [])
+    const mainRelay = createMainPromptSideChatRelay({
+      relay,
+      steerAdvisory: (request) => workflow.steerSideChatAdvisory(request),
+      commitSideChatRelays,
+      onDelivered: vi.fn()
+    })
+
+    await expect(mainRelay.tryInject('app-1', queued)).resolves.toMatchObject({
+      status: 'injected'
+    })
+    expect(commitSideChatRelays).toHaveBeenCalledWith(
+      expect.objectContaining({ relayIds: [queued.messageId], promptMessageId: 'prompt-live' })
+    )
+    expect(mainRelay.claim('app-1')).toBeUndefined()
+    expect(published).toEqual([])
+  })
+
+  it('keeps an advisory consumed when Main finishes during steering', async () => {
+    let liveTurnToken = 'turn-1'
+    const { workflow } = createWorkflow({
+      request: vi.fn(async () => {
+        liveTurnToken = 'turn-2'
+        return { outcome: 'injected' }
+      }),
+      livePromptTurn: () => ({
+        turnToken: liveTurnToken,
+        signal: new AbortController().signal,
+        promptMessageId: liveTurnToken === 'turn-1' ? 'prompt-1' : 'prompt-2'
+      })
+    })
+
+    await expect(
+      workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'Context-only advisory' })
+    ).resolves.toEqual({ injected: true, promptMessageId: 'prompt-1' })
+    expect(published).toEqual([])
   })
 
   it('treats startedNewTurn as injected because the adapter consumed the prompt', async () => {

@@ -260,7 +260,7 @@ const ReviewerModelSelect = (): React.JSX.Element => {
     <ModelPolicySelect
       modelAriaLabel={t('Reviewer model Model')}
       reasoningEffortAriaLabel={t('Reviewer model Reasoning effort')}
-      inheritLabel={t('Follow Active model')}
+      inheritLabel={t('Follow main model')}
       configuration={useSettingsStore((state) => state.reviewerModel)}
       pending={useSettingsStore((state) => state.reviewerModelPending)}
       setConfiguration={useSettingsStore((state) => state.setReviewerModel)}

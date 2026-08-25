@@ -261,7 +261,35 @@ describe('ElectronUpdaterStrategy', () => {
     )
   })
 
-  it('does not start an in-place download while a provider check is active', async () => {
+  it('coalesces overlapping in-place checks onto the in-flight provider query', async () => {
+    const updater = new FakeUpdater()
+    let releaseCheck: (() => void) | undefined
+    const checkGate = new Promise<void>((resolve) => {
+      releaseCheck = resolve
+    })
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('checking-for-update')
+      await checkGate
+      updater.emit('update-available', { version: '0.3.0', releaseNotes: 'notes' })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+
+    const first = strategy.check()
+    const second = strategy.check()
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
+    releaseCheck?.()
+    const [left, right] = await Promise.all([first, second])
+    expect(left).toBe(right)
+    expect(left.state).toBe('available')
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for an in-flight provider check before starting an in-place download', async () => {
     const updater = new FakeUpdater()
     let releaseCheck: (() => void) | undefined
     const checkGate = new Promise<void>((resolve) => {
@@ -280,13 +308,59 @@ describe('ElectronUpdaterStrategy', () => {
     })
 
     const checking = strategy.check()
-    const checkingStatus = strategy.getStatus()
-    expect(checkingStatus.state).toBe('checking')
-    expect(await strategy.download()).toBe(checkingStatus)
+    expect(strategy.getStatus().state).toBe('checking')
+    const downloading = strategy.download()
     expect(updater.downloadUpdate).not.toHaveBeenCalled()
 
     releaseCheck?.()
     expect((await checking).state).toBe('available')
+    expect((await downloading).state).toBe('ready')
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for notes hydration after update-available before starting an in-place download', async () => {
+    const updater = new FakeUpdater()
+    let releaseNotes: (() => void) | undefined
+    const notesGate = new Promise<void>((resolve) => {
+      releaseNotes = resolve
+    })
+    const fetchImpl = vi.fn(async () => {
+      await notesGate
+      return {
+        ok: true,
+        json: async () => ({
+          version: '0.3.0',
+          releaseDate: '',
+          notes: 'cdn notes',
+          localizedNotes: { 'zh-Hans': 'CDN 说明' },
+          downloads: {}
+        })
+      }
+    }) as unknown as typeof fetch
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl
+    })
+
+    const checking = strategy.check()
+    expect(strategy.getStatus()).toEqual(
+      expect.objectContaining({ state: 'available', latest: '0.3.0', notes: 'notes' })
+    )
+    const downloading = strategy.download()
+    expect(updater.downloadUpdate).not.toHaveBeenCalled()
+
+    releaseNotes?.()
+    expect(await checking).toEqual(
+      expect.objectContaining({
+        state: 'available',
+        notes: 'cdn notes',
+        localizedNotes: { 'zh-Hans': 'CDN 说明' }
+      })
+    )
+    expect((await downloading).state).toBe('ready')
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
   })
 
   it('records a failed in-place download without the provider error message', async () => {

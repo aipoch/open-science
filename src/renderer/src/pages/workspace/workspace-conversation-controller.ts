@@ -13,6 +13,7 @@ import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import {
   docIsEmpty,
   docToArtifactRefs,
+  docToMessageParts,
   docToSkillIds,
   docToText,
   type ComposerDoc
@@ -324,7 +325,7 @@ const useWorkspaceConversationController = (
               status: 'complete' as const,
               eventIds: [],
               uploads: snapshot.attachments,
-              parts: snapshot.doc.nodes,
+              parts: docToMessageParts(snapshot.doc),
               createdAt: 0,
               updatedAt: 0
             }
@@ -341,7 +342,7 @@ const useWorkspaceConversationController = (
             text: docToText(snapshot.doc),
             attachments: snapshot.attachments,
             referencedArtifacts: docToArtifactRefs(snapshot.doc),
-            parts: snapshot.doc.nodes,
+            parts: docToMessageParts(snapshot.doc),
             cwd: activeSession?.cwd,
             projectId: activeSession?.projectId ?? current.projectId,
             permissionProfile: current.permissionProfile,
@@ -433,7 +434,7 @@ const useWorkspaceConversationController = (
           return
         void current.runtime.resendEditedMessage(sessionId, messageId, {
           text: docToText(doc),
-          parts: doc.nodes,
+          parts: docToMessageParts(doc),
           forcedSkillIds: docToSkillIds(doc),
           referencedArtifacts: docToArtifactRefs(doc)
         })

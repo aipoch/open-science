@@ -17,7 +17,7 @@ import type {
   NotebookRunRecord
 } from '../../shared/notebook'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
-import { NotebookRunRepository } from '../notebook/repository'
+import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repository'
 import {
   canonicalJson,
   isCanonicalJsonValue,
@@ -130,7 +130,6 @@ type ArtifactVersionProducerCapture =
       argumentsChecksum: string
       inputFiles: NotebookRunInputFile[]
     }
-
 type PreparedArtifactVersionPersistence = {
   notebookSessionId?: string
   producerRunId?: string
@@ -141,13 +140,12 @@ type PreparedArtifactVersionPersistence = {
   executionSnapshotChecksum?: string
   inputs?: Prisma.ArtifactVersionUncheckedCreateInput['inputs']
 }
-
 type ArtifactProvenanceProducerCaptureOptions = {
   inputAuthority: Pick<ImmutableInputAuthority, 'validateVersion'>
   notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'>
+  storageRoot: string
   createId: () => string
 }
-
 type PrepareVersionPersistenceInput = {
   request: CreateArtifactVersionRequest
   producer: ArtifactVersionProducerCapture
@@ -158,13 +156,42 @@ type PrepareVersionPersistenceInput = {
   sizeBytes: number
   createdAt: Date
 }
-
 type ProducerScope = {
   rootFrameId: string
   agentFrameId: string
-  messageBranchId: string
-  runtimeSegmentId: string
-  promptMessageId: string
+  activeRuntimeSegmentId: string
+  activePromptMessageId: string
+  eligibleBranchIds: ReadonlySet<string>
+  eligibleMessageIds: ReadonlySet<string>
+}
+
+type SourceFileObservation = NonNullable<CreateArtifactVersionRequest['sourceFileObservation']>
+type SourceFileObservationAssessment = {
+  notebookSessionOwned: boolean
+  verified?: SourceFileObservation
+}
+
+const isStrictDescendant = (root: string, candidate: string): boolean => {
+  const nested = relative(root, candidate)
+  return nested !== '' && nested !== '..' && !nested.startsWith(`..${sep}`) && !isAbsolute(nested)
+}
+
+const canonicalPath = async (path: string): Promise<string> =>
+  realpath(resolve(path)).catch(() => resolve(path))
+const producerScopeMismatch = (
+  run: NotebookRunRecord,
+  scope: ProducerScope
+): keyof NotebookRunRecord | null => {
+  if (run.rootFrameId !== scope.rootFrameId) return 'rootFrameId'
+  if (run.agentFrameId !== scope.agentFrameId) return 'agentFrameId'
+  if (!run.messageBranchId || !scope.eligibleBranchIds.has(run.messageBranchId))
+    return 'messageBranchId'
+  if (!run.promptMessageId || !scope.eligibleMessageIds.has(run.promptMessageId))
+    return 'promptMessageId'
+  return run.promptMessageId === scope.activePromptMessageId &&
+    run.runtimeSegmentId !== scope.activeRuntimeSegmentId
+    ? 'runtimeSegmentId'
+    : null
 }
 
 class ArtifactProvenanceProducerCapture {
@@ -192,18 +219,16 @@ class ArtifactProvenanceProducerCapture {
         inputFiles
       }
     }
-    // Local files require an app-side observation before an Agent-declared run may become evidence.
-    // Inline bytes have no file observation, so they retain the declared run only after the durable
-    // Notebook Session and graph-scope checks below succeed.
+    if (request.producerRunId && !request.notebookSessionId) {
+      throw new Error('producerRunId requires notebookSessionId in the active Artifact run.')
+    }
+    // Agent-declared local files require an app observation; inline bytes use the durable checks below.
     if (
       request.producerRunId &&
       !request.sourceFileObservation &&
       request.sourceKind !== 'inline'
     ) {
-      return { state: 'unavailable', reason: 'producer-source-unverifiable' }
-    }
-    if (request.producerRunId && !request.notebookSessionId) {
-      throw new Error('producerRunId requires notebookSessionId in the active Artifact run.')
+      throw new Error(`Notebook producer source observation is required: ${request.producerRunId}`)
     }
     if (!request.notebookSessionId) {
       return { state: 'unavailable', reason: 'producer-not-supplied' }
@@ -226,28 +251,58 @@ class ArtifactProvenanceProducerCapture {
           )) ??
       documents[0] ??
       null
-    const sourceFileObservation = request.sourceFileObservation
-      ? await this.verifySourceFileObservation(
+    const sourceFileAssessment = request.sourceFileObservation
+      ? await this.assessSourceFileObservation(
           document,
           request.sourceFileObservation,
-          artifactChecksum
+          artifactChecksum,
+          getNotebookSessionRoot(
+            this.options.storageRoot,
+            request.projectId,
+            request.notebookSessionId
+          )
         )
       : undefined
+    const sourceFileObservation = sourceFileAssessment?.verified
     if (request.sourceFileObservation && !sourceFileObservation) {
+      if (request.producerRunId) {
+        throw new Error(`Notebook producer source could not be verified: ${request.producerRunId}`)
+      }
+      if (sourceFileAssessment?.notebookSessionOwned) {
+        throw new Error('Notebook source observation could not be verified.')
+      }
       return { state: 'unavailable', reason: 'producer-source-unverifiable' }
     }
-    const expected = {
+    const eligibleBranchIds = new Set(
+      request.messageBranchAncestry?.length
+        ? request.messageBranchAncestry
+        : [request.messageBranchId]
+    )
+    if (!eligibleBranchIds.has(request.messageBranchId)) {
+      throw new Error('Artifact Branch ancestry does not contain the active Branch.')
+    }
+    const eligibleMessageIds = new Set(
+      request.messageAncestry?.length ? request.messageAncestry : [request.promptMessageId]
+    )
+    if (!eligibleMessageIds.has(request.promptMessageId)) {
+      throw new Error('Artifact Message ancestry does not contain the producer prompt.')
+    }
+    const scope: ProducerScope = {
       rootFrameId: request.rootFrameId,
       agentFrameId: request.agentFrameId,
-      messageBranchId: request.messageBranchId,
-      runtimeSegmentId: request.runtimeSegmentId,
-      promptMessageId: request.promptMessageId
+      activeRuntimeSegmentId: request.runtimeSegmentId,
+      activePromptMessageId: request.promptMessageId,
+      eligibleBranchIds,
+      eligibleMessageIds
     }
     const inferredProducerRunId = request.producerRunId
       ? undefined
-      : await this.inferProducerRunId(document, sourceFileObservation, expected)
+      : await this.inferProducerRunId(document, sourceFileObservation, scope)
     const producerRunId = request.producerRunId ?? inferredProducerRunId
     if (!producerRunId) {
+      if (sourceFileAssessment?.notebookSessionOwned) {
+        throw new Error('Notebook source must have exactly one eligible Run owner.')
+      }
       return {
         state: 'unavailable',
         reason: request.sourceFileObservation
@@ -261,23 +316,22 @@ class ArtifactProvenanceProducerCapture {
     if (!document || !producerRun || producerRunIndex < 0) {
       throw new Error(`Notebook producer run not found: ${producerRunId}`)
     }
-    for (const [field, value] of Object.entries(expected)) {
-      if (producerRun[field as keyof typeof expected] !== value) {
-        if (field === 'agentFrameId') {
-          throw new Error(
-            'Notebook producer run belongs to a different agent frame. Have the producing agent publish it directly, or reference an already completed Artifact Version.'
-          )
-        }
+    const scopeMismatch = producerScopeMismatch(producerRun, scope)
+    if (scopeMismatch) {
+      if (scopeMismatch === 'agentFrameId') {
         throw new Error(
-          `Notebook producer run does not belong to the active Artifact ${field}: ${producerRunId}`
+          'Notebook producer run belongs to a different agent frame. Have the producing agent publish it directly, or reference an already completed Artifact Version.'
         )
       }
+      throw new Error(
+        `Notebook producer run does not belong to the active Artifact ${scopeMismatch}: ${producerRunId}`
+      )
     }
     if (request.producerRunId && sourceFileObservation) {
       const observedOwners = await this.findObservedWorkingFileRunIds(
         document,
         sourceFileObservation,
-        expected
+        scope
       )
       if (observedOwners.length > 0 && !observedOwners.includes(request.producerRunId)) {
         throw new Error(
@@ -285,38 +339,14 @@ class ArtifactProvenanceProducerCapture {
         )
       }
       if (observedOwners.length !== 1) {
-        return { state: 'unavailable', reason: 'producer-source-unverifiable' }
+        throw new Error(`Producer source must have exactly one Run owner: ${request.producerRunId}`)
       }
     }
 
-    const eligibleBranchIds = new Set(
-      request.messageBranchAncestry?.length
-        ? request.messageBranchAncestry
-        : [request.messageBranchId]
-    )
-    if (!eligibleBranchIds.has(request.messageBranchId)) {
-      throw new Error('Artifact Branch ancestry does not contain the active Branch.')
-    }
-    const eligibleMessageIds = request.messageAncestry?.length
-      ? new Set(request.messageAncestry)
-      : undefined
-    if (eligibleMessageIds && !eligibleMessageIds.has(request.promptMessageId)) {
-      throw new Error('Artifact Message ancestry does not contain the producer prompt.')
-    }
     const eligibleRuns = document.runs
       .slice(0, producerRunIndex + 1)
       .map((run, runIndex) => ({ run, runIndex }))
-      .filter(
-        ({ run }) =>
-          run.agentFrameId === request.agentFrameId &&
-          !!run.messageBranchId &&
-          eligibleBranchIds.has(run.messageBranchId) &&
-          (eligibleMessageIds
-            ? run.promptMessageId
-              ? eligibleMessageIds.has(run.promptMessageId)
-              : run.messageBranchId === request.messageBranchId
-            : true)
-      )
+      .filter(({ run }) => producerScopeMismatch(run, scope) === null)
     const executionSnapshot = buildBoundedExecutionSnapshot(
       {
         schemaVersion: 2,
@@ -502,59 +532,43 @@ class ArtifactProvenanceProducerCapture {
   private async inferProducerRunId(
     document: Awaited<ReturnType<NotebookRunRepository['findExisting']>>,
     observation: CreateArtifactVersionRequest['sourceFileObservation'],
-    expected: ProducerScope
+    scope: ProducerScope
   ): Promise<string | undefined> {
     if (!document || !observation) return undefined
-    const matches = await this.findObservedWorkingFileRunIds(document, observation, expected)
+    const matches = await this.findObservedWorkingFileRunIds(document, observation, scope)
     return matches.length === 1 ? matches[0] : undefined
   }
 
-  // Treat the RPC observation as an untrusted path hint. Main re-observes the source under the
-  // Notebook's durable roots and proves that its bytes are exactly the immutable Artifact content
-  // before the hint may participate in producer attribution.
-  private async verifySourceFileObservation(
+  // Main re-observes the untrusted RPC path under durable roots and proves its bytes match the
+  // immutable Artifact content before the hint participates in producer attribution.
+  private async assessSourceFileObservation(
     document: Awaited<ReturnType<NotebookRunRepository['findExisting']>>,
-    observation: NonNullable<CreateArtifactVersionRequest['sourceFileObservation']>,
-    artifactChecksum: string
-  ): Promise<NonNullable<CreateArtifactVersionRequest['sourceFileObservation']> | undefined> {
+    observation: SourceFileObservation,
+    artifactChecksum: string,
+    notebookSessionRoot: string
+  ): Promise<SourceFileObservationAssessment> {
+    const observedPath = await canonicalPath(observation.path)
+    const rootPaths = [notebookSessionRoot, ...(document ? [document.workspaceCwd] : [])]
+    const roots = await Promise.all(rootPaths.map(canonicalPath))
+    const assessment = { notebookSessionOwned: isStrictDescendant(roots[0], observedPath) }
     if (
-      !document ||
       !Number.isFinite(observation.sizeBytes) ||
       observation.sizeBytes < 0 ||
       !Number.isFinite(observation.mtimeMs) ||
       observation.mtimeMs < 0
     ) {
-      return undefined
+      return assessment
     }
-
-    const observedPath = await realpath(resolve(observation.path)).catch(() => undefined)
-    if (!observedPath) return undefined
-    const roots = await Promise.all(
-      [document.notebookSessionRoot, document.workspaceCwd].map((root) =>
-        realpath(resolve(root)).catch(() => resolve(root))
-      )
-    )
-    if (
-      !roots.some((root) => {
-        const relativePath = relative(root, observedPath)
-        return (
-          relativePath !== '' &&
-          relativePath !== '..' &&
-          !relativePath.startsWith(`..${sep}`) &&
-          !isAbsolute(relativePath)
-        )
-      })
-    ) {
-      return undefined
+    if (!roots.some((root) => isStrictDescendant(root, observedPath))) {
+      return assessment
     }
-
     const before = await stat(observedPath).catch(() => undefined)
     if (
       !before?.isFile() ||
       before.size !== observation.sizeBytes ||
       before.mtimeMs !== observation.mtimeMs
     ) {
-      return undefined
+      return assessment
     }
     const bytes = await readFile(observedPath).catch(() => undefined)
     const after = await stat(observedPath).catch(() => undefined)
@@ -565,16 +579,18 @@ class ArtifactProvenanceProducerCapture {
       after.mtimeMs !== before.mtimeMs ||
       sha256(bytes) !== artifactChecksum
     ) {
-      return undefined
+      return assessment
     }
-
-    return { path: observedPath, sizeBytes: after.size, mtimeMs: after.mtimeMs }
+    return {
+      ...assessment,
+      verified: { path: observedPath, sizeBytes: after.size, mtimeMs: after.mtimeMs }
+    }
   }
 
   private async findObservedWorkingFileRunIds(
     document: NonNullable<Awaited<ReturnType<NotebookRunRepository['findExisting']>>>,
-    observation: NonNullable<CreateArtifactVersionRequest['sourceFileObservation']>,
-    expected: ProducerScope
+    observation: SourceFileObservation,
+    scope: ProducerScope
   ): Promise<string[]> {
     if (
       !Number.isFinite(observation.sizeBytes) ||
@@ -585,28 +601,16 @@ class ArtifactProvenanceProducerCapture {
       return []
     }
 
-    const canonicalPath = async (path: string): Promise<string> =>
-      realpath(resolve(path)).catch(() => resolve(path))
     const observedPath = await canonicalPath(observation.path)
     const documentRoots = await Promise.all(
       [document.notebookSessionRoot, document.workspaceCwd].map(canonicalPath)
     )
-    const isInsideDocumentRoot = documentRoots.some((root) => {
-      const relativePath = relative(root, observedPath)
-      return (
-        relativePath !== '' &&
-        relativePath !== '..' &&
-        !relativePath.startsWith(`..${sep}`) &&
-        !isAbsolute(relativePath)
-      )
-    })
+    const isInsideDocumentRoot = documentRoots.some((root) =>
+      isStrictDescendant(root, observedPath)
+    )
     if (!isInsideDocumentRoot) return []
 
-    const candidates = document.runs.filter((run) =>
-      Object.entries(expected).every(
-        ([field, value]) => run[field as keyof typeof expected] === value
-      )
-    )
+    const candidates = document.runs.filter((run) => producerScopeMismatch(run, scope) === null)
     const workingFileMatches = (
       await Promise.all(
         candidates.map(async (run) => {

@@ -12,6 +12,10 @@ import type {
 
 type ReviewSubmissionReadClient = Pick<PrismaClient, 'finding' | 'reviewFindingDisposition'>
 type PersistedReviewCheckAssessment = ReviewCheckAssessment & { schemaVersion: 1 }
+type ReviewSubmissionProjection = {
+  checks: ReviewCheck[]
+  submittedChecks: SubmittedReviewCheck[]
+}
 
 const parseJson = <T>(value: string, fallback: T): T => {
   try {
@@ -86,26 +90,27 @@ const compareSubmittedChecks = (
   )
 }
 
-// Owns the complete database read for one Review submission. Keeping the relation include, ordering,
+// Owns the complete database read for Review submissions. Keeping the relation include, ordering,
 // legacy sanitization, and mixed new/tracked assembly here prevents command history and Artifact
 // provenance from drifting into subtly different Review projections.
-const loadReviewSubmissionProjection = async (
+const loadReviewSubmissionProjections = async (
   client: ReviewSubmissionReadClient,
-  reviewId: string
-): Promise<{ checks: ReviewCheck[]; submittedChecks: SubmittedReviewCheck[] }> => {
+  reviewIds: readonly string[]
+): Promise<Map<string, ReviewSubmissionProjection>> => {
+  if (reviewIds.length === 0) return new Map()
   const findingRows = await client.finding.findMany({
-    where: { reviewId },
-    orderBy: [{ sortIndex: 'asc' }, { id: 'asc' }]
+    where: { reviewId: { in: [...reviewIds] } },
+    orderBy: [{ reviewId: 'asc' }, { sortIndex: 'asc' }, { id: 'asc' }]
   })
   const [dispositionRows, terminalDispositionRows] = await Promise.all([
     client.reviewFindingDisposition.findMany({
-      where: { causeReviewId: reviewId, trigger: 'review_submission' },
+      where: { causeReviewId: { in: [...reviewIds] }, trigger: 'review_submission' },
       orderBy: [{ createdAt: 'asc' }, { sequence: 'asc' }, { id: 'asc' }],
       include: { sourceFinding: true }
     }),
     client.reviewFindingDisposition.findMany({
       where: {
-        sourceFindingId: { in: findingRows.map((row) => row.id) },
+        sourceFinding: { reviewId: { in: [...reviewIds] } },
         trigger: { in: ['loop_terminated', 'correction_failed', 'aborted'] },
         outcome: 'unaddressed'
       },
@@ -124,36 +129,61 @@ const loadReviewSubmissionProjection = async (
       )
     }
   }
-  const checks = findingRows.map((row) =>
-    toReviewCheck(row, terminalTriggerByFindingId.get(row.id))
-  )
-  const submittedChecks: SubmittedReviewCheck[] = [
-    ...checks.map((check): SubmittedReviewCheck => ({
-      kind: 'new',
-      submissionIndex: check.sortIndex,
-      check
-    })),
-    ...dispositionRows.map((disposition): SubmittedReviewCheck => {
-      const assessment = parseAssessmentSnapshot(disposition.assessmentSnapshot)
-      return {
-        kind: 'tracked',
-        submissionIndex: assessment?.sortIndex ?? null,
-        sourceFindingId: disposition.sourceFindingId,
-        dispositionOutcome: disposition.outcome as ReviewFindingDispositionOutcome,
-        ...(disposition.assessedArtifactVersionId
-          ? { assessedArtifactVersionId: disposition.assessedArtifactVersionId }
-          : {}),
-        assessment,
-        sourceCheck: toReviewCheck(
-          disposition.sourceFinding,
-          terminalTriggerByFindingId.get(disposition.sourceFindingId)
-        )
-      }
-    })
-  ].sort(compareSubmittedChecks)
+  const findingRowsByReviewId = new Map<string, typeof findingRows>()
+  for (const row of findingRows) {
+    const rows = findingRowsByReviewId.get(row.reviewId) ?? []
+    rows.push(row)
+    findingRowsByReviewId.set(row.reviewId, rows)
+  }
+  const dispositionRowsByReviewId = new Map<string, typeof dispositionRows>()
+  for (const row of dispositionRows) {
+    if (!row.causeReviewId) continue
+    const rows = dispositionRowsByReviewId.get(row.causeReviewId) ?? []
+    rows.push(row)
+    dispositionRowsByReviewId.set(row.causeReviewId, rows)
+  }
 
-  return { checks, submittedChecks }
+  return new Map(
+    reviewIds.map((reviewId) => {
+      const checks = (findingRowsByReviewId.get(reviewId) ?? []).map((row) =>
+        toReviewCheck(row, terminalTriggerByFindingId.get(row.id))
+      )
+      const submittedChecks: SubmittedReviewCheck[] = [
+        ...checks.map((check): SubmittedReviewCheck => ({
+          kind: 'new',
+          submissionIndex: check.sortIndex,
+          check
+        })),
+        ...(dispositionRowsByReviewId.get(reviewId) ?? []).map(
+          (disposition): SubmittedReviewCheck => {
+            const assessment = parseAssessmentSnapshot(disposition.assessmentSnapshot)
+            return {
+              kind: 'tracked',
+              submissionIndex: assessment?.sortIndex ?? null,
+              sourceFindingId: disposition.sourceFindingId,
+              dispositionOutcome: disposition.outcome as ReviewFindingDispositionOutcome,
+              ...(disposition.assessedArtifactVersionId
+                ? { assessedArtifactVersionId: disposition.assessedArtifactVersionId }
+                : {}),
+              assessment,
+              sourceCheck: toReviewCheck(
+                disposition.sourceFinding,
+                terminalTriggerByFindingId.get(disposition.sourceFindingId)
+              )
+            }
+          }
+        )
+      ].sort(compareSubmittedChecks)
+      return [reviewId, { checks, submittedChecks }]
+    })
+  )
 }
 
-export { loadReviewSubmissionProjection, toReviewCheck }
+const loadReviewSubmissionProjection = async (
+  client: ReviewSubmissionReadClient,
+  reviewId: string
+): Promise<ReviewSubmissionProjection> =>
+  (await loadReviewSubmissionProjections(client, [reviewId])).get(reviewId)!
+
+export { loadReviewSubmissionProjection, loadReviewSubmissionProjections, toReviewCheck }
 export type { ReviewSubmissionReadClient }

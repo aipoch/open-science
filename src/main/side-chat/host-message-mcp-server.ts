@@ -15,7 +15,7 @@ const HOST_MESSAGE_NAMESPACED_TOOLS = [
   {
     namespace: 'mcp__open_science_host_message',
     name: HOST_SEND_MESSAGE_TOOL_NAME,
-    description: `Queue advisory text for the parent main conversation without waking or interrupting it. Use only after the user explicitly asks in the current Side chat turn to send, relay, forward, or tell something to Main. Do not use for ordinary Side chat questions, requests, follow-ups, or suggestions. ${HOST_MESSAGE_CONTENT_INSTRUCTION}`,
+    description: `Send advisory context to the parent main conversation. If Main is running, delivery is attempted in the current turn; otherwise it is queued for the next real main user turn without waking Main. Use only after the user explicitly asks in the current Side chat turn to send, relay, forward, or tell something to Main. Do not use for ordinary Side chat questions, requests, follow-ups, or suggestions. ${HOST_MESSAGE_CONTENT_INSTRUCTION}`,
     parameters: {
       type: 'object',
       properties: {
@@ -42,7 +42,7 @@ const createHostMessageMcpServer = (handler: HostMessageMcpHandler): ModelContex
     HOST_SEND_MESSAGE_TOOL_NAME,
     {
       title: 'Send advisory to main',
-      description: `Queue advisory text for the parent main conversation. Use only after the user explicitly asks in the current Side chat turn to send, relay, forward, or tell something to Main. Do not use for ordinary Side chat questions, requests, follow-ups, or suggestions. ${HOST_MESSAGE_CONTENT_INSTRUCTION} This does not wake, interrupt, or authorize the main Agent; delivery waits for the next real main user turn.`,
+      description: `Send advisory context to the parent main conversation. If Main is running, delivery is attempted in the current turn; otherwise it is queued for the next real main user turn without waking Main. Use only after the user explicitly asks in the current Side chat turn to send, relay, forward, or tell something to Main. Do not use for ordinary Side chat questions, requests, follow-ups, or suggestions. ${HOST_MESSAGE_CONTENT_INSTRUCTION} This does not independently authorize the main Agent.`,
       inputSchema: {
         target: z.literal('main'),
         text: z.string().trim().min(1).max(SIDE_CHAT_MESSAGE_LIMIT)

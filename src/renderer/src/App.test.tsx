@@ -830,6 +830,28 @@ describe('App startup routing', () => {
     expect(mocks.syncWindowFindAppearance).toHaveBeenCalledTimes(1)
   })
 
+  it('renders Home while existing-user runtime probes continue', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isLoading = true
+    mocks.startupView = 'app'
+
+    await render()
+
+    expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="settings-startup-loading"]')).toBeNull()
+  })
+
+  it('keeps first-run onboarding behind runtime initialization', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isLoading = true
+    mocks.startupView = 'onboarding'
+
+    await render()
+
+    expect(container.querySelector('[data-testid="settings-startup-loading"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="onboarding-page"]')).toBeNull()
+  })
+
   it('shows a settings load error and retries the complete initialization', async () => {
     mocks.settings.loadError = 'settings IPC unavailable'
     mocks.settings.load.mockReset().mockResolvedValueOnce(false).mockResolvedValueOnce(true)

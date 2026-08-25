@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -47,10 +47,91 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
 describe('SessionNotebookContent export', () => {
+  it('loads the previous page when the near-top sentinel intersects', async () => {
+    let intersectionCallback: IntersectionObserverCallback | undefined
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          intersectionCallback = callback
+        }
+        observe = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    const onLoadEarlier = vi.fn()
+    const viewportRef = createRef<HTMLDivElement>()
+    const topSentinelRef = createRef<HTMLDivElement>()
+
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          frameLabels={frameLabels}
+          runs={[run]}
+          runCount={2}
+          status="ready"
+          historyPage={{
+            hasEarlierRuns: true,
+            oldestCursor: { startedAt: 1, runId: 'run-1' }
+          }}
+          viewportRef={viewportRef}
+          topSentinelRef={topSentinelRef}
+          onLoadEarlier={onLoadEarlier}
+          onClose={vi.fn()}
+          onExport={vi.fn()}
+          onExportAll={vi.fn()}
+        />
+      )
+    })
+
+    expect(intersectionCallback).toBeTypeOf('function')
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+    })
+    expect(onLoadEarlier).toHaveBeenCalledOnce()
+  })
+
+  it('falls back to a manual earlier-page control without IntersectionObserver', async () => {
+    vi.stubGlobal('IntersectionObserver', undefined)
+    const onLoadEarlier = vi.fn()
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          frameLabels={frameLabels}
+          runs={[run]}
+          runCount={2}
+          status="ready"
+          historyPage={{
+            hasEarlierRuns: true,
+            oldestCursor: { startedAt: 1, runId: 'run-1' }
+          }}
+          viewportRef={createRef<HTMLDivElement>()}
+          topSentinelRef={createRef<HTMLDivElement>()}
+          onLoadEarlier={onLoadEarlier}
+          onClose={vi.fn()}
+          onExport={vi.fn()}
+          onExportAll={vi.fn()}
+        />
+      )
+    })
+
+    const button = [...container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === 'Load earlier runs'
+    )
+    await act(async () => button?.click())
+    expect(onLoadEarlier).toHaveBeenCalledOnce()
+  })
+
   it('discovers and exports a kernel that exists only outside the recent window', async () => {
     const onExport = vi.fn().mockResolvedValue(undefined)
     const onLoadHistorySummary = vi.fn(async (agentFrameId: string) =>

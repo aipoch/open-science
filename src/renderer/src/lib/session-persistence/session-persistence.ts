@@ -935,13 +935,9 @@ const loadPersistedSessions = async (
   if (api.list) {
     const result = await api.list()
     if (!shouldHydrate()) return undefined
-    const requestedSelection =
-      preferredSelection !== undefined
-        ? preferredSelection.sessionId
-        : (result.manifest.lastSessionId ?? result.sessions[0]?.id)
-    const selectedSummary = result.sessions.find((session) => session.id === requestedSelection)
+    const retrySessionId = preferredSelection?.sessionId
     const summariesToHydrate = result.sessions.filter(
-      (session) => session.id === selectedSummary?.id || session.needsStartupRecovery
+      (session) => session.needsStartupRecovery || session.id === retrySessionId
     )
     const hydratedSessions = new Map(
       await Promise.all(
@@ -957,7 +953,7 @@ const loadPersistedSessions = async (
         )
       )
     )
-    const selected = selectedSummary ? hydratedSessions.get(selectedSummary.id) : undefined
+    const selected = retrySessionId ? hydratedSessions.get(retrySessionId) : undefined
     if (!shouldHydrate()) return undefined
     const missing = summariesToHydrate.find((summary) => !hydratedSessions.get(summary.id))
     if (missing) {

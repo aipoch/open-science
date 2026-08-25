@@ -232,6 +232,23 @@ const invokeWebRpc = async ({ endpoint, auth, protocolVersion, channel, fetchImp
   return payload.result
 }
 
+// 0.18.0–0.18.2 return the in-flight check snapshot from update:download while the startup
+// scheduler still owns check() (notes hydration). Poll until the download actually reaches ready.
+const classifyUpdaterDownloadStatus = (downloaded, expectedVersion) => {
+  if (!downloaded || typeof downloaded !== 'object') return 'unexpected'
+  if (
+    downloaded.state === 'ready' &&
+    downloaded.applyKind === 'restart' &&
+    downloaded.latest === expectedVersion
+  ) {
+    return 'ready'
+  }
+  if (downloaded.state === 'error') return 'failed'
+  if (downloaded.state === 'checking' || downloaded.state === 'downloading') return 'pending'
+  if (downloaded.state === 'available' && downloaded.latest === expectedVersion) return 'pending'
+  return 'unexpected'
+}
+
 const waitForInstallerExit = async ({ installer, env, signal, runProcessImpl = runProcess }) => {
   const script = String.raw`
 Add-Type -TypeDefinition @'
@@ -363,18 +380,22 @@ const runElectronUpdater = async ({
     if (checked.state !== 'available' || checked.latest !== expectedVersion) {
       throw new Error(`Unexpected updater check result: ${JSON.stringify(checked)}`)
     }
-    const downloaded = await withTimeout(
-      invokeWebRpc({
-        endpoint,
-        auth,
-        protocolVersion: bootstrap.rpcProtocolVersion,
-        channel: 'update:download'
-      }),
-      'electron-updater differential download'
+    await waitFor(
+      'electron-updater differential download',
+      async () => {
+        const status = await invokeWebRpc({
+          endpoint,
+          auth,
+          protocolVersion: bootstrap.rpcProtocolVersion,
+          channel: 'update:download'
+        })
+        const classification = classifyUpdaterDownloadStatus(status, expectedVersion)
+        if (classification === 'ready') return status
+        if (classification === 'pending') return undefined
+        throw new Error(`Unexpected updater download result: ${JSON.stringify(status)}`)
+      },
+      UPDATE_TIMEOUT_MS
     )
-    if (downloaded.state !== 'ready' || downloaded.applyKind !== 'restart') {
-      throw new Error(`Unexpected updater download result: ${JSON.stringify(downloaded)}`)
-    }
     await onDownloaded()
 
     // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
@@ -642,6 +663,7 @@ if (invokedAsScript) {
 export {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
+  classifyUpdaterDownloadStatus,
   invokeWebRpc,
   redactPackagedAppOutput,
   waitForInstallerExit,

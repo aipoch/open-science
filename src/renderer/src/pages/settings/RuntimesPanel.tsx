@@ -325,7 +325,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     env: DiscoveredInterpreter
   ): React.JSX.Element => {
     const enabled = isEnabled(language, env)
-    const external = env.provenance !== 'app-managed'
+    const external = env.provenance === 'user-own'
     return (
       <div
         key={env.envId}
@@ -386,15 +386,21 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             <SettingsRow
               className="min-h-0 py-0"
               label={t('Allow package install')}
-              description={t(
-                'Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.'
-              )}
+              description={
+                language === 'r'
+                  ? t(
+                      'Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
+                    )
+                  : t(
+                      'Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.'
+                    )
+              }
             >
               <div className="flex justify-end">
                 <SettingsToggle
-                  enabled={isInstallAuthorized(language, env)}
+                  enabled={language !== 'r' && isInstallAuthorized(language, env)}
                   onToggle={() => void toggleInstallAuthorized(language, env)}
-                  disabled={busy}
+                  disabled={busy || language === 'r'}
                   aria-label={t('Allow package install for {{label}}', { label: env.label })}
                 />
               </div>

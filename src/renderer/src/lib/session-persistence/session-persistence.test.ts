@@ -247,8 +247,7 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
   })
 
-  it('loads only the selected Session JSON from the SQLite summary list', async () => {
-    const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
+  it('hydrates the SQLite summary list without opening Session JSON', async () => {
     const list = vi.fn().mockResolvedValue({
       sessions: [
         {
@@ -286,19 +285,17 @@ describe('renderer session persistence bridge', () => {
       ],
       manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: 'session-1' }
     })
-    const loadOne = vi.fn().mockResolvedValue(selected)
+    const loadOne = vi.fn().mockResolvedValue(undefined)
     const api = createApi({ list, loadOne })
 
     await loadPersistedSessions(api)
 
     expect(api.loadAll).not.toHaveBeenCalled()
-    expect(loadOne).toHaveBeenCalledOnce()
-    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project-1', sessionId: 'session-1' })
+    expect(loadOne).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions).toMatchObject([
-      { id: 'session-1' },
+      { id: 'session-1', contentLoaded: false, messages: [] },
       { id: 'session-2', contentLoaded: false, activeMessageCount: 12, messages: [] }
     ])
-    expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
   })
 
   it('also hydrates unopened Sessions that require startup recovery', async () => {
@@ -333,15 +330,52 @@ describe('renderer session persistence bridge', () => {
 
     await loadPersistedSessions(createApi({ list, loadOne }))
 
-    expect(loadOne).toHaveBeenCalledTimes(2)
+    expect(loadOne).toHaveBeenCalledOnce()
+    expect(loadOne).toHaveBeenCalledWith({
+      projectId: recovering.projectId,
+      sessionId: recovering.id
+    })
     expect(useSessionStore.getState().sessions).toMatchObject([
-      { id: selected.id },
+      { id: selected.id, contentLoaded: false },
       { id: recovering.id }
     ])
     expect(useSessionStore.getState().sessions[1]?.contentLoaded).not.toBe(false)
   })
 
-  it('does not hydrate a selected Session after its lazy JSON load is cancelled', async () => {
+  it('opens the explicitly selected Session again during a recovery retry', async () => {
+    const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
+    const list = vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          number: 1,
+          id: selected.id,
+          projectId: selected.projectId,
+          title: selected.title,
+          status: selected.status,
+          presentedStatus: selected.status,
+          pinned: false,
+          revision: 1,
+          activeMessageCount: selected.messages.length,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: selected.createdAt,
+          updatedAt: selected.updatedAt,
+          needsStartupRecovery: false
+        }
+      ],
+      manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: selected.id }
+    })
+    const loadOne = vi.fn().mockResolvedValue(selected)
+
+    await loadPersistedSessions(createApi({ list, loadOne }), () => true, {
+      sessionId: selected.id
+    })
+
+    expect(loadOne).toHaveBeenCalledWith({ projectId: selected.projectId, sessionId: selected.id })
+    expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
+  })
+
+  it('does not hydrate a recovery Session after its startup JSON load is cancelled', async () => {
     const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
     const lazyLoad = createDeferred<PersistedChatSession | undefined>()
     const api = createApi({
@@ -361,7 +395,7 @@ describe('renderer session persistence bridge', () => {
             filesRevision: 0,
             createdAt: 1,
             updatedAt: 2,
-            needsStartupRecovery: false
+            needsStartupRecovery: true
           }
         ],
         manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: selected.id }

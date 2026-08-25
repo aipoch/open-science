@@ -44,4 +44,20 @@ describe('env-management bundled skill', () => {
     expect(body).toMatch(/do not.*preflight|not.*preflight/i)
     expect(body).toMatch(/missing.*manage_packages/i)
   })
+
+  it('uses canonical create receipts and verifies imports separately from package metadata', async () => {
+    const body = await new SkillRegistry(skillsRoot).body('env-management')
+
+    expect(body).toMatch(/created\.runnable.*created\.runtimeId/i)
+    expect(body).toMatch(/create does not select/i)
+    expect(body).toMatch(/no existing.*notebook_bind_runtime/i)
+    expect(body).toMatch(/existing.*notebook_switch_runtime/i)
+    expect(body).toContain('target receipt')
+    expect(body).toContain('selection:"unresolved"')
+    expect(body).toMatch(/failed bind or switch.*bindingChanged.*target/i)
+    expect(body).toMatch(/only.*action:"list".*full.*snapshot/i)
+    expect(body).toMatch(/create.*remove.*do not return.*snapshot/i)
+    expect(body).toMatch(/unchanged.*distribution metadata/i)
+    expect(body).toMatch(/notebook_execute.*import/i)
+  })
 })

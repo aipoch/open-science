@@ -14,7 +14,10 @@ import {
   buildSessionHistoryReplay,
   type SessionHistoryReplay
 } from '../../shared/session-history-replay'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import {
+  sanitizeSessionReferences,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { validateElicitationAnswers } from './elicitation-owner'
 
@@ -27,6 +30,7 @@ type DurableContinuationSessions = Pick<
 type DurableContinuationPreparation = Readonly<{
   provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
   memoryEnabled: boolean
+  referencedSessions?: AcpPromptRequest['referencedSessions']
   historyReplay?: SessionHistoryReplay
 }>
 
@@ -34,6 +38,7 @@ type DurableElicitationContinuationPreparation = Readonly<{
   request: PendingElicitationRequest
   provenanceContext?: DurableContinuationPreparation['provenanceContext']
   memoryEnabled?: boolean
+  referencedSessions?: DurableContinuationPreparation['referencedSessions']
   historyReplay?: SessionHistoryReplay
 }>
 
@@ -347,9 +352,11 @@ class AcpDurableContinuationContextOwner {
       throw new Error('Durable continuation no longer matches the active Message Branch.')
     }
 
+    const referencedSessions = sanitizeSessionReferences(prompt.parts)
     return {
       provenanceContext: getActiveConversationContext(graph, promptMessageId),
       memoryEnabled: session.memoryEnabled !== false,
+      ...(referencedSessions.length > 0 ? { referencedSessions } : {}),
       ...(replay
         ? {
             historyReplay: buildSessionHistoryReplay(

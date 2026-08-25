@@ -879,12 +879,16 @@ const api: OpenScienceAPI = {
     // Cmd/Ctrl+F. Returns a teardown that announces UNREADY on unmount.
     announceWindowFindReady: () =>
       announceWindowFindReady({ send: (channel) => ipcRenderer.send(channel) }),
+    announceWindowFindContentReady: () =>
+      electronRendererContracts.send('window.announceWindowFindContentReady'),
     onFindInPageResult: (listener) =>
       electronRendererContracts.subscribe('window.onFindInPageResult', listener),
     // Overlay-only surface: main signals the bar was shown (focus + restore remembered query), and the
     // overlay asks main to hide it. The localhost Web UI never loads this overlay, so both stay optional.
     onShowWindowFind: (listener) =>
       electronRendererContracts.subscribe('window.onShowWindowFind', listener),
+    onHideWindowFind: (listener) =>
+      electronRendererContracts.subscribe('window.onHideWindowFind', listener),
     onWindowFindAppearance: (listener) =>
       electronRendererContracts.subscribe('window.onWindowFindAppearance', listener),
     announceWindowFindAppearance: (appearance) =>

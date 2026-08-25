@@ -134,6 +134,33 @@ describe('HostSessionsService', () => {
     expect(JSON.stringify(await service.list({}, context))).not.toMatch(/SECRET|\/private/u)
   })
 
+  it('inspects an explicitly authorized cross-Project Session without widening list scope', async () => {
+    const referenced = session({ id: 'session-b', projectId: 'project-b', title: 'Other result' })
+    const repo: HostSessionsRepository = {
+      readProject: vi.fn(async () => ({ sessions: [], isComplete: true })),
+      readSession: vi.fn(async (projectId, sessionId) =>
+        projectId === 'project-b' && sessionId === referenced.id
+          ? { status: 'found' as const, session: referenced }
+          : { status: 'missing' as const }
+      )
+    }
+    const service = new HostSessionsService(
+      repo,
+      { getSnapshot: () => snapshot() },
+      async (_context, sessionId) =>
+        sessionId === referenced.id ? { projectId: 'project-b' } : undefined
+    )
+
+    await expect(service.inspect(referenced.id, context)).resolves.toMatchObject({
+      session_id: referenced.id,
+      title: 'Other result'
+    })
+    await expect(service.list({}, context)).resolves.toEqual({ total_count: 0, sessions: [] })
+    await expect(service.inspect('not-authorized', context)).rejects.toThrow(
+      'not found in the current Project'
+    )
+  })
+
   it('projects the graph active Frame instead of forcing root Frame navigation', async () => {
     const target = session()
     const graph = target.conversationGraph!

@@ -5,6 +5,7 @@ import type { JSX, PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import type { ChatMessage } from '@/stores/session-store'
 
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
@@ -189,6 +190,38 @@ describe('WorkspaceMessageItem mention pills', () => {
       path: '/p/clinical trial03.pdf',
       source: 'artifact'
     })
+  })
+
+  it('renders a truncated Session title snapshot and navigates by Session id', () => {
+    const openSessionById = vi.spyOn(useNavigationStore.getState(), 'openSessionById')
+    const title = 'A very long referenced Session title that remains available in full'
+    const sessionMessage = createMessage({
+      content: `Compare #${title}`,
+      parts: [
+        { type: 'text', text: 'Compare ' },
+        { type: 'session', sessionId: 'session-2', title }
+      ]
+    })
+
+    act(() => {
+      root.render(
+        <WorkspaceMessageItem
+          message={sessionMessage}
+          onPreviewArtifact={noop}
+          onPreviewUploadAttachment={noop}
+          onOpenSkillMention={noop}
+          onPreviewMentionArtifact={noop}
+        />
+      )
+    })
+
+    const pill = container.querySelector(`[aria-label="Open session ${title}"]`)
+    expect(pill?.className).toContain('truncate')
+    expect(pill?.className).toContain('bg-accent')
+    expect(pill?.className).toContain('text-accent-foreground')
+    expect(pill?.getAttribute('title')).toBe(title)
+    clickButton(`Open session ${title}`)
+    expect(openSessionById).toHaveBeenCalledWith('session-2', 'user')
   })
 
   it('renders a linked-folder mention as a dark-gray @ pill over the relative path', () => {

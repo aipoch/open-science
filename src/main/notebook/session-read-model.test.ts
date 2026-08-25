@@ -319,6 +319,7 @@ describe('NotebookSessionReadModel', () => {
       session.sessionId,
       100,
       [],
+      undefined,
       undefined
     )
     expect(state.runCount).toBe(125)
@@ -375,7 +376,8 @@ describe('NotebookSessionReadModel', () => {
       session.sessionId,
       0,
       [],
-      'frame-child'
+      'frame-child',
+      undefined
     )
     expect(state.historySummary).toEqual(historySummary)
     expect(state.runs).toEqual([])
@@ -406,6 +408,7 @@ describe('NotebookSessionReadModel', () => {
       session.sessionId,
       0,
       ['run-old'],
+      undefined,
       undefined
     )
     expect(state.runs.map((run) => run.runId)).toEqual(['run-old'])

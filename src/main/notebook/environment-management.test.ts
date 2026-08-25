@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { NotebookKernelMetadata } from '../../shared/notebook'
-import type { EnvironmentInfo } from '../../shared/notebook-env'
+import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import {
   NotebookEnvironmentManagementOwner,
   type NotebookEnvironmentManager
 } from './environment-management'
-import { envPrefix } from './runtime-paths'
+import { envPrefix, pythonBin } from './runtime-paths'
 
 type OwnerOptions = ConstructorParameters<typeof NotebookEnvironmentManagementOwner>[0]
 type EnvironmentSession =
@@ -24,8 +24,30 @@ const manager = (): NotebookEnvironmentManager => ({
 })
 
 const session = (
-  statuses: Array<[string, NotebookKernelMetadata['lastKnownStatus']]>
-): EnvironmentSession => ({ kernelStatusEntries: () => statuses })
+  sessionId: string,
+  statuses: Array<[string, NotebookKernelMetadata['lastKnownStatus']]>,
+  bindings: Array<[NotebookSessionRuntimeBinding['language'], NotebookSessionRuntimeBinding]> = []
+): EnvironmentSession => ({
+  sessionId,
+  kernelStatusEntries: () => statuses,
+  runtimeBindingEntries: () => bindings
+})
+
+const managedPythonRuntimeId = (name: string): string => pythonBin(envPrefix('/runtime', name))
+
+const runtimeBinding = (
+  name: string,
+  overrides: Partial<NotebookSessionRuntimeBinding> = {}
+): NotebookSessionRuntimeBinding => ({
+  language: 'python',
+  runtimeId: managedPythonRuntimeId(name),
+  source: 'managed',
+  provenance: 'agent-created',
+  interpreterPath: managedPythonRuntimeId(name),
+  label: name,
+  envName: name,
+  ...overrides
+})
 
 const harness = (
   overrides: Partial<OwnerOptions> = {}
@@ -88,12 +110,9 @@ describe('NotebookEnvironmentManagementOwner', () => {
         return { name, language, ready: true, isDefault: false }
       }
     )
-    const environments: EnvironmentInfo[] = [
-      { name: 'analysis', language: 'python', ready: true, isDefault: false }
-    ]
     vi.mocked(configured.listEnvironments).mockImplementation(() => {
       order.push('list')
-      return environments
+      return [{ name: 'analysis', language: 'python', ready: true, isDefault: false }]
     })
     const { owner, options } = harness({
       manager: configured,
@@ -118,15 +137,22 @@ describe('NotebookEnvironmentManagementOwner', () => {
         language: 'python',
         packages: ['numpy']
       })
-    ).resolves.toEqual({ environments })
+    ).resolves.toEqual({
+      created: {
+        name: 'analysis',
+        language: 'python',
+        runtimeId: managedPythonRuntimeId('analysis'),
+        runnable: true
+      }
+    })
 
     expect(order).toEqual([
       'recovery',
       'recoverable',
       'mutation:analysis',
-      'create:analysis:python:numpy',
-      'list'
+      'create:analysis:python:numpy'
     ])
+    expect(configured.listEnvironments).not.toHaveBeenCalled()
     expect(options.assertPrefixRecoverable).toHaveBeenCalledWith(envPrefix('/runtime', 'analysis'))
   })
 
@@ -153,7 +179,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
     const { owner, options } = harness({
       manager: configured,
       sessions: () => [
-        session([
+        session('session-1', [
           ['repl', 'idle'],
           ['python:analysis', 'idle'],
           ['r:finished', 'terminated']
@@ -172,19 +198,104 @@ describe('NotebookEnvironmentManagementOwner', () => {
     expect(configured.removeEnvironment).not.toHaveBeenCalled()
   })
 
+  it('refuses an agent-created environment selected by an active dormant Session', async () => {
+    const configured = manager()
+    const { owner, options } = harness({
+      manager: configured,
+      sessions: () => [
+        session('session-42', [], [['python', runtimeBinding('analysis', { status: 'active' })]])
+      ]
+    })
+
+    await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
+      'Environment "analysis" cannot be removed because Session "session-42" has an active Runtime Binding to it. Switch that Session to another Runtime Environment first.'
+    )
+
+    expect(options.ensureRecovered).not.toHaveBeenCalled()
+    expect(configured.removeEnvironment).not.toHaveBeenCalled()
+  })
+
+  it('treats a legacy binding without an explicit status as active', async () => {
+    const configured = manager()
+    const { owner } = harness({
+      manager: configured,
+      sessions: () => [session('legacy-session', [], [['python', runtimeBinding('analysis')]])]
+    })
+
+    await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
+      'Session "legacy-session" has an active Runtime Binding to it.'
+    )
+    expect(configured.removeEnvironment).not.toHaveBeenCalled()
+  })
+
+  it('refuses an agent-created environment selected by a revoking dormant Session', async () => {
+    const configured = manager()
+    const { owner, options } = harness({
+      manager: configured,
+      sessions: () => [
+        session(
+          'session-revoking',
+          [],
+          [['python', runtimeBinding('analysis', { status: 'revoking' })]]
+        )
+      ]
+    })
+
+    await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
+      'Environment "analysis" cannot be removed because Session "session-revoking" has a revoking Runtime Binding to it. Switch that Session to another Runtime Environment first.'
+    )
+
+    expect(options.ensureRecovered).not.toHaveBeenCalled()
+    expect(configured.removeEnvironment).not.toHaveBeenCalled()
+  })
+
+  it.each(['missing', 'disabled', 'repair-required'] as const)(
+    'allows removal when the loaded Session binding is unavailable because it is %s',
+    async (reason) => {
+      const configured = manager()
+      const { owner } = harness({
+        manager: configured,
+        sessions: () => [
+          session(
+            'session-unavailable',
+            [],
+            [['python', runtimeBinding('analysis', { status: 'unavailable', reason })]]
+          )
+        ]
+      })
+
+      await expect(owner.manage({ action: 'remove', name: 'analysis' })).resolves.toEqual({
+        removed: { name: 'analysis' }
+      })
+      expect(configured.removeEnvironment).toHaveBeenCalledWith('analysis')
+    }
+  )
+
+  it('allows removal when loaded Sessions bind only unrelated environments', async () => {
+    const configured = manager()
+    const { owner } = harness({
+      manager: configured,
+      sessions: () => [
+        session('session-other', [], [['python', runtimeBinding('other', { status: 'active' })]])
+      ]
+    })
+
+    await expect(owner.manage({ action: 'remove', name: 'analysis' })).resolves.toEqual({
+      removed: { name: 'analysis' }
+    })
+    expect(configured.removeEnvironment).toHaveBeenCalledWith('analysis')
+  })
+
   it('removes an idle-free environment under recovery and clears its repair state', async () => {
     const order: string[] = []
     const configured = manager()
-    const remaining: EnvironmentInfo[] = [
-      { name: 'other', language: 'r', ready: true, isDefault: false }
-    ]
     vi.mocked(configured.removeEnvironment).mockImplementation((name) => {
       order.push(`remove:${name}`)
-      return remaining
+      return [{ name: 'other', language: 'r', ready: true, isDefault: false }]
     })
     const { owner, options } = harness({
       manager: configured,
-      sessions: () => [session([['python:analysis', 'terminated']])],
+      sessions: () => [session('session-1', [['python:analysis', 'terminated']])],
       ensureRecovered: vi.fn(async () => {
         order.push('recovery')
       }),
@@ -205,7 +316,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
     })
 
     await expect(owner.manage({ action: 'remove', name: 'analysis' })).resolves.toEqual({
-      environments: remaining
+      removed: { name: 'analysis' }
     })
 
     expect(order).toEqual([

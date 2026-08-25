@@ -22,7 +22,10 @@ import {
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
   CLOSE_ACTIVE_PANE_UNREADY_CHANNEL,
   WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL,
+  WINDOW_FIND_CONTENT_READY_CHANNEL,
+  WINDOW_FIND_HIDE_CHANNEL,
   WINDOW_FIND_READY_CHANNEL,
+  WINDOW_FIND_SHOW_CHANNEL,
   WINDOW_FIND_UNREADY_CHANNEL,
   isCloseWindowChord,
   isFindInPageChord,
@@ -142,6 +145,8 @@ const createMainWindow = (
   // When either fails, main closes the window itself so the chord always does something.
   let rendererListenerReady = false
   let windowFindListenerReady = false
+  let windowFindOpenPending = false
+  let windowFindAppearance: WindowFindAppearance = { theme: 'light', followsSystem: true }
   let rendererResponsive = true
   let rendererUnresponsiveAt: number | undefined
   let rendererRecoveryTimes: number[] = []
@@ -170,10 +175,23 @@ const createMainWindow = (
   const onWindowFindGone = (event: IpcMainEvent): void => {
     if (event.sender !== window.webContents) return
     windowFindListenerReady = false
+    windowFindOpenPending = false
     findOverlay.close()
+  }
+  const onWindowFindContentReady = (event: IpcMainEvent): void => {
+    if (
+      event.sender !== window.webContents ||
+      !windowFindListenerReady ||
+      !rendererResponsive ||
+      (!windowFindOpenPending && !findOverlay.isOpen())
+    )
+      return
+    windowFindOpenPending = false
+    findOverlay.open()
   }
   const onWindowFindAppearanceChanged = (event: IpcMainEvent, appearance: unknown): void => {
     if (event.sender !== window.webContents || !isWindowFindAppearance(appearance)) return
+    windowFindAppearance = appearance
     findOverlay.updateAppearance(appearance)
     mainWindowCloseOptions.get(window)?.onAppearanceChanged?.(appearance)
   }
@@ -181,6 +199,7 @@ const createMainWindow = (
   ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
   ipcMain.on(WINDOW_FIND_READY_CHANNEL, onWindowFindReady)
   ipcMain.on(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
+  ipcMain.on(WINDOW_FIND_CONTENT_READY_CHANNEL, onWindowFindContentReady)
   ipcMain.on(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, onWindowFindAppearanceChanged)
   // A top-level document swap replaces the mounted hook, which must re-subscribe; a dead render process
   // took its listener with it. Both revoke readiness until the next READY handshake. Gate on the main
@@ -190,6 +209,7 @@ const createMainWindow = (
     if (details.isMainFrame && !details.isSameDocument) {
       rendererListenerReady = false
       windowFindListenerReady = false
+      windowFindOpenPending = false
       findOverlay.close()
     }
   })
@@ -219,6 +239,7 @@ const createMainWindow = (
     })
     rendererListenerReady = false
     windowFindListenerReady = false
+    windowFindOpenPending = false
     clearRendererHangState()
     findOverlay.close()
 
@@ -284,6 +305,7 @@ const createMainWindow = (
       log.warn('renderer became unresponsive')
     }
     rendererResponsive = false
+    windowFindOpenPending = false
     findOverlay.close()
   })
   window.webContents.on('responsive', () => {
@@ -299,6 +321,7 @@ const createMainWindow = (
     ipcMain.removeListener(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
     ipcMain.removeListener(WINDOW_FIND_READY_CHANNEL, onWindowFindReady)
     ipcMain.removeListener(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
+    ipcMain.removeListener(WINDOW_FIND_CONTENT_READY_CHANNEL, onWindowFindContentReady)
     ipcMain.removeListener(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, onWindowFindAppearanceChanged)
     findOverlay.destroy()
   })
@@ -330,16 +353,25 @@ const createMainWindow = (
     if (isFindInPageChord(input, process.platform)) {
       if (windowFindListenerReady && rendererResponsive) {
         event.preventDefault()
-        findOverlay.open()
+        windowFindOpenPending = true
+        window.webContents.send(WINDOW_FIND_SHOW_CHANNEL, windowFindAppearance)
       }
       return
     }
 
     // Escape closes an open find bar even when focus has wandered into the main content — the overlay's
     // own handler covers the input-focused case, this covers the rest.
-    if (input.type === 'keyDown' && input.key === 'Escape' && findOverlay.isOpen()) {
+    if (
+      input.type === 'keyDown' &&
+      input.key === 'Escape' &&
+      (windowFindOpenPending || findOverlay.isOpen())
+    ) {
       event.preventDefault()
-      findOverlay.close()
+      if (windowFindOpenPending) {
+        windowFindOpenPending = false
+        if (findOverlay.isOpen()) findOverlay.close()
+        else window.webContents.send(WINDOW_FIND_HIDE_CHANNEL)
+      } else findOverlay.close()
       return
     }
 

@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { createCachedImageFetchResponse } from './previews/cached-preview-image.test-support'
 import { PreviewUnsupportedContent } from './previews/PreviewFallback'
-import { PreviewImageContent } from './previews/renderers/ImagePreview'
+import { PreviewImageContent as CachedPreviewImageContent } from './previews/renderers/ImagePreview'
+
+let previewVersion = 0
+const PreviewImageContent = (
+  props: ComponentProps<typeof CachedPreviewImageContent>
+): React.JSX.Element => <CachedPreviewImageContent {...props} mtimeMs={previewVersion} />
 
 describe('PreviewUnsupportedContent', () => {
   let container: HTMLDivElement
@@ -70,8 +76,11 @@ describe('PreviewImageContent', () => {
   let root: Root
 
   beforeEach(() => {
+    previewVersion += 1
     container = document.createElement('div')
     document.body.appendChild(container)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(createCachedImageFetchResponse()))
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue(`blob:cached-image-${previewVersion}`)
     window.api = {
       previewResources: {
         acquire: vi.fn().mockResolvedValue({
@@ -96,6 +105,8 @@ describe('PreviewImageContent', () => {
     await act(async () => {
       root.unmount()
     })
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
     container.remove()
   })
 
@@ -127,16 +138,36 @@ describe('PreviewImageContent', () => {
     })
   })
 
-  it('renders an arbitrarily large image from the managed stream URL', async () => {
+  it('streams an image larger than the cache budget without copying it into a Blob', async () => {
+    vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
+      id: 'resource-1',
+      url: 'open-science-preview://resource-1/photo.png',
+      size: 80 * 1024 * 1024,
+      mimeType: 'image/png',
+      version: 1
+    })
+    const fetchImage = vi.fn().mockResolvedValue(createCachedImageFetchResponse())
+    vi.stubGlobal('fetch', fetchImage)
+
     root = createRoot(container)
     await act(async () => {
       root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
     })
 
+    expect(fetchImage).not.toHaveBeenCalled()
     const image = container.querySelector('img')
     expect(image?.getAttribute('src')).toBe('open-science-preview://resource-1/photo.png')
     expect(image?.getAttribute('alt')).toBe('photo.png')
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+
+    await act(async () => root.unmount())
+    expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
+    })
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
   })
 
   it('acquires upload-sourced images through the unified resource API', async () => {
@@ -159,9 +190,7 @@ describe('PreviewImageContent', () => {
       sessionId: 'session-1',
       path: 'upload-version:upload-version-1'
     })
-    expect(container.querySelector('img')?.getAttribute('src')).toBe(
-      'open-science-preview://resource-1/photo.png'
-    )
+    expect(container.querySelector('img')?.getAttribute('src')).toMatch(/^blob:/)
   })
 
   it('falls back to the error state when resource acquisition rejects', async () => {

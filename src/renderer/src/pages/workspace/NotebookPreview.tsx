@@ -464,6 +464,13 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     ? activeKind
     : (visibleKinds[0] ?? 'python')
   const kindRuns = projectedRuns.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
+  const activeRuntimeBinding =
+    effectiveActiveKind === 'python' || effectiveActiveKind === 'r'
+      ? notebookState?.runtimeBindings?.[effectiveActiveKind]
+      : undefined
+  const activeRuntimeDetails = activeRuntimeBinding
+    ? [activeRuntimeBinding.label, activeRuntimeBinding.version].filter(Boolean).join(' · ')
+    : undefined
 
   // Per-environment selector (design D6): only python/r are env-scoped. Distinct env names among
   // this kind's runs, canonical default first, so the selector (when shown) reads default-first.
@@ -750,6 +757,25 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             )
           )}
         </div>
+        {activeRuntimeBinding && activeRuntimeDetails ? (
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={activeRuntimeDetails}
+                  className="ml-2 flex min-w-0 max-w-40 shrink-0 rounded-md bg-bg-300 px-2 py-1 text-[11px] text-text-200"
+                  data-testid="notebook-runtime-binding"
+                >
+                  <span className="min-w-0 truncate">{activeRuntimeBinding.label}</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-[320px] break-words">
+                {activeRuntimeDetails}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : null}
       </header>
 
       {showEnvSelector ? (

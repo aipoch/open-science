@@ -12,6 +12,7 @@ type HandoffPromptContext = Pick<
   | 'provenanceContext'
   | 'attachments'
   | 'referencedArtifacts'
+  | 'referencedSessions'
   | 'historyAttachments'
   | 'historyImages'
   | 'memoryEnabled'
@@ -37,6 +38,9 @@ const copyPromptContext = (source: HandoffPromptContext): HandoffPromptContext =
     : {}),
   ...(source.referencedArtifacts
     ? { referencedArtifacts: source.referencedArtifacts.map((artifact) => ({ ...artifact })) }
+    : {}),
+  ...(source.referencedSessions
+    ? { referencedSessions: source.referencedSessions.map((session) => ({ ...session })) }
     : {}),
   ...(source.historyAttachments
     ? { historyAttachments: source.historyAttachments.map((attachment) => ({ ...attachment })) }
@@ -100,6 +104,12 @@ export class AcpHandoffContinuityOwner {
 
   discardClaudeReplay(sessionId: string): void {
     this.claudeReplayBySession.delete(sessionId)
+  }
+
+  copyReferencedSessions(sessionId: string): AcpPromptRequest['referencedSessions'] {
+    return this.promptContextBySession
+      .get(sessionId)
+      ?.referencedSessions?.map((session) => ({ ...session }))
   }
 
   clearSession(sessionId: string): void {

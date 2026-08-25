@@ -797,8 +797,26 @@ describe('manage_packages tool', () => {
     expect(tool?.method).toBe('managePackages')
     expect(tool?.mapResult).toBe(compactManagePackagesResult)
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(
-      expect.arrayContaining(['language', 'packages', 'usePip', 'channels'])
+      expect.arrayContaining(['language', 'packages', 'usePip', 'installer', 'channels'])
     )
+    expect(tool?.description).toContain('target receipt')
+    expect(tool?.description).toContain('distribution metadata')
+    expect(tool?.description).toContain('notebook_execute')
+  })
+
+  it('accepts explicit Bioconductor and GitHub installers for R requests', () => {
+    const schema = z.object(tool?.inputSchema ?? {})
+
+    expect(schema.parse({ language: 'r', packages: ['DESeq2'], installer: 'biocmanager' })).toEqual(
+      { language: 'r', packages: ['DESeq2'], installer: 'biocmanager' }
+    )
+    expect(
+      schema.parse({ language: 'r', packages: ['tidyverse/ggplot2@main'], installer: 'github' })
+    ).toEqual({
+      language: 'r',
+      packages: ['tidyverse/ggplot2@main'],
+      installer: 'github'
+    })
   })
 
   it('preserves bounded installer-log truncation metadata in the compact result', () => {
@@ -817,6 +835,58 @@ describe('manage_packages tool', () => {
       logTruncation: { droppedBytes: 524_321 }
     })
   })
+
+  it.each([
+    ['changed', { ok: true, needsRestart: true }],
+    ['unchanged', { ok: true, needsRestart: false }],
+    ['failure', { ok: false, needsRestart: false, error: 'installation failed' }]
+  ] as const)(
+    'keeps the structured target when %s package changes exceed the MCP budget',
+    (_outcome, result) => {
+      const target = {
+        language: 'python',
+        selection: 'explicit-binding',
+        runtimeSource: 'external',
+        runtimeId: '/usr/local/bin/python3',
+        label: 'Research Python'
+      }
+      const packageChanges = [
+        ...Array.from({ length: 60 }, (_, index) => ({
+          name: `package-${index}-${'x'.repeat(1_000)}`,
+          ecosystem: 'python',
+          relationship: 'dependency',
+          change: result.ok ? _outcome : 'unknown',
+          beforeVersion: `1.${index}.${'y'.repeat(1_000)}`,
+          afterVersion: `2.${index}.${'z'.repeat(1_000)}`
+        })),
+        {
+          name: 'requested-package',
+          ecosystem: 'python',
+          relationship: 'requested',
+          change: result.ok ? _outcome : 'unknown',
+          afterVersion: '2.0.0'
+        }
+      ]
+
+      const content = buildNotebookToolContent({ ...result, target, packageChanges }, tool!)
+      const text = (content[0] as { type: 'text'; text: string }).text
+      const parsed = JSON.parse(text) as {
+        target?: unknown
+        packageChanges?: unknown[]
+        omittedPackageChangeCount?: number
+        preview?: string
+      }
+
+      expect(text.length).toBeLessThanOrEqual(NOTEBOOK_MCP_CONTROL_RESULT_LIMIT)
+      expect(parsed.target).toEqual(target)
+      expect(parsed.preview).toBeUndefined()
+      expect(parsed.packageChanges?.length).toBeLessThan(packageChanges.length)
+      expect(parsed.packageChanges).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'requested-package' })])
+      )
+      expect(parsed.omittedPackageChangeCount).toBeGreaterThan(0)
+    }
+  )
 
   it('has no per-call environment param — installs target the session-bound runtime (v4)', () => {
     // The env is the session's bound runtime, not a per-call argument, so the schema has no
@@ -935,13 +1005,68 @@ describe('inspect_packages tool', () => {
 })
 
 describe('compactManagePackagesResult', () => {
+  it('preserves an external target alongside a changed package outcome', () => {
+    expect(
+      compactManagePackagesResult({
+        ok: true,
+        needsRestart: false,
+        target: {
+          language: 'python',
+          selection: 'explicit-binding',
+          runtimeSource: 'external',
+          runtimeId: '/usr/bin/python3',
+          label: 'System Python'
+        },
+        packageChanges: [
+          {
+            name: 'numpy',
+            ecosystem: 'python',
+            relationship: 'requested',
+            change: 'installed',
+            afterVersion: '2.2.0'
+          }
+        ],
+        log: 'verbose installer output'
+      })
+    ).toEqual({
+      ok: true,
+      needsRestart: false,
+      target: {
+        language: 'python',
+        selection: 'explicit-binding',
+        runtimeSource: 'external',
+        runtimeId: '/usr/bin/python3',
+        label: 'System Python'
+      },
+      packageChanges: [
+        {
+          name: 'numpy',
+          ecosystem: 'python',
+          relationship: 'requested',
+          change: 'installed',
+          afterVersion: '2.2.0'
+        }
+      ]
+    })
+  })
+
   it('keeps the package outcome while omitting verbose installer diagnostics', () => {
     const compact = compactManagePackagesResult({
       ok: true,
       needsRestart: true,
       method: 'conda',
+      environmentName: 'default-r',
       prefix: '/runtime/envs/default-r',
       fallbackUsed: false,
+      target: {
+        language: 'r',
+        selection: 'explicit-binding',
+        runtimeSource: 'managed',
+        environmentName: 'r-stats',
+        runtimeId: '/runtime/envs/r-stats/bin/R',
+        label: 'conda: r-stats',
+        prefix: '/runtime/envs/r-stats'
+      },
       packageChanges: [
         {
           name: 'dplyr',
@@ -950,6 +1075,20 @@ describe('compactManagePackagesResult', () => {
           change: 'unchanged',
           beforeVersion: '1.1.4',
           afterVersion: '1.1.4'
+        },
+        {
+          name: 'cli',
+          ecosystem: 'r',
+          relationship: 'unattributed',
+          change: 'updated',
+          beforeVersion: '3.6.4',
+          afterVersion: '3.6.5',
+          source: {
+            type: 'github',
+            repository: 'r-lib/cli',
+            ref: 'main',
+            commit: 'abc123'
+          }
         }
       ],
       log: JSON.stringify({
@@ -973,7 +1112,17 @@ describe('compactManagePackagesResult', () => {
       ok: true,
       needsRestart: true,
       method: 'conda',
+      environmentName: 'default-r',
       fallbackUsed: false,
+      target: {
+        language: 'r',
+        selection: 'explicit-binding',
+        runtimeSource: 'managed',
+        environmentName: 'r-stats',
+        runtimeId: '/runtime/envs/r-stats/bin/R',
+        label: 'conda: r-stats',
+        prefix: '/runtime/envs/r-stats'
+      },
       packageChanges: [
         {
           name: 'dplyr',
@@ -982,6 +1131,20 @@ describe('compactManagePackagesResult', () => {
           change: 'unchanged',
           beforeVersion: '1.1.4',
           afterVersion: '1.1.4'
+        },
+        {
+          name: 'cli',
+          ecosystem: 'r',
+          relationship: 'unattributed',
+          change: 'updated',
+          beforeVersion: '3.6.4',
+          afterVersion: '3.6.5',
+          source: {
+            type: 'github',
+            repository: 'r-lib/cli',
+            ref: 'main',
+            commit: 'abc123'
+          }
         }
       ]
     })
@@ -995,11 +1158,29 @@ describe('compactManagePackagesResult', () => {
         ok: false,
         needsRestart: false,
         log: 'very verbose diagnostics',
+        target: {
+          language: 'python',
+          selection: 'implicit-default',
+          runtimeSource: 'managed',
+          environmentName: 'default-python',
+          runtimeId: '/runtime/envs/default-python/bin/python',
+          label: 'default-python',
+          prefix: '/runtime/envs/default-python'
+        },
         error: 'Package installation could not be verified: dplyr.'
       })
     ).toEqual({
       ok: false,
       needsRestart: false,
+      target: {
+        language: 'python',
+        selection: 'implicit-default',
+        runtimeSource: 'managed',
+        environmentName: 'default-python',
+        runtimeId: '/runtime/envs/default-python/bin/python',
+        label: 'default-python',
+        prefix: '/runtime/envs/default-python'
+      },
       error: 'Package installation could not be verified: dplyr.'
     })
     expect(compactManagePackagesResult(null)).toBeNull()
@@ -1081,7 +1262,52 @@ describe('notebook control tool results', () => {
       sessionId: 'session-1',
       status: 'shutdown'
     })
-    const environments = compactManageEnvironmentsResult(
+    const createdEnvironment = compactManageEnvironmentsResult(
+      {
+        created: {
+          name: 'env-39',
+          language: 'python',
+          runtimeId: '/private/runtime/envs/env-39/bin/python',
+          runnable: true,
+          detail: 'x'.repeat(10_000)
+        },
+        environments: Array.from({ length: 40 }, (_, index) => ({
+          name: `env-${index}`,
+          language: 'python',
+          ready: true,
+          isDefault: false,
+          sizeBytes: 10,
+          internalPath: `/private/env-${index}`
+        }))
+      },
+      { action: 'create', offset: 30, limit: 10 }
+    ) as Record<string, unknown>
+    expect(createdEnvironment).not.toHaveProperty('environmentCount')
+    expect(createdEnvironment).not.toHaveProperty('offset')
+    expect(createdEnvironment).not.toHaveProperty('environments')
+    expect(createdEnvironment).not.toHaveProperty('nextOffset')
+    expect(createdEnvironment.created).toEqual({
+      name: 'env-39',
+      language: 'python',
+      runtimeId: '/private/runtime/envs/env-39/bin/python',
+      runnable: true,
+      detail: expect.stringContaining('omitted from this tool response')
+    })
+    expect(
+      compactManageEnvironmentsResult(
+        { environments: [{ name: 'must-not-leak' }] },
+        { action: 'create' }
+      )
+    ).toEqual({})
+
+    expect(
+      compactManageEnvironmentsResult(
+        { removed: { name: 'env-39' }, environments: [{ name: 'stale-snapshot' }] },
+        { action: 'remove' }
+      )
+    ).toEqual({ removed: { name: 'env-39' } })
+
+    const listedEnvironments = compactManageEnvironmentsResult(
       {
         environments: Array.from({ length: 40 }, (_, index) => ({
           name: `env-${index}`,
@@ -1092,12 +1318,46 @@ describe('notebook control tool results', () => {
           internalPath: `/private/env-${index}`
         }))
       },
-      { offset: 30, limit: 10 }
+      { action: 'list', offset: 30, limit: 10 }
     ) as Record<string, unknown>
-    expect(environments).toMatchObject({ environmentCount: 40, offset: 30 })
-    expect(environments.environments).toHaveLength(10)
-    expect(environments).not.toHaveProperty('nextOffset')
-    expect(JSON.stringify(environments)).toContain('env-39')
+    expect(listedEnvironments).toMatchObject({ offset: 30 })
+    expect(listedEnvironments).not.toHaveProperty('environmentCount')
+    expect(listedEnvironments.environments).toHaveLength(10)
+    expect(listedEnvironments).not.toHaveProperty('nextOffset')
+    expect(JSON.stringify(listedEnvironments)).toContain('env-39')
+    expect(JSON.stringify(listedEnvironments)).not.toContain('internalPath')
+  })
+
+  it('keeps failed bind/switch receipts explicit about the unchanged effective target', () => {
+    expect(
+      compactRuntimeBindingResult({
+        ok: false,
+        bindingChanged: false,
+        error: '"analysis" is not an enabled python runtime.',
+        target: {
+          language: 'python',
+          selection: 'explicit-binding',
+          runtimeSource: 'managed',
+          environmentName: 'current-env',
+          runtimeId: '/runtime/envs/current-env/bin/python',
+          label: 'conda: current-env',
+          prefix: '/runtime/envs/current-env'
+        }
+      })
+    ).toEqual({
+      ok: false,
+      bindingChanged: false,
+      error: '"analysis" is not an enabled python runtime.',
+      target: {
+        language: 'python',
+        selection: 'explicit-binding',
+        runtimeSource: 'managed',
+        environmentName: 'current-env',
+        runtimeId: '/runtime/envs/current-env/bin/python',
+        label: 'conda: current-env',
+        prefix: '/runtime/envs/current-env'
+      }
+    })
   })
 })
 
@@ -1110,6 +1370,14 @@ describe('manage_environments tool', () => {
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(
       expect.arrayContaining(['action', 'language', 'name', 'packages', 'offset', 'limit'])
     )
+    expect(tool?.description).toContain('created.runtimeId')
+    expect(tool?.description).toContain('does not select')
+    expect(
+      NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_bind_runtime')?.description
+    ).toContain('no binding exists')
+    expect(
+      NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_switch_runtime')?.description
+    ).toContain('existing binding')
   })
 
   it('validates action enum and optional language/name/packages fields', () => {
@@ -1172,6 +1440,7 @@ describe('manage_environments tool', () => {
     expect(MANAGE_ENVIRONMENTS_DOC).toContain('action:"create"')
     expect(MANAGE_ENVIRONMENTS_DOC).toContain('action:"list"')
     expect(MANAGE_ENVIRONMENTS_DOC).toContain('action:"remove"')
+    expect(MANAGE_ENVIRONMENTS_DOC).toMatch(/only action:"list".*full.*snapshot/i)
   })
 })
 
@@ -1191,11 +1460,14 @@ describe('compactNotebookExecutionResult', () => {
   })
 
   it('applies the compact projection and global budget to every execution tool', () => {
-    for (const name of ['notebook_execute', 'repl_execute', 'bash_execute']) {
+    for (const name of ['notebook_execute', 'bash_execute']) {
       const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === name)
       expect(tool?.mapResult).toBe(compactNotebookExecutionResult)
       expect(tool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
     }
+    const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
+    expect(replTool?.mapResult).not.toBe(compactNotebookExecutionResult)
+    expect(replTool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
   })
 
   it('keeps diagnostic streams once and removes duplicated structured stream outputs', () => {
@@ -1270,6 +1542,98 @@ describe('compactNotebookExecutionResult', () => {
 
     expect(compact.stdout).toBe(stdout)
     expect(compact.truncated).toBeUndefined()
+  })
+
+  it('omits internal REPL stack frames from the agent-facing error', () => {
+    const traceback = [
+      'ReferenceError: en2 is not defined',
+      '    at <repl>:5:21',
+      '    at Script.runInContext (node:vm:149:12)',
+      '    at Object.runInContext (node:vm:301:6)',
+      '    at run (/Users/alice/open-science/resources/notebook/repl_loop.js:3527:28)'
+    ].join('\n')
+
+    const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
+    const summary = runSummary({ traceback })
+    const raw = {
+      ...summary,
+      status: 'failed',
+      outputs: [
+        {
+          type: 'error',
+          message: 'ReferenceError: en2 is not defined',
+          traceback
+        }
+      ]
+    }
+    const compact = replTool?.mapResult?.(raw, {}) as {
+      traceback: string
+      outputs: Array<Record<string, unknown>>
+    }
+
+    expect(compact.traceback).toBe('ReferenceError: en2 is not defined')
+    expect(compact.outputs).toEqual([
+      { type: 'error', message: 'ReferenceError: en2 is not defined' }
+    ])
+    expect(JSON.stringify(compact)).not.toContain('<repl>')
+    expect(JSON.stringify(compact)).not.toContain('node:vm')
+    expect(JSON.stringify(compact)).not.toContain('repl_loop.js')
+    expect((summary.text as { traceback: string }).traceback).toBe(traceback)
+    expect(raw.outputs[0].traceback).toBe(traceback)
+  })
+
+  it('keeps the actionable SyntaxError after the VM source preamble', () => {
+    const traceback = [
+      '<repl>:2',
+      'const value =',
+      '             ^',
+      '',
+      'SyntaxError: Unexpected end of input',
+      '    at new Script (node:vm:117:7)',
+      '    at Object.runInContext (node:vm:301:6)',
+      '    at run (/Users/alice/open-science/resources/notebook/repl_loop.js:3527:28)'
+    ].join('\n')
+    const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
+
+    const compact = replTool?.mapResult?.(
+      { ...runSummary({ traceback }), status: 'failed' },
+      {}
+    ) as { traceback: string }
+
+    expect(compact.traceback).toBe('SyntaxError: Unexpected end of input')
+  })
+
+  it('preserves multiline REPL error messages while omitting stack frames', () => {
+    const traceback = [
+      'Error: first diagnostic line',
+      '    at the lab, review the second diagnostic line',
+      'third diagnostic line',
+      '    at <repl>:1:7',
+      '    at run (/Users/alice/open-science/resources/notebook/repl_loop.js:3527:28)'
+    ].join('\n')
+    const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
+
+    const compact = replTool?.mapResult?.(
+      { ...runSummary({ traceback }), status: 'failed' },
+      {}
+    ) as { traceback: string }
+
+    expect(compact.traceback).toBe(
+      'Error: first diagnostic line\n    at the lab, review the second diagnostic line\nthird diagnostic line'
+    )
+  })
+
+  it('keeps Python tracebacks intact for the agent', () => {
+    const traceback =
+      'Traceback (most recent call last):\n  File "analysis.py", line 2\nValueError: boom'
+
+    const compact = compactNotebookExecutionResult({
+      ...runSummary({ traceback }),
+      kernelKind: 'python',
+      status: 'failed'
+    }) as { traceback: string }
+
+    expect(compact.traceback).toBe(traceback)
   })
 
   it('preserves producer truncation when no additional MCP clipping is needed', () => {

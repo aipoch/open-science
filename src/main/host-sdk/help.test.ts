@@ -47,6 +47,15 @@ const named = (items: HelpField[], name: string): HelpField => {
   return result
 }
 
+const snakeCaseObjectKeys = (value: unknown): string[] => {
+  if (Array.isArray(value)) return value.flatMap(snakeCaseObjectKeys)
+  if (!value || typeof value !== 'object') return []
+  return Object.entries(value).flatMap(([key, entry]) => [
+    ...(key.includes('_') ? [key] : []),
+    ...snakeCaseObjectKeys(entry)
+  ])
+}
+
 describe('Host SDK help', () => {
   it('lists only registered operation topics in a compact deterministic catalog', () => {
     const catalog = hostSdkHelp.query(undefined, mainContext)
@@ -82,7 +91,7 @@ describe('Host SDK help', () => {
       kind: 'operation',
       id: 'host.viewImage',
       availability: { status: 'available' },
-      call_forms: [{ signature: 'await host.viewImage(source, options?)' }]
+      callForms: [{ signature: 'await host.viewImage(source, options?)' }]
     })
     if (help.kind !== 'operation') throw new Error('expected operation help')
     const request = JSON.stringify(help.request)
@@ -102,14 +111,14 @@ describe('Host SDK help', () => {
       kind: 'operation',
       id: 'host.currentModel',
       availability: { status: 'available' },
-      call_forms: [{ signature: 'await host.currentModel()' }],
+      callForms: [{ signature: 'await host.currentModel()' }],
       returns: { type: 'string' }
     })
     expect(hostSdkHelp.query('listModels', { ...mainContext, capabilities })).toMatchObject({
       kind: 'operation',
       id: 'host.listModels',
       availability: { status: 'unavailable' },
-      call_forms: [{ signature: 'await host.listModels()' }],
+      callForms: [{ signature: 'await host.listModels()' }],
       returns: { type: 'string[]' }
     })
   })
@@ -124,7 +133,7 @@ describe('Host SDK help', () => {
       kind: 'operation',
       id: 'host.llm',
       availability: { status: 'available' },
-      call_forms: [{ signature: 'await host.llm(request, options?)' }]
+      callForms: [{ signature: 'await host.llm(request, options?)' }]
     })
     expect(hostSdkHelp.query('host.llm', { ...mainContext, capabilities })).toEqual(help)
     if (help.kind !== 'operation') throw new Error('expected operation help')
@@ -137,15 +146,15 @@ describe('Host SDK help', () => {
       default: 2,
       range: '1..4'
     })
-    expect(fields(help.returns, 'success_fields').map(({ name }) => name)).toEqual([
+    expect(fields(help.returns, 'successFields').map(({ name }) => name)).toEqual([
       'text',
       'model',
       'stopReason',
       'usage'
     ])
-    expect(fields(help.returns, 'batch_error_fields').map(({ name }) => name)).toEqual(['error'])
+    expect(fields(help.returns, 'batchErrorFields').map(({ name }) => name)).toEqual(['error'])
     expect(
-      fields(help.returns, 'usage_fields').map(({ name, required }) => ({ name, required }))
+      fields(help.returns, 'usageFields').map(({ name, required }) => ({ name, required }))
     ).toEqual([
       { name: 'inputTokens', required: true },
       { name: 'cacheTokens', required: true },
@@ -169,7 +178,7 @@ describe('Host SDK help', () => {
       kind: 'operation',
       id: 'host.sessions',
       availability: { status: 'available' },
-      call_forms: [
+      callForms: [
         { signature: 'await host.sessions.list(options?)' },
         { signature: 'await host.sessions.inspect(sessionId)' }
       ]
@@ -236,23 +245,23 @@ describe('Host SDK help', () => {
         }
       ]
     })
-    const childFields = fields(canonical.returns, 'child_fields')
+    const childFields = fields(canonical.returns, 'childFields')
     expect(childFields.map(({ name }) => name)).toEqual([
-      'frame_id',
-      'attempt_id',
+      'frameId',
+      'attemptId',
       'name',
-      'agent_name',
+      'agentName',
       'status',
-      'terminal_message_id',
+      'terminalMessageId',
       'response',
-      'artifacts_created',
-      'cancellation_reason',
+      'artifactsCreated',
+      'cancellationReason',
       'error',
-      'structured_output',
-      'structured_output_unsatisfied'
+      'structuredOutput',
+      'structuredOutputUnsatisfied'
     ])
-    expect(named(childFields, 'frame_id')).toMatchObject({ type: 'string', required: true })
-    expect(named(childFields, 'artifacts_created')).toMatchObject({
+    expect(named(childFields, 'frameId')).toMatchObject({ type: 'string', required: true })
+    expect(named(childFields, 'artifactsCreated')).toMatchObject({
       type: 'array',
       when: 'terminal'
     })
@@ -270,11 +279,12 @@ describe('Host SDK help', () => {
   })
 
   it('uses the same flat field-description shape for every operation topic', () => {
-    for (const id of HOST_SDK_SUBAGENT_OPERATION_IDS) {
+    for (const id of HOST_SDK_OPERATION_IDS) {
       const help = operation(id, id === 'host.submitOutput' ? 'delegate' : 'main')
       expect(Array.isArray((help.request as { fields?: unknown }).fields)).toBe(true)
       expect(Array.isArray((help.options as { fields?: unknown }).fields)).toBe(true)
       expect(help).not.toHaveProperty('errors')
+      expect(snakeCaseObjectKeys(help)).toEqual([])
       const serialized = JSON.stringify(help)
       expect(serialized).not.toContain('"oneOf"')
       expect(serialized).not.toContain('"allOf"')
@@ -288,15 +298,15 @@ describe('Host SDK help', () => {
     expect(fields(children.request)).toEqual([
       expect.objectContaining({ name: 'frameIds', type: 'string[]', required: false })
     ])
-    expect(fields(children.returns, 'item_fields').map(({ name }) => name)).toEqual([
-      'frame_id',
-      'attempt_id',
+    expect(fields(children.returns, 'itemFields').map(({ name }) => name)).toEqual([
+      'frameId',
+      'attemptId',
       'title',
       'name',
-      'agent_name',
+      'agentName',
       'status'
     ])
-    expect(named(fields(children.returns, 'item_fields'), 'status').description).toContain(
+    expect(named(fields(children.returns, 'itemFields'), 'status').description).toContain(
       'awaiting_user'
     )
 
@@ -308,18 +318,20 @@ describe('Host SDK help', () => {
       default: 30,
       range: '0..1800'
     })
-    expect(collect.call_forms[0]?.signature).toBe('await host.collect(selectors, options?)')
-    expect(collect.examples[0]?.code).toContain('{ frameId: frame_id, attemptId: attempt_id }')
+    expect(named(fields(collect.options), 'returnWhen')).toMatchObject({ default: 'all' })
+    expect(collect.constraints.join(' ')).toContain('currently running')
+    expect(collect.callForms[0]?.signature).toBe('await host.collect(selectors, options?)')
+    expect(collect.examples[0]?.code).toContain('{ frameId, attemptId }')
 
     const stop = operation('stopChild')
     expect(fields(stop.request)).toEqual([
       expect.objectContaining({ name: 'frameIds', type: 'string[]', required: true })
     ])
-    expect(fields(stop.returns, 'item_fields').map(({ name }) => name)).toEqual([
-      'frame_id',
+    expect(fields(stop.returns, 'itemFields').map(({ name }) => name)).toEqual([
+      'frameId',
       'status'
     ])
-    expect(stop.call_forms[0]?.signature).toBe('await host.stopChild(frameIds)')
+    expect(stop.callForms[0]?.signature).toBe('await host.stopChild(frameIds)')
 
     const send = operation('sendFrameMessage')
     expect(fields(send.options).map(({ name }) => name)).toEqual([
@@ -327,7 +339,7 @@ describe('Host SDK help', () => {
       'requestId',
       'replyToMessageId'
     ])
-    expect(send.call_forms[0]?.signature).toBe(
+    expect(send.callForms[0]?.signature).toBe(
       'await host.sendFrameMessage(target, message, options?)'
     )
 
@@ -343,7 +355,9 @@ describe('Host SDK help', () => {
     ])
 
     const submitOutput = operation('submitOutput', 'delegate')
-    expect(submitOutput.call_forms[0]?.signature).toBe('await host.submitOutput(value)')
+    expect(submitOutput.callForms[0]?.signature).toBe('await host.submitOutput(value)')
+    expect(submitOutput.constraints.join(' ')).toContain('mandatory')
+    expect(submitOutput.constraints.join(' ')).toContain('ordinary final response')
   })
 
   it('describes reliable receipt routes and states without exhaustive unions', () => {
@@ -357,29 +371,29 @@ describe('Host SDK help', () => {
         ]
       })
       expect(fields(help.returns).map(({ name }) => name)).toEqual([
-        'request_id',
-        'message_id',
-        'source_frame_id',
-        'target_frame_id',
-        'reply_to_message_id',
-        'queued_at',
+        'requestId',
+        'messageId',
+        'sourceFrameId',
+        'targetFrameId',
+        'replyToMessageId',
+        'queuedAt',
         'direction',
         'disposition',
-        'target_attempt_id',
-        'continuation_attempt_id',
-        'source_attempt_id',
-        'root_prompt_message_id',
+        'targetAttemptId',
+        'continuationAttemptId',
+        'sourceAttemptId',
+        'rootPromptMessageId',
         'status',
-        'dispatch_started_at',
-        'accepted_at',
+        'dispatchStartedAt',
+        'acceptedAt',
         'evidence',
-        'failed_at',
+        'failedAt',
         'error',
-        'uncertain_at',
-        'delivery_may_have_occurred',
+        'uncertainAt',
+        'deliveryMayHaveOccurred',
         'resolution',
-        'new_request_retry_safe',
-        'same_request_safe'
+        'newRequestRetrySafe',
+        'sameRequestSafe'
       ])
     }
     expect(operation('resolveMessage').returns).toMatchObject({

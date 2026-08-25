@@ -1,11 +1,15 @@
 // Cross-process update types and pure helpers. No Electron/Node I/O so both main and renderer import it.
 
+import type { Locale } from './locale'
+
 export type PlatformDownload = { url: string; size: number; sha256: string }
+export type LocalizedReleaseNotes = Partial<Record<Exclude<Locale, 'en'>, string>>
 
 export type UpdateManifest = {
   version: string
   releaseDate: string
   notes: string
+  localizedNotes?: LocalizedReleaseNotes
   downloads: Record<string, PlatformDownload>
 }
 
@@ -25,6 +29,7 @@ export type UpdateStatus = {
   current: string
   latest?: string
   notes?: string
+  localizedNotes?: LocalizedReleaseNotes
   download?: PlatformDownload
   progress?: number // 0-100 while downloading
   downloadedBytes?: number // bytes received so far while downloading

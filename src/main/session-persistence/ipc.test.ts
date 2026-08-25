@@ -285,6 +285,8 @@ describe('session persistence IPC handlers', () => {
     const saveSession = vi.fn(async () => ({ created: false, session }))
     const handlers: SessionPersistenceHandlers = {
       loadAll: vi.fn(),
+      list: vi.fn(),
+      loadUsage: vi.fn(),
       loadOne: vi.fn(),
       saveSession,
       setDelegationPolicy: vi.fn(),
@@ -537,6 +539,8 @@ describe('session persistence IPC handlers', () => {
     }
     const injected: SessionPersistenceHandlers = {
       loadAll: vi.fn().mockResolvedValue(loadResult),
+      list: vi.fn(),
+      loadUsage: vi.fn(),
       loadOne: vi.fn(),
       saveSession: vi.fn(),
       setDelegationPolicy: vi.fn(),
@@ -564,6 +568,8 @@ describe('session persistence IPC handlers', () => {
     }
     const injected: SessionPersistenceHandlers = {
       loadAll: vi.fn(),
+      list: vi.fn(),
+      loadUsage: vi.fn(),
       loadOne: vi.fn(),
       saveSession: vi.fn(async () => {
         order.push('saved')
@@ -596,6 +602,8 @@ describe('session persistence IPC handlers', () => {
     }
     const injected: SessionPersistenceHandlers = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      list: vi.fn(),
+      loadUsage: vi.fn(),
       loadOne: vi.fn(),
       saveSession: vi.fn(),
       setDelegationPolicy: vi.fn(),
@@ -662,6 +670,8 @@ describe('session persistence IPC handlers', () => {
     }
     const handlers: SessionPersistenceHandlers = {
       loadAll: vi.fn(),
+      list: vi.fn(),
+      loadUsage: vi.fn(),
       loadOne: vi.fn(),
       saveSession: vi.fn().mockRejectedValue(conflict),
       setDelegationPolicy: vi.fn(),

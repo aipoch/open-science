@@ -7,7 +7,8 @@ import {
   getLoadedSkillName,
   getToolDisplayName,
   isEditActivity,
-  isSkillActivity
+  isSkillActivity,
+  parseManagePackagesResult
 } from './workspace-tool-activity-details'
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
@@ -559,6 +560,63 @@ describe('workspace tool activity details', () => {
     expect(packagesSection?.kind === 'code' && packagesSection.text).toContain(
       'pandas: unchanged at 2.2.3'
     )
+  })
+
+  it('unwraps verified package versions from ACP structured output', () => {
+    const packageChanges = [
+      {
+        name: 'numpy',
+        change: 'unchanged',
+        beforeVersion: '2.5.1',
+        afterVersion: '2.5.1'
+      }
+    ]
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__manage_packages',
+      rawOutput: {
+        structuredContent: {
+          ok: true,
+          needsRestart: false,
+          method: 'conda',
+          environmentName: 'analysis',
+          packageChanges
+        }
+      }
+    })
+
+    expect(parseManagePackagesResult(activity)).toMatchObject({
+      method: 'conda',
+      environmentName: 'analysis',
+      packageChanges
+    })
+  })
+
+  it('unwraps verified package versions from raw MCP text content', () => {
+    const packageChanges = [
+      {
+        name: 'pandas',
+        change: 'installed',
+        afterVersion: '3.0.3'
+      }
+    ]
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__manage_packages',
+      rawOutput: {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              ok: true,
+              needsRestart: false,
+              method: 'conda',
+              packageChanges
+            })
+          }
+        ]
+      }
+    })
+
+    expect(parseManagePackagesResult(activity)).toMatchObject({ method: 'conda', packageChanges })
   })
 
   it('renders an image artifact-write result as an inline preview section', () => {

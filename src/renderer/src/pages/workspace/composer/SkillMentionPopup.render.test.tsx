@@ -130,6 +130,20 @@ describe('SkillMentionPopup', () => {
     expect(text).not.toContain('Imported')
   })
 
+  it('keeps the shortcut footer outside the scrollable skill list', () => {
+    act(() => {
+      root.render(<SkillMentionPopup query="" onSelect={vi.fn()} onClose={vi.fn()} />)
+    })
+
+    const listbox = document.body.querySelector<HTMLElement>('[role="listbox"]')!
+    const popup = listbox.parentElement!
+    const footer = popup.lastElementChild as HTMLElement
+
+    expect([...popup.classList]).toEqual(expect.arrayContaining(['flex', 'flex-col']))
+    expect([...listbox.classList]).toEqual(expect.arrayContaining(['min-h-0', 'flex-1']))
+    expect(footer.classList).toContain('shrink-0')
+  })
+
   it('moves aria-selected with ArrowDown/ArrowUp and wraps', () => {
     act(() => {
       root.render(

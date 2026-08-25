@@ -1488,6 +1488,37 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
     expect(sendPrompt.mock.calls.at(-1)?.[0]).not.toHaveProperty('attribution')
   })
 
+  it('accepts only Session id and title from structured Session references', async () => {
+    registerWithFakes()
+
+    await handlers.get('acp:send-prompt')?.(
+      {},
+      {
+        sessionId: 'session-1',
+        text: 'Compare this result',
+        referencedSessions: [
+          {
+            type: 'session',
+            sessionId: 'session-2',
+            title: 'Prior result',
+            projectId: 'forged-project',
+            frameId: 'forged-frame'
+          },
+          { type: 'session', sessionId: 'session-2', title: 'Duplicate' },
+          { type: 'session', sessionId: '', title: 'Malformed' }
+        ]
+      }
+    )
+
+    expect(sendPrompt.mock.calls.at(-1)?.[0]).toMatchObject({
+      referencedSessions: [{ type: 'session', sessionId: 'session-2', title: 'Prior result' }]
+    })
+    expect(sendPrompt.mock.calls.at(-1)?.[0].referencedSessions?.[0]).not.toHaveProperty(
+      'projectId'
+    )
+    expect(sendPrompt.mock.calls.at(-1)?.[0].referencedSessions?.[0]).not.toHaveProperty('frameId')
+  })
+
   it('reverts the tracked prompt when the runtime rejects the send', async () => {
     const trackPrompt = vi.fn().mockReturnValue({ token: 1 })
     const untrackPrompt = vi.fn()

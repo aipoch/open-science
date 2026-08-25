@@ -22,7 +22,7 @@ Open Science는 과학자와 연구자를 위한 오픈 소스이자 로컬 우�
 
 Open Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[Open Science v0.18.2 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 8월)_. Open Science v0.18.2는 러시아어 현지화, 대화 내보내기의 턴 선택, 사용자 지정 커넥터를 위한 사전 등록 OAuth 클라이언트를 도입합니다. 이와 함께 에이전트 목록 요약 축소, 대량 스트림 중 렌더러 응답성을 유지하는 증분 이벤트 어드미션 제한, 프로젝트 아티팩트 ZIP 스트리밍 내보내기, UTF-8 노트북 소스 디코딩을 갖춘 MCP 진행 하트비트, 메시지 편집 시 첨부 파일 보존, 불명확한 Codex 세션 복구, 멱등적 작업 API 생성, 그리고 다수의 작업 공간·노트북·업데이트·지속성 수정을 반영합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
+> 💡 **[Open Science v0.19.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 8월)_. Open Science v0.19.0은 xAI (Grok) OAuth 구독 공급자, 관리되는 마켓플레이스 설치 스페셜리스트, tree-sitter 분석 기반 노트북 실행 간 의존성 추적, 네이티브 후속 스티어링을 통한 턴 중 지금 보내기, 메시지 내 Markdown 아티팩트 미리보기, 컨텍스트 압축 대화 경계, SQLite 인덱스 기반 세션 메타데이터로 요약 우선 빠른 시작, 종료된 노트북 읽기 전용 미리보기, 재설계된 정보 및 도움말 센터, 보관 실행 취소 단축키, 사용자 지정 모델 토큰 한도, 완전한 OAuth 커넥터 수명 주기, deepseek-v4-flash-vision-exp를 추가합니다. 이와 함께 도구 버스트 IPC 병합, 이벤트 드레인 배칭, 그리고 다수의 노트북·작성기·작업 공간·공급자 수정을 반영합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="생성된 아티팩트가 포함된 에이전트 세션을 보여 주는 Open Science 오픈 소스 AI 연구 워크벤치 데스크톱 앱" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />

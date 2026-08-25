@@ -34,6 +34,7 @@ import {
 } from '@/lib/acp/workspace-events'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import { revealNotebookWhenProjectActive } from './notebook-preview-availability'
+import { invalidateSessionNotebookCache } from './session-notebook-data'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import {
@@ -693,6 +694,10 @@ const WorkspacePage = ({
     }
   }, [activeSessionId, scopedProjectId])
 
+  useEffect(() => {
+    return window.api.notebook.onChanged?.(invalidateSessionNotebookCache) ?? (() => undefined)
+  }, [])
+
   // Subscribe to reviewer lifecycle updates so the card and Reviewing indicator stay live.
   useEffect(() => {
     const removeUpdatedListener = window.api.reviewer.onUpdated(handleReviewUpdate)
@@ -867,17 +872,12 @@ const WorkspacePage = ({
   }
 
   const changeMemoryEnabled = (enabled: boolean): void => {
-    if (!activeSession) {
-      setNewConversationMemoryEnabled(enabled)
-      return
-    }
+    if (!activeSession) return setNewConversationMemoryEnabled(enabled)
 
     setAttachmentError(null)
-    void runtime
-      .setMemoryEnabled(activeSession.id, enabled)
-      .catch((error: unknown) =>
-        setAttachmentError(error instanceof Error ? error.message : String(error))
-      )
+    void runtime.setMemoryEnabled(activeSession.id, enabled).catch((error: unknown) => {
+      setAttachmentError(error instanceof Error ? error.message : String(error))
+    })
   }
 
   // Manually triggers a review of the last completed turn, bypassing autoReviewEnabled and the

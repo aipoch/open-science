@@ -10,7 +10,11 @@ import {
   resolveActiveConversationMessages
 } from '../../shared/conversation-graph'
 import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
-import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
+import {
+  isHiddenControlMessage,
+  sanitizeSessionReferences,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../shared/uploads'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 
@@ -137,6 +141,7 @@ const buildContinuationRequest = (
     )
     return references
   }, [])
+  const referencedSessions = sanitizeSessionReferences(prompt.parts)
   const provenanceContext = resolveProvenanceContext(session, request)
   const contextReset = request.contextReset
   const replayMessages = contextReset
@@ -195,6 +200,11 @@ const buildContinuationRequest = (
       ? { referencedArtifacts: livePrompt.referencedArtifacts }
       : referencedArtifacts?.length
         ? { referencedArtifacts }
+        : {}),
+    ...(livePrompt?.referencedSessions?.length
+      ? { referencedSessions: livePrompt.referencedSessions }
+      : referencedSessions.length
+        ? { referencedSessions }
         : {}),
     ...(attachments?.length ? { attachments } : {}),
     ...(replay?.historyPreamble ? { historyPreamble: replay.historyPreamble } : {}),

@@ -93,7 +93,12 @@ describe('Side chat IPC', () => {
     registerSideChatIpcHandlers(
       runtime as never,
       {
-        loadParentSession: vi.fn(async () => ({ messages: [] })),
+        loadParentSession: vi.fn(async () => ({
+          messages: [
+            { role: 'user', content: 'Please update the result.', status: 'complete' },
+            { role: 'assistant', content: 'Latest Main output.', status: 'complete' }
+          ]
+        })),
         hasLiveParentSession: vi.fn(() => false),
         withParentAvailable: vi.fn(async (_sessionId, operation) => operation())
       } as never
@@ -106,7 +111,11 @@ describe('Side chat IPC', () => {
     await handlers.get('side-chat:cancel')?.(undefined, { sideSessionId: 'side-1' } as never)
     await handlers.get('side-chat:close')?.(undefined, { sideSessionId: 'side-1' } as never)
 
-    expect(runtime.send).toHaveBeenCalledWith({ sideSessionId: 'side-1', text: 'Follow up' })
+    expect(runtime.send).toHaveBeenCalledWith({
+      sideSessionId: 'side-1',
+      text: 'Follow up',
+      historyPreamble: expect.stringContaining('Latest Main output.')
+    })
     expect(runtime.cancel).toHaveBeenCalledWith({ sideSessionId: 'side-1' })
     expect(runtime.close).toHaveBeenCalledWith({ sideSessionId: 'side-1' })
   })

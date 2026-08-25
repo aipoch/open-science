@@ -374,6 +374,22 @@ const request = (): AcpPromptRequest => ({
 })
 
 describe('AcpPromptTurnWorkflow', () => {
+  it('binds referenced Session ids to the prompt reservation', async () => {
+    const harness = createHarness()
+
+    await harness.workflow.run(
+      {
+        ...request(),
+        referencedSessions: [{ type: 'session', sessionId: 'session-2', title: 'Prior result' }]
+      },
+      { kind: 'user' }
+    )
+
+    expect(harness.interactions.reservePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ referencedSessionIds: ['session-2'] })
+    )
+  })
+
   it('admits and executes one user turn in owner order with its opaque handles', async () => {
     const harness = createHarness()
 

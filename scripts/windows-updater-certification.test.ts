@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
+  classifyUpdaterDownloadStatus,
   invokeWebRpc,
   parseArguments,
   parseSingleRange,
@@ -148,5 +149,38 @@ describe('Windows updater certification', () => {
       output: expect.stringContaining('observation.json')
     })
     expect(() => parseArguments(['--current-dir', 'current'])).toThrow(/Usage/)
+  })
+
+  it('retries download while a shipped updater still reports the in-flight check', () => {
+    expect(
+      classifyUpdaterDownloadStatus(
+        { state: 'available', latest: '0.18.2', applyKind: 'restart' },
+        '0.18.2'
+      )
+    ).toBe('pending')
+    expect(classifyUpdaterDownloadStatus({ state: 'checking', current: '0.18.1' }, '0.18.2')).toBe(
+      'pending'
+    )
+    expect(
+      classifyUpdaterDownloadStatus(
+        { state: 'downloading', latest: '0.18.2', applyKind: 'restart' },
+        '0.18.2'
+      )
+    ).toBe('pending')
+    expect(
+      classifyUpdaterDownloadStatus(
+        { state: 'ready', latest: '0.18.2', applyKind: 'restart' },
+        '0.18.2'
+      )
+    ).toBe('ready')
+    expect(classifyUpdaterDownloadStatus({ state: 'error', error: 'offline' }, '0.18.2')).toBe(
+      'failed'
+    )
+    expect(
+      classifyUpdaterDownloadStatus(
+        { state: 'available', latest: '0.18.2', applyKind: 'restart' },
+        '0.19.0'
+      )
+    ).toBe('unexpected')
   })
 })

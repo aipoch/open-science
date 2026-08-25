@@ -167,6 +167,38 @@ export type NotebookRuntimeBindings = {
   r?: NotebookRuntimeBinding
 }
 
+// Stable evidence for the Runtime Environment an operation would use. An absent explicit Runtime
+// Binding is represented directly instead of being confused with a managed binding.
+export type RuntimeTargetReceipt =
+  | {
+      language: NotebookLanguage
+      selection: 'implicit-default' | 'explicit-binding'
+      runtimeSource: RuntimeSource
+      environmentName?: string
+      runtimeId: string
+      label: string
+      prefix?: string
+    }
+  | {
+      language: NotebookLanguage
+      // Target resolution itself failed or produced no enabled runtime. Do not invent ownership or a
+      // canonical identity in that case; later discovery work may attach a more specific typed error.
+      selection: 'unresolved'
+    }
+
+export type RuntimeBindingOperationResult =
+  | {
+      bound: NotebookRuntimeBinding
+      bindings: NotebookRuntimeBindings
+    }
+  | {
+      ok: false
+      bindingChanged: false
+      error: string
+      bindings: NotebookRuntimeBindings
+      target: RuntimeTargetReceipt
+    }
+
 // One entry in list_notebook_runtimes: an ENABLED runtime (app-managed + user-enabled external, never
 // disabled) plus whether it is the session's current binding and whether it can back the kernel loop.
 export type NotebookRuntimeListing = NotebookRuntimeBinding & {

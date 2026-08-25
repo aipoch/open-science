@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -27,6 +28,7 @@ import {
   getUploadedAttachmentPath,
   type UploadedAttachment
 } from '../../../../shared/uploads'
+import { createCachedImageFetchResponse } from './previews/cached-preview-image.test-support'
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
   id: 'message-1',
@@ -321,6 +323,7 @@ describe('ProjectFilesView', () => {
     projectFilesChangedListener = undefined
     container = document.createElement('div')
     document.body.appendChild(container)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(createCachedImageFetchResponse()))
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       previewResources: {
@@ -2864,12 +2867,14 @@ describe('ProjectFilesView', () => {
         .mocked(window.api.uploads.readPreview)
         .mock.calls.every(([request]) => request.maxBytes === 1)
     ).toBe(true)
-    expect(
-      container.querySelector('img[alt="Preview of typhoon_tracks.png"]')?.getAttribute('src')
-    ).toContain('open-science-preview://')
-    expect(
-      container.querySelector('img[alt="Preview of uploaded_image.png"]')?.getAttribute('src')
-    ).toContain('open-science-preview://')
+    await waitFor(() => {
+      expect(
+        container.querySelector('img[alt="Preview of typhoon_tracks.png"]')?.getAttribute('src')
+      ).toMatch(/^blob:/)
+      expect(
+        container.querySelector('img[alt="Preview of uploaded_image.png"]')?.getAttribute('src')
+      ).toMatch(/^blob:/)
+    })
   })
 
   it('reacquires an image thumbnail when the file changes at the same path', async () => {
@@ -3124,9 +3129,11 @@ describe('ProjectFilesView', () => {
     })
 
     expect(window.api.uploads.readPreview).toHaveBeenCalledTimes(uploads.length)
-    expect(container.querySelectorAll('img[alt^="Preview of upload-"]')).toHaveLength(
-      uploads.length
-    )
+    await waitFor(() => {
+      expect(container.querySelectorAll('img[alt^="Preview of upload-"]')).toHaveLength(
+        uploads.length
+      )
+    })
   })
 
   it('uses the same text preview capability for generated files and uploads', async () => {

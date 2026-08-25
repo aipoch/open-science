@@ -139,13 +139,53 @@ const customServerCredentialFingerprint = (server: StoredCustomMcpServer): strin
 const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string =>
   JSON.stringify([server.oauth ?? null, customServerCredentialFingerprint(server)])
 
+const unavailableConnectorMessage = (connector: string): string =>
+  `Connector ${JSON.stringify(connector)} is unavailable. ` +
+  'Do not retry with guessed Connector names. ' +
+  'Use only Connector names and methods documented by a loaded mcp-* Skill. ' +
+  'If the required Skill is unavailable, ask the user to enable or add the Connector in Settings > Connectors, then retry.'
+
+const disabledConnectorMessage = (connector: string): string =>
+  `Connector ${JSON.stringify(connector)} is disabled. ` +
+  'Do not retry with guessed Connector names. ' +
+  'Ask the user to enable it in Settings > Connectors, then retry the same call.'
+
+const unknownConnectorToolMessage = (connector: string, method: string): string =>
+  `unknown tool: ${connector}/${method}. ` +
+  'Do not retry with guessed method names. ' +
+  'Use only methods documented by a loaded mcp-* Skill, then retry with a documented method.'
+
+const connectorGateGuidance: Readonly<Record<string, string>> = {
+  missing_session:
+    'The Connector call could not be associated with the current Session. Do not retry this call. Ask the user to start a new Session before retrying.',
+  specialist_unavailable:
+    'The current Specialist is unavailable. Do not retry from this Specialist. Ask the user to switch to Main Agent or an available Specialist, then retry the same call.',
+  specialist_capability_denied:
+    "The current Specialist is not allowed to use this Connector. Do not retry from this Specialist. Use an allowed Connector, or ask the user to update this Specialist's Connector access in Settings > Specialists, then retry the same call.",
+  connector_unavailable:
+    'The Connector is unavailable. Do not retry with guessed Connector names or methods. Use only Connector names and methods documented by a loaded mcp-* Skill. Wait briefly and retry the same documented call once. If it remains unavailable, ask the user to check the Connector in Settings > Connectors.',
+  connector_disabled:
+    'The Connector is disabled. Do not retry until the user enables it in Settings > Connectors, then retry the same call.',
+  connector_unauthenticated:
+    'Connector authentication is required. Do not retry until the user signs in from Settings > Connectors, then retry the same call.',
+  connector_runtime_unavailable:
+    'The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open Science before retrying.',
+  connector_configuration_changed:
+    'The Connector configuration changed before the external tool was called. Retry the exact same call once.'
+}
+
+const connectorGateMessage = (category: string): string => {
+  const guidance = connectorGateGuidance[category]
+  return `connector call rejected: ${category}${guidance ? `. ${guidance}` : ''}`
+}
+
 // Deliberately contains only a stable category. In particular it must not interpolate connector
 // arguments, custom-server headers, credentials, or a Specialist's system prompt into an error that
 // may be rendered back to an agent.
 class ConnectorGateError extends Error {
   constructor(
     readonly category: string,
-    message = `connector call rejected: ${category}`
+    message = connectorGateMessage(category)
   ) {
     super(message)
     this.name = 'ConnectorGateError'
@@ -246,7 +286,7 @@ export class ConnectorService {
     if (!custom) {
       throw new ConnectorGateError(
         'connector_unavailable',
-        access.specialistScoped ? undefined : `connector not enabled: ${connector}`
+        access.specialistScoped ? undefined : unavailableConnectorMessage(connector)
       )
     }
     return this.callCustom(custom, customServers, method, args, context, access, signal)
@@ -295,7 +335,10 @@ export class ConnectorService {
     signal?: AbortSignal
   ): Promise<unknown> {
     if (!descriptor)
-      throw new ConnectorGateError('connector_unavailable', `unknown tool: ${connector}/${method}`)
+      throw new ConnectorGateError(
+        'connector_unavailable',
+        unknownConnectorToolMessage(connector, method)
+      )
 
     const authorizedConnectors = access.bypassMainPolicy
       ? undefined
@@ -342,7 +385,7 @@ export class ConnectorService {
     if (!access.bypassMainEnablement && !custom.enabled) {
       throw new ConnectorGateError(
         'connector_disabled',
-        `connector not enabled: ${custom.displayName}`
+        disabledConnectorMessage(custom.displayName)
       )
     }
     if (!this.isCustomConfigRunnable(custom, customServers)) {
@@ -391,7 +434,7 @@ export class ConnectorService {
     if (!tools.some((tool) => tool.name === method)) {
       throw new ConnectorGateError(
         'connector_unavailable',
-        `unknown tool: ${authorization.custom.name}/${method}`
+        unknownConnectorToolMessage(authorization.custom.name, method)
       )
     }
     authorization = await this.authorizeCustomForCurrentPolicy(
@@ -547,10 +590,7 @@ export class ConnectorService {
       const connectors = await this.currentConnectors()
       signal?.throwIfAborted()
       if (!this.isEnabled(connectorLabel, connectors)) {
-        throw new ConnectorGateError(
-          'connector_disabled',
-          `connector not enabled: ${connectorLabel}`
-        )
+        throw new ConnectorGateError('connector_disabled', disabledConnectorMessage(connectorLabel))
       }
       const request = this.authorizationRequest(
         connectorLabel,
@@ -601,7 +641,7 @@ export class ConnectorService {
       if (!access.bypassMainEnablement && !current.enabled) {
         throw new ConnectorGateError(
           'connector_disabled',
-          `connector not enabled: ${current.displayName}`
+          disabledConnectorMessage(current.displayName)
         )
       }
       if (!this.isCustomConfigRunnable(current, customServers)) {

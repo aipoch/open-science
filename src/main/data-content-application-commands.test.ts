@@ -18,6 +18,7 @@ import {
   type SessionDeletionResult
 } from '../shared/session-persistence'
 import { ApplicationCommandError } from '../shared/application-command-contract'
+import { ApplicationEventHub } from './application-events'
 
 const callerContext = createCallerContext({
   clientId: 'renderer-1',
@@ -140,8 +141,10 @@ const createDependencies = () => {
     messages: []
   }
   const sessions = {
+    list: vi.fn(),
     loadAll: vi.fn(),
     loadOne: vi.fn(),
+    loadUsage: vi.fn(),
     saveSession: vi.fn(async () => ({ created: true, session })),
     setDelegationPolicy: vi.fn(async () => session),
     deleteSession: vi.fn(async (): Promise<SessionDeletionResult> => ({
@@ -216,8 +219,10 @@ const WRAPPED_COMMAND_KEYS = [
   'projectUpdate',
   'sessionDelete',
   'sessionExportConversation',
+  'sessionList',
   'sessionLoadAll',
   'sessionLoadOne',
+  'sessionLoadUsage',
   'sessionSaveManifest',
   'sessionSave',
   'sessionSetDelegationPolicy',
@@ -247,7 +252,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 50 current data and content invoke channels', () => {
+  it('owns exactly the 52 current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -283,8 +288,10 @@ describe('Data and content application commands', () => {
         'projects:update',
         'sessions:delete-session',
         'sessions:export-conversation',
+        'sessions:list',
         'sessions:load-all',
         'sessions:load-one',
+        'sessions:load-usage',
         'sessions:save-manifest',
         'sessions:update-archive',
         'sessions:save-session',
@@ -709,9 +716,20 @@ describe('Data and content application commands', () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
     const loadResult = { sessions: [], manifest: { version: 1 as const } }
+    const listResult = { sessions: [], manifest: { version: 1 as const } }
+    const usageResult = {
+      sessionCreatedAt: [],
+      projectCreatedAt: [],
+      artifactCreatedAt: [],
+      runsAt: [],
+      usageEvents: [],
+      totalArtifacts: 0
+    }
     const loadedSession = deps.session
+    deps.sessions.list.mockResolvedValueOnce(listResult)
     deps.sessions.loadAll.mockResolvedValueOnce(loadResult)
     deps.sessions.loadOne.mockResolvedValueOnce(loadedSession)
+    deps.sessions.loadUsage.mockResolvedValueOnce(usageResult)
     registerDataContentApplicationCommands(router.registrar, deps.dependencies)
     const updateRequest = { id: 'project-1', name: 'Updated project', expectedUpdatedAt: 1 }
     const deleteProjectRequest = { id: 'project-1' }
@@ -732,11 +750,17 @@ describe('Data and content application commands', () => {
       router.dispatcher.invoke(dataContentApplicationCommands.sessionLoadAll, invocation([]))
     ).resolves.toBe(loadResult)
     await expect(
+      router.dispatcher.invoke(dataContentApplicationCommands.sessionList, invocation([]))
+    ).resolves.toBe(listResult)
+    await expect(
       router.dispatcher.invoke(
         dataContentApplicationCommands.sessionLoadOne,
         invocation([deleteSessionRequest] as const)
       )
     ).resolves.toBe(loadedSession)
+    await expect(
+      router.dispatcher.invoke(dataContentApplicationCommands.sessionLoadUsage, invocation([]))
+    ).resolves.toBe(usageResult)
     await router.dispatcher.invoke(
       dataContentApplicationCommands.sessionSaveManifest,
       invocation([manifestRequest] as const)
@@ -751,10 +775,12 @@ describe('Data and content application commands', () => {
     expect(deps.projects.update).toHaveBeenCalledWith(updateRequest)
     expect(deps.projects.delete).toHaveBeenCalledWith('project-1')
     expect(deps.sessions.loadAll).toHaveBeenCalledOnce()
+    expect(deps.sessions.list).toHaveBeenCalledOnce()
     expect(deps.sessions.loadOne).toHaveBeenCalledWith(deleteSessionRequest)
+    expect(deps.sessions.loadUsage).toHaveBeenCalledOnce()
     expect(deps.sessions.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(deps.sessions.deleteSession).toHaveBeenCalledWith(deleteSessionRequest)
-    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(3)
+    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(5)
     expect(deps.events.publish).toHaveBeenCalledWith('project:updated', deps.project)
     expect(deps.events.publish).toHaveBeenCalledWith('project:deleted', {
       projectId: 'project-1'
@@ -910,14 +936,20 @@ describe('Data and content application commands', () => {
     })
   })
 
-  it('preserves standalone upload publication failures after the upload commits', async () => {
+  it('returns a committed standalone upload when one event subscriber fails', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
+    const events = new ApplicationEventHub()
     const publicationFailure = new Error('renderer broadcast failed')
-    deps.events.publish.mockImplementationOnce(() => {
+    const laterSubscriber = vi.fn()
+    events.subscribe(() => {
       throw publicationFailure
     })
-    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    events.subscribe(laterSubscriber)
+    registerDataContentApplicationCommands(router.registrar, {
+      ...deps.dependencies,
+      events
+    })
     const request = {
       transferId: 'transfer-standalone',
       sourcePath: '/tmp/report.txt',
@@ -930,8 +962,16 @@ describe('Data and content application commands', () => {
         dataContentApplicationCommands.uploadStageLocalPath,
         invocation([request] as const)
       )
-    ).rejects.toBe(publicationFailure)
+    ).resolves.toBe(deps.attachment)
     expect(deps.uploads.stageLocalPath).toHaveBeenCalledOnce()
-    expect(deps.events.publish).toHaveBeenCalledOnce()
+    expect(laterSubscriber).toHaveBeenCalledWith({
+      channel: 'project-files:changed',
+      payload: {
+        projectId: 'project-1',
+        sessionId: 'standalone-uploads',
+        sources: ['upload'],
+        kind: 'upsert'
+      }
+    })
   })
 })

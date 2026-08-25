@@ -28,6 +28,11 @@ type HostSessionsRuntime = {
   getSnapshot(): AcpStateSnapshot | undefined
 }
 
+type HostSessionsReferencedSessionResolver = (
+  context: HostSessionReadContext,
+  sessionId: string
+) => Promise<{ projectId: string } | undefined>
+
 type ArchivedFilter = 'exclude' | 'include' | 'only'
 
 type NormalizedListOptions = {
@@ -205,7 +210,8 @@ const sessionProjection = (
 class HostSessionsService {
   constructor(
     private readonly repository: HostSessionsRepository,
-    private readonly runtime: HostSessionsRuntime
+    private readonly runtime: HostSessionsRuntime,
+    private readonly resolveReferencedSession?: HostSessionsReferencedSessionResolver
   ) {}
 
   async list(options: unknown, context: HostSessionReadContext): Promise<unknown> {
@@ -277,9 +283,18 @@ class HostSessionsService {
         'host.sessions.inspect session_id must be a non-empty string of at most 512 characters.'
       )
     }
-    const diagnostic = await this.repository.readSession(context.projectId, sessionId)
+    let diagnostic = await this.repository.readSession(context.projectId, sessionId)
     if (diagnostic.status === 'unreadable') {
       throw new Error(`Session is unreadable in the current Project: ${sessionId}`)
+    }
+    if (diagnostic.status === 'missing') {
+      const referenced = await this.resolveReferencedSession?.(context, sessionId)
+      if (referenced && referenced.projectId !== context.projectId) {
+        diagnostic = await this.repository.readSession(referenced.projectId, sessionId)
+      }
+    }
+    if (diagnostic.status === 'unreadable') {
+      throw new Error(`Referenced Session is unreadable: ${sessionId}`)
     }
     if (diagnostic.status === 'missing') {
       throw new Error(`Session not found in the current Project: ${sessionId}`)

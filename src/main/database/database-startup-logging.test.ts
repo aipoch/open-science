@@ -111,7 +111,8 @@ describe('database startup logging', () => {
               '0011_cross_resource_tags',
               '0012_tag_ordering',
               '0013_session_projection',
-              '0014_agent_memory'
+              '0014_review_query_indexes',
+              '0015_agent_memory'
             ],
             adoptedLegacy: true
           })

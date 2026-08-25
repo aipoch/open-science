@@ -315,6 +315,72 @@ describe('RuntimesPanel', () => {
     expect(userToggle?.getAttribute('data-state')).toBe('unchecked')
   })
 
+  it('does not offer package-install authorization for an agent-created environment', async () => {
+    const agentCreated: DiscoveredInterpreter = {
+      language: 'python',
+      provenance: 'agent-created',
+      envId: '/data/runtime/envs/agent-analysis/bin/python',
+      interpreterPath: '/data/runtime/envs/agent-analysis/bin/python',
+      label: 'Agent analysis',
+      version: '3.12.4',
+      runnable: true
+    }
+    listEnvironments.mockResolvedValue({ python: [...pythonEnvs, agentCreated], r: rEnvs })
+
+    await render()
+
+    expect(
+      container.querySelector('[aria-label="Enable Agent analysis"]')?.getAttribute('data-state')
+    ).toBe('checked')
+    expect(
+      container.querySelector('[aria-label="Allow package install for Agent analysis"]')
+    ).toBeNull()
+  })
+
+  it('lets an enabled user-owned Python environment authorize package installation', async () => {
+    getEnablement.mockResolvedValue({
+      enabled: { '/usr/bin/python3': true },
+      installAuthorized: {}
+    })
+    setInstallAuthorized.mockResolvedValue({
+      enabled: { '/usr/bin/python3': true },
+      installAuthorized: { '/usr/bin/python3': true }
+    })
+
+    await render()
+
+    const installToggle = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Allow package install for System Python"]'
+    )
+    expect(installToggle?.disabled).toBe(false)
+
+    await click(installToggle)
+
+    expect(setInstallAuthorized).toHaveBeenCalledWith('python', '/usr/bin/python3', true)
+  })
+
+  it('explains that package installation is unavailable for an enabled user-owned R environment', async () => {
+    getEnablement.mockImplementation(async (language: string) =>
+      language === 'r'
+        ? {
+            enabled: { '/opt/conda/envs/bio/bin/R': true },
+            installAuthorized: { '/opt/conda/envs/bio/bin/R': true }
+          }
+        : enablement
+    )
+
+    await render()
+
+    const installToggle = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Allow package install for R 4.4.1"]'
+    )
+    expect(installToggle?.disabled).toBe(true)
+    expect(installToggle?.getAttribute('data-state')).toBe('unchecked')
+    expect(container.textContent).toContain(
+      'Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
+    )
+  })
+
   it('surfaces the "cannot disable the last enabled runtime" error inline', async () => {
     setEnvironmentEnabled.mockRejectedValueOnce(
       new Error('Cannot disable the last enabled runtime for python.')

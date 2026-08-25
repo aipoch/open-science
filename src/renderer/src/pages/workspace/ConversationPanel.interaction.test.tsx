@@ -377,14 +377,18 @@ const createPanelDefaults = (): PanelProps => ({
       error: null,
       historyStatus: '',
       isHistoryBrowsing: false,
-      isUploading: false
+      isUploading: false,
+      caretRequest: undefined
     },
     actions: {
       changeDoc: vi.fn(),
       navigateHistory: vi.fn(() => false),
       stageFiles: onStageAttachmentFiles,
+      stagePastedText: vi.fn(),
       cancelTransfer: vi.fn(),
       removeAttachment: vi.fn(),
+      restorePastedText: vi.fn(),
+      undoPastedTextRemoval: vi.fn(() => false),
       setError: vi.fn()
     }
   },
@@ -610,6 +614,51 @@ describe('ConversationPanel header spacing', () => {
     const surfaceFade = container.querySelector('[data-testid="composer-surface-fade"]')
     expect(surfaceFade?.classList.contains('-top-12')).toBe(true)
     expect(surfaceFade?.classList.contains('h-12')).toBe(true)
+  })
+})
+
+describe('ConversationPanel session loading presentation', () => {
+  it('replaces the transcript with a skeleton until lazy Session content is hydrated', () => {
+    const loadingSession: ChatSession = {
+      id: 'session-loading',
+      projectId: 'project-a',
+      title: 'Loading conversation',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      contentLoaded: false,
+      activeMessageCount: 12,
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({ view: { activeSession: loadingSession } })
+
+    expect(container.querySelector('[data-testid="session-switch-skeleton"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="scroller-pending-elicitations"]')).toBeNull()
+
+    renderPanel({
+      view: {
+        activeSession: {
+          ...loadingSession,
+          contentLoaded: undefined,
+          messages: [
+            {
+              id: 'message-1',
+              role: 'user',
+              content: 'Loaded content',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        }
+      }
+    })
+
+    expect(container.querySelector('[data-testid="session-switch-skeleton"]')).toBeNull()
+    expect(container.querySelector('[data-testid="scroller-pending-elicitations"]')).not.toBeNull()
   })
 })
 
@@ -989,7 +1038,7 @@ describe('ConversationPanel composer intake', () => {
     renderPanel()
 
     expect(getComposerEditor().getAttribute('data-placeholder')).toBe(
-      `Ask anything — / skills · @ files · ${shortcut} search · ↑↓ history`
+      `Ask anything — / skills · @ files · # sessions · ${shortcut} search · ↑↓ history`
     )
     window.api = previousApi
   })
@@ -1715,8 +1764,78 @@ describe('ConversationPanel composer intake', () => {
     expect(progress?.getAttribute('aria-valuenow')).toBe('25')
     expect(container.textContent).toContain('25% of 100 B')
     expect(cancel).not.toBeNull()
+    expect(cancel?.parentElement?.className).toContain('h-9')
+    expect(cancel?.parentElement?.className).not.toContain('h-11')
     act(() => cancel?.click())
     expect(onCancelAttachmentTransfer).toHaveBeenCalledWith(transfer)
+  })
+
+  it('renders a reversible pasted-text attachment and routes restore and close separately', () => {
+    const pastedTextName = 'Pastedtext-div-class-contents-l.txt'
+    const attachment = {
+      id: 'upload-paste',
+      sessionId: '.pending',
+      name: pastedTextName,
+      originalName: pastedTextName,
+      path: `/uploads/${pastedTextName}`,
+      mimeType: 'text/plain',
+      size: 12_000
+    }
+    const restorePastedText = vi.fn()
+    const removeAttachment = vi.fn()
+    renderPanel({
+      composer: {
+        view: {
+          doc: {
+            nodes: [
+              { type: 'text', text: 'before ' },
+              {
+                type: 'pasted-text',
+                id: 'paste-1',
+                text: '<div class="contents">long payload',
+                attachmentId: attachment.id
+              },
+              { type: 'text', text: ' after' }
+            ]
+          },
+          attachments: [attachment]
+        },
+        actions: { restorePastedText, removeAttachment }
+      }
+    })
+
+    const card = container.querySelector<HTMLElement>('[data-pasted-text-attachment="true"]')
+    if (!card) throw new Error('pasted-text attachment not found')
+    const restore = Array.from(card?.querySelectorAll('button') ?? []).find((button) =>
+      button.textContent?.includes('Show in text field')
+    )
+    const remove = card?.querySelector<HTMLButtonElement>(
+      `button[aria-label="Remove attachment ${pastedTextName}"]`
+    )
+
+    expect(card?.getAttribute('data-state')).toBe('success')
+    expect(card?.id).toBe('composer-pasted-text-attachment-paste-1')
+    expect(card?.className).toContain('h-9')
+    expect(card?.className).not.toContain('h-12')
+    expect(card?.textContent).toContain('<div class="conte...')
+    expect(card?.textContent).not.toContain(pastedTextName)
+    expect(restore?.querySelector('span')?.className).toContain('whitespace-nowrap')
+    const scrollIntoView = vi.fn()
+    const animate = vi.fn()
+    Object.defineProperty(card, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    Object.defineProperty(card, 'animate', { configurable: true, value: animate })
+    const marker = getComposerEditor().querySelector<HTMLElement>('[data-pasted-text-id="paste-1"]')
+    act(() => marker?.click())
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'nearest'
+    })
+    expect(animate).toHaveBeenCalledOnce()
+    act(() => restore?.click())
+    expect(restorePastedText).toHaveBeenCalledWith('paste-1')
+    act(() => remove?.click())
+    expect(removeAttachment).toHaveBeenCalledWith(attachment)
   })
 
   it('uses a flat border without a card shadow', () => {
@@ -3973,6 +4092,104 @@ describe('ConversationPanel fix loop lock', () => {
     ).toContain('Available Specialist')
   })
 
+  it('shows the selected Specialist while idle reconfiguration is in flight', () => {
+    useSpecialistStore.setState({
+      items: [
+        {
+          kind: 'custom',
+          id: 'specialist-a',
+          name: 'SPECIALIST_A',
+          displayName: 'Specialist A',
+          colorKey: 'blue',
+          description: 'Currently applied.',
+          systemPrompt: 'Help the user.',
+          enabled: true,
+          capabilityMode: 'full',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        },
+        {
+          kind: 'custom',
+          id: 'specialist-b',
+          name: 'SPECIALIST_B',
+          displayName: 'Specialist B',
+          colorKey: 'purple',
+          description: 'Being configured.',
+          systemPrompt: 'Help the user.',
+          enabled: true,
+          capabilityMode: 'full',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        }
+      ],
+      isLoaded: true
+    })
+
+    renderPanel({
+      view: {
+        activeSession: { ...idleSession, specialistId: 'specialist-a' }
+      },
+      specialist: {
+        view: {
+          specialist: {
+            historyId: 'specialist-b',
+            barrierInFlight: true
+          }
+        }
+      }
+    })
+
+    expect(
+      container
+        .querySelector('[data-testid="composer-specialist-picker-trigger"]')
+        ?.getAttribute('aria-label')
+    ).toContain('Specialist B')
+  })
+
+  it('keeps the Specialist control visible while switching back to Main Agent', () => {
+    useSpecialistStore.setState({
+      items: [
+        {
+          kind: 'custom',
+          id: 'specialist-a',
+          name: 'SPECIALIST_A',
+          displayName: 'Specialist A',
+          colorKey: 'blue',
+          description: 'Currently applied.',
+          systemPrompt: 'Help the user.',
+          enabled: true,
+          capabilityMode: 'full',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+          revision: 1
+        }
+      ],
+      isLoaded: true
+    })
+
+    renderPanel({
+      view: {
+        activeSession: { ...idleSession, specialistId: 'specialist-a' }
+      },
+      specialist: {
+        view: {
+          specialist: {
+            historyId: undefined,
+            barrierInFlight: true
+          }
+        }
+      }
+    })
+
+    expect(
+      container
+        .querySelector('[data-testid="composer-specialist-picker-trigger"]')
+        ?.getAttribute('aria-label')
+    ).toContain('Specialist A')
+  })
+
   it('cancel button is visible when session is running and calls onCancelRun', () => {
     const onCancelRun = vi.fn()
     const runningSession: ChatSession = {
@@ -4799,6 +5016,49 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(button).toBeDefined()
     act(() => button?.click())
     expect(openSettingsToPanel).toHaveBeenCalledWith('agent')
+  })
+
+  it('opens Agent settings from an unsupported Codex ACP session resume failure', () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({ openSettingsToPanel })
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          interrupted: true,
+          error:
+            'Agent session resume failed: Codex ACP adapter 1.1.4 is no longer supported. Update to 1.6.2 or later in settings.'
+        }
+      }
+    })
+
+    expect(errorBoxText()).toContain('Agent session resume failed: Codex ACP adapter 1.1.4')
+    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent === 'Agent settings'
+    )
+    expect(button).toBeDefined()
+    act(() => button?.click())
+    expect(openSettingsToPanel).toHaveBeenCalledWith('agent')
+  })
+
+  it('keeps an unrelated session resume failure in the Resume banner', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          interrupted: true,
+          error: 'Agent session resume failed: connection reset'
+        }
+      }
+    })
+
+    expect(container.querySelector('[aria-label="Resume session"]')).not.toBeNull()
+    expect(
+      Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent === 'Agent settings'
+      )
+    ).toBeUndefined()
   })
 
   it('shows both a transient actionError and the run failure, keeping the Report button', () => {

@@ -1,6 +1,9 @@
 export type PythonLibraryMethodEffect = {
-  effect: 'read' | 'mutate'
+  effect: 'read' | 'mutate' | 'unknown'
+  unknownScope?: 'receiver' | 'namespace'
   unsafeNamespace?: boolean
+  scopedOpaque?: boolean
+  externalState?: boolean
   returnType?: string
   destructuredReturnTypes?: string[]
   mutatesKeyword?: string
@@ -46,6 +49,17 @@ type PythonLibraryEffects = Record<string, PythonLibraryObjectSummary>
 // Static effects are deliberately limited to stable, documented behavior used by ordinary
 // scientific Notebook code. Unknown methods continue through the conservative receiver-call path.
 const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
+  importlib: {
+    kind: 'module',
+    methods: {
+      import_module: {
+        effect: 'unknown',
+        unknownScope: 'receiver',
+        scopedOpaque: true,
+        externalState: true
+      }
+    }
+  },
   pickle: {
     kind: 'module',
     methods: {

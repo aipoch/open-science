@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   isNotebookExecuteToolName,
+  isNotebookManagePackagesToolName,
   matchNotebookControlTool,
   matchNotebookRunTool
 } from './notebook-tool-names'
@@ -80,6 +81,15 @@ describe('isNotebookExecuteToolName', () => {
       'inspect_packages'
     )
     expect(matchNotebookControlTool('mcp__acme-db__notebook_restart')).toBeUndefined()
+  })
+
+  it('matches manage_packages only for the canonical notebook server', () => {
+    expect(isNotebookManagePackagesToolName('open-science-notebook.manage_packages')).toBe(true)
+    expect(isNotebookManagePackagesToolName('mcp__open_science_notebook__manage_packages')).toBe(
+      true
+    )
+    expect(isNotebookManagePackagesToolName('mcp__acme-db__manage_packages')).toBe(false)
+    expect(isNotebookManagePackagesToolName('manage_packages')).toBe(false)
   })
 
   it('rejects empty or missing names', () => {

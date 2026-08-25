@@ -1,7 +1,11 @@
 import type { AcpMessageImage, AcpRuntimeEvent } from '../../../../shared/acp'
 import type { FileReference } from '../../../../shared/artifacts'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
-import type { MessagePart } from '../../../../shared/session-persistence'
+import {
+  collectSessionReferences,
+  type MessagePart,
+  type SessionReference
+} from '../../../../shared/session-persistence'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -183,6 +187,7 @@ type PromptDispatch = {
   attachments: UploadedAttachment[]
   forcedSkillIds?: string[]
   referencedArtifacts?: FileReference[]
+  referencedSessions?: SessionReference[]
   replay?: HistoryReplayContext & {
     resumeFallback?: HistoryReplayContext
     contextReset?: boolean
@@ -214,7 +219,9 @@ const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatc
     useSessionStore.getState().sessions.find((session) => session.id === request.sessionId)
       ?.memoryEnabled !== false
   ] as const
-  const result = runtime.sendPrompt(...args)
+  const result = request.referencedSessions?.length
+    ? runtime.sendPrompt(...args, request.referencedSessions)
+    : runtime.sendPrompt(...args)
   void result
     .then(() => request.accepted?.())
     .catch((error) => {
@@ -348,6 +355,7 @@ const startPendingPrompt = (
       attachments,
       forcedSkillIds: request.forcedSkillIds,
       referencedArtifacts: request.referencedArtifacts,
+      referencedSessions: collectSessionReferences(request.parts),
       replay: { ...request.replay, contextReset: Boolean(request.contextReset) },
       turnIntent: request.turnIntent,
       accepted: () =>
@@ -596,6 +604,7 @@ const sendWorkspaceMessage = async (
       attachments: promptMedia?.currentAttachments ?? promptAttachments,
       forcedSkillIds: input.forcedSkillIds,
       referencedArtifacts: input.referencedArtifacts,
+      referencedSessions: collectSessionReferences(input.parts),
       replay: promptMedia
         ? { ...replay, historyAttachments: promptMedia.historyAttachments }
         : replay,

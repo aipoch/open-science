@@ -28,7 +28,7 @@ import { getProjectDbClient } from '../projects/prisma-client'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { SessionMetadataSnapshot } from './coordinator'
 import { MainMessageAttributionAuthority } from './message-attribution-authority'
-import { isSessionCatalogAuthoritative } from './catalog-authority'
+import { canReconcileSessionAbsences, withProjectDeletionRecoveryStatus } from './catalog-authority'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
 
 type SessionPersistenceBackend = {
@@ -52,8 +52,8 @@ type SessionPersistenceBackend = {
 
 type SessionPersistenceHandlers = {
   loadAll: () => Promise<LoadAllSessionsResult>
-  list?: () => Promise<ListSessionSummariesResult>
-  loadUsage?: () => Promise<SessionUsageProjection>
+  list: () => Promise<ListSessionSummariesResult>
+  loadUsage: () => Promise<SessionUsageProjection>
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
     session: PersistedChatSession,
@@ -78,6 +78,12 @@ type SessionStartupLoader = {
   loadAllReadOnly: () => Promise<LoadAllSessionsResult>
 }
 
+type SessionCatalogHydrator = (
+  loadCatalog: () => Promise<LoadAllSessionsResult>
+) => Promise<LoadAllSessionsResult>
+
+const loadCatalogDirectly: SessionCatalogHydrator = (loadCatalog) => loadCatalog()
+
 type SessionMetadataLoader = {
   sessionMetadataSnapshot: () => Promise<SessionMetadataSnapshot>
 }
@@ -85,27 +91,11 @@ type SessionMetadataLoader = {
 type ProjectDeletionRecoveryForSessionRead =
   { isComplete: true } | { isComplete: false; result: LoadAllSessionsResult }
 
-const withProjectDeletionRecoveryStatus = (
-  result: LoadAllSessionsResult,
-  isProjectDeletionRecoveryComplete: boolean
-): LoadAllSessionsResult => ({
-  ...result,
-  diagnostics: {
-    isComplete: result.diagnostics?.isComplete ?? true,
-    warnings: result.diagnostics?.warnings ?? [],
-    ...result.diagnostics,
-    isProjectDeletionRecoveryComplete
-  }
-})
-
-const canReconcileSessionAbsences = (result: LoadAllSessionsResult): boolean =>
-  result.diagnostics?.isProjectDeletionRecoveryComplete === true &&
-  isSessionCatalogAuthoritative(result.diagnostics)
-
 const recoverProjectDeletionsForSessionRead = async (
   projectRecovery: ProjectDeletionRecoveryBackend,
   sessionLoader: Pick<SessionStartupLoader, 'loadAllReadOnly'>,
-  log: Pick<Logger, 'warn'> = createLogger('session-persistence')
+  log: Pick<Logger, 'warn'> = createLogger('session-persistence'),
+  hydrateCatalog: SessionCatalogHydrator = loadCatalogDirectly
 ): Promise<ProjectDeletionRecoveryForSessionRead> => {
   try {
     await projectRecovery.recoverPendingDeletions()
@@ -123,7 +113,9 @@ const recoverProjectDeletionsForSessionRead = async (
     }
     return {
       isComplete: false,
-      result: withProjectDeletionRecoveryStatus(await sessionLoader.loadAllReadOnly(), false)
+      result: await hydrateCatalog(async () =>
+        withProjectDeletionRecoveryStatus(await sessionLoader.loadAllReadOnly(), false)
+      )
     }
   }
 }
@@ -144,12 +136,20 @@ const loadSessionMetadataAfterProjectRecovery = async (
 const loadSessionsAfterProjectRecovery = async (
   projectRecovery: ProjectDeletionRecoveryBackend,
   sessionLoader: SessionStartupLoader,
-  log: Pick<Logger, 'warn'> = createLogger('session-persistence')
+  log: Pick<Logger, 'warn'> = createLogger('session-persistence'),
+  hydrateCatalog: SessionCatalogHydrator = loadCatalogDirectly
 ): Promise<LoadAllSessionsResult> => {
-  const recovery = await recoverProjectDeletionsForSessionRead(projectRecovery, sessionLoader, log)
+  const recovery = await recoverProjectDeletionsForSessionRead(
+    projectRecovery,
+    sessionLoader,
+    log,
+    hydrateCatalog
+  )
   if (!recovery.isComplete) return recovery.result
 
-  return withProjectDeletionRecoveryStatus(await sessionLoader.loadAll(), true)
+  return hydrateCatalog(async () =>
+    withProjectDeletionRecoveryStatus(await sessionLoader.loadAll(), true)
+  )
 }
 
 // Adapts the coordinator into small handlers that are easy to unit test.
@@ -318,6 +318,8 @@ export {
 }
 export type {
   ProjectDeletionRecoveryForSessionRead,
+  ProjectDeletionRecoveryBackend,
+  SessionCatalogHydrator,
   SessionPersistenceBackend,
   SessionPersistenceHandlers
 }

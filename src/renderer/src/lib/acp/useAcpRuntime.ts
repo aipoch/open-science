@@ -109,7 +109,8 @@ const useAcpRuntime = (): {
     contextReset?: AcpPromptRequest['contextReset'],
     planContinuation?: AcpPromptRequest['planContinuation'],
     turnIntent?: AcpPromptRequest['turnIntent'],
-    memoryEnabled?: boolean
+    memoryEnabled?: boolean,
+    referencedSessions?: AcpPromptRequest['referencedSessions']
   ) => Promise<AcpStateSnapshot>
   respondToPermission: (
     requestId: string,
@@ -404,7 +405,8 @@ const useAcpRuntime = (): {
       contextReset?: AcpPromptRequest['contextReset'],
       planContinuation?: AcpPromptRequest['planContinuation'],
       turnIntent?: AcpPromptRequest['turnIntent'],
-      memoryEnabled = true
+      memoryEnabled = true,
+      referencedSessions?: AcpPromptRequest['referencedSessions']
     ) =>
       runSendPromptAction(() =>
         window.api.acp.sendPrompt({
@@ -416,6 +418,7 @@ const useAcpRuntime = (): {
           ...(forcedSkillIds && forcedSkillIds.length > 0 ? { forcedSkillIds } : {}),
           // Same minimal-request rule for `@`-mentioned artifacts.
           ...(referencedArtifacts && referencedArtifacts.length > 0 ? { referencedArtifacts } : {}),
+          ...(referencedSessions && referencedSessions.length > 0 ? { referencedSessions } : {}),
           // Only present right after a context reset, when a transcript is replayed for continuity.
           ...(historyPreamble ? { historyPreamble } : {}),
           ...(historyAttachments && historyAttachments.length > 0 ? { historyAttachments } : {}),

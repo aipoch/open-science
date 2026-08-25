@@ -101,6 +101,7 @@ export class AnthropicProviderBridge {
     if (!initial) throw new Error('The initial Anthropic bridge target is not registered.')
     this.target = initial
     this.host = new ProviderLoopbackHttpHost({
+      diagnosticName: 'anthropic',
       credentialMode: 'bearer-or-api-key',
       createConnection: (origin, token) => Object.freeze({ baseUrl: origin, token }),
       onUnauthorized: (response) =>

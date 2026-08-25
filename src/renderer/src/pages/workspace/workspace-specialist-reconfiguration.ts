@@ -19,7 +19,7 @@ type IdleSpecialistFailure = {
 
 type IdleSpecialistAttempt = {
   complete: () => boolean
-  recordFailure: (message: string) => void
+  recordFailure: (message: string) => boolean
 }
 
 const specialistNameFor = (
@@ -50,7 +50,7 @@ const useWorkspaceSpecialistReconfiguration = (
   error: WorkspaceSpecialistReconfigureError | null
   setError: Dispatch<SetStateAction<WorkspaceSpecialistReconfigureError | null>>
   idleErrorFor: (sessionId: string | undefined) => WorkspaceSpecialistReconfigureError | null
-  clearIdleRetry: (sessionId: string) => void
+  clearIdleRetry: (sessionId: string) => boolean
   beginIdleAttempt: (sessionId: string, specialistId: string | undefined) => IdleSpecialistAttempt
   retryIdle: (
     activeSessionId: string | undefined,
@@ -75,9 +75,10 @@ const useWorkspaceSpecialistReconfiguration = (
     })
   }, [])
   const clearIdleRetry = useCallback(
-    (sessionId: string): void => {
-      idleAttemptGenerations.current.delete(sessionId)
+    (sessionId: string): boolean => {
+      const invalidated = idleAttemptGenerations.current.delete(sessionId)
       removeIdleFailure(sessionId)
+      return invalidated
     },
     [removeIdleFailure]
   )
@@ -92,7 +93,8 @@ const useWorkspaceSpecialistReconfiguration = (
           idleAttemptGenerations.current.delete(sessionId)
           return true
         },
-        recordFailure: (message: string): void => {
+        recordFailure: (message: string): boolean => {
+          if (idleAttemptGenerations.current.get(sessionId) !== generation) return false
           setIdleFailures((current) => {
             if (idleAttemptGenerations.current.get(sessionId) !== generation) return current
             return {
@@ -108,6 +110,7 @@ const useWorkspaceSpecialistReconfiguration = (
               }
             }
           })
+          return true
         }
       }
     },

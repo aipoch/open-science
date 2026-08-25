@@ -446,6 +446,7 @@ describe('workspace session controller', () => {
       message: 'switch rejected',
       committed: false
     })
+    expect(hook.result.current.view.specialist.historyId).toBe('specialist-a')
     expect(hook.result.current.view.specialist.barrierInFlight).toBe(false)
 
     await act(async () => {
@@ -460,6 +461,39 @@ describe('workspace session controller', () => {
     })
     expect(useSessionStore.getState().sessions[0].specialistId).toBe('specialist-b')
     expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+  })
+
+  it('exposes an idle Session Specialist selection while reconfiguration is in flight', async () => {
+    const active = session({ specialistId: 'specialist-a' })
+    const switchRequest = deferred<{ status: 'applied'; contextReset: boolean }>()
+    const setSessionSpecialist = vi.fn(() => switchRequest.promise)
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    window.api = { specialist: { setSessionSpecialist } } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [
+        specialist('specialist-a', 'Specialist A'),
+        specialist('specialist-b', 'Specialist B')
+      ]
+    })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.selectSpecialist('specialist-b'))
+
+    expect(setSessionSpecialist).toHaveBeenCalledWith({
+      sessionId: active.id,
+      specialistId: 'specialist-b'
+    })
+    expect(hook.result.current.view.specialist.barrierInFlight).toBe(true)
+    const visibleSpecialistWhilePending = hook.result.current.view.specialist.historyId
+
+    await act(async () => {
+      switchRequest.resolve({ status: 'applied', contextReset: false })
+      await switchRequest.promise
+    })
+
+    expect(visibleSpecialistWhilePending).toBe('specialist-b')
+    expect(useSessionStore.getState().sessions[0].specialistId).toBe('specialist-b')
   })
 
   it('keeps idle Specialist failures scoped to each Session', async () => {
@@ -655,6 +689,62 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
     expect(hook.result.current.actions.retrySpecialistSelection()).toBe(false)
     expect(setSessionSpecialist).toHaveBeenCalledOnce()
+  })
+
+  it('clears an in-flight idle selection after an authoritative handoff supersedes it', async () => {
+    const active = session({ specialistId: 'specialist-a' })
+    const authoritative = specialist('specialist-c', 'Specialist C')
+    const switchRequest = deferred<{ status: 'applied'; contextReset: boolean }>()
+    let handoffListener: ((event: CompletionHandoffLifecycleEvent) => void) | undefined
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    window.api = {
+      specialist: {
+        setSessionSpecialist: vi.fn(() => switchRequest.promise),
+        resolveSessionSpecialist: vi.fn().mockResolvedValue({
+          kind: 'bound',
+          profile: authoritative
+        }),
+        onHandoffLifecycleEvent: vi.fn((listener) => {
+          handoffListener = listener
+          return () => undefined
+        })
+      }
+    } as unknown as Window['api']
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [specialist('specialist-b', 'Specialist B'), authoritative]
+    })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.selectSpecialist('specialist-b'))
+    await act(async () => {
+      handoffListener?.({
+        id: 'handoff-1',
+        sessionId: active.id,
+        sequence: 1,
+        observedAt: 1,
+        phase: 'continuation-start',
+        target: 'Specialist C',
+        provenance: { originatingTurnId: 'turn-1', attachmentIds: [], artifactIds: [] }
+      })
+      await Promise.resolve()
+    })
+    hook.rerender(useSessionStore.getState().sessions[0])
+
+    expect(hook.result.current.view.specialist.historyId).toBe('specialist-c')
+    expect(hook.result.current.lifecycle.captureSendIntent(false)).toMatchObject({
+      hasPendingSwitch: false,
+      pendingSpecialistId: 'specialist-c'
+    })
+
+    await act(async () => {
+      switchRequest.resolve({ status: 'applied', contextReset: false })
+      await switchRequest.promise
+    })
+    hook.rerender(useSessionStore.getState().sessions[0])
+
+    expect(useSessionStore.getState().sessions[0].specialistId).toBe('specialist-c')
+    expect(hook.result.current.view.specialist.historyId).toBe('specialist-c')
   })
 
   it('discards an idle Specialist failure after a newer pending-switch update', async () => {

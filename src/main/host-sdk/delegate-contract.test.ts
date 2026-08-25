@@ -44,7 +44,7 @@ describe('Agent-facing delegate contract', () => {
     })
     expect(DELEGATE_AGENT_CONTRACT.options.properties).not.toHaveProperty('timeout_seconds')
     expect(DELEGATE_AGENT_CONTRACT.returns.oneOf[0].properties.children.items.required).toContain(
-      'frame_id'
+      'frameId'
     )
     expect(singleRequest.properties.profile.description).toContain(
       'Omit to inherit the authenticated parent Specialist'
@@ -117,7 +117,7 @@ describe('Agent-facing delegate contract', () => {
 })
 
 describe('Agent-facing collect contract', () => {
-  it('publishes camel-case selector and option inputs while retaining snake-case returns', () => {
+  it('publishes camel-case selector, option, and return fields', () => {
     const explicitSelector = COLLECT_AGENT_CONTRACT.selectors.items.oneOf[1]
     expect(explicitSelector).toMatchObject({
       additionalProperties: false,
@@ -131,21 +131,25 @@ describe('Agent-facing collect contract', () => {
       maximum: 1800,
       default: 30
     })
+    expect(COLLECT_AGENT_CONTRACT.options.properties.returnWhen).toMatchObject({
+      enum: ['all', 'any'],
+      default: 'all'
+    })
     expect(COLLECT_AGENT_CONTRACT.options.properties).not.toHaveProperty('timeout_seconds')
     expect(COLLECT_AGENT_CONTRACT.options.additionalProperties).toBe(false)
-    expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('frame_id')
-    expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('attempt_id')
+    expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('frameId')
+    expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('attemptId')
   })
 
   it('parses private snake-case wire selectors with bounded options', () => {
     expect(
       parseCollectRpcCall({
         selectors: ['frame-1', { frame_id: 'frame-2', attempt_id: 'attempt-2' }],
-        options: { timeout_seconds: 0 }
+        options: { timeout_seconds: 0, return_when: 'any' }
       })
     ).toEqual({
       selectors: ['frame-1', { frameId: 'frame-2', attemptId: 'attempt-2' }],
-      options: { timeoutSeconds: 0 }
+      options: { timeoutSeconds: 0, returnWhen: 'any' }
     })
     for (const invalid of [-1, 1801, Number.NaN, Number.POSITIVE_INFINITY, '30']) {
       expect(() =>
@@ -173,5 +177,8 @@ describe('Agent-facing collect contract', () => {
         options: { timeout_seconds: 0, timeoutSeconds: 0 }
       })
     ).toThrow('private RPC options use timeout_seconds')
+    expect(() =>
+      parseCollectRpcCall({ selectors: ['frame-1'], options: { return_when: 'first' } })
+    ).toThrow('return_when must be all or any')
   })
 })

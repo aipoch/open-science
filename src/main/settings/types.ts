@@ -238,7 +238,7 @@ export type StoredSettings = {
   notebookRuntimes?: Partial<Record<NotebookLanguage, RuntimeSelection>>
   // Per-language v4 environment enablement: an explicit per-env enabled override map plus the separate
   // per-env package-install authorization, both keyed by envId (interpreter real path). Absent means
-  // "use the provenance default" (app-managed ON, user-own/agent-created OFF). See RuntimeEnablement.
+  // "use the provenance default" (app-managed/agent-created ON, user-own OFF). See RuntimeEnablement.
   notebookRuntimeEnablement?: Partial<Record<NotebookLanguage, RuntimeEnablement>>
   // Per-language catalog of interpreter paths the user added manually via "Add interpreter…". These
   // are merged into environment discovery (probed + classified user-own) so a manually-picked

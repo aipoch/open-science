@@ -22,6 +22,7 @@ import type {
 } from './session-presentation-policy'
 import type { SessionCapabilityPolicy } from './session-capability-owner'
 import type { TurnSkillHandle } from './turn-skill-owner'
+import { buildSessionReferencePrompt } from './session-reference-prompt'
 
 const log = createLogger('acp-prompt-preparation-owner')
 type SelectBridgeSkills = NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
@@ -210,6 +211,7 @@ class AcpPromptPreparationOwner {
         notebookHandoff ? notebookHandoffPrompt(notebookHandoff) : undefined,
         promptPrefix,
         recalledMemory,
+        buildSessionReferencePrompt(input.request.referencedSessions),
         skillPreparation.text
       ]
         .filter((segment): segment is string => Boolean(segment))

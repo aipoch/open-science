@@ -277,6 +277,10 @@ export const isArtifactNotebookProducer = (
 ): producer is ArtifactNotebookProducerEvidence =>
   producer.state === 'available' && !('kind' in producer)
 
+export type ArtifactPackageSourceEvidence =
+  | { type: 'github'; repository: string; ref?: string; commit?: string }
+  | { type: 'bioconductor'; version?: string }
+
 export type ArtifactVersionEnvironmentEvidence = {
   capture_kind: 'completed-run'
   environment_name: string
@@ -301,6 +305,7 @@ export type ArtifactVersionEnvironmentEvidence = {
     library_scope?: 'environment' | 'user' | 'system' | 'unknown'
     built_for_runtime?: string
     priority?: 'base' | 'recommended' | 'other'
+    source?: ArtifactPackageSourceEvidence
   }>
   python_version?: string
   r_version?: string
@@ -327,6 +332,7 @@ export type ArtifactVersionEnvironmentEvidence = {
         | 'renv'
         | 'pak'
         | 'biocmanager'
+        | 'github'
         | 'unknown'
       packages: string[]
       status: 'succeeded' | 'failed' | 'skipped'
@@ -363,6 +369,7 @@ export type ArtifactVersionEnvironmentEvidence = {
       after_version?: string
       library_rank?: number
       library_scope?: 'environment' | 'user' | 'system' | 'unknown'
+      source?: ArtifactPackageSourceEvidence
     }>
   }>
   op_log_truncation?: {

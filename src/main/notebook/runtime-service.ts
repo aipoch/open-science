@@ -24,7 +24,9 @@ import type {
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import {
+  isNotebookRunCursor,
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
+  NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT
 } from '../../shared/notebook'
 import type {
@@ -66,9 +68,9 @@ import {
 } from './runtime-paths'
 import type {
   DiscoveredInterpreter,
-  NotebookRuntimeBinding,
   NotebookRuntimeBindings,
   NotebookRuntimeListing,
+  RuntimeBindingOperationResult,
   RuntimeEnablement,
   RuntimeUsage
 } from '../../shared/notebook-runtime'
@@ -628,7 +630,7 @@ class NotebookRuntimeService {
   // runtime; refuses re-binding a different runtime (use notebook_switch_runtime to change).
   async bindRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
-  ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
+  ): Promise<RuntimeBindingOperationResult> {
     return this.sessionLifecycle.runProjectOperation(request, () =>
       this.runtimeBindingOwner.runWrite(
         notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
@@ -657,7 +659,7 @@ class NotebookRuntimeService {
   // state, then rebind. Refuses a disabled/unknown runtime (same MAIN-process gate as bind).
   async switchRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
-  ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
+  ): Promise<RuntimeBindingOperationResult> {
     return this.sessionLifecycle.runProjectOperation(request, () =>
       this.runtimeBindingOwner.runWrite(
         notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
@@ -676,7 +678,7 @@ class NotebookRuntimeService {
               await this.tearDownLanguageBinding(session, request.language, oldEnv)
             }
           )
-          this.sessionLifecycle.notifyChanged(session)
+          if ('bound' in result) this.sessionLifecycle.notifyChanged(session)
           return result
         }
       )
@@ -899,9 +901,20 @@ class NotebookRuntimeService {
         )
       }
       const runIds = [...new Set(requestedRunIds)]
+      const historyLimit = request.historyLimit ?? NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
+      if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 100)
+        throw new Error('Notebook history limit must be 1-100.')
+      if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
+        throw new Error('Notebook state history cursor is invalid.')
       const session = await this.sessionLifecycle.ensure(request)
       await this.runTerminalization.reconcilePending(session)
-      return this.sessionReadModel.state(session, runIds, request.historySummaryFrameId)
+      return this.sessionReadModel.state(
+        session,
+        runIds,
+        request.historySummaryFrameId,
+        request.historyBefore,
+        historyLimit
+      )
     })
   }
 
@@ -1022,9 +1035,10 @@ class NotebookRuntimeService {
   }
 
   // Named-environment management (design D2), delegating to the injected provisioner-backed manager.
-  // create/list return the full current env set; remove REFUSES if any session currently has a live
+  // Only list returns the full current env set; remove REFUSES if any session currently has a live
   // executor process bound to that env name (locked decision — the on-disk env can't be rm-rf'd out
-  // from under a running kernel). Create returns on completion (progress streaming is out of scope).
+  // from under a running kernel). Mutations return bounded operation receipts, and create returns on
+  // completion (progress streaming is out of scope).
   async manageEnvironments(request: ManageEnvironmentsRequest): Promise<ManageEnvironmentsResult> {
     return this.environmentManagement.manage(request)
   }

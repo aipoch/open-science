@@ -43,6 +43,7 @@ const SAFE_CALLS = new Set([
   'any',
   'bool',
   'bytes',
+  'callable',
   'complex',
   'dict',
   'enumerate',
@@ -73,6 +74,7 @@ const SAFE_CALLS = new Set([
 ])
 const EXTERNAL_READ_CALLS = new Set(['open'])
 const SCOPED_MUTATION_CALLS = new Set(['next'])
+const SCOPED_OPAQUE_CALLS = new Set(['getattr', 'hasattr', 'isinstance', 'issubclass'])
 const SAFE_LITERAL_METHODS = new Set([
   'capitalize',
   'casefold',
@@ -1375,6 +1377,98 @@ class MethodEffectVisitor extends NodeVisitor {
   }
 }
 
+class FunctionEffectVisitor extends NodeVisitor {
+  effect: 'read' | 'unknown' = 'read'
+  namespaceUnknown = false
+
+  unknown(namespace = false): void {
+    this.effect = 'unknown'
+    if (namespace) this.namespaceUnknown = true
+  }
+
+  visit_FunctionDef(): void {
+    this.unknown(true)
+  }
+  visit_AsyncFunctionDef = this.visit_FunctionDef
+  visit_Lambda(): void {
+    this.unknown()
+  }
+  visit_Global(): void {
+    this.unknown(true)
+  }
+  visit_Nonlocal(): void {
+    this.unknown(true)
+  }
+  visit_ListComp(): void {
+    this.unknown()
+  }
+  visit_SetComp = this.visit_ListComp
+  visit_DictComp = this.visit_ListComp
+  visit_GeneratorExp = this.visit_ListComp
+
+  visit_Return(node: PyNode): void {
+    const value = isPyNode(node.value) ? node.value : undefined
+    if (value && value.type !== 'Constant') this.unknown(true)
+    this.genericVisit(node)
+  }
+
+  visitImplicitEffect(node: PyNode): void {
+    this.unknown()
+    this.genericVisit(node)
+  }
+  visit_With = this.visitImplicitEffect
+  visit_AsyncWith = this.visitImplicitEffect
+  visit_For = this.visitImplicitEffect
+  visit_AsyncFor = this.visitImplicitEffect
+  visit_Await = this.visitImplicitEffect
+  visit_Yield = this.visitImplicitEffect
+  visit_YieldFrom = this.visitImplicitEffect
+
+  visitImport(node: PyNode): void {
+    this.unknown(true)
+    this.genericVisit(node)
+  }
+  visit_Import = this.visitImport
+  visit_ImportFrom = this.visitImport
+
+  visit_Assign(node: PyNode): void {
+    if (
+      (node.targets ?? []).some(
+        (target) => target.type === 'Attribute' || target.type === 'Subscript'
+      )
+    ) {
+      this.unknown()
+    }
+    this.genericVisit(node)
+  }
+
+  visit_AnnAssign(node: PyNode): void {
+    if (node.target?.type === 'Attribute' || node.target?.type === 'Subscript') this.unknown()
+    this.genericVisit(node)
+  }
+
+  visit_AugAssign = this.visit_AnnAssign
+
+  visit_Delete(node: PyNode): void {
+    if (
+      (node.targets ?? []).some(
+        (target) => target.type === 'Attribute' || target.type === 'Subscript'
+      )
+    ) {
+      this.unknown()
+    }
+    this.genericVisit(node)
+  }
+
+  visit_Call(node: PyNode): void {
+    if (isPyNode(node.func) && node.func.type === 'Name') {
+      if (DYNAMIC_CALLS.has(node.func.id ?? '')) this.unknown(true)
+      else if (!SAFE_CALLS.has(node.func.id ?? '')) this.unknown()
+    } else this.unknown()
+    this.genericVisit(node)
+  }
+}
+
 class FieldVisitor extends NodeVisitor {
   constructor(
     private readonly receiver: string,
@@ -1525,8 +1619,48 @@ const summarizeClass = (node: PyNode): NotebookDependencyTypeSummary | undefined
   }
 }
 
+const summarizeFunction = (node: PyNode): NotebookDependencyTypeSummary | undefined => {
+  if ((node.decorator_list ?? []).length || !node.name) return undefined
+  const fnArgs = node.args as PyArguments | undefined
+  const names = new MethodNameVisitor()
+  for (const argument of [
+    ...(fnArgs?.posonlyargs ?? []),
+    ...(fnArgs?.args ?? []),
+    ...(fnArgs?.kwonlyargs ?? [])
+  ]) {
+    names.locals.add(argument.arg)
+  }
+  if (fnArgs?.vararg) names.locals.add(fnArgs.vararg.arg)
+  if (fnArgs?.kwarg) names.locals.add(fnArgs.kwarg.arg)
+  const visitor = new FunctionEffectVisitor()
+  const body = Array.isArray(node.body) ? node.body : []
+  for (const statement of body) visitor.visit(statement)
+  for (const statement of body) names.visit(statement)
+  const shadowedSafeCalls = new Set(
+    [...names.safeCalls].filter((name) => names.locals.has(name) && !names.globals.has(name))
+  )
+  if (shadowedSafeCalls.size) visitor.unknown(true)
+  return {
+    name: `python-function:${node.name}`,
+    kind: 'python-class',
+    fields: [],
+    methods: [
+      {
+        name: '__call__',
+        effect: visitor.effect,
+        usedNames: [...names.loaded]
+          .filter((name) => !(names.locals.has(name) && !names.globals.has(name)))
+          .sort(),
+        safeCallNames: [...names.safeCalls].filter((name) => !shadowedSafeCalls.has(name)).sort(),
+        unknownScope: visitor.namespaceUnknown ? 'namespace' : 'receiver'
+      }
+    ]
+  }
+}
+
 class Analyzer extends NodeVisitor {
   defined = new Set<string>()
+  conditionallyDefined = new Set<string>()
   used = new Map<string, number>()
   priorUsed = new Map<string, number>()
   mutated = new Set<string>()
@@ -1568,8 +1702,23 @@ class Analyzer extends NodeVisitor {
     else this.priorUsed.set(name, priorCount - 1)
   }
 
+  addMutation(name: string): void {
+    if (this.controlDepth > 0) this.possiblyMutated.add(name)
+    else this.mutated.add(name)
+  }
+
+  conditionalFact(): { conditional?: true } {
+    return this.controlDepth > 0 ? { conditional: true } : {}
+  }
+
   addPossibleAlias(target: string, source: string, access?: string, member?: string): void {
     this.possibleAliases.add(`${target}\0${source}\0${access ?? ''}\0${member ?? ''}`)
+  }
+
+  clearPossibleAliases(target: string): void {
+    for (const alias of this.possibleAliases) {
+      if (alias.split('\0', 1)[0] === target) this.possibleAliases.delete(alias)
+    }
   }
 
   visibleRootName(node: PyNode | null | undefined): string | undefined {
@@ -1828,6 +1977,7 @@ class Analyzer extends NodeVisitor {
       const methods = Object.entries(summary.methods).map(([methodName, effect]) => ({
         name: methodName,
         effect: effect.effect,
+        ...(effect.unknownScope ? { unknownScope: effect.unknownScope } : {}),
         ...(effect.returnType ? { returnType: effect.returnType } : {}),
         ...(effect.destructuredReturnTypes
           ? { destructuredReturnTypes: effect.destructuredReturnTypes }
@@ -1860,6 +2010,7 @@ class Analyzer extends NodeVisitor {
     const method = {
       name: '__call__',
       effect: effect.effect,
+      ...(effect.unknownScope ? { unknownScope: effect.unknownScope } : {}),
       ...(effect.returnType ? { returnType: effect.returnType } : {}),
       ...(effect.destructuredReturnTypes
         ? { destructuredReturnTypes: effect.destructuredReturnTypes }
@@ -1926,8 +2077,14 @@ class Analyzer extends NodeVisitor {
 
   prepareAssignment(targetNames: string[]): void {
     const conditional = this.controlDepth > 0
-    if (conditional) this.unknown.add('control-flow')
+    if (conditional) {
+      this.unknown.add('control-flow')
+      for (const name of targetNames) this.conditionallyDefined.add(name)
+    } else {
+      for (const name of targetNames) this.conditionallyDefined.delete(name)
+    }
     for (const name of targetNames) {
+      if (!conditional) this.clearPossibleAliases(name)
       this.importedModules.delete(name)
       this.importedFunctions.delete(name)
       this.typeBindings = this.typeBindings.filter((binding) => binding.target !== name)
@@ -1954,10 +2111,12 @@ class Analyzer extends NodeVisitor {
   visit_Name(node: PyNode): void {
     if (!node.id || this.localScopes.some((scope) => node.id! in scope)) return
     if (node.ctx === 'Load') this.addUsed(node.id)
-    else if (node.ctx === 'Store') this.defined.add(node.id)
-    else if (node.ctx === 'Del') {
+    else if (node.ctx === 'Store') {
+      this.defined.add(node.id)
+      if (this.controlDepth > 0) this.conditionallyDefined.add(node.id)
+    } else if (node.ctx === 'Del') {
       this.prepareAssignment([node.id])
-      this.mutated.add(node.id)
+      this.addMutation(node.id)
     }
   }
 
@@ -2015,6 +2174,7 @@ class Analyzer extends NodeVisitor {
         : undefined
     const memberAccess = value?.type === 'Subscript' ? 'subscript' : 'attribute'
     const member = memberSource ? memberName(value) : undefined
+    const importedMemberModule = memberSource ? this.importedModules.get(memberSource) : undefined
     const conditionalSources =
       value?.type === 'IfExp'
         ? new Set(
@@ -2034,6 +2194,7 @@ class Analyzer extends NodeVisitor {
       !DYNAMIC_CALLS.has(value.func.id) &&
       !EXTERNAL_READ_CALLS.has(value.func.id) &&
       !SCOPED_MUTATION_CALLS.has(value.func.id) &&
+      !SCOPED_OPAQUE_CALLS.has(value.func.id) &&
       !this.importedFunctions.has(value.func.id)
     let constructorArguments = new Set<string>()
     if (constructor && value) {
@@ -2061,6 +2222,13 @@ class Analyzer extends NodeVisitor {
       (value.type === 'Attribute' || value.type === 'Subscript')
     ) {
       if (memberSource) this.addPossibleAlias(target.id, memberSource, memberAccess, member)
+      if (value.type === 'Attribute' && importedMemberModule && member) {
+        this.bindLibraryModule(target.id, `${importedMemberModule}.${member}`)
+        this.bindLibraryFunction(target.id, importedMemberModule, member)
+        if (!this.importedModules.has(target.id) && !this.importedFunctions.has(target.id)) {
+          this.bindUnknownImport(target.id, importedMemberModule, member)
+        }
+      }
     } else if (
       constructor &&
       target?.type === 'Name' &&
@@ -2132,8 +2300,10 @@ class Analyzer extends NodeVisitor {
       this.prepareAssignment(targetNames)
       for (const name of targetNames) this.defined.add(name)
     }
-    const source = this.visibleRootName(node.iter)
-    this.localScopes.push(Object.fromEntries(targetNames.map((name) => [name, source])))
+    const sources = this.expressionVisibleRoots(node.iter)
+    this.localScopes.push(
+      Object.fromEntries(targetNames.map((name, index) => [name, sources[index] ?? sources[0]]))
+    )
     for (const statement of body) this.visit(statement)
     this.localScopes.pop()
     for (const statement of node.orelse ?? []) this.visit(statement)
@@ -2155,7 +2325,11 @@ class Analyzer extends NodeVisitor {
       this.prepareAssignment([node.name])
       this.defined.add(node.name)
     }
-    this.unknown.add('function-scope')
+    const summary = summarizeFunction(node)
+    if (node.name && summary) {
+      this.typeSummaries.push(summary)
+      this.typeBindings.push({ target: node.name, typeName: summary.name, argumentNames: [] })
+    } else this.unknown.add('function-scope')
     const fnArgs = node.args as PyArguments | undefined
     for (const value of [
       ...(node.decorator_list ?? []),
@@ -2193,8 +2367,10 @@ class Analyzer extends NodeVisitor {
     this.localScopes.push(scope)
     for (const generator of node.generators ?? []) {
       this.visit(generator.iter)
-      const source = this.visibleRootName(generator.iter)
-      for (const name of this.assignedNames(generator.target)) scope[name] = source
+      const sources = this.expressionVisibleRoots(generator.iter)
+      for (const [index, name] of this.assignedNames(generator.target).entries()) {
+        scope[name] = sources[index] ?? sources[0]
+      }
       for (const condition of generator.ifs) this.visit(condition)
     }
     for (const value of values) this.visit(value)
@@ -2219,11 +2395,12 @@ class Analyzer extends NodeVisitor {
     if (name) {
       this.addUsed(name)
       const patchedMember = node.target ? dynamicMemberWrite(node.target) : undefined
-      if (!patchedMember || !patchedMember[1]) this.mutated.add(name)
+      if (!patchedMember || !patchedMember[1]) this.addMutation(name)
       if (patchedMember) {
         const [member, typeWide] = patchedMember
         this.memberWrites.push({
           receiver: name,
+          ...this.conditionalFact(),
           ...(member ? { member } : {}),
           ...(typeWide ? { scope: 'type' as const } : {})
         })
@@ -2242,11 +2419,12 @@ class Analyzer extends NodeVisitor {
       if (name) {
         this.addUsed(name)
         const patchedMember = dynamicMemberWrite(node)
-        if (!patchedMember || !patchedMember[1]) this.mutated.add(name)
+        if (!patchedMember || !patchedMember[1]) this.addMutation(name)
         if (patchedMember) {
           const [member, typeWide] = patchedMember
           this.memberWrites.push({
             receiver: name,
+            ...this.conditionalFact(),
             ...(member ? { member } : {}),
             ...(typeWide ? { scope: 'type' as const } : {})
           })
@@ -2269,9 +2447,10 @@ class Analyzer extends NodeVisitor {
         this.addUsed(name)
         const patchedMember = dynamicMemberWrite(node)
         const [member, typeWide] = patchedMember ?? [node.attr, false]
-        if (!typeWide) this.mutated.add(name)
+        if (!typeWide) this.addMutation(name)
         this.memberWrites.push({
           receiver: name,
+          ...this.conditionalFact(),
           ...(member ? { member } : {}),
           ...(typeWide ? { scope: 'type' as const } : {})
         })
@@ -2291,6 +2470,8 @@ class Analyzer extends NodeVisitor {
       this.unknown.add('opaque-call')
       this.unknown.add('dynamic-namespace')
     }
+    if (libraryEffect?.scopedOpaque) this.unknown.add('scoped-opaque-call')
+    if (libraryEffect?.externalState) this.unknown.add('external-state')
     const formulaRule = libraryEffect?.formulaArgument
     if (formulaRule) {
       const args = Array.isArray(node.args) ? node.args : []
@@ -2310,6 +2491,7 @@ class Analyzer extends NodeVisitor {
         this.receiverCalls.push({
           receiver: node.func.id,
           member: '__call__',
+          ...this.conditionalFact(),
           kind: 'callable',
           argumentNames: this.visibleRoots(candidates),
           receiverChain: [],
@@ -2377,12 +2559,30 @@ class Analyzer extends NodeVisitor {
     } else if (
       isPyNode(node.func) &&
       node.func.type === 'Name' &&
+      SCOPED_OPAQUE_CALLS.has(node.func.id ?? '')
+    ) {
+      this.safeCallNames.add(node.func.id ?? '')
+      const possible = new Set(
+        [...args, ...(node.keywords ?? []).map((keyword) => keyword.value)]
+          .map((candidate) => this.visibleRootName(candidate))
+          .filter((name): name is string => Boolean(name))
+      )
+      for (const name of possible) {
+        this.safeCallArgumentNames.add(name)
+        this.possiblyMutated.add(name)
+      }
+      this.unknown.add('scoped-opaque-call')
+      if (possible.size) this.unknown.add('opaque-mutation')
+    } else if (
+      isPyNode(node.func) &&
+      node.func.type === 'Name' &&
       node.func.id &&
       this.importedFunctions.has(node.func.id)
     ) {
       this.receiverCalls.push({
         receiver: this.importedFunctions.get(node.func.id) ?? node.func.id,
         member: '__call__',
+        ...this.conditionalFact(),
         kind: 'callable',
         argumentNames: this.visibleRoots([
           ...args,
@@ -2414,6 +2614,7 @@ class Analyzer extends NodeVisitor {
       this.receiverCalls.push({
         receiver: node.func.id,
         member: '__call__',
+        ...this.conditionalFact(),
         kind: 'callable',
         argumentNames: this.visibleRoots([
           ...args,
@@ -2468,6 +2669,7 @@ class Analyzer extends NodeVisitor {
           this.receiverCalls.push({
             receiver: name,
             member: node.func.attr ?? '',
+            ...this.conditionalFact(),
             ...(MUTATING_METHODS.has(node.func.attr ?? '') || inplace
               ? { kind: 'mutating' as const }
               : {}),
@@ -2504,7 +2706,7 @@ class Analyzer extends NodeVisitor {
               if (this.hasLocalRoot(keyword.value)) {
                 this.possiblyMutated.add(output)
                 this.unknown.add('opaque-mutation')
-              } else this.mutated.add(output)
+              } else this.addMutation(output)
             }
           }
         }
@@ -2552,6 +2754,7 @@ class Analyzer extends NodeVisitor {
         const typeWide = args[0]?.type === 'Attribute' && args[0].attr === '__class__'
         this.memberWrites.push({
           receiver,
+          ...this.conditionalFact(),
           ...(member ? { member } : {}),
           ...(typeWide ? { scope: 'type' as const } : {})
         })
@@ -2584,6 +2787,7 @@ const factsFromAnalyzer = (
   ]
   return {
     definedNames: [...analyzer.defined].sort(),
+    conditionallyDefinedNames: [...analyzer.conditionallyDefined].sort(),
     usedNames: [...analyzer.used.keys()].sort(),
     priorUsedNames: [...analyzer.priorUsed.keys()].sort(),
     possiblyUsedNames: [...analyzer.possiblyUsed].sort(),
@@ -2605,8 +2809,16 @@ const analyzePythonTree = (root: Node): NotebookRunDependencyFacts => {
   const analyzer = new Analyzer(scopedEffectLoops(tree))
   analyzer.visit(tree)
   const facts = factsFromAnalyzer(analyzer)
-  if (analyzer.unknown.size) {
-    return { state: 'unknown', reasons: [...analyzer.unknown].sort(), ...facts }
+  const reasons = new Set(analyzer.unknown)
+  const hasRemainingConditionalEffects =
+    analyzer.conditionallyDefined.size > 0 ||
+    analyzer.possiblyMutated.size > 0 ||
+    analyzer.possibleAliases.size > 0 ||
+    analyzer.receiverCalls.some((call) => call.conditional) ||
+    analyzer.memberWrites.some((write) => write.conditional)
+  if (!hasRemainingConditionalEffects) reasons.delete('control-flow')
+  if (reasons.size) {
+    return { state: 'unknown', reasons: [...reasons].sort(), ...facts }
   }
   return { state: 'available', ...facts }
 }

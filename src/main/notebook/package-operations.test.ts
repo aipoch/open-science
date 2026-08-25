@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NotebookLanguage } from '../../shared/notebook'
 import { createRootNotebookLane } from './lane-identity'
 import { NotebookPackageOperations } from './package-operations'
+import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { NotebookSessionAggregate, type NotebookSessionRuntimeBinding } from './session-aggregate'
 
@@ -213,7 +214,11 @@ describe('NotebookPackageOperations', () => {
 
     const result = await owner.manage({ language: 'r', packages: ['dplyr'] })
 
-    expect(result).toMatchObject({ ok: true, needsRestart: true })
+    expect(result).toMatchObject({
+      ok: true,
+      needsRestart: true,
+      environmentName: 'default-r'
+    })
     expect(options.installPackages).toHaveBeenCalledWith(
       expect.objectContaining({ language: 'r', environment: 'default-r' }),
       expect.objectContaining({ cranMirror: 'https://mirror/cran' })
@@ -223,5 +228,268 @@ describe('NotebookPackageOperations', () => {
     )
     expect(options.environmentOperations.recommendRestart).toHaveBeenCalledWith('r', 'default-r')
     expect(options.notifyChanged).toHaveBeenCalledWith(activeSession)
+  })
+
+  it('returns an explicit target receipt when the admitted installer throws', async () => {
+    const managed = binding('python', '/runtime/analysis/python', 'managed', 'analysis')
+    const { owner, options } = harness(session('session-1', managed), {
+      installPackages: vi
+        .fn()
+        .mockRejectedValue(new Error(`installer exploded: ${'x'.repeat(3_000)}`))
+    })
+
+    const result = await owner.manage({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      language: 'python',
+      packages: ['numpy']
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('installer exploded'),
+      target: {
+        language: 'python',
+        selection: 'explicit-binding',
+        runtimeId: managed.runtimeId
+      }
+    })
+    expect(result.error).toHaveLength(2_000)
+    expect(options.environmentOperations.logPackageFailure).toHaveBeenCalled()
+  })
+
+  it('returns the known target receipt while retaining recovery protection for an unconfirmed child', async () => {
+    const { owner, options } = harness(session('session-1'), {
+      installPackages: vi
+        .fn()
+        .mockRejectedValue(new Error(`installer failed: ${CHILD_UNCONFIRMED}`))
+    })
+
+    await expect(owner.manage({ language: 'python', packages: ['numpy'] })).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining(CHILD_UNCONFIRMED),
+      target: {
+        language: 'python',
+        selection: 'implicit-default',
+        environmentName: 'default-python'
+      }
+    })
+    expect(options.recovery.markRuntimeLiveUnconfirmed).toHaveBeenCalled()
+    expect(options.recovery.markLiveUnconfirmed).toHaveBeenCalled()
+  })
+
+  it('returns the known target receipt when the mutation transaction throws before install', async () => {
+    const { owner, options } = harness(session('session-1'), {
+      environmentStateTracker: {
+        inspectPackages: vi.fn(),
+        markPackageMutationDirty: vi.fn().mockRejectedValue(new Error('dirty marker unavailable')),
+        refreshAfterPackageMutation: vi.fn()
+      }
+    })
+
+    await expect(owner.manage({ language: 'r', packages: ['dplyr'] })).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('dirty marker unavailable'),
+      target: {
+        language: 'r',
+        selection: 'implicit-default',
+        environmentName: 'default-r'
+      }
+    })
+    expect(options.installPackages).not.toHaveBeenCalled()
+  })
+
+  it('returns the loaded explicit target when recovery fails before package admission', async () => {
+    const managed = binding('python', '/runtime/analysis/python', 'managed', 'analysis')
+    const { owner, options } = harness(session('session-1', managed), {
+      ensureRecovered: vi.fn().mockRejectedValue(new Error('runtime recovery failed'))
+    })
+
+    await expect(
+      owner.manage({
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace',
+        language: 'python',
+        packages: ['numpy']
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: 'runtime recovery failed',
+      target: {
+        language: 'python',
+        selection: 'explicit-binding',
+        runtimeSource: 'managed',
+        environmentName: 'analysis',
+        runtimeId: managed.runtimeId
+      }
+    })
+    expect(options.installPackages).not.toHaveBeenCalled()
+  })
+
+  it('reuses one loaded Session for target receipt and package admission', async () => {
+    const managed = binding('python', '/runtime/analysis/python', 'managed', 'analysis')
+    const loaded = session('session-1', managed)
+    const { owner, options } = harness(loaded, {
+      findSession: vi.fn(() => undefined),
+      loadSession: vi.fn().mockResolvedValue(loaded)
+    })
+
+    await expect(
+      owner.manage({
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace',
+        language: 'python',
+        packages: ['numpy']
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      target: {
+        language: 'python',
+        selection: 'explicit-binding',
+        runtimeId: managed.runtimeId
+      }
+    })
+    expect(options.loadSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not invent a default target when a disposed Session cannot be resolved', async () => {
+    const activeSession = session('other-session')
+    const { owner, options } = harness(activeSession, {
+      ensureRecovered: vi.fn().mockRejectedValue(new Error('runtime service disposed')),
+      findSession: vi.fn(() => undefined),
+      loadSession: vi.fn().mockRejectedValue(new Error('Session is disposed'))
+    })
+
+    await expect(
+      owner.manage({
+        sessionId: 'disposed-session',
+        workspaceCwd: '/workspace',
+        language: 'python',
+        packages: ['numpy']
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: 'runtime service disposed',
+      target: { language: 'python', selection: 'unresolved' }
+    })
+    expect(options.installPackages).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      'Error rejection',
+      new Error('persisted Session could not be loaded'),
+      'persisted Session could not be loaded'
+    ],
+    ['non-Error rejection', 'storage offline', 'storage offline']
+  ])(
+    'returns an unresolved target when Session loading rejects with %s',
+    async (_kind, cause, message) => {
+      const activeSession = session('other-session')
+      const { owner, options } = harness(activeSession, {
+        findSession: vi.fn(() => undefined),
+        loadSession: vi.fn().mockRejectedValue(cause)
+      })
+
+      const result = await owner.manage({
+        sessionId: 'persisted-session',
+        workspaceCwd: '/workspace',
+        language: 'python',
+        packages: ['numpy']
+      })
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: expect.stringContaining(message),
+        target: { language: 'python', selection: 'unresolved' }
+      })
+      expect(result.error?.length).toBeLessThanOrEqual(2_000)
+      expect(options.installPackages).not.toHaveBeenCalled()
+    }
+  )
+
+  it('returns the same unresolved failure contract when the Session registry lookup throws', async () => {
+    const activeSession = session('other-session')
+    const { owner, options } = harness(activeSession, {
+      findSession: vi.fn(() => {
+        throw new Error('Session registry unavailable')
+      })
+    })
+
+    await expect(
+      owner.manage({
+        sessionId: 'persisted-session',
+        language: 'python',
+        packages: ['numpy']
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('Session registry unavailable'),
+      target: { language: 'python', selection: 'unresolved' }
+    })
+    expect(options.installPackages).not.toHaveBeenCalled()
+  })
+
+  it('bounds Session target-resolution diagnostics without dropping the receipt', async () => {
+    const activeSession = session('other-session')
+    const { owner } = harness(activeSession, {
+      loadSession: vi.fn().mockRejectedValue(new Error('x'.repeat(3_000)))
+    })
+
+    const result = await owner.manage({
+      sessionId: 'persisted-session',
+      workspaceCwd: '/workspace',
+      language: 'python',
+      packages: ['numpy']
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      target: { language: 'python', selection: 'unresolved' }
+    })
+    expect(result.error).toHaveLength(2_000)
+  })
+
+  it('does not invent a default target when only an unloaded Session id is available', async () => {
+    const activeSession = session('other-session')
+    const { owner, options } = harness(activeSession, {
+      findSession: vi.fn(() => undefined)
+    })
+
+    await expect(
+      owner.manage({
+        sessionId: 'persisted-session',
+        language: 'python',
+        packages: ['numpy']
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('RUNTIME_SESSION_UNAVAILABLE'),
+      target: { language: 'python', selection: 'unresolved' }
+    })
+    expect(options.loadSession).not.toHaveBeenCalled()
+    expect(options.installPackages).not.toHaveBeenCalled()
+  })
+
+  it('uses the runtime label as the environment name for an external binding', async () => {
+    const external = {
+      ...binding('python', '/opt/research/bin/python', 'external'),
+      label: 'Research Python'
+    }
+    const { owner } = harness(session('session-1', external), {
+      resolveRuntimeEnablement: vi.fn().mockResolvedValue({
+        enabled: { [external.runtimeId]: true },
+        installAuthorized: { [external.runtimeId]: true }
+      })
+    })
+
+    const result = await owner.manage({
+      sessionId: 'session-1',
+      language: 'python',
+      packages: ['numpy']
+    })
+
+    expect(result.environmentName).toBe('Research Python')
+    expect(result.target).toMatchObject({ label: 'Research Python' })
   })
 })

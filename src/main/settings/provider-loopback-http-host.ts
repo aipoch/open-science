@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -6,6 +6,8 @@ import {
   type Server,
   type ServerResponse
 } from 'node:http'
+
+import { createLogger, errorLogFields, type Logger } from '../logger'
 
 // A turn may contain up to 24 MiB of base64 image data before frameworks add text, replayed history,
 // and tool declarations. Keep every authenticated Provider bridge on one memory-bounded envelope.
@@ -28,12 +30,16 @@ type ProviderLoopbackHttpRequest = Readonly<{
 }>
 
 type ProviderLoopbackHttpHostOptions<Connection extends ProviderLoopbackConnection> = Readonly<{
+  diagnosticName: string
+  diagnostics?: Pick<Logger, 'info' | 'error'>
   credentialMode: 'bearer' | 'bearer-or-api-key'
   createConnection: (origin: string, token: string) => Connection
   handle: (request: ProviderLoopbackHttpRequest, response: ServerResponse) => Promise<void>
   onUnauthorized: (response: ServerResponse) => void
   onError: (error: unknown, response: ServerResponse) => void
 }>
+
+const defaultDiagnostics = createLogger('provider-loopback')
 
 class ProviderLoopbackRequestError extends Error {
   constructor(message: string, options: ErrorOptions = {}) {
@@ -115,6 +121,7 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
   private startPromise: Promise<Connection> | undefined
   private closePromise: Promise<void> | undefined
   private closingStartPromise: Promise<Connection> | undefined
+  private lifecycle: { expectedClose: boolean } | undefined
 
   constructor(private readonly options: ProviderLoopbackHttpHostOptions<Connection>) {}
 
@@ -157,6 +164,16 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
 
   private async startServer(): Promise<Connection> {
     const token = randomBytes(24).toString('hex')
+    const diagnostics = this.options.diagnostics ?? defaultDiagnostics
+    const bridgeId = randomUUID()
+    const startedAt = Date.now()
+    const lifecycle = { expectedClose: false }
+    let port: number | undefined
+    const diagnosticFields = (): Record<string, unknown> => ({
+      bridge: this.options.diagnosticName,
+      bridgeId,
+      ...(port === undefined ? {} : { port })
+    })
     const server = createServer((request, response) => {
       void this.serve(request, response, token).catch((error: unknown) => {
         if (response.destroyed || response.writableEnded) return
@@ -167,7 +184,21 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
         }
       })
     })
+    server.on('error', (error) =>
+      diagnostics.error('provider loopback server error', {
+        ...diagnosticFields(),
+        ...errorLogFields(error)
+      })
+    )
+    server.once('close', () =>
+      diagnostics.info('provider loopback closed', {
+        ...diagnosticFields(),
+        expected: lifecycle.expectedClose,
+        lifetimeMs: Date.now() - startedAt
+      })
+    )
     this.server = server
+    this.lifecycle = lifecycle
     try {
       await new Promise<void>((resolve, reject) => {
         const onError = (error: Error): void => reject(error)
@@ -182,13 +213,21 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
       if (!address || typeof address === 'string') {
         throw new Error('Provider loopback HTTP host did not bind a port.')
       }
+      port = address.port
+      diagnostics.info('provider loopback listening', diagnosticFields())
       const connection = this.options.createConnection(`http://127.0.0.1:${address.port}`, token)
       this.connection = connection
       return connection
     } catch (error) {
+      lifecycle.expectedClose = true
+      diagnostics.error('provider loopback failed to start', {
+        ...diagnosticFields(),
+        ...errorLogFields(error)
+      })
       if (this.server === server) this.server = undefined
       this.connection = undefined
       await closeServer(server).catch(() => undefined)
+      if (this.lifecycle === lifecycle) this.lifecycle = undefined
       throw error
     }
   }
@@ -196,9 +235,12 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
   private async closeAfterStart(starting: Promise<Connection> | undefined): Promise<void> {
     await starting?.catch(() => undefined)
     const server = this.server
+    const lifecycle = this.lifecycle
     this.server = undefined
     this.connection = undefined
+    if (lifecycle) lifecycle.expectedClose = true
     if (server) await closeServer(server)
+    if (this.lifecycle === lifecycle) this.lifecycle = undefined
   }
 
   private finishClose(closing: Promise<void>, starting: Promise<Connection> | undefined): void {

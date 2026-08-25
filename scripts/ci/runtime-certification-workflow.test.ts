@@ -65,7 +65,7 @@ describe('runtime certification workflow', () => {
     const create = step(source, 'Create real Python and R environments')
     const verify = step(source, 'Verify runtime prerequisites')
 
-    expect(install.run).toBe('npm ci')
+    expect(install.run).toBe('node scripts/ci/npm-ci.mjs')
     expect(fetch.run).toContain('scripts/fetch-micromamba.mjs linux-64')
     expect(create.run).toContain('python=3.12 matplotlib-base nomkl')
     expect(create.run).toContain('r-base=4.4 r-jsonlite r-ggplot2')

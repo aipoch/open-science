@@ -14,10 +14,15 @@ import type {
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { AcpDurableContinuationContextOwner } from './durable-continuation-context-owner'
 
-const message = (id: string, content: string): PersistedChatMessage => ({
+const message = (
+  id: string,
+  content: string,
+  parts?: PersistedChatMessage['parts']
+): PersistedChatMessage => ({
   id,
   role: 'user',
   content,
+  ...(parts ? { parts } : {}),
   status: 'complete',
   eventIds: [],
   createdAt: 1,
@@ -125,7 +130,11 @@ describe('AcpDurableContinuationContextOwner', () => {
   })
 
   it('restores an elicitation from the canonical pending Session activity', async () => {
-    const session = createSession([message('prompt-active', 'Choose an approach.')])
+    const session = createSession([
+      message('prompt-active', 'Choose an approach.', [
+        { type: 'session', sessionId: 'referenced-session', title: 'Prior analysis' }
+      ])
+    ])
     session.memoryEnabled = false
     setActivities(session, [pendingChoice()])
 
@@ -152,7 +161,10 @@ describe('AcpDurableContinuationContextOwner', () => {
         rootFrameId: 'root-frame-pending-session',
         messageBranchId: 'message-branch-pending-session',
         promptMessageId: 'prompt-active'
-      }
+      },
+      referencedSessions: [
+        { type: 'session', sessionId: 'referenced-session', title: 'Prior analysis' }
+      ]
     })
   })
 

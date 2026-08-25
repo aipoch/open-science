@@ -22,7 +22,7 @@ Open Science 是為科學家與研究人員打造的開源、本機優先且與�
 
 Open Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
-> 💡 **[Open Science v0.18.2 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 8 月）_。Open Science v0.18.2 引入了俄文本地化、對話匯出的輪次選擇，以及自訂連接器的預先註冊 OAuth 用戶端；同時收窄智慧代理清單摘要、限制增量事件許可以保持高吞吐串流期間轉譯器的回應能力、串流匯出專案產物 ZIP、帶 UTF-8 筆記本原始碼解碼的 MCP 進度心跳、訊息編輯時保留附件、復原不透明 Codex 會話、冪等的任務 API 建立，以及大量工作區、筆記本、更新與持久化修復。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[Open Science v0.19.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 8 月）_。Open Science v0.19.0 新增 xAI (Grok) OAuth 訂閱提供商、受管治的市集安裝專家、基於 tree-sitter 分析的筆記本跨執行相依性追蹤、透過原生後續轉向的中途立即傳送、訊息內 Markdown 產物預覽、上下文壓縮轉錄邊界、基於 SQLite 索引的工作階段中繼資料實現摘要優先快速啟動、終止筆記本唯讀預覽、重新設計的關於與說明中心、封存復原快捷鍵、自訂模型權杖上限、完整的 OAuth 連接器生命週期，以及 deepseek-v4-flash-vision-exp；同時合併工具突發 IPC、批次事件排空，並修復大量筆記本、編輯器、工作區與提供商問題。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science 開源 AI 研究工作台桌面應用程式工作區，顯示含有生成產物的智能體會話" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />

@@ -1,4 +1,5 @@
 import type {
+  ArtifactPackageSourceEvidence,
   ArtifactVersionCoreProvenance,
   ArtifactVersionEnvironmentEvidence,
   GetArtifactVersionProvenanceRequest
@@ -55,6 +56,35 @@ const compareText = (left: string, right: string): number =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const projectPackageSource = (value: unknown): ArtifactPackageSourceEvidence => {
+  if (!isRecord(value) || (value.type !== 'github' && value.type !== 'bioconductor')) {
+    throw new Error('Artifact Version package source evidence is corrupt.')
+  }
+  if (value.type === 'github') {
+    if (
+      Object.keys(value).some((key) => !['type', 'repository', 'ref', 'commit'].includes(key)) ||
+      typeof value.repository !== 'string' ||
+      (value.ref !== undefined && typeof value.ref !== 'string') ||
+      (value.commit !== undefined && typeof value.commit !== 'string')
+    ) {
+      throw new Error('Artifact Version package source evidence is corrupt.')
+    }
+    return {
+      type: value.type,
+      repository: value.repository,
+      ...(value.ref !== undefined ? { ref: value.ref } : {}),
+      ...(value.commit !== undefined ? { commit: value.commit } : {})
+    }
+  }
+  if (
+    Object.keys(value).some((key) => !['type', 'version'].includes(key)) ||
+    (value.version !== undefined && typeof value.version !== 'string')
+  ) {
+    throw new Error('Artifact Version package source evidence is corrupt.')
+  }
+  return { type: value.type, ...(value.version !== undefined ? { version: value.version } : {}) }
+}
 
 const normalizeGraphOptions = (
   value: unknown
@@ -183,7 +213,8 @@ const projectEnvironment = (
       ...(entry.library_rank !== undefined ? { library_rank: entry.library_rank } : {}),
       ...(entry.library_scope ? { library_scope: entry.library_scope } : {}),
       ...(entry.built_for_runtime ? { built_for_runtime: entry.built_for_runtime } : {}),
-      ...(entry.priority ? { priority: entry.priority } : {})
+      ...(entry.priority ? { priority: entry.priority } : {}),
+      ...(entry.source !== undefined ? { source: projectPackageSource(entry.source) } : {})
     })),
     ...(value.python_version ? { python_version: value.python_version } : {}),
     ...(value.r_version ? { r_version: value.r_version } : {}),
@@ -230,7 +261,10 @@ const projectEnvironment = (
                     ...(change.library_rank !== undefined
                       ? { library_rank: change.library_rank }
                       : {}),
-                    ...(change.library_scope ? { library_scope: change.library_scope } : {})
+                    ...(change.library_scope ? { library_scope: change.library_scope } : {}),
+                    ...(change.source !== undefined
+                      ? { source: projectPackageSource(change.source) }
+                      : {})
                   }))
                 }
               : {})

@@ -3495,6 +3495,59 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     expect(projection.stalenessByRunId['run-4']).toEqual({ state: 'clear' })
   })
 
+  it('tracks conditional class writes without mutating the persistent method summary', () => {
+    const summary = {
+      name: 'Reader',
+      kind: 'python-class' as const,
+      fields: [],
+      methods: [{ name: 'inspect', effect: 'read' as const }]
+    }
+
+    const projection = projectNotebookDependencies([
+      {
+        run: run('run-1', 'define-reader', 'class Reader: ...\nreader = Reader()', 1),
+        facts: {
+          state: 'available',
+          definedNames: ['Reader', 'reader'],
+          usedNames: [],
+          mutatedNames: [],
+          typeSummaries: [summary],
+          typeBindings: [{ target: 'reader', typeName: 'Reader' }]
+        }
+      },
+      {
+        run: run('run-2', 'read', 'result = reader.inspect()', 2),
+        facts: {
+          state: 'available',
+          definedNames: ['result'],
+          usedNames: ['reader'],
+          mutatedNames: [],
+          receiverCalls: [{ receiver: 'reader', member: 'inspect' }]
+        }
+      },
+      {
+        run: run('run-3', 'maybe-patch', 'if enabled:\n    Reader.inspect = replacement', 3),
+        facts: {
+          state: 'unknown',
+          definedNames: [],
+          usedNames: ['Reader', 'enabled', 'replacement'],
+          mutatedNames: [],
+          conditionallyDefinedNames: [],
+          memberWrites: [
+            { receiver: 'Reader', member: 'inspect', scope: 'type' as const, conditional: true }
+          ],
+          reasons: ['control-flow']
+        }
+      }
+    ])
+
+    expect(projection.stalenessByRunId['run-2']).toEqual({
+      state: 'unknown',
+      reasons: ['opaque-mutation']
+    })
+    expect(summary.methods[0]?.effect).toBe('read')
+  })
+
   it('keeps existing instances bound to the class summary used at construction', () => {
     const projection = projectNotebookDependencies([
       {

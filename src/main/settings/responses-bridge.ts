@@ -91,7 +91,6 @@ type ResponsesBridgeOptions = {
 }
 
 type BridgeFetch = typeof fetch
-
 const DEFAULT_REASONING_CACHE_MAX_ENTRIES = 4_096
 const DEFAULT_REASONING_CACHE_MAX_CHARACTERS = 8 * 1024 * 1024
 
@@ -128,6 +127,7 @@ export class ResponsesBridge {
   ) {
     this.target = target
     this.host = new ProviderLoopbackHttpHost({
+      diagnosticName: 'responses',
       credentialMode: 'bearer',
       createConnection: (origin, token) => ({
         baseUrl: origin + '/v1',

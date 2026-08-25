@@ -209,6 +209,7 @@ const projectNotebookDependencies = (
   const typeSummariesByNamespace = new Map<string, Map<string, NotebookDependencyTypeSummary>>()
   const objectTypesByNamespace = new Map<string, Map<string, NotebookDependencyTypeSummary>>()
   const shadowedMembersByNamespace = new Map<string, Map<string, Set<string>>>()
+  const shadowedTypeMembers = new WeakMap<NotebookDependencyTypeSummary, Set<string>>()
   const safeCallConsumersByNamespace = new Map<string, Map<string, Set<string>>>()
   const possibleConsumersByNamespace = new Map<string, Map<string, Set<string>>>()
   const unknownReasonsByNamespace = new Map<string, string[]>()
@@ -222,6 +223,7 @@ const projectNotebookDependencies = (
     const incompleteRun = isIncompleteRun(run)
     const incomplete = incompleteRun ? incompleteRunFacts(analyzedFacts) : undefined
     const facts = incomplete?.facts ?? analyzedFacts
+    const conditionallyDefinedNames = new Set(facts.conditionallyDefinedNames ?? [])
     const namespace = namespaceKey(run)
     if (!namespace) {
       if (run.status === 'completed' && (run.kernelKind === 'python' || run.kernelKind === 'r')) {
@@ -419,6 +421,12 @@ const projectNotebookDependencies = (
         .filter(([, summary]) => summary === classSummary)
         .map(([name]) => name)
       for (const name of affectedObjects) typeBehaviorChanges.add(name)
+      if (write.conditional) {
+        const members = shadowedTypeMembers.get(classSummary) ?? new Set<string>()
+        members.add(write.member ?? '*')
+        shadowedTypeMembers.set(classSummary, members)
+        continue
+      }
       const methods = write.member
         ? classSummary.methods.filter((method) => method.name === write.member)
         : classSummary.methods
@@ -463,6 +471,14 @@ const projectNotebookDependencies = (
     }
 
     for (const call of facts.receiverCalls ?? []) {
+      const addTypeAwareMutation = (names: readonly string[]): void => {
+        if (call.conditional) {
+          typeAwarePossiblyMutatedNames.push(...names)
+          if (names.length) typeAwareReasons.push('opaque-mutation')
+        } else {
+          typeAwareMutatedNames.push(...names)
+        }
+      }
       const modifiedR6Summary =
         call.member === 'set'
           ? [...typeSummaries.entries()].find(
@@ -489,6 +505,7 @@ const projectNotebookDependencies = (
       const configuredTypeName = typeSummary
         ? (facts.memberWrites ?? []).find(
             (write) =>
+              !write.conditional &&
               write.member !== undefined &&
               receiversMayAlias(write.receiver, call.receiver) &&
               PYTHON_LIBRARY_EFFECTS[typeSummary!.name]?.typeWhenMembersWritten?.[write.member]
@@ -505,7 +522,13 @@ const projectNotebookDependencies = (
       let projectedReceiverValueNames = [call.receiver]
       let chainProvenanceResolved = false
       for (const [chainIndex, chainedMember] of (call.receiverChain ?? []).entries()) {
-        if (priorShadow?.has('*') === true || priorShadow?.has(chainedMember) === true) {
+        const typeShadow = typeSummary ? shadowedTypeMembers.get(typeSummary) : undefined
+        if (
+          priorShadow?.has('*') === true ||
+          priorShadow?.has(chainedMember) === true ||
+          typeShadow?.has('*') === true ||
+          typeShadow?.has(chainedMember) === true
+        ) {
           chainWasShadowed = true
           typeSummary = undefined
           break
@@ -584,11 +607,14 @@ const projectNotebookDependencies = (
           receiversMayAlias(write.receiver, call.receiver) &&
           (write.member === undefined || write.member === call.member)
       )
+      const typeShadow = typeSummary ? shadowedTypeMembers.get(typeSummary) : undefined
       const methodWasShadowed =
         chainWasShadowed ||
         writtenInThisRun ||
         priorShadow?.has('*') === true ||
-        priorShadow?.has(call.member) === true
+        priorShadow?.has(call.member) === true ||
+        typeShadow?.has('*') === true ||
+        typeShadow?.has(call.member) === true
       const methodName = call.kind === 'callable' ? '__call__' : call.member
       const method = methodWasShadowed
         ? undefined
@@ -603,6 +629,7 @@ const projectNotebookDependencies = (
       const hasUnpackedKeywords = call.keywordArguments?.some((keyword) => keyword.name === '**')
       if (
         !incompleteRun &&
+        !call.conditional &&
         receiverTypeRule &&
         ((receiverTypeKeyword && receiverTypeKeyword.staticBoolean !== true) || hasUnpackedKeywords)
       ) {
@@ -815,7 +842,15 @@ const projectNotebookDependencies = (
             if (writtenInThisRun) return true
             const token = referenceTokens.get(reference.root)
             const shadow = token ? shadowedMembers.get(token) : undefined
-            if (shadow?.has('*') || shadow?.has(reference.member)) return true
+            const typeShadow = shadowedTypeMembers.get(summary)
+            if (
+              shadow?.has('*') ||
+              shadow?.has(reference.member) ||
+              typeShadow?.has('*') ||
+              typeShadow?.has(reference.member)
+            ) {
+              return true
+            }
             return (
               summary.methods.find((candidate) => candidate.name === reference.member)?.effect !==
               'read'
@@ -831,12 +866,12 @@ const projectNotebookDependencies = (
         (keyword) => keyword.name === method?.mutatesKeyword
       )
       if (libraryEffect?.mutatesPositionalArgument !== undefined) {
-        typeAwareMutatedNames.push(
-          ...(call.positionalArgumentNames?.[libraryEffect.mutatesPositionalArgument] ?? [])
+        addTypeAwareMutation(
+          call.positionalArgumentNames?.[libraryEffect.mutatesPositionalArgument] ?? []
         )
       }
       if (mutatedKeyword?.argumentNames) {
-        typeAwareMutatedNames.push(...mutatedKeyword.argumentNames)
+        addTypeAwareMutation(mutatedKeyword.argumentNames)
       }
       if (mutatedKeyword?.possibleArgumentNames?.length) {
         typeAwarePossiblyMutatedNames.push(...mutatedKeyword.possibleArgumentNames)
@@ -851,21 +886,35 @@ const projectNotebookDependencies = (
       if (method?.effect === 'unknown' && method.unknownScope === 'namespace') {
         typeAwareReasons.push('opaque-call', 'dynamic-namespace')
       }
+      if (!method && typeSummary?.name.startsWith('python-callable:unknown.')) {
+        typeAwareReasons.push('scoped-opaque-call')
+      }
       if (method?.effect === 'read' && call.kind !== 'mutating') continue
       if (method?.effect === 'mutate' || call.kind === 'mutating') {
         if (call.receiverChain?.length) {
           typeAwarePossiblyMutatedNames.push(...mutationReceiverNames)
           if (mutationReceiverNames.length) typeAwareReasons.push('opaque-mutation')
         } else {
-          typeAwareMutatedNames.push(call.receiver)
+          addTypeAwareMutation([call.receiver])
         }
       } else if (knownConstructorCall) continue
       else if (methodWasShadowed) {
         typeAwarePossiblyMutatedNames.push(call.receiver, ...(call.argumentNames ?? []))
         typeAwareReasons.push('opaque-mutation', 'opaque-call', 'dynamic-namespace')
       } else if (method?.effect === 'unknown') {
-        typeAwarePossiblyMutatedNames.push(...mutationReceiverNames, ...(call.argumentNames ?? []))
+        const safeCallNames = new Set(method.safeCallNames ?? [])
+        typeAwarePossiblyMutatedNames.push(
+          ...mutationReceiverNames,
+          ...(call.argumentNames ?? []),
+          ...(method.usedNames ?? []).filter((name) => !safeCallNames.has(name))
+        )
         typeAwareReasons.push('opaque-mutation')
+        if (
+          typeSummary?.name.startsWith('python-callable:unknown.') ||
+          typeSummary?.name.startsWith('python-function:')
+        ) {
+          typeAwareReasons.push('scoped-opaque-call')
+        }
       } else if (call.kind === 'generic') {
         const argumentNames = call.argumentNames?.length
           ? [...mutationReceiverNames, ...call.argumentNames]
@@ -958,7 +1007,6 @@ const projectNotebookDependencies = (
           'dynamic-assignment',
           'wildcard-import',
           'alias-rebind',
-          'control-flow',
           'class-scope',
           'comprehension-scope',
           'analysis-unavailable',
@@ -1132,7 +1180,9 @@ const projectNotebookDependencies = (
       }
     }
 
-    const definedNames = [...new Set(facts.definedNames ?? [])]
+    const definedNames = [...new Set(facts.definedNames ?? [])].filter(
+      (name) => !conditionallyDefinedNames.has(name)
+    )
     for (const name of definedNames) {
       invalidateName(name, 'stale')
       uncertainBindings.delete(name)
@@ -1142,6 +1192,16 @@ const projectNotebookDependencies = (
       builtinContainers.delete(name)
       copyOnModifyNames.delete(name)
       objectTypes.delete(name)
+    }
+    for (const name of conditionallyDefinedNames) {
+      invalidateName(name, 'unknown', ['control-flow'], false)
+      uncertainBindings.set(name, ['control-flow'])
+      detachPossibleAlias(name, possibleAliases)
+      detachPossibleAlias(name, rCopyAliases)
+      builtinContainers.delete(name)
+      copyOnModifyNames.delete(name)
+      objectTypes.delete(name)
+      typeSummaries.delete(name)
     }
     for (const name of typeBehaviorChanges) {
       invalidateName(name, 'unknown', ['opaque-mutation'], false)
@@ -1156,10 +1216,15 @@ const projectNotebookDependencies = (
       consumers.add(run.runId)
       possibleConsumers.set(name, consumers)
     }
-    for (const name of facts.builtinContainerNames ?? []) builtinContainers.add(name)
-    for (const name of facts.copyOnModifyNames ?? []) copyOnModifyNames.add(name)
+    for (const name of facts.builtinContainerNames ?? []) {
+      if (!conditionallyDefinedNames.has(name)) builtinContainers.add(name)
+    }
+    for (const name of facts.copyOnModifyNames ?? []) {
+      if (!conditionallyDefinedNames.has(name)) copyOnModifyNames.add(name)
+    }
     if (!incompleteRun) {
       for (const [name, typeSummary] of pendingTypeBindings) {
+        if (conditionallyDefinedNames.has(name)) continue
         objectTypes.set(name, typeSummary)
         if (typeSummary.kind === 'r-r6') copyOnModifyNames.delete(name)
       }
@@ -1244,7 +1309,7 @@ const projectNotebookDependencies = (
     for (const write of facts.memberWrites ?? []) {
       const receiverSummary = objectTypes.get(write.receiver)
       const configuredType =
-        write.member && receiverSummary
+        !write.conditional && write.member && receiverSummary
           ? PYTHON_LIBRARY_EFFECTS[receiverSummary.name]?.typeWhenMembersWritten?.[write.member]
           : undefined
       const configuredSummary = configuredType ? typeSummaries.get(configuredType) : undefined
@@ -1263,6 +1328,7 @@ const projectNotebookDependencies = (
         receiversMayAlias(write.receiver, name)
       )?.[1]
       if (classSummary) {
+        if (write.conditional) continue
         if (write.member) {
           const method = classSummary.methods.find((candidate) => candidate.name === write.member)
           if (method) {
@@ -1342,7 +1408,11 @@ const projectNotebookDependencies = (
         const member = call.member.startsWith('data.table::')
           ? call.member.slice('data.table::'.length)
           : call.member
-        if (call.kind === 'mutating' && R_DATA_TABLE_REFERENCE_MUTATORS.has(member)) {
+        if (
+          !call.conditional &&
+          call.kind === 'mutating' &&
+          R_DATA_TABLE_REFERENCE_MUTATORS.has(member)
+        ) {
           const shadowedUnqualifiedCall =
             member === call.member &&
             currentSafeCallNames.includes(member) &&
@@ -1378,7 +1448,11 @@ const projectNotebookDependencies = (
           : namesSharingRCopy(namesSharingReference(target))
       )
     }
-    const copyWriteNames = new Set((facts.memberWrites ?? []).map((write) => write.receiver))
+    const copyWriteNames = new Set(
+      (facts.memberWrites ?? [])
+        .filter((write) => !write.conditional)
+        .map((write) => write.receiver)
+    )
     const ambiguousCopyWriteNames = new Set<string>()
     const ambiguousReferenceAliasNames = new Set<string>()
     const referenceAliasStates = new Map<string, 'stale' | 'unknown'>()
@@ -1447,6 +1521,9 @@ const projectNotebookDependencies = (
     const possibleMutations = new Set<string>()
     const possibleMutationRoots = [
       ...(facts.possiblyMutatedNames ?? []),
+      ...(facts.memberWrites ?? [])
+        .filter((write) => write.conditional)
+        .map((write) => write.receiver),
       ...(incompleteRun ? typeAwareMutatedNames : []),
       ...typeAwarePossiblyMutatedNames,
       ...ambiguousReferenceAliasNames,

@@ -17,6 +17,7 @@ import type {
   SideChatPromptRequest,
   SideChatRuntimeEvent,
   SideChatSendMessageRequest,
+  SideChatSendMessageResult,
   SideChatSessionRequest,
   SideChatSnapshot,
   SideChatSnapshotList,
@@ -62,7 +63,7 @@ const SIDE_CHAT_SYSTEM_PROMPT = [
   'The supplied main transcript is a bounded context snapshot, not a replay and not current authorization to act.',
   'Answer the user directly and concisely.',
   'You have no workspace, shell, file, web, Skill, compute, delegation, or child-Agent capabilities.',
-  'Your only tool is send_message with target "main". It queues advisory text for the next real main user turn; it never wakes, interrupts, or authorizes the main Agent.',
+  'Your only tool is send_message with target "main". While Main is running, it tries to inject advisory context into that turn; otherwise it queues the context for the next real main user turn. It never wakes or authorizes the main Agent.',
   'Do not call send_message for ordinary Side chat questions, requests, follow-ups, or suggestions.',
   'Call it only when the user explicitly asks in the current Side chat turn to send, relay, forward, or tell something to Main.',
   'Never infer permission to relay merely because Main could perform the requested work.',
@@ -102,6 +103,10 @@ type SideChatRuntimeOwnerOptions = Readonly<{
     }
   ) => Promise<ResolvedAgentBackend>
   relay: SideChatRelayOwner
+  deliverRelay?: (
+    parentSessionId: string,
+    queued: SideChatSendMessageResult
+  ) => Promise<SideChatSendMessageResult>
   persistence: Readonly<{
     save(input: {
       projectId: string
@@ -544,7 +549,7 @@ class SideChatRuntimeOwner {
     }
   }
 
-  send(request: SideChatPromptRequest): Promise<void> {
+  send(request: SideChatPromptRequest & Readonly<{ historyPreamble?: string }>): Promise<void> {
     return this.dispatch(request)
   }
 
@@ -1174,7 +1179,7 @@ class SideChatRuntimeOwner {
     active: ActiveSideChat,
     routingId: string,
     request: SideChatSendMessageRequest
-  ): ReturnType<SideChatRelayOwner['send']> {
+  ): Promise<SideChatSendMessageResult> {
     if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) {
       throw new Error('Side chat sender is no longer active.')
     }
@@ -1187,7 +1192,13 @@ class SideChatRuntimeOwner {
       })
       active.relaySenderIds.add(routingId)
     }
-    return this.options.relay.send({ sideSessionId: routingId, ...request })
+    return this.options.relay
+      .send({ sideSessionId: routingId, ...request })
+      .then((queued) =>
+        this.options.deliverRelay
+          ? this.options.deliverRelay(active.parentSessionId, queued)
+          : queued
+      )
   }
 
   private releaseRelaySenders(active: ActiveSideChat): void {

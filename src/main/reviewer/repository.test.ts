@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { PrismaClient } from '@prisma/client'
 
@@ -172,6 +172,56 @@ describe('review repository (integration)', () => {
     await expect(
       repository.getReviewsForProjectSession('project-b', 'shared-session')
     ).resolves.toMatchObject([{ projectId: 'project-b', turnMessageId: 'turn-b' }])
+  })
+
+  it('loads a session Review projection with a constant number of relation queries', async () => {
+    const repository = await createRepository()
+    for (const turnMessageId of ['turn-1', 'turn-2']) {
+      await repository.createReview({
+        projectId: 'project-1',
+        sessionId: 'session-query-count',
+        turnMessageId,
+        scope: scope(turnMessageId)
+      })
+    }
+    const findingQueries = vi.spyOn(client!.finding, 'findMany')
+    const dispositionQueries = vi.spyOn(client!.reviewFindingDisposition, 'findMany')
+
+    await expect(
+      repository.getReviewsForProjectSession('project-1', 'session-query-count')
+    ).resolves.toHaveLength(2)
+
+    expect({
+      findingQueries: findingQueries.mock.calls.length,
+      dispositionQueries: dispositionQueries.mock.calls.length
+    }).toEqual({ findingQueries: 1, dispositionQueries: 2 })
+  })
+
+  it('uses indexes for session Review loads and Review/Finding cleanup filters', async () => {
+    await createRepository()
+    const explain = async (sql: string): Promise<string> =>
+      (await client!.$queryRawUnsafe<Array<{ detail: string }>>(`EXPLAIN QUERY PLAN ${sql}`))
+        .map(({ detail }) => detail)
+        .join('\n')
+
+    const sessionLoad = await explain(
+      `SELECT "id" FROM "Review" WHERE "projectId" = 'project-1' AND "sessionId" = 'session-1' ORDER BY "createdAt" DESC`
+    )
+    const projectCleanup = await explain(
+      `SELECT "id" FROM "Review" WHERE "projectId" = 'project-1'`
+    )
+    const sessionCleanup = await explain(
+      `SELECT "id" FROM "Review" WHERE "sessionId" = 'session-1'`
+    )
+    const findingCleanup = await explain(`SELECT "id" FROM "Finding" WHERE "reviewId" = 'review-1'`)
+
+    expect({ sessionLoad, projectCleanup, sessionCleanup, findingCleanup }).toEqual({
+      sessionLoad: expect.stringMatching(/\bSEARCH Review\b/),
+      projectCleanup: expect.stringMatching(/\bSEARCH Review\b/),
+      sessionCleanup: expect.stringMatching(/\bSEARCH Review\b/),
+      findingCleanup: expect.stringMatching(/\bSEARCH Finding\b/)
+    })
+    expect(sessionLoad).not.toMatch(/\bUSE TEMP B-TREE\b/)
   })
 
   it('writes the exact review scope projection to SQLite and an immutable sidecar', async () => {

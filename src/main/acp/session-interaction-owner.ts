@@ -29,6 +29,7 @@ export interface AcpPromptSessionInteractionRequest {
   readonly provenanceContext?: AcpPromptRequest['provenanceContext']
   readonly memoryEnabled?: boolean
   readonly turnToken?: string
+  readonly referencedSessionIds?: readonly string[]
 }
 
 export interface AcpCompactionSessionInteractionRequest {
@@ -102,6 +103,7 @@ interface ActiveSessionInteraction {
   readonly abortController: AbortController
   cancelled: boolean
   modelTurnCount: number
+  readonly referencedSessionIds: Set<string>
 }
 
 interface TerminalSettlement {
@@ -149,6 +151,23 @@ export class AcpSessionInteractionOwner {
 
   has(sessionId: string): boolean {
     return this.activeInteractions.has(sessionId) || this.pendingPromptReservations.has(sessionId)
+  }
+
+  isSessionReferenceAllowed(sessionId: string, referencedSessionId: string): boolean {
+    const interaction = this.activeInteractions.get(sessionId)
+    return (
+      interaction?.scope.kind === 'prompt' &&
+      interaction.referencedSessionIds.has(referencedSessionId)
+    )
+  }
+
+  authorizeSessionReferences(sessionId: string, referencedSessionIds: readonly string[]): void {
+    const interaction =
+      this.activeInteractions.get(sessionId) ?? this.pendingPromptReservations.get(sessionId)
+    if (interaction?.scope.kind !== 'prompt') return
+    for (const referencedSessionId of referencedSessionIds) {
+      if (referencedSessionId) interaction.referencedSessionIds.add(referencedSessionId)
+    }
   }
 
   snapshot(): readonly AcpSessionInteractionSnapshotEntry[] {
@@ -349,7 +368,8 @@ export class AcpSessionInteractionOwner {
       scope,
       abortController,
       cancelled: false,
-      modelTurnCount: 0
+      modelTurnCount: 0,
+      referencedSessionIds: new Set(request.referencedSessionIds ?? [])
     })
 
     return scope
@@ -399,7 +419,10 @@ export class AcpSessionInteractionOwner {
       scope,
       abortController,
       cancelled: false,
-      modelTurnCount: 0
+      modelTurnCount: 0,
+      referencedSessionIds: new Set(
+        request.kind === 'prompt' ? (request.referencedSessionIds ?? []) : []
+      )
     })
 
     return scope as ScopeFor<Request>

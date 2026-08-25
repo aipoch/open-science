@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { createArtifactChip, createSkillChip, type ComposerNode } from './composer-doc'
+import {
+  createArtifactChip,
+  createSessionChip,
+  createSkillChip,
+  type ComposerNode
+} from './composer-doc'
 
 // A trigger match derived purely from the text before the caret.
 export type TriggerMatch = { active: boolean; query: string }
@@ -146,7 +151,9 @@ export const useMentionTrigger = ({
           ? createSkillChip(node)
           : node.type === 'artifact'
             ? createArtifactChip(node)
-            : document.createTextNode(node.text)
+            : node.type === 'session'
+              ? createSessionChip(node)
+              : document.createTextNode(node.text)
       range.insertNode(inserted)
       const after = document.createRange()
       after.setStartAfter(inserted)

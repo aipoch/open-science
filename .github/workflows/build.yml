@@ -57,7 +57,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
 
       - name: Check generated database schema
         run: npm run db:schema:check
@@ -147,7 +147,7 @@ jobs:
 
       # npm ci runs postinstall: prisma generate + electron-builder install-app-deps.
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
 
       # electron-builder compiles build/icon.icon with actool. Fail here with a focused diagnostic
       # instead of much later in packaging if the runner image ever loses its Xcode 26 selection.

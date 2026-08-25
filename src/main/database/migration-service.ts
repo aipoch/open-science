@@ -28,7 +28,8 @@ import { computePasswordAuthMigration } from './migrations/0010-compute-password
 import { crossResourceTagsMigration } from './migrations/0011-cross-resource-tags'
 import { tagOrderingMigration } from './migrations/0012-tag-ordering'
 import { sessionProjectionMigration } from './migrations/0013-session-projection'
-import { agentMemoryMigration } from './migrations/0014-agent-memory'
+import { reviewQueryIndexesMigration } from './migrations/0014-review-query-indexes'
+import { agentMemoryMigration } from './migrations/0015-agent-memory'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -254,6 +255,12 @@ const SESSION_PROJECTION_CHECKSUM = checksumMigrationPayload(
   sessionProjectionMigration.verifiers,
   sessionProjectionMigration.operations
 )
+const REVIEW_QUERY_INDEXES_CHECKSUM = checksumMigrationPayload(
+  reviewQueryIndexesMigration.id,
+  reviewQueryIndexesMigration.statements,
+  reviewQueryIndexesMigration.verifiers,
+  reviewQueryIndexesMigration.operations
+)
 const AGENT_MEMORY_CHECKSUM = checksumMigrationPayload(
   agentMemoryMigration.id,
   agentMemoryMigration.statements,
@@ -409,6 +416,12 @@ const MIGRATION_MANIFEST = [
   {
     ...sessionProjectionMigration,
     checksum: SESSION_PROJECTION_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...reviewQueryIndexesMigration,
+    checksum: REVIEW_QUERY_INDEXES_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   },
@@ -1368,6 +1381,7 @@ export {
   VISION_EVIDENCE_CHECKSUM,
   COMPUTE_PASSWORD_AUTH_CHECKSUM,
   TAG_ORDERING_CHECKSUM,
+  REVIEW_QUERY_INDEXES_CHECKSUM,
   AGENT_MEMORY_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,

@@ -49,16 +49,12 @@ describe('renderer contract catalog', () => {
     })
 
     expect(
-      paths(({ eventDeliverability }) =>
-        Object.values(eventDeliverability).includes('installed-undelivered')
+      paths(
+        ({ surfaceInstallation, eventDeliverability }) =>
+          surfaceInstallation.localWeb === 'web-event' &&
+          eventDeliverability.localWeb !== 'application-event'
       )
-    ).toEqual([
-      'notebookEnv.onProgress',
-      'notifications.onOpenSession',
-      'notifications.onViewProbe',
-      'uploads.onTransferProgress',
-      'window.onCloseActivePane'
-    ])
+    ).toEqual([])
   })
 
   it('records every intentional and known-deviating argument codec without normalizing it', () => {
@@ -178,7 +174,7 @@ describe('renderer contract catalog', () => {
     ])
   })
 
-  it('keeps SQLite-only Session projection reads on Electron', () => {
+  it('publishes Session projection reads on every renderer surface', () => {
     const projectionReads = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       ['sessions.list', 'sessions.loadOne', 'sessions.loadUsage'].includes(publicPath)
     )
@@ -188,8 +184,8 @@ describe('renderer contract catalog', () => {
       projectionReads.every(
         ({ surfaceInstallation }) =>
           surfaceInstallation.electron === 'preload' &&
-          surfaceInstallation.localWeb === 'unavailable' &&
-          surfaceInstallation.remoteWeb === 'unavailable'
+          surfaceInstallation.localWeb === 'web-rpc' &&
+          surfaceInstallation.remoteWeb === 'web-rpc'
       )
     ).toBe(true)
   })

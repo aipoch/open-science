@@ -1,4 +1,5 @@
 import type { SetSessionSpecialistResponse } from '../../shared/specialist'
+import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type { SessionBindingService } from './session-binding'
 
@@ -42,11 +43,35 @@ export class SessionSpecialistReconfiguration {
     sessionId: string,
     specialistId: string | undefined
   ): Promise<SetSessionSpecialistResponse> {
-    return this.enqueue(sessionId, async () => {
-      await this.validateTarget(sessionId, specialistId)
-      await this.commitDesiredUnlocked(sessionId, specialistId)
-      return this.applyUnlocked(sessionId, specialistId, false)
+    const diagnostics = startDiagnosticOperation(log, {
+      operation: 'specialist-session-switch',
+      fields: {
+        sessionId,
+        target: specialistId === undefined ? 'main-agent' : 'specialist'
+      }
     })
+    diagnostics.phase('queued')
+    return this.enqueue(sessionId, async () => {
+      diagnostics.phase('validate-target')
+      await this.validateTarget(sessionId, specialistId)
+      diagnostics.phase('persist-pending')
+      await this.commitDesiredUnlocked(sessionId, specialistId)
+      return this.applyUnlocked(sessionId, specialistId, false, diagnostics)
+    }).then(
+      (result) => {
+        diagnostics.complete({
+          status: result.status,
+          ...(result.status === 'applied'
+            ? { contextReset: result.contextReset }
+            : { reason: result.reason })
+        })
+        return result
+      },
+      (error: unknown) => {
+        diagnostics.fail(error)
+        throw error
+      }
+    )
   }
 
   // host.agents.switch commits at the old prompt boundary and applies later through the completion
@@ -123,11 +148,13 @@ export class SessionSpecialistReconfiguration {
   private async applyUnlocked(
     sessionId: string,
     specialistId: string | undefined,
-    throwAfterCommit: boolean
+    throwAfterCommit: boolean,
+    diagnostics?: DiagnosticOperation
   ): Promise<SetSessionSpecialistResponse> {
     this.assertSessionActive(sessionId)
     let contextReset = false
     try {
+      diagnostics?.phase('apply-runtime')
       if (this.deps.applyRuntime) {
         contextReset = (await this.deps.applyRuntime(sessionId, specialistId)).contextReset
       }
@@ -144,6 +171,7 @@ export class SessionSpecialistReconfiguration {
     }
 
     try {
+      diagnostics?.phase('persist-applied')
       await this.deps.persistBinding(sessionId, specialistId, false)
       this.assertSessionActive(sessionId)
     } catch (error) {
