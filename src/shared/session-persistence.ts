@@ -3393,15 +3393,9 @@ const sanitizeConversationGraph = (
         if (!isRecord(candidate)) return []
         const id = asString(candidate.id)
         const agentFrameId = asString(candidate.agentFrameId)
-        const frameworkId = asString(candidate.frameworkId) as AgentFrameworkId | undefined
+        const frameworkId = asString(candidate.frameworkId)
         const startedAt = asNumber(candidate.startedAt)
-        if (
-          !id ||
-          !agentFrameId ||
-          !frameworkId ||
-          !AGENT_FRAMEWORK_IDS.has(frameworkId) ||
-          startedAt === undefined
-        ) {
+        if (!id || !agentFrameId || !frameworkId || startedAt === undefined) {
           return []
         }
         return [

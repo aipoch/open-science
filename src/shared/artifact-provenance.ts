@@ -7,7 +7,6 @@ import type {
   NotebookRunInputFile,
   NotebookRunStatus
 } from './notebook'
-import type { AgentFrameworkId } from './settings'
 import type {
   MessageAttribution,
   PersistedActivityGroup,
@@ -544,7 +543,7 @@ export type ProvenanceMessage = {
   createdAt: number
   hasOmittedMedia?: boolean
   agentAttribution?: {
-    frameworkId: AgentFrameworkId
+    frameworkId: string
     agentName?: string
     model?: string
   }

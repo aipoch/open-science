@@ -255,6 +255,45 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
 })
 
 describe('conversation graph materialization diagnostics', () => {
+  it('preserves a conversation written by a not-yet-known Agent framework', () => {
+    const messages: PersistedChatMessage[] = [
+      {
+        id: 'message-1',
+        role: 'user',
+        content: 'Persist me',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    const conversationGraph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    conversationGraph.runtimeSegments[0].frameworkId = 'future-acp'
+
+    const decoded = decodeSessionFile({
+      version: SESSION_FILE_VERSION,
+      session: {
+        ...createSessionWithActivity(undefined),
+        messages,
+        conversationGraph
+      }
+    })
+
+    expect(decoded).toMatchObject({
+      status: 'ok',
+      session: {
+        conversationGraph: {
+          runtimeSegments: [{ frameworkId: 'future-acp' }]
+        }
+      }
+    })
+  })
+
   it('writes a canonical graph while retaining flat messages as the active projection', () => {
     const session: PersistedChatSession = {
       id: 'session-1',
