@@ -203,12 +203,18 @@ export function executeModuleTestPlan(
     spawn = spawnSync,
     environment = process.env,
     platform = process.platform,
-    nodeExecutable = process.execPath
+    nodeExecutable = process.execPath,
+    testArguments = []
   } = {}
 ) {
   process.stdout.write(formatModuleTestPlan(plan))
   if (plan.mode === 'selective' && plan.testFiles.length === 0) return 0
-  const npmArguments = plan.mode === 'full' ? ['test'] : ['test', '--', ...plan.testFiles]
+  const npmArguments = [
+    'test',
+    '--',
+    ...testArguments,
+    ...(plan.mode === 'full' ? [] : plan.testFiles)
+  ]
   const npmExecPath = environment.npm_execpath
   if (platform === 'win32' && !npmExecPath) {
     throw new Error(
@@ -240,6 +246,10 @@ export function runModuleTestCli(arguments_ = process.argv.slice(2), options = {
   const base = argumentValue(arguments_, '--base')
   const head = argumentValue(arguments_, '--head')
   if (!base || !head) throw new Error('--base and --head are required')
+  const coverageChanged = argumentValue(arguments_, '--coverage-changed')
+  if (arguments_.includes('--coverage-changed') && !coverageChanged) {
+    throw new Error('--coverage-changed requires a Git revision')
+  }
   const changes = changesFromGit(base, head, options)
   const paths = sorted(
     changes.flatMap(({ path, previousPath }) => [path, previousPath].filter(Boolean))
@@ -250,7 +260,12 @@ export function runModuleTestCli(arguments_ = process.argv.slice(2), options = {
     process.stdout.write(formatModuleTestPlan(plan))
     return 0
   }
-  return executeModuleTestPlan(plan, options)
+  return executeModuleTestPlan(plan, {
+    ...options,
+    testArguments: coverageChanged
+      ? ['--coverage', '--coverage.changed', coverageChanged]
+      : options.testArguments
+  })
 }
 
 const isDirectExecution =
