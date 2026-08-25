@@ -83,8 +83,13 @@ class ProjectRepository {
   // Updates editable fields, ignoring undefined values so callers can patch only what changed.
   // Pin-only changes preserve updatedAt because pinning controls placement, not research activity.
   async update(request: UpdateProjectRequest): Promise<Project> {
-    const data: { name?: string; description?: string; agentContext?: string; pinned?: boolean } =
-      {}
+    const data: {
+      name?: string
+      description?: string
+      agentContext?: string
+      pinned?: boolean
+      updatedAt?: Date
+    } = {}
 
     if (request.name !== undefined) {
       const name = request.name.trim()
@@ -133,6 +138,11 @@ class ProjectRepository {
     }
 
     if (request.pinned !== undefined) data.pinned = request.pinned
+
+    // Prisma's wall-clock @updatedAt can repeat within one millisecond or move backward after a
+    // clock correction. Advance from the caller's compared value so every accepted content edit
+    // receives a distinct token while updatedAt remains the Project activity timestamp.
+    data.updatedAt = new Date(Math.max(Date.now(), request.expectedUpdatedAt + 1))
 
     const result = await client.project.updateMany({
       where: {

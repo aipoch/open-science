@@ -942,6 +942,53 @@ describe('application database (integration)', () => {
     expect(await repository.list()).toEqual([])
   })
 
+  it('rejects a stale Project update when the system clock moves backward', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-revision-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+    const created = await repository.create({ name: 'Original' })
+
+    // Put the durable timestamp ahead of the database engine's wall clock. This models a Project
+    // created before the system clock moved backward without changing the machine running the test.
+    const futureUpdatedAt = new Date('2100-01-01T00:00:00.000Z')
+    await client.project.update({
+      where: { id: created.id },
+      data: { updatedAt: futureUpdatedAt }
+    })
+
+    // SQLite applies this only inside the temporary test database. It deterministically reproduces
+    // Prisma's wall-clock @updatedAt moving backward by retaining the previously durable value.
+    await client.$executeRawUnsafe(`CREATE TRIGGER freeze_project_updated_at
+      AFTER UPDATE OF name ON "Project"
+      WHEN NEW."updatedAt" <= OLD."updatedAt"
+      BEGIN
+        UPDATE "Project" SET "updatedAt" = OLD."updatedAt" WHERE "id" = NEW."id";
+      END`)
+
+    const staleSnapshot = await repository.get(created.id)
+    expect(staleSnapshot).not.toBeNull()
+
+    const firstUpdate = await repository.update({
+      id: created.id,
+      name: 'First writer',
+      expectedUpdatedAt: staleSnapshot!.updatedAt
+    })
+    expect(firstUpdate.name).toBe('First writer')
+
+    await expect(
+      repository.update({
+        id: created.id,
+        name: 'Stale writer',
+        expectedUpdatedAt: staleSnapshot!.updatedAt
+      })
+    ).rejects.toThrow('Project changed elsewhere.')
+  })
+
   // Verifies the runtime FINDING_TABLE_DDL + migration guard are byte-compatible with the Prisma
   // generated client for the reflagCount column (issue 15).
   it('Finding.reflagCount DDL column is Prisma-compatible and migration guard is idempotent', async () => {

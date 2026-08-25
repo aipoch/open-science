@@ -145,7 +145,7 @@ describe('project repository', () => {
         deletedAt: null,
         updatedAt: new Date(1710000000100)
       },
-      data: { name: 'Renamed' }
+      data: { name: 'Renamed', updatedAt: expect.any(Date) }
     })
     expect(project.update).not.toHaveBeenCalled()
   })
@@ -302,7 +302,7 @@ describe('project repository', () => {
         deletedAt: null,
         updatedAt: new Date(1710000000100)
       },
-      data: { agentContext: 'Prefer Python.' }
+      data: { agentContext: 'Prefer Python.', updatedAt: expect.any(Date) }
     })
   })
 
@@ -330,7 +330,11 @@ describe('project repository', () => {
         deletedAt: null,
         updatedAt: new Date(1710000000100)
       },
-      data: { pinned: true, agentContext: 'Always cite DOIs.' }
+      data: {
+        pinned: true,
+        agentContext: 'Always cite DOIs.',
+        updatedAt: expect.any(Date)
+      }
     })
   })
 
