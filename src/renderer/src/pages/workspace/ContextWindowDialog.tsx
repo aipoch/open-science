@@ -768,15 +768,12 @@ const ContextCallSummary = ({
 
 const ContextCallChart = ({
   bands,
-  capacity,
   activeCallId,
   pinnedCallId,
   onPreview,
   onSelect
 }: {
   bands: readonly ContextWindowCallTurnBand[]
-  // Already visibility-filtered by the caller: 0 hides the line.
-  capacity: number
   activeCallId?: string
   pinnedCallId?: string
   onPreview: (callId: string | undefined) => void
@@ -786,8 +783,9 @@ const ContextCallChart = ({
   const scrollerRef = useRef<HTMLDivElement>(null)
   const points = bands.flatMap((band) => band.calls)
   const callCount = points.length
-  // Scale to the call data, never to capacity: a window far larger than every call would squash
-  // all bars onto the baseline.
+  // Scale to the call data. Bar height is the billing-style total (input + cache + output), so
+  // window capacity — a context-usage limit — is not plotted on this axis; it lives in the
+  // per-call details panel instead.
   const maximum = Math.max(1, ...points.map((point) => callTotalTokens(point.call)))
   const chartWidth = Math.max(560, callCount * 38 + bands.length * 24 + 16)
 
@@ -824,18 +822,6 @@ const ContextCallChart = ({
             <span className="border-t border-border" />
             <span className="border-t border-border" />
           </div>
-          {capacity > 0 ? (
-            <div
-              className="pointer-events-none absolute inset-x-0 bottom-7 top-2"
-              aria-hidden="true"
-            >
-              <span
-                className="absolute inset-x-2 border-t border-dashed border-success-000"
-                data-slot="context-call-capacity"
-                style={{ bottom: `${Math.min(100, (capacity / maximum) * 100)}%` }}
-              />
-            </div>
-          ) : null}
           <div className="absolute inset-0 flex items-end justify-start px-2">
             {bands.map((band, bandIndex) => (
               <div
@@ -1076,10 +1062,19 @@ const ContextCallHistory = ({
     (previewCallId === undefined
       ? undefined
       : points.find((point) => point.call.id === previewCallId)) ?? pinnedPoint
-  // The capacity line is only shown when it lands inside the data-scaled chart range.
-  const maxCallTotal = Math.max(1, ...points.map((point) => callTotalTokens(point.call)))
-  const knownCapacity = Math.max(0, ...points.map((point) => point.call.contextWindowSize ?? 0))
-  const capacity = knownCapacity > 0 && knownCapacity <= maxCallTotal ? knownCapacity : 0
+  // Legend reflects the segments the providers actually reported: calls without a cache
+  // read/write split get a single Cache entry instead of misleading read/write chips.
+  const legendKeys = useMemo(() => {
+    const present = new Set<CallSegmentKey>()
+    for (const point of points) {
+      for (const segment of callTokenSegments(point.call)) {
+        if (segment.tokens > 0) present.add(segment.key)
+      }
+    }
+    return (Object.keys(callSegmentPresentation) as CallSegmentKey[]).filter((key) =>
+      present.has(key)
+    )
+  }, [points])
 
   return (
     <section aria-labelledby="context-call-history-title" data-slot="context-call-history">
@@ -1095,7 +1090,7 @@ const ContextCallHistory = ({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-          {(['input', 'cache-read', 'cache-write', 'output'] as const).map((key) => (
+          {legendKeys.map((key) => (
             <span key={key} className="flex items-center gap-1.5 whitespace-nowrap">
               <span
                 className={cn('h-2.5 w-4 rounded-[2px]', callSegmentPresentation[key].color)}
@@ -1104,18 +1099,11 @@ const ContextCallHistory = ({
               {t(callSegmentPresentation[key].label)}
             </span>
           ))}
-          {capacity > 0 ? (
-            <span className="flex items-center gap-1.5 whitespace-nowrap">
-              <span className="w-4 border-t border-dashed border-success-000" aria-hidden="true" />
-              {t('Capacity')}
-            </span>
-          ) : null}
         </div>
       </div>
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         <ContextCallChart
           bands={bands}
-          capacity={capacity}
           activeCallId={activePoint?.call.id}
           pinnedCallId={pinnedPoint?.call.id}
           onPreview={setPreviewCallId}

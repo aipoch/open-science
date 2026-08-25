@@ -318,12 +318,14 @@ describe('ContextWindowDialog', () => {
     const bands = chart?.querySelectorAll('[data-slot="context-call-band"]')
     expect(bands).toHaveLength(1)
     expect(bands?.[0]?.textContent).toContain('T1')
-    expect(chart?.querySelector('[data-slot="context-call-capacity"]')).not.toBeNull()
 
     const history = document.body.querySelector('[data-slot="context-call-history"]')
-    for (const chip of ['Input', 'Cache read', 'Cache write', 'Output', 'Capacity']) {
+    // These calls report aggregate cache only, so the legend shows a single Cache chip.
+    for (const chip of ['Input', 'Cache', 'Output']) {
       expect(history?.textContent).toContain(chip)
     }
+    expect(history?.textContent).not.toContain('Cache read')
+    expect(history?.textContent).not.toContain('Cache write')
 
     const details = document.body.querySelector('[data-slot="context-call-details"]')
     expect(details?.querySelector('[data-slot="context-call-details-title"]')?.textContent).toBe(
@@ -398,7 +400,6 @@ describe('ContextWindowDialog', () => {
 
     const summary = document.body.querySelector('[data-slot="context-call-summary"]')
     expect(summary?.textContent).toContain('Peak window—')
-    expect(document.body.querySelector('[data-slot="context-call-capacity"]')).toBeNull()
 
     const details = document.body.querySelector('[data-slot="context-call-details"]')
     expect(details?.textContent).toContain('Window used—')
@@ -408,6 +409,43 @@ describe('ContextWindowDialog', () => {
     expect(mix?.textContent).not.toContain('Cache read')
     expect(details?.textContent).not.toContain('undefined')
     expect(details?.textContent).not.toContain('NaN')
+  })
+
+  it('labels the legend with cache read/write when calls report the split', () => {
+    const withSplit = session()
+    withSplit.messages.push({
+      id: 'answer-1',
+      role: 'agent',
+      responseToMessageId: 'prompt-1',
+      content: 'Done',
+      eventIds: [],
+      status: 'complete',
+      turnUsage: { inputTokens: 10, cacheTokens: 9, outputTokens: 3, turnCount: 1 },
+      modelCallUsage: [
+        {
+          id: 'answer-1:model-call:0',
+          index: 0,
+          inputTokens: 10,
+          cacheTokens: 9,
+          cachedReadTokens: 7,
+          cachedWriteTokens: 2,
+          outputTokens: 3
+        }
+      ],
+      createdAt: 2,
+      updatedAt: 3,
+      completedAt: 3
+    })
+
+    act(() => {
+      root.render(<ContextWindowDialog open session={withSplit} onOpenChange={vi.fn()} />)
+    })
+    switchToCalls()
+
+    const history = document.body.querySelector('[data-slot="context-call-history"]')
+    for (const chip of ['Input', 'Cache read', 'Cache write', 'Output']) {
+      expect(history?.textContent).toContain(chip)
+    }
   })
 
   it('keeps the dashed empty state when the session has no tracked calls', () => {
