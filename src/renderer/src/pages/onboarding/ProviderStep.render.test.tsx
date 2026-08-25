@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ValidateProviderResult } from '../../../../shared/settings'
+import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ProviderStep } from './ProviderStep'
 import {
@@ -32,11 +33,12 @@ beforeEach(() => {
   root = createRoot(container)
 })
 
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
   delete (window as unknown as { api?: unknown }).api
+  await i18next.changeLanguage('en')
 })
 
 type HarnessProps = {
@@ -202,6 +204,22 @@ describe('ProviderStep', () => {
 
     expect(useSettingsStore.getState().saveAndActivateProvider).toHaveBeenCalled()
     expect(onAdvance).toHaveBeenCalledOnce()
+  })
+
+  it('localizes an application-generated provider limit error', async () => {
+    readyClaudeEnvironment()
+    useSettingsStore.setState({
+      saveAndActivateProvider: vi.fn().mockRejectedValue(new Error('Provider limit of 64 reached.'))
+    })
+
+    await renderStep()
+    await fillRequiredProviderFields(container)
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    await clickButton(/测试并继续/)
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      '服务商数量已达到 64 个的上限。'
+    )
   })
 
   it('includes a custom model effort preset in the provider request', async () => {

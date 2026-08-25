@@ -30,7 +30,7 @@ import {
   providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
-import { describeValidation } from '../settings/validation-message'
+import { describeValidation, localizeProviderResourceMessage } from '../settings/validation-message'
 
 const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
   type === 'codex-isolated' ||
@@ -369,7 +369,11 @@ const ProviderStep = ({
     } catch (error) {
       if (formValue.type === 'xai-subscription' && xaiLoginCancelledRef.current) return
       setValidationOk(false)
-      setValidationMessage(error instanceof Error ? error.message : t('Could not save provider.'))
+      setValidationMessage(
+        error instanceof Error
+          ? localizeProviderResourceMessage(error.message, tSettings)
+          : t('Could not save provider.')
+      )
     } finally {
       setIsSaving(false)
     }
