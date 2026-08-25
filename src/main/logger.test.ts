@@ -11,6 +11,7 @@ import {
   flushLogs,
   formatLine,
   initLogger,
+  runWithDiagnosticCorrelation,
   writeFatalLogSync
 } from './logger'
 import {
@@ -342,6 +343,29 @@ describe('logger: process run context', () => {
       data: { phase: 'ready' }
     })
     expect(typeof record.t).toBe('string')
+  })
+
+  it('adds one request correlation ID across an async diagnostic context', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-correlation-'))
+    initLogger({ logDir, fileName: 'main.log', mirrorToConsole: false })
+    const log = createLogger('request')
+
+    await runWithDiagnosticCorrelation(async () => {
+      log.info('started')
+      await Promise.resolve()
+      log.warn('failed', { sessionId: 'session-1', runId: 'run-1' })
+    })
+    log.info('outside request')
+    await flushLogs()
+
+    const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(records[0]?.correlationId).toEqual(expect.any(String))
+    expect(records[1]?.correlationId).toBe(records[0]?.correlationId)
+    expect(records[2]).not.toHaveProperty('correlationId')
+    expect(records[1]?.data).toMatchObject({ sessionId: 'session-1', runId: 'run-1' })
   })
 })
 
