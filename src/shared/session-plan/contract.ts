@@ -20,6 +20,9 @@ export function formatPlanSchemaIssue(issue: z.core.$ZodRawIssue): string | unde
     const expected = issue.values.map((value) => JSON.stringify(value)).join(', ')
     return `Expected one of ${expected}; received ${JSON.stringify(issue.input)}`
   }
+  if (issue.code === 'unrecognized_keys') {
+    return `Unexpected fields: ${issue.keys.map((key) => JSON.stringify(key)).join(', ')}`
+  }
   return undefined
 }
 

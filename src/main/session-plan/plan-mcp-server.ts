@@ -24,15 +24,14 @@ import { PLAN_MCP_SERVER_ARG } from '../mcp-server-args'
 
 const PLAN_MCP_SERVER_NAME = 'open-science-plan'
 
-const generatePlanToolSchema = {
-  session_id: z.never({ error: formatPlanSchemaIssue }).optional(),
-  plan_id: z.never({ error: formatPlanSchemaIssue }).optional(),
-  artifact_id: z.never({ error: formatPlanSchemaIssue }).optional(),
-  artifact_version_id: z.never({ error: formatPlanSchemaIssue }).optional(),
-  decision: z.enum(['approved', 'rejected'], { error: formatPlanSchemaIssue }).optional(),
-  approve: z.literal(true, { error: formatPlanSchemaIssue }).optional(),
-  ...generatePlanContentToolSchema.shape
-}
+const generatePlanToolSchema = z.strictObject(
+  {
+    decision: z.enum(['approved', 'rejected'], { error: formatPlanSchemaIssue }).optional(),
+    approve: z.literal(true, { error: formatPlanSchemaIssue }).optional(),
+    ...generatePlanContentToolSchema.shape
+  },
+  { error: formatPlanSchemaIssue }
+)
 
 const sessionPlanStepStatusSchema = z.enum([
   'in_progress',

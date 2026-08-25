@@ -121,6 +121,10 @@ describe('Session Plan MCP server', () => {
           rationale: { type: 'string', description: expect.any(String) }
         }
       })
+      expect(inputSchema.properties).not.toHaveProperty('session_id')
+      expect(inputSchema.properties).not.toHaveProperty('plan_id')
+      expect(inputSchema.properties).not.toHaveProperty('artifact_id')
+      expect(inputSchema.properties).not.toHaveProperty('artifact_version_id')
       expect(inputSchema).not.toHaveProperty('required')
       expect(JSON.stringify(inputSchema)).not.toContain(
         'delegations: [{ name, steps: [{ title, description }] }]'
@@ -614,6 +618,39 @@ describe('Session Plan MCP server', () => {
         expect(result).toMatchObject({ isError: true })
         expect(text).toContain(expected)
         expect(generate).not.toHaveBeenCalled()
+      }
+    )
+  })
+
+  it('rejects unadvertised identity fields before invoking a Plan handler', async () => {
+    const approve = vi.fn()
+
+    await withPlanMcpClient(
+      'plan-forged-identities-test',
+      {
+        generate: vi.fn(),
+        approve,
+        reject: vi.fn(),
+        updateStepStatus: vi.fn()
+      },
+      async (client) => {
+        const result = await client.callTool({
+          name: 'generate_plan',
+          arguments: {
+            decision: 'approved',
+            session_id: 'forged-session',
+            plan_id: 'forged-plan',
+            artifact_id: 'forged-artifact',
+            artifact_version_id: 'forged-version'
+          }
+        })
+        const text = (result as { content: Array<{ text: string }> }).content[0].text
+
+        expect(result).toMatchObject({ isError: true })
+        expect(text).toContain(
+          'Unexpected fields: "session_id", "plan_id", "artifact_id", "artifact_version_id"'
+        )
+        expect(approve).not.toHaveBeenCalled()
       }
     )
   })
