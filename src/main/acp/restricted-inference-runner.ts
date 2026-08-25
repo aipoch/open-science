@@ -61,11 +61,12 @@ type RestrictedInferenceRunnerOptions = Readonly<{
     context: {
       systemPromptAppends: string[]
       includeSkillAndConnectorContext: false
-      forceCodexNativeResponsesCompatibility: true
+      forceCodexNativeResponsesCompatibility?: true
     }
   ) => Promise<ResolvedAgentBackend>
   now?: () => number
   createRuntime?: (options: AcpRuntimeOptions) => RestrictedInferenceRuntime
+  allowNativeCodexSubscription?: boolean
 }>
 
 type ActiveRun = {
@@ -117,7 +118,11 @@ class RestrictedInferenceRunner {
   }
 
   supportsTarget(target: ExplicitAgentBackendTarget): boolean {
-    return !(target.frameworkId === 'codex' && isCodexSubscriptionProviderId(target.providerId))
+    return !(
+      target.frameworkId === 'codex' &&
+      isCodexSubscriptionProviderId(target.providerId) &&
+      this.options.allowNativeCodexSubscription !== true
+    )
   }
 
   async sweepStaleProfiles(): Promise<void> {
@@ -208,10 +213,14 @@ class RestrictedInferenceRunner {
       const cwd = join(jobRoot, 'cwd')
       const profileRoot = join(jobRoot, 'profile')
       await Promise.all([mkdir(cwd), mkdir(profileRoot)])
+      const nativeCodexSubscriptionAllowed =
+        input.target.frameworkId === 'codex' &&
+        isCodexSubscriptionProviderId(input.target.providerId) &&
+        this.options.allowNativeCodexSubscription === true
       backend = await this.options.resolveTarget(input.target, {
         systemPromptAppends: [input.systemPrompt],
         includeSkillAndConnectorContext: false,
-        forceCodexNativeResponsesCompatibility: true
+        ...(nativeCodexSubscriptionAllowed ? {} : { forceCodexNativeResponsesCompatibility: true })
       })
       ensureActive()
       const resolvedBackend = await prepareRestrictedBackend(backend, profileRoot, {
@@ -224,8 +233,11 @@ class RestrictedInferenceRunner {
       backend = resolvedBackend
       ensureActive()
       const bridge = resolvedBackend.responsesBridgeLease
+      const nativeCodexSubscriptionToolingDisabled =
+        resolvedBackend.framework.id === 'codex' && nativeCodexSubscriptionAllowed
       if (
         resolvedBackend.framework.id === 'codex' &&
+        !nativeCodexSubscriptionToolingDisabled &&
         (!bridge?.registerToolLessSession || !bridge.unregisterToolLessSession)
       ) {
         throw new RestrictedInferenceError(

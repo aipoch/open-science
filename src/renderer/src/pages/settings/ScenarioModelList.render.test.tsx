@@ -216,6 +216,45 @@ describe('ScenarioModelList', () => {
     act(() => root.unmount())
   })
 
+  it('summarizes an image-capable Codex subscription Vision model as available', () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportsSkills: true,
+          supportedApiTypes: ['responses']
+        }
+      ],
+      providers: [
+        {
+          id: 'builtin-codex-isolated',
+          type: 'codex-isolated',
+          name: 'Codex subscription',
+          apiEndpoints: ['responses'],
+          models: ['gpt-5.6-sol'],
+          supportsImageInput: true,
+          hasKey: false,
+          needsKey: false
+        }
+      ],
+      visionModel: {
+        providerId: 'builtin-codex-isolated',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'high'
+      }
+    })
+    const root = renderList()
+
+    const visionRow = rowButton('Vision')
+    expect(visionRow?.textContent).toContain('gpt-5.6-sol')
+    expect(visionRow?.textContent).toContain('Codex subscription')
+    expect(visionRow?.textContent).not.toContain('Unavailable')
+
+    act(() => root.unmount())
+  })
+
   it('marks a Vision model without image input as unavailable', () => {
     useSettingsStore.setState({
       providers: [

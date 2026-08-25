@@ -44,6 +44,7 @@ const rootSchema = z
             id,
             display_name: z.string().min(1).max(160),
             summary: z.string().min(1).max(500),
+            author: z.string().trim().min(1).max(160).optional(),
             publisher: publisherSchema,
             latest: z
               .object({

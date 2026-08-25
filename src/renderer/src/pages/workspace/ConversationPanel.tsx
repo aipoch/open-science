@@ -397,7 +397,8 @@ const ConversationPanel = ({
       cancelTransfer: onCancelAttachmentTransfer,
       removeAttachment: onRemoveAttachment,
       restorePastedText: onRestorePastedText,
-      undoPastedTextRemoval: onUndoPastedTextRemoval
+      undo: onUndo,
+      redo: onRedo
     }
   } = composer
   const {
@@ -1542,7 +1543,8 @@ const ConversationPanel = ({
                           onPaste={handleMessageDraftPaste}
                           onLongTextPaste={onStagePastedText}
                           onLocatePastedText={handleLocatePastedText}
-                          onUndoPastedTextRemoval={onUndoPastedTextRemoval}
+                          onUndo={onUndo}
+                          onRedo={onRedo}
                           disabled={!canEditDraft}
                           placeholder={t(
                             'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',

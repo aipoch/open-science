@@ -37,9 +37,9 @@ const HOST_SDK_DISCOVERY_GUIDANCE =
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   '<open_science_notebook_instructions>',
   'Notebook tool instructions (only applies when using open-science-notebook tools).',
-  'Default mode: for materially different interpretations, make `ask_user_question` the first tool call; include all 1-3 known questions in one call; do not inspect or use other tools first or print choices.',
-  'Use preview for code/results; keep conversation in chat.',
-  'Use `notebook_execute` for one persistent Python/R cell; reuse `cellId`. Kernels cannot use connectors. Use `repl_execute` for `host.capabilities`, `host.llm`, `host.mcp`, `host.compute`, `host.agents`, or `host.skills`. Move large cross-kernel data via `process.env.OPEN_SCIENCE_HANDOFF_DIR`.',
+  'Use the app-owned `ask_user_question` as the first tool call when a request has materially different interpretations; do not inspect or use other tools first, and never print a textual choice list. Put all 1-3 known questions in one call with 2-4 real options each. Infer minor reversible details and omit Other; the UI adds custom, agent-decide, and Skip. It shows questions one at a time, then continues the task after Finish. A pending result ends the turn normally.',
+  'Notebook preview is only for code and execution results; keep chat, explanation, and diagnosis in the chat area.',
+  'Use `notebook_execute` for one persistent Python/R cell per call; reuse `cellId` to rerun it. Python/R data kernels cannot call connectors; use `repl_execute` for `host.capabilities`/`host.llm`/`host.mcp`/`host.compute`/`host.agents`/`host.skills`. For large cross-kernel data, write under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL and read that path from Python/R.',
   HOST_SDK_DISCOVERY_GUIDANCE,
   '`manage_environments` creates separate runtime namespaces; bind/switch them and move data with files. Restart/reopen clears variables, not history/files.',
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or modify original user files.',
@@ -1242,7 +1242,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'ask_user_question',
     title: 'Ask the user to choose',
     description:
-      'Default mode: materially different interpretations require this first tool call; include every known question in one call. Ask 1-3 with 2-4 described options; omit Other and do not print choices. Pending ends the turn; Finish continues.',
+      'Collect 1-3 decisions when a request has materially different interpretations. Use this app-owned tool as the first tool call, before inspecting the workspace or using other tools, and include every known question in one call. Never print a textual choice list. Give each question 2-4 unique options with descriptions and omit Other; the app adds custom, agent-decide, and Skip. Questions appear one at a time. A pending result ends the turn normally; the app continues after Finish.',
     method: 'requestUserInput',
     inputSchema: requestUserInputToolSchema,
     mapResult: compactUserChoiceResult,

@@ -265,6 +265,11 @@ const serializeLegacyCodexProviderRoute = (route: ImportedCodexProviderRoute): s
     ''
   ].join('\n')
 
+export const projectSafeCodexProviderRoute = (configToml: string): string | undefined => {
+  const route = extractCodexProviderRoute(configToml)
+  return route ? serializeLegacyCodexProviderRoute(route) : undefined
+}
+
 const IMPORTED_ROUTE_SELECTION_BEGIN = '# Open Science: begin imported Codex route selection'
 const IMPORTED_ROUTE_SELECTION_END = '# Open Science: end imported Codex route selection'
 const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open Science: begin imported Codex provider'

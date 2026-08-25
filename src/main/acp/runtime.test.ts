@@ -5421,7 +5421,6 @@ describe('ACP runtime session management', () => {
     expect(planPrompt).toContain(
       'Review the Skills available in the current session to confirm the catalog covers the task.'
     )
-    expect(planPrompt).toContain('directly ask the user in an ordinary response')
     expect(planPrompt).toContain('complete revised plan')
     expect(planPrompt).toContain('short exact `title`')
     expect(planPrompt).toContain('Execution starts only after approval.')
@@ -9646,7 +9645,7 @@ describe('ACP runtime session management', () => {
       'Notebook tool instructions (only applies when using open-science-notebook tools)'
     )
     expect(fakeAgent.prompts[0].text).toContain('`ask_user_question`')
-    expect(fakeAgent.prompts[0].text).toContain('Default mode')
+    expect(fakeAgent.prompts[0].text).toContain('app-owned `ask_user_question`')
     expect(fakeAgent.prompts[0].text).not.toContain('<open_science_artifact_instructions>')
   })
 
@@ -9674,7 +9673,7 @@ describe('ACP runtime session management', () => {
       fakeAgent.newSessions[0].mcpServers.map((server) => (server as { name: string }).name)
     ).toEqual(['open-science-notebook'])
     expect(fakeAgent.prompts[0].text).toContain('`ask_user_question`')
-    expect(fakeAgent.prompts[0].text).toContain('Default mode')
+    expect(fakeAgent.prompts[0].text).toContain('app-owned `ask_user_question`')
   })
 
   it('does not tell Codex to skip the native SKILL.md read required for progressive loading', async () => {

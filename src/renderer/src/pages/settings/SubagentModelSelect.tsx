@@ -24,10 +24,7 @@ import {
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 import { SettingsField, SettingsRow } from './SettingsLayout'
-import {
-  isCodexSubscriptionProvider,
-  type SubagentModelConfiguration
-} from '../../../../shared/settings'
+import type { SubagentModelConfiguration } from '../../../../shared/settings'
 
 const INHERIT_KEY = 'same-as-main-model'
 
@@ -280,9 +277,7 @@ const VisionModelSelect = (): React.JSX.Element => {
       inheritLabel={t('Not configured')}
       configuration={configuration ? { mode: 'fixed', ...configuration } : { mode: 'inherit' }}
       pending={useSettingsStore((state) => state.visionModelPending)}
-      entryFilter={(entry) =>
-        entry.supportsImageInput && !isCodexSubscriptionProvider(entry.providerType)
-      }
+      entryFilter={(entry) => entry.supportsImageInput}
       setConfiguration={(next) =>
         setVisionModel(
           next.mode === 'fixed'

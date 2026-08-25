@@ -210,7 +210,8 @@ type Overrides = Partial<{
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
   onLongTextPaste: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
   onLocatePastedText: (pastedTextId: string) => void
-  onUndoPastedTextRemoval: () => boolean
+  onUndo: (caret?: { nodeIndex: number; offset: number }) => boolean
+  onRedo: (caret?: { nodeIndex: number; offset: number }) => boolean
   disabled: boolean
   isHistoryBrowsing: boolean
   historyStatus: string
@@ -231,7 +232,8 @@ const renderEditor = (overrides: Overrides = {}): void => {
         onPaste={overrides.onPaste ?? noop}
         onLongTextPaste={overrides.onLongTextPaste}
         onLocatePastedText={overrides.onLocatePastedText}
-        onUndoPastedTextRemoval={overrides.onUndoPastedTextRemoval}
+        onUndo={overrides.onUndo}
+        onRedo={overrides.onRedo}
         disabled={overrides.disabled}
         placeholder="Ask anything"
         ariaLabel="Ask anything"
@@ -421,6 +423,28 @@ describe('ComposerEditor', () => {
     expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'hello' }] })
   })
 
+  it('captures the selection start before replacing selected Composer text', () => {
+    const onDocChange = vi.fn()
+    renderEditor({ doc: { nodes: [{ type: 'text', text: 'hello' }] }, onDocChange })
+    const text = editor().firstChild as Text
+    const range = document.createRange()
+    range.setStart(text, 1)
+    range.setEnd(text, 4)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+
+    dispatchKey(editor(), 'x')
+    act(() => {
+      editor().textContent = 'hXo'
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: 'hXo' }] },
+      { nodeIndex: 0, offset: 1 }
+    )
+  })
+
   it('submits on Enter without shift and not on Shift+Enter', () => {
     const onSubmit = vi.fn()
     renderEditor({ onSubmit })
@@ -448,6 +472,30 @@ describe('ComposerEditor', () => {
     })
     dispatchKey(editor(), 'Enter')
     expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  it('emits one undoable document edit for an IME composition', () => {
+    const onDocChange = vi.fn()
+    renderEditor({ onDocChange })
+    setCaret(editor(), 0)
+
+    act(() => {
+      editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+      editor().textContent = 'n'
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+      editor().textContent = '你'
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(onDocChange).not.toHaveBeenCalled()
+
+    act(() => {
+      editor().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+    })
+    expect(onDocChange).toHaveBeenCalledOnce()
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: '你' }] },
+      { nodeIndex: 0, offset: 0 }
+    )
   })
 
   it('enters history with ArrowUp only from a collapsed caret at the logical start', () => {
@@ -583,7 +631,10 @@ describe('ComposerEditor', () => {
 
     expect(onPaste).toHaveBeenCalledTimes(1)
     expect(editor().textContent).toContain('pasted')
-    expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'pasted' }] })
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: 'pasted' }] },
+      { nodeIndex: 0, offset: 0 }
+    )
   })
 
   it('replaces the active selection with a long-paste anchor at the exact document position', () => {
@@ -614,11 +665,16 @@ describe('ComposerEditor', () => {
     })
 
     expect(onDocChange).not.toHaveBeenCalled()
-    const [nextDoc, node] = onLongTextPaste.mock.calls[0] as [ComposerDoc, ComposerPastedTextNode]
+    const [nextDoc, node, caret] = onLongTextPaste.mock.calls[0] as [
+      ComposerDoc,
+      ComposerPastedTextNode,
+      { nodeIndex: number; offset: number }
+    ]
     expect(node).toMatchObject({ type: 'pasted-text', text: payload })
     expect(nextDoc).toEqual({
       nodes: [{ type: 'text', text: 'before ' }, node, { type: 'text', text: ' after' }]
     })
+    expect(caret).toEqual({ nodeIndex: 0, offset: 'before '.length })
     expect(editor().textContent).not.toContain(payload)
   })
 
@@ -759,12 +815,15 @@ describe('ComposerEditor', () => {
     expect(cut.defaultPrevented).toBe(true)
     expect(clipboard.get('text/plain')).toBe('full payload')
     expect(clipboard.get('application/x-open-science-composer-fragment')).toContain('full payload')
-    expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'before  after' }] })
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: 'before  after' }] },
+      { nodeIndex: 1, offset: 0 }
+    )
   })
 
-  it('uses custom Cmd+Z only while a pasted-text removal is undoable', () => {
-    const onUndoPastedTextRemoval = vi.fn(() => true)
-    renderEditor({ onUndoPastedTextRemoval })
+  it('routes Cmd+Z only through Composer undo, including after its history is empty', () => {
+    const onUndo = vi.fn(() => true)
+    renderEditor({ onUndo })
     const handled = new KeyboardEvent('keydown', {
       key: 'z',
       metaKey: true,
@@ -773,9 +832,9 @@ describe('ComposerEditor', () => {
     })
     act(() => editor().dispatchEvent(handled))
     expect(handled.defaultPrevented).toBe(true)
-    expect(onUndoPastedTextRemoval).toHaveBeenCalledOnce()
+    expect(onUndo).toHaveBeenCalledOnce()
 
-    onUndoPastedTextRemoval.mockReturnValue(false)
+    onUndo.mockReturnValue(false)
     const native = new KeyboardEvent('keydown', {
       key: 'z',
       metaKey: true,
@@ -783,7 +842,28 @@ describe('ComposerEditor', () => {
       cancelable: true
     })
     act(() => editor().dispatchEvent(native))
-    expect(native.defaultPrevented).toBe(false)
+    expect(native.defaultPrevented).toBe(true)
+    expect(onUndo).toHaveBeenCalledTimes(2)
+  })
+
+  it('routes Cmd+Shift+Z and Ctrl+Shift+Z only through Composer redo', () => {
+    const onRedo = vi.fn(() => true)
+    renderEditor({ onRedo })
+
+    for (const [index, modifier] of [{ metaKey: true }, { ctrlKey: true }].entries()) {
+      if (index === 1) onRedo.mockReturnValue(false)
+      const handled = new KeyboardEvent('keydown', {
+        key: 'z',
+        shiftKey: true,
+        ...modifier,
+        bubbles: true,
+        cancelable: true
+      })
+      act(() => editor().dispatchEvent(handled))
+      expect(handled.defaultPrevented).toBe(true)
+    }
+
+    expect(onRedo).toHaveBeenCalledTimes(2)
   })
 
   it('places the caret immediately after restored pasted text', () => {
@@ -826,7 +906,10 @@ describe('ComposerEditor', () => {
 
     // No chip is created; the doc holds only a text node, so it carries no skill id.
     expect(editor().querySelector('[data-skill-id]')).toBeNull()
-    expect(onDocChange).toHaveBeenLastCalledWith({ nodes: [{ type: 'text', text: '/Literature' }] })
+    expect(onDocChange).toHaveBeenLastCalledWith(
+      { nodes: [{ type: 'text', text: '/Literature' }] },
+      { nodeIndex: 0, offset: 0 }
+    )
   })
 
   it('inserts a skill chip when a suggestion is chosen from the popup', () => {
@@ -855,6 +938,7 @@ describe('ComposerEditor', () => {
 
     const lastCall = onDocChange.mock.calls.at(-1)?.[0] as ComposerDoc
     expect(lastCall.nodes.some((node) => node.type === 'skill' && node.id === 'lit')).toBe(true)
+    expect(onDocChange.mock.calls.at(-1)?.[1]).toEqual({ nodeIndex: 0, offset: 4 })
   })
 
   it('exposes the active skill suggestion from the focused editor', () => {
@@ -895,7 +979,7 @@ describe('ComposerEditor', () => {
     dispatchKey(editor(), 'Backspace')
 
     expect(editor().querySelector('[data-skill-id]')).toBeNull()
-    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc)
+    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc, { nodeIndex: 1, offset: 0 })
   })
 
   it('suppresses the popup once a skill chip exists (one skill per message)', () => {
@@ -1087,7 +1171,7 @@ describe('ComposerEditor', () => {
     dispatchKey(editor(), 'Backspace')
 
     expect(editor().querySelector('[data-mention-type="artifact"]')).toBeNull()
-    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc)
+    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc, { nodeIndex: 1, offset: 0 })
   })
 
   it('opens a linked-folder chip in the preview workbench on click', () => {

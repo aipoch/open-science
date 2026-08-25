@@ -37,19 +37,106 @@ const waitForCalls = async (callback: ReturnType<typeof vi.fn>, count: number): 
 }
 
 describe('UserSkillCatalogObserver', () => {
-  it('publishes valid direct additions and ignores malformed packages', async () => {
-    const storageRoot = await makeStorage()
+  it('starts watching without waiting for the initial catalog scan', async () => {
     const watcher = fakeWatcher()
+    let finishInitialScan: ((skills: []) => void) | undefined
+    const list = vi.fn<() => Promise<[]>>(
+      () => new Promise<[]>((resolve) => (finishInitialScan = resolve))
+    )
     const onCatalogChanged = vi.fn()
     const observer = new UserSkillCatalogObserver({
-      storageRoot,
-      catalog: new UserSkillRepository(storageRoot),
+      storageRoot: await makeStorage(),
+      catalog: { list },
+      onCatalogChanged,
+      watchDirectory: watcher.watchDirectory,
+      reconcileIntervalMs: 60_000
+    })
+
+    await observer.start()
+
+    expect(watcher.watchDirectory).toHaveBeenCalledOnce()
+    expect(list).toHaveBeenCalledOnce()
+    observer.dispose()
+    finishInitialScan?.([])
+    await Promise.resolve()
+    expect(onCatalogChanged).not.toHaveBeenCalled()
+  })
+
+  it('reconciles a filesystem event that arrives during the initial scan', async () => {
+    const watcher = fakeWatcher()
+    let finishInitialScan: ((skills: []) => void) | undefined
+    const changedSkill = {
+      id: 'personal-direct',
+      name: 'direct',
+      displayName: 'Direct',
+      description: 'Directly installed.',
+      source: 'personal' as const,
+      updatedAt: '2026-08-25T00:00:00.000Z',
+      sourceDir: '/skills/personal/direct'
+    }
+    const list = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<[]>((resolve) => (finishInitialScan = resolve)))
+      .mockResolvedValue([changedSkill])
+    const onCatalogChanged = vi.fn()
+    const observer = new UserSkillCatalogObserver({
+      storageRoot: await makeStorage(),
+      catalog: { list },
       onCatalogChanged,
       watchDirectory: watcher.watchDirectory,
       debounceMs: 1,
       reconcileIntervalMs: 60_000
     })
     await observer.start()
+
+    watcher.emitChange()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    finishInitialScan?.([])
+
+    await waitForCalls(list, 2)
+    await waitForCalls(onCatalogChanged, 1)
+    observer.dispose()
+  })
+
+  it('publishes the first successful retry after the initial scan fails', async () => {
+    const watcher = fakeWatcher()
+    const list = vi.fn().mockRejectedValueOnce(new Error('transient')).mockResolvedValue([])
+    const onCatalogChanged = vi.fn()
+    const observer = new UserSkillCatalogObserver({
+      storageRoot: await makeStorage(),
+      catalog: { list },
+      onCatalogChanged,
+      watchDirectory: watcher.watchDirectory,
+      debounceMs: 1,
+      reconcileIntervalMs: 60_000
+    })
+    await observer.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    watcher.emitChange()
+
+    await waitForCalls(list, 2)
+    await waitForCalls(onCatalogChanged, 1)
+    observer.dispose()
+  })
+
+  it('publishes valid direct additions and ignores malformed packages', async () => {
+    const storageRoot = await makeStorage()
+    const watcher = fakeWatcher()
+    const onCatalogChanged = vi.fn()
+    const catalog = new UserSkillRepository(storageRoot)
+    const list = vi.spyOn(catalog, 'list')
+    const observer = new UserSkillCatalogObserver({
+      storageRoot,
+      catalog,
+      onCatalogChanged,
+      watchDirectory: watcher.watchDirectory,
+      debounceMs: 1,
+      reconcileIntervalMs: 60_000
+    })
+    await observer.start()
+    await waitForCalls(list, 1)
+    await list.mock.results[0].value
 
     const direct = join(storageRoot, 'skills', 'personal', 'direct')
     await mkdir(direct, { recursive: true })
@@ -80,15 +167,19 @@ describe('UserSkillCatalogObserver', () => {
 
     const watcher = fakeWatcher()
     const onCatalogChanged = vi.fn()
+    const catalog = new UserSkillRepository(storageRoot)
+    const list = vi.spyOn(catalog, 'list')
     const observer = new UserSkillCatalogObserver({
       storageRoot,
-      catalog: new UserSkillRepository(storageRoot),
+      catalog,
       onCatalogChanged,
       watchDirectory: watcher.watchDirectory,
       debounceMs: 1,
       reconcileIntervalMs: 60_000
     })
     await observer.start()
+    await waitForCalls(list, 1)
+    await list.mock.results[0].value
 
     watcher.emitChange()
     await new Promise((resolve) => setTimeout(resolve, 20))

@@ -11,11 +11,7 @@ import {
   configuredModelKey,
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
-import {
-  isCodexSubscriptionProvider,
-  type ProviderView,
-  type ReasoningEffort
-} from '../../../../shared/settings'
+import type { ProviderView, ReasoningEffort } from '../../../../shared/settings'
 import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
 import {
   resolveReasoningEffortControl,
@@ -253,9 +249,7 @@ const ScenarioModelList = (): React.JSX.Element => {
     frameworkEndpoints
   })
   // Vision offers only image-capable models, so its summary resolves against the same filter.
-  const visionCatalog = catalog.filter(
-    (entry) => entry.supportsImageInput && !isCodexSubscriptionProvider(entry.providerType)
-  )
+  const visionCatalog = catalog.filter((entry) => entry.supportsImageInput)
 
   const scenarios: readonly Scenario[] = [
     {

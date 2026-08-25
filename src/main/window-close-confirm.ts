@@ -203,7 +203,7 @@ const nativeFallback = async (
     : variant === 'quit'
       ? {
           type: 'question' as const,
-          buttons: [translate('Cancel'), translate('Quit')],
+          buttons: [translate('Cancel'), translate('Quit', { context: 'verb' })],
           defaultId: 0,
           cancelId: 0,
           title: 'Open Science',
@@ -212,7 +212,7 @@ const nativeFallback = async (
         }
       : {
           type: 'question' as const,
-          buttons: [translate('Minimize to tray'), translate('Quit')],
+          buttons: [translate('Minimize to tray'), translate('Quit', { context: 'verb' })],
           defaultId: 0,
           cancelId: 0,
           title: 'Open Science',

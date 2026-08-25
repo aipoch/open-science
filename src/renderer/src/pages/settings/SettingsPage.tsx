@@ -638,7 +638,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         connectorsView.kind === 'add'
           ? t('Add connector')
           : connectorsView.kind === 'import'
-            ? t('Import configuration')
+            ? t('Import Connector or MCP configuration')
             : connectorsView.kind === 'export'
               ? t('Export {{name}}', {
                   name:

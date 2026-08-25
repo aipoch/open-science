@@ -78,4 +78,83 @@ describe('notification inbox store', () => {
     expect(getSnapshot).not.toHaveBeenCalled()
     expect(removeChanged).toHaveBeenCalledOnce()
   })
+
+  it('coalesces a burst of notification changes into one snapshot refresh', async () => {
+    let changed: (() => void) | undefined
+    const getSnapshot = vi.fn(async () => ({
+      revision: 2,
+      unreadCount: 1,
+      latestSequence: 3,
+      items: []
+    }))
+    const webWindow = Object.assign(new EventTarget(), {
+      api: {
+        notifications: {
+          getSnapshot,
+          onChanged: vi.fn((listener: () => void) => {
+            changed = listener
+            return () => undefined
+          })
+        }
+      }
+    })
+    vi.stubGlobal('window', webWindow)
+
+    const cleanup = useNotificationInboxStore.getState().listen()
+    await vi.waitFor(() => expect(getSnapshot).toHaveBeenCalledOnce())
+    getSnapshot.mockClear()
+
+    changed?.()
+    changed?.()
+    changed?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getSnapshot).toHaveBeenCalledOnce()
+    cleanup()
+  })
+
+  it('performs one trailing refresh when changes arrive during a snapshot request', async () => {
+    let resolveFirst: ((snapshot: typeof EMPTY_SNAPSHOT) => void) | undefined
+    const getSnapshot = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<typeof EMPTY_SNAPSHOT>((resolve) => {
+            resolveFirst = resolve
+          })
+      )
+      .mockResolvedValue({ ...EMPTY_SNAPSHOT, revision: 2 })
+    vi.stubGlobal('window', { api: { notifications: { getSnapshot } } })
+
+    const first = useNotificationInboxStore.getState().refresh()
+    await vi.waitFor(() => expect(getSnapshot).toHaveBeenCalledOnce())
+    const second = useNotificationInboxStore.getState().refresh()
+    const third = useNotificationInboxStore.getState().refresh()
+
+    resolveFirst?.({ ...EMPTY_SNAPSHOT, revision: 1 })
+    await Promise.all([first, second, third])
+
+    expect(getSnapshot).toHaveBeenCalledTimes(2)
+    expect(useNotificationInboxStore.getState().revision).toBe(2)
+  })
+
+  it('reports snapshot failures without rejecting refresh callers', async () => {
+    const getSnapshot = vi
+      .fn()
+      .mockRejectedValueOnce('offline')
+      .mockRejectedValueOnce(new Error('network unavailable'))
+    vi.stubGlobal('window', { api: { notifications: { getSnapshot } } })
+
+    await useNotificationInboxStore.getState().refresh()
+    expect(useNotificationInboxStore.getState()).toMatchObject({
+      status: 'error',
+      error: 'Messages could not be loaded.'
+    })
+
+    await useNotificationInboxStore.getState().refresh()
+    expect(useNotificationInboxStore.getState()).toMatchObject({
+      status: 'error',
+      error: 'network unavailable'
+    })
+  })
 })

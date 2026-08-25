@@ -268,7 +268,9 @@ describe('Specialist package source adapters', () => {
     const zip = zipSync({
       'manifest.json': new Uint8Array(await readFile(join(fixtureRoot, 'manifest.json'))),
       'specialist.json': new Uint8Array(await readFile(join(fixtureRoot, 'specialist.json'))),
-      'README.txt': new Uint8Array(await readFile(join(fixtureRoot, 'README.txt')))
+      'README.txt': new Uint8Array(await readFile(join(fixtureRoot, 'README.txt'))),
+      'THIRD_PARTY_NOTICES.txt': encoder.encode('Third-party notices'),
+      'attachments/guide.pdf': encoder.encode('attachment')
     })
 
     const directory = await validateSpecialistDirectory(fixtureRoot, catalog)
@@ -295,6 +297,8 @@ describe('Specialist package source adapters', () => {
     )
     const zip = zipSync({
       ...packageFiles,
+      'openscience-specialist-template/THIRD_PARTY_NOTICES.txt':
+        encoder.encode('Third-party notices'),
       '__MACOSX/openscience-specialist-template/._manifest.json': new Uint8Array([1, 2, 3]),
       '__MACOSX/openscience-specialist-template/._specialist.json': new Uint8Array([4, 5, 6])
     })
@@ -333,7 +337,7 @@ describe('Specialist package source adapters', () => {
     )
   })
 
-  it('rejects forbidden root content identically without executing it', async () => {
+  it('accepts extra root attachments identically without executing scripts', async () => {
     const zip = zipSync({
       'manifest.json': new Uint8Array(await readFile(join(invalidFixtureRoot, 'manifest.json'))),
       'specialist.json': new Uint8Array(
@@ -345,15 +349,15 @@ describe('Specialist package source adapters', () => {
     const directory = await validateSpecialistDirectory(invalidFixtureRoot, catalog)
     const archive = validateSpecialistZip(zip, catalog)
     const expected = {
-      severity: 'error',
-      code: 'package.top-level-content-forbidden',
-      message: 'The package contains unsupported top-level content.',
+      severity: 'warning',
+      code: 'package.executable-content-present',
+      message: 'The package contains script or executable content; preview never executes it.',
       path: 'run.sh'
     }
 
     expect(directory.preview.diagnostics).toContainEqual(expected)
     expect(archive.preview.diagnostics).toEqual(directory.preview.diagnostics)
-    expect(directory.preview.installable).toBe(false)
+    expect(directory.preview.installable).toBe(true)
   })
 
   it('aggregates the same multi-error fixture diagnostics through either adapter', async () => {
@@ -480,9 +484,6 @@ describe('Specialist package source adapters', () => {
           limit: SPECIALIST_PACKAGE_ARCHIVE_LIMITS.fileBytes,
           unit: 'bytes'
         })
-      )
-      expect(result.preview.diagnostics).not.toContainEqual(
-        expect.objectContaining({ code: 'package.top-level-content-forbidden' })
       )
     } finally {
       await rm(root, { recursive: true, force: true })

@@ -338,4 +338,49 @@ describe('VisionModelSelect', () => {
     })
     act(() => root.unmount())
   })
+
+  it('offers an image-capable Codex subscription model', () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportsSkills: true,
+          supportedApiTypes: ['responses']
+        }
+      ],
+      providers: [
+        {
+          id: 'builtin-codex-isolated',
+          type: 'codex-isolated',
+          name: 'Codex subscription',
+          apiEndpoints: ['responses'],
+          models: ['gpt-5.6-sol'],
+          supportsImageInput: true,
+          hasKey: false,
+          needsKey: false
+        }
+      ]
+    })
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => root.render(<VisionModelSelect />))
+
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Vision model Model"]'
+    )
+    act(() => {
+      trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).some((candidate) =>
+        candidate.textContent?.includes('gpt-5.6-sol')
+      )
+    ).toBe(true)
+    act(() => root.unmount())
+  })
 })

@@ -295,15 +295,14 @@ describe('notebook MCP server config', () => {
 describe('ask_user_question tool', () => {
   const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'ask_user_question')
 
-  it('is available in Default mode and accepts 1-3 compact questions', () => {
+  it('accepts 1-3 compact questions', () => {
     expect(tool).toBeDefined()
     expect(tool?.method).toBe('requestUserInput')
-    expect(tool?.description).toContain('Default mode')
+    expect(tool?.description).toContain('app-owned tool')
     expect(tool?.description).toContain('materially different interpretations')
     expect(tool?.description).toContain('first tool call')
     expect(tool?.description).toContain('include every known question in one call')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('ask_user_question')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Default mode')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('materially different interpretations')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('first tool call')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('all 1-3 known questions in one call')

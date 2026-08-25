@@ -5635,6 +5635,27 @@ describe('SettingsService: Reviewer model', () => {
 })
 
 describe('SettingsService: Vision model', () => {
+  it('persists and admits an image-capable Codex subscription model', async () => {
+    const service = createService()
+    const codex = (await service.upsertProvider({ type: 'codex-isolated' })).providers[0]
+    await repository.setAgentFramework('codex')
+    const configuration = {
+      providerId: codex.id,
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'high' as const
+    }
+
+    await expect(service.setVisionModel(configuration)).resolves.toMatchObject({
+      visionModel: configuration
+    })
+    await expect(service.admitVisionModel()).resolves.toMatchObject({
+      frameworkId: 'codex',
+      providerId: configuration.providerId,
+      model: { kind: 'required', id: 'gpt-5.6-sol' },
+      reasoningEffort: 'high'
+    })
+  })
+
   it('persists and admits one image-capable fixed target', async () => {
     const service = createService()
     const created = await service.upsertProvider({

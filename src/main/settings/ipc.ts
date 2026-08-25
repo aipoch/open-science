@@ -56,6 +56,7 @@ import {
   type ValidateProviderRequest
 } from '../../shared/settings'
 import { SettingsService } from './service'
+import { connectorTemplateExportSelection } from './connector-template'
 import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '../logger'
 import type { SkillExportArchive } from '../skills/export'
@@ -368,21 +369,22 @@ const registerSettingsIpcHandlers = ({
     ): Promise<ExportCustomServerTemplateResult> => {
       if (!connectorTemplateFiles) throw new Error('Connector configuration files are unavailable')
       const result = await service.buildCustomServerTemplateExport(request.id)
+      const selected = connectorTemplateExportSelection(result, request.format ?? 'open-science')
       if (
         !result.preview.ready ||
-        !result.preview.digest ||
-        !result.preview.suggestedFileName ||
-        !result.contents
+        !selected.digest ||
+        !selected.suggestedFileName ||
+        !selected.contents
       ) {
         throw new Error('Connector configuration is not safe to export')
       }
-      if (result.preview.digest !== request.expectedDigest) {
+      if (selected.digest !== request.expectedDigest) {
         throw new Error('Connector configuration changed after preview; review it again')
       }
       return {
         saved: await connectorTemplateFiles.save(
-          result.preview.suggestedFileName,
-          result.contents,
+          selected.suggestedFileName,
+          selected.contents,
           event.sender
         )
       }

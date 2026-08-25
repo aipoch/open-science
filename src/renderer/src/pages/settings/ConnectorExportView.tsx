@@ -4,8 +4,12 @@ import { AlertTriangle, CheckCircle2, Download, FileJson } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { ConnectorTemplateExportPreview } from '../../../../shared/settings'
+import type {
+  ConnectorTemplateExportFormat,
+  ConnectorTemplateExportPreview
+} from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
+import { localizeConnectorError } from './connector-error-message'
 
 type ConnectorExportViewProps = {
   id: string
@@ -19,6 +23,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [format, setFormat] = useState<ConnectorTemplateExportFormat>('open-science')
   const [error, setError] = useState<string>()
 
   useEffect(() => {
@@ -41,14 +46,16 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
   }, [id])
 
   const save = async (): Promise<void> => {
-    if (!preview?.ready || !preview.digest) return
+    const expectedDigest = format === 'mcp-client' ? preview?.mcpClientDigest : preview?.digest
+    if (!preview?.ready || !expectedDigest) return
     setSaving(true)
     setSaved(false)
     setError(undefined)
     try {
       const result = await window.api.settings.exportCustomServerTemplate({
         id,
-        expectedDigest: preview.digest
+        expectedDigest,
+        format
       })
       setSaved(result.saved)
     } catch (cause) {
@@ -59,6 +66,9 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
   }
 
   const definition = preview?.definition
+  const selectedDigest = format === 'mcp-client' ? preview?.mcpClientDigest : preview?.digest
+  const diagnostics =
+    format === 'mcp-client' ? (preview?.mcpClientDiagnostics ?? []) : (preview?.diagnostics ?? [])
   const secretNames = [
     ...(definition?.requiredSecrets?.environment ?? []),
     ...(definition?.requiredSecrets?.headers ?? [])
@@ -76,6 +86,29 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
               'Review the portable configuration before saving it. Secret values, OAuth tokens, local permissions, and trust state are excluded.'
             )}
           </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2" aria-label={t('Export format')}>
+          <Button
+            type="button"
+            variant={format === 'open-science' ? 'default' : 'outline'}
+            onClick={() => {
+              setFormat('open-science')
+              setSaved(false)
+            }}
+          >
+            {t('Open Science Connector')}
+          </Button>
+          <Button
+            type="button"
+            variant={format === 'mcp-client' ? 'default' : 'outline'}
+            onClick={() => {
+              setFormat('mcp-client')
+              setSaved(false)
+            }}
+          >
+            {t('MCP client config')}
+          </Button>
         </div>
 
         {loading ? (
@@ -131,9 +164,9 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
           </div>
         ) : null}
 
-        {preview?.diagnostics.length ? (
+        {diagnostics.length ? (
           <div className="space-y-2" aria-label={t('Configuration diagnostics')}>
-            {preview.diagnostics.map((item) => (
+            {diagnostics.map((item) => (
               <div
                 key={`${item.code}:${item.path ?? ''}`}
                 className={`flex items-start gap-2 text-xs ${
@@ -143,7 +176,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
                 }`}
               >
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                <span>{item.message}</span>
+                <span>{localizeConnectorError(item.message, t)}</span>
               </div>
             ))}
           </div>
@@ -162,7 +195,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
           </Button>
           <Button
             type="button"
-            disabled={!preview?.ready || !preview.digest || saving}
+            disabled={!preview?.ready || !selectedDigest || saving}
             onClick={() => void save()}
           >
             <Download data-icon="inline-start" aria-hidden="true" />

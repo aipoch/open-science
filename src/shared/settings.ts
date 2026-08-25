@@ -1389,6 +1389,10 @@ export type ConnectorTemplateDiagnostic = {
 
 export type ConnectorTemplatePreview = {
   definition?: ConnectorTemplateDefinition
+  // MCP client configuration files may contain more than one server. The renderer selects one
+  // definition at a time and sends it through the existing trusted Add Connector workflow.
+  definitions?: ConnectorTemplateDefinition[]
+  sourceFormat?: 'open-science' | 'mcp-client' | 'mcp-registry'
   diagnostics: ConnectorTemplateDiagnostic[]
   ready: boolean
 }
@@ -1397,6 +1401,9 @@ export type ConnectorTemplateExportPreview = ConnectorTemplatePreview & {
   connectorId: string
   digest?: string
   suggestedFileName?: string
+  mcpClientDigest?: string
+  mcpClientSuggestedFileName?: string
+  mcpClientDiagnostics?: ConnectorTemplateDiagnostic[]
 }
 
 export type ConnectorTemplateSelectionResult =
@@ -1407,7 +1414,12 @@ export type SelectCustomServerTemplateRequest = {
   contents: string
 }
 
-export type ExportCustomServerTemplateRequest = { id: string; expectedDigest: string }
+export type ConnectorTemplateExportFormat = 'open-science' | 'mcp-client'
+export type ExportCustomServerTemplateRequest = {
+  id: string
+  expectedDigest: string
+  format?: ConnectorTemplateExportFormat
+}
 export type ExportCustomServerTemplateResult = { saved: boolean }
 
 // Edit an existing custom MCP server. `name` is deliberately absent because it is immutable.
