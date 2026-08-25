@@ -22,27 +22,45 @@ const EMPTY_SNAPSHOT: NotificationInboxSnapshot = {
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : 'Messages could not be loaded.'
 
-let refreshTail: Promise<void> = Promise.resolve()
+let refreshTail: Promise<void> | undefined
+let refreshInFlight = false
+let trailingRefreshRequested = false
 
-// Mirrors the backend-owned snapshot. Every renderer subscribes before its first read, while the
-// serialized refresh queue prevents an older RPC response from overwriting a newer event-triggered one.
+// Mirrors the backend-owned snapshot. Every renderer subscribes before its first read. Synchronous
+// bursts share one request; changes observed during that request schedule one authoritative follow-up.
 export const useNotificationInboxStore = create<NotificationInboxStore>((set, get) => ({
   ...EMPTY_SNAPSHOT,
   status: 'idle',
 
   refresh: () => {
-    const operation = async (): Promise<void> => {
-      const api = window.api?.notifications
-      if (!api?.getSnapshot) return
-      if (get().status === 'idle') set({ status: 'loading', error: undefined })
-      try {
-        const snapshot = await api.getSnapshot()
-        set({ ...snapshot, status: 'ready', error: undefined })
-      } catch (error) {
-        set({ status: 'error', error: errorMessage(error) })
-      }
+    if (refreshTail) {
+      if (refreshInFlight) trailingRefreshRequested = true
+      return refreshTail
     }
-    refreshTail = refreshTail.then(operation, operation)
+
+    refreshTail = Promise.resolve()
+      .then(async () => {
+        do {
+          trailingRefreshRequested = false
+          refreshInFlight = true
+          const api = window.api?.notifications
+          if (!api?.getSnapshot) return
+          if (get().status === 'idle') set({ status: 'loading', error: undefined })
+          try {
+            const snapshot = await api.getSnapshot()
+            set({ ...snapshot, status: 'ready', error: undefined })
+          } catch (error) {
+            set({ status: 'error', error: errorMessage(error) })
+          } finally {
+            refreshInFlight = false
+          }
+        } while (trailingRefreshRequested)
+      })
+      .finally(() => {
+        refreshInFlight = false
+        refreshTail = undefined
+      })
+
     return refreshTail
   },
 
