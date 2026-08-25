@@ -67,7 +67,7 @@ type WorkspaceComposerController = {
     caretRequest: { key: number; position: ComposerCaretPosition } | undefined
   }
   actions: {
-    changeDoc: (doc: ComposerDoc) => void
+    changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     navigateHistory: (direction: 'previous' | 'next') => boolean
     stageFiles: (files: File[]) => void
     stagePastedText: (doc: ComposerDoc, node: ComposerPastedTextStage) => void

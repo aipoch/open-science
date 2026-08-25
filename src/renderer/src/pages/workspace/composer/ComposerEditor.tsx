@@ -48,7 +48,7 @@ const composerPlaceholderClassName =
 
 type ComposerEditorProps = {
   doc: ComposerDoc
-  onDocChange: (doc: ComposerDoc) => void
+  onDocChange: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
   onSubmit: () => void
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
   onLongTextPaste?: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
@@ -380,6 +380,21 @@ const moveCaretToPosition = (root: HTMLElement, position: ComposerCaretPosition)
   selection?.addRange(range)
 }
 
+const currentCaretPosition = (root: HTMLElement): ComposerCaretPosition | undefined => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return undefined
+  const range = selection.getRangeAt(0)
+  if (!range.collapsed || !root.contains(range.startContainer)) return undefined
+  let topLevel: Node = range.startContainer
+  while (topLevel.parentNode && topLevel.parentNode !== root) topLevel = topLevel.parentNode
+  const nodeIndex = Array.prototype.indexOf.call(root.childNodes, topLevel) as number
+  if (nodeIndex < 0) return undefined
+  return {
+    nodeIndex,
+    offset: topLevel.nodeType === Node.TEXT_NODE ? range.startOffset : 0
+  }
+}
+
 const canReceiveFocus = (root: HTMLElement): boolean =>
   root.getAttribute('contenteditable') === 'true' && root.closest('[hidden]') === null
 
@@ -445,11 +460,17 @@ export const ComposerEditor = ({
     disabled: disabled || docSessionCount(doc) >= MAX_COMPOSER_SESSION_MENTIONS
   })
   const mentionPopupOpen = mention.active || artifactMention.active || sessionMention.active
+  const undoCaretRef = useRef<ComposerCaretPosition | undefined>(undefined)
 
   // Read the live DOM back into a doc and notify the parent.
   const emitDocFromDom = useCallback((): void => {
     const root = editorRef.current
-    if (root) onDocChange(domToDoc(root))
+    if (root) {
+      const nextDoc = domToDoc(root)
+      if (undoCaretRef.current) onDocChange(nextDoc, undoCaretRef.current)
+      else onDocChange(nextDoc)
+    }
+    undoCaretRef.current = undefined
   }, [onDocChange])
 
   // Apply the incoming doc to the DOM only when it diverges from what the editor already shows.
@@ -761,6 +782,10 @@ export const ComposerEditor = ({
           className
         )}
         onInput={handleInput}
+        onBeforeInput={() => {
+          const root = editorRef.current
+          undoCaretRef.current = root ? currentCaretPosition(root) : undefined
+        }}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}

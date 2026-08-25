@@ -35,7 +35,7 @@ type PastedTextUndoReceipt = {
   attachmentDoc?: ComposerDoc
 }
 
-type ComposerUndoSnapshot = ComposerDraft
+type ComposerUndoSnapshot = ComposerDraft & { caret?: ComposerCaretPosition }
 
 export type ComposerUploadApi = UploadStagingApi & {
   claimLocalFile?: (request: { transferId: string }) => Promise<void>
@@ -62,7 +62,7 @@ type WorkspaceComposerUploadController = {
     isUploading: boolean
   }
   actions: {
-    changeDoc: (doc: ComposerDoc) => void
+    changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     stageFiles: (files: File[]) => void
     stagePastedText: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
     cancelTransfer: (transfer: ComposerUploadTransfer) => void
@@ -167,18 +167,33 @@ export const useWorkspaceComposerUploadController = ({
     [activeDraftKeyRef]
   )
   const captureUndo = useCallback(
-    (draftKey = activeDraftKeyRef.current): void => {
+    (draftKey = activeDraftKeyRef.current, caret?: ComposerCaretPosition): void => {
       const stack = undoRef.current[draftKey] ?? []
       undoRef.current[draftKey] = [
         ...stack,
         {
           doc: docRef.current,
           attachments: [...attachmentsRef.current],
-          attachmentTransfers: [...transfersRef.current]
+          attachmentTransfers: [...transfersRef.current],
+          caret
         }
       ].slice(-100)
     },
     [activeDraftKeyRef, docRef]
+  )
+  const reconcileFailedPastedTextUndo = useCallback(
+    (draftKey: string, pastedTextId: string, transferId: string): void => {
+      const stack = undoRef.current[draftKey]
+      if (!stack) return
+      undoRef.current[draftKey] = stack.map((snapshot) => ({
+        ...snapshot,
+        doc: restorePastedTextNode(snapshot.doc, pastedTextId)?.doc ?? snapshot.doc,
+        attachmentTransfers: snapshot.attachmentTransfers.filter(
+          (candidate) => candidate.transferId !== transferId
+        )
+      }))
+    },
+    []
   )
 
   useEffect(
@@ -369,7 +384,7 @@ export const useWorkspaceComposerUploadController = ({
               const message = asText(uploadError)
               if (transfer.pastedTextId) {
                 updateTransfer({ remove: true })
-                clearUndo(draftKey)
+                reconcileFailedPastedTextUndo(draftKey, transfer.pastedTextId, transfer.transferId)
                 restorePastedTextInline(draftKey, transfer.pastedTextId)
               } else {
                 updateTransfer({ status: 'error', error: message })
@@ -387,7 +402,7 @@ export const useWorkspaceComposerUploadController = ({
       activeDraftKeyRef,
       commitDraftAttachment,
       restorePastedTextInline,
-      clearUndo,
+      reconcileFailedPastedTextUndo,
       updateDraftTransfers,
       uploads
     ]
@@ -636,7 +651,7 @@ export const useWorkspaceComposerUploadController = ({
   }, [activeDraftKeyRef, docRef, stagePastedText])
 
   const changeDoc = useCallback(
-    (nextDoc: ComposerDoc): void => {
+    (nextDoc: ComposerDoc, caret?: ComposerCaretPosition): void => {
       const draftKey = activeDraftKeyRef.current
       const serializedNextDoc = JSON.stringify(nextDoc)
       // Backspace/Delete emits the current doc with exactly one atomic marker removed. Reuse the
@@ -651,15 +666,7 @@ export const useWorkspaceComposerUploadController = ({
         return
       }
       if (serializedNextDoc === JSON.stringify(docRef.current)) return
-      const removesPastedText = docRef.current.nodes.some(
-        (node) =>
-          node.type === 'pasted-text' &&
-          !nextDoc.nodes.some(
-            (candidate) => candidate.type === 'pasted-text' && candidate.id === node.id
-          )
-      )
-      if (removesPastedText) clearUndo(draftKey)
-      else captureUndo(draftKey)
+      captureUndo(draftKey, caret)
       clearPastedTextUndo(draftKey)
       clearHistory(draftKey)
       reconcileRemovedPastedTextUploads(nextDoc, draftKey)
@@ -670,7 +677,6 @@ export const useWorkspaceComposerUploadController = ({
       activeDraftKeyRef,
       clearHistory,
       clearPastedTextUndo,
-      clearUndo,
       docRef,
       markChanged,
       reconcileRemovedPastedTextUploads,
@@ -737,6 +743,7 @@ export const useWorkspaceComposerUploadController = ({
     } else {
       setActiveDoc(snapshot.doc)
     }
+    requestCaret(snapshot.caret ?? { nodeIndex: snapshot.doc.nodes.length, offset: 0 })
     return true
   }, [
     activeDraftKeyRef,
@@ -747,6 +754,7 @@ export const useWorkspaceComposerUploadController = ({
     setActiveDoc,
     setActiveTransfers,
     stagePastedText,
+    requestCaret,
     undoPastedTextRemoval,
     uploads
   ])
@@ -876,6 +884,7 @@ export const useWorkspaceComposerUploadController = ({
       delete draftsRef.current[draftKey]
       clearHistory(draftKey)
       clearPastedTextUndo(draftKey)
+      clearUndo(draftKey)
       for (const transfer of cleanup.attachmentTransfers) {
         cancelledTransfersRef.current.add(transfer.transferId)
         controllersRef.current[transfer.transferId]?.abort()
@@ -883,7 +892,7 @@ export const useWorkspaceComposerUploadController = ({
       }
       deleteAttachmentFiles(cleanup.attachments)
     },
-    [clearHistory, clearPastedTextUndo, deleteAttachmentFiles, draftsRef, uploads]
+    [clearHistory, clearPastedTextUndo, clearUndo, deleteAttachmentFiles, draftsRef, uploads]
   )
 
   return {

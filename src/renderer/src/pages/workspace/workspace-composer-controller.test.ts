@@ -142,6 +142,27 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.doc).toEqual(emptyDoc)
   })
 
+  it('restores the caret captured before a Composer document edit', () => {
+    const hook = renderController()
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('draft'), { nodeIndex: 0, offset: 2 }))
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+
+    expect(hook.result.current.view.caretRequest?.position).toEqual({ nodeIndex: 0, offset: 2 })
+  })
+
+  it('releases Composer undo history when its session is deleted', () => {
+    const hook = renderController()
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('draft')))
+    expect(hook.result.current.lifecycle.beginSessionDeletion('session-a')).toBe(true)
+    act(() => hook.result.current.lifecycle.settleSessionDeletion('session-a', true))
+
+    expect(hook.result.current.actions.undo()).toBe(false)
+  })
+
   it('undoes a pasted image after its attachment finishes staging', async () => {
     const image = {
       id: 'upload-image',
@@ -451,7 +472,28 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.doc).toEqual(textDoc('before payload after'))
     expect(hook.result.current.view.attachments).toEqual([])
     expect(hook.result.current.view.error).toBe('disk full')
-    expect(hook.result.current.actions.undo()).toBe(false)
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+  })
+
+  it('keeps later text edits undoable when a converted paste upload fails', async () => {
+    const pending = deferred<UploadedAttachment | null>()
+    const hook = renderController(uploads(vi.fn(() => pending.promise)))
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-1', text: 'payload' }
+
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    act(() =>
+      hook.result.current.actions.changeDoc({
+        nodes: [...hook.result.current.view.doc.nodes, { type: 'text', text: ' typed' }]
+      })
+    )
+    pending.reject(new Error('disk full'))
+    await flushAsyncWork()
+
+    expect(docToText(hook.result.current.view.doc)).toBe('before payload after typed')
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(docToText(hook.result.current.view.doc)).toBe('before payload after')
   })
 
   it('rebinds an undo snapshot when a pending long paste finishes uploading', async () => {
@@ -645,6 +687,46 @@ describe('workspace composer controller', () => {
       id: 'paste-1',
       attachmentId: 'upload-restaged'
     })
+  })
+
+  it('undoes a selection edit that removes a pasted-text anchor and surrounding text', async () => {
+    const stageLocalFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'upload-first',
+        sessionId: '.pending',
+        name: 'Pastedtext-payload.txt',
+        originalName: 'Pastedtext-payload.txt',
+        path: '/uploads/first.txt',
+        mimeType: 'text/plain',
+        size: 7
+      })
+      .mockResolvedValueOnce({
+        id: 'upload-restaged',
+        sessionId: '.pending',
+        name: 'Pastedtext-payload.txt',
+        originalName: 'Pastedtext-payload.txt',
+        path: '/uploads/restaged.txt',
+        mimeType: 'text/plain',
+        size: 7
+      })
+    const hook = renderController(uploads(stageLocalFile))
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-1', text: 'payload' }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    await flushAsyncWork()
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('replacement')))
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.doc.nodes).toContainEqual(
+      expect.objectContaining({
+        type: 'pasted-text',
+        id: 'paste-1',
+        attachmentId: 'upload-restaged'
+      })
+    )
   })
 
   it('undoes only the closed paste when another staged paste falls back inline', async () => {
