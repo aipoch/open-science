@@ -347,7 +347,7 @@ describe('ComputeApprovalBroker', () => {
     expect(onSettled).toHaveBeenCalledWith('id-3', 'cancelled')
   })
 
-  it('allows new approvals if Session deletion fails after pending requests are cancelled', async () => {
+  it('holds cancellation through deletion and allows new approvals only if the Session is retained', async () => {
     const timer = makeTimer()
     const broker = new ComputeApprovalBroker({
       generateId: () => 'id-1',
@@ -361,13 +361,34 @@ describe('ComputeApprovalBroker', () => {
       operation: 'call_command'
     }
 
-    broker.cancelSession('session-retained')
+    broker.beginSessionDeletion('session-retained')
     broker.completeSessionCancellation('session-retained')
+    await expect(broker.request(makeRequest(), context)).resolves.toBe('deny')
+
+    broker.finishSessionDeletion('session-retained', true)
     const retried = broker.request(makeRequest(), context)
 
     expect(broker.getPending('id-1')).not.toBeNull()
     broker.respond('id-1', 'once')
     await expect(retried).resolves.toBe('once')
+  })
+
+  it('keeps approvals cancelled after a Session is successfully deleted', async () => {
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined
+    })
+    const context = {
+      sessionId: 'session-deleted',
+      projectId: 'project-1',
+      operation: 'call_command'
+    }
+
+    broker.beginSessionDeletion('session-deleted')
+    broker.finishSessionDeletion('session-deleted', false)
+
+    await expect(broker.request(makeRequest(), context)).resolves.toBe('deny')
+    expect(broker.getPending('id-1')).toBeNull()
   })
 
   it('denies a pending approval when its compute provider is invalidated', async () => {
@@ -490,8 +511,8 @@ describe('ComputeApprovalBroker', () => {
     })
     await vi.waitFor(() => expect(resolveGrant).toHaveBeenCalledOnce())
 
-    broker.cancelSession('session-deleting')
-    broker.completeSessionCancellation('session-deleting')
+    broker.beginSessionDeletion('session-deleting')
+    broker.finishSessionDeletion('session-deleting', false)
     finishGrantLookup?.()
 
     await expect(decision).resolves.toBe('deny')

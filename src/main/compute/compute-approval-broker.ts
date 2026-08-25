@@ -76,6 +76,7 @@ export class ComputeApprovalBroker {
   private readonly pending = new Map<string, PendingComputeApproval>()
   private readonly pausedSessions = new Set<string>()
   private readonly cancellingSessions = new Set<string>()
+  private readonly deletingSessions = new Set<string>()
   private readonly completingSessionCancellations = new Set<string>()
 
   private readonly providerGenerations = new Map<string, number>()
@@ -339,8 +340,19 @@ export class ComputeApprovalBroker {
     this.conversationGrants.clear()
   }
 
+  beginSessionDeletion(sessionId: string): void {
+    this.deletingSessions.add(sessionId)
+    this.cancelSession(sessionId)
+  }
+
+  finishSessionDeletion(sessionId: string, retained: boolean): void {
+    this.deletingSessions.delete(sessionId)
+    if (retained) this.completeSessionCancellation(sessionId)
+  }
+
   completeSessionCancellation(sessionId: string): void {
     if (!this.cancellingSessions.has(sessionId)) return
+    if (this.deletingSessions.has(sessionId)) return
     if (this.inFlightSessionRequests.has(sessionId)) {
       this.completingSessionCancellations.add(sessionId)
       return
@@ -390,7 +402,10 @@ export class ComputeApprovalBroker {
     sessionRequests?.delete(request)
     if (sessionRequests?.size !== 0) return
     this.inFlightSessionRequests.delete(sessionId)
-    if (this.completingSessionCancellations.delete(sessionId)) {
+    if (
+      this.completingSessionCancellations.delete(sessionId) &&
+      !this.deletingSessions.has(sessionId)
+    ) {
       this.cancellingSessions.delete(sessionId)
     }
   }

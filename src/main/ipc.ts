@@ -2163,14 +2163,12 @@ const createApplicationModules = async (
       onAllSessionsCancellationRequested:
         approvalSessionLifecycle.onAllSessionsCancellationRequested,
       beforeSessionDelete: async (sessionId) => {
-        computeIpcModule.handlers.approvalCancelSession(sessionId)
-        try {
-          await sideChatOwnerRef.current?.invalidateParents([sessionId])
-          await notebookService.shutdownSession(sessionId)
-        } finally {
-          computeIpcModule.handlers.approvalCompleteSessionCancellation(sessionId)
-        }
+        computeIpcModule.handlers.approvalBeginSessionDeletion(sessionId)
+        await sideChatOwnerRef.current?.invalidateParents([sessionId])
+        await notebookService.shutdownSession(sessionId)
       },
+      afterSessionDelete: (sessionId, retained) =>
+        computeIpcModule.handlers.approvalFinishSessionDeletion(sessionId, retained),
       initializationBarrier: initialConnectorSkillsReady,
       profileService,
       sessionPersistenceCoordinator,

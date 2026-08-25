@@ -134,6 +134,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   onAllSessionsCancellationRequested?: () => void
   onDisconnected?: () => void
   beforeSessionDelete?: (sessionId: string) => Promise<void>
+  afterSessionDelete?: (sessionId: string, retained: boolean) => void
   profileService?: ProfileService
   sessionPersistenceCoordinator?: Pick<
     SessionPersistenceCoordinator,
@@ -181,6 +182,7 @@ const createAcpRuntime = ({
   onAllSessionsCancellationRequested,
   onDisconnected,
   beforeSessionDelete,
+  afterSessionDelete,
   profileService,
   sessionPersistenceCoordinator,
   delegatedWork,
@@ -531,7 +533,8 @@ const createAcpRuntime = ({
       onSkillImportAttachmentEligible,
       onSessionCancellationRequested,
       onAllSessionsCancellationRequested,
-      beforeSessionDelete
+      beforeSessionDelete,
+      afterSessionDelete
     },
     permissionGrantRegistry
       ? () => projectRegistrySessionGrants(permissionGrantRegistry.listCached())
