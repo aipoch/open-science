@@ -57,6 +57,7 @@ class UserSkillCatalogObserver {
   private reconcileDrain: Promise<void> | undefined
   private reconcilePending = false
   private reconcileForcePending = false
+  private initialReconciliationFailed = false
   private disposed = false
 
   constructor(private readonly options: UserSkillCatalogObserverOptions) {}
@@ -147,6 +148,7 @@ class UserSkillCatalogObserver {
         await this.reconcile(force)
       } catch (error) {
         failure ??= error
+        if (this.fingerprint === undefined) this.initialReconciliationFailed = true
         log.warn('user skill catalog reconciliation failed', diagnosticErrorFields(error))
       }
     }
@@ -158,8 +160,11 @@ class UserSkillCatalogObserver {
     const fingerprint = catalogFingerprint(await this.options.catalog.list())
     if (this.disposed) return
     const changed = this.fingerprint !== undefined && fingerprint !== this.fingerprint
+    const recoveredInitialReconciliation =
+      this.fingerprint === undefined && this.initialReconciliationFailed
     this.fingerprint = fingerprint
-    if (changed || force) await this.options.onCatalogChanged()
+    this.initialReconciliationFailed = false
+    if (changed || recoveredInitialReconciliation || force) await this.options.onCatalogChanged()
   }
 }
 

@@ -98,6 +98,28 @@ describe('UserSkillCatalogObserver', () => {
     observer.dispose()
   })
 
+  it('publishes the first successful retry after the initial scan fails', async () => {
+    const watcher = fakeWatcher()
+    const list = vi.fn().mockRejectedValueOnce(new Error('transient')).mockResolvedValue([])
+    const onCatalogChanged = vi.fn()
+    const observer = new UserSkillCatalogObserver({
+      storageRoot: await makeStorage(),
+      catalog: { list },
+      onCatalogChanged,
+      watchDirectory: watcher.watchDirectory,
+      debounceMs: 1,
+      reconcileIntervalMs: 60_000
+    })
+    await observer.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    watcher.emitChange()
+
+    await waitForCalls(list, 2)
+    await waitForCalls(onCatalogChanged, 1)
+    observer.dispose()
+  })
+
   it('publishes valid direct additions and ignores malformed packages', async () => {
     const storageRoot = await makeStorage()
     const watcher = fakeWatcher()
