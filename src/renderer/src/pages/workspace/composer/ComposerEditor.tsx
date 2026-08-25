@@ -111,10 +111,17 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
 
 // Insert plain text at the current caret and collapse the caret after it. Used for paste so the
 // contenteditable never absorbs rich HTML from the clipboard.
-const insertPlainTextAtCaret = (text: string): void => {
+const selectedRangeIn = (root: HTMLElement): { selection: Selection; range: Range } | undefined => {
   const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0) return
+  if (!selection || selection.rangeCount === 0) return undefined
   const range = selection.getRangeAt(0)
+  return root.contains(range.commonAncestorContainer) ? { selection, range } : undefined
+}
+
+const insertPlainTextAtCaret = (root: HTMLElement, text: string): boolean => {
+  const selected = selectedRangeIn(root)
+  if (!selected) return false
+  const { selection, range } = selected
   range.deleteContents()
   const inserted = document.createTextNode(text)
   range.insertNode(inserted)
@@ -122,6 +129,7 @@ const insertPlainTextAtCaret = (text: string): void => {
   range.collapse(true)
   selection.removeAllRanges()
   selection.addRange(range)
+  return true
 }
 
 const caretNodeAfterPastedText = (anchor: ChildNode, splitOwnedHost: boolean): Text => {
@@ -139,10 +147,10 @@ const caretNodeAfterPastedText = (anchor: ChildNode, splitOwnedHost: boolean): T
   return host
 }
 
-const insertPastedTextAtCaret = (node: ComposerPastedTextNode): void => {
-  const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0) return
-  const range = selection.getRangeAt(0)
+const insertPastedTextAtCaret = (root: HTMLElement, node: ComposerPastedTextNode): boolean => {
+  const selected = selectedRangeIn(root)
+  if (!selected) return false
+  const { selection, range } = selected
   const splitOwnedHost = isPastedTextCaretHost(range.startContainer)
   range.deleteContents()
   const inserted = createPastedTextAnchor(node)
@@ -152,6 +160,7 @@ const insertPastedTextAtCaret = (node: ComposerPastedTextNode): void => {
   range.collapse(true)
   selection.removeAllRanges()
   selection.addRange(range)
+  return true
 }
 
 const PASTED_TEXT_CLIPBOARD_TYPE = 'application/x-open-science-composer-fragment'
@@ -259,11 +268,12 @@ const parseComposerClipboardFragment = (value: string): ComposerClipboardFragmen
 }
 
 const insertComposerClipboardFragmentAtCaret = (
+  root: HTMLElement,
   fragment: ComposerClipboardFragment
 ): ComposerPastedTextNode[] => {
-  const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0) return []
-  const range = selection.getRangeAt(0)
+  const selected = selectedRangeIn(root)
+  if (!selected) return []
+  const { selection, range } = selected
   const splitOwnedHost = isPastedTextCaretHost(range.startContainer)
   range.deleteContents()
   const inserted = document.createDocumentFragment()
@@ -644,8 +654,10 @@ export const ComposerEditor = ({
     )
     if (internalFragment && onLongTextPaste) {
       event.preventDefault()
-      const pastedTextNodes = insertComposerClipboardFragmentAtCaret(internalFragment)
       const root = editorRef.current
+      const pastedTextNodes = root
+        ? insertComposerClipboardFragmentAtCaret(root, internalFragment)
+        : []
       if (root && pastedTextNodes.length > 0) {
         onLongTextPaste(domToDoc(root), pastedTextNodes)
       }
@@ -655,18 +667,16 @@ export const ComposerEditor = ({
     const text = event.clipboardData?.getData('text/plain') ?? ''
     if (text) {
       event.preventDefault()
+      const root = editorRef.current
       if (onLongTextPaste && shouldAttachPastedText(text)) {
         const node: ComposerPastedTextNode = {
           type: 'pasted-text',
           id: crypto.randomUUID(),
           text
         }
-        insertPastedTextAtCaret(node)
-        const root = editorRef.current
-        if (root) onLongTextPaste(domToDoc(root), node)
+        if (root && insertPastedTextAtCaret(root, node)) onLongTextPaste(domToDoc(root), node)
       } else {
-        insertPlainTextAtCaret(text)
-        emitDocFromDom()
+        if (root && insertPlainTextAtCaret(root, text)) emitDocFromDom()
       }
     }
   }

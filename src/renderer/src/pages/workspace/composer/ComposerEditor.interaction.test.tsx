@@ -622,6 +622,30 @@ describe('ComposerEditor', () => {
     expect(editor().textContent).not.toContain(payload)
   })
 
+  it('does not stage a long paste when the selection is outside the editor', () => {
+    const onLongTextPaste = vi.fn()
+    renderEditor({ onLongTextPaste })
+    const outside = document.createTextNode('outside')
+    document.body.appendChild(outside)
+    setCaret(outside, outside.textContent?.length ?? 0)
+    const payload = 'x'.repeat(LONG_PASTE_CHARACTER_THRESHOLD + 1)
+
+    act(() => {
+      const event = new Event('paste', { bubbles: true, cancelable: true }) as Event & {
+        clipboardData: unknown
+      }
+      event.clipboardData = {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? payload : '')
+      }
+      editor().dispatchEvent(event)
+    })
+
+    expect(onLongTextPaste).not.toHaveBeenCalled()
+    expect(outside.textContent).toBe('outside')
+    expect(editor().querySelector('[data-composer-node-type="pasted-text"]')).toBeNull()
+  })
+
   it('does not serialize a split trailing caret marker after another long paste', () => {
     const onLongTextPaste = vi.fn()
     const firstPaste = { type: 'pasted-text' as const, id: 'paste-1', text: 'first payload' }
