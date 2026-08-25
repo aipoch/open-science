@@ -18,6 +18,8 @@ import {
 const PROJECTION_STATE_ID = 'session-projection'
 const PROJECTION_VERSION = 2
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
+const MAX_SQLITE_INT = 2_147_483_647
 
 type ProjectionClient = () => Promise<PrismaClient>
 
@@ -53,6 +55,109 @@ type SessionProjection = Readonly<{
   runs: Array<{ messageId: string; createdAtMs: bigint }>
   artifactRefs: Array<{ artifactId: string; artifactCreatedAtMs: bigint | null }>
 }>
+
+const assertProjectionStorageShape = (projection: SessionProjection): void => {
+  const assertText = (value: unknown, field: string): void => {
+    if (typeof value !== 'string') {
+      throw new Error(`Session projection ${field} must be a string.`)
+    }
+  }
+  const assertInt = (value: number, field: string): void => {
+    if (!Number.isSafeInteger(value) || value < 0 || value > MAX_SQLITE_INT) {
+      throw new Error(`Session projection ${field} must fit a non-negative SQLite Int.`)
+    }
+  }
+  const assertSafeNumber = (value: number, field: string): void => {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`Session projection ${field} must be a non-negative safe integer.`)
+    }
+  }
+  const assertBigInt = (value: bigint, field: string): void => {
+    if (value < 0n || value > MAX_SAFE_INTEGER_BIGINT) {
+      throw new Error(`Session projection ${field} must be a non-negative safe integer.`)
+    }
+  }
+  const assertNullableText = (value: string | null, field: string): void => {
+    if (value !== null) assertText(value, field)
+  }
+  const assertNullableBigInt = (value: bigint | null, field: string): void => {
+    if (value !== null) assertBigInt(value, field)
+  }
+  const assertUnique = (values: string[], field: string): void => {
+    if (new Set(values).size !== values.length) {
+      throw new Error(`Session projection ${field} must be unique.`)
+    }
+  }
+
+  for (const field of ['id', 'projectId', 'title', 'status', 'presentedStatus'] as const) {
+    assertText(projection.summary[field], field)
+  }
+  for (const field of ['activeMessageCount', 'artifactCount', 'filesRevision'] as const) {
+    assertInt(projection.summary[field], field)
+  }
+  for (const field of ['revision', 'createdAt', 'updatedAt'] as const) {
+    assertSafeNumber(projection.summary[field], field)
+  }
+  if (projection.summary.archivedAt !== undefined) {
+    assertSafeNumber(projection.summary.archivedAt, 'archivedAt')
+  }
+  if (projection.summary.presentedActivityAt !== undefined) {
+    assertSafeNumber(projection.summary.presentedActivityAt, 'presentedActivityAt')
+  }
+
+  for (const usage of projection.turnUsage) {
+    assertText(usage.messageId, 'turnUsage.messageId')
+    assertBigInt(usage.completedAtMs, 'turnUsage.completedAtMs')
+    assertBigInt(usage.inputTokens, 'turnUsage.inputTokens')
+    assertBigInt(usage.cacheTokens, 'turnUsage.cacheTokens')
+    assertNullableBigInt(usage.cachedReadTokens, 'turnUsage.cachedReadTokens')
+    assertNullableBigInt(usage.cachedWriteTokens, 'turnUsage.cachedWriteTokens')
+    assertBigInt(usage.outputTokens, 'turnUsage.outputTokens')
+    if (usage.modelCallCount !== null) assertInt(usage.modelCallCount, 'turnUsage.modelCallCount')
+  }
+  assertUnique(
+    projection.turnUsage.map(({ messageId }) => messageId),
+    'turnUsage.messageId'
+  )
+  for (const call of projection.modelCalls) {
+    assertText(call.messageId, 'modelCall.messageId')
+    assertText(call.callId, 'modelCall.callId')
+    assertInt(call.callIndex, 'modelCall.callIndex')
+    assertNullableText(call.sourceInvocationId, 'modelCall.sourceInvocationId')
+    assertNullableText(call.frameworkId, 'modelCall.frameworkId')
+    assertNullableText(call.backendId, 'modelCall.backendId')
+    assertNullableText(call.model, 'modelCall.model')
+    assertBigInt(call.inputTokens, 'modelCall.inputTokens')
+    assertBigInt(call.cacheTokens, 'modelCall.cacheTokens')
+    assertNullableBigInt(call.cachedReadTokens, 'modelCall.cachedReadTokens')
+    assertNullableBigInt(call.cachedWriteTokens, 'modelCall.cachedWriteTokens')
+    assertBigInt(call.outputTokens, 'modelCall.outputTokens')
+    assertNullableBigInt(call.contextUsedTokens, 'modelCall.contextUsedTokens')
+    assertNullableBigInt(call.contextWindowSize, 'modelCall.contextWindowSize')
+  }
+  assertUnique(
+    projection.modelCalls.map(({ callId }) => callId),
+    'modelCall.callId'
+  )
+  assertUnique(
+    projection.modelCalls.map(({ messageId, callIndex }) => `${messageId}\0${callIndex}`),
+    'modelCall.messageId/callIndex'
+  )
+  for (const run of projection.runs) {
+    assertText(run.messageId, 'run.messageId')
+    assertBigInt(run.createdAtMs, 'run.createdAtMs')
+  }
+  assertUnique(
+    projection.runs.map(({ messageId }) => messageId),
+    'run.messageId'
+  )
+  for (const artifact of projection.artifactRefs) {
+    assertText(artifact.artifactId, 'artifactRef.artifactId')
+    if (artifact.artifactCreatedAtMs !== null) {
+      assertBigInt(artifact.artifactCreatedAtMs, 'artifactRef.artifactCreatedAtMs')
+    }
+  }
+}
 
 const finiteNonNegativeInteger = (value: number | undefined): number =>
   value !== undefined && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
@@ -400,6 +505,7 @@ export class SessionProjectionRepository {
   async prepareSave(session: PersistedChatSession): Promise<PersistedChatSession> {
     const client = await this.client()
     const projection = buildSessionProjection(session)
+    assertProjectionStorageShape(projection)
     const number = await client.$transaction(async (tx) => {
       const project = await tx.project.findFirst({
         where: { id: session.projectId, deletedAt: null },

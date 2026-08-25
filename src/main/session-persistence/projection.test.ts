@@ -1,4 +1,4 @@
-import { mkdtemp, rename, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -292,6 +292,31 @@ describe('Session projection', () => {
     await expect(client.session.count()).resolves.toBe(75)
     await expect(client.sessionTurnUsage.count()).resolves.toBe(75)
     await expect(client.sessionModelCallUsage.count()).resolves.toBe(150)
+  })
+
+  it('does not replace Session authority when an invalid projection integer rejects the save', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-save-validation-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({
+      data: { id: 'project-1', name: 'Project', createdAt: new Date(50) }
+    })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const saved = await repository.saveSession(session('session-1'))
+    const authorityPath = join(storageRoot, 'sessions', 'project-1', 'session-1.json')
+    const originalAuthority = await readFile(authorityPath, 'utf8')
+
+    await expect(
+      repository.saveSession({
+        ...saved,
+        title: 'Rejected update',
+        updatedAt: Number.MAX_VALUE
+      })
+    ).rejects.toThrow('Session projection updatedAt must be a non-negative safe integer.')
+
+    expect.soft(await readFile(authorityPath, 'utf8')).toBe(originalAuthority)
+    await expect(projection.pending()).resolves.toEqual([])
   })
 
   it('keeps a deleted metadata tombstone, excludes its facts, and never reuses its number', async () => {
