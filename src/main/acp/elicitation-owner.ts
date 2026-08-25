@@ -7,14 +7,15 @@ import {
   MAX_ELICITATION_LABEL_CHARS,
   MAX_ELICITATION_MESSAGE_CHARS,
   MAX_ELICITATION_MULTI_SELECT_VALUES,
+  isValidElicitationValue,
   resolveAgentUserChoiceQuestions,
+  sanitizeElicitationField,
   sanitizeElicitationProjection,
   sanitizePendingElicitationRequest,
   type ElicitationAnswer,
   type ElicitationField,
   type ElicitationProjection,
   type ElicitationResponse,
-  type ElicitationValue,
   type AgentTurnProvenanceContext,
   type PendingElicitationRequest
 } from '../../shared/elicitation'
@@ -90,6 +91,11 @@ const normalizeOptions = (value: unknown): ElicitationField['options'] | undefin
     : undefined
 }
 
+const withValidDefault = (
+  field: ElicitationField,
+  defaultValue: unknown
+): ElicitationField | undefined => sanitizeElicitationField({ ...field, defaultValue })
+
 const normalizeField = (
   id: string,
   schema: unknown,
@@ -128,15 +134,15 @@ const normalizeField = (
     ) {
       return undefined
     }
-    return {
+    const field: ElicitationField = {
       ...common,
       kind: options ? 'single-select' : 'text',
       ...(options ? { options } : {}),
       ...(format ? { format } : {}),
       ...(minLength !== undefined ? { minLength } : {}),
-      ...(maxLength !== undefined ? { maxLength } : {}),
-      ...(defaultValue !== undefined ? { defaultValue } : {})
+      ...(maxLength !== undefined ? { maxLength } : {})
     }
+    return withValidDefault(field, defaultValue)
   }
 
   if (type === 'number' || type === 'integer') {
@@ -144,21 +150,21 @@ const normalizeField = (
     const minimum = readNumber(schema.minimum)
     const maximum = readNumber(schema.maximum)
     if (minimum !== undefined && maximum !== undefined && minimum > maximum) return undefined
-    return {
+    const field: ElicitationField = {
       ...common,
       kind: type,
       ...(minimum !== undefined ? { minimum } : {}),
-      ...(maximum !== undefined ? { maximum } : {}),
-      ...(defaultValue !== undefined ? { defaultValue } : {})
+      ...(maximum !== undefined ? { maximum } : {})
     }
+    return withValidDefault(field, defaultValue)
   }
 
   if (type === 'boolean') {
-    return {
+    const field: ElicitationField = {
       ...common,
-      kind: 'boolean',
-      ...(typeof schema.default === 'boolean' ? { defaultValue: schema.default } : {})
+      kind: 'boolean'
     }
+    return withValidDefault(field, schema.default)
   }
 
   if (type === 'array' && isRecord(schema.items)) {
@@ -183,14 +189,14 @@ const normalizeField = (
     ) {
       return undefined
     }
-    return {
+    const field: ElicitationField = {
       ...common,
       kind: 'multi-select',
       options,
       ...(minItems !== undefined ? { minItems } : {}),
-      ...(maxItems !== undefined ? { maxItems } : {}),
-      ...(defaultValue ? { defaultValue } : {})
+      ...(maxItems !== undefined ? { maxItems } : {})
     }
+    return withValidDefault(field, defaultValue)
   }
 
   return undefined
@@ -252,70 +258,6 @@ const containsUnknownFieldSchema = (params: CreateElicitationRequest): boolean =
   })
 }
 
-const isValidCalendarDate = (value: string): boolean => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
-  if (!match) return false
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const date = new Date(Date.UTC(year, month - 1, day))
-  return (
-    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-  )
-}
-
-const isValidFormattedString = (format: ElicitationField['format'], value: string): boolean => {
-  if (!format) return true
-  if (format === 'email') return /^[^\s@]+@[^\s@]+$/.test(value)
-  if (format === 'uri') {
-    try {
-      new URL(value)
-      return true
-    } catch {
-      return false
-    }
-  }
-  if (format === 'date') return isValidCalendarDate(value)
-
-  const match =
-    /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(
-      value
-    )
-  if (!match || !isValidCalendarDate(match[1])) return false
-  const hour = Number(match[2])
-  const minute = Number(match[3])
-  const second = Number(match[4])
-  const offsetHour = match[6] === undefined ? 0 : Number(match[6])
-  const offsetMinute = match[7] === undefined ? 0 : Number(match[7])
-  return hour <= 23 && minute <= 59 && second <= 59 && offsetHour <= 23 && offsetMinute <= 59
-}
-
-const validateAnswerValue = (field: ElicitationField, value: ElicitationValue): boolean => {
-  if (field.kind === 'text' || field.kind === 'single-select') {
-    if (typeof value !== 'string') return false
-    if (value.length > MAX_ELICITATION_MESSAGE_CHARS) return false
-    if (field.minLength !== undefined && value.length < field.minLength) return false
-    if (field.maxLength !== undefined && value.length > field.maxLength) return false
-    if (field.options && !field.options.some((option) => option.value === value)) return false
-    if (!isValidFormattedString(field.format, value)) return false
-    return true
-  }
-  if (field.kind === 'number' || field.kind === 'integer') {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return false
-    if (field.kind === 'integer' && !Number.isInteger(value)) return false
-    if (field.minimum !== undefined && value < field.minimum) return false
-    if (field.maximum !== undefined && value > field.maximum) return false
-    return true
-  }
-  if (field.kind === 'boolean') return typeof value === 'boolean'
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) return false
-  if (value.length > MAX_ELICITATION_MULTI_SELECT_VALUES) return false
-  if (field.minItems !== undefined && value.length < field.minItems) return false
-  if (field.maxItems !== undefined && value.length > field.maxItems) return false
-  const allowed = new Set(field.options?.map((option) => option.value) ?? [])
-  return value.every((item) => allowed.has(item))
-}
-
 export const validateElicitationAnswers = (
   request: PendingElicitationRequest,
   answers: ElicitationAnswer[] | undefined
@@ -329,7 +271,7 @@ export const validateElicitationAnswers = (
 
   for (const answer of candidates) {
     const field = fields.get(answer.fieldId)
-    if (!field || seen.has(answer.fieldId) || !validateAnswerValue(field, answer.value)) {
+    if (!field || seen.has(answer.fieldId) || !isValidElicitationValue(field, answer.value)) {
       throw new Error('Invalid structured input response')
     }
     seen.add(answer.fieldId)

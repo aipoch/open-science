@@ -24,6 +24,7 @@ import type {
 
 export {
   isDurableAgentUserChoiceRequest,
+  isValidElicitationValue,
   MAX_ELICITATION_MESSAGE_CHARS,
   resolveAgentUserChoiceQuestions
 } from './elicitation'

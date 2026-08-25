@@ -137,6 +137,72 @@ export const MAX_AGENT_USER_CHOICE_OPTIONS = 4
 export const MAX_AGENT_USER_CHOICE_QUESTIONS = 3
 export const MAX_AGENT_TURN_PROVENANCE_ANCESTRY = 256
 
+const isValidCalendarDate = (value: string): boolean => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(Date.UTC(year, month - 1, day))
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  )
+}
+
+const isValidFormattedString = (format: ElicitationField['format'], value: string): boolean => {
+  if (!format) return true
+  if (format === 'email') return /^[^\s@]+@[^\s@]+$/.test(value)
+  if (format === 'uri') {
+    try {
+      new URL(value)
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (format === 'date') return isValidCalendarDate(value)
+
+  const match =
+    /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(
+      value
+    )
+  if (!match || !isValidCalendarDate(match[1])) return false
+  const hour = Number(match[2])
+  const minute = Number(match[3])
+  const second = Number(match[4])
+  const offsetHour = match[6] === undefined ? 0 : Number(match[6])
+  const offsetMinute = match[7] === undefined ? 0 : Number(match[7])
+  return hour <= 23 && minute <= 59 && second <= 59 && offsetHour <= 23 && offsetMinute <= 59
+}
+
+export const isValidElicitationValue = (
+  field: ElicitationField,
+  value: unknown
+): value is ElicitationValue => {
+  if (field.kind === 'text' || field.kind === 'single-select') {
+    if (typeof value !== 'string') return false
+    if (value.length > MAX_ELICITATION_MESSAGE_CHARS) return false
+    if (field.minLength !== undefined && value.length < field.minLength) return false
+    if (field.maxLength !== undefined && value.length > field.maxLength) return false
+    if (field.options && !field.options.some((option) => option.value === value)) return false
+    return isValidFormattedString(field.format, value)
+  }
+  if (field.kind === 'number' || field.kind === 'integer') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return false
+    if (field.kind === 'integer' && !Number.isInteger(value)) return false
+    if (field.minimum !== undefined && value < field.minimum) return false
+    if (field.maximum !== undefined && value > field.maximum) return false
+    return true
+  }
+  if (field.kind === 'boolean') return typeof value === 'boolean'
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) return false
+  if (value.length > MAX_ELICITATION_MULTI_SELECT_VALUES) return false
+  if (field.minItems !== undefined && value.length < field.minItems) return false
+  if (field.maxItems !== undefined && value.length > field.maxItems) return false
+  const allowed = new Set(field.options?.map((option) => option.value) ?? [])
+  return value.every((item) => allowed.has(item))
+}
+
 const resolveAgentUserChoiceQuestion = (
   choiceField: ElicitationField,
   customField: ElicitationField
@@ -200,6 +266,9 @@ const cappedDataString = (value: unknown, max: number): string | undefined => {
   return value.slice(0, max)
 }
 
+const boundedDataString = (value: unknown, max: number): string | undefined =>
+  typeof value === 'string' && value.trim() && value.length <= max ? value : undefined
+
 const boundedString = (value: unknown, max: number): string | undefined => {
   if (typeof value !== 'string') return undefined
   const text = value.trim()
@@ -261,7 +330,7 @@ export const sanitizeAgentUserChoiceRequest = (
 
 const sanitizeOption = (value: unknown): ElicitationOption | undefined => {
   if (!isRecord(value)) return undefined
-  const optionValue = cappedDataString(value.value, MAX_ELICITATION_LABEL_CHARS)
+  const optionValue = boundedDataString(value.value, MAX_ELICITATION_LABEL_CHARS)
   const label = cappedString(value.label, MAX_ELICITATION_LABEL_CHARS)
   if (!optionValue || !label) return undefined
 
@@ -269,20 +338,34 @@ const sanitizeOption = (value: unknown): ElicitationOption | undefined => {
   return { value: optionValue, label, ...(description ? { description } : {}) }
 }
 
-const sanitizeField = (value: unknown): ElicitationField | undefined => {
+const withSanitizedDefault = (
+  field: ElicitationField,
+  value: Record<string, unknown>
+): ElicitationField =>
+  value.defaultValue !== undefined && isValidElicitationValue(field, value.defaultValue)
+    ? { ...field, defaultValue: value.defaultValue }
+    : field
+
+export const sanitizeElicitationField = (value: unknown): ElicitationField | undefined => {
   if (!isRecord(value)) return undefined
-  const id = cappedDataString(value.id, MAX_ELICITATION_LABEL_CHARS)
+  const id = boundedDataString(value.id, MAX_ELICITATION_LABEL_CHARS)
   const label = cappedString(value.label, MAX_ELICITATION_LABEL_CHARS)
   const kind = value.kind as ElicitationField['kind'] | undefined
   if (!id || !label || !kind || !ELICITATION_FIELD_KINDS.has(kind)) return undefined
 
   const description = cappedString(value.description, MAX_ELICITATION_MESSAGE_CHARS)
-  const options = Array.isArray(value.options)
-    ? value.options
-        .slice(0, MAX_ELICITATION_OPTIONS_PER_FIELD)
-        .map(sanitizeOption)
-        .filter((option): option is ElicitationOption => !!option)
-    : undefined
+  const options = Array.isArray(value.options) ? value.options.map(sanitizeOption) : undefined
+  if (
+    value.options !== undefined &&
+    (!options ||
+      options.length === 0 ||
+      options.length > MAX_ELICITATION_OPTIONS_PER_FIELD ||
+      options.some((option) => !option) ||
+      new Set(options.map((option) => option!.value)).size !== options.length)
+  ) {
+    return undefined
+  }
+  const sanitizedOptions = options as ElicitationOption[] | undefined
   const format =
     value.format === 'email' ||
     value.format === 'uri' ||
@@ -290,6 +373,7 @@ const sanitizeField = (value: unknown): ElicitationField | undefined => {
     value.format === 'date-time'
       ? value.format
       : undefined
+  if (value.format !== undefined && !format) return undefined
   const finiteNumber = (candidate: unknown): number | undefined =>
     typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : undefined
   const nonNegativeInteger = (candidate: unknown): number | undefined => {
@@ -302,24 +386,126 @@ const sanitizeField = (value: unknown): ElicitationField | undefined => {
   const maximum = finiteNumber(value.maximum)
   const minItems = nonNegativeInteger(value.minItems)
   const maxItems = nonNegativeInteger(value.maxItems)
-  const defaultValue = sanitizeAnswerValue(value.defaultValue)
+  if (
+    (value.minLength !== undefined && minLength === undefined) ||
+    (value.maxLength !== undefined && maxLength === undefined) ||
+    (value.minimum !== undefined && minimum === undefined) ||
+    (value.maximum !== undefined && maximum === undefined) ||
+    (value.minItems !== undefined && minItems === undefined) ||
+    (value.maxItems !== undefined && maxItems === undefined)
+  ) {
+    return undefined
+  }
 
-  return {
+  const common = {
     id,
     label,
-    kind,
     ...(description ? { description } : {}),
-    ...(value.required === true ? { required: true } : {}),
-    ...(options && options.length > 0 ? { options } : {}),
-    ...(format ? { format } : {}),
-    ...(minLength !== undefined ? { minLength } : {}),
-    ...(maxLength !== undefined ? { maxLength } : {}),
-    ...(minimum !== undefined ? { minimum } : {}),
-    ...(maximum !== undefined ? { maximum } : {}),
-    ...(minItems !== undefined ? { minItems } : {}),
-    ...(maxItems !== undefined ? { maxItems } : {}),
-    ...(defaultValue !== undefined ? { defaultValue } : {})
+    ...(value.required === true ? { required: true } : {})
   }
+  const hasNumericConstraints = minimum !== undefined || maximum !== undefined
+  const hasLengthConstraints = minLength !== undefined || maxLength !== undefined
+  const hasItemConstraints = minItems !== undefined || maxItems !== undefined
+
+  if (kind === 'text' || kind === 'single-select') {
+    if (
+      hasNumericConstraints ||
+      hasItemConstraints ||
+      (minLength !== undefined && minLength > MAX_ELICITATION_MESSAGE_CHARS) ||
+      (minLength !== undefined && maxLength !== undefined && minLength > maxLength) ||
+      (value.required === true && maxLength === 0) ||
+      (kind === 'text' && sanitizedOptions !== undefined) ||
+      (kind === 'single-select' && sanitizedOptions === undefined)
+    ) {
+      return undefined
+    }
+    const field: ElicitationField = {
+      ...common,
+      kind,
+      ...(sanitizedOptions ? { options: sanitizedOptions } : {}),
+      ...(format ? { format } : {}),
+      ...(minLength !== undefined ? { minLength } : {}),
+      ...(maxLength !== undefined ? { maxLength } : {})
+    }
+    if (
+      kind === 'single-select' &&
+      !sanitizedOptions!.every((option) => isValidElicitationValue(field, option.value))
+    ) {
+      return undefined
+    }
+    return withSanitizedDefault(field, value)
+  }
+
+  if (kind === 'number' || kind === 'integer') {
+    if (
+      sanitizedOptions !== undefined ||
+      format !== undefined ||
+      hasLengthConstraints ||
+      hasItemConstraints ||
+      (minimum !== undefined && maximum !== undefined && minimum > maximum) ||
+      (kind === 'integer' &&
+        minimum !== undefined &&
+        maximum !== undefined &&
+        Math.ceil(minimum) > Math.floor(maximum))
+    ) {
+      return undefined
+    }
+    const field: ElicitationField = {
+      ...common,
+      kind,
+      ...(minimum !== undefined ? { minimum } : {}),
+      ...(maximum !== undefined ? { maximum } : {})
+    }
+    return withSanitizedDefault(field, value)
+  }
+
+  if (kind === 'boolean') {
+    if (
+      sanitizedOptions !== undefined ||
+      format !== undefined ||
+      hasLengthConstraints ||
+      hasNumericConstraints ||
+      hasItemConstraints
+    ) {
+      return undefined
+    }
+    return withSanitizedDefault({ ...common, kind }, value)
+  }
+
+  if (
+    sanitizedOptions === undefined ||
+    format !== undefined ||
+    hasLengthConstraints ||
+    hasNumericConstraints ||
+    (minItems !== undefined && minItems > MAX_ELICITATION_MULTI_SELECT_VALUES) ||
+    (minItems !== undefined && maxItems !== undefined && minItems > maxItems) ||
+    (minItems !== undefined && minItems > sanitizedOptions.length) ||
+    (value.required === true && maxItems === 0)
+  ) {
+    return undefined
+  }
+  const field: ElicitationField = {
+    ...common,
+    kind: 'multi-select',
+    options: sanitizedOptions,
+    ...(minItems !== undefined ? { minItems } : {}),
+    ...(maxItems !== undefined ? { maxItems } : {})
+  }
+  return withSanitizedDefault(field, value)
+}
+
+const sanitizeFields = (value: unknown): ElicitationField[] | undefined => {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_ELICITATION_FIELDS) {
+    return undefined
+  }
+  const fields = value.map(sanitizeElicitationField)
+  if (
+    fields.some((field) => !field) ||
+    new Set(fields.map((field) => field!.id)).size !== fields.length
+  ) {
+    return undefined
+  }
+  return fields as ElicitationField[]
 }
 
 const sanitizeAnswerValue = (value: unknown): ElicitationValue | undefined => {
@@ -357,6 +543,7 @@ const sanitizeAgentTurnProvenanceContext = (
   if (!promptMessageId) return undefined
 
   const optionalIds = [
+    'originMessageId',
     'rootFrameId',
     'agentFrameId',
     'messageBranchId',
@@ -387,6 +574,7 @@ const sanitizeAgentTurnProvenanceContext = (
 
   return {
     promptMessageId,
+    ...(ids.originMessageId ? { originMessageId: ids.originMessageId } : {}),
     ...(ids.rootFrameId ? { rootFrameId: ids.rootFrameId } : {}),
     ...(ids.agentFrameId ? { agentFrameId: ids.agentFrameId } : {}),
     ...(ids.messageBranchId ? { messageBranchId: ids.messageBranchId } : {}),
@@ -429,18 +617,14 @@ export const sanitizePendingElicitationRequest = (
   const sessionId = boundedString(value.sessionId, MAX_ELICITATION_LABEL_CHARS)
   const toolCallId = boundedString(value.toolCallId, MAX_ELICITATION_LABEL_CHARS)
   const message = boundedString(value.message, MAX_ELICITATION_MESSAGE_CHARS)
-  const fields = value.fields
-    .slice(0, MAX_ELICITATION_FIELDS)
-    .map(sanitizeField)
-    .filter((field): field is ElicitationField => !!field)
+  const fields = sanitizeFields(value.fields)
   const durable = sanitizeDurableElicitation(value.durable)
   if (
     !requestId ||
     !sessionId ||
     !toolCallId ||
     !message ||
-    fields.length === 0 ||
-    fields.length !== value.fields.length ||
+    !fields ||
     (value.durable !== undefined && !durable) ||
     (durable && durable.requestId !== requestId)
   ) {
@@ -466,11 +650,8 @@ export const sanitizeElicitationProjection = (
     return undefined
   }
 
-  const fields = value.fields
-    .slice(0, MAX_ELICITATION_FIELDS)
-    .map(sanitizeField)
-    .filter((field): field is ElicitationField => !!field)
-  if (fields.length === 0) return undefined
+  const fields = sanitizeFields(value.fields)
+  if (!fields) return undefined
 
   const answers = Array.isArray(value.answers)
     ? value.answers

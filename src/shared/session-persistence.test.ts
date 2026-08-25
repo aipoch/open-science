@@ -1523,6 +1523,99 @@ describe('sanitizeToolActivity', () => {
     })
   })
 
+  it.each([
+    [
+      'duplicate field identities',
+      [
+        { id: 'answer', label: 'First answer', kind: 'text' },
+        { id: 'answer', label: 'Second answer', kind: 'text' }
+      ]
+    ],
+    [
+      'contradictory field constraints',
+      [{ id: 'answer', label: 'Answer', kind: 'text', minLength: 2, maxLength: 1 }]
+    ]
+  ])('drops a persisted elicitation with %s', (_label, fields) => {
+    const activity = sanitizeToolActivity({
+      id: 'tool-invalid-elicitation',
+      status: 'in_progress',
+      elicitation: {
+        message: 'Provide an answer',
+        fields,
+        state: 'pending'
+      }
+    })
+
+    expect(activity).not.toHaveProperty('elicitation')
+  })
+
+  it('removes an invalid persisted default without discarding the elicitation', () => {
+    const activity = sanitizeToolActivity({
+      id: 'tool-invalid-default',
+      status: 'in_progress',
+      elicitation: {
+        message: 'Choose the number of attempts',
+        fields: [
+          {
+            id: 'attempts',
+            label: 'Attempts',
+            kind: 'integer',
+            minimum: 1,
+            maximum: 3,
+            defaultValue: '2'
+          }
+        ],
+        state: 'pending'
+      }
+    })
+
+    expect(activity?.elicitation?.fields).toEqual([
+      {
+        id: 'attempts',
+        label: 'Attempts',
+        kind: 'integer',
+        minimum: 1,
+        maximum: 3
+      }
+    ])
+  })
+
+  it('preserves the authorization origin in durable elicitation provenance', () => {
+    const activity = sanitizeToolActivity({
+      id: 'tool-durable-choice',
+      status: 'in_progress',
+      elicitation: {
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'approach',
+            label: 'Approach',
+            kind: 'single-select',
+            options: [
+              { value: 'minimal', label: 'Minimal' },
+              { value: 'expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        state: 'pending',
+        durable: {
+          kind: 'agent-user-choice',
+          requestId: 'choice-1',
+          promptMessageId: 'synthetic-continuation',
+          provenanceContext: {
+            promptMessageId: 'synthetic-continuation',
+            originMessageId: 'authorizing-user-message'
+          }
+        }
+      }
+    })
+
+    expect(activity?.elicitation?.durable?.provenanceContext).toEqual({
+      promptMessageId: 'synthetic-continuation',
+      originMessageId: 'authorizing-user-message'
+    })
+  })
+
   it('keeps identity fields and known text/diff content', () => {
     const activity = sanitizeToolActivity({
       id: 'tool-1',
