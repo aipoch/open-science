@@ -703,10 +703,13 @@ export const useWorkspaceComposerUploadController = ({
     clearHistory(draftKey)
     markChanged(draftKey)
     const currentAttachmentIds = new Set(attachmentsRef.current.map(({ id }) => id))
+    const currentTransferIds = new Set(transfersRef.current.map(({ transferId }) => transferId))
     const pastedTextToRestage = snapshot.doc.nodes.filter(
       (node): node is ComposerPastedTextNode =>
         node.type === 'pasted-text' &&
-        Boolean(node.attachmentId && !currentAttachmentIds.has(node.attachmentId))
+        (node.attachmentId
+          ? !currentAttachmentIds.has(node.attachmentId)
+          : !node.transferId || !currentTransferIds.has(node.transferId))
     )
     setActiveAttachments(
       attachmentsRef.current.filter((attachment) => attachmentIds.has(attachment.id))

@@ -785,6 +785,45 @@ describe('workspace composer controller', () => {
     ])
   })
 
+  it('re-stages a pending pasted attachment when undo restores its replaced anchor', async () => {
+    const oldUpload = deferred<UploadedAttachment | null>()
+    const newUpload = deferred<UploadedAttachment | null>()
+    const stageLocalFile = vi
+      .fn()
+      .mockImplementationOnce(() => oldUpload.promise)
+      .mockImplementationOnce(() => newUpload.promise)
+      .mockResolvedValueOnce({
+        id: 'upload-old-restaged',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/old-restaged.txt',
+        mimeType: 'text/plain',
+        size: 3
+      })
+    const hook = renderController(uploads(stageLocalFile))
+    mounted.push(hook)
+    const oldPaste: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-old', text: 'old' }
+    const newPaste: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-new', text: 'new' }
+
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(oldPaste), oldPaste))
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(newPaste), newPaste))
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    await flushAsyncWork()
+
+    expect(stageLocalFile).toHaveBeenCalledTimes(3)
+    expect(hook.result.current.view.doc.nodes).toContainEqual(
+      expect.objectContaining({
+        type: 'pasted-text',
+        id: 'paste-old',
+        attachmentId: 'upload-old-restaged'
+      })
+    )
+    expect(hook.result.current.view.attachments.map(({ id }) => id)).toEqual([
+      'upload-old-restaged'
+    ])
+  })
+
   it('reuses the attachment slot when a new long paste replaces an anchor at the cap', () => {
     const blocked = deferred<UploadedAttachment | null>()
     const hook = renderController(uploads(vi.fn(() => blocked.promise)))
