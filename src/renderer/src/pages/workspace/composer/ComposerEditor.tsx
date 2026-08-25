@@ -512,7 +512,9 @@ export const ComposerEditor = ({
     if (root && restoreFocusRequest !== undefined && canReceiveFocus(root)) moveCaretToEnd(root)
   }, [restoreFocusRequest])
 
-  const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])
+  const handleInput = useCallback((): void => {
+    if (!composingRef.current) emitDocFromDom()
+  }, [emitDocFromDom])
 
   // Clicking an `@` mention chip opens the file in the preview workbench, like the sent-message
   // pills do. Linked-folder chips resolve rootId + relativePath through the granted-roots store
@@ -792,7 +794,9 @@ export const ComposerEditor = ({
         onInput={handleInput}
         onBeforeInput={() => {
           const root = editorRef.current
-          undoCaretRef.current = root ? currentCaretPosition(root) : undefined
+          if (!composingRef.current) {
+            undoCaretRef.current = root ? currentCaretPosition(root) : undefined
+          }
         }}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
@@ -800,10 +804,13 @@ export const ComposerEditor = ({
         onCopy={handleCopy}
         onCut={handleCut}
         onCompositionStart={() => {
+          const root = editorRef.current
+          undoCaretRef.current = root ? currentCaretPosition(root) : undefined
           composingRef.current = true
         }}
         onCompositionEnd={() => {
           composingRef.current = false
+          emitDocFromDom()
         }}
       />
       <span id={historyDescriptionId} className="sr-only">

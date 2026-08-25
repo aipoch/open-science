@@ -450,6 +450,30 @@ describe('ComposerEditor', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })
 
+  it('emits one undoable document edit for an IME composition', () => {
+    const onDocChange = vi.fn()
+    renderEditor({ onDocChange })
+    setCaret(editor(), 0)
+
+    act(() => {
+      editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+      editor().textContent = 'n'
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+      editor().textContent = '你'
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(onDocChange).not.toHaveBeenCalled()
+
+    act(() => {
+      editor().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+    })
+    expect(onDocChange).toHaveBeenCalledOnce()
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: '你' }] },
+      { nodeIndex: 0, offset: 0 }
+    )
+  })
+
   it('enters history with ArrowUp only from a collapsed caret at the logical start', () => {
     const onNavigateHistory = vi.fn(() => true)
     renderEditor({
