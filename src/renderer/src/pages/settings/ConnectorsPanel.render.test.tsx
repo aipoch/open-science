@@ -602,10 +602,8 @@ describe('ConnectorsPanel (groups)', () => {
     })
 
     openDropdownByText('Add connector')
-    expect(document.body.textContent).toContain(
-      'Import an Open Science Connector or MCP client configuration'
-    )
-    clickItemByText('menuitem', 'Import Connector or MCP configuration')
+    expect(document.body.textContent).toContain('Import a configuration file')
+    clickItemByText('menuitem', 'Connector or MCP')
 
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'import' })
   })
