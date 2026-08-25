@@ -54,6 +54,7 @@ type SendWorkspaceMessageIntent = {
   enabledComputeHosts?: string[]
   selectedComputeHosts?: string[]
   agentConfiguration?: SessionAgentConfiguration
+  memoryEnabled?: boolean
 }
 type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   agentFrameworkId?: AgentFrameworkId
@@ -207,13 +208,13 @@ const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatc
     request.replay?.historyImages,
     request.replay?.resumeFallback,
     promptContext(request.sessionId, request.messageId),
-    request.replay?.contextReset
+    request.replay?.contextReset,
+    request.continuation,
+    request.turnIntent,
+    useSessionStore.getState().sessions.find((session) => session.id === request.sessionId)
+      ?.memoryEnabled !== false
   ] as const
-  const result = request.turnIntent
-    ? runtime.sendPrompt(...args, request.continuation, request.turnIntent)
-    : request.continuation
-      ? runtime.sendPrompt(...args, request.continuation)
-      : runtime.sendPrompt(...args)
+  const result = runtime.sendPrompt(...args)
   void result
     .then(() => request.accepted?.())
     .catch((error) => {
@@ -254,13 +255,16 @@ const startPendingPrompt = (
             request.projectId,
             request.permissionProfile,
             request.specialistId ?? undefined,
-            target
+            target,
+            request.memoryEnabled !== false
           )
         : await runtime.createSession(
             request.cwd,
             request.projectId,
             request.permissionProfile,
-            request.specialistId ?? undefined
+            request.specialistId ?? undefined,
+            undefined,
+            request.memoryEnabled !== false
           )
     } catch (error) {
       if (ownsPrompt(pending.sessionId, pending.messageId)) {
@@ -614,6 +618,7 @@ const sendWorkspaceMessage = async (
     agentBackendId: input.agentBackendId,
     agentModel: input.agentModel,
     agentConfiguration: input.agentConfiguration,
+    memoryEnabled: input.memoryEnabled,
     specialistId: input.specialistId ?? undefined,
     enabledComputeHosts: input.enabledComputeHosts,
     selectedComputeHosts: input.selectedComputeHosts

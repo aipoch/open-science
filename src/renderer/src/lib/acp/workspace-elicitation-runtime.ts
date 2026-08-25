@@ -157,7 +157,8 @@ const reviseWorkspaceElicitation = async (
         session.providerSessionId,
         session.providerContinuityToken,
         session.specialistBindingPending,
-        options.agentTarget
+        options.agentTarget,
+        session.memoryEnabled !== false
       )
       contextResetFromResume = Boolean(resumed?.contextReset)
       useSessionStore.getState().markResumed(
@@ -213,7 +214,8 @@ const reviseWorkspaceElicitation = async (
         session.id,
         cwd,
         session.projectId,
-        session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+        session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+        session.memoryEnabled !== false
       )
       useSessionStore.getState().markResumed(
         session.id,
@@ -322,7 +324,8 @@ const respondToWorkspaceElicitation = async (
       session.providerSessionId,
       session.providerContinuityToken,
       session.specialistBindingPending,
-      options.agentTarget
+      options.agentTarget,
+      session.memoryEnabled !== false
     )
     useSessionStore.getState().markResumed(
       session.id,

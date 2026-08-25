@@ -105,6 +105,7 @@ const SESSION_CONFLICT_REBASE_FIELDS = [
   'title',
   'permissionProfile',
   'autoReviewEnabled',
+  'memoryEnabled',
   'agentConfiguration',
   'pinned'
 ] as const satisfies readonly SessionConflictRebaseField[]

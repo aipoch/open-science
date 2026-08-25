@@ -197,6 +197,7 @@ const prepareSaveAsSkillContinuation = (
     continuation: {
       sessionId: session.id,
       text: SAVE_AS_SKILL_PROMPT,
+      memoryEnabled: session.memoryEnabled !== false,
       suppressUserMessage: true,
       provenanceContext,
       resumeFallback: {

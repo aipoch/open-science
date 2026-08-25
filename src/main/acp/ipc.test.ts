@@ -176,6 +176,7 @@ const registerWithFakes = (overrides?: {
   delegatedNotebookConnection?: AcpTestOptions['delegatedNotebookConnection']
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
   interruptedTurnSessions?: Parameters<typeof createAcpHandlerWorkflows>[4]
+  resolveMemoryEnabled?: Parameters<typeof installAcpIpcHandlers>[4]
 }): AcpTestOptions => {
   const taskNotifications =
     overrides?.taskNotifications ??
@@ -227,7 +228,8 @@ const registerWithFakes = (overrides?: {
       overrides?.interruptedTurnSessions
     ),
     undefined,
-    overrides?.archiveAvailability ?? passThroughSessionAdmission
+    overrides?.archiveAvailability ?? passThroughSessionAdmission,
+    overrides?.resolveMemoryEnabled
   )
   return options as AcpTestOptions
 }
@@ -1124,6 +1126,24 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     expect(result).toEqual({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
   })
 
+  it('uses the durable Memory preference for renderer resume and reset requests', async () => {
+    const resolveMemoryEnabled = vi.fn(async () => false)
+    registerWithFakes({ resolveMemoryEnabled })
+    const request: AcpResumeSessionRequest = {
+      sessionId: 's-1',
+      cwd: '/workspace',
+      projectId: 'project-1',
+      memoryEnabled: true
+    }
+
+    await handlers.get('acp:resume-session')?.({}, request)
+    await handlers.get('acp:reset-session-context')?.({}, request)
+
+    expect(resumeSession).toHaveBeenCalledWith({ ...request, memoryEnabled: false })
+    expect(resetSessionContext).toHaveBeenCalledWith({ ...request, memoryEnabled: false })
+    expect(resolveMemoryEnabled).toHaveBeenCalledTimes(2)
+  })
+
   it('rejects reset before runtime mutation when Session admission is closed', async () => {
     const failure = new Error('Project is being deleted.')
     const withSessionAvailableById = vi.fn().mockRejectedValue(failure)
@@ -1498,7 +1518,9 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
       sessionId: 'session-1',
       text: 'Plot the curve',
       continuation: undefined,
-      suppressUserMessage: undefined
+      suppressUserMessage: undefined,
+      turnIntent: undefined,
+      memoryEnabled: true
     })
     expect(sendPrompt).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -76,13 +76,15 @@ const ownerNames = [
   'workspace-runtime-attachment-owner',
   'workspace-runtime-command-owner',
   'workspace-runtime-session-lifecycle-owner',
+  'workspace-runtime-session-memory-owner',
   'workspace-runtime-selection-owner',
   'workspace-runtime-save-as-skill-owner'
 ] as const
 const facadeOwnerNames = ownerNames.filter(
   (name) =>
     name !== 'workspace-runtime-session-branch-owner' &&
-    name !== 'workspace-runtime-attachment-owner'
+    name !== 'workspace-runtime-attachment-owner' &&
+    name !== 'workspace-runtime-session-memory-owner'
 )
 const ownerTargets = new Map(ownerNames.map((name) => [name, modulePath(resolve(__dirname, name))]))
 const ownerFilePath = (name: (typeof ownerNames)[number]): string => `${ownerTargets.get(name)}.ts`
@@ -474,6 +476,7 @@ const hookKeys = [
   'resumeInterruptedSession',
   'respondToPermission',
   'setPermissionProfile',
+  'setMemoryEnabled',
   'revokePermissionGrant',
   'resolveSessionRuntimeSelection'
 ] as const
@@ -494,7 +497,8 @@ const sendIntentKeys = [
   'specialistId',
   'enabledComputeHosts',
   'selectedComputeHosts',
-  'agentConfiguration'
+  'agentConfiguration',
+  'memoryEnabled'
 ] as const
 const ownerDependencyNames = (path: string): string[] => {
   const targets = new Set(importsFrom(path).map((reference) => reference.target))
@@ -530,7 +534,7 @@ const privateOwnerBoundaryViolations = (path: string, source = readSource(path))
 describe('workspace runtime architecture', () => {
   const facadeFile = sourceFileFor(facadePath)
   it('keeps the facade, deep owners, and presentation adapter within their completion gates', () => {
-    expect(physicalLines(facadePath), 'workspace runtime facade').toBeLessThanOrEqual(605)
+    expect(physicalLines(facadePath), 'workspace runtime facade').toBeLessThanOrEqual(610)
     for (const name of ownerNames) {
       expect(physicalLines(ownerFilePath(name)), name).toBeLessThanOrEqual(700)
     }
@@ -582,6 +586,7 @@ describe('workspace runtime architecture', () => {
       recordPromptPlanAuthority: 1,
       compact: 1,
       ensureReady: 1,
+      reconfigureMemory: 1,
       resume: 1,
       cancel: 1
     })
@@ -625,8 +630,10 @@ describe('workspace runtime architecture', () => {
       ],
       'workspace-runtime-session-lifecycle-owner': [
         'workspace-runtime-prompt-preparation-owner',
-        'workspace-runtime-command-owner'
+        'workspace-runtime-command-owner',
+        'workspace-runtime-session-memory-owner'
       ],
+      'workspace-runtime-session-memory-owner': [],
       'workspace-runtime-selection-owner': [],
       'workspace-runtime-save-as-skill-owner': [
         'workspace-runtime-prompt-preparation-owner',
@@ -794,7 +801,7 @@ describe('workspace runtime architecture', () => {
     })
     expect(violations).toEqual([])
   })
-  it('keeps the lifecycle owner interface at six operations', () => {
+  it('keeps the lifecycle owner interface at seven operations', () => {
     const lifecyclePath = `${ownerTargets.get('workspace-runtime-session-lifecycle-owner')}.ts`
     const lifecycle = variableArrow(
       sourceFileFor(lifecyclePath),
@@ -805,6 +812,7 @@ describe('workspace runtime architecture', () => {
       'processRuntimeEvents',
       'compact',
       'ensureReady',
+      'reconfigureMemory',
       'resume',
       'cancel'
     ])

@@ -116,6 +116,7 @@ type WorkspaceAgentRuntime = {
   resumeInterruptedSession: (sessionId: string) => Promise<void>
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
+  setMemoryEnabled: (sessionId: string, enabled: boolean) => Promise<void>
   revokePermissionGrant: (sessionId: string, categoryKey: string) => Promise<void>
   resolveSessionRuntimeSelection: (sessionId: string) => WorkspaceSessionRuntimeSelection
 }
@@ -386,6 +387,16 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       lifecycleOwner.ensureReady(runtime, sessionId, getSessionAgentTarget(sessionId)),
     [getSessionAgentTarget, lifecycleOwner, runtime]
   )
+  const setMemoryEnabled = useCallback(
+    (sessionId: string, enabled: boolean): Promise<void> =>
+      lifecycleOwner.reconfigureMemory(
+        runtime,
+        sessionId,
+        enabled,
+        handleSendPreparationStateChange
+      ),
+    [handleSendPreparationStateChange, lifecycleOwner, runtime]
+  )
   const { saveAsSkillInFlightSessionIds, saveAsSkill } = useWorkspaceRuntimeSaveAsSkillOwner({
     runtime,
     resolveSessionRuntimeSelection: getSessionRuntimeSelection,
@@ -448,7 +459,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
                 session.providerSessionId,
                 session.providerContinuityToken,
                 session.specialistBindingPending,
-                getSessionAgentTarget(session.id)
+                getSessionAgentTarget(session.id),
+                session.memoryEnabled !== false
               )
               useSessionStore.getState().markResumed(
                 session.id,
@@ -548,6 +560,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     subscribeToSubagentRuntimeUpdates,
     compactContext,
     ensureSessionReady,
+    setMemoryEnabled,
     saveAsSkill,
     sendMessage,
     resendEditedMessage,

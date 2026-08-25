@@ -126,6 +126,7 @@ describe('AcpDurableContinuationContextOwner', () => {
 
   it('restores an elicitation from the canonical pending Session activity', async () => {
     const session = createSession([message('prompt-active', 'Choose an approach.')])
+    session.memoryEnabled = false
     setActivities(session, [pendingChoice()])
 
     await expect(
@@ -138,6 +139,7 @@ describe('AcpDurableContinuationContextOwner', () => {
         answers: [{ fieldId: 'question_0', value: 'Expanded' }]
       })
     ).resolves.toMatchObject({
+      memoryEnabled: false,
       request: {
         requestId: 'choice-1',
         sessionId: 'session-1',

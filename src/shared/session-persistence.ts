@@ -516,6 +516,9 @@ export type PersistedChatSession = {
   // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
   // only an explicit true enables it.
   autoReviewEnabled?: boolean
+  // Per-conversation Memory toggle. Historical Sessions predate this control and preserve the
+  // original behavior by restoring as enabled; only an explicit false disables Memory.
+  memoryEnabled?: boolean
   // Controls admission of new delegated children for this Session. Older files omit it and restore
   // to allow. Switching to deny never cancels or hides children that were already admitted.
   delegationPolicy?: DelegationPolicy
@@ -625,6 +628,7 @@ export type SessionConflictRebaseField =
   | 'title'
   | 'permissionProfile'
   | 'autoReviewEnabled'
+  | 'memoryEnabled'
   | 'agentConfiguration'
   | 'enabledComputeHosts'
   | 'selectedComputeHosts'
@@ -3397,6 +3401,9 @@ const sanitizeSession = (
     // Auto-review defaults off: a missing or non-boolean value restores as disabled, and only an
     // explicit true turns it on.
     autoReviewEnabled: session.autoReviewEnabled === true ? true : false,
+    // Memory predates its per-conversation switch, so historical or malformed values retain the
+    // previous enabled behavior. Only an explicit false opts this Session out.
+    memoryEnabled: session.memoryEnabled === false ? false : true,
     // Only deny changes behavior; missing/malformed historical values preserve delegation.
     delegationPolicy: session.delegationPolicy === 'deny' ? 'deny' : 'allow',
     messages: Array.isArray(session.messages)

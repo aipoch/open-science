@@ -276,9 +276,11 @@ type ConversationPanelAgentControls = {
   modelUnavailable?: boolean
   changeModelConfiguration?: (configuration: SessionAgentConfiguration) => void
   autoReviewEnabled: boolean
+  memoryEnabled?: boolean
   enabledComputeHosts: string[]
   selectedComputeHosts?: string[]
   toggleAutoReview: (enabled: boolean) => void
+  toggleMemory?: (enabled: boolean) => void
   setComputeHostEnabled?: (providerId: string, enabled: boolean) => void
   setComputeHostSelected?: (providerId: string, selected: boolean) => void
 }
@@ -427,9 +429,11 @@ const ConversationPanel = ({
     modelUnavailable = false,
     changeModelConfiguration = () => undefined,
     autoReviewEnabled,
+    memoryEnabled = true,
     enabledComputeHosts,
     selectedComputeHosts = [],
     toggleAutoReview: onAutoReviewToggle,
+    toggleMemory: onMemoryToggle = () => undefined,
     setComputeHostEnabled: onComputeHostEnabledChange = () => undefined,
     setComputeHostSelected: onComputeHostSelectedChange = () => undefined
   } = agentControls
@@ -1184,6 +1188,7 @@ const ConversationPanel = ({
                               profileState={permissionProfileState}
                               grants={permissionGrants}
                               autoReviewEnabled={autoReviewEnabled}
+                              memoryEnabled={memoryEnabled}
                               readOnly
                               permissionProfileReadOnly
                               grantActionsReadOnly
@@ -1194,6 +1199,7 @@ const ConversationPanel = ({
                               onComputeHostSelectedChange={onComputeHostSelectedChange}
                               onProfileChange={onPermissionProfileChange}
                               onAutoReviewChange={onAutoReviewToggle}
+                              onMemoryChange={onMemoryToggle}
                               onRevokeGrant={onRevokePermissionGrant}
                               onClearGrants={onClearPermissionGrants}
                               showSpecialist={activeSession !== undefined}
@@ -1670,6 +1676,7 @@ const ConversationPanel = ({
                           profileState={permissionProfileState}
                           grants={permissionGrants}
                           autoReviewEnabled={autoReviewEnabled}
+                          memoryEnabled={memoryEnabled}
                           readOnly={!canChangeAgentControls}
                           permissionProfileReadOnly={!canChangePermissionProfile}
                           grantActionsReadOnly={false}
@@ -1680,6 +1687,7 @@ const ConversationPanel = ({
                           onComputeHostSelectedChange={onComputeHostSelectedChange}
                           onProfileChange={onPermissionProfileChange}
                           onAutoReviewChange={onAutoReviewToggle}
+                          onMemoryChange={onMemoryToggle}
                           onRevokeGrant={onRevokePermissionGrant}
                           onClearGrants={onClearPermissionGrants}
                           showSpecialist={

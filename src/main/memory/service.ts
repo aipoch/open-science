@@ -108,6 +108,10 @@ class MemoryService {
     return this.enqueue(() => this.repository.snapshot())
   }
 
+  isEnabled(): Promise<boolean> {
+    return this.enqueue(() => this.repository.isEnabled())
+  }
+
   setEnabled(request: SetMemoryEnabledRequest): Promise<MemorySnapshot> {
     return this.mutate(() => this.repository.setEnabled(request))
   }

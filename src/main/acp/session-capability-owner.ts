@@ -130,9 +130,11 @@ export type SessionCapabilityNotebookOptions = {
   mcpEntryPath: string
   mcpCommand?: string
   memoryTools?: boolean
+  isMemoryEnabled?: () => Promise<boolean>
   getRpcConnection?: (binding: {
     sessionId: string
     projectId: string
+    memoryTools: boolean
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
   releaseSessionCapabilities?: (sessionId: string) => void
@@ -167,6 +169,7 @@ type BuildSessionCapabilitiesRequest = {
   provisionGeneration: number
   sessionCwd: string
   projectId: string
+  memoryEnabled?: boolean
   onNotebookConnection?: (connection: NotebookRpcConnection) => void
   onSkillImportConnection?: (connection: SkillImportRpcConnection) => void
   onPlanConnection?: (connection: NotebookRpcConnection) => void
@@ -303,6 +306,7 @@ export class AcpSessionCapabilityOwner {
         provisionGeneration,
         sessionCwd: request.sessionCwd,
         projectId: request.projectId,
+        memoryEnabled: request.memoryEnabled,
         onNotebookConnection: (connection) => {
           notebookRelease = connection.release
         },
@@ -468,6 +472,14 @@ export class AcpSessionCapabilityOwner {
     const skillImportAllowed = policyAllowsSessionCapability(request.policy, 'skill-import')
     const planAllowed = policyAllowsSessionCapability(request.policy, 'plan')
     const hostMessageAllowed = policyAllowsSessionCapability(request.policy, 'host-message')
+    let memoryToolsEnabled = false
+    if ((this.options.notebook?.memoryTools ?? true) && request.memoryEnabled !== false) {
+      try {
+        memoryToolsEnabled = (await this.options.notebook?.isMemoryEnabled?.()) !== false
+      } catch (error) {
+        safeLogError('Memory capability gate read failed', diagnosticErrorFields(error))
+      }
+    }
 
     const servers =
       transport === 'stdio'
@@ -476,7 +488,8 @@ export class AcpSessionCapabilityOwner {
             notebook: notebookAllowed,
             skillImport: skillImportAllowed,
             plan: planAllowed,
-            hostMessage: hostMessageAllowed
+            hostMessage: hostMessageAllowed,
+            memoryTools: memoryToolsEnabled
           })
         : transport === 'http'
           ? await this.buildHttpServers(request, {
@@ -484,7 +497,8 @@ export class AcpSessionCapabilityOwner {
               notebook: notebookAllowed,
               skillImport: skillImportAllowed,
               plan: planAllowed,
-              hostMessage: hostMessageAllowed
+              hostMessage: hostMessageAllowed,
+              memoryTools: memoryToolsEnabled
             })
           : []
     const modelFacingServers = servers.map((server) => {
@@ -812,6 +826,7 @@ export class AcpSessionCapabilityOwner {
     routingId: string,
     sessionCwd: string,
     projectId: string,
+    memoryTools: boolean,
     onConnection?: (connection: NotebookRpcConnection) => void
   ): Promise<NotebookMcpEnvironment | undefined> {
     if (!this.options.notebook || !routingId) return undefined
@@ -820,7 +835,8 @@ export class AcpSessionCapabilityOwner {
     }
     const connection = await this.options.notebook.getRpcConnection({
       sessionId: routingId,
-      projectId: projectId
+      projectId: projectId,
+      memoryTools
     })
     onConnection?.(connection)
     return {
@@ -864,6 +880,7 @@ export class AcpSessionCapabilityOwner {
       skillImport: boolean
       plan: boolean
       hostMessage: boolean
+      memoryTools: boolean
     }
   ): Promise<McpServer[]> {
     const servers: McpServer[] = []
@@ -888,6 +905,7 @@ export class AcpSessionCapabilityOwner {
         request.routingIds.notebook,
         request.sessionCwd,
         request.projectId,
+        enabled.memoryTools,
         request.onNotebookConnection
       )
       if (environment && this.options.notebook) {
@@ -895,7 +913,7 @@ export class AcpSessionCapabilityOwner {
           createNotebookMcpServerConfig({
             command: this.options.notebook.mcpCommand ?? process.execPath,
             entryPath: this.options.notebook.mcpEntryPath,
-            memoryTools: this.options.notebook.memoryTools ?? true,
+            memoryTools: enabled.memoryTools,
             ...environment
           })
         )
@@ -943,6 +961,7 @@ export class AcpSessionCapabilityOwner {
       skillImport: boolean
       plan: boolean
       hostMessage: boolean
+      memoryTools: boolean
     }
   ): Promise<McpServer[]> {
     const host = this.options.mcpHttpHost
@@ -972,12 +991,13 @@ export class AcpSessionCapabilityOwner {
         request.routingIds.notebook,
         request.sessionCwd,
         request.projectId,
+        enabled.memoryTools,
         request.onNotebookConnection
       )
       if (environment && this.options.notebook && this.canPublishHttpRoute(request)) {
         host.registerNotebook(request.routingIds.notebook, {
           ...environment,
-          memoryTools: this.options.notebook.memoryTools ?? true
+          memoryTools: enabled.memoryTools
         })
         servers.push({
           type: 'http',

@@ -223,6 +223,7 @@ export const createSessionMessageGraphOwner = <
     agentBackendId,
     agentModel,
     agentConfiguration,
+    memoryEnabled,
     isPending,
     specialistId,
     enabledComputeHosts,
@@ -320,6 +321,7 @@ export const createSessionMessageGraphOwner = <
         agentBackendId: normalizedAgentBackendId,
         agentModel: normalizedAgentModel,
         ...(agentConfiguration ? { agentConfiguration } : {}),
+        memoryEnabled: memoryEnabled !== false,
         ...(specialistId ? { specialistId } : {}),
         ...(enabledComputeHosts?.length
           ? {
@@ -367,6 +369,7 @@ export const createSessionMessageGraphOwner = <
     agentBackendId,
     agentModel,
     agentConfiguration,
+    memoryEnabled,
     specialistId
   }) => {
     const trimmedContent = content?.trim() ?? ''
@@ -423,6 +426,7 @@ export const createSessionMessageGraphOwner = <
       ...(source.autoReviewEnabled !== undefined
         ? { autoReviewEnabled: source.autoReviewEnabled }
         : {}),
+      memoryEnabled: memoryEnabled ?? source.memoryEnabled ?? true,
       ...(source.enabledComputeHosts
         ? { enabledComputeHosts: [...source.enabledComputeHosts] }
         : {}),

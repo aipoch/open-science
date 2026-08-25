@@ -26,12 +26,14 @@ type DurableContinuationSessions = Pick<
 
 type DurableContinuationPreparation = Readonly<{
   provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
+  memoryEnabled: boolean
   historyReplay?: SessionHistoryReplay
 }>
 
 type DurableElicitationContinuationPreparation = Readonly<{
   request: PendingElicitationRequest
   provenanceContext?: DurableContinuationPreparation['provenanceContext']
+  memoryEnabled?: boolean
   historyReplay?: SessionHistoryReplay
 }>
 
@@ -347,6 +349,7 @@ class AcpDurableContinuationContextOwner {
 
     return {
       provenanceContext: getActiveConversationContext(graph, promptMessageId),
+      memoryEnabled: session.memoryEnabled !== false,
       ...(replay
         ? {
             historyReplay: buildSessionHistoryReplay(

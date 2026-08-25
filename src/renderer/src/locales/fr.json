@@ -1023,6 +1023,7 @@
   "Let the agent decide": "Laissez l'agent décider",
   "Length limit reached": "Limite de longueur atteinte",
   "Let the agent detect attached .zip and .skill packages and ask before importing them.": "Laissez l’agent détecter les paquets .zip et .skill joints, puis demander votre accord avant de les importer.",
+  "Let the agent recall and save memory in this conversation.": "Autoriser l’agent à rappeler et enregistrer des souvenirs dans cette session.",
   "Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.": "Permet à Open Science d'installer des paquets dans cet environnement. Les installations sont effectuées dans votre propre environnement, et non dans le stockage géré par l'application.",
   "Library": "Bibliothèque",
   "License": "Licence",

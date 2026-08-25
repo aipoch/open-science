@@ -117,6 +117,7 @@ type NotebookLocalRpcServerOptions = {
     MemoryService,
     'listCategoriesForAgent' | 'searchForAgent' | 'rememberForAgent'
   >
+  isMemoryEnabledForSession?: (sessionId: string) => boolean | Promise<boolean>
   computeService?: {
     callCommand(
       context: { sessionId: string; projectId: string },
@@ -314,6 +315,7 @@ type NotebookRpcSessionBinding = {
   sessionId: string
   projectId?: string
   agentFrameId?: string
+  memoryTools?: boolean
   delegatedWorkRole?: 'main' | 'delegate'
   delegatedWorkAttemptId?: string
   allowedMethods?: ReadonlySet<string>
@@ -489,6 +491,7 @@ class NotebookLocalRpcServer {
   private readonly transport: NotebookLocalRpcServerOptions['transport']
   private readonly connectorService: NotebookLocalRpcServerOptions['connectorService']
   private readonly memoryService: NotebookLocalRpcServerOptions['memoryService']
+  private readonly isMemoryEnabledForSession: NotebookLocalRpcServerOptions['isMemoryEnabledForSession']
   private readonly computeService: NotebookLocalRpcServerOptions['computeService']
   private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
   private readonly planService: NotebookLocalRpcServerOptions['planService']
@@ -545,6 +548,7 @@ class NotebookLocalRpcServer {
     this.transport = options.transport
     this.connectorService = options.connectorService
     this.memoryService = options.memoryService
+    this.isMemoryEnabledForSession = options.isMemoryEnabledForSession
     this.computeService = options.computeService
     this.skillImporter = options.skillImporter
     this.planService = options.planService
@@ -930,7 +934,8 @@ class NotebookLocalRpcServer {
   async issueSessionConnection(
     sessionId: string,
     projectId: string,
-    agentFrameId: string
+    agentFrameId: string,
+    memoryTools = true
   ): Promise<NotebookRpcConnection> {
     if (!agentFrameId.trim()) {
       throw new Error('Notebook RPC capabilities require an explicit Agent Frame owner.')
@@ -952,6 +957,7 @@ class NotebookLocalRpcServer {
       sessionId: resolvedSessionId,
       projectId,
       agentFrameId: resolvedAgentFrameId,
+      memoryTools,
       delegatedWorkRole: 'main'
     })
     return {
@@ -1130,6 +1136,7 @@ class NotebookLocalRpcServer {
       sessionId: resolvedSessionId,
       projectId,
       agentFrameId: resolvedAgentFrameId,
+      memoryTools: delegatedWorkIdentity.role === 'main',
       delegatedWorkRole: delegatedWorkIdentity.role,
       ...(delegatedWorkIdentity.attemptId
         ? { delegatedWorkAttemptId: delegatedWorkIdentity.attemptId }
@@ -1443,6 +1450,20 @@ class NotebookLocalRpcServer {
           authenticatedSessionBinding = sessionBinding
           if (sessionBinding.allowedMethods && !sessionBinding.allowedMethods.has(method)) {
             throw new RpcHttpError(403, `Notebook RPC capability does not allow ${method}.`)
+          }
+          if (MEMORY_RPC_METHODS.has(method) && sessionBinding.memoryTools !== true) {
+            throw new RpcHttpError(403, 'Memory is disabled for this Session.')
+          }
+          if (MEMORY_RPC_METHODS.has(method) && this.isMemoryEnabledForSession) {
+            let memoryEnabled = false
+            try {
+              memoryEnabled = await this.isMemoryEnabledForSession(sessionBinding.sessionId)
+            } catch (error) {
+              log.warn('Memory Session gate read failed', errorLogFields(error))
+            }
+            if (!memoryEnabled) {
+              throw new RpcHttpError(403, 'Memory is disabled for this Session.')
+            }
           }
           if (
             (method === 'artifactsCall' || method === 'lineageCall') &&

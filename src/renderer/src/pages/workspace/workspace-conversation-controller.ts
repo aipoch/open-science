@@ -87,6 +87,7 @@ type WorkspaceConversationControllerOptions = {
   actionability: SessionActionabilityProjection | undefined
   hasPendingPermissionRequest: (sessionId: string) => boolean
   newConversationAutoReviewEnabled: boolean
+  newConversationMemoryEnabled?: boolean
   newConversationEnabledComputeHosts: string[]
   newConversationSelectedComputeHosts?: string[]
   composer: ConversationComposer
@@ -306,6 +307,9 @@ const useWorkspaceConversationController = (
 
       const wasNewConversation = !activeSession
       const autoReviewEnabled = current.newConversationAutoReviewEnabled
+      const memoryEnabled = activeSession
+        ? activeSession.memoryEnabled !== false
+        : current.newConversationMemoryEnabled !== false
       const computeHosts = current.newConversationEnabledComputeHosts
       const selectedComputeHosts = current.newConversationSelectedComputeHosts ?? []
       const { draftSpecialistId, hasPendingSwitch, pendingSpecialistId } =
@@ -342,6 +346,7 @@ const useWorkspaceConversationController = (
             projectId: activeSession?.projectId ?? current.projectId,
             permissionProfile: current.permissionProfile,
             agentConfiguration: current.agentConfiguration,
+            memoryEnabled,
             forcedSkillIds,
             ...(mode === 'plan-first' ? { turnIntent: 'plan-first' as const } : {}),
             specialistId: draftSpecialistId,

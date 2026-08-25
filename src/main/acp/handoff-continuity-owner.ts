@@ -14,9 +14,11 @@ type HandoffPromptContext = Pick<
   | 'referencedArtifacts'
   | 'historyAttachments'
   | 'historyImages'
+  | 'memoryEnabled'
 >
 
 const copyPromptContext = (source: HandoffPromptContext): HandoffPromptContext => ({
+  ...(source.memoryEnabled !== undefined ? { memoryEnabled: source.memoryEnabled } : {}),
   ...(source.provenanceContext
     ? {
         provenanceContext: {

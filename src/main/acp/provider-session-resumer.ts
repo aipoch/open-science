@@ -304,7 +304,8 @@ export class AcpProviderSessionResumer {
         bridgeMcpAliasesEnabled: backend.adapter.bridgeMcpAliasesEnabled,
         policy: this.deps.capabilityPolicy,
         sessionCwd: cwd,
-        projectId
+        projectId,
+        memoryEnabled: request.memoryEnabled
       })
       const capabilityDescriptor = capability.descriptor
       const existingAggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
@@ -432,6 +433,7 @@ export class AcpProviderSessionResumer {
           frameworkId: backend.framework.id,
           backendId: backend.backendId,
           permissionProfile: structuredClone(configuration.permissionProfile),
+          memoryEnabled: request.memoryEnabled !== false,
           appliedModel: configuration.appliedModel,
           configOptions: structuredClone(configuration.configOptions)
         })
@@ -483,7 +485,8 @@ export class AcpProviderSessionResumer {
       identity,
       permissionProfile: request.permissionProfile,
       specialistId: request.specialistId,
-      specialistBindingPending: request.specialistBindingPending
+      specialistBindingPending: request.specialistBindingPending,
+      memoryEnabled: request.memoryEnabled
     })
   }
 

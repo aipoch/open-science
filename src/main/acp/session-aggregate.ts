@@ -10,6 +10,7 @@ type AcpSessionAggregateAttachInput = {
   frameworkId: AgentFrameworkId
   backendId?: string
   permissionProfile: SessionPermissionProfileState
+  memoryEnabled?: boolean
   appliedModel?: string
   configOptions?: SessionConfigOption[] | null
 }
@@ -29,6 +30,7 @@ type AcpSessionAggregateSnapshot = DeepReadonly<{
   frameworkId?: AgentFrameworkId
   backendId?: string
   permissionProfile?: SessionPermissionProfileState
+  memoryEnabled: boolean
   specialistId?: string
   specialistPrefix?: string
   sessionSetupPromptPrefix?: string
@@ -54,6 +56,7 @@ class AcpSessionAggregate {
   private frameworkId: AgentFrameworkId | undefined
   private backendId: string | undefined
   private permissionProfile: SessionPermissionProfileState | undefined
+  private memoryEnabled = true
   private specialistId: string | undefined
   private specialistPrefix: string | undefined
   private specialistBindingRevisionValue = 0
@@ -83,6 +86,7 @@ class AcpSessionAggregate {
       backendId: this.backendId,
       permissionProfile:
         this.permissionProfile === undefined ? undefined : structuredClone(this.permissionProfile),
+      memoryEnabled: this.memoryEnabled,
       specialistId: this.specialistId,
       specialistPrefix: this.specialistPrefix,
       sessionSetupPromptPrefix: this.sessionSetupPromptPrefix,
@@ -103,6 +107,7 @@ class AcpSessionAggregate {
     this.frameworkId = input.frameworkId
     if (input.backendId !== undefined) this.backendId = input.backendId
     this.permissionProfile = structuredClone(input.permissionProfile)
+    this.memoryEnabled = input.memoryEnabled !== false
     this.appliedModel = input.appliedModel
     this.configOptions = cloneConfigOptions(input.configOptions)
     this.refreshSnapshot()
@@ -117,6 +122,11 @@ class AcpSessionAggregate {
 
   setPermissionProfile(state: SessionPermissionProfileState | undefined): void {
     this.permissionProfile = state === undefined ? undefined : structuredClone(state)
+    this.refreshSnapshot()
+  }
+
+  setMemoryEnabled(enabled: boolean): void {
+    this.memoryEnabled = enabled
     this.refreshSnapshot()
   }
 

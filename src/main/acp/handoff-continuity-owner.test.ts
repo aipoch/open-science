@@ -29,6 +29,7 @@ describe('AcpHandoffContinuityOwner', () => {
     owner.recordAdmittedPrompt({
       sessionId: 'session-1',
       text: 'Analyse the dataset',
+      memoryEnabled: false,
       provenanceContext: {
         promptMessageId: 'message-1',
         messageAncestry: ['message-root']
@@ -45,6 +46,7 @@ describe('AcpHandoffContinuityOwner', () => {
     expect(continuation).toEqual({
       sessionId: 'session-1',
       text: 'Continue the existing task from the approved handoff as Target Specialist.',
+      memoryEnabled: false,
       suppressUserMessage: true,
       provenanceContext: {
         promptMessageId: 'message-1',

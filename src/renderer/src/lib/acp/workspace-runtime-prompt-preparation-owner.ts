@@ -285,7 +285,8 @@ const prepareExistingWorkspacePrompt = async (
           sessionId,
           resetCwd,
           request.projectId,
-          currentSession?.permissionProfile ?? request.permissionProfile
+          currentSession?.permissionProfile ?? request.permissionProfile,
+          currentSession?.memoryEnabled !== false
         )
         useSessionStore.getState().markResumed(
           sessionId,
@@ -330,9 +331,11 @@ const prepareExistingWorkspacePrompt = async (
               ...request.selectedRuntime.agentConfiguration
             }
           : undefined
-      const resumeResult = target
-        ? await runtime.resumeSession(...resumeArguments, target)
-        : await runtime.resumeSession(...resumeArguments)
+      const resumeResult = await runtime.resumeSession(
+        ...resumeArguments,
+        target,
+        currentSession?.memoryEnabled !== false
+      )
       contextResetFromResume = Boolean(resumeResult?.contextReset)
       useSessionStore.getState().markResumed(
         sessionId,
@@ -351,7 +354,8 @@ const prepareExistingWorkspacePrompt = async (
           sessionId,
           resumeCwd,
           request.projectId,
-          currentSession?.permissionProfile ?? request.permissionProfile
+          currentSession?.permissionProfile ?? request.permissionProfile,
+          currentSession?.memoryEnabled !== false
         )
         useSessionStore.getState().markResumed(
           sessionId,

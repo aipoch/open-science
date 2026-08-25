@@ -19743,11 +19743,13 @@ describe('ACP runtime session management', () => {
         fakeAgent.newSessions[0].mcpServers[0],
         'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'
       ),
-      projectId: 'default-project'
+      projectId: 'default-project',
+      memoryTools: true
     })
     expect(getRpcConnection).toHaveBeenNthCalledWith(2, {
       sessionId: 'remote-session-2',
-      projectId: 'default-project'
+      projectId: 'default-project',
+      memoryTools: true
     })
     expect(fakeAgent.resumedSessions[0].mcpServers).toHaveLength(1)
     expect(

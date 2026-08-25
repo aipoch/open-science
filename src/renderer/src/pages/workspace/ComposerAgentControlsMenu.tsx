@@ -18,6 +18,7 @@ import type { AcpPermissionGrant } from '../../../../shared/acp'
 import {
   AlertTriangle,
   ArrowRight,
+  BrainCircuit,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -76,6 +77,7 @@ type ComposerAgentControlsMenuProps = {
   profileState?: SessionPermissionProfileState
   grants?: AcpPermissionGrant[]
   autoReviewEnabled: boolean
+  memoryEnabled?: boolean
   // Read-only while a session is running: the menu stays openable and the permission
   // submenu still expands on hover, but profiles, auto-review, and compute stay immutable.
   readOnly?: boolean
@@ -86,6 +88,7 @@ type ComposerAgentControlsMenuProps = {
   autoReviewDisabled?: boolean
   onProfileChange: (profile: PermissionProfileId) => void
   onAutoReviewChange: (enabled: boolean) => void
+  onMemoryChange?: (enabled: boolean) => void
   onRevokeGrant?: (categoryKey: string) => void
   onClearGrants?: () => void
   // Compute hosts: the SSH section is appended below auto-review. Optional so the menu still
@@ -151,12 +154,14 @@ const ComposerAgentControlsMenu = ({
   profileState,
   grants,
   autoReviewEnabled,
+  memoryEnabled = true,
   readOnly = false,
   permissionProfileReadOnly = readOnly,
   grantActionsReadOnly = readOnly,
   autoReviewDisabled = false,
   onProfileChange,
   onAutoReviewChange,
+  onMemoryChange = () => undefined,
   onRevokeGrant,
   onClearGrants,
   enabledComputeHosts,
@@ -185,7 +190,7 @@ const ComposerAgentControlsMenu = ({
   // Ask grants stay visible across profile switches so changing Auto/Full never appears to lose them.
   const hasGrants = (grants?.length ?? 0) > 0
   // Anything other than the defaults (ask + auto-review off) gets a dot on the trigger.
-  const isNonDefault = profile !== DEFAULT_PERMISSION_PROFILE || autoReviewEnabled
+  const isNonDefault = profile !== DEFAULT_PERMISSION_PROFILE || autoReviewEnabled || !memoryEnabled
 
   useEffect(() => {
     if (openRequest === undefined || openRequest === previousOpenRequest.current) return
@@ -485,6 +490,34 @@ const ComposerAgentControlsMenu = ({
                 <Switch
                   size="sm"
                   checked={autoReviewEnabled}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  className="pointer-events-none"
+                />
+              </DropdownMenuItem>
+
+              <DropdownMenuItem
+                disabled={readOnly}
+                className="items-center gap-2 px-2 py-1.5"
+                onSelect={(event) => {
+                  event.preventDefault()
+                  onMemoryChange(!memoryEnabled)
+                }}
+              >
+                <BrainCircuit
+                  className="size-4 shrink-0 text-text-200"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium leading-5">{t('Memory')}</span>
+                  <span className="block text-[11px] leading-4 text-text-300">
+                    {t('Let the agent recall and save memory in this conversation.')}
+                  </span>
+                </span>
+                <Switch
+                  size="sm"
+                  checked={memoryEnabled}
                   tabIndex={-1}
                   aria-hidden="true"
                   className="pointer-events-none"

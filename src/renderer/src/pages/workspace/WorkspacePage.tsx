@@ -223,6 +223,7 @@ const WorkspacePage = ({
   // conversation starts disabled; the user can toggle it on before sending. On send it is stamped
   // onto the created session through the Conversation submit transaction.
   const [newConversationAutoReviewEnabled, setNewConversationAutoReviewEnabled] = useState(false)
+  const [newConversationMemoryEnabled, setNewConversationMemoryEnabled] = useState(true)
   // Draft compute hosts for a not-yet-created conversation. Cleared when a new conversation draft
   // is started, and stamped onto the session by the Conversation submit transaction.
   const [newConversationEnabledComputeHosts, setNewConversationEnabledComputeHosts] = useState<
@@ -459,6 +460,9 @@ const WorkspacePage = ({
   const activeAutoReviewEnabled = activeSession
     ? activeSession.autoReviewEnabled === true
     : newConversationAutoReviewEnabled
+  const activeMemoryEnabled = activeSession
+    ? activeSession.memoryEnabled !== false
+    : newConversationMemoryEnabled
   const computeHostAccess = createWorkspaceComputeHostAccessController({
     activeSession,
     newConversationEnabledComputeHosts,
@@ -496,6 +500,7 @@ const WorkspacePage = ({
     hasPendingPermissionRequest: (sessionId) =>
       pendingPermissions.some((request) => request.sessionId === sessionId),
     newConversationAutoReviewEnabled,
+    newConversationMemoryEnabled,
     newConversationEnabledComputeHosts,
     newConversationSelectedComputeHosts,
     composer,
@@ -506,6 +511,7 @@ const WorkspacePage = ({
     setAutoReviewEnabled,
     resetNewConversationSettings: () => {
       setNewConversationAutoReviewEnabled(false)
+      setNewConversationMemoryEnabled(true)
       setNewConversationEnabledComputeHosts([])
       setNewConversationSelectedComputeHosts([])
       resetNewConversationConfiguration()
@@ -778,6 +784,7 @@ const WorkspacePage = ({
     setAttachmentError(null)
     setNewConversationPermissionProfile(defaultPermissionProfile)
     setNewConversationAutoReviewEnabled(false)
+    setNewConversationMemoryEnabled(true)
     setNewConversationEnabledComputeHosts([])
     setNewConversationSelectedComputeHosts([])
     resetNewConversationConfiguration()
@@ -857,6 +864,20 @@ const WorkspacePage = ({
     }
 
     setAutoReviewEnabled(activeSession.id, enabled)
+  }
+
+  const changeMemoryEnabled = (enabled: boolean): void => {
+    if (!activeSession) {
+      setNewConversationMemoryEnabled(enabled)
+      return
+    }
+
+    setAttachmentError(null)
+    void runtime
+      .setMemoryEnabled(activeSession.id, enabled)
+      .catch((error: unknown) =>
+        setAttachmentError(error instanceof Error ? error.message : String(error))
+      )
   }
 
   // Manually triggers a review of the last completed turn, bypassing autoReviewEnabled and the
@@ -1116,9 +1137,11 @@ const WorkspacePage = ({
               modelUnavailable: agentConfigurationUnavailable,
               changeModelConfiguration: changeAgentConfiguration,
               autoReviewEnabled: activeAutoReviewEnabled,
+              memoryEnabled: activeMemoryEnabled,
               enabledComputeHosts: computeHostAccess.enabledProviderIds,
               selectedComputeHosts: computeHostAccess.selectedProviderIds,
               toggleAutoReview: changeAutoReviewEnabled,
+              toggleMemory: changeMemoryEnabled,
               setComputeHostEnabled: computeHostAccess.setHostEnabled,
               setComputeHostSelected: computeHostAccess.setHostSelected
             }}

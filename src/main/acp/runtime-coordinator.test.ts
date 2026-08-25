@@ -411,6 +411,7 @@ describe('AcpRuntimeCoordinator', () => {
             sessionId: 'detached-session',
             cwd: '/workspace',
             projectId: 'project-1',
+            memoryEnabled: false,
             agentTarget
           }
         },
@@ -431,6 +432,7 @@ describe('AcpRuntimeCoordinator', () => {
         sessionId: 'detached-session',
         cwd: '/workspace',
         projectId: 'project-1',
+        memoryEnabled: false,
         agentTarget
       })
       expect(vi.mocked(created[1].runtime.sendApplicationPrompt)).toHaveBeenCalledOnce()
@@ -3807,6 +3809,7 @@ describe('AcpRuntimeCoordinator', () => {
           sessionId: 'old-session',
           cwd: '/workspace',
           projectId: 'project-1',
+          memoryEnabled: false,
           previousFrameworkId: 'claude-code',
           specialistId: 'specialist-new',
           specialistBindingPending: true,
@@ -3832,6 +3835,7 @@ describe('AcpRuntimeCoordinator', () => {
       sessionId: 'old-session',
       cwd: '/workspace',
       projectId: 'project-1',
+      memoryEnabled: false,
       previousFrameworkId: 'claude-code',
       specialistId: 'specialist-new',
       specialistBindingPending: true

@@ -46,6 +46,14 @@ describe('ACP session aggregate', () => {
     expect(aggregate.activeSession()).toBe(replacement)
   })
 
+  it('keeps the Main-owned conversation Memory preference in the Session snapshot', () => {
+    const aggregate = new AcpSessionAggregate('app-session')
+
+    aggregate.attach(attachInput('provider-session', { memoryEnabled: false }))
+
+    expect(aggregate.snapshot().memoryEnabled).toBe(false)
+  })
+
   it('replaces provider metadata without erasing retained backend affinity', () => {
     const aggregate = new AcpSessionAggregate('app-session')
     const configOption = {

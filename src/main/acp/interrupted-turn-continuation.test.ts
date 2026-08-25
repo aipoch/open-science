@@ -64,6 +64,7 @@ describe('continueInterruptedTurn', () => {
     const durable = session([
       message('prompt-1', 'user', 'Save as skill', { turnIntent: 'save-as-skill' })
     ])
+    durable.memoryEnabled = false
     const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
 
     await continueInterruptedTurn(
@@ -84,6 +85,7 @@ describe('continueInterruptedTurn', () => {
         text: expect.stringMatching(
           /Distill this session.*Review the active conversation branch.*First decide.*If it does not.*If it does.*load Customize/s
         ),
+        memoryEnabled: false,
         suppressUserMessage: true,
         provenanceContext: expect.objectContaining({ promptMessageId: 'prompt-1' })
       })

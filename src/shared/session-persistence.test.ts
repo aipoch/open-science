@@ -2899,6 +2899,19 @@ describe('normalizeSessionFile with activities', () => {
     expect(corrupt?.autoReviewEnabled).toBe(false)
   })
 
+  it('round-trips the Memory toggle and defaults older or malformed sessions to enabled', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined }
+    const disabled = normalizeSessionFile({ ...base, memoryEnabled: false })
+    const enabled = normalizeSessionFile({ ...base, memoryEnabled: true })
+    const legacy = normalizeSessionFile(base)
+    const malformed = normalizeSessionFile({ ...base, memoryEnabled: 'nope' })
+
+    expect(disabled?.memoryEnabled).toBe(false)
+    expect(enabled?.memoryEnabled).toBe(true)
+    expect(legacy?.memoryEnabled).toBe(true)
+    expect(malformed?.memoryEnabled).toBe(true)
+  })
+
   it('round-trips delegation policy and defaults historical or malformed values to allow', () => {
     const base = { ...createSessionWithActivity(undefined), activities: undefined }
     const denied = normalizeSessionFile({ ...base, delegationPolicy: 'deny' })

@@ -1014,6 +1014,7 @@
   "Let the agent decide": "Пусть агент решит",
   "Length limit reached": "Достигнут лимит длины",
   "Let the agent detect attached .zip and .skill packages and ask before importing them.": "Пусть агент определит прикреплённые пакеты .zip и .skill и запросит подтверждение перед импортом.",
+  "Let the agent recall and save memory in this conversation.": "Разрешить агенту использовать и сохранять память в этом диалоге.",
   "Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.": "Разрешает Open Science устанавливать пакеты в эту среду. Пакеты устанавливаются в вашу среду, а не в хранилище приложения.",
   "Library": "Библиотека",
   "License": "Лицензия",

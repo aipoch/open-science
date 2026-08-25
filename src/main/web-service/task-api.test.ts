@@ -679,8 +679,12 @@ describe('HeadlessTaskApi adapter', () => {
       cwd: existing.cwd,
       projectId: project.id,
       permissionProfile: 'ask',
+      memoryEnabled: true,
       previousFrameworkId: 'codex',
-      previousBackendId: 'codex:shared'
+      previousBackendId: 'codex:shared',
+      previousModel: undefined,
+      providerSessionId: undefined,
+      providerContinuityToken: undefined
     })
     expect(invoke.mock.calls.every(([channel]) => !String(channel).startsWith('acp:'))).toBe(true)
   })

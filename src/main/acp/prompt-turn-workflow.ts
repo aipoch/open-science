@@ -218,7 +218,8 @@ class AcpPromptTurnWorkflow {
           cwd: snapshot?.cwd ?? this.options.currentCwd(),
           projectId,
           permissionProfile:
-            snapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE
+            snapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
+          ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {})
         })
         if (resumed.contextReset) {
           request.historyPreamble = request.resumeFallback?.historyPreamble
@@ -516,6 +517,7 @@ class AcpPromptTurnWorkflow {
       kind: 'prompt',
       promptMessageId: request.provenanceContext?.promptMessageId,
       provenanceContext: request.provenanceContext,
+      ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {}),
       turnToken: request.continuation?.originatingTurnToken
     })
   }

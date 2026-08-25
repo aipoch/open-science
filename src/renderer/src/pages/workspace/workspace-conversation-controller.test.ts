@@ -761,11 +761,12 @@ describe('workspace conversation controller', () => {
     expect(hook.result.current.optimisticMessage).toBeUndefined()
   })
 
-  it('includes new-Session Compute intent in creation and stamps Review after submit succeeds', async () => {
+  it('includes new-Session Memory and Compute intent and stamps Review after submit succeeds', async () => {
     const input = options({
       activeSession: undefined,
       currentDraftKey: 'new:project-a',
       newConversationAutoReviewEnabled: true,
+      newConversationMemoryEnabled: false,
       newConversationEnabledComputeHosts: ['ssh:lab', 'ssh:available'],
       newConversationSelectedComputeHosts: ['ssh:lab']
     })
@@ -788,6 +789,7 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         agentConfiguration: input.agentConfiguration,
+        memoryEnabled: false,
         enabledComputeHosts: ['ssh:lab', 'ssh:available'],
         selectedComputeHosts: ['ssh:lab']
       })

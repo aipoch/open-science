@@ -303,6 +303,30 @@ describe('ComposerAgentControlsMenu', () => {
     expect(container.textContent).not.toContain('Enable Full access?')
   })
 
+  it('toggles Memory for the conversation without closing the menu', () => {
+    const onMemoryChange = vi.fn()
+
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          memoryEnabled
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onMemoryChange={onMemoryChange}
+        />
+      )
+    })
+
+    act(() =>
+      findButton('MemoryLet the agent recall and save memory in this conversation.').click()
+    )
+
+    expect(onMemoryChange).toHaveBeenCalledWith(false)
+    expect(selectEvents.at(-1)?.prevented).toBe(true)
+  })
+
   it('opens permission choices inside the same menu on mobile and can return', () => {
     mediaState.mobile = true
 

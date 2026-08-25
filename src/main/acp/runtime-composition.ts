@@ -307,13 +307,15 @@ const createAcpRuntime = ({
           projectId: DEFAULT_ARTIFACT_PROJECT_ID,
           mcpEntryPath,
           memoryTools: !delegatedNotebookConnection,
-          getRpcConnection: ({ sessionId, projectId }) =>
+          isMemoryEnabled: () => memory?.isEnabled?.() ?? Promise.resolve(false),
+          getRpcConnection: ({ sessionId, projectId, memoryTools }) =>
             delegatedNotebookConnection
               ? Promise.resolve(delegatedNotebookConnection)
               : notebookRpcServer.issueSessionConnection(
                   sessionId,
                   projectId,
-                  `root-frame-${sessionId}`
+                  `root-frame-${sessionId}`,
+                  memoryTools
                 ),
           ...(delegatedNotebookConnection
             ? {}

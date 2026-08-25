@@ -5238,6 +5238,7 @@ describe('session store public contract', () => {
         'setElicitationHistoryReplayRequest',
         'setElicitationPending',
         'setFixLoopActive',
+        'setMemoryEnabled',
         'setPermissionPending',
         'setPermissionProfile',
         'setSessionSpecialistId',
@@ -5274,6 +5275,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-memory-owner.ts',
       'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
       'src/renderer/src/lib/active-session-display.ts',
       'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',
@@ -5607,6 +5609,7 @@ describe('branchInNewSession', () => {
               contextUsage: { used: 500, size: 1_000 },
               pinned: true,
               autoReviewEnabled: true,
+              memoryEnabled: false,
               enabledComputeHosts: ['ssh:build'],
               filesRevision: 7,
               artifacts: [
@@ -5670,6 +5673,7 @@ describe('branchInNewSession', () => {
       agentBackendId: 'codex:shared',
       agentModel: 'gpt-5.4',
       autoReviewEnabled: true,
+      memoryEnabled: false,
       enabledComputeHosts: ['ssh:build'],
       branchSource: {
         sessionId: 'source-session',

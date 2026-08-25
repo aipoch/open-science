@@ -134,6 +134,76 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('rejects Memory RPC through a Session capability issued with Memory disabled', async () => {
+    const memorySearch = vi.fn(async () => [])
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      memoryService: {
+        listCategoriesForAgent: vi.fn(async () => []),
+        searchForAgent: memorySearch,
+        rememberForAgent: vi.fn()
+      }
+    })
+    const connection = await server.issueSessionConnection(
+      'session-off',
+      'project-1',
+      'root-frame-session-off',
+      false
+    )
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'memorySearch', params: { query: 'private' } })
+      })
+
+      expect(response.status).toBe(403)
+      expect(memorySearch).not.toHaveBeenCalled()
+    } finally {
+      connection.release?.()
+      await server.close()
+    }
+  })
+
+  it('rejects Memory RPC when the current Main-owned Session gate is disabled', async () => {
+    const memorySearch = vi.fn(async () => [])
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      isMemoryEnabledForSession: async () => false,
+      memoryService: {
+        listCategoriesForAgent: vi.fn(async () => []),
+        searchForAgent: memorySearch,
+        rememberForAgent: vi.fn()
+      }
+    })
+    const control = await server.issueControlConnection(
+      'session-off',
+      'project-1',
+      'root-frame-session-off'
+    )
+
+    try {
+      const response = await fetch(control.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${control.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'memorySearch', params: { query: 'private' } })
+      })
+
+      expect(response.status).toBe(403)
+      expect(memorySearch).not.toHaveBeenCalled()
+    } finally {
+      control.release()
+      await server.close()
+    }
+  })
+
   it('recalls an Agent memory after reopen from another session and Agent', async () => {
     const root = await createStorageRoot()
     let client: PrismaClient = createProjectDbClient(root)

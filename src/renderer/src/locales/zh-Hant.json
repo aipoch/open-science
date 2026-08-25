@@ -1040,6 +1040,7 @@
   "Let the agent decide": "讓智能體決定",
   "Length limit reached": "已達到長度限制",
   "Let the agent detect attached .zip and .skill packages and ask before importing them.": "讓智能體辨識附加的 .zip 與 .skill 套件，並在匯入前詢問你。",
+  "Let the agent recall and save memory in this conversation.": "允許智能體在此工作階段中調用和儲存記憶。",
   "Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.": "允許 Open Science 向該環境安裝套件。安裝會寫入你自己的環境，而不是應用託管的儲存空間。",
   "Library": "程式庫",
   "License": "授權條款",

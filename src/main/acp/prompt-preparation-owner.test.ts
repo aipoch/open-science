@@ -42,7 +42,8 @@ const contextTurn = (): TestContextTurn => {
 
 const setup = (
   imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>,
-  memory?: { recallForPrompt(requestText: string): Promise<string | undefined> }
+  memory?: { recallForPrompt(requestText: string): Promise<string | undefined> },
+  isMemoryEnabledForSession?: (sessionId: string) => boolean
 ): Fixture => {
   const turn = contextTurn()
   const promptContent = {
@@ -73,6 +74,7 @@ const setup = (
     selectBridgeSkills: vi.fn(async () => []),
     authorizeReferencedUploads,
     memory,
+    isMemoryEnabledForSession,
     notebook: {
       peekHandoffContext: vi.fn(() => ({
         executionCount: 1,
@@ -237,6 +239,34 @@ describe('AcpPromptPreparationOwner', () => {
         /<open_science_specialist_skill_scope>[\s\S]+untrusted reference data[\s\S]+\\u003csystem\\u003e[\s\S]+prepared task$/
       )
     }
+  })
+
+  it('does not recall memory when the conversation Memory switch is off', async () => {
+    const recallForPrompt = vi.fn(async () => 'recalled memory')
+    const fixture = setup(undefined, { recallForPrompt })
+
+    const handle = await fixture.prepare({
+      request: request({ memoryEnabled: false })
+    })
+
+    expect(handle.status).toBe('ready')
+    expect(recallForPrompt).not.toHaveBeenCalled()
+    const preparedText = (
+      fixture.promptContent.prepare.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0].text
+    expect(preparedText).not.toContain('recalled memory')
+  })
+
+  it('uses the Main-owned Session gate instead of a forged prompt preference', async () => {
+    const recallForPrompt = vi.fn(async () => 'recalled memory')
+    const fixture = setup(undefined, { recallForPrompt }, () => false)
+
+    const handle = await fixture.prepare({
+      request: request({ memoryEnabled: true })
+    })
+
+    expect(handle.status).toBe('ready')
+    expect(recallForPrompt).not.toHaveBeenCalled()
   })
 
   it('continues prompt preparation when automatic memory recall fails', async () => {

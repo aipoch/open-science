@@ -987,6 +987,7 @@
   "Let the agent decide": "에이전트가 결정하게 하세요",
   "Length limit reached": "길이 제한에 도달했습니다.",
   "Let the agent detect attached .zip and .skill packages and ask before importing them.": "에이전트가 첨부된 .zip 및 .skill 패키지를 감지하고 가져오기 전에 묻도록 합니다.",
+  "Let the agent recall and save memory in this conversation.": "이 대화에서 에이전트가 메모리를 불러오고 저장하도록 허용합니다.",
   "Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.": "Open Science에서 이 환경에 패키지를 설치할 수 있도록 허용합니다. 패키지는 앱 관리 저장소가 아닌 별도로 설정한 환경에 설치됩니다.",
   "Library": "라이브러리",
   "License": "라이센스",

@@ -154,8 +154,8 @@ const conversationPanelPropNames = (): string[] => {
 
 describe('workspace page architecture', () => {
   it('keeps the page and extracted owners within their completion gates', () => {
-    // Session-model fallback adds page wiring for the extracted configuration owner.
-    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_230)
+    // Session-model fallback and conversation Memory add page wiring for extracted owners.
+    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_245)
     for (const ownerPath of [
       ownerPaths.layout,
       ownerPaths.composer,

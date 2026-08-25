@@ -7,6 +7,7 @@ const RENDERER_SESSION_CONFLICT_REBASE_FIELDS = new Set<SessionConflictRebaseFie
   'title',
   'permissionProfile',
   'autoReviewEnabled',
+  'memoryEnabled',
   'agentConfiguration',
   'enabledComputeHosts',
   'selectedComputeHosts',

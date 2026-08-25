@@ -39,6 +39,7 @@ export type AppendUserMessageInput = {
   agentBackendId?: PersistedChatSession['agentBackendId']
   agentModel?: string
   agentConfiguration?: PersistedChatSession['agentConfiguration']
+  memoryEnabled?: boolean
   isPending?: boolean
   specialistId?: string
   enabledComputeHosts?: string[]
@@ -59,6 +60,7 @@ export type BranchInNewSessionInput = {
   agentBackendId?: PersistedChatSession['agentBackendId']
   agentModel?: string
   agentConfiguration?: PersistedChatSession['agentConfiguration']
+  memoryEnabled?: boolean
   specialistId?: string | null
 }
 

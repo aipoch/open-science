@@ -284,6 +284,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
               cwd: session.cwd,
               projectId: session.projectId,
               permissionProfile: session.permissionProfile,
+              memoryEnabled: session.memoryEnabled !== false,
               previousFrameworkId: session.agentFrameworkId,
               previousBackendId: session.agentBackendId,
               specialistId: session.specialistId,

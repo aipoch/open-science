@@ -971,6 +971,7 @@
   "Let the agent decide": "エージェントに決めてもらいましょう",
   "Length limit reached": "長さ制限に達しました",
   "Let the agent detect attached .zip and .skill packages and ask before importing them.": "エージェントに添付された .zip および .skill パッケージを検出させ、インポートする前に確認させます。",
+  "Let the agent recall and save memory in this conversation.": "このセッションでエージェントがメモリを呼び出して保存できるようにします。",
   "Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.": "Open Science がこの環境にパッケージをインストールできるようにします。インストールはアプリが管理するストレージではなく、独自の環境に行われます。",
   "Library": "ライブラリ",
   "License": "ライセンス",

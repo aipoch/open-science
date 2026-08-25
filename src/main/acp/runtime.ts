@@ -192,6 +192,7 @@ type AcpRuntimeOptions = {
   }
   notebook?: AcpRuntimeNotebookOptions
   memory?: {
+    isEnabled?(): Promise<boolean>
     recallForPrompt(requestText: string): Promise<string | undefined>
   }
   skillImport?: AcpRuntimeSkillImportOptions
@@ -306,9 +307,11 @@ type AcpRuntimeNotebookOptions = {
   mcpEntryPath: string
   mcpCommand?: string
   memoryTools?: boolean
+  isMemoryEnabled?: () => Promise<boolean>
   getRpcConnection?: (binding: {
     sessionId: string
     projectId: string
+    memoryTools: boolean
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
   releaseSessionCapabilities?: (sessionId: string) => void
@@ -426,6 +429,7 @@ class AcpRuntime {
     Readonly<{
       sessionId: string
       provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
+      memoryEnabled?: boolean
     }>
   >()
   private readonly durableContinuationContext: AcpRuntimeSessionOwners['durableContinuationContext']
@@ -685,6 +689,10 @@ class AcpRuntime {
       this.activeSessionFor(sessionId) !== undefined &&
       this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectId === projectId
     )
+  }
+
+  isSessionMemoryEnabled(sessionId: string): boolean {
+    return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().memoryEnabled ?? false
   }
 
   liveSessionProjectId(sessionId: string): string | undefined {
@@ -1372,6 +1380,9 @@ class AcpRuntime {
             'that tool call. Use an alternative that does not require the denied permission, or ' +
             'explain what cannot be completed. Do not request the same permission again unless the ' +
             'user explicitly asks.',
+          ...(promptInteraction.memoryEnabled !== undefined
+            ? { memoryEnabled: promptInteraction.memoryEnabled }
+            : {}),
           suppressUserMessage: true,
           ...(promptInteraction.promptMessageId
             ? { provenanceContext: { promptMessageId: promptInteraction.promptMessageId } }
@@ -1507,6 +1518,7 @@ class AcpRuntime {
       request: {
         sessionId: restored.sessionId,
         text,
+        memoryEnabled: continuation.memoryEnabled,
         suppressUserMessage: true,
         provenanceContext: continuation.provenanceContext,
         ...(continuation.historyReplay?.historyPreamble
@@ -1602,7 +1614,8 @@ class AcpRuntime {
         resolution.request,
         resolution.response,
         restoredContinuation?.historyReplay,
-        restoredContinuation?.provenanceContext ?? liveProvenance?.provenanceContext
+        restoredContinuation?.provenanceContext ?? liveProvenance?.provenanceContext,
+        restoredContinuation?.memoryEnabled ?? liveProvenance?.memoryEnabled
       )
       if (continuation) {
         this.appContinuations.set(resolution.request.sessionId, {
@@ -1713,7 +1726,10 @@ class AcpRuntime {
     if (promptInteraction?.kind === 'prompt' && promptInteraction.provenanceContext) {
       this.userChoiceProvenanceContexts.set(requestId, {
         sessionId: request.sessionId,
-        provenanceContext: promptInteraction.provenanceContext
+        provenanceContext: promptInteraction.provenanceContext,
+        ...(promptInteraction.memoryEnabled !== undefined
+          ? { memoryEnabled: promptInteraction.memoryEnabled }
+          : {})
       })
     }
     return { action: 'pending' }
@@ -1723,7 +1739,8 @@ class AcpRuntime {
     request: PendingElicitationRequest,
     response: CreateElicitationResponse,
     historyReplay?: ElicitationResponse['historyReplay'],
-    provenanceContext?: AcpPromptRequest['provenanceContext']
+    provenanceContext?: AcpPromptRequest['provenanceContext'],
+    memoryEnabled?: boolean
   ): AcpPromptRequest | undefined {
     if (response.action === 'cancel') return undefined
     const content =
@@ -1775,6 +1792,7 @@ class AcpRuntime {
     return {
       sessionId: request.sessionId,
       text,
+      ...(memoryEnabled !== undefined ? { memoryEnabled } : {}),
       suppressUserMessage: true,
       ...(continuationProvenance ? { provenanceContext: continuationProvenance } : {}),
       ...(historyReplay?.historyPreamble ? { historyPreamble: historyReplay.historyPreamble } : {}),
@@ -1943,6 +1961,7 @@ class AcpRuntime {
           : 'The user approved the pending Session Plan. Continue execution of exactly that ' +
             `approved Plan Artifact Version (artifact_version_id=${plan.artifactVersionId}). ` +
             'Do not regenerate, broaden, or reinterpret the approved Plan.',
+      memoryEnabled: continuation.memoryEnabled,
       suppressUserMessage: true,
       provenanceContext: continuation.provenanceContext,
       planContinuation: {

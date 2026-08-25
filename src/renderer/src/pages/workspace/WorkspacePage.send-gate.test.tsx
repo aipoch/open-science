@@ -38,7 +38,8 @@ const runtime = vi.hoisted(() => ({
   ensureSessionReady: vi.fn().mockResolvedValue(undefined),
   cancelRun: vi.fn(),
   deleteRuntimeSession: vi.fn(),
-  respondToPermission: vi.fn()
+  respondToPermission: vi.fn(),
+  setMemoryEnabled: vi.fn()
 }))
 
 vi.mock('@/components/ui/resizable', () => ({
@@ -63,7 +64,8 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     ensureSessionReady: runtime.ensureSessionReady,
     cancelRun: runtime.cancelRun,
     deleteRuntimeSession: runtime.deleteRuntimeSession,
-    respondToPermission: runtime.respondToPermission
+    respondToPermission: runtime.respondToPermission,
+    setMemoryEnabled: runtime.setMemoryEnabled
   })
 }))
 
@@ -738,5 +740,18 @@ describe('WorkspacePage send gate while compacting', () => {
     })
 
     expect(conversationProps.view.actionError).toBe('Continuation failed')
+  })
+
+  it('surfaces a failed Memory reconfiguration for the active conversation', async () => {
+    runtime.setMemoryEnabled.mockRejectedValueOnce(new Error('Memory update failed'))
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.agentControls.toggleMemory?.(false)
+      await Promise.resolve()
+    })
+
+    expect(runtime.setMemoryEnabled).toHaveBeenCalledWith('sess-a', false)
+    expect(conversationProps.view.actionError).toBe('Memory update failed')
   })
 })

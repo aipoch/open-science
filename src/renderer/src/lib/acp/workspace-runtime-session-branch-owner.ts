@@ -100,13 +100,16 @@ export const branchWorkspaceSessionFromMessage = async (
           pendingSession.projectId,
           pendingSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
           pendingSession.specialistId,
-          target
+          target,
+          pendingSession.memoryEnabled !== false
         )
       : await runtime.createSession(
           pendingSession.cwd || undefined,
           pendingSession.projectId,
           pendingSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-          pendingSession.specialistId
+          pendingSession.specialistId,
+          undefined,
+          pendingSession.memoryEnabled !== false
         )
     const sessionId = created?.sessionId
     if (!sessionId) throw new Error('Agent session could not be created.')

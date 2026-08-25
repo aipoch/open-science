@@ -697,6 +697,8 @@ export type AcpCreateSessionRequest = {
   // Scopes generated artifacts / notebooks to a project's storage subtree. Defaults per runtime.
   projectId?: string
   permissionProfile?: PermissionProfileId
+  // Per-conversation Memory preference. Missing preserves the historical enabled behavior.
+  memoryEnabled?: boolean
   // Immutable Specialist ID to bind on first turn. Main process resolves the latest Profile at
   // session-creation time — the renderer MUST NOT send systemPrompt or capability data, only the
   // stable ID. Absent or undefined means no specialist; use Main Agent.
@@ -727,6 +729,7 @@ export type AcpResumeSessionRequest = {
   cwd: string
   projectId?: string
   permissionProfile?: PermissionProfileId
+  memoryEnabled?: boolean
   previousFrameworkId?: AgentFrameworkId
   previousBackendId?: string
   // Durable session binding, supplied on restore so session/resume reissues the Specialist whitelist.
@@ -776,6 +779,8 @@ export type AcpSetPermissionProfileRequest = {
 export type AcpPromptRequest = {
   sessionId: string
   text: string
+  // Renderer-owned Session preference. Main still applies the higher-priority global Memory gate.
+  memoryEnabled?: boolean
   // Closed, application-owned behavior requested for this Conversation Turn only.
   turnIntent?: 'plan-first'
   // Explicit, immutable identity for a Plan-bound interaction. Main validates it before admitting

@@ -34,6 +34,9 @@ export const rebaseSafeSessionFields = (
       case 'autoReviewEnabled':
         rebased.autoReviewEnabled = submitted.autoReviewEnabled
         break
+      case 'memoryEnabled':
+        rebased.memoryEnabled = submitted.memoryEnabled
+        break
       case 'agentConfiguration':
         rebased.agentConfiguration = submitted.agentConfiguration
         break
