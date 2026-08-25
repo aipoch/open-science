@@ -78,6 +78,7 @@ export class ComputeApprovalBroker {
   private readonly cancellingSessions = new Set<string>()
   private readonly deletingSessions = new Set<string>()
   private readonly completingSessionCancellations = new Set<string>()
+  private globalCancellationActive = false
 
   private readonly providerGenerations = new Map<string, number>()
   private readonly invalidatingProviders = new Set<string>()
@@ -110,6 +111,7 @@ export class ComputeApprovalBroker {
     signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {
     signal?.throwIfAborted()
+    if (this.globalCancellationActive) return Promise.resolve('deny')
     if (context && this.cancellingSessions.has(context.sessionId)) return Promise.resolve('deny')
     const id = this.deps.generateId()
     const providerId = info.provider_id
@@ -160,6 +162,7 @@ export class ComputeApprovalBroker {
     signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {
     signal?.throwIfAborted()
+    if (this.globalCancellationActive) return Promise.resolve('deny')
     if (this.cancellingSessions.has(ctx.sessionId)) return Promise.resolve('deny')
     const providerId = info.provider_id
     if (this.invalidatingProviders.has(providerId)) return Promise.resolve('deny')
@@ -188,7 +191,7 @@ export class ComputeApprovalBroker {
     const providerGeneration = this.providerGenerations.get(providerId) ?? 0
     const requestWasCancelled = (): boolean => {
       signal?.throwIfAborted()
-      return this.cancellingSessions.has(sessionId)
+      return this.globalCancellationActive || this.cancellingSessions.has(sessionId)
     }
 
     if (this.deps.permissionGrants) {
@@ -328,6 +331,7 @@ export class ComputeApprovalBroker {
   }
 
   cancelAll(): void {
+    this.globalCancellationActive = true
     const sessionIds = new Set(this.inFlightSessionRequests.keys())
     for (const entry of this.pending.values()) {
       if (entry.context) sessionIds.add(entry.context.sessionId)
@@ -338,6 +342,10 @@ export class ComputeApprovalBroker {
     }
     this.pausedSessions.clear()
     this.conversationGrants.clear()
+  }
+
+  completeGlobalCancellation(): void {
+    this.globalCancellationActive = false
   }
 
   beginSessionDeletion(sessionId: string): void {

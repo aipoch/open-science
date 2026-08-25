@@ -347,6 +347,38 @@ describe('ComputeApprovalBroker', () => {
     expect(onSettled).toHaveBeenCalledWith('id-3', 'cancelled')
   })
 
+  it('fences approvals that enter the broker after all Session runtimes stop', async () => {
+    const broadcast = vi.fn()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast
+    })
+
+    broker.cancelAll()
+    const lateApproval = broker.request(makeRequest(), {
+      sessionId: 'session-late',
+      projectId: 'project-1',
+      operation: 'call_command'
+    })
+
+    try {
+      expect(broadcast).not.toHaveBeenCalled()
+      await expect(lateApproval).resolves.toBe('deny')
+    } finally {
+      broker.respond('id-1', 'deny')
+    }
+
+    broker.completeGlobalCancellation()
+    const resumedApproval = broker.request(makeRequest(), {
+      sessionId: 'session-resumed',
+      projectId: 'project-1',
+      operation: 'call_command'
+    })
+    expect(broadcast).toHaveBeenCalledOnce()
+    broker.respond('id-1', 'once')
+    await expect(resumedApproval).resolves.toBe('once')
+  })
+
   it('holds cancellation through deletion and allows new approvals only if the Session is retained', async () => {
     const timer = makeTimer()
     const broker = new ComputeApprovalBroker({

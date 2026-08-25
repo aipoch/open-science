@@ -9,7 +9,8 @@ describe('compute approval Session lifecycle', () => {
     const compute = {
       approvalCancelSession: vi.fn(),
       approvalCompleteSessionCancellation: vi.fn(),
-      approvalCancelAll: vi.fn()
+      approvalCancelAll: vi.fn(),
+      approvalCompleteGlobalCancellation: vi.fn()
     }
     const lifecycle = bindComputeApprovalSessionLifecycle(
       { onSessionCancellationRequested, onSessionTurnStarted },
@@ -20,6 +21,7 @@ describe('compute approval Session lifecycle', () => {
     lifecycle.onSessionTurnStarted?.('session-1', 'turn-2')
 
     expect(compute.approvalCancelSession).toHaveBeenCalledWith('session-1')
+    expect(compute.approvalCompleteGlobalCancellation).toHaveBeenCalledOnce()
     expect(compute.approvalCompleteSessionCancellation).toHaveBeenCalledWith('session-1')
     expect(onSessionCancellationRequested).toHaveBeenCalledWith('session-1')
     expect(onSessionTurnStarted).toHaveBeenCalledWith('session-1', 'turn-2')
@@ -31,7 +33,8 @@ describe('compute approval Session lifecycle', () => {
     const compute = {
       approvalCancelSession: vi.fn(),
       approvalCompleteSessionCancellation: vi.fn(),
-      approvalCancelAll: vi.fn()
+      approvalCancelAll: vi.fn(),
+      approvalCompleteGlobalCancellation: vi.fn()
     }
     const lifecycle = bindComputeApprovalSessionLifecycle(
       { onSessionUnavailable, onAllSessionsCancellationRequested },

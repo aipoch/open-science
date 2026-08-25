@@ -15,6 +15,7 @@ type ComputeApprovalLifecycleHandlers = {
   approvalCancelSession: (sessionId: string) => void
   approvalCompleteSessionCancellation: (sessionId: string) => void
   approvalCancelAll: () => void
+  approvalCompleteGlobalCancellation: () => void
 }
 
 export const bindComputeApprovalSessionLifecycle = (
@@ -23,6 +24,7 @@ export const bindComputeApprovalSessionLifecycle = (
 ): SessionApprovalLifecycleCallbacks => ({
   ...callbacks,
   onSessionTurnStarted: (sessionId, turnToken) => {
+    compute.approvalCompleteGlobalCancellation()
     compute.approvalCompleteSessionCancellation(sessionId)
     callbacks.onSessionTurnStarted?.(sessionId, turnToken)
   },

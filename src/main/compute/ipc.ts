@@ -192,6 +192,7 @@ type ComputeHandlers = {
   approvalResumeSession: (sessionId: string) => void
   approvalCancelSession: (sessionId: string) => void
   approvalCancelAll: () => void
+  approvalCompleteGlobalCancellation: () => void
   approvalCompleteSessionCancellation: (sessionId: string) => void
   approvalBeginSessionDeletion: (sessionId: string) => void
   approvalFinishSessionDeletion: (sessionId: string, retained: boolean) => void
@@ -443,6 +444,7 @@ const createComputeHandlers = (
     approvalResumeSession: (sessionId) => broker.resumeSession(sessionId),
     approvalCancelSession: (sessionId) => broker.cancelSession(sessionId),
     approvalCancelAll: () => broker.cancelAll(),
+    approvalCompleteGlobalCancellation: () => broker.completeGlobalCancellation(),
     approvalCompleteSessionCancellation: (sessionId) =>
       broker.completeSessionCancellation(sessionId),
     approvalBeginSessionDeletion: (sessionId) => broker.beginSessionDeletion(sessionId),
