@@ -147,10 +147,12 @@ describe('ComputeJobDeletionOwner', () => {
     const handle = JSON.parse(rawHandle) as Parameters<typeof cleanupCommand>[1]
     const command = cleanupCommand('~/.openscience/jobs/job-1', handle)
     expect(command).toContain('kill_job_pid() {')
+    expect(command).toContain('process_owned_by_workdir() {')
     expect(command).toContain('process_workdir=$(readlink "/proc/$pid/cwd"')
     expect(command).toContain('command -v lsof')
     expect(command).toContain('lsof -a -p "$pid" -d cwd -Fn')
-    expect(command).toContain('[ "$process_workdir" = "$workdir" ] || return 0')
+    expect(command).toContain('[ "$process_workdir" = "$expected_workdir" ]')
+    expect(command).toContain('process_owned_by_workdir "$pid" "$workdir" || return 0')
     expect(command).toContain('kill_job_pid 123')
     expect(command).not.toContain('kill -TERM -- -123')
     expect(command).toContain('[ ! -L ')

@@ -10,7 +10,11 @@ import {
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
 } from './connection-broker'
-import { quoteRemotePath, type RemoteHandle } from './job-dispatcher'
+import {
+  quoteRemotePath,
+  REMOTE_PROCESS_OWNERSHIP_FUNCTION,
+  type RemoteHandle
+} from './job-dispatcher'
 import { parsePollOutput } from './job-poll-output'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { emitJobNotification } from './job-notifier'
@@ -164,7 +168,7 @@ export class JobPoller {
   }
 
   private runTick(): void {
-    if (this.paused) return
+    if (this.paused || this.activeTicks.size > 0) return
     const task = this.tick()
     this.activeTicks.add(task)
     void task.then(
@@ -360,13 +364,14 @@ export class JobPoller {
     // Build per-job check commands, batched into one SSH round-trip.
     // Format per job (each marker carries the nonce prefix):
     //   echo "<nonce>JOB_START:<jobId>"
+    //   resolve the canonical workdir and prove the pid still owns it
     //   kill -0 <pid> 2>/dev/null && echo "<nonce>alive:1" || echo "<nonce>alive:0"
     //   test -f <exit_code_path> && cat <exit_code_path> || echo ""
     //   tail -c 65536 <stdout_path> 2>/dev/null || true
     //   echo "<nonce>STDOUT_END:<jobId>"
     //   tail -c 65536 <stderr_path> 2>/dev/null || true
     //   echo "<nonce>STDERR_END:<jobId>"
-    const parts: string[] = []
+    const parts: string[] = [REMOTE_PROCESS_OWNERSHIP_FUNCTION]
     const batched: ComputeJob[] = []
     for (const job of jobs) {
       const handle = this._parseHandle(job.remote_handle)
@@ -375,7 +380,8 @@ export class JobPoller {
 
       parts.push(
         `echo "${nonce}JOB_START:${job.job_id}"`,
-        `kill -0 ${handle.pid} 2>/dev/null && echo "${nonce}alive:1" || echo "${nonce}alive:0"`,
+        `workdir=$(cd -- ${quoteRemotePath(handle.workdir)} 2>/dev/null && pwd -P || true)`,
+        `process_owned_by_workdir ${handle.pid} "$workdir" && kill -0 ${handle.pid} 2>/dev/null && echo "${nonce}alive:1" || echo "${nonce}alive:0"`,
         `if [ -f ${quoteRemotePath(handle.exit_code_path)} ]; then cat ${quoteRemotePath(handle.exit_code_path)}; else echo ""; fi`,
         `tail -c ${TAIL_MAX_BYTES} ${quoteRemotePath(handle.stdout_path)} 2>/dev/null || true`,
         `echo "${nonce}STDOUT_END:${job.job_id}"`,
@@ -384,7 +390,7 @@ export class JobPoller {
       )
     }
 
-    if (parts.length === 0) return
+    if (batched.length === 0) return
 
     // Size the output cap to this batch: one PER_JOB_POLL_BYTES budget per job that emits a section.
     const maxOutputBytes = batched.length * PER_JOB_POLL_BYTES
@@ -589,7 +595,12 @@ export class JobPoller {
           // Best-effort kill; ignore errors (process may have already exited).
           try {
             await connection.run(
-              `kill ${handle.pid} 2>/dev/null; kill -9 ${handle.pid} 2>/dev/null; true`,
+              [
+                REMOTE_PROCESS_OWNERSHIP_FUNCTION,
+                `workdir=$(cd -- ${quoteRemotePath(handle.workdir)} 2>/dev/null && pwd -P || true)`,
+                `process_owned_by_workdir ${handle.pid} "$workdir" && kill ${handle.pid} 2>/dev/null || true`,
+                `process_owned_by_workdir ${handle.pid} "$workdir" && kill -9 ${handle.pid} 2>/dev/null || true`
+              ].join('\n'),
               {
                 timeoutMs: 10_000,
                 loginShell: false,

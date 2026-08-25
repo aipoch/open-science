@@ -820,9 +820,17 @@ describe('JobPoller', () => {
     )
     // Second run call should have been the kill command.
     expect(runFn).toHaveBeenCalledTimes(2)
+    const pollCall = runFn.mock.calls[0]
     const killCall = runFn.mock.calls[1]
+    expect(pollCall[1]).toContain('/proc/$pid/cwd')
+    expect(pollCall[1]).toContain('process_workdir')
+    expect(pollCall[1]).toContain('process_owned_by_workdir 1234 "$workdir" && kill -0 1234')
     expect(killCall[1]).toContain('kill')
     expect(killCall[1]).toContain('1234') // pid from makeJob
+    expect(killCall[1]).toContain('/proc/$pid/cwd')
+    expect(killCall[1]).toContain('process_workdir')
+    expect(killCall[1]).toContain('process_owned_by_workdir 1234 "$workdir" && kill 1234')
+    expect(killCall[1]).toContain('process_owned_by_workdir 1234 "$workdir" && kill -9 1234')
     expect(runFn.mock.invocationCallOrder[1]).toBeLessThan(
       updateIfStatus.mock.invocationCallOrder[0]
     )
@@ -1093,6 +1101,70 @@ describe('JobPoller', () => {
     // Calling stop() again is a no-op.
     poller.stop()
     expect(clearIntervalMock).toHaveBeenCalledOnce()
+  })
+
+  it('does not count overlapping interval callbacks as separate vanish observations', async () => {
+    const job = makeJob()
+    const update = vi.fn((_id: string, updates: unknown) =>
+      Promise.resolve({ ...job, ...(updates as object) })
+    )
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      update,
+      updateIfStatus: guardStatusUpdate(update)
+    } as unknown as ComputeJobRepository
+    const vanishedOutput = withNonce([
+      'JOB_START:job-1',
+      'alive:0',
+      '',
+      '',
+      'STDOUT_END:job-1',
+      '',
+      'STDERR_END:job-1'
+    ])
+    let releasePoll!: () => void
+    const pollReleased = new Promise<void>((resolve) => {
+      releasePoll = resolve
+    })
+    const run = vi.fn(async () => {
+      await pollReleased
+      return {
+        exitCode: 0,
+        stdout: vanishedOutput,
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }
+    })
+    let intervalCallback!: () => void
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner({ run } as SshRunner),
+      hostRepository: {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE,
+      setInterval: (callback) => {
+        intervalCallback = callback
+        return 999 as unknown as ReturnType<typeof setInterval>
+      },
+      clearInterval: vi.fn()
+    })
+
+    poller.start()
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+    intervalCallback()
+    intervalCallback()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    releasePoll()
+    await poller.pause()
+    poller.stop()
+
+    expect(run).toHaveBeenCalledOnce()
+    expect(update).not.toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: 'failed', errorCode: 'process_vanished' })
+    )
   })
 })
 

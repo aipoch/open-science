@@ -483,6 +483,53 @@ describe('ConcurrencyManager', () => {
       expect(dispatchJob).toHaveBeenNthCalledWith(2, 'job-2', expect.any(Function))
     })
 
+    it('does not block another provider behind a slow dispatch', async () => {
+      const queuedJobs: ComputeJob[] = [
+        {
+          job_id: 'job-1',
+          project_id: 'project-1',
+          session_id: 'session-1',
+          provider_id: 'ssh:cluster-a',
+          created_at: 1000,
+          status: 'queued'
+        } as ComputeJob,
+        {
+          job_id: 'job-2',
+          project_id: 'project-2',
+          session_id: 'session-2',
+          provider_id: 'ssh:cluster-b',
+          created_at: 2000,
+          status: 'queued'
+        } as ComputeJob
+      ]
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue(queuedJobs)
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 1 } as ComputeHost)
+
+      let releaseFirstDispatch!: () => void
+      dispatchJob.mockImplementation(async (jobId) => {
+        if (jobId === 'job-1') {
+          await new Promise<void>((resolve) => {
+            releaseFirstDispatch = resolve
+          })
+        }
+      })
+
+      const reconciliation = manager.onJobCompleted()
+      await vi.waitFor(() =>
+        expect(dispatchJob).toHaveBeenCalledWith('job-1', expect.any(Function))
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const secondStartedBeforeFirstFinished = dispatchJob.mock.calls.some(
+        ([jobId]) => jobId === 'job-2'
+      )
+      releaseFirstDispatch()
+      await reconciliation
+
+      expect(secondStartedBeforeFirstFinished).toBe(true)
+    })
+
     it('does not dispatch a queued projection after another writer changes its status', async () => {
       vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue([
         {
