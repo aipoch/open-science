@@ -843,6 +843,53 @@ describe('JobPoller', () => {
     )
   })
 
+  it('does not mark timeout when shutdown cancels the fallback kill', async () => {
+    const job = makeJob({ timeout_seconds: 10, started_at: Date.now() - 71_000 })
+    const controller = new AbortController()
+    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const updateIfStatus = guardStatusUpdate(update)
+    const jobRepo = {
+      findNonTerminal: vi.fn(async () => [job]),
+      get: vi.fn(async () => job),
+      update,
+      updateIfStatus
+    } as unknown as ComputeJobRepository
+    const pollOutput = withNonce([
+      'JOB_START:job-1',
+      'alive:1',
+      '',
+      '',
+      'STDOUT_END:job-1',
+      '',
+      'STDERR_END:job-1'
+    ])
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: pollOutput,
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      .mockImplementationOnce(async () => {
+        controller.abort()
+        throw Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })
+      })
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner({ run }),
+      hostRepository: { get: vi.fn(async () => sampleHost()) } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE
+    })
+
+    await poller.tick(controller.signal)
+
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(updateIfStatus).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+  })
+
   it('serializes overlapping results so a late fallback timeout cannot kill after success', async () => {
     const job = makeJob({ timeout_seconds: 10, started_at: Date.now() - 71_000 })
     let current = job

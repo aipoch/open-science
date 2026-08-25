@@ -631,6 +631,7 @@ export class JobPoller {
             // Ignore kill errors — the job is marked terminal regardless.
           }
         }
+        if (signal.aborted) return
         const transition = await this.lifecycle.finishPolled(job.job_id, {
           status: 'timeout',
           errorCode: 'timeout',
