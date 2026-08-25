@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http'
 import { randomUUID } from 'node:crypto'
+import { isIP } from 'node:net'
 
 import type {
   OAuthClientProvider,
@@ -257,9 +258,13 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    const hostname = authorizationUrl.hostname
     if (
       authorizationUrl.protocol !== 'https:' &&
-      !(authorizationUrl.protocol === 'http:' && authorizationUrl.hostname === '127.0.0.1')
+      !(
+        authorizationUrl.protocol === 'http:' &&
+        ((isIP(hostname) === 4 && hostname.startsWith('127.')) || hostname === '[::1]')
+      )
     ) {
       throw new Error('OAuth authorization URL must use HTTPS or loopback HTTP.')
     }

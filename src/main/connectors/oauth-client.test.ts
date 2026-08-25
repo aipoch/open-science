@@ -214,18 +214,21 @@ describe('PersistentOAuthClientProvider', () => {
 
     for (const authorizationUrl of [
       'https://auth.example.test/authorize',
-      'http://127.0.0.1:4000/authorize'
+      'http://127.0.0.2:4000/authorize',
+      'http://[::1]:4000/authorize'
     ]) {
       await provider.redirectToAuthorization(new URL(authorizationUrl))
     }
     expect(openExternal.mock.calls).toEqual([
       ['https://auth.example.test/authorize'],
-      ['http://127.0.0.1:4000/authorize']
+      ['http://127.0.0.2:4000/authorize'],
+      ['http://[::1]:4000/authorize']
     ])
 
     openExternal.mockClear()
     for (const authorizationUrl of [
       'http://auth.example.test/authorize',
+      'http://127.example.test/authorize',
       'file:///tmp/oauth-authorization'
     ]) {
       await expect(provider.redirectToAuthorization(new URL(authorizationUrl))).rejects.toThrow(
