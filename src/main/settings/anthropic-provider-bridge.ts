@@ -2,6 +2,7 @@ import type { ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
+import { createLogger, errorLogFields, type Logger } from '../logger'
 import { normalizeAnthropicBaseUrl } from './base-url'
 import {
   ProviderLoopbackHttpHost,
@@ -37,6 +38,16 @@ type ProviderErrorSnapshot = Readonly<{
   headers: Record<string, string>
   status: number
 }>
+
+const defaultDiagnostics = createLogger('provider-loopback')
+
+const upstreamOrigin = (baseUrl: string): string | undefined => {
+  try {
+    return new URL(baseUrl).origin
+  } catch {
+    return undefined
+  }
+}
 
 export type AnthropicProviderBridgeTarget = Readonly<{
   id: string
@@ -87,17 +98,20 @@ export class AnthropicProviderBridge {
   private readonly host: ProviderLoopbackHttpHost<AnthropicProviderBridgeConnection>
   private target: AnthropicProviderBridgeTarget
   private readonly fetchImpl: typeof fetch
+  private readonly diagnostics: Pick<Logger, 'error'>
   private readonly deterministicErrors =
     new DeterministicProviderErrorReplay<ProviderErrorSnapshot>()
 
   constructor(
     targets: readonly AnthropicProviderBridgeTarget[],
     initialTargetId: string,
-    fetchImpl: typeof fetch = fetch
+    fetchImpl: typeof fetch = fetch,
+    diagnostics: Pick<Logger, 'error'> = defaultDiagnostics
   ) {
     this.targets = new Map(targets.map((target) => [target.id, target]))
     const initial = this.targets.get(initialTargetId)
     this.fetchImpl = fetchImpl
+    this.diagnostics = diagnostics
     if (!initial) throw new Error('The initial Anthropic bridge target is not registered.')
     this.target = initial
     this.host = new ProviderLoopbackHttpHost({
@@ -182,13 +196,25 @@ export class AnthropicProviderBridge {
     }
     const baseUrl = normalizeAnthropicBaseUrl(target.baseUrl)
     if (!baseUrl) throw new Error('The Anthropic provider target has no valid base URL.')
-    const upstream = await this.fetchImpl(`${baseUrl}${requestUrl.pathname}${requestUrl.search}`, {
-      method: 'POST',
-      headers: headersToForward,
-      body,
-      redirect: 'manual',
-      signal: request.signal
-    })
+    let upstream: Response
+    try {
+      upstream = await this.fetchImpl(`${baseUrl}${requestUrl.pathname}${requestUrl.search}`, {
+        method: 'POST',
+        headers: headersToForward,
+        body,
+        redirect: 'manual',
+        signal: request.signal
+      })
+    } catch (error) {
+      const origin = upstreamOrigin(baseUrl)
+      this.diagnostics.error('anthropic provider request failed', {
+        targetId: target.id,
+        path: requestUrl.pathname,
+        ...(origin ? { upstreamOrigin: origin } : {}),
+        ...errorLogFields(error)
+      })
+      throw error
+    }
     const headers = responseHeaders(upstream.headers)
     if (isDeterministicProviderErrorStatus(upstream.status)) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, {

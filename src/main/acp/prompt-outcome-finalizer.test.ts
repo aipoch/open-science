@@ -309,6 +309,33 @@ describe('AcpPromptOutcomeFinalizer', () => {
     )
   })
 
+  it('guides the user when Claude Code cannot connect to the model provider', async () => {
+    const harness = createHarness({ now: () => 321 })
+    const error = Object.assign(
+      new Error('Internal error: API Error: Unable to connect to API (ConnectionRefused)'),
+      {
+        code: -32603,
+        data: { errorKind: 'unknown' },
+        name: 'RequestError'
+      }
+    )
+
+    await expect(
+      new AcpPromptOutcomeFinalizer().finalize(harness.handles, {
+        kind: 'failed',
+        error
+      })
+    ).rejects.toBe(error)
+
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        providerError: true,
+        text: 'Could not connect to the model provider for model "test-model". Check the base URL in Settings → Model and your proxy, VPN, or firewall, then retry. Connection detail: ConnectionRefused.'
+      })
+    )
+  })
+
   it.each([
     {
       name: 'context overflow',
