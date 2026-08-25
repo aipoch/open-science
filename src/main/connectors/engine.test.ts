@@ -151,6 +151,120 @@ describe('ParserEngine declarative path', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
+  it('enforces a tool total deadline while response body chunks keep arriving', async () => {
+    const encoder = new TextEncoder()
+    const fetchImpl = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const chunks = ['{"value":', '9', '}', ' ']
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), {
+                once: true
+              })
+            },
+            async pull(controller) {
+              await new Promise((resolve) => setTimeout(resolve, 10))
+              if (init?.signal?.aborted) return
+              const next = chunks.shift()
+              if (next === undefined) controller.close()
+              else controller.enqueue(encoder.encode(next))
+            }
+          })
+        )
+      }
+    )
+    const engine = new ParserEngine({
+      fetchImpl,
+      timeoutMs: 30,
+      retries: 0,
+      retryBackoffMs: 0
+    })
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      totalTimeoutMs: 25,
+      url: () => 'https://x.test/data',
+      parse: (raw) => raw
+    }
+
+    await expect(engine.call(desc, {}, {})).rejects.toMatchObject({
+      name: 'ConnectorRequestTimeoutError',
+      message:
+        'Connector request exceeded the 25ms total deadline after 1 attempt for https://x.test/data'
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a response as soon as it exceeds the tool byte limit', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('abcdef'))
+    const engine = new ParserEngine({ fetchImpl, retries: 2, retryBackoffMs: 0 })
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      format: 'text',
+      maxResponseBytes: 5,
+      url: () => 'https://x.test/data',
+      parse: (raw) => raw
+    }
+
+    await expect(engine.call(desc, {}, {})).rejects.toMatchObject({
+      name: 'ConnectorResponseTooLargeError',
+      message: 'Connector response exceeded the 5-byte limit for https://x.test/data'
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('allows a tool to raise both engine response budgets', async () => {
+    const encoder = new TextEncoder()
+    const fetchImpl = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              const timer = setTimeout(() => {
+                controller.enqueue(encoder.encode('abcdef'))
+                controller.close()
+              }, 10)
+              init?.signal?.addEventListener(
+                'abort',
+                () => {
+                  clearTimeout(timer)
+                  controller.error(init.signal?.reason)
+                },
+                { once: true }
+              )
+            }
+          })
+        )
+    )
+    const engine = new ParserEngine({
+      fetchImpl,
+      timeoutMs: 30,
+      totalTimeoutMs: 5,
+      maxResponseBytes: 5,
+      retries: 0
+    })
+    const desc: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      format: 'text',
+      totalTimeoutMs: 50,
+      maxResponseBytes: 6,
+      url: () => 'https://x.test/data',
+      parse: (raw) => raw
+    }
+
+    await expect(engine.call(desc, {}, {})).resolves.toBe('abcdef')
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
   it('times out and retries when a response body stops producing chunks', async () => {
     const encoder = new TextEncoder()
     const fetchImpl = vi.fn(
