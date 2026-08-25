@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight, Eye, SearchCheck, Sparkles, Workflow, type LucideIcon } from 'lucide-react'
+import { Captions, ChevronRight, Eye, SearchCheck, Workflow, type LucideIcon } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
@@ -331,7 +331,7 @@ const ScenarioModelList = (): React.JSX.Element => {
     },
     {
       id: 'session-details',
-      icon: Sparkles,
+      icon: Captions,
       name: t('Session details'),
       description:
         sessionDetailsModel.mode === 'disabled'
