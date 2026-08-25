@@ -13,6 +13,8 @@ import type { ResolvedProvider } from './provider-env'
 import { ResponsesBridge, responsesToChatRequest } from './responses-bridge'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import { normalizeResponsesBaseUrl } from '../agent-framework/codex'
+import { ResponseBodyLimitError, readBoundedResponseText } from './bounded-response'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 // Runs a real connectivity/auth probe for a provider and classifies the outcome into an actionable
 // category. Request construction and classification are pure so the branch matrix is unit-testable;
@@ -324,8 +326,15 @@ const extractProviderErrorMessage = (bodyText: string): string | undefined => {
 // Reads and extracts a failed response's error message, tolerating a body that can't be read.
 const readProviderErrorMessage = async (response: Response): Promise<string | undefined> => {
   try {
-    return extractProviderErrorMessage(await response.text())
-  } catch {
+    return extractProviderErrorMessage(
+      await readBoundedResponseText(
+        response,
+        PROVIDER_RESOURCE_LIMITS.validationResponseBytes,
+        'Provider validation response'
+      )
+    )
+  } catch (error) {
+    if (error instanceof ResponseBodyLimitError) throw error
     return undefined
   }
 }
@@ -490,7 +499,22 @@ const validateProviderThroughLocalResponsesAdapter = async (
       signal: controller.signal
     })
     let category = classifyStatus(response.status)
-    const bodyText = await response.text()
+    let bodyText: string
+    try {
+      bodyText = await readBoundedResponseText(
+        response,
+        PROVIDER_RESOURCE_LIMITS.validationResponseBytes,
+        'Provider validation response'
+      )
+    } catch (error) {
+      if (error instanceof ResponseBodyLimitError) {
+        return toResult('unknown', {
+          status: response.status,
+          message: error.message
+        })
+      }
+      throw error
+    }
     const providerMessage = extractProviderErrorMessage(bodyText)
 
     if ((response.status === 400 || response.status === 404) && providerMessage) {
@@ -627,7 +651,14 @@ const validateCustomProvider = async (
     let providerMessage: string | undefined
 
     if (response.status < 200 || response.status >= 300) {
-      providerMessage = await readProviderErrorMessage(response)
+      try {
+        providerMessage = await readProviderErrorMessage(response)
+      } catch (error) {
+        if (error instanceof ResponseBodyLimitError) {
+          return toResult(category, { status: response.status, message: error.message })
+        }
+        throw error
+      }
       if ((response.status === 400 || response.status === 404) && providerMessage) {
         category = isModelNotFoundMessage(providerMessage) ? 'model-not-found' : 'unknown'
       }
@@ -647,8 +678,18 @@ const validateCustomProvider = async (
     if (category === 'ok' && request.endpoint === 'anthropic') {
       let bodyText = ''
       try {
-        bodyText = await response.text()
-      } catch {
+        bodyText = await readBoundedResponseText(
+          response,
+          PROVIDER_RESOURCE_LIMITS.validationResponseBytes,
+          'Provider validation response'
+        )
+      } catch (error) {
+        if (error instanceof ResponseBodyLimitError) {
+          return toResult('unknown', {
+            status: response.status,
+            message: error.message
+          })
+        }
         // An unreadable success body cannot prove the Messages contract.
       }
       if (!hasValidAnthropicMessage(bodyText)) {
@@ -662,8 +703,18 @@ const validateCustomProvider = async (
     if (category === 'ok' && request.requiresBridgeToolCall) {
       let bodyText = ''
       try {
-        bodyText = await response.text()
-      } catch {
+        bodyText = await readBoundedResponseText(
+          response,
+          PROVIDER_RESOURCE_LIMITS.validationResponseBytes,
+          'Provider validation response'
+        )
+      } catch (error) {
+        if (error instanceof ResponseBodyLimitError) {
+          return toResult('unknown', {
+            status: response.status,
+            message: error.message
+          })
+        }
         // An unreadable success body cannot prove the bridge contract.
       }
       if (!hasBridgeProbeToolCall(bodyText)) {
