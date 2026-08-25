@@ -219,7 +219,9 @@ class RestrictedInferenceRunner {
         isCodexSubscriptionProviderId(input.target.providerId) &&
         this.options.allowNativeCodexSubscription === true
       backend = await this.options.resolveTarget(input.target, {
-        systemPromptAppends: [input.systemPrompt],
+        // Install restricted instructions only in the disposable profile prepared below. OpenCode
+        // materializes resolver appends into the shared Main Agent config before this isolation step.
+        systemPromptAppends: [],
         includeSkillAndConnectorContext: false,
         ...(nativeCodexSubscriptionAllowed ? {} : { forceCodexNativeResponsesCompatibility: true })
       })
