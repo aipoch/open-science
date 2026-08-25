@@ -105,6 +105,7 @@ class SkillCatalogModule {
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
   private readonly githubFetch: FetchLike
+  private userSkillCatalogRead: Promise<BundledSkill[]> | undefined
 
   constructor(private readonly options: SkillCatalogModuleOptions) {
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
@@ -158,7 +159,7 @@ class SkillCatalogModule {
   }
 
   private async catalog(): Promise<BundledSkill[]> {
-    const [featured, user] = await Promise.all([this.skillRegistry.list(), this.userSkills.list()])
+    const [featured, user] = await Promise.all([this.skillRegistry.list(), this.listUserSkills()])
     const bundledNames = new Set(featured.map((skill) => skill.name))
     const bundledIds = new Set(featured.map((skill) => skill.id))
     const userIdCounts = new Map<string, number>()
@@ -215,7 +216,12 @@ class SkillCatalogModule {
   // second production transaction facade while excluding immutable bundled packages from each
   // writable-directory reconciliation.
   async listUserSkills(): Promise<BundledSkill[]> {
-    return this.userSkills.list()
+    if (this.userSkillCatalogRead) return this.userSkillCatalogRead
+    const read = this.userSkills.list().finally(() => {
+      if (this.userSkillCatalogRead === read) this.userSkillCatalogRead = undefined
+    })
+    this.userSkillCatalogRead = read
+    return read
   }
 
   async withHostSkillRead<T>(
@@ -247,7 +253,7 @@ class SkillCatalogModule {
     return skills.map((skill) => this.toSkillView(skill, disabled))
   }
 
-  async listSpecialistSkillCatalog(): Promise<
+  async listSpecialistSkillCatalog(options: { bundledOnly?: boolean } = {}): Promise<
     Array<{
       id: string
       frameworkName: string
@@ -259,7 +265,11 @@ class SkillCatalogModule {
     }>
   > {
     const [skills, settings] = await Promise.all([
-      this.managedCatalog(),
+      options.bundledOnly
+        ? this.skillRegistry
+            .list()
+            .then((entries) => entries.filter((skill) => skill.exposure !== 'internal'))
+        : this.managedCatalog(),
       this.options.repository.getSettings()
     ])
     const disabled = new Set(settings.disabledSkillIds ?? [])

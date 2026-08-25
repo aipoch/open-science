@@ -129,10 +129,6 @@ const MAP: Record<string, (diagnostic: PackageDiagnostic) => SpecialistDiagnosti
     'Required file missing',
     'The package must contain this file. Re-export the package and import again.'
   ),
-  'package.top-level-content-forbidden': plain(
-    'Unsupported top-level content',
-    'The package contains files outside the allowed layout. Keep only manifest.json, specialist.json, README.txt, LICENSE and skills/.'
-  ),
   'package.executable-content-present': plain(
     'Scripts included',
     'The package contains script or executable content. It is inspected as content only and is never executed.'

@@ -176,7 +176,7 @@ export const CloseConfirmModal = ({
             )}
             {!hasDelegatedWork ? (
               <Button type="button" onClick={() => reply('quit')}>
-                {t('Quit')}
+                {t('Quit', { context: 'verb', ns: 'common' })}
               </Button>
             ) : null}
           </div>

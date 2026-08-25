@@ -13,6 +13,7 @@ const definition = {
   schemaVersion: 1 as const,
   kind: 'open-science.connector' as const,
   name: 'example-research',
+  displayName: 'Example Research',
   transport: 'stdio' as const,
   command: 'npx',
   args: ['-y', '@example/research-mcp'],
@@ -115,6 +116,46 @@ describe('Connector configuration transfer views', () => {
     expect(buttonNamed('Use configuration')?.disabled).toBe(true)
   })
 
+  it('selects one server from a multi-server MCP client configuration', async () => {
+    const remoteDefinition = {
+      ...definition,
+      name: 'remote-research',
+      displayName: 'Remote Research',
+      transport: 'streamable_http' as const,
+      command: undefined,
+      args: undefined,
+      url: 'https://mcp.example.test/mcp'
+    }
+    window.api = {
+      settings: {
+        selectCustomServerTemplate: vi.fn().mockResolvedValue({
+          cancelled: false,
+          fileName: 'mcp.json',
+          preview: {
+            ready: true,
+            sourceFormat: 'mcp-client',
+            definition,
+            definitions: [definition, remoteDefinition],
+            diagnostics: []
+          }
+        })
+      }
+    } as unknown as Window['api']
+    const onUse = vi.fn()
+    act(() => root.render(<ConnectorImportView onUse={onUse} onCancel={vi.fn()} />))
+
+    await act(async () => buttonContaining('Drag and drop or click to choose')?.click())
+    const select = document.body.querySelector('select')!
+    await act(async () => {
+      select.value = '1'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    act(() => buttonNamed('Use configuration')?.click())
+
+    expect(document.body.textContent).toContain('Remote Research')
+    expect(onUse).toHaveBeenCalledWith(remoteDefinition)
+  })
+
   it('uses the Settings danger banner for import failures', async () => {
     window.api = {
       settings: {
@@ -176,7 +217,9 @@ describe('Connector configuration transfer views', () => {
       diagnostics: [],
       definition,
       digest: 'preview-digest',
-      suggestedFileName: 'open-science-connector-example-research.json'
+      suggestedFileName: 'open-science-connector-example-research.json',
+      mcpClientDigest: 'mcp-preview-digest',
+      mcpClientSuggestedFileName: 'mcp-example-research.json'
     })
     const exportCustomServerTemplate = vi.fn().mockResolvedValue({ saved: true })
     window.api = {
@@ -193,9 +236,39 @@ describe('Connector configuration transfer views', () => {
 
     expect(exportCustomServerTemplate).toHaveBeenCalledWith({
       id: 'server-id',
-      expectedDigest: 'preview-digest'
+      expectedDigest: 'preview-digest',
+      format: 'open-science'
     })
     expect(document.body.textContent).toContain('Configuration saved.')
+  })
+
+  it('exports the MCP client configuration with its own preview digest', async () => {
+    window.api = {
+      settings: {
+        previewCustomServerTemplateExport: vi.fn().mockResolvedValue({
+          connectorId: 'server-id',
+          ready: true,
+          diagnostics: [],
+          definition,
+          digest: 'preview-digest',
+          suggestedFileName: 'open-science-connector-example-research.json',
+          mcpClientDigest: 'mcp-preview-digest',
+          mcpClientSuggestedFileName: 'mcp-example-research.json'
+        }),
+        exportCustomServerTemplate: vi.fn().mockResolvedValue({ saved: true })
+      }
+    } as unknown as Window['api']
+    act(() => root.render(<ConnectorExportView id="server-id" onDone={vi.fn()} />))
+    await act(async () => undefined)
+
+    act(() => buttonNamed('MCP client config')?.click())
+    await act(async () => buttonNamed('Save configuration')?.click())
+
+    expect(window.api.settings.exportCustomServerTemplate).toHaveBeenCalledWith({
+      id: 'server-id',
+      expectedDigest: 'mcp-preview-digest',
+      format: 'mcp-client'
+    })
   })
 
   it('re-enables Connector export after the user cancels Save As', async () => {

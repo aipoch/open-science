@@ -651,7 +651,7 @@ export function ConnectorsPanel({
               <span className="flex flex-col">
                 <span>{tCommon('Import configuration')}</span>
                 <span className="text-xs text-muted-foreground">
-                  {tCommon('Validate a shared Connector file')}
+                  {tCommon('Import a Connector or MCP client configuration')}
                 </span>
               </span>
             </DropdownMenuItem>

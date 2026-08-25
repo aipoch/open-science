@@ -11,20 +11,11 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { useLocaleStore } from '@/stores/locale-store'
-import { LANGUAGE_PREFERENCES, type Locale, type LanguagePreference } from '../../../shared/locale'
-
-// Language names are written in their own language and never translated, so a reader who has landed in
-// the wrong language can still find their way out. Not a t() lookup: these are identical in every
-// catalog, and `satisfies` makes a newly supported locale a compile error here instead of a blank label.
-const LANGUAGE_NAMES = {
-  en: 'English',
-  'zh-Hans': '简体中文',
-  'zh-Hant': '繁體中文',
-  ja: '日本語',
-  ko: '한국어',
-  fr: 'Français',
-  ru: 'Русский'
-} as const satisfies Record<Locale, string>
+import {
+  LANGUAGE_PREFERENCES,
+  LOCALE_SELF_NAMES,
+  type LanguagePreference
+} from '../../../shared/locale'
 
 // Only the 'System' option follows the interface language. Order puts 'System' first, then the
 // locales in LOCALES order.
@@ -38,7 +29,7 @@ const useOptions = (): { value: LanguagePreference; label: string; description?:
           label: t('System', { context: 'language' }),
           description: t('Match your device')
         }
-      : { value, label: LANGUAGE_NAMES[value] }
+      : { value, label: LOCALE_SELF_NAMES[value] }
   )
 }
 

@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
@@ -30,6 +31,7 @@ import {
   BookOpen,
   ChartNoAxesCombined,
   ChevronDown,
+  ChevronRight,
   CircleHelp,
   FileText,
   Flag,
@@ -73,7 +75,13 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 
 import { ComposerEditor } from './composer/ComposerEditor'
-import { appendArtifactMention, docToSkillIds } from './composer/composer-doc'
+import {
+  appendArtifactMention,
+  docToSkillIds,
+  pastedTextAttachmentDomId,
+  pastedTextPreviewName,
+  type ComposerPastedTextNode
+} from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerComputeTargetIndicator } from './ComposerComputeTargetIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
@@ -162,7 +170,16 @@ const composerContentClassName = 'mx-auto w-full max-w-4xl'
 const attachmentChipClassName =
   'flex h-9 min-w-0 max-w-[220px] items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-2 text-text-000'
 const attachmentRemoveButtonClassName = cn(
-  'flex size-6 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50',
+  "relative flex size-6 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-2 [@media(pointer:coarse)]:before:content-['']",
+  composerInteractiveTransitionClassName
+)
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4
+ * component: reversible paste attachment + inline locator · genre: modern-minimal · theme: existing
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * slop: pass (1–58) · contrast: inherited semantic tokens · mobile: pass (34, 49–57)
+ */
+const pastedTextRestoreButtonClassName = cn(
+  'flex h-full min-w-0 flex-1 flex-col justify-center rounded-md text-left hover:text-text-100 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50',
   composerInteractiveTransitionClassName
 )
 // Read from two places (pointer-fine tooltip and coarse-pointer hint), so it takes t rather than
@@ -367,14 +384,19 @@ const ConversationPanel = ({
       transfers: attachmentTransfers,
       historyStatus,
       isHistoryBrowsing,
-      isUploading: isUploadingAttachments
+      isUploading: isUploadingAttachments,
+      caretRequest
     },
     actions: {
       changeDoc: onDraftDocChange,
       navigateHistory: onNavigateHistory,
       stageFiles: onStageAttachmentFiles,
+      stagePastedText: onStagePastedText,
       cancelTransfer: onCancelAttachmentTransfer,
-      removeAttachment: onRemoveAttachment
+      removeAttachment: onRemoveAttachment,
+      restorePastedText: onRestorePastedText,
+      undo: onUndo,
+      redo: onRedo
     }
   } = composer
   const {
@@ -773,6 +795,15 @@ const ConversationPanel = ({
   const hasTextDraft = draftDoc.nodes.some(
     (node) => node.type === 'text' && node.text.trim().length > 0
   )
+  const pastedTextNodes = draftDoc.nodes.filter(
+    (node): node is ComposerPastedTextNode => node.type === 'pasted-text'
+  )
+  const pastedTextById = new Map(pastedTextNodes.map((node) => [node.id, node]))
+  const pastedTextByAttachmentId = new Map(
+    pastedTextNodes.flatMap((node) =>
+      node.attachmentId ? ([[node.attachmentId, node]] as const) : []
+    )
+  )
   const canPlanFirst = effectiveCanSend && hasTextDraft
   const canStartSideChat =
     Boolean(activeSession) &&
@@ -822,6 +853,44 @@ const ConversationPanel = ({
 
     event.preventDefault()
     onStageAttachmentFiles(files)
+  }
+
+  const handleRemoveAttachment = (attachment: (typeof attachments)[number]): void => {
+    onRemoveAttachment(attachment)
+    if (pastedTextByAttachmentId.has(attachment.id)) {
+      setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
+    }
+  }
+
+  const handleCancelAttachmentTransfer = (transfer: (typeof attachmentTransfers)[number]): void => {
+    onCancelAttachmentTransfer(transfer)
+    if (transfer.pastedTextId) {
+      setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
+    }
+  }
+
+  const handleLocatePastedText = (pastedTextId: string): void => {
+    const attachment = document.getElementById(pastedTextAttachmentDomId(pastedTextId))
+    if (!attachment) return
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    attachment.scrollIntoView?.({
+      behavior: reducedMotion ? 'auto' : 'smooth',
+      block: 'nearest',
+      inline: 'nearest'
+    })
+    attachment.animate?.(
+      reducedMotion
+        ? [{ opacity: 1 }, { opacity: 0.72 }, { opacity: 1 }]
+        : [
+            { transform: 'scale(1)', opacity: 1 },
+            { transform: 'scale(1.012)', opacity: 0.72 },
+            { transform: 'scale(1)', opacity: 1 }
+          ],
+      {
+        duration: reducedMotion ? 140 : 480,
+        easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+      }
+    )
   }
 
   return (
@@ -1303,23 +1372,53 @@ const ConversationPanel = ({
                               ? ImageIcon
                               : FileText
                             const attachmentName = attachment.originalName || attachment.name
+                            const pastedText = pastedTextByAttachmentId.get(attachment.id)
 
                             return (
-                              <div key={attachment.id} className={attachmentChipClassName}>
+                              <div
+                                key={attachment.id}
+                                id={
+                                  pastedText ? pastedTextAttachmentDomId(pastedText.id) : undefined
+                                }
+                                data-pasted-text-attachment={pastedText ? 'true' : undefined}
+                                data-state={pastedText ? 'success' : undefined}
+                                className={attachmentChipClassName}
+                              >
                                 <AttachmentIcon
                                   className="size-4 shrink-0 text-text-300"
                                   strokeWidth={2}
                                   aria-hidden="true"
                                 />
-                                <div className="min-w-0 flex-1">
-                                  <ExtensionPreservingFileName
-                                    name={attachmentName}
-                                    className="text-[12px] leading-4"
-                                  />
-                                  <div className="truncate text-[11px] leading-3 text-text-300">
-                                    {formatAttachmentSize(attachment.size)}
+                                {pastedText ? (
+                                  <button
+                                    type="button"
+                                    className={pastedTextRestoreButtonClassName}
+                                    disabled={!canEditDraft}
+                                    onClick={() => onRestorePastedText(pastedText.id)}
+                                  >
+                                    <span className="w-full truncate whitespace-nowrap text-[12px] leading-4">
+                                      {pastedTextPreviewName(pastedText.text)}
+                                    </span>
+                                    <span className="flex items-center gap-0.5 whitespace-nowrap text-[11px] leading-3 text-text-300">
+                                      {t('Show in text field')}
+                                      <ChevronRight
+                                        className="size-3 shrink-0"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                    </span>
+                                  </button>
+                                ) : (
+                                  <div className="min-w-0 flex-1">
+                                    <ExtensionPreservingFileName
+                                      name={attachmentName}
+                                      className="text-[12px] leading-4"
+                                    />
+                                    <div className="truncate text-[11px] leading-3 text-text-300">
+                                      {formatAttachmentSize(attachment.size)}
+                                    </div>
                                   </div>
-                                </div>
+                                )}
                                 <button
                                   type="button"
                                   className={attachmentRemoveButtonClassName}
@@ -1327,7 +1426,7 @@ const ConversationPanel = ({
                                   aria-label={t('Remove attachment {{name}}', {
                                     name: attachmentName
                                   })}
-                                  onClick={() => onRemoveAttachment(attachment)}
+                                  onClick={() => handleRemoveAttachment(attachment)}
                                 >
                                   <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
                                 </button>
@@ -1353,11 +1452,19 @@ const ConversationPanel = ({
                                   : transfer.status === 'error'
                                     ? transfer.error || t('Upload failed')
                                     : `${percent}% of ${formatAttachmentSize(transfer.totalBytes)}`
+                            const pastedText = transfer.pastedTextId
+                              ? pastedTextById.get(transfer.pastedTextId)
+                              : undefined
 
                             return (
                               <div
                                 key={transfer.transferId}
-                                className={`${attachmentChipClassName} h-11`}
+                                id={
+                                  pastedText ? pastedTextAttachmentDomId(pastedText.id) : undefined
+                                }
+                                data-pasted-text-attachment={pastedText ? 'true' : undefined}
+                                data-state={pastedText ? transfer.status : undefined}
+                                className={attachmentChipClassName}
                               >
                                 <AttachmentIcon
                                   className="size-4 shrink-0 text-text-300"
@@ -1365,10 +1472,16 @@ const ConversationPanel = ({
                                   aria-hidden="true"
                                 />
                                 <div className="min-w-0 flex-1">
-                                  <ExtensionPreservingFileName
-                                    name={transfer.name}
-                                    className="text-[12px] leading-4"
-                                  />
+                                  {pastedText ? (
+                                    <div className="truncate text-[12px] leading-4">
+                                      {pastedTextPreviewName(pastedText.text)}
+                                    </div>
+                                  ) : (
+                                    <ExtensionPreservingFileName
+                                      name={transfer.name}
+                                      className="text-[12px] leading-4"
+                                    />
+                                  )}
                                   <div
                                     className={`truncate text-[11px] leading-3 ${
                                       transfer.status === 'error' ? 'text-red-600' : 'text-text-300'
@@ -1405,7 +1518,7 @@ const ConversationPanel = ({
                                       : 'Cancel attachment {{name}}',
                                     { name: transfer.name }
                                   )}
-                                  onClick={() => onCancelAttachmentTransfer(transfer)}
+                                  onClick={() => handleCancelAttachmentTransfer(transfer)}
                                 >
                                   <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
                                 </button>
@@ -1422,6 +1535,10 @@ const ConversationPanel = ({
                           onDocChange={onDraftDocChange}
                           onSubmit={handleSubmit}
                           onPaste={handleMessageDraftPaste}
+                          onLongTextPaste={onStagePastedText}
+                          onLocatePastedText={handleLocatePastedText}
+                          onUndo={onUndo}
+                          onRedo={onRedo}
                           disabled={!canEditDraft}
                           placeholder={t(
                             'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
@@ -1443,6 +1560,7 @@ const ConversationPanel = ({
                           restoreFocusRequest={
                             ordinaryComposerBlocked ? undefined : composerRestoreFocusRequest
                           }
+                          caretRequest={ordinaryComposerBlocked ? undefined : caretRequest}
                         />
                       </div>
 

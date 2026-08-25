@@ -79,6 +79,59 @@ const userSkillSourceDir = (catalog: SkillCatalogModule, source: 'personal' | 'i
   join(catalogStorageRoots.get(catalog)!, 'skills', source)
 
 describe('SkillCatalogModule', () => {
+  it('lists bundled Specialist dependencies without consulting user Skills', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
+    roots.push(storageRoot)
+    const userSkills = { list: vi.fn() } as unknown as UserSkillRepository
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: {
+        list: async () => [
+          {
+            id: 'featured',
+            name: 'featured',
+            displayName: 'Featured',
+            description: 'Bundled.',
+            source: 'featured' as const,
+            updatedAt: '2026-08-25T00:00:00.000Z',
+            sourceDir: '/bundled/featured',
+            compatibility: `sha256:${'a'.repeat(64)}`
+          }
+        ]
+      } as unknown as SkillRegistry,
+      userSkills
+    })
+
+    await expect(catalog.listSpecialistSkillCatalog({ bundledOnly: true })).resolves.toEqual([
+      expect.objectContaining({ id: 'featured', source: 'featured', available: true })
+    ])
+    expect(userSkills.list).not.toHaveBeenCalled()
+  })
+
+  it('shares an in-flight user Skill scan between observer and agent materialization', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-skill-runtime-'))
+    roots.push(storageRoot, runtimeRoot)
+    let finishScan: ((skills: []) => void) | undefined
+    const list = vi.fn<() => Promise<[]>>(
+      () => new Promise<[]>((resolve) => (finishScan = resolve))
+    )
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: { list: vi.fn().mockResolvedValue([]) } as unknown as SkillRegistry,
+      userSkills: { list } as unknown as UserSkillRepository
+    })
+
+    const observerRead = catalog.listUserSkills()
+    const sessionRead = catalog.materializeSkills(runtimeRoot, [])
+
+    expect(list).toHaveBeenCalledOnce()
+    finishScan?.([])
+    await expect(Promise.all([observerRead, sessionRead])).resolves.toEqual([[], undefined])
+  })
+
   it('keeps only the newest user Skill when Personal and Imported packages share a name', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
     roots.push(storageRoot)

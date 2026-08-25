@@ -377,14 +377,19 @@ const createPanelDefaults = (): PanelProps => ({
       error: null,
       historyStatus: '',
       isHistoryBrowsing: false,
-      isUploading: false
+      isUploading: false,
+      caretRequest: undefined
     },
     actions: {
       changeDoc: vi.fn(),
       navigateHistory: vi.fn(() => false),
       stageFiles: onStageAttachmentFiles,
+      stagePastedText: vi.fn(),
       cancelTransfer: vi.fn(),
       removeAttachment: vi.fn(),
+      restorePastedText: vi.fn(),
+      undo: vi.fn(() => false),
+      redo: vi.fn(() => false),
       setError: vi.fn()
     }
   },
@@ -1760,8 +1765,78 @@ describe('ConversationPanel composer intake', () => {
     expect(progress?.getAttribute('aria-valuenow')).toBe('25')
     expect(container.textContent).toContain('25% of 100 B')
     expect(cancel).not.toBeNull()
+    expect(cancel?.parentElement?.className).toContain('h-9')
+    expect(cancel?.parentElement?.className).not.toContain('h-11')
     act(() => cancel?.click())
     expect(onCancelAttachmentTransfer).toHaveBeenCalledWith(transfer)
+  })
+
+  it('renders a reversible pasted-text attachment and routes restore and close separately', () => {
+    const pastedTextName = 'Pastedtext-div-class-contents-l.txt'
+    const attachment = {
+      id: 'upload-paste',
+      sessionId: '.pending',
+      name: pastedTextName,
+      originalName: pastedTextName,
+      path: `/uploads/${pastedTextName}`,
+      mimeType: 'text/plain',
+      size: 12_000
+    }
+    const restorePastedText = vi.fn()
+    const removeAttachment = vi.fn()
+    renderPanel({
+      composer: {
+        view: {
+          doc: {
+            nodes: [
+              { type: 'text', text: 'before ' },
+              {
+                type: 'pasted-text',
+                id: 'paste-1',
+                text: '<div class="contents">long payload',
+                attachmentId: attachment.id
+              },
+              { type: 'text', text: ' after' }
+            ]
+          },
+          attachments: [attachment]
+        },
+        actions: { restorePastedText, removeAttachment }
+      }
+    })
+
+    const card = container.querySelector<HTMLElement>('[data-pasted-text-attachment="true"]')
+    if (!card) throw new Error('pasted-text attachment not found')
+    const restore = Array.from(card?.querySelectorAll('button') ?? []).find((button) =>
+      button.textContent?.includes('Show in text field')
+    )
+    const remove = card?.querySelector<HTMLButtonElement>(
+      `button[aria-label="Remove attachment ${pastedTextName}"]`
+    )
+
+    expect(card?.getAttribute('data-state')).toBe('success')
+    expect(card?.id).toBe('composer-pasted-text-attachment-paste-1')
+    expect(card?.className).toContain('h-9')
+    expect(card?.className).not.toContain('h-12')
+    expect(card?.textContent).toContain('<div class="conte...')
+    expect(card?.textContent).not.toContain(pastedTextName)
+    expect(restore?.querySelector('span')?.className).toContain('whitespace-nowrap')
+    const scrollIntoView = vi.fn()
+    const animate = vi.fn()
+    Object.defineProperty(card, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    Object.defineProperty(card, 'animate', { configurable: true, value: animate })
+    const marker = getComposerEditor().querySelector<HTMLElement>('[data-pasted-text-id="paste-1"]')
+    act(() => marker?.click())
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'nearest'
+    })
+    expect(animate).toHaveBeenCalledOnce()
+    act(() => restore?.click())
+    expect(restorePastedText).toHaveBeenCalledWith('paste-1')
+    act(() => remove?.click())
+    expect(removeAttachment).toHaveBeenCalledWith(attachment)
   })
 
   it('uses a flat border without a card shadow', () => {

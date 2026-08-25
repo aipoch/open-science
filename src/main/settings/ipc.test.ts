@@ -206,9 +206,12 @@ const createFakeService = (): FakeSettingsService => ({
       ready: true,
       diagnostics: [],
       digest: 'digest',
-      suggestedFileName: 'open-science-connector-example.json'
+      suggestedFileName: 'open-science-connector-example.json',
+      mcpClientDigest: 'mcp-digest',
+      mcpClientSuggestedFileName: 'mcp-example.json'
     },
-    contents: '{"schemaVersion":1}\n'
+    contents: '{"schemaVersion":1}\n',
+    mcpClientContents: '{"mcpServers":{}}\n'
   }),
   previewCustomServerTemplateImport: vi.fn().mockResolvedValue({
     ready: true,
@@ -386,6 +389,19 @@ describe('settings IPC handlers', () => {
     expect(connectorTemplateFiles.save).toHaveBeenCalledWith(
       'open-science-connector-example.json',
       '{"schemaVersion":1}\n',
+      ipcSender
+    )
+
+    await expect(
+      invoke('settings:export-custom-server-template', {
+        id: 'server-id',
+        expectedDigest: 'mcp-digest',
+        format: 'mcp-client'
+      })
+    ).resolves.toEqual({ saved: true })
+    expect(connectorTemplateFiles.save).toHaveBeenLastCalledWith(
+      'mcp-example.json',
+      '{"mcpServers":{}}\n',
       ipcSender
     )
 

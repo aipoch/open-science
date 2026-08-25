@@ -78,6 +78,38 @@ describe('NotebookRuntimeSettingsModule', () => {
     })
   })
 
+  it('preserves concurrent environment enablement updates', async () => {
+    const settings = await createModule()
+    const firstPath = resolve('/usr/bin/python3')
+    const secondPath = resolve('/opt/python/bin/python3')
+
+    await Promise.all([
+      settings.setEnvironmentEnabled('python', firstPath, true),
+      settings.setEnvironmentEnabled('python', secondPath, false)
+    ])
+
+    expect((await settings.getSnapshot('python')).runtimeEnablement.enabled).toEqual({
+      [firstPath]: true,
+      [secondPath]: false
+    })
+  })
+
+  it('preserves concurrent manual interpreter additions', async () => {
+    const settings = await createModule()
+    const firstPath = resolve('/usr/bin/python3')
+    const secondPath = resolve('/opt/python/bin/python3')
+
+    await Promise.all([
+      settings.addManualInterpreter('python', firstPath),
+      settings.addManualInterpreter('python', secondPath)
+    ])
+
+    expect((await settings.getSnapshot('python')).manualInterpreters).toEqual([
+      firstPath,
+      secondPath
+    ])
+  })
+
   it('preserves repository normalization for manual interpreters and package mirrors', async () => {
     const settings = await createModule()
     const interpreterPath = resolve('/opt/python/bin/python3')

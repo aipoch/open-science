@@ -21,6 +21,7 @@ const rootBytes = encoder.encode(
         id: 'example-specialist',
         display_name: 'Example Specialist',
         summary: 'An example.',
+        author: 'Example Author',
         publisher: { id: 'example', name: 'Example' },
         latest: {
           version: '1.0.0',
@@ -49,6 +50,7 @@ describe('Specialist Marketplace protocol', () => {
     const signature = parseMarketplaceSignature(signatureBytes)
 
     expect(root.specialists[0]?.id).toBe('example-specialist')
+    expect(root.specialists[0]?.author).toBe('Example Author')
     expect(marketplaceKeyFingerprint(publicKeyBase64)).toMatch(/^[a-f0-9]{64}$/)
     expect(verifyMarketplaceRoot(rootBytes, signature)).toBe(true)
     expect(
@@ -73,5 +75,16 @@ describe('Specialist Marketplace protocol', () => {
     expect(
       parseMarketplaceRoot(encoder.encode(JSON.stringify(parsed))).specialists[0]?.latest.version
     ).toBe('1.2.3-rc.1+build.7')
+  })
+
+  it('accepts a missing author and rejects a blank author', () => {
+    const parsed = JSON.parse(new TextDecoder().decode(rootBytes))
+    delete parsed.specialists[0].author
+    expect(
+      parseMarketplaceRoot(encoder.encode(JSON.stringify(parsed))).specialists[0]?.author
+    ).toBeUndefined()
+
+    parsed.specialists[0].author = '   '
+    expect(() => parseMarketplaceRoot(encoder.encode(JSON.stringify(parsed)))).toThrow()
   })
 })

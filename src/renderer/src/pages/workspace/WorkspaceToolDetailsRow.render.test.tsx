@@ -3,7 +3,6 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import i18next from 'i18next'
 
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
@@ -11,6 +10,7 @@ import type { NotebookRunRecord } from '../../../../shared/notebook'
 import { formatNotebookRunOutputLineMeta } from './notebook-run-figures'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
+import { i18next } from '@/i18n'
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
   id: 'tool-1',

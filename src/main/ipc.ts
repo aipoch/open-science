@@ -1058,22 +1058,19 @@ const createApplicationModules = async (
   // the same repository while keeping their dynamic Connector/custom-Skill catalog separate.
   const specialistRepository = new SpecialistRepository(resolveStorageRoot())
   const appVersion = app.getVersion()
-  const specialistSkills = await settingsService.listSpecialistSkillCatalog()
-  const packageSkills = await specialistPackageSkillAdapter.snapshot()
+  const specialistSkills = await settingsService.listSpecialistSkillCatalog({ bundledOnly: true })
   composition.phase('specialist-catalog')
   const builtinRegistry = new BuiltinSpecialistRegistry({
     appVersion,
     builtinSkills: composeBuiltinSkillCatalog(appVersion, specialistSkills),
     skills: specialistSkills.map((skill) => {
-      const packageSkill = packageSkills.find((candidate) => candidate.id === skill.id)
       return {
         id: skill.id,
         name: skill.frameworkName,
         builtin: skill.source === 'featured',
         displayName: skill.displayName,
         source: skill.source,
-        mainEnabled: skill.mainEnabled,
-        ...(packageSkill ?? {})
+        mainEnabled: skill.mainEnabled
       }
     }),
     connectorIds: ALL_CONNECTOR_IDS,
@@ -1992,7 +1989,9 @@ const createApplicationModules = async (
     appVersion: app.getVersion(),
     configRoot,
     profileNamespace: 'vision-evidence',
-    resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
+    resolveTarget: (target, context) =>
+      settingsService.resolveExplicitAgentBackend(target, context),
+    allowNativeCodexSubscription: true
   })
   void visionInferenceRunner
     .sweepStaleProfiles()

@@ -15,14 +15,22 @@ import { createPreviewRequestScope } from '../previews/preview-file-reader'
 import { ArtifactMentionPopup, type PickedArtifact } from './ArtifactMentionPopup'
 import {
   applyDocToDom,
+  createPastedTextAnchor,
+  createPastedTextCaretHost,
   docArtifactCount,
-  docIsEmpty,
   docSessionCount,
   domToDoc,
+  isPastedTextCaretHost,
   MAX_COMPOSER_ARTIFACT_MENTIONS,
   MAX_COMPOSER_SESSION_MENTIONS,
+  PASTED_TEXT_CARET_MARKER,
+  shouldAttachPastedText,
+  syncPastedTextAnchors,
+  type ComposerCaretPosition,
   type ComposerDoc,
-  type ComposerNode
+  type ComposerNode,
+  type ComposerPastedTextNode,
+  type ComposerPastedTextStage
 } from './composer-doc'
 import { SkillMentionPopup } from './SkillMentionPopup'
 import { SessionMentionPopup, type PickedSession } from './SessionMentionPopup'
@@ -40,9 +48,17 @@ const composerPlaceholderClassName =
 
 type ComposerEditorProps = {
   doc: ComposerDoc
-  onDocChange: (doc: ComposerDoc) => void
+  onDocChange: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
   onSubmit: () => void
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
+  onLongTextPaste?: (
+    doc: ComposerDoc,
+    node: ComposerPastedTextStage,
+    caret?: ComposerCaretPosition
+  ) => void
+  onLocatePastedText?: (pastedTextId: string) => void
+  onUndo?: (caret?: ComposerCaretPosition) => boolean
+  onRedo?: (caret?: ComposerCaretPosition) => boolean
   disabled?: boolean
   placeholder: string
   className?: string
@@ -57,6 +73,7 @@ type ComposerEditorProps = {
   mentionPreviewContext?: { sessionId: string; projectId?: string }
   focusRequest?: string | number
   restoreFocusRequest?: number
+  caretRequest?: { key: number; position: ComposerCaretPosition }
 }
 
 // Structural equality over doc nodes; used to decide whether the incoming prop diverges from what
@@ -72,6 +89,9 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
     }
     if (node.type === 'session' && other.type === 'session') {
       return node.sessionId === other.sessionId && node.title === other.title
+    }
+    if (node.type === 'pasted-text' && other.type === 'pasted-text') {
+      return node.id === other.id && node.text === other.text
     }
     if (node.type === 'artifact' && other.type === 'artifact') {
       if (
@@ -96,10 +116,17 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
 
 // Insert plain text at the current caret and collapse the caret after it. Used for paste so the
 // contenteditable never absorbs rich HTML from the clipboard.
-const insertPlainTextAtCaret = (text: string): void => {
+const selectedRangeIn = (root: HTMLElement): { selection: Selection; range: Range } | undefined => {
   const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0) return
+  if (!selection || selection.rangeCount === 0) return undefined
   const range = selection.getRangeAt(0)
+  return root.contains(range.commonAncestorContainer) ? { selection, range } : undefined
+}
+
+const insertPlainTextAtCaret = (root: HTMLElement, text: string): boolean => {
+  const selected = selectedRangeIn(root)
+  if (!selected) return false
+  const { selection, range } = selected
   range.deleteContents()
   const inserted = document.createTextNode(text)
   range.insertNode(inserted)
@@ -107,11 +134,187 @@ const insertPlainTextAtCaret = (text: string): void => {
   range.collapse(true)
   selection.removeAllRanges()
   selection.addRange(range)
+  return true
+}
+
+const caretNodeAfterPastedText = (anchor: ChildNode, splitOwnedHost: boolean): Text => {
+  const sibling = anchor.nextSibling
+  if (
+    sibling?.nodeType === Node.TEXT_NODE &&
+    sibling.textContent !== '' &&
+    (!splitOwnedHost || sibling.textContent !== PASTED_TEXT_CARET_MARKER)
+  ) {
+    return sibling as Text
+  }
+  const host = createPastedTextCaretHost()
+  if (sibling?.nodeType === Node.TEXT_NODE) sibling.replaceWith(host)
+  else anchor.after(host)
+  return host
+}
+
+const insertPastedTextAtCaret = (root: HTMLElement, node: ComposerPastedTextNode): boolean => {
+  const selected = selectedRangeIn(root)
+  if (!selected) return false
+  const { selection, range } = selected
+  const splitOwnedHost = isPastedTextCaretHost(range.startContainer)
+  range.deleteContents()
+  const inserted = createPastedTextAnchor(node)
+  range.insertNode(inserted)
+  const caretHost = caretNodeAfterPastedText(inserted, splitOwnedHost)
+  range.setStart(caretHost, 0)
+  range.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  return true
+}
+
+const PASTED_TEXT_CLIPBOARD_TYPE = 'application/x-open-science-composer-fragment'
+
+type ComposerClipboardNode = { type: 'text'; text: string } | { type: 'pasted-text'; text: string }
+
+type ComposerClipboardFragment = { version: 1; nodes: ComposerClipboardNode[] }
+
+const appendClipboardNode = (nodes: ComposerClipboardNode[], node: ComposerClipboardNode): void => {
+  if (node.text === '') return
+  const previous = nodes.at(-1)
+  if (node.type === 'text' && previous?.type === 'text') previous.text += node.text
+  else nodes.push(node)
+}
+
+const clipboardNodesFromSelection = (
+  root: HTMLElement,
+  doc: ComposerDoc,
+  eventTarget: EventTarget | null
+): ComposerClipboardNode[] | undefined => {
+  const pastedTextById = new Map(
+    doc.nodes
+      .filter((node): node is ComposerPastedTextNode => node.type === 'pasted-text')
+      .map((node) => [node.id, node])
+  )
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return undefined
+  const range = selection.getRangeAt(0)
+  if (!root.contains(range.commonAncestorContainer)) return undefined
+
+  let selectedNodes: Node[]
+  if (range.collapsed) {
+    const marker = (eventTarget as HTMLElement | null)?.closest?.(
+      '[data-composer-node-type="pasted-text"]'
+    )
+    if (!marker || !root.contains(marker)) return undefined
+    selectedNodes = [marker]
+  } else {
+    selectedNodes = Array.from(range.cloneContents().childNodes)
+  }
+
+  const nodes: ComposerClipboardNode[] = []
+  for (const selected of selectedNodes) {
+    if (selected.nodeType === Node.TEXT_NODE) {
+      appendClipboardNode(nodes, {
+        type: 'text',
+        text: (selected.textContent ?? '').replaceAll(PASTED_TEXT_CARET_MARKER, '')
+      })
+      continue
+    }
+    if (selected.nodeType !== Node.ELEMENT_NODE) continue
+    const element = selected as HTMLElement
+    if (element.getAttribute('data-composer-node-type') === 'pasted-text') {
+      const id = element.getAttribute('data-pasted-text-id')
+      const pastedText = id ? pastedTextById.get(id) : undefined
+      if (pastedText) appendClipboardNode(nodes, { type: 'pasted-text', text: pastedText.text })
+      continue
+    }
+    appendClipboardNode(nodes, {
+      type: 'text',
+      text: (element.textContent ?? '').replaceAll(PASTED_TEXT_CARET_MARKER, '')
+    })
+  }
+  return nodes.some((node) => node.type === 'pasted-text') ? nodes : undefined
+}
+
+const writeComposerClipboardSelection = (
+  root: HTMLElement,
+  doc: ComposerDoc,
+  event: React.ClipboardEvent<HTMLDivElement>
+): boolean => {
+  const nodes = clipboardNodesFromSelection(root, doc, event.target)
+  if (!nodes) return false
+  const fragment: ComposerClipboardFragment = { version: 1, nodes }
+  event.clipboardData.setData(PASTED_TEXT_CLIPBOARD_TYPE, JSON.stringify(fragment))
+  event.clipboardData.setData('text/plain', nodes.map((node) => node.text).join(''))
+  event.preventDefault()
+  return true
+}
+
+const parseComposerClipboardFragment = (value: string): ComposerClipboardFragment | undefined => {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!parsed || typeof parsed !== 'object') return undefined
+    const candidate = parsed as { version?: unknown; nodes?: unknown }
+    if (candidate.version !== 1 || !Array.isArray(candidate.nodes)) return undefined
+    const nodes: ComposerClipboardNode[] = []
+    for (const node of candidate.nodes) {
+      if (!node || typeof node !== 'object') return undefined
+      const valueNode = node as { type?: unknown; text?: unknown }
+      if (
+        (valueNode.type !== 'text' && valueNode.type !== 'pasted-text') ||
+        typeof valueNode.text !== 'string'
+      ) {
+        return undefined
+      }
+      appendClipboardNode(nodes, { type: valueNode.type, text: valueNode.text })
+    }
+    if (!nodes.some((node) => node.type === 'pasted-text')) return undefined
+    return { version: 1, nodes }
+  } catch {
+    return undefined
+  }
+}
+
+const insertComposerClipboardFragmentAtCaret = (
+  root: HTMLElement,
+  fragment: ComposerClipboardFragment
+): ComposerPastedTextNode[] => {
+  const selected = selectedRangeIn(root)
+  if (!selected) return []
+  const { selection, range } = selected
+  const splitOwnedHost = isPastedTextCaretHost(range.startContainer)
+  range.deleteContents()
+  const inserted = document.createDocumentFragment()
+  const pastedTextNodes: ComposerPastedTextNode[] = []
+  for (const node of fragment.nodes) {
+    if (node.type === 'text') inserted.appendChild(document.createTextNode(node.text))
+    else {
+      const pastedText: ComposerPastedTextNode = {
+        type: 'pasted-text',
+        id: crypto.randomUUID(),
+        text: node.text
+      }
+      pastedTextNodes.push(pastedText)
+      inserted.appendChild(createPastedTextAnchor(pastedText))
+    }
+  }
+  const lastInserted = inserted.lastChild
+  range.insertNode(inserted)
+  if (!lastInserted) return []
+  if (lastInserted.nodeType === Node.ELEMENT_NODE) {
+    const caretHost = caretNodeAfterPastedText(lastInserted, splitOwnedHost)
+    range.setStart(caretHost, 0)
+  } else {
+    range.setStartAfter(lastInserted)
+  }
+  range.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  return pastedTextNodes
 }
 
 // A rendered mention chip element (skill or artifact) — any atomic, non-editable token span.
-const asMentionChip = (node: Node | null): HTMLElement | null =>
-  node?.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).hasAttribute('data-mention-type')
+const asAtomicChip = (node: Node | null): HTMLElement | null =>
+  node?.nodeType === Node.ELEMENT_NODE &&
+  ((node as HTMLElement).hasAttribute('data-mention-type') ||
+    (node as HTMLElement).getAttribute('data-composer-node-type') === 'pasted-text')
     ? (node as HTMLElement)
     : null
 
@@ -126,12 +329,12 @@ const chipBesideCaret = (root: HTMLElement, side: 'before' | 'after'): HTMLEleme
   const offset = range.startOffset
 
   if (node.nodeType === Node.TEXT_NODE) {
-    if (side === 'before') return offset === 0 ? asMentionChip(node.previousSibling) : null
-    return offset === (node.textContent ?? '').length ? asMentionChip(node.nextSibling) : null
+    if (side === 'before') return offset === 0 ? asAtomicChip(node.previousSibling) : null
+    return offset === (node.textContent ?? '').length ? asAtomicChip(node.nextSibling) : null
   }
   if (node.nodeType === Node.ELEMENT_NODE) {
     const index = side === 'before' ? offset - 1 : offset
-    return asMentionChip(node.childNodes[index] ?? null)
+    return asAtomicChip(node.childNodes[index] ?? null)
   }
   return null
 }
@@ -158,11 +361,50 @@ const caretIsAtStart = (root: HTMLElement): boolean => {
 const moveCaretToEnd = (root: HTMLElement): void => {
   root.focus()
   const range = document.createRange()
-  range.selectNodeContents(root)
-  range.collapse(false)
+  const last = root.lastChild
+  if (last?.nodeType === Node.TEXT_NODE && last.textContent?.endsWith(PASTED_TEXT_CARET_MARKER)) {
+    range.setStart(last, last.textContent.length - PASTED_TEXT_CARET_MARKER.length)
+  } else {
+    range.selectNodeContents(root)
+    range.collapse(false)
+  }
   const selection = window.getSelection()
   selection?.removeAllRanges()
   selection?.addRange(range)
+}
+
+const moveCaretToPosition = (root: HTMLElement, position: ComposerCaretPosition): void => {
+  const node = root.childNodes[position.nodeIndex]
+  root.focus()
+  const range = document.createRange()
+  if (!node) range.setStart(root, root.childNodes.length)
+  else if (node.nodeType === Node.TEXT_NODE) {
+    range.setStart(node, Math.min(position.offset, node.textContent?.length ?? 0))
+  } else {
+    range.setStart(root, position.nodeIndex)
+  }
+  range.collapse(true)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+}
+
+const currentCaretPosition = (root: HTMLElement): ComposerCaretPosition | undefined => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return undefined
+  const range = selection.getRangeAt(0)
+  if (!root.contains(range.startContainer)) return undefined
+  if (range.startContainer === root) {
+    return { nodeIndex: Math.min(range.startOffset, root.childNodes.length), offset: 0 }
+  }
+  let topLevel: Node = range.startContainer
+  while (topLevel.parentNode && topLevel.parentNode !== root) topLevel = topLevel.parentNode
+  const nodeIndex = Array.prototype.indexOf.call(root.childNodes, topLevel) as number
+  if (nodeIndex < 0) return undefined
+  return {
+    nodeIndex,
+    offset: topLevel.nodeType === Node.TEXT_NODE ? range.startOffset : 0
+  }
 }
 
 const canReceiveFocus = (root: HTMLElement): boolean =>
@@ -175,6 +417,10 @@ export const ComposerEditor = ({
   onDocChange,
   onSubmit,
   onPaste,
+  onLongTextPaste,
+  onLocatePastedText,
+  onUndo,
+  onRedo,
   disabled = false,
   placeholder,
   className,
@@ -185,7 +431,8 @@ export const ComposerEditor = ({
   onNavigateHistory,
   mentionPreviewContext,
   focusRequest,
-  restoreFocusRequest
+  restoreFocusRequest,
+  caretRequest
 }: ComposerEditorProps): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -195,11 +442,17 @@ export const ComposerEditor = ({
   const mentionListboxId = useId()
   const [activeMentionOptionId, setActiveMentionOptionId] = useState<string | undefined>()
   const restoreHistoryCaretRef = useRef(false)
+  const handledCaretRequestRef = useRef<number | undefined>(undefined)
   // Tracks IME composition so Enter never submits mid-composition.
   const composingRef = useRef(false)
 
   // At most one skill per message: once a chip exists, suppress the trigger so a further `/` does nothing.
   const hasSkill = doc.nodes.some((node) => node.type === 'skill')
+  const hasVisibleContent = doc.nodes.some(
+    (node) => node.type !== 'pasted-text' && (node.type !== 'text' || node.text !== '')
+  )
+  const hasPastedText = doc.nodes.some((node) => node.type === 'pasted-text')
+  const showInlinePlaceholder = hasPastedText && !hasVisibleContent
 
   // The hook guards a null current internally; widen the element type for its generic ref option.
   const mention = useMentionTrigger({
@@ -220,11 +473,17 @@ export const ComposerEditor = ({
     disabled: disabled || docSessionCount(doc) >= MAX_COMPOSER_SESSION_MENTIONS
   })
   const mentionPopupOpen = mention.active || artifactMention.active || sessionMention.active
+  const undoCaretRef = useRef<ComposerCaretPosition | undefined>(undefined)
 
   // Read the live DOM back into a doc and notify the parent.
   const emitDocFromDom = useCallback((): void => {
     const root = editorRef.current
-    if (root) onDocChange(domToDoc(root))
+    if (root) {
+      const nextDoc = domToDoc(root)
+      if (undoCaretRef.current) onDocChange(nextDoc, undoCaretRef.current)
+      else onDocChange(nextDoc)
+    }
+    undoCaretRef.current = undefined
   }, [onDocChange])
 
   // Apply the incoming doc to the DOM only when it diverges from what the editor already shows.
@@ -236,11 +495,18 @@ export const ComposerEditor = ({
       focusRequest !== undefined && canReceiveFocus(root) && document.activeElement === root
     const docChanged = !nodesEqual(domToDoc(root).nodes, doc.nodes)
     if (docChanged) applyDocToDom(root, doc)
-    if (restoreHistoryCaretRef.current || (docChanged && shouldPreserveFocus)) {
+    else syncPastedTextAnchors(root, doc)
+    const hasCaretRequest =
+      caretRequest !== undefined && handledCaretRequestRef.current !== caretRequest.key
+    if (hasCaretRequest) {
+      handledCaretRequestRef.current = caretRequest.key
+      restoreHistoryCaretRef.current = false
+      moveCaretToPosition(root, caretRequest.position)
+    } else if (restoreHistoryCaretRef.current || (docChanged && shouldPreserveFocus)) {
       restoreHistoryCaretRef.current = false
       moveCaretToEnd(root)
     }
-  }, [doc, focusRequest])
+  }, [caretRequest, doc, focusRequest])
 
   useLayoutEffect(() => {
     const root = editorRef.current
@@ -252,7 +518,9 @@ export const ComposerEditor = ({
     if (root && restoreFocusRequest !== undefined && canReceiveFocus(root)) moveCaretToEnd(root)
   }, [restoreFocusRequest])
 
-  const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])
+  const handleInput = useCallback((): void => {
+    if (!composingRef.current) emitDocFromDom()
+  }, [emitDocFromDom])
 
   // Clicking an `@` mention chip opens the file in the preview workbench, like the sent-message
   // pills do. Linked-folder chips resolve rootId + relativePath through the granted-roots store
@@ -260,6 +528,16 @@ export const ComposerEditor = ({
   // inert, then open through the mention preview item.
   const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     const root = editorRef.current
+    const pastedTextMarker = (event.target as HTMLElement).closest?.(
+      '[data-composer-node-type="pasted-text"]'
+    ) as HTMLElement | null
+    if (root && pastedTextMarker && root.contains(pastedTextMarker)) {
+      const pastedTextId = pastedTextMarker.getAttribute('data-pasted-text-id')
+      if (!pastedTextId) return
+      event.preventDefault()
+      onLocatePastedText?.(pastedTextId)
+      return
+    }
     const sessionChip = (event.target as HTMLElement).closest?.(
       '[data-mention-type="session"]'
     ) as HTMLElement | null
@@ -329,7 +607,47 @@ export const ComposerEditor = ({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const pastedTextMarker = (event.target as HTMLElement).closest?.(
+      '[data-composer-node-type="pasted-text"]'
+    ) as HTMLElement | null
+    if (
+      pastedTextMarker &&
+      (event.key === 'Enter' || event.key === ' ') &&
+      editorRef.current?.contains(pastedTextMarker)
+    ) {
+      const pastedTextId = pastedTextMarker.getAttribute('data-pasted-text-id')
+      if (pastedTextId) {
+        event.preventDefault()
+        onLocatePastedText?.(pastedTextId)
+      }
+      return
+    }
     if (disabled) return
+    if (
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete')
+    ) {
+      const root = editorRef.current
+      undoCaretRef.current = root ? currentCaretPosition(root) : undefined
+    }
+    const primaryUndoModifier =
+      (event.metaKey && !event.ctrlKey) || (event.ctrlKey && !event.metaKey)
+    const historyAction = event.shiftKey ? onRedo : onUndo
+    if (
+      event.key.toLowerCase() === 'z' &&
+      primaryUndoModifier &&
+      !event.altKey &&
+      !event.repeat &&
+      !event.nativeEvent.isComposing &&
+      historyAction
+    ) {
+      event.preventDefault()
+      const root = editorRef.current
+      historyAction(root ? currentCaretPosition(root) : undefined)
+      return
+    }
     // While either mention popup is open it owns Enter/arrow keys; leave them to its document listener.
     if (mention.active || artifactMention.active || sessionMention.active) return
     if (
@@ -362,6 +680,7 @@ export const ComposerEditor = ({
       const chip = root && chipBesideCaret(root, event.key === 'Backspace' ? 'before' : 'after')
       if (chip) {
         event.preventDefault()
+        undoCaretRef.current = currentCaretPosition(root)
         chip.remove()
         emitDocFromDom()
         return
@@ -375,26 +694,90 @@ export const ComposerEditor = ({
   }
 
   const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    const activeRoot = editorRef.current
+    undoCaretRef.current = activeRoot ? currentCaretPosition(activeRoot) : undefined
     // Forward first so the panel can route file attachments to its intake.
     onPaste(event)
     if (disabled || event.isDefaultPrevented()) return
+    const internalFragment = parseComposerClipboardFragment(
+      event.clipboardData?.getData(PASTED_TEXT_CLIPBOARD_TYPE) ?? ''
+    )
+    if (internalFragment && onLongTextPaste) {
+      event.preventDefault()
+      const root = editorRef.current
+      const pastedTextNodes = root
+        ? insertComposerClipboardFragmentAtCaret(root, internalFragment)
+        : []
+      if (root && pastedTextNodes.length > 0) {
+        onLongTextPaste(domToDoc(root), pastedTextNodes, undoCaretRef.current)
+        undoCaretRef.current = undefined
+      }
+      return
+    }
     // For text, insert it as plain text ourselves to keep the contenteditable free of rich HTML.
     const text = event.clipboardData?.getData('text/plain') ?? ''
     if (text) {
       event.preventDefault()
-      insertPlainTextAtCaret(text)
-      emitDocFromDom()
+      const root = editorRef.current
+      if (onLongTextPaste && shouldAttachPastedText(text)) {
+        const node: ComposerPastedTextNode = {
+          type: 'pasted-text',
+          id: crypto.randomUUID(),
+          text
+        }
+        if (root && insertPastedTextAtCaret(root, node)) {
+          onLongTextPaste(domToDoc(root), node, undoCaretRef.current)
+          undoCaretRef.current = undefined
+        }
+      } else {
+        if (root && insertPlainTextAtCaret(root, text)) emitDocFromDom()
+      }
     }
+  }
+
+  const handleCopy = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    const root = editorRef.current
+    if (!root) return
+    writeComposerClipboardSelection(root, doc, event)
+  }
+
+  const handleCut = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    const root = editorRef.current
+    if (!root || !writeComposerClipboardSelection(root, doc, event)) return
+    undoCaretRef.current = currentCaretPosition(root)
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0) return
+    const range = selection.getRangeAt(0)
+    if (range.collapsed) {
+      const marker = (event.target as HTMLElement).closest?.(
+        '[data-composer-node-type="pasted-text"]'
+      )
+      if (!marker || !root.contains(marker) || !marker.parentNode) return
+      const parent = marker.parentNode
+      const offset = Array.prototype.indexOf.call(parent.childNodes, marker) as number
+      marker.remove()
+      range.setStart(parent, offset)
+    } else {
+      range.deleteContents()
+    }
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    emitDocFromDom()
   }
 
   // Replace the active `/query` token with a skill chip, then close the popup.
   const handleSelectSkill = (skill: SkillView): void => {
+    const root = editorRef.current
+    undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.displayName })
     mention.cancel()
   }
 
   // Replace the active `@query` token with an artifact chip, then close the popup.
   const handleSelectArtifact = (ref: PickedArtifact): void => {
+    const root = editorRef.current
+    undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     artifactMention.replaceTokenWith({
       type: 'artifact',
       id: ref.id,
@@ -408,6 +791,8 @@ export const ComposerEditor = ({
   }
 
   const handleSelectSession = (session: PickedSession): void => {
+    const root = editorRef.current
+    undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     sessionMention.replaceTokenWith(session)
     sessionMention.cancel()
   }
@@ -428,16 +813,33 @@ export const ComposerEditor = ({
         contentEditable={!disabled}
         suppressContentEditableWarning
         data-placeholder={placeholder}
-        className={cn(composerEditorClassName, className)}
+        data-inline-placeholder={showInlinePlaceholder ? 'true' : undefined}
+        className={cn(
+          composerEditorClassName,
+          showInlinePlaceholder &&
+            'after:pointer-events-none after:text-muted-foreground after:content-[attr(data-placeholder)]',
+          className
+        )}
         onInput={handleInput}
+        onBeforeInput={() => {
+          const root = editorRef.current
+          if (!composingRef.current) {
+            undoCaretRef.current = root ? currentCaretPosition(root) : undefined
+          }
+        }}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
+        onCopy={handleCopy}
+        onCut={handleCut}
         onCompositionStart={() => {
+          const root = editorRef.current
+          undoCaretRef.current = root ? currentCaretPosition(root) : undefined
           composingRef.current = true
         }}
         onCompositionEnd={() => {
           composingRef.current = false
+          emitDocFromDom()
         }}
       />
       <span id={historyDescriptionId} className="sr-only">
@@ -446,8 +848,7 @@ export const ComposerEditor = ({
       <span id={historyStatusId} role="status" aria-live="polite" className="sr-only">
         {historyStatus}
       </span>
-      {/* Show the placeholder whenever the doc is empty, regardless of focus. */}
-      {docIsEmpty(doc) ? (
+      {!hasVisibleContent && !hasPastedText ? (
         <div aria-hidden="true" className={composerPlaceholderClassName}>
           {placeholder}
         </div>
