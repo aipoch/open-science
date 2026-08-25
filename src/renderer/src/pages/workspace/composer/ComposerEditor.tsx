@@ -388,7 +388,7 @@ const currentCaretPosition = (root: HTMLElement): ComposerCaretPosition | undefi
   const selection = window.getSelection()
   if (!selection || selection.rangeCount === 0) return undefined
   const range = selection.getRangeAt(0)
-  if (!range.collapsed || !root.contains(range.startContainer)) return undefined
+  if (!root.contains(range.startContainer)) return undefined
   if (range.startContainer === root) {
     return { nodeIndex: Math.min(range.startOffset, root.childNodes.length), offset: 0 }
   }
@@ -617,6 +617,15 @@ export const ComposerEditor = ({
       return
     }
     if (disabled) return
+    if (
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete')
+    ) {
+      const root = editorRef.current
+      undoCaretRef.current = root ? currentCaretPosition(root) : undefined
+    }
     const primaryUndoModifier =
       (event.metaKey && !event.ctrlKey) || (event.ctrlKey && !event.metaKey)
     if (
@@ -678,6 +687,8 @@ export const ComposerEditor = ({
   }
 
   const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    const activeRoot = editorRef.current
+    undoCaretRef.current = activeRoot ? currentCaretPosition(activeRoot) : undefined
     // Forward first so the panel can route file attachments to its intake.
     onPaste(event)
     if (disabled || event.isDefaultPrevented()) return
@@ -722,6 +733,7 @@ export const ComposerEditor = ({
   const handleCut = (event: React.ClipboardEvent<HTMLDivElement>): void => {
     const root = editorRef.current
     if (!root || !writeComposerClipboardSelection(root, doc, event)) return
+    undoCaretRef.current = currentCaretPosition(root)
     const selection = window.getSelection()
     if (!selection || selection.rangeCount === 0) return
     const range = selection.getRangeAt(0)

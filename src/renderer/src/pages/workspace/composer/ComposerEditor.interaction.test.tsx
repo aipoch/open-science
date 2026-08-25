@@ -421,6 +421,28 @@ describe('ComposerEditor', () => {
     expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'hello' }] })
   })
 
+  it('captures the selection start before replacing selected Composer text', () => {
+    const onDocChange = vi.fn()
+    renderEditor({ doc: { nodes: [{ type: 'text', text: 'hello' }] }, onDocChange })
+    const text = editor().firstChild as Text
+    const range = document.createRange()
+    range.setStart(text, 1)
+    range.setEnd(text, 4)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+
+    dispatchKey(editor(), 'x')
+    act(() => {
+      editor().textContent = 'hXo'
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: 'hXo' }] },
+      { nodeIndex: 0, offset: 1 }
+    )
+  })
+
   it('submits on Enter without shift and not on Shift+Enter', () => {
     const onSubmit = vi.fn()
     renderEditor({ onSubmit })
@@ -607,7 +629,10 @@ describe('ComposerEditor', () => {
 
     expect(onPaste).toHaveBeenCalledTimes(1)
     expect(editor().textContent).toContain('pasted')
-    expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'pasted' }] })
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: 'pasted' }] },
+      { nodeIndex: 0, offset: 0 }
+    )
   })
 
   it('replaces the active selection with a long-paste anchor at the exact document position', () => {
@@ -783,7 +808,10 @@ describe('ComposerEditor', () => {
     expect(cut.defaultPrevented).toBe(true)
     expect(clipboard.get('text/plain')).toBe('full payload')
     expect(clipboard.get('application/x-open-science-composer-fragment')).toContain('full payload')
-    expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'before  after' }] })
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: 'before  after' }] },
+      { nodeIndex: 1, offset: 0 }
+    )
   })
 
   it('routes Cmd+Z only through Composer undo, including after its history is empty', () => {
@@ -851,7 +879,10 @@ describe('ComposerEditor', () => {
 
     // No chip is created; the doc holds only a text node, so it carries no skill id.
     expect(editor().querySelector('[data-skill-id]')).toBeNull()
-    expect(onDocChange).toHaveBeenLastCalledWith({ nodes: [{ type: 'text', text: '/Literature' }] })
+    expect(onDocChange).toHaveBeenLastCalledWith(
+      { nodes: [{ type: 'text', text: '/Literature' }] },
+      { nodeIndex: 0, offset: 0 }
+    )
   })
 
   it('inserts a skill chip when a suggestion is chosen from the popup', () => {
