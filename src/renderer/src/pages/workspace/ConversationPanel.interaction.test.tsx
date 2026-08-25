@@ -1771,12 +1771,13 @@ describe('ConversationPanel composer intake', () => {
   })
 
   it('renders a reversible pasted-text attachment and routes restore and close separately', () => {
+    const pastedTextName = 'Pastedtext-div-class-contents-l.txt'
     const attachment = {
       id: 'upload-paste',
       sessionId: '.pending',
-      name: 'Pasted text.txt',
-      originalName: 'Pasted text.txt',
-      path: '/uploads/Pasted text.txt',
+      name: pastedTextName,
+      originalName: pastedTextName,
+      path: `/uploads/${pastedTextName}`,
       mimeType: 'text/plain',
       size: 12_000
     }
@@ -1809,15 +1810,14 @@ describe('ConversationPanel composer intake', () => {
       button.textContent?.includes('Show in text field')
     )
     const remove = card?.querySelector<HTMLButtonElement>(
-      'button[aria-label="Remove attachment Pasted text.txt"]'
+      `button[aria-label="Remove attachment ${pastedTextName}"]`
     )
 
     expect(card?.getAttribute('data-state')).toBe('success')
     expect(card?.id).toBe('composer-pasted-text-attachment-paste-1')
     expect(card?.className).toContain('h-9')
     expect(card?.className).not.toContain('h-12')
-    expect(card?.textContent).toContain('<div class="contents...')
-    expect(card?.textContent).not.toContain('Pasted text.txt')
+    expect(card?.textContent).toContain(pastedTextName)
     expect(restore?.querySelector('span')?.className).toContain('whitespace-nowrap')
     const scrollIntoView = vi.fn()
     const animate = vi.fn()

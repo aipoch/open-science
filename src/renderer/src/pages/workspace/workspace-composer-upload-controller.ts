@@ -81,7 +81,22 @@ type WorkspaceComposerUploadController = {
   }
 }
 
-const PASTED_TEXT_FILENAME = 'Pasted text.txt'
+const pastedTextFilename = (text: string): string => {
+  const safePrefix = Array.from(
+    text
+      .normalize('NFKC')
+      .trim()
+      .replace(/\s+/gu, '-')
+      .replace(/[^\p{L}\p{N}_-]+/gu, '-')
+      .replace(/[-_]+/gu, '-')
+      .replace(/^-+|-+$/gu, '')
+  )
+    .slice(0, 20)
+    .join('')
+    .replace(/-+$/u, '')
+
+  return safePrefix ? `Pastedtext-${safePrefix}.txt` : 'Pastedtext.txt'
+}
 
 const asText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -422,7 +437,7 @@ export const useWorkspaceComposerUploadController = ({
         : [staged as ComposerPastedTextNode]
       const records = nodes.map((node) => ({
         node,
-        file: new File([node.text], PASTED_TEXT_FILENAME, { type: 'text/plain' })
+        file: new File([node.text], pastedTextFilename(node.text), { type: 'text/plain' })
       }))
       const intake = canStageAttachments
         ? planComposerAttachmentIntake(
@@ -445,7 +460,7 @@ export const useWorkspaceComposerUploadController = ({
         const transfer: ComposerUploadTransfer = {
           transferId: crypto.randomUUID(),
           pastedTextId: node.id,
-          name: PASTED_TEXT_FILENAME,
+          name: file.name,
           mimeType: file.type,
           receivedBytes: 0,
           totalBytes: file.size,

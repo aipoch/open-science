@@ -116,12 +116,13 @@ afterEach(() => {
 
 describe('workspace composer controller', () => {
   it('stages a long pasted text node and binds the managed attachment back to its anchor', async () => {
+    const pastedTextName = 'Pastedtext-div-data-pane-body-l.txt'
     const stageLocalFile = vi.fn().mockResolvedValue({
       id: 'upload-paste',
       sessionId: '.pending',
-      name: 'Pasted text.txt',
-      originalName: 'Pasted text.txt',
-      path: '/uploads/Pasted text.txt',
+      name: pastedTextName,
+      originalName: pastedTextName,
+      path: `/uploads/${pastedTextName}`,
       mimeType: 'text/plain',
       size: 7
     })
@@ -130,13 +131,13 @@ describe('workspace composer controller', () => {
     const node: ComposerPastedTextNode = {
       type: 'pasted-text',
       id: 'paste-1',
-      text: 'payload'
+      text: `<div data-pane-body="left">${'x'.repeat(50)}`
     }
 
     act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
     expect(hook.result.current.view.transfers[0]).toMatchObject({
       pastedTextId: 'paste-1',
-      name: 'Pasted text.txt',
+      name: pastedTextName,
       mimeType: 'text/plain'
     })
 
@@ -144,7 +145,8 @@ describe('workspace composer controller', () => {
 
     expect(hook.result.current.view.attachments).toHaveLength(1)
     expect(stageLocalFile.mock.calls[0]?.[0]).toBeInstanceOf(File)
-    expect(stageLocalFile.mock.calls[0]?.[0].name).toBe('Pasted text.txt')
+    expect(stageLocalFile.mock.calls[0]?.[0].name).toBe(pastedTextName)
+    expect(Array.from(pastedTextName.replace(/^Pastedtext-|\.txt$/gu, ''))).toHaveLength(20)
     expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
       type: 'pasted-text',
       id: 'paste-1',
