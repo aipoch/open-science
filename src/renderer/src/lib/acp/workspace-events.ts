@@ -688,7 +688,9 @@ const applyWorkspaceRuntimeEvent = async (
         'cancelled',
         INTERRUPTED_TURN_ERROR,
         terminalPromptMessageId,
-        contextWindowSample
+        contextWindowSample,
+        event.turnUsage,
+        event.modelCallUsage
       )
       return true
     }

@@ -433,12 +433,18 @@ export const projectInterruptedRun = (
   recoveryCause: PersistedSessionResumeRecovery['cause'],
   error: string,
   promptMessageId = session.activeRun?.promptMessageId,
-  contextWindowSample?: RunTerminalContextWindowSample
+  contextWindowSample?: RunTerminalContextWindowSample,
+  turnUsage?: AcpTurnTokenUsage,
+  modelCallUsage?: readonly AcpModelCallUsage[]
 ): ChatSession => {
   const now = Math.max(Date.now(), session.updatedAt + 1)
+  const failedMessages = failStreamingMessages(session.messages, now)
   const messages = appendContextWindowSample(
     session,
-    failStreamingMessages(session.messages, now).map((message) =>
+    (turnUsage
+      ? completeStreamingMessages(failedMessages, promptMessageId, turnUsage, modelCallUsage, now)
+      : failedMessages
+    ).map((message) =>
       message.id === promptMessageId && message.role === 'user'
         ? { ...message, interrupted: true as const, updatedAt: now }
         : message

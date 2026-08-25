@@ -79,7 +79,9 @@ export type SessionRunProjectionActions = {
     cause: PersistedSessionResumeRecovery['cause'],
     error: string,
     promptMessageId?: string,
-    contextWindowSample?: RunTerminalContextWindowSample
+    contextWindowSample?: RunTerminalContextWindowSample,
+    turnUsage?: AcpTurnTokenUsage,
+    modelCallUsage?: readonly AcpModelCallUsage[]
   ) => void
   markResumed: (
     sessionId: string,
@@ -341,10 +343,26 @@ export const createSessionRunProjectionOwner = <
       }))
     },
 
-    interruptRun: (sessionId, cause, error, promptMessageId, contextWindowSample) => {
+    interruptRun: (
+      sessionId,
+      cause,
+      error,
+      promptMessageId,
+      contextWindowSample,
+      turnUsage,
+      modelCallUsage
+    ) => {
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
-          projectInterruptedRun(session, cause, error, promptMessageId, contextWindowSample)
+          projectInterruptedRun(
+            session,
+            cause,
+            error,
+            promptMessageId,
+            contextWindowSample,
+            turnUsage,
+            modelCallUsage
+          )
         )
       }))
     },
