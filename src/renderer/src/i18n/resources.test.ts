@@ -2189,8 +2189,8 @@ describe('Korean binding terminology', () => {
     ],
     ['Star', '별표'],
     [
-      'Choose one .json file up to {{size}}. Credentials are never imported from the file.',
-      '최대 {{size}}인 .json 파일 하나를 선택하세요. 파일에서 자격 증명은 가져오지 않습니다.'
+      'Choose one .json file up to {{size}}. Credential values are never imported from the file.',
+      '최대 {{size}}인 .json 파일 하나를 선택하세요. 파일에서 자격 증명 값은 가져오지 않습니다.'
     ],
     ['Star on GitHub', 'GitHub에서 Star'],
     ['Star {{app}} on GitHub', 'GitHub에서 {{app}}에 Star'],
