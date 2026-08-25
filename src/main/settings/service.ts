@@ -615,8 +615,8 @@ class SettingsService {
   }
 
   // Imports a skill from a public GitHub URL (deduplicated), returning the outcome + refreshed list.
-  async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
-    return this.skills.importSkill(request)
+  async importSkill(request: ImportSkillRequest, signal?: AbortSignal): Promise<ImportSkillResult> {
+    return this.skills.importSkill(request, signal)
   }
 
   async getGitHubTokenStatus(): Promise<GitHubTokenStatus> {
@@ -667,13 +667,16 @@ class SettingsService {
 
   // Lazily loads one selected GitHub candidate. The repository's bounded helper downloads only its
   // SKILL.md; the display label is reconstructed from the public URL and contains no host paths.
-  async previewGitHubSkill(request: PreviewGitHubSkillRequest): Promise<SkillImportPreviewContent> {
-    return this.skills.previewGitHubSkill(request)
+  async previewGitHubSkill(
+    request: PreviewGitHubSkillRequest,
+    signal?: AbortSignal
+  ): Promise<SkillImportPreviewContent> {
+    return this.skills.previewGitHubSkill(request, signal)
   }
 
   // Scans a GitHub repo for importable skill directories (marking already-imported ones).
-  async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
-    return this.skills.scanRepoSkills(request)
+  async scanRepoSkills(request: ScanRepoRequest, signal?: AbortSignal): Promise<ScanRepoResult> {
+    return this.skills.scanRepoSkills(request, signal)
   }
 
   // Compatibility facade for installed Skill discovery, preview, and batch import.

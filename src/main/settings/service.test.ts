@@ -4331,13 +4331,15 @@ describe('SettingsService: skills', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { importFromGitHub, list: () => Promise.resolve([]) } as any
     })
+    const signal = new AbortController().signal
 
-    await service.importSkill({ url: 'https://github.com/o/r/tree/main/skills/demo' })
+    await service.importSkill({ url: 'https://github.com/o/r/tree/main/skills/demo' }, signal)
 
     expect(importFromGitHub).toHaveBeenCalledWith(
       'https://github.com/o/r/tree/main/skills/demo',
       netFetch,
-      ['demo']
+      ['demo'],
+      { signal }
     )
   })
 
@@ -4349,10 +4351,11 @@ describe('SettingsService: skills', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { scanRepo } as any
     })
+    const signal = new AbortController().signal
 
-    await service.scanRepoSkills({ repo: 'o/r' })
+    await service.scanRepoSkills({ repo: 'o/r' }, signal)
 
-    expect(scanRepo).toHaveBeenCalledWith('o/r', netFetch)
+    expect(scanRepo).toHaveBeenCalledWith('o/r', netFetch, { signal })
   })
 
   it('searches GitHub repositories for keyword input without scanning a guessed repo', async () => {
@@ -4414,7 +4417,7 @@ describe('SettingsService: skills', () => {
       sourceLabel: 'github.com/o/r@main/skills/demo',
       body: '# Demo'
     })
-    expect(previewGitHubSkill).toHaveBeenCalledWith(url, netFetch)
+    expect(previewGitHubSkill).toHaveBeenCalledWith(url, netFetch, { signal: undefined })
   })
 })
 
