@@ -725,6 +725,12 @@ colors communicate a successful or failed probe/migration result.
   list is empty, each Project row also shows its artifact count from a complete Project Files index;
   partial index counts are omitted. While those counts are visible, Project Files change events
   refresh the affected Project so index repair and file changes do not leave stale totals.
+- Global search Session rows share the same result skeleton as Artifact rows: a `size-10` leading
+  visual anchor, two text lines, and stable trailing metadata. Artifact rows use their thumbnail and
+  contextual actions; Session rows use a neutral icon tile and show their SQLite-backed `#number` as
+  quiet monospaced tabular text. Do not render a redundant Session type badge. A pure numeric query
+  matches positive Session-number prefixes and ranks an exact number first; nonnumeric queries remain
+  title-only so global search does not expand into message-body or metadata search.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.
 - Inline more actions: default `opacity-0`, then `opacity-100` on hover or focus-visible.
 

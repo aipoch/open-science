@@ -16,17 +16,40 @@ import {
 export type ComposerArtifactNode = { type: 'artifact' } & FileReference
 export type ComposerSessionNode = SessionReference
 
+// Live-draft-only anchor for a long plain-text paste staged as an upload. The text stays beside its
+// logical insertion point so restoring never has to infer a caret offset. This node is filtered at
+// every MessagePart boundary and is never persisted.
+export type ComposerPastedTextNode = {
+  type: 'pasted-text'
+  id: string
+  text: string
+  transferId?: string
+  attachmentId?: string
+}
+
+export type ComposerPastedTextStage = ComposerPastedTextNode | readonly ComposerPastedTextNode[]
+
 export type ComposerNode =
   | { type: 'text'; text: string }
   | { type: 'skill'; id: string; name: string }
   | ComposerArtifactNode
   | ComposerSessionNode
+  | ComposerPastedTextNode
 
 export type ComposerDoc = { nodes: ComposerNode[] }
 
 // Max artifact `@` mentions per message, mirroring the composer upload attachment cap.
 export const MAX_COMPOSER_ARTIFACT_MENTIONS = 10
 export const MAX_COMPOSER_SESSION_MENTIONS = MAX_SESSION_REFERENCES_PER_MESSAGE
+
+export const LONG_PASTE_CHARACTER_THRESHOLD = 10_000
+export const LONG_PASTE_LINE_THRESHOLD = 300
+
+export const pastedTextPreviewName = (text: string): string =>
+  `${Array.from(text.trim().replace(/\s+/gu, ' ')).slice(0, 17).join('')}...`
+
+export const pastedTextAttachmentDomId = (id: string): string =>
+  `composer-pasted-text-attachment-${id}`
 
 // Shared canonical empty document.
 export const emptyDoc: ComposerDoc = { nodes: [] }
@@ -37,12 +60,126 @@ const nodeToText = (node: ComposerNode): string => {
   if (node.type === 'text') return node.text
   if (node.type === 'skill') return `/${node.name}`
   if (node.type === 'session') return `#${node.title}`
+  if (node.type === 'pasted-text') return ''
   if (node.source === 'linked-folder') return `@${node.relativePath}`
   return `@${node.name}`
 }
 
 // Render the document as plain text; chips serialize to their `/` or `@` label.
 export const docToText = (doc: ComposerDoc): string => doc.nodes.map(nodeToText).join('')
+
+// Only durable message parts cross the renderer/runtime boundary. Pasted-text anchors are paired
+// with attachments and deliberately stay out of Session JSON.
+export const docToMessageParts = (doc: ComposerDoc): MessagePart[] =>
+  doc.nodes.filter(
+    (node): node is Exclude<ComposerNode, ComposerPastedTextNode> => node.type !== 'pasted-text'
+  )
+
+export const shouldAttachPastedText = (text: string): boolean => {
+  if (text.length > LONG_PASTE_CHARACTER_THRESHOLD) return true
+  let lines = 1
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === '\n' || (text[index] === '\r' && text[index + 1] !== '\n')) lines += 1
+  }
+  return lines > LONG_PASTE_LINE_THRESHOLD
+}
+
+export type ComposerCaretPosition = { nodeIndex: number; offset: number }
+
+const appendNode = (
+  nodes: ComposerNode[],
+  node: ComposerNode
+): ComposerCaretPosition | undefined => {
+  const previous = nodes.at(-1)
+  if (node.type === 'text' && previous?.type === 'text') {
+    const offset = previous.text.length + node.text.length
+    previous.text += node.text
+    return { nodeIndex: nodes.length - 1, offset }
+  }
+  nodes.push(node.type === 'text' ? { ...node } : node)
+  return node.type === 'text'
+    ? { nodeIndex: nodes.length - 1, offset: node.text.length }
+    : undefined
+}
+
+export const updatePastedTextNode = (
+  doc: ComposerDoc,
+  id: string,
+  update: (node: ComposerPastedTextNode) => ComposerPastedTextNode
+): ComposerDoc => ({
+  nodes: doc.nodes.map((node) =>
+    node.type === 'pasted-text' && node.id === id ? update(node) : node
+  )
+})
+
+export const removePastedTextNode = (doc: ComposerDoc, id: string): ComposerDoc => {
+  const nodes: ComposerNode[] = []
+  for (const node of doc.nodes) {
+    if (node.type === 'pasted-text' && node.id === id) continue
+    appendNode(nodes, node)
+  }
+  return nodes.length === 0 ? emptyDoc : { nodes }
+}
+
+const logicalNodeLength = (node: ComposerNode): number =>
+  node.type === 'pasted-text' ? node.text.length : nodeToText(node).length
+
+export const pastedTextLogicalOffset = (doc: ComposerDoc, id: string): number | undefined => {
+  let offset = 0
+  for (const node of doc.nodes) {
+    if (node.type === 'pasted-text' && node.id === id) return offset
+    offset += logicalNodeLength(node)
+  }
+  return undefined
+}
+
+export const insertPastedTextNodeAtLogicalOffset = (
+  doc: ComposerDoc,
+  pastedText: ComposerPastedTextNode,
+  logicalOffset: number
+): ComposerDoc => {
+  const nodes: ComposerNode[] = []
+  let remaining = logicalOffset
+  let inserted = false
+  for (const node of doc.nodes) {
+    const length = logicalNodeLength(node)
+    if (!inserted && remaining <= length) {
+      if (node.type === 'text' && remaining > 0 && remaining < length) {
+        appendNode(nodes, { type: 'text', text: node.text.slice(0, remaining) })
+        nodes.push(pastedText)
+        appendNode(nodes, { type: 'text', text: node.text.slice(remaining) })
+      } else if (remaining === 0) {
+        nodes.push(pastedText)
+        appendNode(nodes, node)
+      } else {
+        appendNode(nodes, node)
+        nodes.push(pastedText)
+      }
+      inserted = true
+      continue
+    }
+    appendNode(nodes, node)
+    remaining -= length
+  }
+  if (!inserted) nodes.push(pastedText)
+  return { nodes }
+}
+
+export const restorePastedTextNode = (
+  doc: ComposerDoc,
+  id: string
+): { doc: ComposerDoc; caret: ComposerCaretPosition } | undefined => {
+  const nodes: ComposerNode[] = []
+  let caret: ComposerCaretPosition | undefined
+  for (const node of doc.nodes) {
+    if (node.type === 'pasted-text' && node.id === id) {
+      caret = appendNode(nodes, { type: 'text', text: node.text })
+    } else {
+      appendNode(nodes, node)
+    }
+  }
+  return caret ? { doc: { nodes }, caret } : undefined
+}
 
 // Collect picked skill ids in document order, dropping duplicates.
 export const docToSkillIds = (doc: ComposerDoc): string[] => {
@@ -164,6 +301,13 @@ export const docIsEmpty = (doc: ComposerDoc): boolean =>
 const SKILL_MENTION_TYPE = 'skill'
 const ARTIFACT_MENTION_TYPE = 'artifact'
 const SESSION_MENTION_TYPE = 'session'
+const PASTED_TEXT_NODE_TYPE = 'pasted-text'
+export const PASTED_TEXT_CARET_MARKER = '\u2060'
+const pastedTextByAnchor = new WeakMap<HTMLElement, ComposerPastedTextNode>()
+const pastedTextCaretHosts = new WeakSet<Text>()
+
+export const isPastedTextCaretHost = (node: Node): node is Text =>
+  node.nodeType === Node.TEXT_NODE && pastedTextCaretHosts.has(node as Text)
 
 // Read one artifact chip element back into a node; returns null when required attributes are missing.
 const artifactNodeFromEl = (el: HTMLElement): ComposerArtifactNode | null => {
@@ -202,7 +346,11 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
   const nodes: ComposerNode[] = []
   for (const child of Array.from(root.childNodes)) {
     if (child.nodeType === Node.TEXT_NODE) {
-      const text = child.textContent ?? ''
+      const rawText = child.textContent ?? ''
+      const text = isPastedTextCaretHost(child)
+        ? rawText.replace(PASTED_TEXT_CARET_MARKER, '')
+        : rawText
+      if (text === '') continue
       const last = nodes[nodes.length - 1]
       // Merge into a preceding text node so adjacent text collapses.
       if (last && last.type === 'text') last.text += text
@@ -230,6 +378,11 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
         const sessionId = el.getAttribute('data-session-id')
         const title = el.getAttribute('data-session-title')
         if (sessionId && title) nodes.push({ type: 'session', sessionId, title })
+        continue
+      }
+      if (el.getAttribute('data-composer-node-type') === PASTED_TEXT_NODE_TYPE) {
+        const node = pastedTextByAnchor.get(el)
+        if (node) nodes.push({ ...node })
       }
     }
   }
@@ -326,6 +479,48 @@ export const createSessionChip = (node: ComposerSessionNode): HTMLSpanElement =>
   return span
 }
 
+// The compact marker preserves the pasted text's logical position without rendering the payload.
+// A WeakMap lets domToDoc recover the live node while only a short preview reaches the DOM.
+export const createPastedTextAnchor = (node: ComposerPastedTextNode): HTMLSpanElement => {
+  const span = document.createElement('span')
+  span.setAttribute('contenteditable', 'false')
+  span.setAttribute('role', 'button')
+  span.setAttribute('tabindex', '0')
+  span.setAttribute('aria-label', pastedTextPreviewName(node.text))
+  span.setAttribute('aria-controls', pastedTextAttachmentDomId(node.id))
+  span.setAttribute('data-composer-node-type', PASTED_TEXT_NODE_TYPE)
+  span.setAttribute('data-pasted-text-id', node.id)
+  span.className =
+    'mx-0.5 inline-flex h-5 min-w-5 cursor-pointer select-all items-center justify-center rounded border border-border-200 bg-bg-200 px-1 align-middle text-[11px] leading-none text-text-300 transition-[background-color,color,transform,opacity] duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:transition-none motion-reduce:active:translate-y-0'
+  span.title = pastedTextPreviewName(node.text)
+  span.textContent = '…'
+  pastedTextByAnchor.set(span, { ...node })
+  return span
+}
+
+export const createPastedTextCaretHost = (): Text => {
+  const host = document.createTextNode(PASTED_TEXT_CARET_MARKER)
+  pastedTextCaretHosts.add(host)
+  return host
+}
+
+// Refresh renderer-only upload metadata without replacing anchor elements, which would discard the
+// browser selection when an upload finishes binding while the user keeps typing after the paste.
+export const syncPastedTextAnchors = (root: HTMLElement, doc: ComposerDoc): void => {
+  const nodesById = new Map(
+    doc.nodes
+      .filter((node): node is ComposerPastedTextNode => node.type === 'pasted-text')
+      .map((node) => [node.id, node])
+  )
+  for (const anchor of root.querySelectorAll<HTMLElement>(
+    `[data-composer-node-type="${PASTED_TEXT_NODE_TYPE}"]`
+  )) {
+    const id = anchor.getAttribute('data-pasted-text-id')
+    const node = id === null ? undefined : nodesById.get(id)
+    if (node) pastedTextByAnchor.set(anchor, { ...node })
+  }
+}
+
 // Replace the root's content with the doc rendered as text nodes and chip spans.
 export const applyDocToDom = (root: HTMLElement, doc: ComposerDoc): void => {
   root.textContent = ''
@@ -333,6 +528,8 @@ export const applyDocToDom = (root: HTMLElement, doc: ComposerDoc): void => {
     if (node.type === 'text') root.appendChild(document.createTextNode(node.text))
     else if (node.type === 'skill') root.appendChild(createSkillChip(node))
     else if (node.type === 'artifact') root.appendChild(createArtifactChip(node))
-    else root.appendChild(createSessionChip(node))
+    else if (node.type === 'session') root.appendChild(createSessionChip(node))
+    else root.appendChild(createPastedTextAnchor(node))
   }
+  if (doc.nodes.at(-1)?.type === 'pasted-text') root.appendChild(createPastedTextCaretHost())
 }

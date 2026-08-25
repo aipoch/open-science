@@ -3314,5 +3314,6 @@
   "Removed packages": "パッケージを削除しました",
   "Removed {{count}} packages_other": "{{count}} 個のパッケージを削除しました",
   "Bioconductor": "Bioconductor",
-  "Related changes": "関連する変更"
+  "Related changes": "関連する変更",
+  "Show in text field": "テキスト欄に表示"
 }

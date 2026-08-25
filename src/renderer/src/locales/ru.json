@@ -3712,5 +3712,6 @@
   "The file could not be verified after saving. Reopen it and try again.": "Не удалось проверить файл после сохранения. Откройте его заново и повторите попытку.",
   "There is not enough storage space to save this file.": "Недостаточно места в хранилище для сохранения этого файла.",
   "This file has a newer version.": "У этого файла есть более новая версия.",
-  "View latest version": "Открыть последнюю версию"
+  "View latest version": "Открыть последнюю версию",
+  "Show in text field": "Показать в текстовом поле"
 }

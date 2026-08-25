@@ -6,22 +6,35 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 
 import type { UploadStagingApi } from './composer-upload-transfer'
-import type { ComposerDoc } from './composer/composer-doc'
+import { docToText, type ComposerDoc, type ComposerPastedTextNode } from './composer/composer-doc'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
 
+const pastedDoc = (node: ComposerPastedTextNode): ComposerDoc => ({
+  nodes: [{ type: 'text', text: 'before ' }, node, { type: 'text', text: ' after' }]
+})
+
 const deferred = <Value>(): {
   promise: Promise<Value>
   resolve: (value: Value) => void
+  reject: (error: unknown) => void
 } => {
   let resolve!: (value: Value) => void
-  const promise = new Promise<Value>((accept) => {
+  let reject!: (error: unknown) => void
+  const promise = new Promise<Value>((accept, decline) => {
     resolve = accept
+    reject = decline
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
+}
+
+const flushAsyncWork = async (): Promise<void> => {
+  await act(async () => {
+    for (let index = 0; index < 8; index += 1) await Promise.resolve()
+  })
 }
 
 const uploads = (
@@ -102,6 +115,482 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
+  it('stages a long pasted text node and binds the managed attachment back to its anchor', async () => {
+    const pastedTextName = 'Pastedtext-div-data-pane-body-l.txt'
+    const stageLocalFile = vi.fn().mockResolvedValue({
+      id: 'upload-paste',
+      sessionId: '.pending',
+      name: pastedTextName,
+      originalName: pastedTextName,
+      path: `/uploads/${pastedTextName}`,
+      mimeType: 'text/plain',
+      size: 7
+    })
+    const hook = renderController(uploads(stageLocalFile))
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = {
+      type: 'pasted-text',
+      id: 'paste-1',
+      text: `<div data-pane-body="left">${'x'.repeat(50)}`
+    }
+
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    expect(hook.result.current.view.transfers[0]).toMatchObject({
+      pastedTextId: 'paste-1',
+      name: pastedTextName,
+      mimeType: 'text/plain'
+    })
+
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.attachments).toHaveLength(1)
+    expect(stageLocalFile.mock.calls[0]?.[0]).toBeInstanceOf(File)
+    expect(stageLocalFile.mock.calls[0]?.[0].name).toBe(pastedTextName)
+    expect(Array.from(pastedTextName.replace(/^Pastedtext-|\.txt$/gu, ''))).toHaveLength(20)
+    expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
+      type: 'pasted-text',
+      id: 'paste-1',
+      attachmentId: 'upload-paste',
+      transferId: undefined
+    })
+    expect(docToText(hook.result.current.view.doc)).toBe('before  after')
+  })
+
+  it('stages copied pasted-text anchors as one independent upload batch', async () => {
+    const stageLocalFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'upload-a',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/a.txt',
+        mimeType: 'text/plain',
+        size: 5
+      })
+      .mockResolvedValueOnce({
+        id: 'upload-b',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/b.txt',
+        mimeType: 'text/plain',
+        size: 5
+      })
+    const hook = renderController(uploads(stageLocalFile))
+    mounted.push(hook)
+    const pasteA: ComposerPastedTextNode = { type: 'pasted-text', id: 'copy-a', text: 'alpha' }
+    const pasteB: ComposerPastedTextNode = { type: 'pasted-text', id: 'copy-b', text: 'bravo' }
+    const doc: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'before ' },
+        pasteA,
+        { type: 'text', text: ' middle ' },
+        pasteB,
+        { type: 'text', text: ' after' }
+      ]
+    }
+
+    act(() => hook.result.current.actions.stagePastedText(doc, [pasteA, pasteB]))
+
+    expect(hook.result.current.view.transfers).toHaveLength(2)
+    expect(hook.result.current.view.transfers.map((transfer) => transfer.pastedTextId)).toEqual([
+      'copy-a',
+      'copy-b'
+    ])
+
+    await flushAsyncWork()
+
+    expect(stageLocalFile).toHaveBeenCalledTimes(2)
+    expect(hook.result.current.view.attachments.map((attachment) => attachment.id)).toEqual([
+      'upload-a',
+      'upload-b'
+    ])
+    expect(
+      hook.result.current.view.doc.nodes
+        .filter((node): node is ComposerPastedTextNode => node.type === 'pasted-text')
+        .map((node) => ({ id: node.id, attachmentId: node.attachmentId }))
+    ).toEqual([
+      { id: 'copy-a', attachmentId: 'upload-a' },
+      { id: 'copy-b', attachmentId: 'upload-b' }
+    ])
+  })
+
+  it('restores staged pasted text at its exact position and Cmd+Z converts it back', async () => {
+    const uploadApi = uploads(
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          id: 'upload-paste',
+          sessionId: '.pending',
+          name: 'Pasted text.txt',
+          originalName: 'Pasted text.txt',
+          path: '/uploads/Pasted text.txt',
+          mimeType: 'text/plain',
+          size: 7
+        })
+        .mockResolvedValueOnce({
+          id: 'upload-paste-restaged',
+          sessionId: '.pending',
+          name: 'Pasted text.txt',
+          originalName: 'Pasted text.txt',
+          path: '/uploads/Pasted text-restaged.txt',
+          mimeType: 'text/plain',
+          size: 7
+        })
+    )
+    const hook = renderController(uploadApi)
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = {
+      type: 'pasted-text',
+      id: 'paste-1',
+      text: 'payload'
+    }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.attachments).toHaveLength(1)
+    act(() => hook.result.current.actions.restorePastedText('paste-1'))
+
+    expect(hook.result.current.view.doc).toEqual(textDoc('before payload after'))
+    expect(hook.result.current.view.attachments).toEqual([])
+    expect(hook.result.current.view.caretRequest?.position).toEqual({
+      nodeIndex: 0,
+      offset: 'before payload'.length
+    })
+    expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/Pasted text.txt' })
+
+    act(() => expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(true))
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
+      type: 'pasted-text',
+      id: 'paste-1',
+      attachmentId: 'upload-paste-restaged'
+    })
+    expect(docToText(hook.result.current.view.doc)).toBe('before  after')
+    expect(hook.result.current.view.attachments[0]?.id).toBe('upload-paste-restaged')
+
+    hook.selectDraft('session-b')
+    expect(hook.result.current.view.caretRequest).toBeUndefined()
+  })
+
+  it('restores the original text inline when staging a converted paste fails', async () => {
+    const hook = renderController(uploads(vi.fn().mockRejectedValue(new Error('disk full'))))
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = {
+      type: 'pasted-text',
+      id: 'paste-1',
+      text: 'payload'
+    }
+
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.transfers).toEqual([])
+    expect(hook.result.current.view.doc).toEqual(textDoc('before payload after'))
+    expect(hook.result.current.view.attachments).toEqual([])
+    expect(hook.result.current.view.error).toBe('disk full')
+  })
+
+  it('keeps the long paste inline when the composer attachment cap is already full', () => {
+    const blocked = deferred<UploadedAttachment | null>()
+    const hook = renderController(uploads(vi.fn(() => blocked.promise)))
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.actions.stageFiles(
+        Array.from({ length: 10 }, (_, index) => new File(['x'], `file-${index}.txt`))
+      )
+    )
+    expect(hook.result.current.view.transfers).toHaveLength(10)
+    const node: ComposerPastedTextNode = {
+      type: 'pasted-text',
+      id: 'paste-1',
+      text: 'payload'
+    }
+
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+
+    expect(hook.result.current.view.doc).toEqual(textDoc('before payload after'))
+    expect(hook.result.current.view.error).toBe('You can attach up to 10 files')
+  })
+
+  it('finishes a pasted-text upload in the draft that started it after a session switch', async () => {
+    const staged = deferred<UploadedAttachment | null>()
+    const hook = renderController(uploads(vi.fn(() => staged.promise)))
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = {
+      type: 'pasted-text',
+      id: 'paste-1',
+      text: 'payload'
+    }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    hook.selectDraft('session-b')
+
+    await act(async () => {
+      staged.resolve({
+        id: 'upload-paste',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/Pasted text.txt',
+        mimeType: 'text/plain',
+        size: 7
+      })
+      await staged.promise
+      await Promise.resolve()
+    })
+
+    expect(hook.result.current.view.attachments).toEqual([])
+    hook.selectDraft('session-a')
+    expect(hook.result.current.view.attachments[0]?.id).toBe('upload-paste')
+    expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
+      type: 'pasted-text',
+      id: 'paste-1',
+      attachmentId: 'upload-paste'
+    })
+  })
+
+  it('undoes a pasted attachment close by re-staging it, but yields after ordinary typing', async () => {
+    const stageLocalFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'upload-first',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/first.txt',
+        mimeType: 'text/plain',
+        size: 7
+      })
+      .mockResolvedValueOnce({
+        id: 'upload-restaged',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/restaged.txt',
+        mimeType: 'text/plain',
+        size: 7
+      })
+    const uploadApi = uploads(stageLocalFile)
+    const hook = renderController(uploadApi)
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = {
+      type: 'pasted-text',
+      id: 'paste-1',
+      text: 'payload'
+    }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    await flushAsyncWork()
+    expect(hook.result.current.view.attachments).toHaveLength(1)
+
+    const firstAttachment = hook.result.current.view.attachments[0]
+    act(() => hook.result.current.actions.removeAttachment(firstAttachment))
+    expect(hook.result.current.view.doc).toEqual(textDoc('before  after'))
+    expect(hook.result.current.view.attachments).toEqual([])
+
+    act(() => expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(true))
+    await flushAsyncWork()
+    expect(hook.result.current.view.attachments[0]?.id).toBe('upload-restaged')
+    expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
+      type: 'pasted-text',
+      id: 'paste-1',
+      attachmentId: 'upload-restaged'
+    })
+    expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/first.txt' })
+
+    act(() => hook.result.current.actions.removeAttachment(hook.result.current.view.attachments[0]))
+    act(() => hook.result.current.actions.changeDoc(textDoc('new typing')))
+    expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(false)
+  })
+
+  it('undoes an atomic pasted-text anchor deletion emitted by the editor', async () => {
+    const stageLocalFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'upload-first',
+        sessionId: '.pending',
+        name: 'Pastedtext-payload.txt',
+        originalName: 'Pastedtext-payload.txt',
+        path: '/uploads/first.txt',
+        mimeType: 'text/plain',
+        size: 7
+      })
+      .mockResolvedValueOnce({
+        id: 'upload-restaged',
+        sessionId: '.pending',
+        name: 'Pastedtext-payload.txt',
+        originalName: 'Pastedtext-payload.txt',
+        path: '/uploads/restaged.txt',
+        mimeType: 'text/plain',
+        size: 7
+      })
+    const hook = renderController(uploads(stageLocalFile))
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = {
+      type: 'pasted-text',
+      id: 'paste-1',
+      text: 'payload'
+    }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    await flushAsyncWork()
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('before  after')))
+    expect(hook.result.current.view.attachments).toEqual([])
+
+    act(() => expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(true))
+    await flushAsyncWork()
+    expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
+      type: 'pasted-text',
+      id: 'paste-1',
+      attachmentId: 'upload-restaged'
+    })
+  })
+
+  it('undoes only the closed paste when another staged paste falls back inline', async () => {
+    const failedSecond = deferred<UploadedAttachment | null>()
+    const stageLocalFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'upload-a',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/a.txt',
+        mimeType: 'text/plain',
+        size: 5
+      })
+      .mockImplementationOnce(() => failedSecond.promise)
+      .mockResolvedValueOnce({
+        id: 'upload-a-restaged',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/a-restaged.txt',
+        mimeType: 'text/plain',
+        size: 5
+      })
+    const hook = renderController(uploads(stageLocalFile))
+    mounted.push(hook)
+    const pasteA: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-a', text: 'alpha' }
+    const pasteB: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-b', text: 'bravo' }
+
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(pasteA), pasteA))
+    await flushAsyncWork()
+    const boundA = hook.result.current.view.doc.nodes.find(
+      (node): node is ComposerPastedTextNode => node.type === 'pasted-text'
+    )!
+    act(() =>
+      hook.result.current.actions.stagePastedText(
+        {
+          nodes: [
+            { type: 'text', text: 'before ' },
+            boundA,
+            { type: 'text', text: ' middle ' },
+            pasteB,
+            { type: 'text', text: ' after' }
+          ]
+        },
+        pasteB
+      )
+    )
+    act(() => hook.result.current.actions.removeAttachment(hook.result.current.view.attachments[0]))
+    failedSecond.reject(new Error('disk full'))
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.doc.nodes.some((node) => node.type === 'pasted-text')).toBe(
+      false
+    )
+    expect(docToText(hook.result.current.view.doc)).toBe('before  middle bravo after')
+
+    act(() => expect(hook.result.current.actions.undoPastedTextRemoval()).toBe(true))
+    await flushAsyncWork()
+    expect(docToText(hook.result.current.view.doc)).toBe('before  middle bravo after')
+    expect(hook.result.current.view.doc.nodes).toContainEqual(
+      expect.objectContaining({
+        type: 'pasted-text',
+        id: 'paste-a',
+        attachmentId: 'upload-a-restaged'
+      })
+    )
+    expect(hook.result.current.view.doc.nodes).not.toContainEqual(
+      expect.objectContaining({ type: 'pasted-text', id: 'paste-b' })
+    )
+  })
+
+  it('deletes an existing pasted attachment when a new long paste replaces its anchor', async () => {
+    const stageLocalFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'upload-old',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/old.txt',
+        mimeType: 'text/plain',
+        size: 3
+      })
+      .mockResolvedValueOnce({
+        id: 'upload-new',
+        sessionId: '.pending',
+        name: 'Pasted text.txt',
+        originalName: 'Pasted text.txt',
+        path: '/uploads/new.txt',
+        mimeType: 'text/plain',
+        size: 3
+      })
+    const uploadApi = uploads(stageLocalFile)
+    const hook = renderController(uploadApi)
+    mounted.push(hook)
+    const oldPaste: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-old', text: 'old' }
+    const newPaste: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-new', text: 'new' }
+
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(oldPaste), oldPaste))
+    await flushAsyncWork()
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(newPaste), newPaste))
+    await flushAsyncWork()
+
+    expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/old.txt' })
+    expect(hook.result.current.view.attachments.map((attachment) => attachment.id)).toEqual([
+      'upload-new'
+    ])
+    expect(hook.result.current.view.doc.nodes).toContainEqual(
+      expect.objectContaining({ type: 'pasted-text', id: 'paste-new' })
+    )
+    expect(hook.result.current.view.doc.nodes).not.toContainEqual(
+      expect.objectContaining({ type: 'pasted-text', id: 'paste-old' })
+    )
+  })
+
+  it('reuses the attachment slot when a new long paste replaces an anchor at the cap', () => {
+    const blocked = deferred<UploadedAttachment | null>()
+    const hook = renderController(uploads(vi.fn(() => blocked.promise)))
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.actions.stageFiles(
+        Array.from({ length: 9 }, (_, index) => new File(['x'], `file-${index}.txt`))
+      )
+    )
+    const oldPaste: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-old', text: 'old' }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(oldPaste), oldPaste))
+    expect(hook.result.current.view.transfers).toHaveLength(10)
+
+    const newPaste: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-new', text: 'new' }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(newPaste), newPaste))
+
+    expect(hook.result.current.view.transfers).toHaveLength(10)
+    expect(
+      hook.result.current.view.transfers.some((item) => item.pastedTextId === 'paste-old')
+    ).toBe(false)
+    expect(
+      hook.result.current.view.transfers.some((item) => item.pastedTextId === 'paste-new')
+    ).toBe(true)
+    expect(hook.result.current.view.doc.nodes).toContainEqual(
+      expect.objectContaining({ type: 'pasted-text', id: 'paste-new' })
+    )
+    expect(hook.result.current.view.error).toBeNull()
+  })
+
   it('commits a completed upload to the draft that started it after selection changes', async () => {
     const staged = deferred<UploadedAttachment | null>()
     const hook = renderController(uploads(vi.fn(() => staged.promise)))

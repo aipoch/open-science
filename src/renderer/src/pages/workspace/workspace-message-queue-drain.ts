@@ -1,4 +1,4 @@
-import { docToArtifactRefs } from './composer/composer-doc'
+import { docToArtifactRefs, docToMessageParts } from './composer/composer-doc'
 import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import {
   isQueueLiveTurn,
@@ -86,7 +86,7 @@ const dispatchQueuedSession = (
         text: item.text,
         attachments: item.snapshot.attachments,
         referencedArtifacts: docToArtifactRefs(item.snapshot.doc),
-        parts: item.snapshot.doc.nodes,
+        parts: docToMessageParts(item.snapshot.doc),
         cwd: item.cwd,
         projectId: item.projectId,
         permissionProfile: item.permissionProfile,
@@ -231,7 +231,9 @@ const sendQueuedItemNow = async (
             : {}),
           ...(referencedArtifacts.length > 0 ? { referencedArtifacts } : {}),
           ...(item.forcedSkillIds.length > 0 ? { forcedSkillIds: item.forcedSkillIds } : {}),
-          ...(item.snapshot.doc.nodes.length > 0 ? { parts: item.snapshot.doc.nodes } : {})
+          ...(docToMessageParts(item.snapshot.doc).length > 0
+            ? { parts: docToMessageParts(item.snapshot.doc) }
+            : {})
         })
         if (steered.injected) {
           const latest = owner.itemsFor(sessionId)

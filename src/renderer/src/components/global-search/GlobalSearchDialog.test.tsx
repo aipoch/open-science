@@ -77,6 +77,7 @@ beforeEach(() => {
         id: 'session-a',
         projectId: 'project-a',
         title: 'Python 绘制 sin 函数图',
+        number: 12,
         cwd: '/workspace',
         status: 'idle',
         createdAt: Date.now(),
@@ -88,6 +89,7 @@ beforeEach(() => {
         id: 'session-b',
         projectId: 'project-b',
         title: 'Other sin session',
+        number: 123,
         cwd: '/workspace',
         status: 'idle',
         createdAt: Date.now() - 1,
@@ -180,7 +182,19 @@ describe('GlobalSearchDialog', () => {
 
     expect(document.body.textContent).toContain('Recent artifacts')
     expect(document.body.textContent).toContain('Recent sessions')
+    const sessionRow = [...document.body.querySelectorAll('[role="option"]')].find((element) =>
+      element.querySelector('[data-testid="global-search-session-icon"]')
+    ) as HTMLElement
+    expect(sessionRow.textContent).toContain('#12')
+    expect(sessionRow.querySelector('[data-testid="global-search-session-icon"]')).not.toBeNull()
+    expect(sessionRow.querySelector('.font-mono.tabular-nums')?.textContent).toBe('#12')
     expect(document.body.textContent).toContain('New session')
+    const newSession = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (element) => element.textContent?.includes('New session')
+    )
+    const newSessionIcon = newSession?.querySelector('[data-testid="global-search-command-icon"]')
+    expect(newSessionIcon?.classList.contains('size-10')).toBe(true)
+    expect(newSessionIcon?.classList.contains('shrink-0')).toBe(true)
     const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
     expect(input?.placeholder).toBe('Search this project…')
     expect(input?.parentElement?.textContent).toContain('Alpha')
@@ -281,6 +295,88 @@ describe('GlobalSearchDialog', () => {
       projectId: 'project-a'
     })
     expect(usePreviewWorkbenchStore.getState().fileDialogItem?.selectedVersionId).toBeUndefined()
+  })
+
+  it('finds Sessions by number while keeping the number visible as trailing metadata', async () => {
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
+      primary: { items: [], totalCount: 0 },
+      other: [],
+      isIndexComplete: true
+    })
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set
+    await act(async () => {
+      valueSetter?.call(input, '12')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 180))
+    })
+
+    const sessionRows = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].filter(
+      (element) => element.querySelector('[data-testid="global-search-session-icon"]')
+    )
+    expect(sessionRows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining('Python 绘制 sin 函数图'),
+      expect.stringContaining('Other sin session')
+    ])
+    expect(sessionRows[0].querySelector('.font-mono.tabular-nums')?.textContent).toBe('#12')
+    expect(sessionRows[1].querySelector('.font-mono.tabular-nums')?.textContent).toBe('#123')
+  })
+
+  it('selects an exact Session number from another Project before a local prefix match', async () => {
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
+      primary: { items: [], totalCount: 0 },
+      other: [],
+      isIndexComplete: true
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-a'
+          ? { ...session, number: 123 }
+          : session.id === 'session-b'
+            ? { ...session, number: 12 }
+            : session
+      )
+    }))
+    const onOpenChange = vi.fn()
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set
+    await act(async () => {
+      valueSetter?.call(input, '12')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 180))
+    })
+
+    const selectedOption = document.body.querySelector<HTMLElement>(
+      '[role="option"][aria-selected="true"]'
+    )
+    expect(selectedOption?.textContent).toContain('Other sin session')
+    expect(selectedOption?.textContent).toContain('Beta')
+    expect(selectedOption?.textContent).toContain('#12')
+
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-b')
+    expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
   it('waits for Artifact search before showing a complete keyword result set', async () => {
@@ -919,6 +1015,9 @@ describe('GlobalSearchDialog', () => {
     const newProject = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
       (element) => element.textContent?.includes('New project')
     )
+    const newProjectIcon = newProject?.querySelector('[data-testid="global-search-command-icon"]')
+    expect(newProjectIcon?.classList.contains('size-10')).toBe(true)
+    expect(newProjectIcon?.classList.contains('shrink-0')).toBe(true)
     await act(async () => newProject?.click())
     expect(useNavigationStore.getState()).toMatchObject({
       view: 'home',
