@@ -1290,7 +1290,7 @@ describe('Russian catalog quality', () => {
       'Open Science exited before this copy finished. Your current data is untouched. Discard the incomplete copy to use this location again.',
       'Open Science завершил работу до окончания копирования. Текущие данные не изменены. Удалите неполную копию, чтобы снова использовать это расположение.'
     ],
-    ['By {{publisher}}', 'Автор: {{publisher}}'],
+    ['Publisher: {{publisher}}', 'Издатель: {{publisher}}'],
     ['{{agent}} cannot be accessed.', '{{agent}} недоступен.'],
     [
       '{{fileName}}: unsupported file — upload a .md file or a .zip / .skill bundle.',

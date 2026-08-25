@@ -636,8 +636,13 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     </span>
                   ) : null}
                   <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
-                    {t('By {{publisher}}', { publisher: release.publisher.name })}
+                    {t('Publisher: {{publisher}}', { publisher: release.publisher.name })}
                   </span>
+                  {release.author ? (
+                    <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
+                      {t('Author: {{author}}', { author: release.author })}
+                    </span>
+                  ) : null}
                   <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
                     v{release.version}
                   </span>
@@ -1129,8 +1134,13 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                         </span>
                       )}
                       <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
-                        {item.publisher.name}
+                        {t('Publisher: {{publisher}}', { publisher: item.publisher.name })}
                       </span>
+                      {item.author ? (
+                        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
+                          {t('Author: {{author}}', { author: item.author })}
+                        </span>
+                      ) : null}
                       <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
                         v{item.version}
                       </span>

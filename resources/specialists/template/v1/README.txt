@@ -5,13 +5,18 @@ This ZIP is an editable Specialist template. manifest.json is application-genera
 
 One. Package layout
 
-The ZIP root may contain:
+The ZIP root must contain the two required JSON files and may contain documentation or other
+attachments:
 
   manifest.json   Application metadata. Required. Do not edit.
   specialist.json Your content. Required. The only file to edit.
   README.txt      This guide. Optional; safe to delete.
   LICENSE         Optional.
+  THIRD_PARTY_NOTICES.txt Optional third-party license notices.
   skills/         Optional. Bundled Skills.
+
+Only files under skills/<skill-id>/ are installed with a bundled Skill. Other attachments are
+scanned for archive safety and then ignored after preview; package scripts are never executed.
 
 The recommended layout keeps the package files at the ZIP root. The importer also accepts a ZIP
 with exactly one wrapper directory, such as a Finder-created archive, and removes that wrapper
@@ -82,8 +87,6 @@ missing and malformed bundled Skills.
 - JSON invalid: check quotes, commas, and UTF-8 encoding.
 - Required file missing: keep manifest.json and specialist.json at the standard ZIP root, or
   inside one wrapper directory.
-- Unsupported top-level content: remove files outside the allowed list; do not mix root-level
-  files with a wrapper directory.
 - Skill document missing / Skill name mismatch: add SKILL.md under each skills/<skill-id>/ and
   make its frontmatter name match the directory name; otherwise that Skill is ignored with a
   warning.
@@ -104,15 +107,18 @@ Open Science 自定义 Specialist 导入指南
 
 一、包结构
 
-标准布局下，ZIP 根目录可包含以下内容：
+ZIP 根目录必须包含两个 JSON 文件，也可以包含文档或其他附件：
 
   manifest.json   应用生成的元数据，必填，不要修改
   specialist.json 你填写的内容，必填，唯一需要编辑的文件
   README.txt      本指南，可选，可删除
   LICENSE         可选
+  THIRD_PARTY_NOTICES.txt 可选，存放第三方许可证声明
   skills/         可选，存放随包携带的 Skill
 
-推荐不要在 ZIP 外再套一层文件夹，也不要添加其他顶层文件。应用也接受只包含一个外层文件夹的 ZIP（例如 Finder 创建的归档），导入时会自动去掉该层；不要同时混用根目录文件和外层文件夹。.DS_Store、__MACOSX、Thumbs.db 等常见归档元数据会被应用自动忽略。
+只有 skills/<skill-id>/ 下的文件会随 bundled Skill 安装。其他附件仅接受归档安全扫描和预览，之后会被忽略；应用绝不会执行包内脚本。
+
+推荐不要在 ZIP 外再套一层文件夹。应用也接受只包含一个外层文件夹的 ZIP（例如 Finder 创建的归档），导入时会自动去掉该层；不要同时混用根目录文件和外层文件夹。.DS_Store、__MACOSX、Thumbs.db 等常见归档元数据会被应用自动忽略。
 
 二、填写 specialist.json
 
@@ -176,8 +182,6 @@ bundled Skill。
 - JSON invalid：检查引号、逗号和 UTF-8 编码。
 - Required file missing：确认 manifest.json 和 specialist.json 位于标准 ZIP 根目录，
   或位于唯一的外层文件夹内。
-- Unsupported top-level content：删除不在允许列表中的顶层文件；不要同时混用根目录
-  文件和外层文件夹。
 - Skill document missing / Skill name mismatch：为每个 skills/<skill-id>/ 添加 SKILL.md，
   并让 frontmatter 的 name 与目录名一致；否则该 Skill 会被 warning 忽略。
 - Skill conflict：目标应用已有同 ID 但内容或版本不同的 Skill；修改 Skill ID 或删除冲突后重试。

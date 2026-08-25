@@ -1048,7 +1048,7 @@ describe('SpecialistsPanel', () => {
     )
     expect(marketplaceGroup?.textContent).toContain('RNA Reviewer')
     expect(document.body.textContent).toContain('Marketplace')
-    expect(document.body.textContent).toContain('By Open Science')
+    expect(document.body.textContent).toContain('Publisher: Open Science')
     expect(document.body.textContent).toContain('Version 1.0.1')
     expect(document.body.textContent).not.toContain('Unchanged locally')
     expect(document.body.textContent).not.toContain('Imported ZIP')
