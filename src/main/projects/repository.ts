@@ -173,24 +173,19 @@ class ProjectRepository {
     }
 
     const client = await this.getClient()
-    const current = await client.project.findUnique({ where: { id: request.id } })
-    if (!current || current.deletedAt !== null) throw new Error('Project not found.')
-
     const expectedArchivedAt = request.expectedArchivedAt
-    const result = await client.project.updateMany({
-      where: {
-        id: request.id,
-        deletedAt: null,
-        archivedAt: expectedArchivedAt === null ? null : new Date(expectedArchivedAt)
-      },
-      data: {
-        archivedAt: request.archived ? new Date(archivedAt) : null,
-        // Prisma otherwise updates this @updatedAt field. Administrative visibility changes must
-        // not make a Project look newer than its underlying work.
-        updatedAt: current.updatedAt
-      }
-    })
-    if (result.count !== 1) {
+    // Prisma's @updatedAt automation also runs for administrative changes. Updating only the archive
+    // column in SQL preserves the activity timestamp without reading and later restoring a stale value.
+    const updated = await client.$executeRaw`
+      UPDATE "Project"
+      SET "archivedAt" = ${request.archived ? new Date(archivedAt) : null}
+      WHERE "id" = ${request.id}
+        AND "deletedAt" IS NULL
+        AND "archivedAt" IS ${expectedArchivedAt === null ? null : new Date(expectedArchivedAt)}
+    `
+    if (updated !== 1) {
+      const current = await client.project.findUnique({ where: { id: request.id } })
+      if (!current || current.deletedAt !== null) throw new Error('Project not found.')
       throw new Error('Project archive state changed elsewhere.')
     }
 

@@ -936,6 +936,21 @@ describe('application database (integration)', () => {
     expect(pinned.pinned).toBe(true)
     expect(pinned.updatedAt).toBe(renamed.updatedAt)
 
+    const archivedAt = renamed.updatedAt + 1000
+    const archived = await repository.updateArchive(
+      { id: created.id, archived: true, expectedArchivedAt: null },
+      archivedAt
+    )
+    expect(archived.archivedAt).toBe(archivedAt)
+    expect(archived.updatedAt).toBe(renamed.updatedAt)
+
+    const restored = await repository.updateArchive(
+      { id: created.id, archived: false, expectedArchivedAt: archivedAt },
+      archivedAt + 1
+    )
+    expect(restored.archivedAt).toBeUndefined()
+    expect(restored.updatedAt).toBe(renamed.updatedAt)
+
     // Any project is deletable — there is no protected default.
     await repository.delete(created.id)
     expect(await repository.get(created.id)).toBeNull()
@@ -987,6 +1002,43 @@ describe('application database (integration)', () => {
         expectedUpdatedAt: staleSnapshot!.updatedAt
       })
     ).rejects.toThrow('Project changed elsewhere.')
+  })
+
+  it('does not roll back activity time when a concurrent edit races with archiving', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-archive-race-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+    const created = await repository.create({ name: 'Before edit' })
+    const concurrentUpdatedAt = new Date('2099-01-01T00:00:00.000Z')
+    const archivedAt = created.updatedAt + 1000
+
+    await client.$executeRawUnsafe(`
+      CREATE TRIGGER "simulate_concurrent_project_edit"
+      BEFORE UPDATE OF "archivedAt" ON "Project"
+      FOR EACH ROW
+      BEGIN
+        UPDATE "Project"
+        SET "name" = 'Edited concurrently',
+            "updatedAt" = '${concurrentUpdatedAt.toISOString()}'
+        WHERE "id" = OLD."id";
+      END
+    `)
+
+    await expect(
+      repository.updateArchive(
+        { id: created.id, archived: true, expectedArchivedAt: null },
+        archivedAt
+      )
+    ).resolves.toMatchObject({
+      name: 'Edited concurrently',
+      archivedAt,
+      updatedAt: concurrentUpdatedAt.getTime()
+    })
   })
 
   // Verifies the runtime FINDING_TABLE_DDL + migration guard are byte-compatible with the Prisma
