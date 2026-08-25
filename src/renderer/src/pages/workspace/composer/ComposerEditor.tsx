@@ -207,6 +207,20 @@ const clipboardNodesFromSelection = (
   return nodes.some((node) => node.type === 'pasted-text') ? nodes : undefined
 }
 
+const writeComposerClipboardSelection = (
+  root: HTMLElement,
+  doc: ComposerDoc,
+  event: React.ClipboardEvent<HTMLDivElement>
+): boolean => {
+  const nodes = clipboardNodesFromSelection(root, doc, event.target)
+  if (!nodes) return false
+  const fragment: ComposerClipboardFragment = { version: 1, nodes }
+  event.clipboardData.setData(PASTED_TEXT_CLIPBOARD_TYPE, JSON.stringify(fragment))
+  event.clipboardData.setData('text/plain', nodes.map((node) => node.text).join(''))
+  event.preventDefault()
+  return true
+}
+
 const parseComposerClipboardFragment = (value: string): ComposerClipboardFragment | undefined => {
   if (!value) return undefined
   try {
@@ -649,12 +663,31 @@ export const ComposerEditor = ({
   const handleCopy = (event: React.ClipboardEvent<HTMLDivElement>): void => {
     const root = editorRef.current
     if (!root) return
-    const nodes = clipboardNodesFromSelection(root, doc, event.target)
-    if (!nodes) return
-    const fragment: ComposerClipboardFragment = { version: 1, nodes }
-    event.clipboardData.setData(PASTED_TEXT_CLIPBOARD_TYPE, JSON.stringify(fragment))
-    event.clipboardData.setData('text/plain', nodes.map((node) => node.text).join(''))
-    event.preventDefault()
+    writeComposerClipboardSelection(root, doc, event)
+  }
+
+  const handleCut = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    const root = editorRef.current
+    if (!root || !writeComposerClipboardSelection(root, doc, event)) return
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0) return
+    const range = selection.getRangeAt(0)
+    if (range.collapsed) {
+      const marker = (event.target as HTMLElement).closest?.(
+        '[data-composer-node-type="pasted-text"]'
+      )
+      if (!marker || !root.contains(marker) || !marker.parentNode) return
+      const parent = marker.parentNode
+      const offset = Array.prototype.indexOf.call(parent.childNodes, marker) as number
+      marker.remove()
+      range.setStart(parent, offset)
+    } else {
+      range.deleteContents()
+    }
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    emitDocFromDom()
   }
 
   // Replace the active `/query` token with a skill chip, then close the popup.
@@ -710,6 +743,7 @@ export const ComposerEditor = ({
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
         onCopy={handleCopy}
+        onCut={handleCut}
         onCompositionStart={() => {
           composingRef.current = true
         }}

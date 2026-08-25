@@ -710,6 +710,34 @@ describe('ComposerEditor', () => {
     expect(editor().textContent).not.toContain('bravo')
   })
 
+  it('cuts a focused pasted-text marker with its full payload', () => {
+    const onDocChange = vi.fn()
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'text', text: 'before ' },
+          { type: 'pasted-text', id: 'paste-a', text: 'full payload' },
+          { type: 'text', text: ' after' }
+        ]
+      },
+      onDocChange
+    })
+    const marker = editor().querySelector<HTMLElement>('[data-pasted-text-id="paste-a"]')!
+    setCaret(editor(), 1)
+    const clipboard = new Map<string, string>()
+    const cut = new Event('cut', { bubbles: true, cancelable: true })
+    Object.defineProperty(cut, 'clipboardData', {
+      value: { setData: (type: string, value: string) => clipboard.set(type, value) }
+    })
+
+    act(() => marker.dispatchEvent(cut))
+
+    expect(cut.defaultPrevented).toBe(true)
+    expect(clipboard.get('text/plain')).toBe('full payload')
+    expect(clipboard.get('application/x-open-science-composer-fragment')).toContain('full payload')
+    expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'before  after' }] })
+  })
+
   it('uses custom Cmd+Z only while a pasted-text removal is undoable', () => {
     const onUndoPastedTextRemoval = vi.fn(() => true)
     renderEditor({ onUndoPastedTextRemoval })
