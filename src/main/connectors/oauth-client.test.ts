@@ -214,6 +214,7 @@ describe('PersistentOAuthClientProvider', () => {
 
     for (const authorizationUrl of [
       'https://auth.example.test/authorize',
+      'http://localhost:4000/authorize',
       'http://127.0.0.2:4000/authorize',
       'http://[::1]:4000/authorize'
     ]) {
@@ -221,6 +222,7 @@ describe('PersistentOAuthClientProvider', () => {
     }
     expect(openExternal.mock.calls).toEqual([
       ['https://auth.example.test/authorize'],
+      ['http://localhost:4000/authorize'],
       ['http://127.0.0.2:4000/authorize'],
       ['http://[::1]:4000/authorize']
     ])
@@ -228,6 +230,7 @@ describe('PersistentOAuthClientProvider', () => {
     openExternal.mockClear()
     for (const authorizationUrl of [
       'http://auth.example.test/authorize',
+      'http://localhost.example.test/authorize',
       'http://127.example.test/authorize',
       'file:///tmp/oauth-authorization'
     ]) {

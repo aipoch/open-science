@@ -270,7 +270,9 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
       authorizationUrl.protocol !== 'https:' &&
       !(
         authorizationUrl.protocol === 'http:' &&
-        ((isIP(hostname) === 4 && hostname.startsWith('127.')) || hostname === '[::1]')
+        (hostname === 'localhost' ||
+          (isIP(hostname) === 4 && hostname.startsWith('127.')) ||
+          hostname === '[::1]')
       )
     ) {
       throw new Error('OAuth authorization URL must use HTTPS or loopback HTTP.')
