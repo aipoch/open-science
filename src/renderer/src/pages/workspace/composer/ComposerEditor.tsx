@@ -596,9 +596,10 @@ export const ComposerEditor = ({
       !event.shiftKey &&
       !event.repeat &&
       !event.nativeEvent.isComposing &&
-      onUndo?.()
+      onUndo
     ) {
       event.preventDefault()
+      onUndo()
       return
     }
     // While either mention popup is open it owns Enter/arrow keys; leave them to its document listener.

@@ -762,7 +762,7 @@ describe('ComposerEditor', () => {
     expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'before  after' }] })
   })
 
-  it('routes Cmd+Z through Composer undo and yields when there is nothing to undo', () => {
+  it('routes Cmd+Z only through Composer undo, including after its history is empty', () => {
     const onUndo = vi.fn(() => true)
     renderEditor({ onUndo })
     const handled = new KeyboardEvent('keydown', {
@@ -783,7 +783,8 @@ describe('ComposerEditor', () => {
       cancelable: true
     })
     act(() => editor().dispatchEvent(native))
-    expect(native.defaultPrevented).toBe(false)
+    expect(native.defaultPrevented).toBe(true)
+    expect(onUndo).toHaveBeenCalledTimes(2)
   })
 
   it('places the caret immediately after restored pasted text', () => {

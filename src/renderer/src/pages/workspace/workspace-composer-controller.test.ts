@@ -138,6 +138,8 @@ describe('workspace composer controller', () => {
     act(() => expect(hook.result.current.actions.undo()).toBe(true))
 
     expect(hook.result.current.view.doc).toEqual(emptyDoc)
+    expect(hook.result.current.actions.undo()).toBe(false)
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
   })
 
   it('undoes a pasted image after its attachment finishes staging', async () => {
