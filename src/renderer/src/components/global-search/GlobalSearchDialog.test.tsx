@@ -258,6 +258,55 @@ describe('GlobalSearchDialog', () => {
     expect(sessionRows[1].querySelector('.font-mono.tabular-nums')?.textContent).toBe('#123')
   })
 
+  it('selects an exact Session number from another Project before a local prefix match', async () => {
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
+      primary: { items: [], totalCount: 0 },
+      other: [],
+      isIndexComplete: true
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-a'
+          ? { ...session, number: 123 }
+          : session.id === 'session-b'
+            ? { ...session, number: 12 }
+            : session
+      )
+    }))
+    const onOpenChange = vi.fn()
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set
+    await act(async () => {
+      valueSetter?.call(input, '12')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 180))
+    })
+
+    const selectedOption = document.body.querySelector<HTMLElement>(
+      '[role="option"][aria-selected="true"]'
+    )
+    expect(selectedOption?.textContent).toContain('Other sin session')
+    expect(selectedOption?.textContent).toContain('Beta')
+    expect(selectedOption?.textContent).toContain('#12')
+
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-b')
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
   it('waits for Artifact search before showing a complete keyword result set', async () => {
     await act(async () => {
       root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)

@@ -99,6 +99,40 @@ describe('global search catalog', () => {
     ])
   })
 
+  it('promotes an exact Session-number match from another Project ahead of local prefixes', () => {
+    const result = searchSessionTitles({
+      sessions: [
+        { ...sessions(1)[0], id: 'local-prefix', number: 123, updatedAt: 3_000 },
+        {
+          ...sessions(1, 'project-b')[0],
+          id: 'cross-project-exact',
+          number: 12,
+          updatedAt: 1_000
+        },
+        {
+          ...sessions(1, 'project-b')[0],
+          id: 'cross-project-prefix',
+          number: 120,
+          updatedAt: 2_000
+        }
+      ],
+      projectNames: new Map([
+        ['project-a', 'Alpha'],
+        ['project-b', 'Beta']
+      ]),
+      primaryProjectId: 'project-a',
+      query: '12',
+      visiblePrimaryCount: 8
+    })
+
+    expect(result.primary.map((session) => session.id)).toEqual([
+      'cross-project-exact',
+      'local-prefix'
+    ])
+    expect(result.primary[0].projectName).toBe('Beta')
+    expect(result.other.map((session) => session.id)).toEqual(['cross-project-prefix'])
+  })
+
   it('returns recent non-pending sessions in recency order with a five-row cap', () => {
     const recent = getRecentSessions(
       [

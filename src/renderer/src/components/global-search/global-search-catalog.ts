@@ -79,8 +79,19 @@ export const searchSessionTitles = ({
       }
       return compareByRecency(left, right)
     })
+  const promotedExactMatch =
+    primaryProjectId && numericQuery
+      ? matches.find(
+          (session) =>
+            session.projectId !== primaryProjectId &&
+            String(validSessionNumber(session.number)) === numericQuery
+        )
+      : undefined
   const primaryMatches = primaryProjectId
-    ? matches.filter((session) => session.projectId === primaryProjectId)
+    ? [
+        ...(promotedExactMatch ? [promotedExactMatch] : []),
+        ...matches.filter((session) => session.projectId === primaryProjectId)
+      ]
     : matches
 
   return {
@@ -90,7 +101,9 @@ export const searchSessionTitles = ({
     primaryTotalCount: primaryMatches.length,
     other: primaryProjectId
       ? matches
-          .filter((session) => session.projectId !== primaryProjectId)
+          .filter(
+            (session) => session.projectId !== primaryProjectId && session !== promotedExactMatch
+          )
           .slice(0, OTHER_PROJECT_RESULT_LIMIT)
           .map((session) => toResult(session, projectNames))
       : []
