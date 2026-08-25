@@ -43,6 +43,9 @@ type Workflow = {
 
 const workflowText = readFileSync(join(process.cwd(), '.github/workflows/pr-gate.yml'), 'utf8')
 const workflow = load(workflowText) as Workflow
+const packageManifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
+  scripts?: Record<string, string>
+}
 const manifest = JSON.parse(
   readFileSync(join(process.cwd(), 'scripts/ci/change-impact.json'), 'utf8')
 ) as { bundleOrder: string[]; laneBundles: Record<string, string>; laneOrder: string[] }
@@ -310,7 +313,7 @@ describe('PR Gate workflow', () => {
     expect(manifest.laneOrder).toContain('i18n')
   })
 
-  it('runs and enforces the Linux version storage contract for bootstrap full and selective plans', () => {
+  it('runs and enforces the Linux version storage contracts for full and selective plans', () => {
     const contract = workflow.jobs.static.steps?.find(
       ({ name }) => name === 'Test immutable version storage on Linux'
     )
@@ -321,18 +324,53 @@ describe('PR Gate workflow', () => {
     expect(contract).toMatchObject({
       id: 'version_storage_linux',
       'continue-on-error': true,
-      run: 'npx vitest run src/main/managed-file-versions/version-file-operator.test.ts'
+      run: expect.stringContaining(
+        'src/main/managed-file-versions/version-file-operator.test.ts scripts/run-version-file-operator-electron-contract.test.ts'
+      )
     })
     expect(contract?.if).toContain("mode == 'full'")
-    expect(contract?.if).toContain("'version_storage_linux'")
+    expect(contract?.if).toContain("'version_file_operator_contract'")
     expect(enforce?.env).toMatchObject({
       VERSION_STORAGE_LINUX_OUTCOME: '${{ steps.version_storage_linux.outcome }}',
       VERSION_STORAGE_LINUX_REQUIRED:
-        "${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_storage_linux') }}"
+        "${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_file_operator_contract') }}"
     })
     expect(enforce?.run).toContain(
       'require_success version_storage_linux "$VERSION_STORAGE_LINUX_OUTCOME" "$VERSION_STORAGE_LINUX_REQUIRED"'
     )
+  })
+
+  it('runs the version file operator contract in a real Electron main process on every OS', () => {
+    const command = 'npm run test:version-file-operator:electron'
+    const requiredCondition =
+      "${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_file_operator_contract') }}"
+
+    expect(packageManifest.scripts?.['test:version-file-operator:electron']).toBe(
+      'node scripts/run-version-file-operator-electron-contract.mjs'
+    )
+
+    for (const [jobId, platform, outcomeVariable] of [
+      ['static', 'linux', 'VERSION_STORAGE_ELECTRON_LINUX_OUTCOME'],
+      ['macos_e2e', 'macos', 'VERSION_STORAGE_ELECTRON_MACOS_OUTCOME'],
+      ['windows_core', 'windows', 'VERSION_STORAGE_ELECTRON_WINDOWS_OUTCOME']
+    ] as const) {
+      const job = workflow.jobs[jobId]
+      const contract = job.steps?.find(({ id }) => id === `version_storage_electron_${platform}`)
+      const enforce = job.steps?.find(({ name }) => name?.startsWith('Enforce selected'))
+
+      expect(contract, `${jobId} must execute the Electron main-process contract`).toMatchObject({
+        if: requiredCondition,
+        'continue-on-error': true,
+        run: command
+      })
+      expect(enforce?.env).toMatchObject({
+        [outcomeVariable]: `\${{ steps.version_storage_electron_${platform}.outcome }}`,
+        VERSION_STORAGE_ELECTRON_REQUIRED: requiredCondition
+      })
+      expect(enforce?.run).toContain(
+        `require_success version_storage_electron_${platform} "$${outcomeVariable}" "$VERSION_STORAGE_ELECTRON_REQUIRED"`
+      )
+    }
   })
 
   it('shards only full macOS Module tests and merges coverage into the stable unit bundle', () => {

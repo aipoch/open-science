@@ -16,6 +16,7 @@
     "lint": "eslint --cache .",
     "test": "vitest run",
     "test:module": "node scripts/ci/module-test-impact.mjs module",
+    "test:version-file-operator:electron": "node scripts/run-version-file-operator-electron-contract.mjs",
     "test:affected": "node scripts/ci/module-test-impact.mjs affected",
     "test:affected:explain": "node scripts/ci/module-test-impact.mjs affected --explain",
     "build:e2e": "node --max-old-space-size=4096 node_modules/electron-vite/bin/electron-vite.js build",

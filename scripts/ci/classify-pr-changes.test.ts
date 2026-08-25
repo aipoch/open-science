@@ -356,14 +356,21 @@ describe('pull request change classification', () => {
 
   it.each([
     ['source', 'src/main/managed-file-versions/version-file-operator.ts'],
-    ['contract', 'src/main/managed-file-versions/version-file-operator.test.ts']
-  ])('selects the Linux immutable-version contract for operator %s changes', (_label, path) => {
-    const plan = classifyChanges([{ path, status: 'modified' }])
+    ['contract', 'src/main/managed-file-versions/version-file-operator.test.ts'],
+    ['Electron harness', 'scripts/version-file-operator-electron-contract.ts'],
+    ['Electron runner', 'scripts/run-version-file-operator-electron-contract.mjs'],
+    ['Electron runner contract', 'scripts/run-version-file-operator-electron-contract.test.ts']
+  ])(
+    'selects every immutable-version contract platform for operator %s changes',
+    (_label, path) => {
+      const plan = classifyChanges([{ path, status: 'modified' }])
 
-    expect(plan.roots).toContain('version_file_operator')
-    expect(plan.lanes).toContain('version_storage_linux')
-    expect(plan.reasonChains).toContain(`${path} -> version_file_operator`)
-  })
+      expect(plan.roots).toContain('version_file_operator')
+      expect(plan.lanes).toContain('version_file_operator_contract')
+      expect(plan.bundles).toEqual(expect.arrayContaining(['static', 'windows_core', 'macos_e2e']))
+      expect(plan.reasonChains).toContain(`${path} -> version_file_operator`)
+    }
+  )
 
   it.each([
     ['renderer view', 'src/renderer/src/components/Button.tsx'],

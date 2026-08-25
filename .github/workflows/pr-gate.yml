@@ -406,9 +406,14 @@ jobs:
         run: npx vitest run src/renderer/src/i18n/resources.test.ts
       - name: Test immutable version storage on Linux
         id: version_storage_linux
-        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_storage_linux') }}
+        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_file_operator_contract') }}
         continue-on-error: true
-        run: npx vitest run src/main/managed-file-versions/version-file-operator.test.ts
+        run: npx vitest run src/main/managed-file-versions/version-file-operator.test.ts scripts/run-version-file-operator-electron-contract.test.ts
+      - name: Test immutable version storage in Electron on Linux
+        id: version_storage_electron_linux
+        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_file_operator_contract') }}
+        continue-on-error: true
+        run: npm run test:version-file-operator:electron
       - name: Enforce selected static checks
         if: ${{ always() }}
         shell: bash
@@ -423,7 +428,9 @@ jobs:
           TYPECHECKS_OUTCOME: ${{ steps.typechecks.outcome }}
           TYPECHECK_WEB_OUTCOME: ${{ steps.typechecks.outputs.web }}
           VERSION_STORAGE_LINUX_OUTCOME: ${{ steps.version_storage_linux.outcome }}
-          VERSION_STORAGE_LINUX_REQUIRED: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_storage_linux') }}
+          VERSION_STORAGE_LINUX_REQUIRED: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_file_operator_contract') }}
+          VERSION_STORAGE_ELECTRON_LINUX_OUTCOME: ${{ steps.version_storage_electron_linux.outcome }}
+          VERSION_STORAGE_ELECTRON_REQUIRED: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_file_operator_contract') }}
         run: |
           set -euo pipefail
           failed=0
@@ -448,6 +455,7 @@ jobs:
           check interface_contracts "$INTERFACE_CONTRACTS_OUTCOME"
           check cli_sdk "$CLI_SDK_OUTCOME"
           check i18n "$I18N_OUTCOME"
+          require_success version_storage_electron_linux "$VERSION_STORAGE_ELECTRON_LINUX_OUTCOME" "$VERSION_STORAGE_ELECTRON_REQUIRED"
           require_success version_storage_linux "$VERSION_STORAGE_LINUX_OUTCOME" "$VERSION_STORAGE_LINUX_REQUIRED"
           exit "$failed"
 
@@ -687,6 +695,11 @@ jobs:
           --maxWorkers=1
           --testTimeout=30000
           --hookTimeout=30000
+      - name: Test immutable version storage in Electron on Windows
+        id: version_storage_electron_windows
+        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_file_operator_contract') }}
+        continue-on-error: true
+        run: npm run test:version-file-operator:electron
       - name: Enforce selected Windows core checks
         if: ${{ always() }}
         shell: bash
@@ -695,6 +708,8 @@ jobs:
           WINDOWS_RUNTIME_OUTCOME: ${{ steps.windows_runtime.outcome }}
           WINDOWS_SERVICE_TIMEOUT_OUTCOME: ${{ steps.windows_service_timeout.outcome }}
           WINDOWS_SHELL_OUTCOME: ${{ steps.windows_shell.outcome }}
+          VERSION_STORAGE_ELECTRON_WINDOWS_OUTCOME: ${{ steps.version_storage_electron_windows.outcome }}
+          VERSION_STORAGE_ELECTRON_REQUIRED: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_file_operator_contract') }}
         run: |
           set -euo pipefail
           failed=0
@@ -704,10 +719,17 @@ jobs:
               failed=1
             fi
           }
+          require_success() {
+            if [[ "$3" == "true" && "$2" != "success" ]]; then
+              echo "$1 required success but ended with $2" >&2
+              failed=1
+            fi
+          }
           check windows_runtime "$WINDOWS_RUNTIME_OUTCOME"
           check windows_shell "$WINDOWS_SHELL_OUTCOME"
           check windows_service_timeout "$WINDOWS_SERVICE_TIMEOUT_OUTCOME"
           check windows_path "$WINDOWS_PATH_OUTCOME"
+          require_success version_storage_electron_windows "$VERSION_STORAGE_ELECTRON_WINDOWS_OUTCOME" "$VERSION_STORAGE_ELECTRON_REQUIRED"
           exit "$failed"
 
   macos_e2e:
@@ -737,6 +759,11 @@ jobs:
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'build') }}
         continue-on-error: true
         run: npm run build:web
+      - name: Test immutable version storage in Electron on macOS
+        id: version_storage_electron_macos
+        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_file_operator_contract') }}
+        continue-on-error: true
+        run: npm run test:version-file-operator:electron
       - name: Run functional journeys
         id: e2e_functional_macos
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos') }}
@@ -811,6 +838,8 @@ jobs:
           E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_macos.outcome }}
           E2E_VISUAL_OUTCOME: ${{ steps.e2e_visual_macos.outcome }}
           E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_macos.outcome }}
+          VERSION_STORAGE_ELECTRON_MACOS_OUTCOME: ${{ steps.version_storage_electron_macos.outcome }}
+          VERSION_STORAGE_ELECTRON_REQUIRED: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'version_file_operator_contract') }}
         run: |
           set -euo pipefail
           failed=0
@@ -820,12 +849,19 @@ jobs:
               failed=1
             fi
           }
+          require_success() {
+            if [[ "$3" == "true" && "$2" != "success" ]]; then
+              echo "$1 required success but ended with $2" >&2
+              failed=1
+            fi
+          }
           check build_electron "$BUILD_ELECTRON_OUTCOME"
           check build_web "$BUILD_WEB_OUTCOME"
           check e2e_functional_macos "$E2E_FUNCTIONAL_OUTCOME"
           check e2e_workspace_macos "$E2E_WORKSPACE_OUTCOME"
           check e2e_accessibility_macos "$E2E_ACCESSIBILITY_OUTCOME"
           check e2e_visual_macos "$E2E_VISUAL_OUTCOME"
+          require_success version_storage_electron_macos "$VERSION_STORAGE_ELECTRON_MACOS_OUTCOME" "$VERSION_STORAGE_ELECTRON_REQUIRED"
           exit "$failed"
 
   windows_e2e:

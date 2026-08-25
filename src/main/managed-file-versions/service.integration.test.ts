@@ -925,6 +925,120 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     }
   )
 
+  it.each(['artifact', 'upload'] as const)(
+    'returns a conflict before staging normalized no-op %s bytes when the expected head is stale',
+    async (source) => {
+      const fixture = await createFixture(source)
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const versionCountBefore =
+        source === 'artifact'
+          ? await client.artifactVersion.count({ where: { artifactId: fixture.fileId } })
+          : await client.uploadVersion.count({ where: { uploadFileId: fixture.fileId } })
+
+      const result = await service.saveTextEdit({
+        source,
+        projectId: 'project-1',
+        fileId: fixture.fileId,
+        basedOnVersionId: fixture.versionIds[0],
+        expectedHeadVersionId: fixture.versionIds[0],
+        // The v1 format restores the BOM and CRLF, so these editor bytes normalize to v1 exactly.
+        content: 'first\nline\n',
+        operationId: `${source}-stale-noop-operation`
+      })
+
+      expect(result).toMatchObject({
+        kind: 'conflict',
+        expectedHeadVersionId: fixture.versionIds[0],
+        actualHead: { id: fixture.versionIds[1], versionNumber: 2 }
+      })
+      expect(await client.managedFileVersionWriteOperation.count()).toBe(0)
+      expect(
+        source === 'artifact'
+          ? await client.artifactVersion.count({ where: { artifactId: fixture.fileId } })
+          : await client.uploadVersion.count({ where: { uploadFileId: fixture.fileId } })
+      ).toBe(versionCountBefore)
+      await expect(
+        readdir(join(storageRoot, `${source}s`, 'project-1', 'session-1', fixture.fileId))
+      ).resolves.toEqual(['versions'])
+    }
+  )
+
+  it.each(['artifact', 'upload'] as const)(
+    'linearizes a normalized no-op %s save against a concurrent head advance',
+    async (source) => {
+      const fixture = await createFixture(source)
+      const operator = new NodeVersionFileOperator({ storageRoot })
+      const openImmutable = operator.openImmutable.bind(operator)
+      let resumeBaseRead!: () => void
+      let reportBaseRead!: () => void
+      const baseReadPaused = new Promise<void>((resolve) => {
+        reportBaseRead = resolve
+      })
+      const baseReadResume = new Promise<void>((resolve) => {
+        resumeBaseRead = resolve
+      })
+      let shouldPauseBaseRead = true
+      vi.spyOn(operator, 'openImmutable').mockImplementation(async (storageRef, integrity) => {
+        if (shouldPauseBaseRead && storageRef.endsWith(`/${fixture.versionIds[0]}/content`)) {
+          shouldPauseBaseRead = false
+          reportBaseRead()
+          await baseReadResume
+        }
+        return openImmutable(storageRef, integrity)
+      })
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client),
+        versionFileOperator: operator
+      })
+
+      const staleNoop = service.saveTextEdit({
+        source,
+        projectId: 'project-1',
+        fileId: fixture.fileId,
+        basedOnVersionId: fixture.versionIds[0],
+        expectedHeadVersionId: fixture.versionIds[1],
+        content: 'first\nline\n',
+        operationId: `${source}-racing-noop-operation`
+      })
+      await baseReadPaused
+
+      const concurrentSave = await service
+        .saveTextEdit({
+          source,
+          projectId: 'project-1',
+          fileId: fixture.fileId,
+          basedOnVersionId: fixture.versionIds[1],
+          expectedHeadVersionId: fixture.versionIds[1],
+          content: 'concurrent change\n',
+          operationId: `${source}-concurrent-operation`
+        })
+        .finally(resumeBaseRead)
+      expect(concurrentSave).toMatchObject({ kind: 'created', replayed: false })
+      if (concurrentSave.kind !== 'created')
+        throw new Error('Expected concurrent Version creation.')
+
+      await expect(staleNoop).resolves.toMatchObject({
+        kind: 'conflict',
+        expectedHeadVersionId: fixture.versionIds[1],
+        actualHead: { id: concurrentSave.version.id, versionNumber: 3 }
+      })
+      await expect(
+        client.managedFileVersionWriteOperation.findMany({
+          select: { operationId: true, state: true }
+        })
+      ).resolves.toEqual([{ operationId: `${source}-concurrent-operation`, state: 'published' }])
+      expect(
+        source === 'artifact'
+          ? await client.artifactVersion.count({ where: { artifactId: fixture.fileId } })
+          : await client.uploadVersion.count({ where: { uploadFileId: fixture.fileId } })
+      ).toBe(3)
+    }
+  )
+
   it.each([
     ['CONTAINS_NUL', 'unsafe\0content'],
     ['EDIT_LIMIT_EXCEEDED', 'x'.repeat(MANAGED_TEXT_EDIT_MAX_BYTES + 1)]
@@ -1119,7 +1233,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
   })
 
-  it('replays a failed partial publication on the journaled destination without leaving an orphan', async () => {
+  it('replays a failed partial publication with only a scrubbed deletion tombstone', async () => {
     const fixture = await createFixture('upload')
     let corruptPublication = true
     const versionFileOperator = new NodeVersionFileOperator({
@@ -1197,10 +1311,13 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
     await expect(
       client.managedFileVersionWriteOperation.findUniqueOrThrow({ where: { operationId } })
-    ).resolves.toMatchObject({ state: 'published', contentStorageKey: firstPlan.storageRef })
-    await expect(readFile(firstPath)).resolves.toEqual(Buffer.from(request.content))
-    await expect(readFile(secondPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(readdir(dirname(firstPath))).resolves.toEqual([firstPlan.storedFilename])
+    ).resolves.toMatchObject({ state: 'published', contentStorageKey: secondPlan.storageRef })
+    await expect(readFile(firstPath)).resolves.toHaveLength(0)
+    await expect(readFile(secondPath)).resolves.toEqual(Buffer.from(request.content))
+    const parentEntries = await readdir(dirname(firstPath))
+    expect(parentEntries).toHaveLength(2)
+    expect(parentEntries).toContain(firstPlan.storedFilename)
+    expect(parentEntries).toContain(secondPlan.storedFilename)
   })
 
   it('does not delete an existing destination when every no-clobber publication collides', async () => {
@@ -2013,7 +2130,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         where: { operationId: 'zz-paged-terminal' }
       })
     ).resolves.toMatchObject({ state: 'failed' })
-    await expect(readFile(terminalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(terminalPath)).resolves.toHaveLength(0)
   })
 
   it('marks corrupt staged publication bytes failed and never advances the head', async () => {
@@ -2143,7 +2260,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         getClient: () => Promise.resolve(client)
       }).recoverPendingWrites()
 
-      await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(finalPath)).resolves.toHaveLength(0)
       await expect(
         client.managedFileVersionWriteOperation.findUniqueOrThrow({
           where: { operationId }
@@ -2251,7 +2368,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
     await service.recoverPendingWrites()
     expect(removalAttempts).toBe(2)
-    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(finalPath)).resolves.toHaveLength(0)
     await expect(
       client.managedFileVersionWriteOperation.findUniqueOrThrow({ where: { operationId } })
     ).resolves.toMatchObject({ state: 'failed', errorCode: 'CONTENT_INTEGRITY_FAILED' })

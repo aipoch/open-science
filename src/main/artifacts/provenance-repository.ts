@@ -138,6 +138,11 @@ type JournalRecoveryPlan = {
   plannedFile: PlannedFile
 }
 
+type ProjectLogicalFileOwner = {
+  sessionId: string
+  logicalFilename: string
+}
+
 const assertSafeSegment = (value: string, label: string): string => {
   if (!SAFE_SEGMENT_PATTERN.test(value)) {
     throw new Error(`Invalid ${label}: ${value}`)
@@ -162,40 +167,30 @@ const hasServerInferredProducer = (evidenceJson: string): boolean => {
 
 const journalRecoveryPlan = (
   operator: VersionFileOperator,
-  operation: ProjectVersionWriteOperation
+  operation: ProjectVersionWriteOperation,
+  owner: ProjectLogicalFileOwner | undefined
 ): JournalRecoveryPlan | undefined => {
-  if (operation.source !== 'artifact' && operation.source !== 'upload') return undefined
-  const filenameMatch = /^v[a-z0-9]{8}_(.+)$/u.exec(operation.storedFilename)
-  if (!filenameMatch) return undefined
-  const segments = operation.contentStorageKey.split('/')
-  if (
-    segments.length !== 6 ||
-    segments[0] !== `${operation.source}s` ||
-    segments[1] !== operation.projectId ||
-    segments[3] !== operation.sourceFileId ||
-    segments[4] !== 'managed-versions' ||
-    segments[5] !== operation.storedFilename
-  ) {
-    return undefined
-  }
-  const logicalFilename = filenameMatch[1]!
+  if ((operation.source !== 'artifact' && operation.source !== 'upload') || !owner) return undefined
+  // Storage references remain operator-owned. The database supplies the logical owner fields needed
+  // to reproduce a plan without teaching project deletion about any adapter's physical layout.
   for (let candidateIndex = 0; candidateIndex < VERSION_FILE_CANDIDATE_LIMIT; candidateIndex += 1) {
     const input: PlanImmutableInput = {
       operationId: operation.operationId,
       scope: {
         source: operation.source,
         projectId: operation.projectId,
-        sessionId: segments[2]!,
+        sessionId: owner.sessionId,
         logicalFileId: operation.sourceFileId
       },
-      logicalFilename,
+      logicalFilename: owner.logicalFilename,
       candidateIndex
     }
     const plannedFile = operator.planImmutable(input)
     if (
       plannedFile.storageRef === operation.contentStorageKey &&
       plannedFile.storedFilename === operation.storedFilename &&
-      `v${plannedFile.versionToken}` === operation.storageTag
+      `v${plannedFile.versionToken}` === operation.storageTag &&
+      plannedFile.candidateIndex === candidateIndex
     ) {
       return { input, plannedFile }
     }
@@ -781,31 +776,53 @@ class ArtifactProvenanceRepository {
   async deleteProjectProvenance(projectIdValue: string): Promise<void> {
     const projectId = assertSafeSegment(projectIdValue, 'project id')
     const client = await this.options.getClient()
-    const [artifactVersions, uploadVersions, versionWriteOperations] = await Promise.all([
-      client.artifactVersion.findMany({
-        where: { artifact: { is: { projectId } } },
-        select: { contentStorageKey: true, sizeBytes: true, checksum: true }
-      }),
-      client.uploadVersion.findMany({
-        where: { uploadFile: { is: { projectId } } },
-        select: { contentStorageKey: true, sizeBytes: true, checksum: true }
-      }),
-      client.managedFileVersionWriteOperation.findMany({
-        where: { projectId, source: { in: ['artifact', 'upload'] } },
-        orderBy: { operationId: 'asc' },
-        select: {
-          operationId: true,
-          source: true,
-          projectId: true,
-          sourceFileId: true,
-          storageTag: true,
-          storedFilename: true,
-          contentStorageKey: true,
-          sizeBytes: true,
-          checksum: true
-        }
+    const [artifactVersions, uploadVersions, versionWriteOperations, artifactOwners, uploadOwners] =
+      await Promise.all([
+        client.artifactVersion.findMany({
+          where: { artifact: { is: { projectId } } },
+          select: { contentStorageKey: true, sizeBytes: true, checksum: true }
+        }),
+        client.uploadVersion.findMany({
+          where: { uploadFile: { is: { projectId } } },
+          select: { contentStorageKey: true, sizeBytes: true, checksum: true }
+        }),
+        client.managedFileVersionWriteOperation.findMany({
+          where: { projectId, source: { in: ['artifact', 'upload'] } },
+          orderBy: { operationId: 'asc' },
+          select: {
+            operationId: true,
+            source: true,
+            projectId: true,
+            sourceFileId: true,
+            storageTag: true,
+            storedFilename: true,
+            contentStorageKey: true,
+            sizeBytes: true,
+            checksum: true
+          }
+        }),
+        client.artifactLineage.findMany({
+          where: { projectId },
+          select: { id: true, sessionId: true, filename: true }
+        }),
+        client.uploadFile.findMany({
+          where: { projectId },
+          select: { id: true, sessionId: true, filename: true, originalFilename: true }
+        })
+      ])
+    const journalOwners = new Map<string, ProjectLogicalFileOwner>()
+    for (const owner of artifactOwners) {
+      journalOwners.set(`artifact:${owner.id}`, {
+        sessionId: owner.sessionId,
+        logicalFilename: owner.filename
       })
-    ])
+    }
+    for (const owner of uploadOwners) {
+      journalOwners.set(`upload:${owner.id}`, {
+        sessionId: owner.sessionId,
+        logicalFilename: owner.originalFilename || owner.filename
+      })
+    }
 
     // Version rows remain the retry authority until every immutable byte has been removed. A write
     // journal may share that storage reference only when both authorities agree on its integrity.
@@ -854,7 +871,11 @@ class ArtifactProvenanceRepository {
       // Legacy journals have no durable claim and can only be removed when their complete bytes
       // match. Current journals use the operator claim to distinguish owned partial writes from
       // unrelated occupants before any incomplete content is removed.
-      const recoveryPlan = journalRecoveryPlan(this.versionFileOperator, operation)
+      const recoveryPlan = journalRecoveryPlan(
+        this.versionFileOperator,
+        operation,
+        journalOwners.get(`${operation.source}:${operation.sourceFileId}`)
+      )
       if (!recoveryPlan) {
         await this.versionFileOperator.removeImmutable(
           operation.contentStorageKey,

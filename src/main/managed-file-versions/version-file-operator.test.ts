@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   open as openFile,
+  readdir,
   readFile,
   rename as renameFile,
   rm,
@@ -85,6 +86,255 @@ describe('NodeVersionFileOperator', () => {
     await expect(
       readFile(join(cleanupRoot, ...plannedFile.storageRef.split('/')))
     ).resolves.toEqual(content)
+  })
+
+  it('publishes when the configured file system does not support hard links', async () => {
+    const module = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const operator = new module.NodeVersionFileOperator({
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        link: async () => {
+          throw Object.assign(new Error('hard links are not supported'), { code: 'ENOTSUP' })
+        }
+      }
+    })
+    const planInput = {
+      operationId: 'operation-no-hard-links',
+      scope: {
+        source: 'upload' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'upload-1'
+      },
+      logicalFilename: 'notes.txt',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(planInput)
+    const content = Buffer.from('publish without hard links')
+
+    await expect(
+      operator.publishImmutable({ ...planInput, plannedFile, content })
+    ).resolves.toMatchObject({
+      storageRef: plannedFile.storageRef,
+      sizeBytes: content.byteLength,
+      checksum: createHash('sha256').update(content).digest('hex')
+    })
+  })
+
+  it('recovers a publication interrupted after the final exclusive create', async () => {
+    const module = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    let interruptAfterCreate = true
+    const operator = new module.NodeVersionFileOperator({
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        open: async (...args) => {
+          const handle = await openFile(...args)
+          if (!interruptAfterCreate || typeof args[1] !== 'string' || !args[1].startsWith('wx')) {
+            return handle
+          }
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === 'stat') {
+                return async () => {
+                  interruptAfterCreate = false
+                  throw Object.assign(new Error('interrupted after create'), { code: 'EIO' })
+                }
+              }
+              const value = Reflect.get(target, property, target)
+              return typeof value === 'function' ? value.bind(target) : value
+            }
+          })
+        }
+      }
+    })
+    const planInput = {
+      operationId: 'operation-interrupted-after-final-create',
+      scope: {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'artifact-1'
+      },
+      logicalFilename: 'README.md',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(planInput)
+    const content = Buffer.from('retry the same operation after cleanup')
+    const expectedIntegrity = {
+      sizeBytes: content.byteLength,
+      checksum: createHash('sha256').update(content).digest('hex')
+    }
+
+    await expect(
+      operator.publishImmutable({ ...planInput, plannedFile, content })
+    ).rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
+    const inspection = await operator.inspectRecovery({
+      ...planInput,
+      plannedFile,
+      expectedIntegrity
+    })
+    expect(inspection).toMatchObject({ state: 'incomplete' })
+    if (inspection.state !== 'incomplete') return
+
+    await operator.removeIncomplete({
+      ...planInput,
+      plannedFile,
+      actualIntegrity: inspection.actualIntegrity
+    })
+    await expect(
+      readFile(join(cleanupRoot, ...plannedFile.storageRef.split('/')))
+    ).resolves.toHaveLength(0)
+    await expect(
+      operator.publishImmutable({ ...planInput, plannedFile, content })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED', reason: 'DESTINATION_COLLISION' })
+    const retryInput = { ...planInput, candidateIndex: 1 }
+    const retryPlan = operator.planImmutable(retryInput)
+    await expect(
+      operator.publishImmutable({ ...retryInput, plannedFile: retryPlan, content })
+    ).resolves.toMatchObject(expectedIntegrity)
+  })
+
+  it('fails closed when the version parent changes during recovery reservation', async () => {
+    const module = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))
+    const replacementParent = join(outsideRoot, 'replacement-managed-versions')
+    const movedParent = join(outsideRoot, 'moved-managed-versions')
+    await mkdir(replacementParent)
+    let managedParent = ''
+    let finalPath = ''
+    let swapped = false
+    const swapBeforeClaimMutation = async (mutationPath: string): Promise<void> => {
+      if (
+        swapped ||
+        !managedParent ||
+        mutationPath === finalPath ||
+        dirname(mutationPath) !== managedParent
+      ) {
+        return
+      }
+      swapped = true
+      await renameFile(managedParent, movedParent)
+      await symlink(
+        replacementParent,
+        managedParent,
+        process.platform === 'win32' ? 'junction' : 'dir'
+      )
+    }
+    const operator = new module.NodeVersionFileOperator({
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        mkdir: async (path, options) => {
+          await swapBeforeClaimMutation(String(path))
+          return mkdir(path, options)
+        },
+        open: async (...args) => {
+          await swapBeforeClaimMutation(String(args[0]))
+          return openFile(...args)
+        }
+      }
+    })
+    const planInput = {
+      operationId: 'operation-parent-swap-during-reservation',
+      scope: {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'artifact-1'
+      },
+      logicalFilename: 'README.md',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(planInput)
+    finalPath = join(cleanupRoot, ...plannedFile.storageRef.split('/'))
+    managedParent = dirname(finalPath)
+
+    await expect(
+      operator.publishImmutable({
+        ...planInput,
+        plannedFile,
+        content: Buffer.from('must not escape during reservation')
+      })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+    expect(swapped).toBe(true)
+    await expect(readdir(replacementParent)).resolves.toEqual([])
+    await expect(readdir(movedParent)).resolves.toEqual([])
+    await rm(outsideRoot, { recursive: true, force: true })
+  })
+
+  it('fails closed when the version parent changes during a claim transition', async () => {
+    const module = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))
+    const replacementParent = join(outsideRoot, 'replacement-managed-versions')
+    const movedParent = join(outsideRoot, 'moved-managed-versions')
+    await mkdir(replacementParent)
+    let finalPath = ''
+    let finalCreated = false
+    let swapped = false
+    const swapBeforeTransition = async (): Promise<void> => {
+      if (!finalCreated || swapped) return
+      swapped = true
+      const managedParent = dirname(finalPath)
+      await renameFile(managedParent, movedParent)
+      await symlink(
+        replacementParent,
+        managedParent,
+        process.platform === 'win32' ? 'junction' : 'dir'
+      )
+    }
+    const operator = new module.NodeVersionFileOperator({
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        mkdir: async (path, options) => {
+          await swapBeforeTransition()
+          return mkdir(path, options)
+        },
+        open: async (...args) => {
+          const path = String(args[0])
+          const flags = args[1]
+          if (
+            path !== finalPath &&
+            typeof flags === 'number' &&
+            (flags & constants.O_CREAT) !== 0
+          ) {
+            await swapBeforeTransition()
+          }
+          const handle = await openFile(...args)
+          if (path === finalPath && typeof args[1] === 'string' && args[1].startsWith('wx')) {
+            finalCreated = true
+          }
+          return handle
+        }
+      }
+    })
+    const planInput = {
+      operationId: 'operation-parent-swap-during-transition',
+      scope: {
+        source: 'upload' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'upload-1'
+      },
+      logicalFilename: 'notes.txt',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(planInput)
+    finalPath = join(cleanupRoot, ...plannedFile.storageRef.split('/'))
+
+    await expect(
+      operator.publishImmutable({
+        ...planInput,
+        plannedFile,
+        content: Buffer.from('must not escape during transition')
+      })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+    expect(swapped).toBe(true)
+    await expect(readdir(replacementParent)).resolves.toEqual([])
+    await expect(readFile(join(movedParent, plannedFile.storedFilename))).resolves.toHaveLength(0)
+    await rm(outsideRoot, { recursive: true, force: true })
   })
 
   it('replays an already-published operation when the immutable bytes match', async () => {
@@ -312,7 +562,7 @@ describe('NodeVersionFileOperator', () => {
     await operator.removeImmutable(stored.storageRef, stored)
     await operator.removeImmutable(stored.storageRef, stored)
 
-    await expect(readFile(localPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(localPath)).resolves.toHaveLength(0)
   })
 
   it('serializes concurrent idempotent removals across operator instances', async () => {
@@ -493,6 +743,11 @@ describe('NodeVersionFileOperator', () => {
     corruptPublication = false
     await expect(
       operator.publishImmutable({ ...planInput, plannedFile, content })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED', reason: 'DESTINATION_COLLISION' })
+    const retryInput = { ...planInput, candidateIndex: 1 }
+    const retryPlan = operator.planImmutable(retryInput)
+    await expect(
+      operator.publishImmutable({ ...retryInput, plannedFile: retryPlan, content })
     ).resolves.toMatchObject(expectedIntegrity)
   })
 
@@ -510,19 +765,35 @@ describe('NodeVersionFileOperator', () => {
       const operator = new module.NodeVersionFileOperator({
         storageRoot: cleanupRoot,
         fileSystem: {
-          open: async (...args) => {
-            const path = String(args[0])
+          mkdir: async (path, options) => {
             if (
-              failureState.armed === 'claim-read' &&
-              path.endsWith('.claim') &&
-              !path.includes('.claim.')
+              failureState.armed === 'transition' &&
+              String(path).includes('.claim-') &&
+              String(path).includes('deleting-')
             ) {
-              throw Object.assign(new Error('claim read failed'), { code: nativeCode })
-            }
-            if (failureState.armed === 'transition' && path.includes('.claim.transition-')) {
               throw Object.assign(new Error('claim transition failed'), { code: nativeCode })
             }
+            return mkdir(path, options)
+          },
+          open: async (...args) => {
             const handle = await openFile(...args)
+            if (
+              failureState.armed === 'content-remove' &&
+              typeof args[1] === 'number' &&
+              (args[1] & constants.O_RDWR) === constants.O_RDWR
+            ) {
+              return new Proxy(handle, {
+                get(target, property) {
+                  if (property === 'truncate') {
+                    return async () => {
+                      throw Object.assign(new Error('content scrub failed'), { code: nativeCode })
+                    }
+                  }
+                  const value = Reflect.get(target, property, target)
+                  return typeof value === 'function' ? value.bind(target) : value
+                }
+              })
+            }
             if (!interruptPublication || typeof args[1] !== 'string' || !args[1].startsWith('wx')) {
               return handle
             }
@@ -540,16 +811,13 @@ describe('NodeVersionFileOperator', () => {
               }
             })
           },
-          remove: async (path, options) => {
-            if (
-              failureState.armed === 'content-remove' &&
-              String(path).includes('.delete-') &&
-              String(path).endsWith('content')
-            ) {
-              throw Object.assign(new Error('content remove failed'), { code: nativeCode })
+          readdir: async (...args) => {
+            if (failureState.armed === 'claim-read' && String(args[0]).includes('.claim-')) {
+              throw Object.assign(new Error('claim read failed'), { code: nativeCode })
             }
-            return rm(path, options)
-          }
+            return readdir(args[0], args[1])
+          },
+          remove: rm
         }
       })
       const planInput = {
@@ -598,33 +866,11 @@ describe('NodeVersionFileOperator', () => {
     const operator = new module.NodeVersionFileOperator({
       storageRoot: cleanupRoot,
       fileSystem: {
-        open: async (...args) => {
-          const handle = await openFile(...args)
-          if (
-            !interruptClaimUpdate ||
-            typeof args[0] !== 'string' ||
-            !args[0].includes('.claim.transition-')
-          ) {
-            return handle
+        mkdir: async (path, options) => {
+          if (interruptClaimUpdate && /[\\/]publishing$/u.test(String(path))) {
+            throw Object.assign(new Error('claim transition interrupted'), { code: 'EIO' })
           }
-          return new Proxy(handle, {
-            get(target, property) {
-              if (property === 'write') {
-                return async (
-                  buffer: Uint8Array,
-                  offset: number,
-                  length: number,
-                  position: number
-                ) => {
-                  const partialLength = Math.max(1, Math.floor(length / 2))
-                  await target.write(buffer, offset, partialLength, position)
-                  throw Object.assign(new Error('claim transition interrupted'), { code: 'EIO' })
-                }
-              }
-              const value = Reflect.get(target, property, target)
-              return typeof value === 'function' ? value.bind(target) : value
-            }
-          })
+          return mkdir(path, options)
         }
       }
     })
@@ -653,49 +899,25 @@ describe('NodeVersionFileOperator', () => {
 
     await expect(
       operator.inspectRecovery({ ...planInput, plannedFile, expectedIntegrity })
-    ).resolves.toMatchObject({ state: 'occupied' })
+    ).resolves.toMatchObject({ state: 'incomplete' })
     await expect(
       readFile(join(cleanupRoot, ...plannedFile.storageRef.split('/')))
     ).resolves.toHaveLength(0)
   })
 
-  it('does not publish a malformed initial claim when its first write is interrupted', async () => {
+  it('recovers an initial reservation interrupted after its directory is created', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
     let interruptReservation = true
     const operator = new module.NodeVersionFileOperator({
       storageRoot: cleanupRoot,
       fileSystem: {
-        open: async (...args) => {
-          const handle = await openFile(...args)
-          const flags = args[1]
-          if (
-            !interruptReservation ||
-            typeof args[0] !== 'string' ||
-            !args[0].includes('.claim') ||
-            args[0].includes('.claim.transition-') ||
-            typeof flags !== 'number' ||
-            (flags & constants.O_CREAT) === 0
-          ) {
-            return handle
+        mkdir: async (path, options) => {
+          const result = await mkdir(path, options)
+          if (interruptReservation && /[\\/]\.claim-[a-f0-9]{64}$/u.test(String(path))) {
+            throw Object.assign(new Error('initial reservation interrupted'), { code: 'EIO' })
           }
-          return new Proxy(handle, {
-            get(target, property) {
-              if (property === 'write') {
-                return async (
-                  buffer: Uint8Array,
-                  offset: number,
-                  length: number,
-                  position: number
-                ) => {
-                  await target.write(buffer, offset, Math.max(1, Math.floor(length / 2)), position)
-                  throw Object.assign(new Error('initial claim interrupted'), { code: 'EIO' })
-                }
-              }
-              const value = Reflect.get(target, property, target)
-              return typeof value === 'function' ? value.bind(target) : value
-            }
-          })
+          return result
         }
       }
     })
@@ -732,7 +954,20 @@ describe('NodeVersionFileOperator', () => {
   it('does not overwrite or remove an existing unowned recovery claim', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
-    const operator = new module.NodeVersionFileOperator({ storageRoot: cleanupRoot })
+    const externalClaim = Buffer.from('claim owned by another writer')
+    let claimPath: string | undefined
+    const operator = new module.NodeVersionFileOperator({
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        mkdir: async (path, options) => {
+          if (!claimPath && /[\\/]\.claim-[a-f0-9]{64}$/u.test(String(path))) {
+            claimPath = String(path)
+            await writeFile(path, externalClaim, { flag: 'wx' })
+          }
+          return mkdir(path, options)
+        }
+      }
+    })
     const planInput = {
       operationId: 'operation-external-claim',
       scope: {
@@ -745,12 +980,6 @@ describe('NodeVersionFileOperator', () => {
       candidateIndex: 0
     }
     const plannedFile = operator.planImmutable(planInput)
-    const localPath = join(cleanupRoot, ...plannedFile.storageRef.split('/'))
-    const claimPath = join(dirname(localPath), `.${plannedFile.storedFilename}.claim`)
-    const externalClaim = Buffer.from('claim owned by another writer')
-    await mkdir(dirname(claimPath), { recursive: true })
-    await writeFile(claimPath, externalClaim)
-
     await expect(
       operator.publishImmutable({
         ...planInput,
@@ -758,7 +987,8 @@ describe('NodeVersionFileOperator', () => {
         content: Buffer.from('must not replace external claim')
       })
     ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
-    await expect(readFile(claimPath)).resolves.toEqual(externalClaim)
+    expect(claimPath).toBeDefined()
+    await expect(readFile(claimPath!)).resolves.toEqual(externalClaim)
   })
 
   it('rejects recovery for a planned file that does not belong to the operation', async () => {
@@ -907,9 +1137,9 @@ describe('NodeVersionFileOperator', () => {
     await expect(
       readFile(join(movedParentPath!, plannedFile.storedFilename))
     ).resolves.toHaveLength(0)
-    await expect(
-      readFile(join(movedParentPath!, `.${plannedFile.storedFilename}.claim`), 'utf8')
-    ).resolves.toContain('"state":"reserved"')
+    const movedEntries = await readdir(movedParentPath!)
+    expect(movedEntries).toContain(plannedFile.storedFilename)
+    expect(movedEntries.some((entry) => /^\.claim-[a-f0-9]{64}$/u.test(entry))).toBe(true)
     await rm(outsideRoot, { recursive: true, force: true })
   })
 
@@ -1019,7 +1249,7 @@ describe('NodeVersionFileOperator', () => {
     await rm(outsideRoot, { recursive: true, force: true })
   })
 
-  it('rejects recovery inspection and quarantine cleanup through a symbolic-link parent', async () => {
+  it('rejects recovery inspection and immutable removal through a symbolic-link parent', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
     const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))
@@ -1161,21 +1391,24 @@ describe('NodeVersionFileOperator', () => {
     ).resolves.toMatchObject({ state: 'incomplete' })
   })
 
-  it('does not delete a path replacement introduced after quarantine isolation', async () => {
+  it('does not depend on path rename or removal to delete immutable bytes', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
-    let publishedPath = ''
-    let replaced = false
-    const replacement = Buffer.from('replacement owned elsewhere')
+    let deleting = false
     const operator = new module.NodeVersionFileOperator({
       storageRoot: cleanupRoot,
       fileSystem: {
-        rename: async (sourcePath, destinationPath) => {
-          await renameFile(sourcePath, destinationPath)
-          if (!replaced && sourcePath === publishedPath) {
-            replaced = true
-            await writeFile(sourcePath, replacement)
-          }
+        rename: async (...args) => {
+          if (!deleting) return renameFile(...args)
+          throw new Error('removeImmutable must not rename paths')
+        },
+        remove: async (...args) => {
+          if (!deleting) return rm(...args)
+          throw new Error('removeImmutable must not unlink paths')
+        },
+        removeDirectory: async (...args) => {
+          if (!deleting) return rmdir(...args)
+          throw new Error('removeImmutable must not remove directories')
         }
       }
     })
@@ -1196,29 +1429,47 @@ describe('NodeVersionFileOperator', () => {
       plannedFile,
       content: Buffer.from('expected immutable bytes')
     })
-    publishedPath = join(cleanupRoot, ...stored.storageRef.split('/'))
+    const publishedPath = join(cleanupRoot, ...stored.storageRef.split('/'))
+    deleting = true
 
     await expect(operator.removeImmutable(stored.storageRef, stored)).resolves.toBeUndefined()
-    await expect(readFile(publishedPath)).resolves.toEqual(replacement)
+    await expect(readFile(publishedPath)).resolves.toHaveLength(0)
   })
 
-  it('does not report a missing rename source when the immutable file still exists', async () => {
+  it('does not scrub an external replacement when the parent changes inside final open', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))
+    const replacementParent = join(outsideRoot, 'replacement-managed-versions')
+    const movedParent = join(outsideRoot, 'moved-managed-versions')
+    let localPath = ''
+    let swapped = false
     const operator = new module.NodeVersionFileOperator({
       storageRoot: cleanupRoot,
       fileSystem: {
-        rename: async (sourcePath, destinationPath) => {
-          if (String(sourcePath).includes('.claim.transition-')) {
-            await renameFile(sourcePath, destinationPath)
-            return
+        open: async (...args) => {
+          const flags = args[1]
+          if (
+            !swapped &&
+            String(args[0]) === localPath &&
+            typeof flags === 'number' &&
+            (flags & constants.O_RDWR) === constants.O_RDWR
+          ) {
+            swapped = true
+            const managedParent = dirname(localPath)
+            await renameFile(managedParent, movedParent)
+            await symlink(
+              replacementParent,
+              managedParent,
+              process.platform === 'win32' ? 'junction' : 'dir'
+            )
           }
-          throw Object.assign(new Error('rename source missing'), { code: 'ENOENT' })
+          return openFile(...args)
         }
       }
     })
     const planInput = {
-      operationId: 'operation-ambiguous-rename-missing',
+      operationId: 'operation-delete-parent-swap',
       scope: {
         source: 'upload' as const,
         projectId: 'project-1',
@@ -1229,14 +1480,388 @@ describe('NodeVersionFileOperator', () => {
       candidateIndex: 0
     }
     const plannedFile = operator.planImmutable(planInput)
-    const content = Buffer.from('must remain after failed rename')
+    const content = Buffer.from('immutable bytes must remain in the trusted directory')
     const stored = await operator.publishImmutable({ ...planInput, plannedFile, content })
-    const localPath = join(cleanupRoot, ...stored.storageRef.split('/'))
+    localPath = join(cleanupRoot, ...stored.storageRef.split('/'))
+    await mkdir(replacementParent, { recursive: true })
+    const decoyPath = join(replacementParent, plannedFile.storedFilename)
+    await writeFile(decoyPath, content)
+
+    try {
+      await expect(operator.removeImmutable(stored.storageRef, stored)).rejects.toMatchObject({
+        code: 'INTEGRITY_FAILED'
+      })
+      expect(swapped).toBe(true)
+      await expect(readFile(decoyPath)).resolves.toEqual(content)
+      await expect(readFile(join(movedParent, plannedFile.storedFilename))).resolves.toEqual(
+        content
+      )
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when the final path inode changes after checksum verification', async () => {
+    const module = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const replacement = Buffer.from('replacement owned elsewhere')
+    let localPath = ''
+    let heldAsidePath = ''
+    let swapped = false
+    const operator = new module.NodeVersionFileOperator({
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        open: async (...args) => {
+          const handle = await openFile(...args)
+          const flags = args[1]
+          if (
+            String(args[0]) !== localPath ||
+            typeof flags !== 'number' ||
+            (flags & constants.O_RDWR) !== constants.O_RDWR
+          ) {
+            return handle
+          }
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === 'read') {
+                return async (
+                  buffer: Uint8Array,
+                  offset: number,
+                  length: number,
+                  position: number
+                ) => {
+                  const result = await target.read(buffer, offset, length, position)
+                  if (!swapped) {
+                    swapped = true
+                    await renameFile(localPath, heldAsidePath)
+                    await writeFile(localPath, replacement)
+                  }
+                  return result
+                }
+              }
+              const value = Reflect.get(target, property, target)
+              return typeof value === 'function' ? value.bind(target) : value
+            }
+          })
+        }
+      }
+    })
+    const planInput = {
+      operationId: 'operation-final-inode-swap',
+      scope: {
+        source: 'upload' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'upload-1'
+      },
+      logicalFilename: 'notes.txt',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(planInput)
+    const content = Buffer.from('held immutable bytes')
+    const stored = await operator.publishImmutable({ ...planInput, plannedFile, content })
+    localPath = join(cleanupRoot, ...stored.storageRef.split('/'))
+    heldAsidePath = join(dirname(localPath), '.held-aside-direct')
 
     await expect(operator.removeImmutable(stored.storageRef, stored)).rejects.toMatchObject({
-      code: 'STORAGE_UNAVAILABLE'
+      code: 'INTEGRITY_FAILED'
     })
-    await expect(readFile(localPath)).resolves.toEqual(content)
+    expect(swapped).toBe(true)
+    await expect(readFile(localPath)).resolves.toEqual(replacement)
+    await expect(readFile(heldAsidePath)).resolves.toHaveLength(0)
+  })
+
+  it('fails closed when the version parent changes during incomplete cleanup', async () => {
+    const module = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))
+    const replacementParent = join(outsideRoot, 'replacement-managed-versions')
+    const movedParent = join(outsideRoot, 'moved-managed-versions')
+    let interruptPublication = true
+    let localPath = ''
+    let swapped = false
+    const operator = new module.NodeVersionFileOperator({
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        open: async (...args) => {
+          const handle = await openFile(...args)
+          const flags = args[1]
+          if (interruptPublication && typeof flags === 'string' && flags.startsWith('wx')) {
+            return new Proxy(handle, {
+              get(target, property) {
+                if (property === 'write') {
+                  return async () => {
+                    interruptPublication = false
+                    await target.write(Buffer.from('partial'), 0, 7, 0)
+                    throw Object.assign(new Error('publication interrupted'), { code: 'EIO' })
+                  }
+                }
+                const value = Reflect.get(target, property, target)
+                return typeof value === 'function' ? value.bind(target) : value
+              }
+            })
+          }
+          if (typeof flags === 'number' && (flags & constants.O_RDWR) === constants.O_RDWR) {
+            return new Proxy(handle, {
+              get(target, property) {
+                if (property === 'truncate') {
+                  return async (length?: number) => {
+                    if (!swapped) {
+                      swapped = true
+                      const managedParent = dirname(localPath)
+                      await renameFile(managedParent, movedParent)
+                      await symlink(
+                        replacementParent,
+                        managedParent,
+                        process.platform === 'win32' ? 'junction' : 'dir'
+                      )
+                    }
+                    return target.truncate(length)
+                  }
+                }
+                const value = Reflect.get(target, property, target)
+                return typeof value === 'function' ? value.bind(target) : value
+              }
+            })
+          }
+          return handle
+        }
+      }
+    })
+    const planInput = {
+      operationId: 'operation-incomplete-delete-parent-swap',
+      scope: {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'artifact-1'
+      },
+      logicalFilename: 'README.md',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(planInput)
+    const content = Buffer.from('expected complete immutable bytes')
+    const expectedIntegrity = {
+      sizeBytes: content.byteLength,
+      checksum: createHash('sha256').update(content).digest('hex')
+    }
+    await expect(
+      operator.publishImmutable({ ...planInput, plannedFile, content })
+    ).rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
+    const inspection = await operator.inspectRecovery({
+      ...planInput,
+      plannedFile,
+      expectedIntegrity
+    })
+    expect(inspection.state).toBe('incomplete')
+    if (inspection.state !== 'incomplete') return
+    localPath = join(cleanupRoot, ...plannedFile.storageRef.split('/'))
+    const managedParent = dirname(localPath)
+    const claimName = (await readdir(managedParent)).find((entry) =>
+      /^\.claim-[a-f0-9]{64}$/u.test(entry)
+    )
+    expect(claimName).toBeDefined()
+    const externalClaimPath = join(replacementParent, claimName!)
+    await mkdir(join(externalClaimPath, 'publishing'), { recursive: true })
+    const partialContent = Buffer.from('partial')
+    const decoyPath = join(replacementParent, plannedFile.storedFilename)
+    await writeFile(decoyPath, partialContent)
+
+    try {
+      await expect(
+        operator.removeIncomplete({
+          ...planInput,
+          plannedFile,
+          actualIntegrity: inspection.actualIntegrity
+        })
+      ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+      expect(swapped).toBe(true)
+      await expect(readFile(decoyPath)).resolves.toEqual(partialContent)
+      await expect(readdir(externalClaimPath)).resolves.toEqual(['publishing'])
+      await expect(readFile(join(movedParent, plannedFile.storedFilename))).resolves.toHaveLength(0)
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('fails incomplete cleanup when the final path inode changes after checksum verification', async () => {
+    const module = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const replacement = Buffer.from('foreign partial replacement')
+    let interruptPublication = true
+    let cleanupArmed = false
+    let localPath = ''
+    let heldAsidePath = ''
+    let swapped = false
+    const operator = new module.NodeVersionFileOperator({
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        open: async (...args) => {
+          const handle = await openFile(...args)
+          const flags = args[1]
+          if (interruptPublication && typeof flags === 'string' && flags.startsWith('wx')) {
+            return new Proxy(handle, {
+              get(target, property) {
+                if (property === 'write') {
+                  return async () => {
+                    interruptPublication = false
+                    await target.write(Buffer.from('partial'), 0, 7, 0)
+                    throw Object.assign(new Error('publication interrupted'), { code: 'EIO' })
+                  }
+                }
+                const value = Reflect.get(target, property, target)
+                return typeof value === 'function' ? value.bind(target) : value
+              }
+            })
+          }
+          if (
+            !cleanupArmed ||
+            String(args[0]) !== localPath ||
+            typeof flags !== 'number' ||
+            (flags & constants.O_RDWR) !== constants.O_RDWR
+          ) {
+            return handle
+          }
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === 'read') {
+                return async (
+                  buffer: Uint8Array,
+                  offset: number,
+                  length: number,
+                  position: number
+                ) => {
+                  const result = await target.read(buffer, offset, length, position)
+                  if (!swapped) {
+                    swapped = true
+                    await renameFile(localPath, heldAsidePath)
+                    await writeFile(localPath, replacement)
+                  }
+                  return result
+                }
+              }
+              const value = Reflect.get(target, property, target)
+              return typeof value === 'function' ? value.bind(target) : value
+            }
+          })
+        }
+      }
+    })
+    const planInput = {
+      operationId: 'operation-incomplete-final-inode-swap',
+      scope: {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'artifact-1'
+      },
+      logicalFilename: 'README.md',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(planInput)
+    const content = Buffer.from('expected complete immutable bytes')
+    const expectedIntegrity = {
+      sizeBytes: content.byteLength,
+      checksum: createHash('sha256').update(content).digest('hex')
+    }
+    await expect(
+      operator.publishImmutable({ ...planInput, plannedFile, content })
+    ).rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
+    const inspection = await operator.inspectRecovery({
+      ...planInput,
+      plannedFile,
+      expectedIntegrity
+    })
+    expect(inspection.state).toBe('incomplete')
+    if (inspection.state !== 'incomplete') return
+    localPath = join(cleanupRoot, ...plannedFile.storageRef.split('/'))
+    heldAsidePath = join(dirname(localPath), '.held-aside-incomplete')
+    cleanupArmed = true
+
+    await expect(
+      operator.removeIncomplete({
+        ...planInput,
+        plannedFile,
+        actualIntegrity: inspection.actualIntegrity
+      })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+    expect(swapped).toBe(true)
+    await expect(readFile(localPath)).resolves.toEqual(replacement)
+    await expect(readFile(heldAsidePath)).resolves.toHaveLength(0)
+  })
+
+  it('scrubs only the held immutable inode when the parent changes during content removal', async () => {
+    const module = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))
+    const replacementParent = join(outsideRoot, 'replacement-managed-versions')
+    const movedParent = join(outsideRoot, 'moved-managed-versions')
+    let managedParent = ''
+    let swapped = false
+    const swapParent = async (): Promise<void> => {
+      if (swapped) return
+      swapped = true
+      await renameFile(managedParent, movedParent)
+      await symlink(
+        replacementParent,
+        managedParent,
+        process.platform === 'win32' ? 'junction' : 'dir'
+      )
+    }
+    const operator = new module.NodeVersionFileOperator({
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        open: async (...args) => {
+          const handle = await openFile(...args)
+          const flags = args[1]
+          if (typeof flags !== 'number' || (flags & constants.O_RDWR) !== constants.O_RDWR) {
+            return handle
+          }
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === 'truncate') {
+                return async (length?: number) => {
+                  await swapParent()
+                  return target.truncate(length)
+                }
+              }
+              const value = Reflect.get(target, property, target)
+              return typeof value === 'function' ? value.bind(target) : value
+            }
+          })
+        }
+      }
+    })
+    const planInput = {
+      operationId: 'operation-parent-swap-during-scrub',
+      scope: {
+        source: 'upload' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'upload-1'
+      },
+      logicalFilename: 'notes.txt',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(planInput)
+    const content = Buffer.from('only the intended immutable inode may be scrubbed')
+    const stored = await operator.publishImmutable({ ...planInput, plannedFile, content })
+    const localPath = join(cleanupRoot, ...stored.storageRef.split('/'))
+    managedParent = dirname(localPath)
+    await mkdir(replacementParent, { recursive: true })
+    const externalDecoyPath = join(replacementParent, plannedFile.storedFilename)
+    await writeFile(externalDecoyPath, content)
+
+    try {
+      await expect(operator.removeImmutable(stored.storageRef, stored)).rejects.toMatchObject({
+        code: 'INTEGRITY_FAILED'
+      })
+      expect(swapped).toBe(true)
+      await expect(readFile(externalDecoyPath)).resolves.toEqual(content)
+      await expect(readFile(join(movedParent, plannedFile.storedFilename))).resolves.toHaveLength(0)
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true })
+    }
   })
 
   it('treats a missing immutable parent below an available storage root as already removed', async () => {
@@ -1266,38 +1891,113 @@ describe('NodeVersionFileOperator', () => {
     await expect(operator.removeImmutable(stored.storageRef, stored)).resolves.toBeUndefined()
   })
 
-  it('cleans an empty deletion quarantine before removing the immutable file', async () => {
-    const module = await import('./version-file-operator')
-    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
-    const operator = new module.NodeVersionFileOperator({ storageRoot: cleanupRoot })
-    const planInput = {
-      operationId: 'operation-empty-quarantine',
-      scope: {
-        source: 'artifact' as const,
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        logicalFileId: 'artifact-1'
-      },
-      logicalFilename: 'README.md',
-      candidateIndex: 0
-    }
-    const plannedFile = operator.planImmutable(planInput)
-    const stored = await operator.publishImmutable({
-      ...planInput,
-      plannedFile,
-      content: Buffer.from('remove after empty quarantine')
-    })
-    const localPath = join(cleanupRoot, ...stored.storageRef.split('/'))
-    const quarantineDirectoryPath = join(
-      dirname(localPath),
-      `.delete-${createHash('sha256').update(stored.storageRef).digest('hex').slice(0, 16)}-${stored.checksum.slice(0, 16)}`
-    )
-    await mkdir(quarantineDirectoryPath)
+  it.each([
+    ['non-empty', Buffer.from('republished immutable bytes')],
+    ['empty', Buffer.alloc(0)]
+  ])(
+    'scrubs a %s immutable file in place and durably re-scrubs its tombstone',
+    async (_caseName, content) => {
+      const module = await import('./version-file-operator')
+      cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+      const operator = new module.NodeVersionFileOperator({ storageRoot: cleanupRoot })
+      const planInput = {
+        operationId: `operation-republished-${_caseName}`,
+        scope: {
+          source: 'artifact' as const,
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          logicalFileId: `artifact-${_caseName}`
+        },
+        logicalFilename: 'README.md',
+        candidateIndex: 0
+      }
+      const plannedFile = operator.planImmutable(planInput)
+      const stored = await operator.publishImmutable({
+        ...planInput,
+        plannedFile,
+        content
+      })
+      const localPath = join(cleanupRoot, ...stored.storageRef.split('/'))
 
-    await expect(operator.removeImmutable(stored.storageRef, stored)).resolves.toBeUndefined()
-    await expect(readFile(localPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(readFile(quarantineDirectoryPath)).rejects.toMatchObject({ code: 'ENOENT' })
-  })
+      await operator.removeImmutable(stored.storageRef, stored)
+      await expect(readFile(localPath)).resolves.toHaveLength(0)
+      await expect(operator.removeImmutable(stored.storageRef, stored)).resolves.toBeUndefined()
+      await expect(readFile(localPath)).resolves.toHaveLength(0)
+    }
+  )
+
+  it.each(['sync', 'close'] as const)(
+    're-scrubs an in-place tombstone after the first held-handle %s fails',
+    async (failingMethod) => {
+      const module = await import('./version-file-operator')
+      cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+      let injectedFailure = false
+      let scrubSyncCalls = 0
+      const operator = new module.NodeVersionFileOperator({
+        storageRoot: cleanupRoot,
+        fileSystem: {
+          open: async (...args) => {
+            const handle = await openFile(...args)
+            if (typeof args[1] !== 'number' || (args[1] & constants.O_RDWR) !== constants.O_RDWR) {
+              return handle
+            }
+            return new Proxy(handle, {
+              get(target, property) {
+                if (property === 'sync') {
+                  return async () => {
+                    scrubSyncCalls += 1
+                    if (failingMethod === 'sync' && !injectedFailure) {
+                      injectedFailure = true
+                      throw Object.assign(new Error('sync failed'), { code: 'EIO' })
+                    }
+                    return target.sync()
+                  }
+                }
+                if (property === 'close') {
+                  return async () => {
+                    if (failingMethod === 'close' && !injectedFailure) {
+                      injectedFailure = true
+                      throw Object.assign(new Error('close failed'), { code: 'EIO' })
+                    }
+                    return target.close()
+                  }
+                }
+                const value = Reflect.get(target, property, target)
+                return typeof value === 'function' ? value.bind(target) : value
+              }
+            })
+          }
+        }
+      })
+      const planInput = {
+        operationId: `operation-${failingMethod}-retry`,
+        scope: {
+          source: 'artifact' as const,
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          logicalFileId: `artifact-${failingMethod}`
+        },
+        logicalFilename: 'README.md',
+        candidateIndex: 0
+      }
+      const plannedFile = operator.planImmutable(planInput)
+      const stored = await operator.publishImmutable({
+        ...planInput,
+        plannedFile,
+        content: Buffer.from('durable deletion')
+      })
+      const localPath = join(cleanupRoot, ...stored.storageRef.split('/'))
+
+      await expect(operator.removeImmutable(stored.storageRef, stored)).rejects.toMatchObject({
+        code: 'STORAGE_UNAVAILABLE'
+      })
+      expect(scrubSyncCalls).toBe(1)
+
+      await expect(operator.removeImmutable(stored.storageRef, stored)).resolves.toBeUndefined()
+      expect(scrubSyncCalls).toBe(2)
+      await expect(readFile(localPath)).resolves.toHaveLength(0)
+    }
+  )
 
   it('does not treat an unavailable storage root as a missing immutable file', async () => {
     const module = await import('./version-file-operator')
@@ -1335,10 +2035,10 @@ describe('NodeVersionFileOperator', () => {
     }
   })
 
-  it('does not overwrite a quarantine path created during a deletion race', async () => {
+  it('fails closed when an in-place tombstone is replaced with different non-empty bytes', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
-    const racedBytes = Buffer.from('quarantine owned elsewhere')
+    const racedBytes = Buffer.from('replacement owned elsewhere')
     const operator = new module.NodeVersionFileOperator({ storageRoot: cleanupRoot })
     const planInput = {
       operationId: 'operation-delete-destination-race',
@@ -1355,34 +2055,43 @@ describe('NodeVersionFileOperator', () => {
     const content = Buffer.from('immutable bytes')
     const stored = await operator.publishImmutable({ ...planInput, plannedFile, content })
     const localPath = join(cleanupRoot, ...stored.storageRef.split('/'))
-    const racedQuarantinePath = join(
-      dirname(localPath),
-      `.delete-${createHash('sha256').update(stored.storageRef).digest('hex').slice(0, 16)}-${stored.checksum.slice(0, 16)}`,
-      'content'
-    )
-    await mkdir(dirname(racedQuarantinePath), { recursive: true })
-    await writeFile(racedQuarantinePath, racedBytes)
+    await operator.removeImmutable(stored.storageRef, stored)
+    await expect(readFile(localPath)).resolves.toHaveLength(0)
+    await writeFile(localPath, racedBytes)
 
     await expect(operator.removeImmutable(stored.storageRef, stored)).rejects.toMatchObject({
       code: 'INTEGRITY_FAILED'
     })
-    await expect(readFile(localPath)).resolves.toEqual(content)
-    await expect(readFile(racedQuarantinePath)).resolves.toEqual(racedBytes)
+    await expect(readFile(localPath)).resolves.toEqual(racedBytes)
   })
 
-  it('treats a concurrent quarantine removal as idempotent and normalizes permission failures', async () => {
+  it('replays an in-place tombstone idempotently and normalizes scrub permission failures', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
-    let removeMode: 'concurrent' | 'denied' = 'concurrent'
+    let scrubMode: 'normal' | 'denied' = 'normal'
     const operator = new module.NodeVersionFileOperator({
       storageRoot: cleanupRoot,
       fileSystem: {
-        remove: async (path, options) => {
-          if (removeMode === 'concurrent') {
-            await rm(path, options)
-            throw Object.assign(new Error('already removed'), { code: 'ENOENT' })
+        open: async (...args) => {
+          const handle = await openFile(...args)
+          if (
+            scrubMode !== 'denied' ||
+            typeof args[1] !== 'number' ||
+            (args[1] & constants.O_RDWR) !== constants.O_RDWR
+          ) {
+            return handle
           }
-          throw Object.assign(new Error('permission denied'), { code: 'EACCES' })
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === 'truncate') {
+                return async () => {
+                  throw Object.assign(new Error('permission denied'), { code: 'EACCES' })
+                }
+              }
+              const value = Reflect.get(target, property, target)
+              return typeof value === 'function' ? value.bind(target) : value
+            }
+          })
         }
       }
     })
@@ -1405,6 +2114,7 @@ describe('NodeVersionFileOperator', () => {
     })
 
     await expect(operator.removeImmutable(first.storageRef, first)).resolves.toBeUndefined()
+    await expect(operator.removeImmutable(first.storageRef, first)).resolves.toBeUndefined()
 
     const secondInput = { ...planInput, operationId: 'operation-permission-delete' }
     const secondPlan = operator.planImmutable(secondInput)
@@ -1413,43 +2123,10 @@ describe('NodeVersionFileOperator', () => {
       plannedFile: secondPlan,
       content: Buffer.from('second')
     })
-    removeMode = 'denied'
+    scrubMode = 'denied'
     await expect(operator.removeImmutable(second.storageRef, second)).rejects.toMatchObject({
       code: 'PERMISSION_DENIED'
     })
-  })
-
-  it('treats a quarantine directory removed by another deleter as idempotent', async () => {
-    const module = await import('./version-file-operator')
-    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
-    const operator = new module.NodeVersionFileOperator({
-      storageRoot: cleanupRoot,
-      fileSystem: {
-        removeDirectory: async (path) => {
-          await rmdir(path)
-          throw Object.assign(new Error('directory already removed'), { code: 'ENOENT' })
-        }
-      }
-    })
-    const planInput = {
-      operationId: 'operation-concurrent-directory-delete',
-      scope: {
-        source: 'artifact' as const,
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        logicalFileId: 'artifact-1'
-      },
-      logicalFilename: 'README.md',
-      candidateIndex: 0
-    }
-    const plannedFile = operator.planImmutable(planInput)
-    const stored = await operator.publishImmutable({
-      ...planInput,
-      plannedFile,
-      content: Buffer.from('delete once')
-    })
-
-    await expect(operator.removeImmutable(stored.storageRef, stored)).resolves.toBeUndefined()
   })
 
   it('normalizes read-lease source and destination storage failures', async () => {
@@ -1562,48 +2239,44 @@ describe('NodeVersionFileOperator', () => {
     await expect(closeLease.close()).rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
   })
 
-  it.each(['reservation', 'transition'] as const)(
-    'does not remove an externally occupied %s temp path after exclusive open fails',
-    async (tempKind) => {
-      const module = await import('./version-file-operator')
-      cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
-      const externalBytes = Buffer.from(`external ${tempKind} temp`)
-      let occupiedPath: string | undefined
-      const operator = new module.NodeVersionFileOperator({
-        storageRoot: cleanupRoot,
-        fileSystem: {
-          open: async (...args) => {
-            const path = String(args[0])
-            if (!occupiedPath && path.includes(`.claim.${tempKind}-`)) {
-              occupiedPath = path
-              await writeFile(path, externalBytes, { flag: 'wx' })
-            }
-            return openFile(...args)
+  it('does not remove an externally occupied recovery state marker', async () => {
+    const module = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const externalBytes = Buffer.from('external recovery state')
+    let occupiedPath: string | undefined
+    const operator = new module.NodeVersionFileOperator({
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        mkdir: async (path, options) => {
+          if (!occupiedPath && /[\\/]publishing$/u.test(String(path))) {
+            occupiedPath = String(path)
+            await writeFile(path, externalBytes, { flag: 'wx' })
           }
+          return mkdir(path, options)
         }
-      })
-      const planInput = {
-        operationId: `operation-external-${tempKind}-temp`,
-        scope: {
-          source: 'upload' as const,
-          projectId: 'project-1',
-          sessionId: 'session-1',
-          logicalFileId: 'upload-1'
-        },
-        logicalFilename: 'notes.txt',
-        candidateIndex: 0
       }
-      const plannedFile = operator.planImmutable(planInput)
-
-      await expect(
-        operator.publishImmutable({
-          ...planInput,
-          plannedFile,
-          content: Buffer.from('immutable content')
-        })
-      ).rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
-      expect(occupiedPath).toBeDefined()
-      await expect(readFile(occupiedPath!)).resolves.toEqual(externalBytes)
+    })
+    const planInput = {
+      operationId: 'operation-external-state-marker',
+      scope: {
+        source: 'upload' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'upload-1'
+      },
+      logicalFilename: 'notes.txt',
+      candidateIndex: 0
     }
-  )
+    const plannedFile = operator.planImmutable(planInput)
+
+    await expect(
+      operator.publishImmutable({
+        ...planInput,
+        plannedFile,
+        content: Buffer.from('immutable content')
+      })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+    expect(occupiedPath).toBeDefined()
+    await expect(readFile(occupiedPath!)).resolves.toEqual(externalBytes)
+  })
 })

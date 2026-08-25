@@ -4848,6 +4848,110 @@ describe('artifact provenance repository', () => {
     await expect(client.fileOriginSession.count()).resolves.toBe(0)
   })
 
+  it('recovers an opaque partial journal from its database logical-file owner', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-opaque-journal-delete-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-opaque' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-opaque',
+        projectId: 'project-1',
+        sessionId: 'session-opaque',
+        filename: 'internal.csv',
+        originalFilename: 'Opaque.csv'
+      }
+    })
+    const checksum = createHash('sha256').update('new').digest('hex')
+    await client.managedFileVersionWriteOperation.create({
+      data: {
+        operationId: 'opaque-operation',
+        source: 'upload',
+        projectId: 'project-1',
+        sourceFileId: 'upload-opaque',
+        basedOnVersionId: 'upload-v1',
+        expectedHeadVersionId: 'upload-v1',
+        state: 'failed',
+        storageTag: 'vopaque01',
+        storedFilename: 'vopaque01_Opaque.csv',
+        contentStorageKey: 'opaque:version-file:operation-1',
+        checksum,
+        sizeBytes: 3,
+        textFormatJson: '{}',
+        errorCode: 'CONTENT_INTEGRITY_FAILED'
+      }
+    })
+    let reportMismatchedCandidateIndex = true
+    const planImmutable = vi.fn((input: { candidateIndex: number }) => ({
+      storageRef:
+        input.candidateIndex === 0
+          ? 'opaque:version-file:operation-1'
+          : `opaque:version-file:operation-${input.candidateIndex + 1}`,
+      storedFilename:
+        input.candidateIndex === 0
+          ? 'vopaque01_Opaque.csv'
+          : `vopaque0${input.candidateIndex + 1}_Opaque.csv`,
+      versionToken: input.candidateIndex === 0 ? 'opaque01' : `opaque0${input.candidateIndex + 1}`,
+      candidateIndex: reportMismatchedCandidateIndex
+        ? input.candidateIndex + 1
+        : input.candidateIndex
+    }))
+    const inspectRecovery = vi.fn().mockResolvedValue({
+      state: 'incomplete',
+      actualIntegrity: { sizeBytes: 2, checksum: createHash('sha256').update('ne').digest('hex') }
+    })
+    const removeIncomplete = vi.fn().mockResolvedValue(undefined)
+    const removeImmutable = vi
+      .fn()
+      .mockRejectedValue(new Error('opaque partial journals require recovery inspection'))
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      versionFileOperator: {
+        planImmutable,
+        inspectRecovery,
+        removeIncomplete,
+        removeImmutable
+      } as never
+    })
+
+    await expect(repository.deleteProjectProvenance('project-1')).rejects.toThrow(
+      'opaque partial journals require recovery inspection'
+    )
+    expect(inspectRecovery).not.toHaveBeenCalled()
+    expect(removeIncomplete).not.toHaveBeenCalled()
+    await expect(client.managedFileVersionWriteOperation.count()).resolves.toBe(1)
+    await expect(client.uploadFile.count()).resolves.toBe(1)
+
+    reportMismatchedCandidateIndex = false
+    planImmutable.mockClear()
+    removeImmutable.mockClear()
+
+    await expect(repository.deleteProjectProvenance('project-1')).resolves.toBeUndefined()
+
+    expect(inspectRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationId: 'opaque-operation',
+        scope: {
+          source: 'upload',
+          projectId: 'project-1',
+          sessionId: 'session-opaque',
+          logicalFileId: 'upload-opaque'
+        },
+        logicalFilename: 'Opaque.csv',
+        candidateIndex: 0,
+        expectedIntegrity: { sizeBytes: 3, checksum }
+      })
+    )
+    expect(removeIncomplete).toHaveBeenCalledOnce()
+    expect(removeImmutable).not.toHaveBeenCalled()
+    await expect(client.managedFileVersionWriteOperation.count()).resolves.toBe(0)
+    await expect(client.uploadFile.count()).resolves.toBe(0)
+  })
+
   it('deletes migrated Artifact and Upload graphs with multiple derived Versions', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-version-chain-delete-'))
     const client = createProjectDbClient(storageRoot)
@@ -5071,7 +5175,7 @@ describe('artifact provenance repository', () => {
     await expect(client.uploadFile.count({ where: { projectId: 'project-1' } })).resolves.toBe(1)
     await expect(
       readFile(join(storageRoot, ...operations[0]!.contentStorageKey.split('/')))
-    ).rejects.toMatchObject({ code: 'ENOENT' })
+    ).resolves.toHaveLength(0)
     await expect(
       readFile(join(storageRoot, ...operations[2]!.contentStorageKey.split('/')))
     ).resolves.toEqual(Buffer.from('x'))
@@ -5085,9 +5189,12 @@ describe('artifact provenance repository', () => {
       client.managedFileVersionWriteOperation.count({ where: { projectId: 'project-1' } })
     ).resolves.toBe(0)
     for (const operation of operations) {
-      await expect(
-        readFile(join(storageRoot, ...operation.contentStorageKey.split('/')))
-      ).rejects.toMatchObject({ code: 'ENOENT' })
+      const operationPath = join(storageRoot, ...operation.contentStorageKey.split('/'))
+      if (operation.source === 'upload') {
+        await expect(readFile(operationPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      } else {
+        await expect(readFile(operationPath)).resolves.toHaveLength(0)
+      }
     }
   })
 

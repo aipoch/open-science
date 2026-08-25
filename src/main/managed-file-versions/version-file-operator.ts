@@ -1,10 +1,11 @@
-import { createHash, randomBytes } from 'node:crypto'
-import { constants, type BigIntStats } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { constants, type BigIntStats, type Dirent } from 'node:fs'
 import {
   link,
   lstat,
   mkdir,
   open,
+  readdir,
   realpath,
   rename,
   rm,
@@ -154,10 +155,9 @@ type VersionFileRecoveryInspection =
   | { state: 'occupied'; actualIntegrity: Integrity }
 
 type VersionFileRecoveryClaim =
-  | { schemaVersion: 1; operationDigest: string; state: 'reserved' | 'publishing' }
+  | { state: 'reserved' }
+  | { state: 'publishing' }
   | {
-      schemaVersion: 1
-      operationDigest: string
       state: 'deleting'
       actualIntegrity: Integrity
     }
@@ -175,8 +175,15 @@ type NodeVersionFileOperatorOptions = {
 type VersionFileSystem = {
   link: typeof link
   lstat: typeof lstat
-  mkdir: typeof mkdir
+  mkdir: (
+    path: Parameters<typeof mkdir>[0],
+    options?: Parameters<typeof mkdir>[1]
+  ) => Promise<string | undefined>
   open: typeof open
+  readdir: (
+    path: Parameters<typeof readdir>[0],
+    options: { withFileTypes: true }
+  ) => Promise<Dirent[]>
   realpath: typeof realpath
   rename: typeof rename
   remove: typeof rm
@@ -186,7 +193,6 @@ type VersionFileSystem = {
 const SAFE_SCOPE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const VERSION_FILE_CANDIDATE_LIMIT = 16
 const VERSION_TOKEN_SPACE = 36n ** 8n
-const RECOVERY_CLAIM_MAX_BYTES = 512
 const immutableOperationTails = new Map<string, Promise<void>>()
 
 const serializeImmutableOperation = async <T>(
@@ -308,6 +314,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
       lstat: options.fileSystem?.lstat ?? lstat,
       mkdir: options.fileSystem?.mkdir ?? mkdir,
       open: options.fileSystem?.open ?? open,
+      readdir: options.fileSystem?.readdir ?? readdir,
       realpath: options.fileSystem?.realpath ?? realpath,
       rename: options.fileSystem?.rename ?? rename,
       remove: options.fileSystem?.remove ?? rm,
@@ -360,7 +367,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
     }
     let handle: FileHandle | undefined
     try {
-      const claim = await this.ensureRecoveryReservation(input)
+      const claim = await this.ensureRecoveryReservation(input, parentSnapshot)
       try {
         handle = await this.fileSystem.open(finalPath, 'wx+', 0o600)
       } catch (error) {
@@ -374,7 +381,9 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
           existing.sizeBytes !== input.content.byteLength ||
           existing.checksum !== expectedChecksum
         ) {
-          if (claim.state === 'reserved') await this.removeRecoveryClaim(input, claim)
+          if (claim.state === 'reserved') {
+            await this.removeRecoveryClaim(input, claim, parentSnapshot)
+          }
           throw new VersionFileOperatorError(
             'INTEGRITY_FAILED',
             'Immutable version destination already contains different bytes.',
@@ -382,7 +391,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
             { cause: error }
           )
         }
-        await this.removeRecoveryClaim(input, claim)
+        await this.removeRecoveryClaim(input, claim, parentSnapshot)
         return {
           storageRef: input.plannedFile.storageRef,
           storedFilename: input.plannedFile.storedFilename,
@@ -405,11 +414,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
         handle = undefined
         throw error
       }
-      await this.writeRecoveryClaim(input, {
-        schemaVersion: 1,
-        operationDigest: this.recoveryClaimDigest(input),
-        state: 'publishing'
-      })
+      await this.writeRecoveryClaim(input, { state: 'publishing' }, parentSnapshot)
       const expectedChecksum = createHash('sha256').update(input.content).digest('hex')
       await writeAll(handle, input.content)
       await handle.sync()
@@ -430,7 +435,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
       }
       await handle.close()
       handle = undefined
-      await this.removeRecoveryClaim(input)
+      await this.removeRecoveryClaim(input, undefined, parentSnapshot)
       return {
         storageRef: input.plannedFile.storageRef,
         storedFilename: input.plannedFile.storedFilename,
@@ -672,112 +677,74 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
   private async removeImmutableUnlocked(
     storageRef: string,
     expectedIntegrity: Integrity,
-    localPath: string
+    localPath: string,
+    fixedParentSnapshot?: StorageParentSnapshot
   ): Promise<void> {
-    const quarantineDirectoryRef = posix.join(
-      posix.dirname(storageRef),
-      `.delete-${createHash('sha256').update(storageRef).digest('hex').slice(0, 16)}-${expectedIntegrity.checksum.slice(0, 16)}`
-    )
-    const quarantineDirectoryPath = this.resolveStorageRef(quarantineDirectoryRef)
-    const quarantinePath = this.resolveStorageRef(posix.join(quarantineDirectoryRef, 'content'))
-
-    try {
-      await this.verifyStorageRoot()
-    } catch (error) {
-      throw normalizeStorageError(
-        error,
-        'STORAGE_UNAVAILABLE',
-        'Unable to inspect immutable version before removal.'
-      )
-    }
-    try {
-      await this.verifyStorageParent(storageRef)
-    } catch (error) {
-      if (errorChainHasCode(error, 'ENOENT')) {
-        try {
-          await this.verifyStorageRoot()
-          return
-        } catch (rootError) {
-          throw normalizeStorageError(
-            rootError,
-            'STORAGE_UNAVAILABLE',
-            'Unable to inspect immutable version before removal.'
-          )
-        }
-      }
-      throw normalizeStorageError(
-        error,
-        'STORAGE_UNAVAILABLE',
-        'Unable to inspect immutable version before removal.'
-      )
-    }
-
-    try {
-      await this.removeQuarantineIfPresent(
-        quarantineDirectoryPath,
-        quarantinePath,
-        expectedIntegrity
-      )
+    let parentSnapshot: StorageParentSnapshot
+    if (fixedParentSnapshot) {
       try {
-        await this.fileSystem.lstat(localPath)
+        await this.verifyStorageParentSnapshot(fixedParentSnapshot)
+        parentSnapshot = fixedParentSnapshot
       } catch (error) {
+        throw normalizeStorageError(
+          error,
+          'INTEGRITY_FAILED',
+          'Immutable version storage parent changed before removal.'
+        )
+      }
+    } else {
+      try {
+        await this.verifyStorageRoot()
+        await this.verifyStorageParent(storageRef)
+        parentSnapshot = await this.snapshotStorageParent(storageRef)
+      } catch (error) {
+        if (errorChainHasCode(error, 'ENOENT')) {
+          try {
+            await this.verifyStorageRoot()
+            return
+          } catch (rootError) {
+            throw normalizeStorageError(
+              rootError,
+              'STORAGE_UNAVAILABLE',
+              'Unable to inspect immutable version before removal.'
+            )
+          }
+        }
+        throw normalizeStorageError(
+          error,
+          'STORAGE_UNAVAILABLE',
+          'Unable to inspect immutable version before removal.'
+        )
+      }
+    }
+
+    let heldHandle: FileHandle | undefined
+    try {
+      await this.verifyStorageParentSnapshot(parentSnapshot)
+      let heldFile: { handle: FileHandle; identity: Pick<BigIntStats, 'dev' | 'ino'> }
+      try {
+        heldFile = await this.openHeldImmutable(localPath, expectedIntegrity, true)
+      } catch (error) {
+        await this.verifyStorageParentSnapshot(parentSnapshot)
         if (errorChainHasCode(error, 'ENOENT')) return
         throw error
       }
-
-      const lease = await this.openImmutable(storageRef, expectedIntegrity)
-      await lease.close()
-
-      try {
-        await this.fileSystem.mkdir(quarantineDirectoryPath, { mode: 0o700 })
-      } catch (error) {
-        if (errorChainHasCode(error, 'EEXIST')) {
-          await this.removeQuarantineIfPresent(
-            quarantineDirectoryPath,
-            quarantinePath,
-            expectedIntegrity
-          )
-          await this.fileSystem.mkdir(quarantineDirectoryPath, { mode: 0o700 })
-        } else {
-          throw error
-        }
-      }
-      try {
-        await this.fileSystem.rename(localPath, quarantinePath)
-      } catch (error) {
-        await this.fileSystem.removeDirectory(quarantineDirectoryPath).catch(() => undefined)
-        if (errorChainHasCode(error, 'ENOENT')) {
-          try {
-            await this.fileSystem.lstat(localPath)
-          } catch (sourceError) {
-            if (errorChainHasCode(sourceError, 'ENOENT')) return
-            throw sourceError
-          }
-        }
-        throw error
-      }
-      const quarantinedIntegrity = await measureImmutablePath(quarantinePath, this.fileSystem.open)
-      if (
-        quarantinedIntegrity.sizeBytes !== expectedIntegrity.sizeBytes ||
-        quarantinedIntegrity.checksum !== expectedIntegrity.checksum
-      ) {
-        throw new VersionFileOperatorError(
-          'INTEGRITY_FAILED',
-          'Immutable version changed immediately before removal.'
-        )
-      }
-      try {
-        await this.fileSystem.remove(quarantinePath)
-      } catch (error) {
-        if (!errorChainHasCode(error, 'ENOENT')) throw error
-      }
-      await this.removeDirectoryIfPresent(quarantineDirectoryPath)
+      heldHandle = heldFile.handle
+      await this.verifyStorageParentSnapshot(parentSnapshot)
+      await this.scrubHeldImmutable(heldHandle, heldFile.identity)
+      await heldHandle.close()
+      heldHandle = undefined
+      await this.verifyStorageParentSnapshot(parentSnapshot)
+      await this.verifyScrubbedFinalPath(localPath, heldFile.identity)
+      await this.verifyStorageParentSnapshot(parentSnapshot)
     } catch (error) {
       throw normalizeStorageError(
         error,
         'STORAGE_UNAVAILABLE',
         'Unable to remove immutable version.'
       )
+    } finally {
+      await heldHandle?.close().catch(() => undefined)
     }
   }
 
@@ -799,8 +766,10 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
         'Unable to inspect immutable version recovery storage.'
       )
     }
+    let parentSnapshot: StorageParentSnapshot
     try {
       await this.verifyStorageParent(input.plannedFile.storageRef)
+      parentSnapshot = await this.snapshotStorageParent(input.plannedFile.storageRef)
     } catch (error) {
       if (errorChainHasCode(error, 'ENOENT')) return { state: 'missing' }
       throw normalizeStorageError(
@@ -810,7 +779,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
       )
     }
     try {
-      const claim = await this.readRecoveryClaim(input)
+      const claim = await this.readRecoveryClaim(input, parentSnapshot)
       if (claim?.state === 'deleting') {
         return { state: 'incomplete', actualIntegrity: claim.actualIntegrity }
       }
@@ -822,20 +791,19 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
         )
       } catch (error) {
         if (!errorChainHasCode(error, 'ENOENT')) throw error
-        if (claim) await this.removeRecoveryClaim(input, claim)
+        if (claim) await this.removeRecoveryClaim(input, claim, parentSnapshot)
         return { state: 'missing' }
       }
       if (
         actualIntegrity.sizeBytes === input.expectedIntegrity.sizeBytes &&
         actualIntegrity.checksum === input.expectedIntegrity.checksum
       ) {
-        if (claim) await this.removeRecoveryClaim(input, claim)
+        if (claim) await this.removeRecoveryClaim(input, claim, parentSnapshot)
         return { state: 'complete', integrity: actualIntegrity }
       }
-      if (claim?.state === 'publishing') {
+      if (claim?.state === 'reserved' || claim?.state === 'publishing') {
         return { state: 'incomplete', actualIntegrity }
       }
-      if (claim) await this.removeRecoveryClaim(input, claim)
       return { state: 'occupied', actualIntegrity }
     } catch (error) {
       if (errorChainHasCode(error, 'ENOENT')) return { state: 'missing' }
@@ -867,8 +835,9 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
     input: RemoveIncompleteInput,
     localPath: string
   ): Promise<void> {
-    const claim = await this.readRecoveryClaim(input)
-    if (!claim || claim.state === 'reserved') {
+    const parentSnapshot = await this.snapshotStorageParent(input.plannedFile.storageRef)
+    const claim = await this.readRecoveryClaim(input, parentSnapshot)
+    if (!claim) {
       throw new VersionFileOperatorError(
         'INTEGRITY_FAILED',
         'Incomplete immutable version content is not claimed by this operation.'
@@ -882,19 +851,19 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
         )
       }
     } else {
-      await this.writeRecoveryClaim(input, {
-        schemaVersion: 1,
-        operationDigest: this.recoveryClaimDigest(input),
-        state: 'deleting',
-        actualIntegrity: input.actualIntegrity
-      })
+      await this.writeRecoveryClaim(
+        input,
+        { state: 'deleting', actualIntegrity: input.actualIntegrity },
+        parentSnapshot
+      )
     }
     await this.removeImmutableUnlocked(
       input.plannedFile.storageRef,
       input.actualIntegrity,
-      localPath
+      localPath,
+      parentSnapshot
     )
-    await this.removeRecoveryClaim(input)
+    await this.removeRecoveryClaim(input, undefined, parentSnapshot)
   }
 
   private assertPlannedFile(input: PlanImmutableInput & { plannedFile: PlannedFile }): void {
@@ -917,7 +886,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
   ): string {
     return posix.join(
       posix.dirname(input.plannedFile.storageRef),
-      `.${input.plannedFile.storedFilename}.claim`
+      `.claim-${this.recoveryClaimDigest(input)}`
     )
   }
 
@@ -942,167 +911,125 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
       .digest('hex')
   }
 
-  private encodeRecoveryClaim(claim: VersionFileRecoveryClaim): Buffer {
-    return Buffer.from(`${JSON.stringify(claim)}\n`, 'utf8')
+  private recoveryClaimStateName(
+    claim: Exclude<VersionFileRecoveryClaim, { state: 'reserved' }>
+  ): string {
+    if (claim.state === 'publishing') return 'publishing'
+    return `deleting-${claim.actualIntegrity.sizeBytes}-${claim.actualIntegrity.checksum}`
   }
 
-  private parseRecoveryClaim(
-    bytes: Uint8Array,
-    input: PlanImmutableInput & { plannedFile: PlannedFile }
-  ): VersionFileRecoveryClaim {
-    let value: unknown
-    try {
-      value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
-    } catch (error) {
-      throw new VersionFileOperatorError(
-        'INTEGRITY_FAILED',
-        'Immutable version recovery claim is malformed.',
-        undefined,
-        { cause: error }
-      )
-    }
-    if (typeof value !== 'object' || value === null) {
-      throw new VersionFileOperatorError(
-        'INTEGRITY_FAILED',
-        'Immutable version recovery claim is malformed.'
-      )
-    }
-    const record = value as Record<string, unknown>
-    if (
-      record.schemaVersion !== 1 ||
-      record.operationDigest !== this.recoveryClaimDigest(input) ||
-      (record.state !== 'reserved' && record.state !== 'publishing' && record.state !== 'deleting')
-    ) {
-      throw new VersionFileOperatorError(
-        'INTEGRITY_FAILED',
-        'Immutable version recovery claim does not belong to this operation.'
-      )
-    }
-    if (record.state !== 'deleting') {
-      return {
-        schemaVersion: 1,
-        operationDigest: record.operationDigest,
-        state: record.state
-      }
-    }
-    const actualIntegrity = record.actualIntegrity
-    if (typeof actualIntegrity !== 'object' || actualIntegrity === null) {
-      throw new VersionFileOperatorError(
-        'INTEGRITY_FAILED',
-        'Immutable version deletion claim has invalid integrity.'
-      )
-    }
-    const integrityRecord = actualIntegrity as Record<string, unknown>
-    const integrity = {
-      sizeBytes: integrityRecord.sizeBytes,
-      checksum: integrityRecord.checksum
-    }
-    if (!this.isValidIntegrity(integrity)) {
-      throw new VersionFileOperatorError(
-        'INTEGRITY_FAILED',
-        'Immutable version deletion claim has invalid integrity.'
-      )
-    }
-    return {
-      schemaVersion: 1,
-      operationDigest: record.operationDigest,
-      state: 'deleting',
-      actualIntegrity: integrity
-    }
+  private recoveryClaimsMatch(
+    left: VersionFileRecoveryClaim,
+    right: VersionFileRecoveryClaim
+  ): boolean {
+    if (left.state !== right.state) return false
+    return (
+      left.state !== 'deleting' ||
+      (right.state === 'deleting' &&
+        this.integrityMatches(left.actualIntegrity, right.actualIntegrity))
+    )
   }
 
   private async readRecoveryClaim(
-    input: PlanImmutableInput & { plannedFile: PlannedFile }
+    input: PlanImmutableInput & { plannedFile: PlannedFile },
+    parentSnapshot?: StorageParentSnapshot
   ): Promise<VersionFileRecoveryClaim | undefined> {
     const claimPath = this.resolveStorageRef(this.recoveryClaimStorageRef(input))
-    let handle: FileHandle | undefined
     try {
-      await this.assertNotSymbolicLink(claimPath)
-      handle = await this.fileSystem.open(
-        claimPath,
-        constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
-      )
-      const stats = await handle.stat()
-      if (!stats.isFile() || stats.size <= 0 || stats.size > RECOVERY_CLAIM_MAX_BYTES) {
+      if (parentSnapshot) await this.verifyStorageParentSnapshot(parentSnapshot)
+      const claimStats = await this.fileSystem.lstat(claimPath)
+      if (claimStats.isSymbolicLink() || !claimStats.isDirectory()) {
         throw new VersionFileOperatorError(
           'INTEGRITY_FAILED',
-          'Immutable version recovery claim has an invalid size or type.'
+          'Immutable version recovery claim is not a trusted directory.'
         )
       }
-      const bytes = Buffer.allocUnsafe(stats.size)
-      await readExact(handle, bytes, 0)
-      return this.parseRecoveryClaim(bytes, input)
+      const entries = await this.fileSystem.readdir(claimPath, { withFileTypes: true })
+      let publishing = false
+      let deleting: Integrity | undefined
+      for (const entry of entries) {
+        const statePath = join(claimPath, entry.name)
+        const stateStats = await this.fileSystem.lstat(statePath)
+        if (
+          entry.isSymbolicLink() ||
+          !entry.isDirectory() ||
+          stateStats.isSymbolicLink() ||
+          !stateStats.isDirectory()
+        ) {
+          throw new VersionFileOperatorError(
+            'INTEGRITY_FAILED',
+            'Immutable version recovery claim contains an invalid state marker.'
+          )
+        }
+        if (entry.name === 'publishing') {
+          publishing = true
+          continue
+        }
+        const deletionMatch = /^deleting-([0-9]+)-([a-f0-9]{64})$/u.exec(entry.name)
+        const sizeBytes = deletionMatch ? Number(deletionMatch[1]) : Number.NaN
+        const integrity = { sizeBytes, checksum: deletionMatch?.[2] ?? '' }
+        if (
+          !deletionMatch ||
+          String(sizeBytes) !== deletionMatch[1] ||
+          !this.isValidIntegrity(integrity) ||
+          deleting
+        ) {
+          throw new VersionFileOperatorError(
+            'INTEGRITY_FAILED',
+            'Immutable version recovery claim contains an invalid state marker.'
+          )
+        }
+        deleting = integrity
+      }
+      if (parentSnapshot) await this.verifyStorageParentSnapshot(parentSnapshot)
+      if (deleting) return { state: 'deleting', actualIntegrity: deleting }
+      if (publishing) return { state: 'publishing' }
+      return { state: 'reserved' }
     } catch (error) {
-      if (errorChainHasCode(error, 'ENOENT')) return undefined
+      if (errorChainHasCode(error, 'ENOENT')) {
+        if (parentSnapshot) await this.verifyStorageParentSnapshot(parentSnapshot)
+        return undefined
+      }
       throw error
-    } finally {
-      await handle?.close().catch(() => undefined)
     }
   }
 
   private async ensureRecoveryReservation(
-    input: PlanImmutableInput & { plannedFile: PlannedFile }
+    input: PlanImmutableInput & { plannedFile: PlannedFile },
+    parentSnapshot: StorageParentSnapshot
   ): Promise<VersionFileRecoveryClaim> {
-    const claim: VersionFileRecoveryClaim = {
-      schemaVersion: 1,
-      operationDigest: this.recoveryClaimDigest(input),
-      state: 'reserved'
-    }
     const claimPath = this.resolveStorageRef(this.recoveryClaimStorageRef(input))
-    const reservationPath = `${claimPath}.reservation-${randomBytes(8).toString('hex')}`
-    let handle: FileHandle | undefined
-    let ownsReservationPath = false
-    try {
-      handle = await this.fileSystem.open(
-        reservationPath,
-        constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | (constants.O_NOFOLLOW ?? 0),
-        0o600
-      )
-      ownsReservationPath = true
-      const bytes = this.encodeRecoveryClaim(claim)
-      await writeAll(handle, bytes)
-      await handle.sync()
-      const stats = await handle.stat({ bigint: true })
-      if (!stats.isFile() || stats.size !== BigInt(bytes.byteLength)) {
-        throw new VersionFileOperatorError(
-          'INTEGRITY_FAILED',
-          'Immutable version recovery claim was not published durably.'
-        )
-      }
-      await handle.close()
-      handle = undefined
-      try {
-        await this.fileSystem.link(reservationPath, claimPath)
-      } catch (error) {
-        if (!isExistsError(error)) throw error
-        const existing = await this.readRecoveryClaim(input)
-        if (!existing) throw error
-        return existing
-      }
-      return claim
-    } finally {
-      await handle?.close().catch(() => undefined)
-      if (ownsReservationPath) {
-        await this.fileSystem.remove(reservationPath, { force: true }).catch(() => undefined)
-      }
-    }
+    const created = await this.createRecoveryDirectory(
+      claimPath,
+      parentSnapshot,
+      'Immutable version recovery reservation was not created safely.'
+    )
+    if (created) return { state: 'reserved' }
+    const existing = await this.readRecoveryClaim(input, parentSnapshot)
+    if (existing) return existing
+    throw new VersionFileOperatorError(
+      'STORAGE_UNAVAILABLE',
+      'Immutable version recovery reservation disappeared during publication.'
+    )
   }
 
   private async writeRecoveryClaim(
     input: PlanImmutableInput & { plannedFile: PlannedFile },
-    claim: VersionFileRecoveryClaim
+    claim: Exclude<VersionFileRecoveryClaim, { state: 'reserved' }>,
+    parentSnapshot: StorageParentSnapshot
   ): Promise<void> {
-    const existing = await this.readRecoveryClaim(input)
+    const existing = await this.readRecoveryClaim(input, parentSnapshot)
     if (!existing) {
       throw new VersionFileOperatorError(
         'INTEGRITY_FAILED',
         'Immutable version recovery claim disappeared before publication completed.'
       )
     }
-    if (JSON.stringify(existing) === JSON.stringify(claim)) return
+    if (this.recoveryClaimsMatch(existing, claim)) return
     if (!(
       (existing.state === 'reserved' && claim.state === 'publishing') ||
-      (existing.state === 'publishing' && claim.state === 'deleting')
+      ((existing.state === 'reserved' || existing.state === 'publishing') &&
+        claim.state === 'deleting')
     )) {
       throw new VersionFileOperatorError(
         'INTEGRITY_FAILED',
@@ -1110,51 +1037,135 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
       )
     }
     const claimPath = this.resolveStorageRef(this.recoveryClaimStorageRef(input))
-    const transitionPath = `${claimPath}.transition-${randomBytes(8).toString('hex')}`
-    let handle: FileHandle | undefined
-    let ownsTransitionPath = false
-    try {
-      const bytes = this.encodeRecoveryClaim(claim)
-      handle = await this.fileSystem.open(
-        transitionPath,
-        constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | (constants.O_NOFOLLOW ?? 0),
-        0o600
+    const markerPath = join(claimPath, this.recoveryClaimStateName(claim))
+    const created = await this.createRecoveryDirectory(
+      markerPath,
+      parentSnapshot,
+      'Immutable version recovery claim transition was not created safely.'
+    )
+    if (!created) {
+      const current = await this.readRecoveryClaim(input, parentSnapshot)
+      if (current && this.recoveryClaimsMatch(current, claim)) return
+      throw new VersionFileOperatorError(
+        'INTEGRITY_FAILED',
+        'Immutable version recovery claim transition is occupied by different state.'
       )
-      ownsTransitionPath = true
-      await writeAll(handle, bytes)
-      await handle.sync()
-      const stats = await handle.stat()
-      if (!stats.isFile() || stats.size !== bytes.byteLength) {
-        throw new VersionFileOperatorError(
-          'INTEGRITY_FAILED',
-          'Immutable version recovery claim update was incomplete.'
-        )
-      }
-      await handle.close()
-      handle = undefined
-      await this.fileSystem.rename(transitionPath, claimPath)
-    } finally {
-      await handle?.close().catch(() => undefined)
-      if (ownsTransitionPath) {
-        await this.fileSystem.remove(transitionPath, { force: true }).catch(() => undefined)
-      }
     }
   }
 
   private async removeRecoveryClaim(
     input: PlanImmutableInput & { plannedFile: PlannedFile },
-    expected?: VersionFileRecoveryClaim
+    expected?: VersionFileRecoveryClaim,
+    parentSnapshot?: StorageParentSnapshot
   ): Promise<void> {
-    const existing = await this.readRecoveryClaim(input)
+    const snapshot =
+      parentSnapshot ?? (await this.snapshotStorageParent(input.plannedFile.storageRef))
+    const existing = await this.readRecoveryClaim(input, snapshot)
     if (!existing) return
-    if (expected && JSON.stringify(existing) !== JSON.stringify(expected)) {
+    if (expected && !this.recoveryClaimsMatch(existing, expected)) {
+      throw new VersionFileOperatorError(
+        'INTEGRITY_FAILED',
+        'Immutable version recovery claim changed during cleanup.'
+      )
+    }
+    const claimPath = this.resolveStorageRef(this.recoveryClaimStorageRef(input))
+    if (existing.state === 'deleting') {
+      await this.removeRecoveryDirectory(
+        join(claimPath, this.recoveryClaimStateName(existing)),
+        snapshot
+      )
+    }
+    if (existing.state !== 'reserved') {
+      await this.removeRecoveryDirectory(join(claimPath, 'publishing'), snapshot)
+    }
+    await this.removeRecoveryDirectory(claimPath, snapshot)
+  }
+
+  private async createRecoveryDirectory(
+    path: string,
+    parentSnapshot: StorageParentSnapshot,
+    failureMessage: string
+  ): Promise<boolean> {
+    await this.verifyStorageParentSnapshot(parentSnapshot)
+    let createdSnapshot: Pick<BigIntStats, 'dev' | 'ino'> | undefined
+    try {
+      try {
+        await this.fileSystem.mkdir(path, { mode: 0o700 })
+      } catch (error) {
+        if (!isExistsError(error)) {
+          await this.verifyStorageParentSnapshot(parentSnapshot)
+          throw error
+        }
+        await this.verifyStorageParentSnapshot(parentSnapshot)
+        return false
+      }
+      const stats = await this.fileSystem.lstat(path, { bigint: true })
+      createdSnapshot = { dev: stats.dev, ino: stats.ino }
+      if (stats.isSymbolicLink() || !stats.isDirectory()) {
+        throw new VersionFileOperatorError('INTEGRITY_FAILED', failureMessage)
+      }
+      await this.verifyStorageParentSnapshot(parentSnapshot)
+      return true
+    } catch (error) {
+      if (createdSnapshot) {
+        try {
+          await this.removeRecoveryDirectoryByIdentity(path, createdSnapshot)
+        } catch (cleanupError) {
+          throw new VersionFileOperatorError('INTEGRITY_FAILED', failureMessage, undefined, {
+            cause: new AggregateError([error, cleanupError])
+          })
+        }
+      }
+      throw error
+    }
+  }
+
+  private async removeRecoveryDirectory(
+    path: string,
+    parentSnapshot: StorageParentSnapshot
+  ): Promise<void> {
+    await this.verifyStorageParentSnapshot(parentSnapshot)
+    let stats: BigIntStats
+    try {
+      stats = await this.fileSystem.lstat(path, { bigint: true })
+    } catch (error) {
+      if (errorChainHasCode(error, 'ENOENT')) return
+      throw error
+    }
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new VersionFileOperatorError(
+        'INTEGRITY_FAILED',
+        'Immutable version recovery claim changed during cleanup.'
+      )
+    }
+    await this.removeRecoveryDirectoryByIdentity(path, stats)
+    await this.verifyStorageParentSnapshot(parentSnapshot)
+  }
+
+  private async removeRecoveryDirectoryByIdentity(
+    path: string,
+    expected: Pick<BigIntStats, 'dev' | 'ino'>
+  ): Promise<void> {
+    let actual: BigIntStats
+    try {
+      actual = await this.fileSystem.lstat(path, { bigint: true })
+    } catch (error) {
+      if (errorChainHasCode(error, 'ENOENT')) return
+      throw error
+    }
+    if (
+      actual.isSymbolicLink() ||
+      !actual.isDirectory() ||
+      actual.dev !== expected.dev ||
+      actual.ino !== expected.ino
+    ) {
       throw new VersionFileOperatorError(
         'INTEGRITY_FAILED',
         'Immutable version recovery claim changed during cleanup.'
       )
     }
     try {
-      await this.fileSystem.remove(this.resolveStorageRef(this.recoveryClaimStorageRef(input)))
+      await this.fileSystem.removeDirectory(path)
     } catch (error) {
       if (!errorChainHasCode(error, 'ENOENT')) throw error
     }
@@ -1341,52 +1352,119 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
     }
   }
 
-  private async removeQuarantineIfPresent(
-    quarantineDirectoryPath: string,
-    quarantinePath: string,
-    expectedIntegrity: Integrity
-  ): Promise<void> {
+  private async openHeldImmutable(
+    path: string,
+    expectedIntegrity: Integrity,
+    allowEmptyTombstone = false
+  ): Promise<{
+    handle: FileHandle
+    identity: Pick<BigIntStats, 'dev' | 'ino'>
+    sizeBytes: number
+  }> {
+    const pathStats = await this.fileSystem.lstat(path, { bigint: true })
+    if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+      throw new VersionFileOperatorError(
+        'INTEGRITY_FAILED',
+        'Immutable version deletion source is not a trusted file.'
+      )
+    }
+    let handle: FileHandle | undefined
     try {
-      const directoryStats = await this.fileSystem.lstat(quarantineDirectoryPath)
-      if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
+      handle = await this.fileSystem.open(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0))
+      const handleStats = await handle.stat({ bigint: true })
+      if (
+        !handleStats.isFile() ||
+        handleStats.dev !== pathStats.dev ||
+        handleStats.ino !== pathStats.ino ||
+        handleStats.size > BigInt(Number.MAX_SAFE_INTEGER)
+      ) {
         throw new VersionFileOperatorError(
           'INTEGRITY_FAILED',
-          'Immutable version deletion quarantine is not a trusted directory.'
+          'Immutable version deletion source changed while it was opened.'
         )
       }
-    } catch (error) {
-      if (errorChainHasCode(error, 'ENOENT')) return
-      throw error
-    }
-    let actualIntegrity: Integrity
-    try {
-      await this.assertNotSymbolicLink(quarantinePath)
-      actualIntegrity = await measureImmutablePath(quarantinePath, this.fileSystem.open)
-    } catch (error) {
-      if (errorChainHasCode(error, 'ENOENT')) {
-        await this.removeDirectoryIfPresent(quarantineDirectoryPath)
-        return
+      const sizeBytes = Number(handleStats.size)
+      if (!(allowEmptyTombstone && sizeBytes === 0)) {
+        if (sizeBytes !== expectedIntegrity.sizeBytes) {
+          throw new VersionFileOperatorError(
+            'INTEGRITY_FAILED',
+            'Immutable version deletion source has different bytes.'
+          )
+        }
+        const checksum = await checksumHandle(handle, sizeBytes)
+        if (checksum !== expectedIntegrity.checksum) {
+          throw new VersionFileOperatorError(
+            'INTEGRITY_FAILED',
+            'Immutable version deletion source has different bytes.'
+          )
+        }
       }
-      throw error
+      const held = {
+        handle,
+        identity: { dev: handleStats.dev, ino: handleStats.ino },
+        sizeBytes
+      }
+      handle = undefined
+      return held
+    } finally {
+      await handle?.close().catch(() => undefined)
     }
+  }
+
+  private async scrubHeldImmutable(
+    handle: FileHandle,
+    expected: Pick<BigIntStats, 'dev' | 'ino'>
+  ): Promise<void> {
+    const before = await handle.stat({ bigint: true })
+    if (!before.isFile() || before.dev !== expected.dev || before.ino !== expected.ino) {
+      throw new VersionFileOperatorError(
+        'INTEGRITY_FAILED',
+        'Immutable version deletion handle changed before scrub.'
+      )
+    }
+    await handle.truncate(0)
+    await handle.sync()
+    const after = await handle.stat({ bigint: true })
     if (
-      actualIntegrity.sizeBytes !== expectedIntegrity.sizeBytes ||
-      actualIntegrity.checksum !== expectedIntegrity.checksum
+      !after.isFile() ||
+      after.dev !== expected.dev ||
+      after.ino !== expected.ino ||
+      after.size !== 0n
     ) {
       throw new VersionFileOperatorError(
         'INTEGRITY_FAILED',
-        'Immutable version deletion quarantine contains different bytes.'
+        'Immutable version deletion scrub did not produce a durable tombstone.'
       )
     }
-    await this.fileSystem.remove(quarantinePath)
-    await this.removeDirectoryIfPresent(quarantineDirectoryPath)
   }
 
-  private async removeDirectoryIfPresent(path: string): Promise<void> {
+  private async verifyScrubbedFinalPath(
+    path: string,
+    expected: Pick<BigIntStats, 'dev' | 'ino'>
+  ): Promise<void> {
+    let actual: BigIntStats
     try {
-      await this.fileSystem.removeDirectory(path)
+      actual = await this.fileSystem.lstat(path, { bigint: true })
     } catch (error) {
       if (!errorChainHasCode(error, 'ENOENT')) throw error
+      throw new VersionFileOperatorError(
+        'INTEGRITY_FAILED',
+        'Immutable version final path changed after deletion scrub.',
+        undefined,
+        { cause: error }
+      )
+    }
+    if (
+      actual.isSymbolicLink() ||
+      !actual.isFile() ||
+      actual.dev !== expected.dev ||
+      actual.ino !== expected.ino ||
+      actual.size !== 0n
+    ) {
+      throw new VersionFileOperatorError(
+        'INTEGRITY_FAILED',
+        'Immutable version final path changed after deletion scrub.'
+      )
     }
   }
 }

@@ -405,12 +405,16 @@ class ManagedFileVersionService {
       )
     }
 
-    if (contentChecksum === basedOn.checksum && bytes.byteLength === Number(basedOn.sizeBytes)) {
+    if (headVersionId !== request.expectedHeadVersionId) {
       return {
-        kind: 'noop',
-        version: toDescriptor(request.source, logicalFile.displayName, basedOn),
-        headVersionId: head.id
+        kind: 'conflict',
+        expectedHeadVersionId: request.expectedHeadVersionId,
+        actualHead: toDescriptor(request.source, logicalFile.displayName, head)
       }
+    }
+
+    if (contentChecksum === basedOn.checksum && bytes.byteLength === Number(basedOn.sizeBytes)) {
+      return this.noOpResult(client, logicalFile, request, basedOn)
     }
 
     const operation = await this.createOperation(
@@ -1564,6 +1568,48 @@ class ManagedFileVersionService {
       expectedHeadVersionId: operation.expectedHeadVersionId,
       actualHead: toDescriptor(logicalFile.source, logicalFile.displayName, actualHead)
     }
+  }
+
+  private async noOpResult(
+    client: PrismaClient,
+    logicalFile: ManagedLogicalFile,
+    request: ManagedFileVersionSaveTextEditRequest,
+    basedOn: ManagedFileVersionRecord
+  ): Promise<SaveTextEditResult> {
+    return client.$transaction(async (tx) => {
+      const currentFile = await this.loadLogicalFile(tx, {
+        source: logicalFile.source,
+        projectId: logicalFile.projectId,
+        fileId: logicalFile.id
+      })
+      await this.assertPublicationAllowed(tx, currentFile)
+      const actualHeadVersionId = currentFile.currentVersionId
+      if (!actualHeadVersionId) {
+        throw new ManagedFileVersionError(
+          'CONTENT_INTEGRITY_FAILED',
+          'Managed file has no actual head.'
+        )
+      }
+      const actualHead = await this.loadVersion(tx, currentFile, actualHeadVersionId)
+      if (!actualHead || actualHead.state !== COMPLETE_STATE[currentFile.source]) {
+        throw new ManagedFileVersionError(
+          'CONTENT_INTEGRITY_FAILED',
+          'Managed file head is not a published version.'
+        )
+      }
+      if (actualHeadVersionId !== request.expectedHeadVersionId) {
+        return {
+          kind: 'conflict',
+          expectedHeadVersionId: request.expectedHeadVersionId,
+          actualHead: toDescriptor(currentFile.source, currentFile.displayName, actualHead)
+        }
+      }
+      return {
+        kind: 'noop',
+        version: toDescriptor(currentFile.source, currentFile.displayName, basedOn),
+        headVersionId: actualHead.id
+      }
+    })
   }
 
   private async failOperation(

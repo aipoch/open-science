@@ -350,11 +350,27 @@ export const createManagedFileReferenceResolver = (dependencies: {
     projectId: string,
     reference: Extract<FileReference, { source: 'artifact' | 'upload' }>
   ): Promise<ManagedFileReadLease | undefined> => {
-    if (!reference.sourceFileId || !dependencies.managedFileVersions) return undefined
+    let sourceFileId = reference.sourceFileId
+    if (reference.source === 'artifact') {
+      const versionIdentity = parseArtifactVersionLocator(reference.path)
+      if (versionIdentity) {
+        if (versionIdentity.projectId !== projectId) {
+          throw new Error('Artifact Version belongs to a different project.')
+        }
+        if (sourceFileId !== undefined && sourceFileId !== versionIdentity.artifactId) {
+          throw new Error('Artifact source file does not match its Version locator.')
+        }
+        sourceFileId = versionIdentity.artifactId
+        if (!dependencies.managedFileVersions) {
+          throw new Error('Latest managed file resolution is not configured.')
+        }
+      }
+    }
+    if (!sourceFileId || !dependencies.managedFileVersions) return undefined
     return dependencies.managedFileVersions.openLatest({
       source: reference.source,
       projectId,
-      fileId: reference.sourceFileId
+      fileId: sourceFileId
     })
   }
 
@@ -419,23 +435,6 @@ export const createManagedFileReferenceResolver = (dependencies: {
             versionId: logical.version.id,
             checksum: logical.version.checksum,
             trustedLease: logical
-          }
-        }
-        const versionIdentity = parseArtifactVersionLocator(reference.path)
-        if (versionIdentity) {
-          if (versionIdentity.projectId !== projectId) {
-            throw new Error('Artifact Version belongs to a different project.')
-          }
-          if (!dependencies.artifactVersions?.resolveVersionContent) {
-            throw new Error('Artifact Provenance is not configured.')
-          }
-          const resolved =
-            await dependencies.artifactVersions.resolveVersionContent(versionIdentity)
-          return {
-            absolutePath: resolved.path,
-            name: resolved.filename,
-            mimeType: resolved.contentType ?? reference.mimeType,
-            allowSkillImportReference: false
           }
         }
         if (!dependencies.artifacts) throw new Error('Artifact repository is not configured.')

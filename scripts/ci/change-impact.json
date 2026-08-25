@@ -12,7 +12,7 @@
     "cli_sdk",
     "i18n",
     "unit_macos",
-    "version_storage_linux",
+    "version_file_operator_contract",
     "windows_runtime",
     "windows_path",
     "build",
@@ -35,7 +35,7 @@
     "cli_sdk": "static",
     "i18n": "static",
     "unit_macos": "unit",
-    "version_storage_linux": "static",
+    "version_file_operator_contract": "static",
     "windows_runtime": "windows_core",
     "windows_path": "windows_core",
     "build": "macos_e2e",
@@ -188,9 +188,22 @@
       "capabilities": ["windows_sensitive"]
     },
     {
+      "id": "version_file_operator_harness",
+      "role": "owner",
+      "paths": [
+        "scripts/run-version-file-operator-electron-contract.mjs",
+        "scripts/run-version-file-operator-electron-contract.test.ts",
+        "scripts/version-file-operator-electron-contract.ts"
+      ],
+      "capabilities": []
+    },
+    {
       "id": "version_file_operator",
       "role": "overlay",
       "paths": [
+        "scripts/run-version-file-operator-electron-contract.mjs",
+        "scripts/run-version-file-operator-electron-contract.test.ts",
+        "scripts/version-file-operator-electron-contract.ts",
         "src/main/managed-file-versions/version-file-operator.test.ts",
         "src/main/managed-file-versions/version-file-operator.ts"
       ],
@@ -278,7 +291,7 @@
     },
     "version_file_operator": {
       "consumers": [],
-      "lanes": ["version_storage_linux"]
+      "lanes": ["version_file_operator_contract", "windows_runtime", "build"]
     },
     "renderer_view": {
       "consumers": ["e2e_functional", "e2e_accessibility", "e2e_visual", "i18n_catalog"],

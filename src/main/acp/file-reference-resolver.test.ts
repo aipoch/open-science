@@ -177,6 +177,138 @@ describe('managed file reference resolver', () => {
     })
     expect(close).not.toHaveBeenCalled()
   })
+
+  it('uses the logical Artifact id in a legacy Version locator to open the latest Version', async () => {
+    const close = vi.fn(async () => undefined)
+    const openLatest = vi.fn().mockResolvedValue({
+      path: '/trusted/latest.csv',
+      size: 12,
+      read: vi.fn(),
+      readRange: vi.fn(),
+      verifyUnchanged: vi.fn(),
+      close,
+      logicalFile: { id: 'artifact-file', displayName: 'latest.csv' },
+      version: {
+        id: 'artifact-version-3',
+        checksum: '3'.repeat(64),
+        contentType: 'text/csv'
+      }
+    })
+    const resolveVersionContent = vi.fn().mockRejectedValue(new Error('history path must not open'))
+    const resolver = createManagedFileReferenceResolver({
+      artifacts: {} as ArtifactRepository,
+      artifactVersions: { resolveVersionContent },
+      managedFileVersions: { openLatest } as never
+    })
+
+    await expect(
+      resolver.resolve(
+        { projectId: 'project-1', sessionId: 'target-session' },
+        {
+          id: 'legacy-artifact-reference',
+          name: 'historic.csv',
+          path: createArtifactVersionLocator({
+            projectId: 'project-1',
+            appSessionId: 'source-session',
+            artifactId: 'artifact-file',
+            versionId: 'artifact-version-1'
+          }),
+          source: 'artifact',
+          mimeType: 'text/csv'
+        }
+      )
+    ).resolves.toMatchObject({
+      absolutePath: '/trusted/latest.csv',
+      name: 'latest.csv',
+      sourceFileId: 'artifact-file',
+      versionId: 'artifact-version-3',
+      checksum: '3'.repeat(64),
+      trustedLease: { close }
+    })
+    expect(openLatest).toHaveBeenCalledWith({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'artifact-file'
+    })
+    expect(resolveVersionContent).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when a legacy Artifact Version locator disagrees with sourceFileId', async () => {
+    const openLatest = vi.fn().mockResolvedValue({
+      path: '/wrong/latest.csv',
+      size: 12,
+      read: vi.fn(),
+      readRange: vi.fn(),
+      verifyUnchanged: vi.fn(),
+      close: vi.fn(),
+      logicalFile: { id: 'wrong-artifact-file', displayName: 'wrong.csv' },
+      version: {
+        id: 'wrong-artifact-version',
+        checksum: '4'.repeat(64),
+        contentType: 'text/csv'
+      }
+    })
+    const resolveVersionContent = vi.fn()
+    const resolveManagedFilePath = vi.fn()
+    const resolver = createManagedFileReferenceResolver({
+      artifacts: { resolveManagedFilePath } as never,
+      artifactVersions: { resolveVersionContent },
+      managedFileVersions: { openLatest } as never
+    })
+
+    await expect(
+      resolver.resolve(
+        { projectId: 'project-1', sessionId: 'target-session' },
+        {
+          id: 'legacy-artifact-reference',
+          sourceFileId: 'wrong-artifact-file',
+          name: 'historic.csv',
+          path: createArtifactVersionLocator({
+            projectId: 'project-1',
+            appSessionId: 'source-session',
+            artifactId: 'artifact-file',
+            versionId: 'artifact-version-1'
+          }),
+          source: 'artifact',
+          mimeType: 'text/csv'
+        }
+      )
+    ).rejects.toThrow(/source file.*does not match.*locator/i)
+    expect(openLatest).not.toHaveBeenCalled()
+    expect(resolveVersionContent).not.toHaveBeenCalled()
+    expect(resolveManagedFilePath).not.toHaveBeenCalled()
+  })
+
+  it('fails closed for a legacy Artifact Version locator when latest resolution is unavailable', async () => {
+    const resolveVersionContent = vi.fn().mockResolvedValue({
+      path: '/untrusted/history.csv',
+      filename: 'history.csv'
+    })
+    const resolver = createManagedFileReferenceResolver({
+      artifacts: {} as ArtifactRepository,
+      artifactVersions: { resolveVersionContent }
+    })
+
+    await expect(
+      resolver.resolve(
+        { projectId: 'project-1', sessionId: 'target-session' },
+        {
+          id: 'legacy-artifact-reference',
+          name: 'historic.csv',
+          path: createArtifactVersionLocator({
+            projectId: 'project-1',
+            appSessionId: 'source-session',
+            artifactId: 'artifact-file',
+            versionId: 'artifact-version-1'
+          }),
+          source: 'artifact',
+          mimeType: 'text/csv'
+        }
+      )
+    ).rejects.toThrow(/latest.*not configured/i)
+    expect(resolveVersionContent).not.toHaveBeenCalled()
+  })
+
   it('validates upload paths and returns trusted on-disk metadata', async () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
     const uploads = new UploadRepository(root)
