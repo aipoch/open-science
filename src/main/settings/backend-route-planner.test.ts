@@ -93,6 +93,12 @@ describe('BackendRoutePlanner route matrix', () => {
       route: 'opencode-anthropic'
     },
     {
+      name: 'CodeBuddy Responses compatibility',
+      frameworkId: 'codebuddy',
+      target: { apiEndpoints: ['responses'], needsChatResponsesBridge: true },
+      route: 'codebuddy-openai'
+    },
+    {
       name: 'Codex Chat bridge',
       frameworkId: 'codex',
       target: { needsChatResponsesBridge: true },
@@ -184,6 +190,25 @@ describe('BackendRoutePlanner route matrix', () => {
     })
 
     expect(plan.transport).toEqual({ kind: 'direct' })
+  })
+
+  it.each([
+    { apiEndpoints: ['responses'] as const, wire: 'responses' as const },
+    { apiEndpoints: ['anthropic'] as const, wire: 'anthropic' as const }
+  ])('adapts a $wire-only provider to CodeBuddy Chat Completions', ({ apiEndpoints, wire }) => {
+    const provider = makeStoredProvider({ apiEndpoints: [...apiEndpoints] })
+    const plan = makePlanner().planBackend({
+      settings: { ...makeSettings(provider), agentFrameworkId: 'codebuddy' },
+      frameworkId: 'codebuddy',
+      target: makeTarget(provider, {
+        apiEndpoints: [...apiEndpoints],
+        needsChatResponsesBridge: true
+      }),
+      effortIntent: 'high',
+      conversationSkillImportEnabled: true
+    })
+
+    expect(plan.transport).toEqual({ kind: 'codebuddy-provider-compatibility', wire })
   })
 
   it.each([

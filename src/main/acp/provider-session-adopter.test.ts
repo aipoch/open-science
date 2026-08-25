@@ -1,4 +1,4 @@
-import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
+import type { ActiveSession, ClientConnection, McpServer } from '@agentclientprotocol/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const loggerSpies = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }))
@@ -77,6 +77,7 @@ const createHarness = (
     projectAgentContextError?: Error
     specialistIdentity?: { append: string; prefix: string }
     specialistSkills?: EffectiveSpecialistSkills
+    capabilityMcpServers?: McpServer[]
   } = {}
 ): AdopterHarness => {
   const order: string[] = []
@@ -141,17 +142,27 @@ const createHarness = (
   )
   const provision = vi.fn(async () => {
     order.push('capability provision')
+    const mcpServers = options.capabilityMcpServers ?? []
+    const descriptor = {
+      role: 'primary' as const,
+      delegation: 'denied' as const,
+      transport: 'none' as const,
+      capabilities: [],
+      canonicalMcpServerNames: [],
+      modelFacingMcpServerNames: [],
+      controlRpcMethods: []
+    }
     return {
-      mcpServers: [],
-      descriptor: {
-        role: 'primary' as const,
-        delegation: 'denied' as const,
-        transport: 'none' as const,
-        capabilities: [],
-        canonicalMcpServerNames: [],
-        modelFacingMcpServerNames: [],
-        controlRpcMethods: []
-      },
+      mcpServers,
+      descriptor,
+      includeFrameworkMcpServers: (servers: readonly McpServer[]) => ({
+        mcpServers: [...mcpServers, ...servers],
+        descriptor: {
+          ...descriptor,
+          canonicalMcpServerNames: servers.map((server) => server.name),
+          modelFacingMcpServerNames: servers.map((server) => server.name)
+        }
+      }),
       commit,
       release
     }
@@ -220,6 +231,42 @@ const createHarness = (
 describe('AcpProviderSessionAdopter', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('merges framework-contributed MCP servers into adopted session/new', async () => {
+    const capabilityServer: McpServer = {
+      type: 'http',
+      name: 'open-science-notebook',
+      url: 'http://127.0.0.1:4321/mcp',
+      headers: []
+    }
+    const skillServer: McpServer = {
+      name: 'skills',
+      command: '/app/electron',
+      args: ['/app/main.js', '--open-science-skill-runtime-mcp'],
+      env: []
+    }
+    const harness = createHarness({
+      capabilityMcpServers: [capabilityServer],
+      initialBackend: {
+        framework: {
+          ...claudeCodeFramework,
+          buildSessionSetup: () => ({ mcpServers: [skillServer] })
+        },
+        backendId: 'claude-code',
+        session: { modelRequired: false },
+        prompt: { systemPromptAppends: [] },
+        context: { supportsImageInput: false },
+        adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+      }
+    })
+
+    await harness.adopt()
+
+    expect(harness.connection.agent.buildSession).toHaveBeenCalledWith({
+      cwd: '/workspace',
+      mcpServers: [capabilityServer, skillServer]
+    })
   })
 
   it('records phase timings while adopting a provider Session', async () => {

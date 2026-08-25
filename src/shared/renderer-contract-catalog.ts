@@ -239,6 +239,7 @@ import type {
   EnvironmentCheckResult,
   XaiOAuthDeviceAuthorization,
   InstallClaudeRequest,
+  InstallCodeBuddyRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
   Preflight,
@@ -1427,6 +1428,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.detectClaude': callable<() => Promise<ClaudeDetectResult>>()('settings', [
     'settings:detect-claude'
   ]),
+  'settings.detectCodeBuddy': callable<() => Promise<SettingsSnapshot>>()('settings', [
+    'settings:detect-codebuddy'
+  ]),
   'settings.detectCodex': callable<() => Promise<SettingsSnapshot>>()('settings', [
     'settings:detect-codex'
   ]),
@@ -1476,6 +1480,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.installClaude': callable<
     (request: InstallClaudeRequest) => Promise<ClaudeInstallResult>
   >()('settings', ['settings:install-claude', LOCAL]),
+  'settings.installCodeBuddy': callable<
+    (request: InstallCodeBuddyRequest) => Promise<ClaudeInstallResult>
+  >()('settings', ['settings:install-codebuddy', LOCAL]),
   'settings.installCodex': callable<
     (request: InstallCodexRequest) => Promise<ClaudeInstallResult>
   >()('settings', ['settings:install-codex', LOCAL]),
@@ -1682,6 +1689,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('settings', ['settings:set-vision-model']),
   'settings.uninstallClaude': callable<() => Promise<SettingsSnapshot>>()('settings', [
     'settings:uninstall-claude',
+    LOCAL
+  ]),
+  'settings.uninstallCodeBuddy': callable<() => Promise<SettingsSnapshot>>()('settings', [
+    'settings:uninstall-codebuddy',
     LOCAL
   ]),
   'settings.uninstallCodex': callable<() => Promise<SettingsSnapshot>>()('settings', [

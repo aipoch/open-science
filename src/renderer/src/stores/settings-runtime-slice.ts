@@ -43,6 +43,7 @@ export type RuntimeSetupState = {
   isDetectingClaude: boolean
   isDetectingOpencode: boolean
   isDetectingCodex: boolean
+  isDetectingCodeBuddy: boolean
   installStates: Record<AgentFrameworkId, RuntimeInstallState>
 }
 
@@ -52,14 +53,17 @@ export type RuntimeSetupActions = {
   detectClaude: () => Promise<ClaudeDetectResult>
   detectOpencode: () => Promise<void>
   detectCodex: () => Promise<void>
+  detectCodeBuddy: () => Promise<void>
   installClaude: (
     source: ClaudeInstallSource,
     managedRegistry?: ManagedClaudeRegistry
   ) => Promise<ClaudeInstallResult>
   installOpencode: (source?: ClaudeInstallSource) => Promise<ClaudeInstallResult>
   installCodex: (source?: CodexInstallSource) => Promise<ClaudeInstallResult>
+  installCodeBuddy: (source?: 'managed') => Promise<ClaudeInstallResult>
   uninstallClaude: () => Promise<void>
   uninstallOpencode: () => Promise<void>
+  uninstallCodeBuddy: () => Promise<void>
   uninstallCodex: () => Promise<void>
   clearInstallLogs: (runtime?: AgentFrameworkId) => void
 }
@@ -80,11 +84,14 @@ type RuntimeSetupCommands = Pick<
   | 'detectClaude'
   | 'detectOpencode'
   | 'detectCodex'
+  | 'detectCodeBuddy'
   | 'installClaude'
   | 'installOpencode'
   | 'installCodex'
+  | 'installCodeBuddy'
   | 'uninstallClaude'
   | 'uninstallOpencode'
+  | 'uninstallCodeBuddy'
   | 'uninstallCodex'
   | 'onInstallLog'
 >
@@ -118,6 +125,7 @@ const createInitialPreflight = (): Preflight => ({
   claudeReady: false,
   opencodeReady: false,
   codexReady: false,
+  codebuddyReady: false,
   agentFrameworkId: 'claude-code',
   agentReady: false,
   activeProviderReady: false
@@ -134,10 +142,12 @@ export const createInitialRuntimeSetupState = (): RuntimeSetupState => ({
   isDetectingClaude: false,
   isDetectingOpencode: false,
   isDetectingCodex: false,
+  isDetectingCodeBuddy: false,
   installStates: {
     'claude-code': createInitialRuntimeInstallState(),
     opencode: createInitialRuntimeInstallState(),
-    codex: createInitialRuntimeInstallState()
+    codex: createInitialRuntimeInstallState(),
+    codebuddy: createInitialRuntimeInstallState()
   }
 })
 
@@ -149,7 +159,8 @@ export const createRuntimeSetupLoadPatch = (
 export const selectAnyInstalling = (state: RuntimeSetupState): boolean =>
   state.installStates['claude-code'].isInstalling ||
   state.installStates.opencode.isInstalling ||
-  state.installStates.codex.isInstalling
+  state.installStates.codex.isInstalling ||
+  state.installStates.codebuddy.isInstalling
 
 const patchRuntimeSetupState = <Store extends RuntimeSetupHost>(
   set: StoreApi<Store>['setState'],
@@ -170,6 +181,29 @@ const patchInstallState = <Store extends RuntimeSetupHost>(
     ...installStates,
     [runtime]: { ...installStates[runtime], ...patch }
   }))
+
+const snapshotRuntimePath = (
+  snapshot: SettingsSnapshot,
+  runtime: AgentFrameworkId
+): string | undefined => {
+  if (runtime === 'claude-code') return snapshot.claude.resolvedPath
+  if (runtime === 'opencode') return snapshot.opencode.resolvedPath
+  if (runtime === 'codex') return snapshot.codex?.resolvedPath
+  return snapshot.codebuddy?.resolvedPath
+}
+
+const clearRuntimeInstallDiagnosticsIfMissing = <Store extends RuntimeSetupHost>(
+  set: StoreApi<Store>['setState'],
+  runtime: AgentFrameworkId,
+  snapshot: SettingsSnapshot
+): void => {
+  if (snapshotRuntimePath(snapshot, runtime)) return
+  patchInstallState(set, runtime, {
+    installLogs: [],
+    installProgress: null,
+    installError: undefined
+  })
+}
 
 const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
   set: StoreApi<Store>['setState'],
@@ -253,7 +287,9 @@ const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
 
     // Snapshot/preflight reconciliation is best-effort and must not relabel the install outcome.
     try {
-      reconcileSnapshot(await commands.getSettings())
+      const snapshot = await commands.getSettings()
+      reconcileSnapshot(snapshot)
+      if (result.ok) clearRuntimeInstallDiagnosticsIfMissing(set, runtime, snapshot)
       await get().refreshPreflight()
     } catch {
       // The next detection or refresh repairs a briefly stale renderer projection.
@@ -379,6 +415,17 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
     }
   },
 
+  detectCodeBuddy: async () => {
+    patchRuntimeSetupState(set, { isDetectingCodeBuddy: true })
+    try {
+      const snapshot = await getCommands().detectCodeBuddy()
+      reconcileSnapshot(snapshot)
+      clearRuntimeInstallDiagnosticsIfMissing(set, 'codebuddy', snapshot)
+    } finally {
+      patchRuntimeSetupState(set, { isDetectingCodeBuddy: false })
+    }
+  },
+
   installClaude: (source, managedRegistry) =>
     runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'claude-code', (commands) =>
       commands.installClaude({ source, managedRegistry })
@@ -391,6 +438,10 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
     runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'codex', (commands) =>
       commands.installCodex({ source })
     ),
+  installCodeBuddy: (source = 'managed') =>
+    runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'codebuddy', (commands) =>
+      commands.installCodeBuddy({ source })
+    ),
 
   uninstallClaude: async () => {
     reconcileSnapshot(await getCommands().uninstallClaude())
@@ -398,6 +449,12 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
   },
   uninstallOpencode: async () => {
     reconcileSnapshot(await getCommands().uninstallOpencode())
+    await get().refreshPreflight()
+  },
+  uninstallCodeBuddy: async () => {
+    const snapshot = await getCommands().uninstallCodeBuddy()
+    reconcileSnapshot(snapshot)
+    clearRuntimeInstallDiagnosticsIfMissing(set, 'codebuddy', snapshot)
     await get().refreshPreflight()
   },
   uninstallCodex: async () => {
@@ -409,7 +466,7 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
     updateInstallStates(set, (current) => {
       const runtimes: AgentFrameworkId[] = runtime
         ? [runtime]
-        : ['claude-code', 'opencode', 'codex']
+        : ['claude-code', 'opencode', 'codex', 'codebuddy']
       const installStates = { ...current }
 
       for (const id of runtimes) {

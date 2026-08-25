@@ -33,6 +33,7 @@ import type {
   UpdateSkillRequest
 } from '../../shared/settings'
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
+import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
   createAuthenticatedGitHubFetch,
@@ -332,6 +333,27 @@ class SkillCatalogModule {
     if (!codexHome) return []
     const skillsRoot = this.allowedCodexSkillsRoot(codexHome)
     if (!skillsRoot) return []
+    return this.projectedSkillCatalog(skillsRoot, additionalEntries)
+  }
+
+  async codeBuddySkillCatalog(
+    runtimeRoot: string | undefined,
+    additionalEntries: AdditionalSkillCatalogEntries = []
+  ): Promise<SkillCatalogEntry[]> {
+    if (
+      !runtimeRoot ||
+      resolve(runtimeRoot) !==
+        resolve(join(codeBuddyStorageDir(this.options.storageRoot), 'skill-runtime'))
+    ) {
+      return []
+    }
+    return this.projectedSkillCatalog(join(runtimeRoot, '.claude', 'skills'), additionalEntries)
+  }
+
+  private async projectedSkillCatalog(
+    skillsRoot: string,
+    additionalEntries: AdditionalSkillCatalogEntries
+  ): Promise<SkillCatalogEntry[]> {
     const realRoot = await realpath(skillsRoot).catch(() => undefined)
     if (!realRoot) return []
     const rootWithSep = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`
@@ -956,4 +978,4 @@ class SkillCatalogModule {
 }
 
 export { SkillCatalogModule }
-export type { AdditionalSkillCatalogEntry, SkillCatalogModuleOptions }
+export type { AdditionalSkillCatalogEntry, SkillCatalogEntry, SkillCatalogModuleOptions }

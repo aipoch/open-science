@@ -394,21 +394,24 @@ class ProviderAccountsModule {
       incompatibility || xaiAuthResult
         ? undefined
         : await this.auth.validateProviderAuth(resolved.provider, settings, storedValidationTarget)
+    const usesCompatibilityTransport = requiresChatCompletionsBridge(resolved.provider, framework)
     const result =
       incompatibility ??
       xaiAuthResult ??
       authResult ??
       (await validateProviderTarget(validationProvider, {
         fetchImpl: netFetchStandard,
-        requireBridgeToolCall: requiresChatCompletionsBridge(resolved.provider, framework),
+        requireBridgeToolCall: framework.id === 'codex' && usesCompatibilityTransport,
         requireNativeResponsesCompatibility:
           !isXaiSubscriptionProvider(resolved.provider.type) &&
           requiresNativeResponsesCompatibility(resolved.provider, framework),
         frameworkEndpoints: isXaiSubscriptionProvider(resolved.provider.type)
           ? ['responses']
-          : framework.id === 'codex'
-            ? undefined
-            : framework.supportedApiTypes
+          : framework.id === 'codebuddy' && usesCompatibilityTransport
+            ? providerEndpoints(resolved.provider)
+            : framework.id === 'codex'
+              ? undefined
+              : framework.supportedApiTypes
       }))
 
     if (!resolved.storedId) return result

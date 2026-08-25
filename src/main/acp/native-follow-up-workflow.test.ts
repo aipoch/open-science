@@ -6,7 +6,7 @@ import {
   finalizeNativeFollowUpPreparedContent,
   type NativeFollowUpUserMessage
 } from './native-follow-up-workflow'
-import { ACP_STEERING_METHOD } from './native-follow-up'
+import { ACP_STEERING_METHOD, CODEBUDDY_STEER_METHOD } from './native-follow-up'
 import { SideChatRelayOwner } from './side-chat-relay-owner'
 
 const published: NativeFollowUpUserMessage[] = []
@@ -20,7 +20,7 @@ const createWorkflow = (
     pendingPermission?: boolean | (() => boolean)
     livePromptTurn?: () =>
       { turnToken: string; signal: AbortSignal; promptMessageId?: string } | undefined
-    frameworkId?: 'claude-code' | 'opencode' | 'codex'
+    frameworkId?: 'claude-code' | 'opencode' | 'codex' | 'codebuddy'
     openCodeHttp?: boolean
     providerSessionId?: string | null
     request?: (
@@ -121,6 +121,33 @@ describe('AcpNativeFollowUpWorkflow', () => {
         prompt: [{ type: 'text', text: 'focus on tests' }],
         _meta: { steering: { idleBehavior: 'promptRequired' } }
       }),
+      expect.objectContaining({ cancellationSignal: expect.any(AbortSignal) })
+    )
+    expect(published).toEqual([
+      { sessionId: 'app-1', messageId: 'message-steer-1', text: 'focus on tests' }
+    ])
+  })
+
+  it('injects CodeBuddy session/steer when standard ACP steering is not advertised', async () => {
+    const { request, workflow } = createWorkflow({
+      advertised: false,
+      frameworkId: 'codebuddy',
+      request: vi.fn(async () => ({ steered: true }))
+    })
+
+    await expect(
+      workflow.steerFollowUp({ sessionId: 'app-1', text: 'focus on tests' })
+    ).resolves.toEqual({
+      injected: true,
+      transport: 'codebuddy-acp-steer',
+      messageId: 'message-steer-1'
+    })
+    expect(request).toHaveBeenCalledWith(
+      CODEBUDDY_STEER_METHOD,
+      {
+        sessionId: 'provider-1',
+        contentBlocks: [{ type: 'text', text: 'focus on tests' }]
+      },
       expect.objectContaining({ cancellationSignal: expect.any(AbortSignal) })
     )
     expect(published).toEqual([
@@ -383,7 +410,7 @@ describe('AcpNativeFollowUpWorkflow', () => {
     })
   })
 
-  it.each(['claude-code', 'codex'] as const)(
+  it.each(['claude-code', 'codex', 'codebuddy'] as const)(
     'refuses %s ACP steering when permission becomes pending during preparation',
     async (frameworkId) => {
       let pendingPermission = false

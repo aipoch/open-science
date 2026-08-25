@@ -17,11 +17,10 @@ import {
 } from './responses-response-adapter'
 import type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
 import {
-  boundedSkillSelectorCatalog,
-  renderSkillSelectorCatalog,
-  resolveSelectedSkills,
-  selectExplicitConnectorSkills
-} from './skill-selector-routing'
+  selectChatSkills,
+  type ChatSkillSelectorCandidate,
+  type ChatSkillSelectorInput
+} from './chat-skill-selector'
 import {
   ProviderLoopbackHttpHost,
   writeProviderLoopbackJson as json,
@@ -33,6 +32,7 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
+import type { SkillSelectorUsageObservation } from '../agent-framework'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
 // at the boundary before values reach the upstream request.
@@ -75,17 +75,13 @@ export type ResponsesBridgeConnection = {
   kind?: 'responses-compatibility'
 }
 
-export type ResponsesBridgeSkillCandidate = {
-  name: string
-  description: string
-  path: string
-  source?: 'connector'
-}
+export type ResponsesBridgeSkillCandidate = ChatSkillSelectorCandidate
 
-export type ResponsesBridgeSkillInput = Pick<ResponsesBridgeSkillCandidate, 'name' | 'path'>
+export type ResponsesBridgeSkillInput = ChatSkillSelectorInput
 
-type ResponsesBridgeOptions = {
+export type ResponsesBridgeOptions = {
   skillSelectorTimeoutMs?: number
+  skillSelectorFailureMode?: 'empty' | 'throw'
   reasoningCacheMaxEntries?: number
   reasoningCacheMaxCharacters?: number
 }
@@ -156,109 +152,30 @@ export class ResponsesBridge {
   async selectSkills(
     text: string,
     catalog: ResponsesBridgeSkillCandidate[],
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    observeUsage?: (observation: SkillSelectorUsageObservation) => void
   ): Promise<ResponsesBridgeSkillInput[]> {
-    if (!text.trim() || catalog.length === 0 || signal?.aborted) return []
-    const explicit = selectExplicitConnectorSkills(text, catalog)
-    if (explicit.length > 0) return explicit
-    const selectorCatalog = boundedSkillSelectorCatalog(catalog)
-    if (selectorCatalog.length === 0) return []
-
-    const timeout = new AbortController()
-    let timedOut = false
-    const abortFromCaller = (): void => timeout.abort(signal?.reason)
-    signal?.addEventListener('abort', abortFromCaller, { once: true })
-    const timer = setTimeout(() => {
-      timedOut = true
-      timeout.abort()
-    }, this.options.skillSelectorTimeoutMs ?? 15_000)
-    timer.unref?.()
     try {
-      const response = await this.fetchImpl(chatUrl(this.target.baseUrl), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(this.target.key ? { authorization: `Bearer ${this.target.key}` } : {})
+      return await selectChatSkills({
+        text,
+        catalog,
+        target: {
+          url: chatUrl(this.target.baseUrl),
+          ...(this.target.key ? { key: this.target.key } : {}),
+          ...(this.target.model ? { model: this.target.model } : {}),
+          ...(this.target.vendorId ? { vendorId: this.target.vendorId } : {}),
+          ...(this.target.reasoningEffortTransport
+            ? { reasoningEffortTransport: this.target.reasoningEffortTransport }
+            : {})
         },
-        body: JSON.stringify({
-          model: this.target.model,
-          stream: false,
-          temperature: 0,
-          max_tokens: 512,
-          messages: [
-            {
-              role: 'system',
-              content:
-                'You are a Skill routing classifier. Select only the Skills needed to execute the current user request. Do not perform the task. Call select_skills exactly once. Use only catalog names. Return an empty list when no Skill applies.\n\nSkill catalog:\n' +
-                renderSkillSelectorCatalog(selectorCatalog)
-            },
-            { role: 'user', content: text }
-          ],
-          tools: [
-            {
-              type: 'function',
-              function: {
-                name: 'select_skills',
-                description: 'Select zero to three applicable Skills from the provided catalog.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    skill_names: {
-                      type: 'array',
-                      maxItems: 3,
-                      items: { type: 'string' }
-                    }
-                  },
-                  required: ['skill_names'],
-                  additionalProperties: false
-                }
-              }
-            }
-          ]
-        }),
-        signal: timeout.signal
+        fetchImpl: this.fetchImpl,
+        timeoutMs: this.options.skillSelectorTimeoutMs ?? 15_000,
+        ...(signal ? { signal } : {}),
+        ...(observeUsage ? { observeUsage } : {})
       })
-      if (!response.ok) {
-        log.warn('bridge skill selection failed', {
-          model: this.target.model,
-          reason: 'upstream-http',
-          status: response.status
-        })
-        return []
-      }
-
-      const completion = (await response.json()) as JsonObject
-      const calls = completion.choices?.[0]?.message?.tool_calls
-      const call = Array.isArray(calls)
-        ? calls.find((candidate) => candidate?.function?.name === 'select_skills')
-        : undefined
-      if (typeof call?.function?.arguments !== 'string') {
-        log.warn('bridge skill selection failed', {
-          model: this.target.model,
-          reason: 'missing-function-call'
-        })
-        return []
-      }
-
-      const args = JSON.parse(call.function.arguments) as JsonObject
-      const requested = Array.isArray(args.skill_names) ? args.skill_names : []
-      const selected = resolveSelectedSkills(requested, selectorCatalog)
-      log.info('bridge skill selection completed', {
-        model: this.target.model,
-        catalogCount: catalog.length,
-        routedCatalogCount: selectorCatalog.length,
-        selectedNames: selected.map(({ name }) => name)
-      })
-      return selected
-    } catch {
-      log.warn('bridge skill selection failed', {
-        model: this.target.model,
-        reason: timedOut ? 'timeout' : signal?.aborted ? 'cancelled' : 'invalid-response'
-      })
+    } catch (error) {
+      if (this.options.skillSelectorFailureMode === 'throw') throw error
       return []
-    } finally {
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', abortFromCaller)
     }
   }
 

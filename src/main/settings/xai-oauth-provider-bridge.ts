@@ -19,6 +19,10 @@ import {
 type Wire = 'anthropic' | 'openai'
 export type XaiOAuthBridgeTarget = Readonly<{ id: string; model: string }>
 export type XaiOAuthBridgeConnection = Readonly<{ baseUrl: string; token: string }>
+type XaiOAuthProviderBridgeOptions = Readonly<{
+  fetchImpl?: typeof fetch
+  adaptOpenAiRequest?: (request: Record<string, unknown>) => Record<string, unknown>
+}>
 
 const log = createLogger('xai-oauth-bridge')
 
@@ -65,7 +69,10 @@ export class XaiOAuthProviderBridge {
     initialTargetId: string,
     private readonly wire: Wire,
     private readonly getAccessToken: (forceRefresh?: boolean) => Promise<string>,
-    private readonly fetchImpl: typeof fetch = fetch
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly adaptOpenAiRequest?: (
+      request: Record<string, unknown>
+    ) => Record<string, unknown>
   ) {
     this.targets = new Map(targets.map((target) => [target.id, target]))
     const initial = this.targets.get(initialTargetId)
@@ -130,7 +137,11 @@ export class XaiOAuthProviderBridge {
       })
     }
     if (pathname !== expected) return json(response, 404, { error: { message: 'Not found' } })
-    const body = await request.readJsonObject()
+    const receivedBody = await request.readJsonObject()
+    const body =
+      this.wire === 'openai' && this.adaptOpenAiRequest
+        ? this.adaptOpenAiRequest(receivedBody)
+        : receivedBody
     const requestModel =
       typeof body.model === 'string' && body.model ? body.model : this.target.model
     this.advertise(requestModel)
@@ -306,8 +317,17 @@ export const createXaiOAuthProviderBridge = (
   initialTargetId: string,
   wire: Wire,
   getAccessToken: ((forceRefresh?: boolean) => Promise<string>) | undefined,
-  fetchImpl: typeof fetch = netFetchStandard
+  fetchOrOptions: typeof fetch | XaiOAuthProviderBridgeOptions = netFetchStandard
 ): XaiOAuthProviderBridge => {
   if (!getAccessToken) throw new Error('xAI OAuth is unavailable.')
-  return new XaiOAuthProviderBridge(targets, initialTargetId, wire, getAccessToken, fetchImpl)
+  const options =
+    typeof fetchOrOptions === 'function' ? { fetchImpl: fetchOrOptions } : fetchOrOptions
+  return new XaiOAuthProviderBridge(
+    targets,
+    initialTargetId,
+    wire,
+    getAccessToken,
+    options.fetchImpl ?? netFetchStandard,
+    options.adaptOpenAiRequest
+  )
 }

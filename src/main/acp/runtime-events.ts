@@ -111,8 +111,17 @@ const extractProviderToolName = (source: { _meta?: unknown } | undefined): strin
     if (claudeToolName) return claudeToolName
   }
 
-  return trimProviderValue(meta.toolName) ?? trimProviderValue(meta.tool_name)
+  return (
+    trimProviderValue(meta.toolName) ??
+    trimProviderValue(meta.tool_name) ??
+    trimProviderValue(meta['codebuddy.ai/toolName'])
+  )
 }
+
+// CodeBuddy correlates a tool with assistant content from the same model response through this
+// top-level extension. ACP's current ToolCall types do not declare it, so read it defensively.
+const extractProviderMessageId = (source: unknown): string | undefined =>
+  isRecord(source) ? trimProviderValue(source.messageId) : undefined
 
 type TerminalMeta = {
   terminalOutput?: string
@@ -417,6 +426,7 @@ const toAcpRuntimeEvent = (
         ...base,
         raw: undefined,
         kind: 'tool',
+        messageId: extractProviderMessageId(update),
         toolCallId: update.toolCallId,
         providerToolName: extractProviderToolName(update),
         toolKind: update.kind,
@@ -437,6 +447,7 @@ const toAcpRuntimeEvent = (
         ...base,
         raw: undefined,
         kind: 'tool',
+        messageId: extractProviderMessageId(update),
         toolCallId: update.toolCallId,
         providerToolName: extractProviderToolName(update),
         toolKind: update.kind ?? undefined,

@@ -21,6 +21,7 @@ export const resolveHistoryReplayTarget = (
   framework?: AgentFrameworkView
 ): HistoryReplayTarget => {
   if (frameworkId === 'opencode') return 'opencode'
+  if (frameworkId === 'codebuddy') return 'codebuddy'
   if (frameworkId !== 'codex') return 'claude-code'
   if (
     provider &&

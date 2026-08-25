@@ -1931,6 +1931,8 @@ const createApplicationModules = async (
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
       onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
+      isHostSkillsAvailable: (sessionId) =>
+        runtimeRef.current?.getSessionFramework(sessionId) !== 'codebuddy',
       connectorService,
       computeService: agentComputeService,
       skillImporter: conversationSkillImporter,

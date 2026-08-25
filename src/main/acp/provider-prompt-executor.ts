@@ -9,10 +9,12 @@ import { toAcpTurnTokenUsage } from '../../shared/acp'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { AcpBackendGenerationOwner } from './backend-generation-owner'
 import { claudeCodeTurnAdapter } from './claude-turn-adapter'
+import { codeBuddyTurnAdapter } from './codebuddy-turn-adapter'
 import { createCodexTurnAdapter } from './codex-turn-adapter'
 import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
 import { fetchOpenCodeUsageSnapshot } from './opencode-turn-usage'
 import type {
+  AcpProviderModelCallUsage,
   AcpProviderTurnAdapter,
   AcpProviderTurnProbe,
   AcpProviderTurnResult
@@ -31,6 +33,7 @@ type ProviderPromptExecutionInput = Readonly<{
   onAccepted: () => void | Promise<void>
   routeNotification: (notification: SessionNotification) => void
   reportBestEffortFailure?: (stage: ProviderPromptObservationStage, error: unknown) => void
+  preDispatchModelCalls?: readonly AcpProviderModelCallUsage[]
 }>
 
 type AcpProviderPromptExecutorOptions = Readonly<{
@@ -84,6 +87,53 @@ const normalizeFacts = (
     ...(facts.lastModelStepUsage
       ? { lastModelStepUsage: Object.freeze({ ...facts.lastModelStepUsage }) }
       : {})
+  })
+}
+
+const withPreDispatchModelCalls = (
+  facts: AcpProviderTurnResult,
+  preDispatch: readonly AcpProviderModelCallUsage[] | undefined
+): AcpProviderTurnResult => {
+  if (
+    !preDispatch?.length ||
+    !facts.turnUsage ||
+    facts.modelTurnCount === undefined ||
+    !facts.modelCalls
+  ) {
+    return facts
+  }
+  const calls = [...preDispatch, ...facts.modelCalls]
+  const sum = (key: 'inputTokens' | 'cacheTokens' | 'outputTokens'): number =>
+    calls.reduce((total, call) => total + call[key], 0)
+  const optionalSum = (key: 'cachedReadTokens' | 'cachedWriteTokens'): number | undefined =>
+    calls.every((call) => call[key] !== undefined)
+      ? calls.reduce((total, call) => total + (call[key] ?? 0), 0)
+      : undefined
+  const inputTokens = sum('inputTokens')
+  const cacheTokens = sum('cacheTokens')
+  const outputTokens = sum('outputTokens')
+  const cachedReadTokens = optionalSum('cachedReadTokens')
+  const cachedWriteTokens = optionalSum('cachedWriteTokens')
+  if (
+    !Number.isSafeInteger(inputTokens) ||
+    !Number.isSafeInteger(cacheTokens) ||
+    !Number.isSafeInteger(outputTokens) ||
+    (cachedReadTokens !== undefined && !Number.isSafeInteger(cachedReadTokens)) ||
+    (cachedWriteTokens !== undefined && !Number.isSafeInteger(cachedWriteTokens))
+  ) {
+    return facts
+  }
+  return Object.freeze({
+    ...facts,
+    turnUsage: Object.freeze({
+      inputTokens,
+      cacheTokens,
+      ...(cachedReadTokens === undefined ? {} : { cachedReadTokens }),
+      ...(cachedWriteTokens === undefined ? {} : { cachedWriteTokens }),
+      outputTokens
+    }),
+    modelTurnCount: facts.modelTurnCount + preDispatch.length,
+    modelCalls: Object.freeze(calls.map((call) => Object.freeze({ ...call })))
   })
 }
 
@@ -177,6 +227,11 @@ class AcpProviderPromptExecutor {
           }
         }
         if (message.kind !== 'stop') {
+          try {
+            probe.observe?.(message.notification)
+          } catch (error) {
+            reportBestEffort(input.reportBestEffortFailure, 'observe', error)
+          }
           input.routeNotification(message.notification)
           continue
         }
@@ -196,7 +251,10 @@ class AcpProviderPromptExecutor {
         return Object.freeze({
           kind: 'stopped',
           response: message.response,
-          facts: normalizeFacts(message.response, facts)
+          facts: withPreDispatchModelCalls(
+            normalizeFacts(message.response, facts),
+            input.preDispatchModelCalls
+          )
         })
       }
     } finally {
@@ -208,6 +266,7 @@ class AcpProviderPromptExecutor {
   private adapterFor(frameworkId: AgentFrameworkId): AcpProviderTurnAdapter {
     if (frameworkId === 'claude-code') return claudeCodeTurnAdapter
     if (frameworkId === 'codex') return createCodexTurnAdapter()
+    if (frameworkId === 'codebuddy') return codeBuddyTurnAdapter
 
     // Capture one generation's immutable API before adapter.begin awaits. Re-reading the owner for
     // the final snapshot could mix credentials or lose usage after a generation switch.

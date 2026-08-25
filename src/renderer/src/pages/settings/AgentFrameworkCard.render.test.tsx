@@ -246,6 +246,15 @@ describe('AgentFrameworkCard', () => {
     ).toBe(false)
   })
 
+  it('treats detected install metadata without a ready preflight as repairable, not missing', () => {
+    renderCard({ ready: false, installed: true, path: '/data/codebuddy', version: '2.138.0' })
+
+    expect(container.textContent).toContain('Needs repair')
+    expect(container.textContent).toContain('v2.138.0')
+    expect(container.querySelector('[aria-label^="Repair"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label^="Install"]')).toBeNull()
+  })
+
   it('shows an installed outdated runtime with a one-click managed Update action', () => {
     const onInstall = vi.fn()
     renderCard({

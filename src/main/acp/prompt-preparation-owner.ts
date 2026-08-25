@@ -21,7 +21,8 @@ import type {
   AcpSessionToolingAvailability
 } from './session-presentation-policy'
 import type { SessionCapabilityPolicy } from './session-capability-owner'
-import type { TurnSkillHandle } from './turn-skill-owner'
+import { codeBuddySkillRuntimeRoot, type TurnSkillHandle } from './turn-skill-owner'
+import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 import { buildSessionReferencePrompt } from './session-reference-prompt'
 
 const log = createLogger('acp-prompt-preparation-owner')
@@ -96,6 +97,8 @@ type ReadyPreparedPromptHandle = Readonly<{
   content: string | ContentBlock[]
   promptPrefix?: string
   skillActivityInputs: ReadonlyArray<Readonly<{ name: string; path: string }>>
+  skillRuntimeAllowlist?: readonly string[]
+  preDispatchModelCalls?: readonly AcpProviderModelCallUsage[]
   transferContextTurn: () => ContextWindowTurnHandle
   close: () => void
 }>
@@ -117,6 +120,7 @@ class AcpPromptPreparationOwner {
   async prepare(input: AcpPromptPreparationInput): Promise<PreparedPromptHandle> {
     let releaseGrant: (() => void) | undefined
     let contextTurn: ContextWindowTurnHandle | undefined
+    const preDispatchModelCalls: AcpProviderModelCallUsage[] = []
     let closed = false
 
     const releaseOwned = (failContext: boolean): void => {
@@ -162,7 +166,27 @@ class AcpPromptPreparationOwner {
           selectSkills: async (text, catalog, signal) =>
             (await this.options.selectBridgeSkills(text, catalog, signal)) ?? [],
           signal: input.signal
-        }
+        },
+        ...(input.backend.framework.id === 'codebuddy'
+          ? {
+              codebuddy: {
+                root: codeBuddySkillRuntimeRoot(input.backend.session.options),
+                selectorAvailable: input.bridgeSkillsAvailable,
+                selectSkills: async (text, catalog, signal, observeUsage) =>
+                  (await this.options.selectBridgeSkills(text, catalog, signal, observeUsage)) ??
+                  [],
+                signal: input.signal,
+                observeUsage: ({ usage, sourceInvocationId }) => {
+                  const contextUsedTokens = usage.inputTokens + (usage.cachedReadTokens ?? 0)
+                  preDispatchModelCalls.push({
+                    ...usage,
+                    ...(sourceInvocationId ? { sourceInvocationId } : {}),
+                    ...(Number.isSafeInteger(contextUsedTokens) ? { contextUsedTokens } : {})
+                  })
+                }
+              }
+            }
+          : {})
       })
       if (await cancelled()) return cancelPrepared()
 
@@ -181,8 +205,13 @@ class AcpPromptPreparationOwner {
           ...(input.turnPromptReminders ?? [])
         ]
       })
-      const skillActivityInputs = Object.freeze(
+      const codexSkillInputs = Object.freeze(
         skillPreparation.codexSkillInputs.map((skill) => Object.freeze({ ...skill }))
+      )
+      const skillActivityInputs = Object.freeze(
+        (skillPreparation.skillActivityInputs ?? codexSkillInputs).map((skill) =>
+          Object.freeze({ ...skill })
+        )
       )
       const notebookHandoff =
         input.request.contextReset || input.request.historyPreamble
@@ -222,7 +251,7 @@ class AcpPromptPreparationOwner {
         historyUploads: input.request.historyAttachments ?? [],
         currentUploads: input.request.attachments ?? [],
         references: input.request.referencedArtifacts ?? [],
-        codexSkillInputs: skillActivityInputs,
+        codexSkillInputs,
         skillImportEnabled: input.skillImportEnabled,
         imageCompatibilityRelay:
           input.backend.context.supportsImageInput === false &&
@@ -264,7 +293,7 @@ class AcpPromptPreparationOwner {
         input,
         providerContent,
         promptPrefix,
-        skillActivityInputs
+        codexSkillInputs
       )
       if (!contextEstimateCurrent) return cancelPrepared()
       if (await cancelled()) return cancelPrepared()
@@ -275,6 +304,12 @@ class AcpPromptPreparationOwner {
         content: providerContent,
         ...(promptPrefix ? { promptPrefix } : {}),
         skillActivityInputs,
+        ...(skillPreparation.skillRuntimeAllowlist
+          ? { skillRuntimeAllowlist: skillPreparation.skillRuntimeAllowlist }
+          : {}),
+        ...(preDispatchModelCalls.length > 0
+          ? { preDispatchModelCalls: Object.freeze([...preDispatchModelCalls]) }
+          : {}),
         transferContextTurn: (): ContextWindowTurnHandle => {
           if (closed) throw new Error('Prepared prompt is already closed.')
           if (transferred || !contextTurn) {

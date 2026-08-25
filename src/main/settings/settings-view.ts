@@ -30,6 +30,7 @@ export const buildSettingsSnapshot = (
   return {
     claude: settings.claude ?? {},
     opencode: { resolvedPath: settings.opencodePath, version: settings.opencodeVersion },
+    codebuddy: { resolvedPath: settings.codebuddyPath, version: settings.codebuddyVersion },
     codex: {
       resolvedPath: settings.codex?.resolvedPath,
       version: settings.codex?.version,
@@ -40,6 +41,9 @@ export const buildSettingsSnapshot = (
       : false,
     opencodeManaged: settings.opencodePath
       ? runtimeManager.isManagedRuntimePath('opencode', settings.opencodePath)
+      : false,
+    codebuddyManaged: settings.codebuddyPath
+      ? runtimeManager.isManagedRuntimePath('codebuddy', settings.codebuddyPath)
       : false,
     codexManaged: settings.codex?.resolvedPath
       ? runtimeManager.isManagedRuntimePath('codex', settings.codex.resolvedPath)

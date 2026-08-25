@@ -1,6 +1,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 
 import type { AcpPromptRequest } from '../../shared/acp'
+import type { AgentFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import { createLogger, errorLogFields } from '../logger'
@@ -139,8 +140,9 @@ const composeAcpRuntimePromptOwners = (
     imageInputCompatibility: options.imageInputCompatibility,
     presentation: base.sessionPresentationPolicy,
     contextUsage: base.contextUsageTracker,
-    selectBridgeSkills: async (text, catalog, signal) =>
-      (await base.connectionResources.selectBridgeSkills(text, catalog, signal)) ?? [],
+    selectBridgeSkills: async (text, catalog, signal, observeUsage) =>
+      (await base.connectionResources.selectBridgeSkills(text, catalog, signal, observeUsage)) ??
+      [],
     authorizeReferencedUploads: options.skillImport?.authorizeReferencedUploads,
     ...(options.notebook
       ? {
@@ -152,6 +154,24 @@ const composeAcpRuntimePromptOwners = (
       : {}),
     emitState
   })
+  const beforeFrameworkPromptDispatch = async (input: {
+    appSessionId: string
+    framework: AgentFramework
+    providerSessionId: string
+    cwd: string
+    skillRuntimeAllowlist?: readonly string[]
+  }): Promise<void> => {
+    if (!input.framework.beforePromptDispatch) return
+    const connection = base.connectionResources.connection
+    if (!connection) throw new Error('ACP connection is not available.')
+    await input.framework.beforePromptDispatch({
+      connection,
+      providerSessionId: input.providerSessionId,
+      cwd: input.cwd,
+      mcpServers: base.sessionCapabilities.mcpServersFor(input.appSessionId),
+      ...(input.skillRuntimeAllowlist ? { skillRuntimeAllowlist: input.skillRuntimeAllowlist } : {})
+    })
+  }
   const contextCompactionWorkflow = new AcpContextCompactionWorkflow({
     sessions: { activeSession, currentFramework },
     interactions: base.sessionInteractions,
@@ -176,6 +196,19 @@ const composeAcpRuntimePromptOwners = (
     pushEvent: (event) => session.publication.pushEvent(event),
     emitState,
     errorMessage,
+    beforePromptDispatch: async ({ appSessionId, session: active }) => {
+      const framework = currentFramework()
+      await beforeFrameworkPromptDispatch({
+        appSessionId,
+        framework,
+        providerSessionId: active.sessionId,
+        cwd:
+          session.sessionRegistry.lookup(appSessionId)?.aggregate.snapshot().cwd ??
+          base.snapshotOwner.cwd,
+        skillRuntimeAllowlist: []
+      })
+    },
+    serialization: base.providerPromptSerialization,
     cancelCompaction: async (sessionId) => {
       const connection = base.connectionResources.connection
       const active = activeSession(sessionId)
@@ -193,6 +226,7 @@ const composeAcpRuntimePromptOwners = (
     skills: base.turnSkills,
     preparation: promptPreparation,
     executor: base.providerPromptExecutor,
+    serialization: base.providerPromptSerialization,
     contextUsage: base.contextUsageTracker,
     providerReconnectPending: () => base.connectionTransitions.providerReconnectPending,
     finalizer: base.promptOutcomeFinalizer,
@@ -230,7 +264,8 @@ const composeAcpRuntimePromptOwners = (
           role: 'user',
           ...(attribution ? { attribution } : {}),
           text
-        })
+        }),
+      beforePromptDispatch: beforeFrameworkPromptDispatch
     },
     artifacts: {
       open: openArtifact,

@@ -275,7 +275,8 @@ export const isHostViewImageBackendCertified = (backend: HostViewImageBackend): 
       (backend.modelRoute === 'opencode-openai' || backend.modelRoute === 'opencode-anthropic')) ||
     (backend.frameworkId === 'codex' &&
       (backend.modelRoute === 'codex-responses' ||
-        backend.modelRoute === 'codex-responses-compatibility')))
+        backend.modelRoute === 'codex-responses-compatibility')) ||
+    (backend.frameworkId === 'codebuddy' && backend.modelRoute === 'codebuddy-openai'))
 
 const frozenResult = (
   sourceKind: HostViewImageResult['sourceKind'],

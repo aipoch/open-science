@@ -10,6 +10,7 @@ import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import type { ReadyPreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnWorkflowOptions } from './prompt-turn-workflow'
+import { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
 import { AcpSessionAggregate } from './session-aggregate'
 import { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type { TurnSkillHandle } from './turn-skill-owner'
@@ -126,6 +127,8 @@ const createHarness = (
   input: {
     admitPlan?: AcpPromptTurnWorkflowOptions['plan']['admit']
     authorize?: () => TurnSkillHandle | Promise<TurnSkillHandle>
+    backend?: AcpBackendGenerationView
+    beforePromptDispatch?: AcpPromptTurnWorkflowOptions['environment']['beforePromptDispatch']
     cancellationCheckpoint?: AcpPromptTurnWorkflowOptions['interactions']['cancellationCheckpoint']
     execute?: AcpPromptTurnWorkflowOptions['executor']['execute']
     finalize?: AcpPromptOutcomeFinalizer['finalize']
@@ -135,12 +138,14 @@ const createHarness = (
     prepare?: AcpPromptTurnWorkflowOptions['preparation']['prepare']
     providerReconnectPending?: () => boolean
     resolveComputeExecutionTargetIds?: (sessionId: string) => readonly string[]
+    skillRuntimeAllowlist?: readonly string[]
     sideChatClaim?: NonNullable<
       NonNullable<AcpPromptTurnWorkflowOptions['environment']['sideChatRelays']>['claim']
     >
   } = {}
 ): Harness => {
   const journal: string[] = []
+  const runtimeBackend = input.backend ?? backend
   const owner = new AcpSessionInteractionOwner()
   let session = { sessionId: 'provider-1' } as ActiveSession
   const aggregate = new AcpSessionAggregate('app-1')
@@ -148,7 +153,7 @@ const createHarness = (
     session,
     cwd: '/session',
     projectId: 'project-1',
-    frameworkId: 'opencode',
+    frameworkId: runtimeBackend.framework.id,
     permissionProfile: {
       selectedProfile: 'ask',
       effectiveProfile: 'ask',
@@ -218,6 +223,7 @@ const createHarness = (
     status: 'ready',
     content: 'provider content',
     skillActivityInputs: [{ name: 'Research', path: '/skills/research/SKILL.md' }],
+    ...(input.skillRuntimeAllowlist ? { skillRuntimeAllowlist: input.skillRuntimeAllowlist } : {}),
     transferContextTurn: vi.fn(() => context),
     close: vi.fn()
   } satisfies ReadyPreparedPromptHandle
@@ -302,10 +308,11 @@ const createHarness = (
     skills: { authorize },
     preparation: { prepare: preparation },
     executor: { execute: executor },
+    serialization: new AcpProviderPromptSerializationOwner(),
     contextUsage,
     providerReconnectPending: input.providerReconnectPending ?? (() => false),
     environment: {
-      backend: () => backend,
+      backend: () => runtimeBackend,
       tooling: () => ({ artifacts: true, notebook: true, skillImport: true }),
       bridgeSkillsAvailable: () => true,
       skillImportEnabled: () => true,
@@ -319,7 +326,8 @@ const createHarness = (
       ...(input.sideChatClaim ? { sideChatRelays: { claim: input.sideChatClaim } } : {}),
       routeNotification,
       diagnosticContext: () => ({}),
-      pushUserMessage
+      pushUserMessage,
+      ...(input.beforePromptDispatch ? { beforePromptDispatch: input.beforePromptDispatch } : {})
     },
     artifacts,
     plan: { preflight: preflightPlan, admit: admitPlan, ...planLifecycle },
@@ -366,8 +374,8 @@ const createHarness = (
   }
 }
 
-const request = (): AcpPromptRequest => ({
-  sessionId: 's1',
+const request = (sessionId = 's1'): AcpPromptRequest => ({
+  sessionId,
   text: 'analyze',
   forcedSkillIds: ['research'],
   provenanceContext: { promptMessageId: 'message-1' }
@@ -482,6 +490,90 @@ describe('AcpPromptTurnWorkflow', () => {
       'in_progress',
       'completed'
     ])
+  })
+
+  it('activates a framework-owned current Session before provider dispatch', async () => {
+    const frameworkBeforePromptDispatch = vi.fn(async () => undefined)
+    const beforePromptDispatch = vi.fn<
+      NonNullable<AcpPromptTurnWorkflowOptions['environment']['beforePromptDispatch']>
+    >(async ({ framework, providerSessionId, cwd }) => {
+      await framework.beforePromptDispatch?.({
+        connection: {} as never,
+        providerSessionId,
+        cwd,
+        mcpServers: []
+      })
+    })
+    const framework = {
+      ...opencodeFramework,
+      id: 'codebuddy' as const,
+      displayName: 'CodeBuddy',
+      beforePromptDispatch: frameworkBeforePromptDispatch
+    }
+    const harness = createHarness({
+      backend: { ...backend, framework },
+      beforePromptDispatch,
+      skillRuntimeAllowlist: ['mcp-pubmed'],
+      execute: async (input) => {
+        await expect(input.beforeDispatch()).resolves.toBe('active')
+        const response: PromptResponse = { stopReason: 'end_turn' }
+        input.onAccepted()
+        input.captureStop()
+        return { kind: 'stopped', response, facts: {} }
+      }
+    })
+
+    await harness.workflow.run(request(), { kind: 'user' })
+
+    expect(beforePromptDispatch).toHaveBeenCalledWith({
+      appSessionId: 's1',
+      framework,
+      providerSessionId: 'provider-1',
+      cwd: '/session',
+      skillRuntimeAllowlist: ['mcp-pubmed']
+    })
+    expect(frameworkBeforePromptDispatch).toHaveBeenCalledWith({
+      connection: {},
+      providerSessionId: 'provider-1',
+      cwd: '/session',
+      mcpServers: []
+    })
+  })
+
+  it('serializes provider prompt dispatch for frameworks with process-global Session state', async () => {
+    const firstDispatch = deferred<void>()
+    const framework = {
+      ...opencodeFramework,
+      serializesProviderPrompts: true
+    }
+    const harness = createHarness({
+      backend: { ...backend, framework },
+      execute: async (input) => {
+        await input.beforeDispatch()
+        const dispatchIndex = harness.executor.mock.calls.length
+        harness.journal.push(`provider:${dispatchIndex}`)
+        if (dispatchIndex === 1) await firstDispatch.promise
+        const response: PromptResponse = { stopReason: 'end_turn' }
+        input.onAccepted()
+        input.captureStop()
+        return { kind: 'stopped', response, facts: {} }
+      }
+    })
+
+    const first = harness.workflow.run(request('s1'), { kind: 'user' })
+    await vi.waitFor(() => expect(harness.journal).toContain('provider:1'))
+    const second = harness.workflow.run(request('s2'), { kind: 'user' })
+
+    await vi.waitFor(() => expect(harness.preparation).toHaveBeenCalledTimes(2))
+    expect(harness.journal).not.toContain('provider:2')
+
+    firstDispatch.resolve()
+
+    await expect(first).resolves.toEqual({ stopReason: 'end_turn' })
+    await expect(second).resolves.toEqual({ stopReason: 'end_turn' })
+    expect(harness.journal.indexOf('provider:1')).toBeLessThan(
+      harness.journal.indexOf('provider:2')
+    )
   })
 
   it('rejects delayed context usage after a successor or provider reconnect takes ownership', async () => {

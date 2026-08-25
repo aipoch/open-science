@@ -343,13 +343,16 @@ export class AcpProviderSessionResumer {
         }
       }
       let specialistProjection = await resolveSpecialistProjection(specialistId, backend)
+      const sessionCapabilities = capability.includeFrameworkMcpServers(
+        specialistProjection.setup.mcpServers ?? []
+      )
 
       let resumeResponse: unknown
       try {
         resumeResponse = await connection.agent.request(acp.methods.agent.session.resume, {
           sessionId: providerSessionId,
           cwd,
-          mcpServers: capability.mcpServers,
+          mcpServers: sessionCapabilities.mcpServers,
           ...specialistProjection.setup.metaArg
         })
       } catch (error) {

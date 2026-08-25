@@ -11,6 +11,7 @@ import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
 import type { ConversationPermissionGrantStore } from './permission-broker'
 import type { AgentModelChangeTarget } from '../agent-framework'
+import type { AgentFrameworkId } from '../../shared/settings'
 import { DelegateMessageParkedError } from '../delegation/execution-port'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import { createProjectHandlers } from '../projects/ipc'
@@ -46,7 +47,7 @@ const runtimeEventId = (runtimeSequence: number, eventId: string): RegExp =>
   new RegExp(`^runtime-${runtimeSequence}-[0-9a-f-]{36}:${eventId}$`, 'u')
 
 const createFakeRuntime = (options: {
-  frameworkId: 'claude-code' | 'opencode' | 'codex'
+  frameworkId: AgentFrameworkId
   sessionIds: string[]
   callbacks: AcpRuntimeCallbacks
   permissionGrantStore?: ConversationPermissionGrantStore

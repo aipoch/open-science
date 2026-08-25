@@ -3,11 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { getAgentFramework, listAgentFrameworks } from './registry'
 
 describe('agent framework registry', () => {
-  it('exposes Codex as a selectable Responses-only framework', () => {
+  it('exposes Codex and CodeBuddy as selectable frameworks', () => {
     expect(listAgentFrameworks().map((framework) => framework.id)).toEqual([
       'claude-code',
       'opencode',
-      'codex'
+      'codex',
+      'codebuddy'
     ])
     expect(getAgentFramework('codex')).toMatchObject({
       displayName: 'Codex',
@@ -16,15 +17,23 @@ describe('agent framework registry', () => {
       acceptsStdioMcp: true,
       supportsDelegatedWork: true
     })
+    expect(getAgentFramework('codebuddy')).toMatchObject({
+      displayName: 'CodeBuddy',
+      supportedApiTypes: ['openai'],
+      supportsSkills: false,
+      acceptsStdioMcp: true,
+      supportsDelegatedWork: true
+    })
   })
 
-  it('admits delegated work for every certified framework', () => {
+  it('admits delegated work only for certified frameworks', () => {
     expect(
       listAgentFrameworks().map(({ id, supportsDelegatedWork }) => ({ id, supportsDelegatedWork }))
     ).toEqual([
       { id: 'claude-code', supportsDelegatedWork: true },
       { id: 'opencode', supportsDelegatedWork: true },
-      { id: 'codex', supportsDelegatedWork: true }
+      { id: 'codex', supportsDelegatedWork: true },
+      { id: 'codebuddy', supportsDelegatedWork: true }
     ])
   })
 

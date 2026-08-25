@@ -348,6 +348,13 @@ const createFrameworkCompositionHarness = async (
               }
             }
           : {}),
+        ...(frameworkId === 'codebuddy'
+          ? {
+              codebuddyFramework: {
+                spawn: () => ({ kill: vi.fn() }) as unknown as ChildProcessWithoutNullStreams
+              }
+            }
+          : {}),
         prepare: async (input: DelegateExecutionInput) => {
           inputs.set(input.attemptId, input)
           const durable = context.harness!.durable()
@@ -404,20 +411,33 @@ const createFrameworkCompositionHarness = async (
                     ]
                   }
                 }
-              : {
-                  ...base,
-                  spawn: {
-                    executablePath: '/fake-codex-acp',
-                    args: [],
-                    env: {
-                      HOME: base.runtimeHome,
-                      CODEX_HOME: base.runtimeHome,
-                      CODEX_CONFIG: JSON.stringify({
-                        features: { multi_agent: false, multi_agent_v2: false }
-                      })
+              : frameworkId === 'codex'
+                ? {
+                    ...base,
+                    spawn: {
+                      executablePath: '/fake-codex-acp',
+                      args: [],
+                      env: {
+                        HOME: base.runtimeHome,
+                        CODEX_HOME: base.runtimeHome,
+                        CODEX_CONFIG: JSON.stringify({
+                          features: { multi_agent: false, multi_agent_v2: false }
+                        })
+                      } as Record<string, string>
                     }
                   }
-                }
+                : {
+                    ...base,
+                    spawn: {
+                      executablePath: '/fake-codebuddy',
+                      args: ['--tools', 'Read,Write,Edit,Glob,Grep,Bash'],
+                      env: {
+                        CODEBUDDY_DISABLE_FORK_SUBAGENT: '1',
+                        CODEBUDDY_DISABLE_BACKGROUND_TASKS: '1',
+                        CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS: '1'
+                      } as Record<string, string>
+                    }
+                  }
         },
         createRuntime: (
           scope,
@@ -1087,6 +1107,16 @@ describe('production delegated-work composition', () => {
     harness.replaceDurable({ ...harness.durable(), agentFrameworkId: 'claude-code' })
     await expect(harness.composition.root.wakeMessages?.(legacy.id)).resolves.toBeUndefined()
     expect(harness.selected).toEqual(['claude-code'])
+  })
+
+  it('certifies a CodeBuddy Session when waking delegated work', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-codebuddy-wake-'))
+    const harness = await createCompositionHarness(root, 'codebuddy')
+
+    await expect(
+      harness.composition.root.wakeMessages?.(harness.session.id)
+    ).resolves.toBeUndefined()
+    expect(harness.selected).toEqual(['codebuddy'])
   })
 
   it('rejects a missing framework identity when delegated history already exists', async () => {
@@ -2186,7 +2216,7 @@ describe('production delegated-work composition', () => {
 
   it('selects each advertised production framework from the durable Session identity', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-frameworks-'))
-    for (const frameworkId of ['claude-code', 'opencode', 'codex'] as const) {
+    for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
       const execution = createDeterministicDelegateExecution()
       execution.plan({ status: 'completed', response: `${frameworkId} complete` })
       const harness = await createCompositionHarness(

@@ -17,6 +17,7 @@ import {
 const expectedChannels = [
   'settings:uninstall-claude',
   'settings:uninstall-codex',
+  'settings:uninstall-codebuddy',
   'settings:uninstall-opencode',
   'settings:upsert-provider',
   'settings:delete-provider',
@@ -82,7 +83,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings runtime application commands', () => {
-  it('installs the exact 19-command inventory and dispatches a remote-safe selection', async () => {
+  it('installs the exact 20-command inventory and dispatches a remote-safe selection', async () => {
     const { dependencies, workflowMethod } = createDependencies()
     const selected = { activeProviderId: 'provider-1' }
     workflowMethod('setActiveProvider').mockResolvedValue(selected)
@@ -145,7 +146,7 @@ describe('Settings runtime application commands', () => {
     expect(workflowMethod('setReasoningEffort')).toHaveBeenCalledWith({ effort: 'high' })
   })
 
-  it('rejects all fourteen local-only commands before a runtime workflow can run', async () => {
+  it('rejects all fifteen local-only commands before a runtime workflow can run', async () => {
     const { dependencies, workflowMethod } = createDependencies()
     const router = createApplicationCommandRouter()
     registerRuntimeSettingsApplicationCommands(router.registrar, dependencies)
@@ -153,6 +154,7 @@ describe('Settings runtime application commands', () => {
     const attempts = [
       [settingsRuntimeApplicationCommands.uninstallClaude, []],
       [settingsRuntimeApplicationCommands.uninstallCodex, []],
+      [settingsRuntimeApplicationCommands.uninstallCodeBuddy, []],
       [settingsRuntimeApplicationCommands.uninstallOpencode, []],
       [settingsRuntimeApplicationCommands.loginSharedClaude, []],
       [settingsRuntimeApplicationCommands.logoutSharedClaude, []],
@@ -198,6 +200,10 @@ describe('Settings runtime application commands', () => {
     )
     await router.dispatcher.invoke(
       settingsRuntimeApplicationCommands.uninstallCodex,
+      invocation([] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.uninstallCodeBuddy,
       invocation([] as const)
     )
     await router.dispatcher.invoke(
@@ -252,6 +258,7 @@ describe('Settings runtime application commands', () => {
     expect(workflowMethod('uninstallRuntime').mock.calls).toEqual([
       ['uninstallClaude', 'claude-code'],
       ['uninstallCodex', 'codex'],
+      ['uninstallCodeBuddy', 'codebuddy'],
       ['uninstallOpencode', 'opencode']
     ])
     expect(workflowMethod('loginClaudeShared')).toHaveBeenCalledOnce()

@@ -59,7 +59,7 @@ const permissionRequest = (
 const observe = (
   context: AcpPermissionContext,
   notification: SessionNotification,
-  framework: 'codex' | 'opencode' | 'claude-code'
+  framework: 'codex' | 'opencode' | 'claude-code' | 'codebuddy'
 ): void => {
   context.observeToolCall(notification, {
     sessionId: notification.sessionId,
@@ -745,6 +745,50 @@ describe('ACP permission context', () => {
         permissionContext
       )
     }
+
+    expect(onNotebookExecutionAuthorized).toHaveBeenCalledOnce()
+    expect(onNotebookExecutionAuthorized).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        toolCallId: 'call-1',
+        promptMessageId: 'prompt-1',
+        method: 'execute',
+        executionInput: { language: 'python', code: 'print(1)' }
+      })
+    )
+  })
+
+  it('authorizes a native CodeBuddy Notebook call in full access mode', () => {
+    const onNotebookExecutionAuthorized = vi.fn()
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting(),
+      onNotebookExecutionAuthorized
+    })
+    const toolCall = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call' as const,
+        toolCallId: 'call-1',
+        title: 'mcp__open-science-notebook__notebook_execute',
+        kind: 'execute' as const,
+        status: 'pending' as const,
+        rawInput: { language: 'python', code: 'print(1)' },
+        _meta: {
+          'codebuddy.ai/toolName': 'mcp__open-science-notebook__notebook_execute'
+        }
+      }
+    }
+    const permissionContext = {
+      sessionId: 'session-1',
+      framework: 'codebuddy' as const,
+      mcpServerNames: NOTEBOOK_SERVERS,
+      nativeFullAccess: true,
+      promptMessageId: 'prompt-1'
+    }
+
+    context.observeToolCall(toolCall, permissionContext)
+    context.observeToolCall(toolCall, permissionContext)
 
     expect(onNotebookExecutionAuthorized).toHaveBeenCalledOnce()
     expect(onNotebookExecutionAuthorized).toHaveBeenCalledWith(

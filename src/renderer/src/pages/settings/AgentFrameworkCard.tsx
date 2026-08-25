@@ -26,8 +26,10 @@ type AgentFrameworkCardProps = {
   name: string
   // One-line summary of what the agent is, shown under the name.
   description: React.ReactNode
-  // Preflight-passed runtimes are selectable and sit in the Installed group.
+  // Preflight-passed runtimes are selectable.
   ready: boolean
+  // Detection/install found runtime metadata. It may still need repair before it is selectable.
+  installed?: boolean
   // Installed but below the minimum supported runtime version. It remains in Installed, is not
   // selectable, and gets an explicit managed-update action instead of generic repair treatment.
   updateRequired?: boolean
@@ -93,6 +95,7 @@ const AgentFrameworkCard = ({
   name,
   description,
   ready,
+  installed,
   updateRequired = false,
   minimumVersion,
   needsRepair,
@@ -124,9 +127,10 @@ const AgentFrameworkCard = ({
   const { t } = useTranslation()
   const [showLog, setShowLog] = useState(false)
 
-  // A runtime with a resolved path (even a broken one) shows its path/link and the Uninstall control.
+  // A runtime with a resolved path (even a broken one) shows its path/link.
   const found = Boolean(path)
-  const repair = !updateRequired && (needsRepair || found)
+  const installedRuntime = installed ?? found
+  const repair = !updateRequired && (needsRepair || installedRuntime)
   const canRequestRepair = !ready && repair && Boolean(onRepairRequired)
   const activateCard = selectDisabled
     ? undefined
@@ -193,7 +197,7 @@ const AgentFrameworkCard = ({
         // Active gets the strongest treatment (primary ring + faint tint); a not-installed card
         // recedes with a dashed "placeholder" outline so the two groups read differently at a glance.
         ready && active && 'bg-primary/[0.04] ring-1 ring-primary',
-        !ready && !updateRequired && 'border-dashed bg-muted/40',
+        !ready && !updateRequired && !installedRuntime && 'border-dashed bg-muted/40',
         updateRequired &&
           'border-status-warning-foreground/30 bg-status-warning-surface/40 dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20',
         previewState === 'hover' && 'bg-status-warning-surface/70',
@@ -219,7 +223,7 @@ const AgentFrameworkCard = ({
             aria-hidden="true"
             className={cn(
               'flex size-6 shrink-0 items-center justify-center',
-              !ready && !updateRequired && 'opacity-50'
+              !ready && !updateRequired && !installedRuntime && 'opacity-50'
             )}
           >
             {icon}

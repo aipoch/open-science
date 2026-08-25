@@ -6,7 +6,8 @@ import {
   ProviderTransportOwner,
   type ProviderTransportOwnerOptions
 } from './provider-transport-owner'
-import { OpenAiProviderBridge } from './openai-provider-bridge'
+import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
+import type { ChatProviderCompatibilityTarget } from './chat-provider-compatibility'
 
 type ResponsesBridgeStub = ReturnType<
   NonNullable<ProviderTransportOwnerOptions['createResponsesBridge']>
@@ -19,6 +20,9 @@ type AnthropicBridgeStub = ReturnType<
 >
 type OpenAiBridgeStub = ReturnType<
   NonNullable<ProviderTransportOwnerOptions['createOpenAiProviderBridge']>
+>
+type ChatCompatibilityBridgeStub = ReturnType<
+  NonNullable<ProviderTransportOwnerOptions['createChatProviderCompatibilityBridge']>
 >
 
 const makeTarget = (): ProviderRuntimeTarget => ({
@@ -106,6 +110,14 @@ const makeOpenAiBridge = (index: number, startError?: Error): OpenAiBridgeStub =
   clearErrorReplay: vi.fn()
 })
 
+const makeChatCompatibilityBridge = (): ChatCompatibilityBridgeStub => ({
+  start: vi.fn(async () => ({
+    baseUrl: 'http://127.0.0.1:45000',
+    token: 'chat-compatibility-token'
+  })),
+  close: vi.fn(async () => undefined)
+})
+
 const makePlan = (transport: BackendTransportPlan): BackendRoutePlan => ({
   modelRoute:
     transport.kind === 'claude-anthropic'
@@ -120,6 +132,194 @@ const makePlan = (transport: BackendTransportPlan): BackendRoutePlan => ({
 })
 
 describe('ProviderTransportOwner generations', () => {
+  it('routes only CodeBuddy model traffic through its image-normalizing bridge', async () => {
+    const selector = makeResponsesBridge(0)
+    const bridge = makeOpenAiBridge(0)
+    let targets: readonly OpenAiProviderBridgeTarget[] = []
+    const createResponsesBridge = vi.fn(() => selector)
+    const owner = new ProviderTransportOwner({
+      createResponsesBridge,
+      createOpenAiProviderBridge: (registered) => {
+        targets = registered
+        return bridge
+      }
+    })
+    const target = makeTarget()
+    const plan: BackendRoutePlan = {
+      ...makePlan({ kind: 'direct' }),
+      modelRoute: 'codebuddy-openai'
+    }
+
+    const generation = await owner.acquire({ activeTarget: target, plan })
+    await generation.providerTransportLease?.selectSkills?.('use pubmed', [])
+
+    expect(selector.start).not.toHaveBeenCalled()
+    expect(createResponsesBridge).toHaveBeenCalledWith(expect.any(Object), {
+      skillSelectorFailureMode: 'throw'
+    })
+    expect(selector.selectSkills).toHaveBeenCalledWith('use pubmed', [], undefined, undefined)
+    expect(bridge.start).toHaveBeenCalledOnce()
+    expect(targets).toHaveLength(1)
+    expect(targets[0]).toMatchObject({
+      wire: 'chat-completions',
+      endpoint: 'https://provider.example/v1/chat/completions',
+      key: 'plain-provider-key',
+      model: 'model-a',
+      adaptRequest: expect.any(Function)
+    })
+    expect(generation.provider).toMatchObject({
+      openaiBaseUrl: 'http://127.0.0.1:44000/v1',
+      key: 'openai-token-0',
+      model: 'model-a'
+    })
+    expect(generation.environment?.NO_PROXY).toBe(generation.environment?.no_proxy)
+    await generation.release()
+    expect(selector.close).toHaveBeenCalledOnce()
+    expect(bridge.close).toHaveBeenCalledOnce()
+  })
+
+  it('routes CodeBuddy xAI subscription traffic through the OAuth bridge', async () => {
+    const selector = makeResponsesBridge(0)
+    const oauthBridge = makeOpenAiBridge(0)
+    const openAiBridge = makeOpenAiBridge(1)
+    const createXaiOAuthProviderBridge = vi.fn(() => oauthBridge as never)
+    const createOpenAiProviderBridge = vi.fn(() => openAiBridge)
+    const createResponsesBridge = vi.fn(() => selector)
+    const getXaiOAuthAccessToken = vi.fn(async () => 'oauth-access-token')
+    const owner = new ProviderTransportOwner({
+      createResponsesBridge,
+      createOpenAiProviderBridge,
+      createXaiOAuthProviderBridge,
+      getXaiOAuthAccessToken
+    })
+    const base = makeTarget()
+    const activeTarget: ProviderRuntimeTarget = {
+      ...base,
+      providerId: 'builtin-xai-subscription',
+      providerType: 'xai-subscription',
+      provider: {
+        ...base.provider,
+        type: 'xai-subscription',
+        vendorId: 'xai',
+        key: undefined,
+        model: 'grok-4.6'
+      },
+      effectiveModel: 'grok-4.6'
+    }
+
+    const generation = await owner.acquire({
+      activeTarget,
+      plan: {
+        ...makePlan({ kind: 'direct' }),
+        modelRoute: 'codebuddy-openai'
+      }
+    })
+
+    expect(createXaiOAuthProviderBridge).toHaveBeenCalledWith(
+      [{ id: expect.any(String), model: 'grok-4.6' }],
+      expect.any(String),
+      'openai',
+      getXaiOAuthAccessToken,
+      expect.objectContaining({ adaptOpenAiRequest: expect.any(Function) })
+    )
+    expect(createOpenAiProviderBridge).not.toHaveBeenCalled()
+    expect(createResponsesBridge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'http://127.0.0.1:44000/v1',
+        key: 'openai-token-0'
+      }),
+      { skillSelectorFailureMode: 'throw' }
+    )
+    await generation.release()
+  })
+
+  it('closes both CodeBuddy transports when its model bridge fails to start', async () => {
+    const startError = new Error('CodeBuddy bridge start failed')
+    const selector = makeResponsesBridge(0)
+    const bridge = makeOpenAiBridge(0, startError)
+    const owner = new ProviderTransportOwner({
+      createResponsesBridge: () => selector,
+      createOpenAiProviderBridge: () => bridge
+    })
+
+    await expect(
+      owner.acquire({
+        activeTarget: makeTarget(),
+        plan: {
+          ...makePlan({ kind: 'direct' }),
+          modelRoute: 'codebuddy-openai'
+        }
+      })
+    ).rejects.toBe(startError)
+
+    expect(bridge.close).toHaveBeenCalledOnce()
+    expect(selector.close).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    {
+      wire: 'responses' as const,
+      apiEndpoints: ['responses'] as const,
+      endpoint: 'https://provider.example/v1/responses'
+    },
+    {
+      wire: 'anthropic' as const,
+      apiEndpoints: ['anthropic'] as const,
+      endpoint: 'https://provider.example/v1/messages'
+    }
+  ])('routes a $wire-only CodeBuddy provider through Chat compatibility', async (testCase) => {
+    const selector = makeResponsesBridge(0)
+    const bridge = makeChatCompatibilityBridge()
+    let compatibilityTarget: ChatProviderCompatibilityTarget | undefined
+    const createResponsesBridge = vi.fn(() => selector)
+    const owner = new ProviderTransportOwner({
+      createResponsesBridge,
+      createChatProviderCompatibilityBridge: (target) => {
+        compatibilityTarget = target
+        return bridge
+      }
+    })
+    const activeTarget: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      apiEndpoints: [...testCase.apiEndpoints],
+      provider: {
+        ...makeTarget().provider,
+        apiEndpoints: [...testCase.apiEndpoints],
+        openaiBaseUrl: 'https://provider.example/v1'
+      },
+      needsChatResponsesBridge: true
+    }
+    const generation = await owner.acquire({
+      activeTarget,
+      plan: {
+        ...makePlan({ kind: 'codebuddy-provider-compatibility', wire: testCase.wire }),
+        modelRoute: 'codebuddy-openai'
+      }
+    })
+
+    expect(compatibilityTarget).toMatchObject({
+      wire: testCase.wire,
+      endpoint: testCase.endpoint,
+      model: 'model-a',
+      key: 'plain-provider-key',
+      adaptRequest: expect.any(Function)
+    })
+    expect(createResponsesBridge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'http://127.0.0.1:45000/v1',
+        key: 'chat-compatibility-token'
+      }),
+      { skillSelectorFailureMode: 'throw' }
+    )
+    expect(generation.provider).toMatchObject({
+      openaiBaseUrl: 'http://127.0.0.1:45000/v1',
+      apiEndpoints: ['openai']
+    })
+    await generation.release()
+    expect(bridge.close).toHaveBeenCalledOnce()
+    expect(selector.close).toHaveBeenCalledOnce()
+  })
+
   it('creates independent Responses generations and releases each idempotently', async () => {
     const bridges: ReturnType<typeof makeResponsesBridge>[] = []
     let generation = 0

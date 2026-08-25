@@ -138,7 +138,10 @@ class BackendSelectionOwner {
 
   private resolveConfiguredFrameworkId(settings: StoredSettings): AgentFrameworkId {
     const forced = this.options.readFrameworkOverride()
-    return forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
+    return forced === 'opencode' ||
+      forced === 'claude-code' ||
+      forced === 'codex' ||
+      forced === 'codebuddy'
       ? forced
       : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
   }

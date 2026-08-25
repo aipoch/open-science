@@ -368,7 +368,8 @@ const parseCache = (
       typeof cache.model !== 'string' ||
       (cache.frameworkId !== 'claude-code' &&
         cache.frameworkId !== 'opencode' &&
-        cache.frameworkId !== 'codex')
+        cache.frameworkId !== 'codex' &&
+        cache.frameworkId !== 'codebuddy')
     ) {
       return undefined
     }
