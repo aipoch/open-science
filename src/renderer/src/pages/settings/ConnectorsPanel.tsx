@@ -649,9 +649,9 @@ export function ConnectorsPanel({
             <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
               <FileUp className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>{tCommon('Import configuration')}</span>
+                <span>{tCommon('Import Connector or MCP configuration')}</span>
                 <span className="text-xs text-muted-foreground">
-                  {tCommon('Validate a shared Connector file')}
+                  {tCommon('Import an Open Science Connector or MCP client configuration')}
                 </span>
               </span>
             </DropdownMenuItem>

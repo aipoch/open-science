@@ -104,7 +104,7 @@ export function ConnectorImportView({
       <div className="flex w-full flex-col gap-5">
         <div>
           <h2 className="text-base font-semibold text-foreground">
-            {t('Import Connector configuration')}
+            {t('Import Connector or MCP configuration')}
           </h2>
           <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
             {t(
