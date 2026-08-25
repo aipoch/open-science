@@ -78,7 +78,8 @@ type WorkspaceComposerController = {
     cancelTransfer: (transfer: ComposerUploadTransfer) => void
     removeAttachment: (attachment: UploadedAttachment) => void
     restorePastedText: (pastedTextId: string) => void
-    undo: () => boolean
+    undo: (caret?: ComposerCaretPosition) => boolean
+    redo: (caret?: ComposerCaretPosition) => boolean
     setError: (error: string | null) => void
   }
   lifecycle: {
@@ -164,6 +165,7 @@ const useWorkspaceComposerController = ({
     removeAttachment,
     restorePastedText,
     undo,
+    redo,
     setError,
     clearPastedTextUndo,
     clearUndo
@@ -499,6 +501,7 @@ const useWorkspaceComposerController = ({
       removeAttachment,
       restorePastedText,
       undo,
+      redo,
       setError
     },
     lifecycle: {

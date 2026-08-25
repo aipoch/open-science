@@ -57,7 +57,8 @@ type ComposerEditorProps = {
     caret?: ComposerCaretPosition
   ) => void
   onLocatePastedText?: (pastedTextId: string) => void
-  onUndo?: () => boolean
+  onUndo?: (caret?: ComposerCaretPosition) => boolean
+  onRedo?: (caret?: ComposerCaretPosition) => boolean
   disabled?: boolean
   placeholder: string
   className?: string
@@ -419,6 +420,7 @@ export const ComposerEditor = ({
   onLongTextPaste,
   onLocatePastedText,
   onUndo,
+  onRedo,
   disabled = false,
   placeholder,
   className,
@@ -632,17 +634,18 @@ export const ComposerEditor = ({
     }
     const primaryUndoModifier =
       (event.metaKey && !event.ctrlKey) || (event.ctrlKey && !event.metaKey)
+    const historyAction = event.shiftKey ? onRedo : onUndo
     if (
       event.key.toLowerCase() === 'z' &&
       primaryUndoModifier &&
       !event.altKey &&
-      !event.shiftKey &&
       !event.repeat &&
       !event.nativeEvent.isComposing &&
-      onUndo
+      historyAction
     ) {
       event.preventDefault()
-      onUndo()
+      const root = editorRef.current
+      historyAction(root ? currentCaretPosition(root) : undefined)
       return
     }
     // While either mention popup is open it owns Enter/arrow keys; leave them to its document listener.

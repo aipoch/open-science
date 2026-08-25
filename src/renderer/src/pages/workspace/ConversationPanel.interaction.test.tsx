@@ -389,6 +389,7 @@ const createPanelDefaults = (): PanelProps => ({
       removeAttachment: vi.fn(),
       restorePastedText: vi.fn(),
       undo: vi.fn(() => false),
+      redo: vi.fn(() => false),
       setError: vi.fn()
     }
   },

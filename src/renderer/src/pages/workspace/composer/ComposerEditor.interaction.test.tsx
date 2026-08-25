@@ -210,7 +210,8 @@ type Overrides = Partial<{
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
   onLongTextPaste: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
   onLocatePastedText: (pastedTextId: string) => void
-  onUndo: () => boolean
+  onUndo: (caret?: { nodeIndex: number; offset: number }) => boolean
+  onRedo: (caret?: { nodeIndex: number; offset: number }) => boolean
   disabled: boolean
   isHistoryBrowsing: boolean
   historyStatus: string
@@ -232,6 +233,7 @@ const renderEditor = (overrides: Overrides = {}): void => {
         onLongTextPaste={overrides.onLongTextPaste}
         onLocatePastedText={overrides.onLocatePastedText}
         onUndo={overrides.onUndo}
+        onRedo={overrides.onRedo}
         disabled={overrides.disabled}
         placeholder="Ask anything"
         ariaLabel="Ask anything"
@@ -842,6 +844,26 @@ describe('ComposerEditor', () => {
     act(() => editor().dispatchEvent(native))
     expect(native.defaultPrevented).toBe(true)
     expect(onUndo).toHaveBeenCalledTimes(2)
+  })
+
+  it('routes Cmd+Shift+Z and Ctrl+Shift+Z only through Composer redo', () => {
+    const onRedo = vi.fn(() => true)
+    renderEditor({ onRedo })
+
+    for (const [index, modifier] of [{ metaKey: true }, { ctrlKey: true }].entries()) {
+      if (index === 1) onRedo.mockReturnValue(false)
+      const handled = new KeyboardEvent('keydown', {
+        key: 'z',
+        shiftKey: true,
+        ...modifier,
+        bubbles: true,
+        cancelable: true
+      })
+      act(() => editor().dispatchEvent(handled))
+      expect(handled.defaultPrevented).toBe(true)
+    }
+
+    expect(onRedo).toHaveBeenCalledTimes(2)
   })
 
   it('places the caret immediately after restored pasted text', () => {
