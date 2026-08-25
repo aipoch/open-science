@@ -451,6 +451,46 @@ describe('RemoteSessionPairingManager', () => {
     expect((await repository.load()).trustedBrowsers).toHaveLength(0)
   })
 
+  it('removes a persistent approval when the browser never claims it before expiry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
+    roots.push(root)
+    const repository = new RemoteAccessRepository(root)
+    let now = 0
+    const manager = await RemoteSessionPairingManager.create({
+      repository,
+      isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+      isEnabled: () => true,
+      onChanged: vi.fn(),
+      now: () => now
+    })
+    await manager.webAccess.authorizeHttp(
+      request('/'),
+      response().response,
+      new URL('https://home.example.ts.net/')
+    )
+    const [pending] = manager.pendingViews()
+    await manager.approve(pending.id, 'always')
+    expect((await repository.load()).trustedBrowsers).toHaveLength(1)
+
+    const persist = repository.save.bind(repository)
+    const save = vi
+      .spyOn(repository, 'save')
+      .mockRejectedValueOnce(new Error('cleanup persistence failed'))
+      .mockImplementation((value) => persist(value))
+
+    now = 11 * 60 * 1_000
+    expect(manager.pendingViews()).toHaveLength(0)
+
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+    expect((await repository.load()).trustedBrowsers).toHaveLength(1)
+
+    await vi.waitFor(async () => {
+      manager.pendingViews()
+      expect((await repository.load()).trustedBrowsers).toHaveLength(0)
+    })
+    expect(save).toHaveBeenCalledTimes(2)
+  })
+
   it('rejects an invalid pairing decision without granting or persisting access', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pairing-'))
     roots.push(root)

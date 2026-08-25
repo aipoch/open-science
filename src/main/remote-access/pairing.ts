@@ -161,6 +161,7 @@ export class RemoteSessionPairingManager {
   private readonly unclaimedTrustedBrowserCleanup = new Set<string>()
   private readonly now: () => number
   private storedMutationQueue: Promise<void> = Promise.resolve()
+  private unclaimedTrustedBrowserCleanupTask: Promise<void> | undefined
   private authorizationGeneration = 0
 
   private constructor(
@@ -617,14 +618,41 @@ export class RemoteSessionPairingManager {
     return changed
   }
 
+  private scheduleUnclaimedTrustedBrowserCleanup(): void {
+    if (this.unclaimedTrustedBrowserCleanupTask || this.unclaimedTrustedBrowserCleanup.size === 0) {
+      return
+    }
+
+    let succeeded = false
+    const cleanupTask = this.cleanupUnclaimedTrustedBrowsers([])
+      .then((changed) => {
+        succeeded = true
+        if (changed) this.options.onChanged()
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.unclaimedTrustedBrowserCleanupTask !== cleanupTask) return
+        this.unclaimedTrustedBrowserCleanupTask = undefined
+        if (succeeded) this.scheduleUnclaimedTrustedBrowserCleanup()
+      })
+    this.unclaimedTrustedBrowserCleanupTask = cleanupTask
+  }
+
   private pruneExpired(): void {
     const now = this.now()
     for (const [id, request] of this.pending) {
-      if (request.expiresAt <= now) this.pending.delete(id)
+      if (request.expiresAt > now) continue
+      if (request.grant?.decision === 'always') {
+        this.unclaimedTrustedBrowserCleanup.add(request.grant.sessionId)
+      } else if (request.grant?.decision === 'once') {
+        this.oneTimeSessions.delete(request.grant.sessionId)
+      }
+      this.pending.delete(id)
     }
     for (const [id, session] of this.oneTimeSessions) {
       if (session.expiresAt <= now) this.oneTimeSessions.delete(id)
     }
+    this.scheduleUnclaimedTrustedBrowserCleanup()
   }
 }
 
