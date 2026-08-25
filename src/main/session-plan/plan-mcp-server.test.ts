@@ -799,6 +799,13 @@ describe('Session Plan MCP server', () => {
     ])
     const generateTool = listedTools.tools.find((tool) => tool.name === 'generate_plan')
     expect(generateTool).toBeDefined()
+    expect(generateTool?.description).toMatch(/^Generation and decision use separate call shapes\./)
+    expect(generateTool?.description).toContain(
+      'all four top-level fields: task_summary, phases, desired_outputs, and feasibility'
+    )
+    expect(generateTool?.description).toContain(
+      'For a decision, submit only decision:"approved" or decision:"rejected"'
+    )
     expect(generateTool?.description).toContain('kind:feedback')
     expect(generateTool?.description).toContain('decision:"approved"')
     expect(generateTool?.description).not.toContain(
