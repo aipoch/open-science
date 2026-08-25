@@ -758,7 +758,8 @@ describe('AcpSessionUpdateProjector', () => {
     expect(JSON.stringify(effects[2])).not.toContain('do-not-log')
   })
 
-  it('uses the Codex MCP raw result as the failure diagnostic when content is absent', () => {
+  it('uses a safe Codex MCP validation diagnostic when content is absent', () => {
+    const sensitiveResult = 'artifact contents: api_key=do-not-log'
     const projector = createProjector()
     const effects = projector.route(
       {
@@ -778,7 +779,7 @@ describe('AcpSessionUpdateProjector', () => {
               content: [
                 {
                   type: 'text',
-                  text: 'MCP error -32602: Input validation error: Invalid arguments for tool write_artifact_file: Invalid input: expected string, received undefined at filename'
+                  text: `MCP error -32602: Input validation error: Invalid arguments for tool write_artifact_file: Invalid input: expected string, received undefined at filename; ${sensitiveResult}`
                 }
               ]
             },
@@ -800,9 +801,9 @@ describe('AcpSessionUpdateProjector', () => {
       tool: 'open-science-artifacts/write_artifact_file',
       toolCallId: 'tool-1',
       sessionId: 'session-1',
-      reason:
-        'MCP error -32602: Input validation error: Invalid arguments for tool write_artifact_file: Invalid input: expected string, received undefined at filename'
+      reason: 'MCP input validation failed.'
     })
+    expect(JSON.stringify(effects[2])).not.toContain(sensitiveResult)
   })
 
   it('suppresses empty message events after retaining their context refresh ordering', () => {

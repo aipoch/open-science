@@ -10,6 +10,7 @@ import {
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
 // cannot flood it. Tuned to fit a typical error message (e.g. WebFetch's domain-safety preflight).
 const TOOL_FAILURE_TEXT_LIMIT = 300
+const MCP_INPUT_VALIDATION_ERROR_PREFIX = 'MCP error -32602: Input validation error:'
 const MAX_RUNTIME_RAW_PAYLOAD_CHARS = 8_000
 const MAX_SKILL_NAME_CHARS = 200
 const SKILL_TOOL_TITLE_PATTERN = /^(?:run|loaded)\s+skill(?:\?|:|\s|$)/iu
@@ -210,8 +211,8 @@ const boundedToolFailureText = (text: string): string | undefined => {
 }
 
 // Extracts a bounded, text-only reason from a failed tool call for logging. Codex MCP updates carry
-// the model-facing error under rawOutput.result.content instead of ACP content. Read only those text
-// blocks (never raw arguments, diffs, or terminal output) so the diagnostic remains useful and safe.
+// input-validation failures under rawOutput.result.content instead of ACP content. Recognize only
+// that protocol error and emit fixed copy so arbitrary MCP result text never reaches the log.
 const extractToolFailureText = (
   content: ToolCallContent[] | undefined,
   rawOutput?: unknown
@@ -227,14 +228,15 @@ const extractToolFailureText = (
   const rawContent = rawOutput.result.content
   if (!Array.isArray(rawContent)) return undefined
 
-  return boundedToolFailureText(
-    rawContent
-      .map((item) =>
-        isRecord(item) && item.type === 'text' && typeof item.text === 'string' ? item.text : ''
-      )
-      .filter(Boolean)
-      .join(' ')
+  const hasInputValidationError = rawContent.some(
+    (item) =>
+      isRecord(item) &&
+      item.type === 'text' &&
+      typeof item.text === 'string' &&
+      item.text.startsWith(MCP_INPUT_VALIDATION_ERROR_PREFIX)
   )
+
+  return hasInputValidationError ? 'MCP input validation failed.' : undefined
 }
 
 type ToolCallUpdate = Extract<
