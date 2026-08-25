@@ -72,13 +72,13 @@ import {
   SessionDelegatedWorkPersistenceOwner
 } from './delegated-work-owner'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
-import { isSessionCatalogAuthoritative } from './catalog-authority'
+import { assertSessionIdentityOwnership, isSessionCatalogAuthoritative } from './catalog-authority'
 import {
   createSafeSessionUpdatePublisher as safeSessionUpdates,
   type SessionUpdatePublisher
 } from './session-update-publication'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
-import { SessionPersistenceAuthorityOwner } from './session-authority-owner'
+import { mutateSessionDetailsAuthority } from './session-details-authority'
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
@@ -176,7 +176,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   private readonly deletionOwner: SessionPersistenceDeletionOwner
   private readonly reconciliationOwner: SessionPersistenceReconciliationOwner
   private readonly delegatedWorkOwner: SessionDelegatedWorkPersistenceOwner
-  private readonly authorityOwner: SessionPersistenceAuthorityOwner
   private destructiveStartupWindowOpen = true
   private delegatedStartupRecoveryComplete = false
   private sessionDeletionHandlers: SessionDeletionHandlers | undefined
@@ -194,32 +193,21 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     onDelegatedWorkSessionUpdated?: SessionUpdatePublisher
   ) {
     const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
-    const assertMutable = (
-      projectId: string,
-      sessionId: string,
-      operation: 'save' | 'mutate'
-    ): void => {
-      if (this.deletedProjects.has(projectId)) {
-        throw new Error(`Cannot ${operation} a session whose project has been deleted.`)
-      }
-      if (this.deletedSessions.has(sessionKey(projectId, sessionId))) {
-        throw new Error(`Cannot ${operation} a session that has been deleted.`)
-      }
-    }
     this.stateOwner = new SessionPersistenceStateOwner({
       repository,
       fileIndex,
       provenance,
       uploads,
       log,
-      assertMutable,
+      assertMutable: (projectId, sessionId, operation) =>
+        this.assertMutable(projectId, sessionId, operation),
       notifyFilesChanged: (event) => this.notifyFilesChanged(event),
       notifyRuntimeContextSessionUpdated: (session) =>
         publishSessionUpdate(session, 'runtime-context')
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,
-      assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
+      assertMutable: (projectId, sessionId) => this.assertMutable(projectId, sessionId, 'mutate'),
       recordSession: (session) => this.stateOwner.recordSession(session),
       notifySessionUpdated: (session) => publishSessionUpdate(session, 'runtime-context')
     })
@@ -256,19 +244,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         key
           ? this.operationScheduler.runSession(key.projectId, key.sessionId, work)
           : this.operationScheduler.runGlobal(work),
-      assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
+      assertMutable: (projectId, sessionId) => this.assertMutable(projectId, sessionId, 'mutate'),
       markStartupRecoveryComplete: () => {
         this.delegatedStartupRecoveryComplete = true
       },
       notifySessionUpdated: (session) => publishSessionUpdate(session, 'delegated-work')
-    })
-    this.authorityOwner = new SessionPersistenceAuthorityOwner({
-      repository,
-      assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
-      recordSession: (session) => this.stateOwner.recordSession(session),
-      invalidateBindingTopology: (projectId, sessionId) =>
-        this.stateOwner.invalidateBindingTopology(projectId, sessionId),
-      metadataSnapshot: () => this.stateOwner.metadataSnapshot()
     })
   }
 
@@ -283,9 +263,13 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   }
 
   loadSessionForContinuation(projectId: string, sessionId: string): Promise<PersistedChatSession> {
-    return this.operationScheduler.runSession(projectId, sessionId, () =>
-      this.authorityOwner.loadForContinuation(projectId, sessionId)
-    )
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+      if (loaded.status !== 'found') {
+        throw new Error(`Cannot prepare a durable continuation for a ${loaded.status} Session.`)
+      }
+      return structuredClone(loaded.session)
+    })
   }
 
   setSessionDeletionHandlers(handlers: SessionDeletionHandlers): void {
@@ -728,7 +712,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     options: SaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, async () => {
-      await this.authorityOwner.assertIdentityOwnership(session)
+      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
       return this.stateOwner.saveSession(session, sanitizeRendererSaveSessionOptions(options))
     })
   }
@@ -739,7 +723,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     specialistBindingPending = false
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, async () => {
-      await this.authorityOwner.assertIdentityOwnership(session)
+      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
       return this.stateOwner.saveSessionSpecialistBinding(
         session,
         specialistId,
@@ -805,9 +789,15 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     sessionId: string,
     mutation: () => Promise<Result>
   ): Promise<Result> {
-    return this.operationScheduler.runSession(projectId, sessionId, () =>
-      this.authorityOwner.runMutation(projectId, sessionId, mutation)
-    )
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      this.assertMutable(projectId, sessionId, 'mutate')
+      try {
+        return await mutation()
+      } finally {
+        // Force the next save to validate Artifact finalization's binding before reusing topology.
+        this.stateOwner.invalidateBindingTopology(projectId, sessionId)
+      }
+    })
   }
 
   // Session details is Main-owned metadata: its background lifecycle and the manual edit command
@@ -819,9 +809,16 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     sessionId: string,
     mutation: (session: PersistedChatSession) => PersistedChatSession | undefined
   ): Promise<PersistedChatSession | undefined> {
-    return this.operationScheduler.runSession(projectId, sessionId, () =>
-      this.authorityOwner.mutateSessionDetails(projectId, sessionId, mutation)
-    )
+    return this.operationScheduler.runSession(projectId, sessionId, () => {
+      this.assertMutable(projectId, sessionId, 'mutate')
+      return mutateSessionDetailsAuthority(
+        this.repository,
+        projectId,
+        sessionId,
+        mutation,
+        (session) => this.stateOwner.recordSession(session)
+      )
+    })
   }
 
   /**
@@ -956,6 +953,15 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       (receiptKind) =>
         this.deletionOwner.reconcileSessionDeletion(projectId, sessionId, receiptKind)
     )
+  }
+
+  private assertMutable(projectId: string, sessionId: string, operation: 'save' | 'mutate'): void {
+    if (this.deletedProjects.has(projectId)) {
+      throw new Error(`Cannot ${operation} a session whose project has been deleted.`)
+    }
+    if (this.deletedSessions.has(sessionKey(projectId, sessionId))) {
+      throw new Error(`Cannot ${operation} a session that has been deleted.`)
+    }
   }
 
   // Renderer notifications are derived state. They must never change the result of an authoritative

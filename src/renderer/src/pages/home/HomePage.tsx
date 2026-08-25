@@ -667,7 +667,10 @@ const HomePage = ({
                       session.description,
                       <button
                         type="button"
-                        className="flex min-h-36 w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
+                        // Fixed height sized to the tallest content (status row + title +
+                        // two-line description, ~154px); cards without a description keep the
+                        // height and mt-auto sinks the project line.
+                        className="flex h-[156px] w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 pb-3 px-[18px] pt-4 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
                         onClick={() => openSession(session.projectId, session.id, 'user')}
                         aria-label={
                           waitReason
@@ -677,27 +680,8 @@ const HomePage = ({
                               : t('Open session {{title}}, running', { title: session.title })
                         }
                       >
-                        <span
-                          className={cn(
-                            'min-w-0 max-w-full truncate text-base font-semibold text-text-000',
-                            completed && 'pr-10',
-                            !waiting && !completed && 'home-session-title-running'
-                          )}
-                        >
-                          {session.title}
-                        </span>
-                        <span className="mt-1 truncate text-xs text-text-100">
-                          {projectNames.get(session.projectId) ?? t('Unknown project')}
-                        </span>
-                        {session.description?.trim() ? (
-                          <span
-                            data-testid="session-description-preview"
-                            className="mt-2 line-clamp-2 text-sm leading-5 text-text-200"
-                          >
-                            {session.description.trim()}
-                          </span>
-                        ) : null}
-                        <span className="mt-auto flex w-full items-end justify-between gap-3 pt-6">
+                        {/* Status leads the card — the Home grid answers "what needs me" at a glance. */}
+                        <span className="flex w-full items-center justify-between gap-3">
                           <span
                             className={cn(
                               'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
@@ -730,6 +714,8 @@ const HomePage = ({
                                   : 'Running'
                             )}
                           </span>
+                          {/* Flush right on every card — a reserved dismiss gap leaves the time
+                              floating left of where a long truncated title ends. */}
                           <span className="shrink-0 text-xs text-text-100">
                             {completed
                               ? isJustNow
@@ -739,6 +725,25 @@ const HomePage = ({
                                 ? t('waiting {{time}}', { time: relativeActivityTime })
                                 : t('running {{time}}', { time: relativeActivityTime })}
                           </span>
+                        </span>
+                        <span
+                          className={cn(
+                            'mt-2.5 min-w-0 max-w-full truncate text-base font-semibold text-text-000',
+                            !waiting && !completed && 'home-session-title-running'
+                          )}
+                        >
+                          {session.title}
+                        </span>
+                        {session.description?.trim() ? (
+                          <span
+                            data-testid="session-description-preview"
+                            className="mt-1.5 line-clamp-2 break-words text-xs leading-[1.4] text-text-300"
+                          >
+                            {session.description.trim()}
+                          </span>
+                        ) : null}
+                        <span className="mt-auto w-full truncate pt-3 text-xs text-text-100">
+                          {projectNames.get(session.projectId) ?? t('Unknown project')}
                         </span>
                       </button>
                     )}

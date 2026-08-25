@@ -1013,7 +1013,6 @@ const sampleDeleteSession = { projectId: 'p-1', sessionId: 's-1' }
 const sampleEditSessionDetails = {
   projectId: 'p-1',
   sessionId: 's-1',
-  expectedRevision: 1,
   title: 'Edited',
   description: 'Description'
 }

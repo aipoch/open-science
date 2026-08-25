@@ -137,6 +137,10 @@ const FixedEffortBadge = ({ label }: { label: string }): React.JSX.Element => (
   </Badge>
 )
 
+const InheritedEffortBadge = ({ label }: { label: string }): React.JSX.Element => (
+  <Badge className="bg-muted text-muted-foreground">{label}</Badge>
+)
+
 // Divider + provider tail at the end of the row: kind icon and name, visually separated from the
 // model/effort pair so the three facts scan as two groups.
 const ProviderTail = ({
@@ -166,7 +170,7 @@ const ScenarioRowCluster = ({ summary }: { summary: ScenarioSummary }): React.JS
       return (
         <>
           <span className="truncate text-sm text-muted-foreground">{summary.label}</span>
-          {summary.effortLabel ? <FixedEffortBadge label={summary.effortLabel} /> : null}
+          {summary.effortLabel ? <InheritedEffortBadge label={summary.effortLabel} /> : null}
         </>
       )
     case 'unconfigured':

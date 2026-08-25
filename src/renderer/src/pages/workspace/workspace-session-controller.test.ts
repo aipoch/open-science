@@ -234,7 +234,6 @@ describe('workspace session controller', () => {
     expect(editDetails).toHaveBeenCalledWith({
       projectId: active.projectId,
       sessionId: active.id,
-      expectedRevision: 2,
       title: '  After  ',
       description: ''
     })

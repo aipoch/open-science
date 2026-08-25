@@ -83,6 +83,13 @@ describe('ScenarioModelList', () => {
 
     expect(sessionDetailsRow?.textContent).toContain('Same as main model')
     expect(sessionDetailsRow?.textContent).toContain('Low')
+    expect(sessionDetailsRow?.querySelector('[data-slot="badge"]')?.className).toContain('bg-muted')
+    expect(sessionDetailsRow?.querySelector('[data-slot="badge"]')?.className).toContain(
+      'text-muted-foreground'
+    )
+    expect(sessionDetailsRow?.querySelector('[data-slot="badge"]')?.className).not.toContain(
+      'status-info'
+    )
     expect(subagentRow?.textContent).toContain('Same as main model')
     expect(reviewerRow?.textContent).toContain('Follow main model')
     expect(visionRow?.textContent).toContain('Not configured')

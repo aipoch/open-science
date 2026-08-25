@@ -741,7 +741,6 @@ describe('Data and content application commands', () => {
     const editDetailsRequest = {
       projectId: 'project-1',
       sessionId: 'session-1',
-      expectedRevision: 1,
       title: 'Edited',
       description: 'Description'
     }
@@ -883,18 +882,16 @@ describe('Data and content application commands', () => {
       request: {
         projectId: 'project-1',
         sessionId: 'session-1',
-        expectedRevision: 1,
         title: 'Edited',
         description: '',
         force: true
       }
     },
     {
-      label: 'unsafe revision',
+      label: 'empty session id',
       request: {
         projectId: 'project-1',
-        sessionId: 'session-1',
-        expectedRevision: Number.MAX_SAFE_INTEGER + 1,
+        sessionId: '',
         title: 'Edited',
         description: ''
       }
@@ -904,7 +901,6 @@ describe('Data and content application commands', () => {
       request: {
         projectId: 'project-1',
         sessionId: 'session-1',
-        expectedRevision: 1,
         title: 'Edited'
       }
     }

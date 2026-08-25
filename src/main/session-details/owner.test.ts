@@ -549,8 +549,6 @@ describe('SessionDetailsOwner', () => {
     const edited = await owner.edit({
       projectId: 'project-1',
       sessionId: 'session-1',
-      // Revision 1 is stale only because the owner wrote the running transition.
-      expectedRevision: 1,
       title: '  Manual title ',
       description: ' Manual description '
     })
@@ -580,24 +578,90 @@ describe('SessionDetailsOwner', () => {
     })
   })
 
-  it('rejects unrelated stale manual writes', async () => {
+  it('derives superseded failure completion from durable manual authority', async () => {
+    const usage: AcpTurnTokenUsage = { inputTokens: 7, cacheTokens: 1, outputTokens: 2 }
+    const { owner, store, generate } = harness([queuedSession()], {
+      inference: ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject({ usage }))
+        })
+    })
+    await owner.start()
+    await waitFor(() => generate.mock.calls.length === 1)
+
+    await owner.edit({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      title: 'Manual title',
+      description: 'Manual description'
+    })
+    await waitFor(
+      () =>
+        store.current().sessionDetailsGeneration?.status === 'superseded' &&
+        'usage' in store.current().sessionDetailsGeneration!
+    )
+
+    expect(store.current()).toMatchObject({
+      title: 'Manual title',
+      description: 'Manual description',
+      sessionDetailsSource: 'manual',
+      sessionDetailsGeneration: { status: 'superseded', usage }
+    })
+  })
+
+  it('logs a manual-fence abort as superseded after durable authority disappears', async () => {
+    const authority = { store: undefined as MemorySessions | undefined }
+    const testHarness = harness([queuedSession()], {
+      inference: ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            authority.store?.records.delete('project-1:session-1')
+            reject(new DOMException('Session details were manually edited.', 'AbortError'))
+          })
+        })
+    })
+    authority.store = testHarness.store
+    const { owner, generate, warn } = testHarness
+    await owner.start()
+    await waitFor(() => generate.mock.calls.length === 1)
+
+    await owner.edit({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      title: 'Manual title',
+      description: 'Manual description'
+    })
+    await waitFor(() => warn.mock.calls.length > 0)
+
+    expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({
+      sessionId: 'session-1',
+      requestId: 'request-1',
+      status: 'superseded'
+    })
+  })
+
+  it('applies manual edits over unrelated concurrent session writes', async () => {
     const session = queuedSession({
       revision: 3,
       sessionDetailsGeneration: undefined,
       sessionDetailsSource: 'manual'
     })
-    const { owner } = harness([session])
+    const { owner, store } = harness([session])
     await owner.start()
 
-    await expect(
-      owner.edit({
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        expectedRevision: 2,
-        title: 'Stale title',
-        description: ''
-      })
-    ).rejects.toMatchObject({ code: 'session-revision-conflict' })
+    const edited = await owner.edit({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      title: 'Fresh title',
+      description: ''
+    })
+
+    expect(edited).toMatchObject({
+      title: 'Fresh title',
+      sessionDetailsSource: 'manual',
+      revision: 4
+    })
+    expect(store.current().title).toBe('Fresh title')
   })
 
   it('discards a late result when durable source identity has been replaced', async () => {

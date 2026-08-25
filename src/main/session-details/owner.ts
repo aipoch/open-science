@@ -9,8 +9,6 @@ import {
 import {
   SESSION_DETAILS_DESCRIPTION_MAX_LENGTH,
   SESSION_DETAILS_TITLE_MAX_LENGTH,
-  SessionRevisionConflictError,
-  sessionRevision,
   type EditSessionDetailsRequest,
   type PersistedChatSession,
   type PersistedSessionDetailsGeneration,
@@ -23,6 +21,7 @@ export const SESSION_DETAILS_DESCRIPTION_LIMIT = SESSION_DETAILS_DESCRIPTION_MAX
 const MAX_INFERENCE_OUTPUT_BYTES = 8_192
 const DEFAULT_SHUTDOWN_CLEANUP_MS = 500
 const DEFAULT_INFERENCE_TIMEOUT_MS = 30_000
+const MANUAL_EDIT_ABORT_REASON = 'Session details were manually edited.'
 
 export type SessionDetailsGeneration = PersistedSessionDetailsGeneration
 export type SessionDetailsSession = PersistedChatSession
@@ -106,7 +105,6 @@ type ActiveAttempt = {
   requestId: string
   controller: AbortController
   admission: SessionDetailsAdmission
-  manualFence: boolean
   completionClaimed: boolean
   timeout?: ReturnType<typeof setTimeout>
   task?: Promise<void>
@@ -220,6 +218,18 @@ const sameClaim = (
   generation?.requestId === active.requestId &&
   generation.sourceMessageId === active.sourceMessageId
 
+const supersededGeneration = (
+  generation: SessionDetailsGeneration,
+  completedAt: number,
+  usage?: AcpTurnTokenUsage
+): SessionDetailsGeneration =>
+  ({
+    ...generation,
+    status: 'superseded',
+    completedAt,
+    ...(usage ? { usage } : {})
+  }) as SessionDetailsGeneration
+
 const hasValidGenerationAuthority = (session: SessionDetailsSession): boolean => {
   const generation = session.sessionDetailsGeneration
   return (
@@ -241,7 +251,6 @@ export const createSessionDetailsOwner = (
 ): SessionDetailsOwner => {
   const now = dependencies.now ?? Date.now
   const active = new Map<string, ActiveAttempt>()
-  const generationRevisions = new Map<string, Set<number>>()
   const pendingSaves: SessionDetailsSession[] = []
   let started = false
   let stopping = false
@@ -254,15 +263,8 @@ export const createSessionDetailsOwner = (
   }
 
   const keyOf = (projectId: string, sessionId: string): string => `${projectId}\0${sessionId}`
-  const rememberGenerationRevision = (session: SessionDetailsSession): void => {
-    const key = keyOf(session.projectId, session.id)
-    const revisions = generationRevisions.get(key) ?? new Set<number>()
-    revisions.add(sessionRevision(session))
-    generationRevisions.set(key, revisions)
-  }
   const publishTransition = (session: SessionDetailsSession | undefined): void => {
     if (!session) return
-    rememberGenerationRevision(session)
     try {
       dependencies.lifecycle.publish(session)
     } catch {
@@ -391,12 +393,7 @@ export const createSessionDetailsOwner = (
               kind: 'write',
               session: {
                 ...session,
-                sessionDetailsGeneration: {
-                  ...generation,
-                  status: 'superseded',
-                  completedAt: now(),
-                  ...(normalized ? { usage: normalized } : {})
-                } as SessionDetailsGeneration
+                sessionDetailsGeneration: supersededGeneration(generation, now(), normalized)
               }
             }
           }
@@ -471,9 +468,11 @@ export const createSessionDetailsOwner = (
           (typeof error === 'object' && error !== null && 'usage' in error
             ? (error as { usage?: AcpTurnTokenUsage }).usage
             : undefined)
+        const outcome =
+          attempt.controller.signal.reason === MANUAL_EDIT_ABORT_REASON ? 'superseded' : 'failed'
         await terminalize(
           attempt,
-          attempt.manualFence ? 'superseded' : 'failed',
+          outcome,
           reportedUsage,
           error instanceof DOMException && error.name === 'TimeoutError'
         )
@@ -565,7 +564,6 @@ export const createSessionDetailsOwner = (
       requestId: authority.sessionDetailsGeneration.requestId,
       controller,
       admission,
-      manualFence: false,
       completionClaimed: false
     }
     const running = await dependencies.sessions.mutateSession(projectId, sessionId, (session) => {
@@ -591,9 +589,6 @@ export const createSessionDetailsOwner = (
     })
     if (running?.sessionDetailsGeneration?.status !== 'running') return
     if (stopping || !acceptCompletions) return
-    // Admission is durable authority but has no user-visible details change. Remember its revision
-    // for manual-edit rebasing without broadcasting an otherwise redundant renderer update.
-    rememberGenerationRevision(running)
     active.set(key, attempt)
     runInference(attempt, running, target)
   }
@@ -735,32 +730,18 @@ export const createSessionDetailsOwner = (
     async edit(request: EditSessionDetailsRequest): Promise<PersistedChatSession> {
       const key = keyOf(request.projectId, request.sessionId)
       const currentAttempt = active.get(key)
+      // Manual edits change only authority-owned display fields on the freshly loaded Session, so
+      // unrelated concurrent writes (conversation turns, runtime context) never fence them. The
+      // details' single other writer — generation — is superseded below instead.
       const saved = await dependencies.sessions.mutateSession(
         request.projectId,
         request.sessionId,
         (session) => {
           const details = validateManualDetails(request.title, request.description)
-          const actualRevision = sessionRevision(session)
-          if (actualRevision !== request.expectedRevision) {
-            const owned = generationRevisions.get(key)
-            for (
-              let revision = request.expectedRevision + 1;
-              revision <= actualRevision;
-              revision += 1
-            ) {
-              if (!owned?.has(revision)) {
-                throw new SessionRevisionConflictError(request.expectedRevision, actualRevision)
-              }
-            }
-          }
           const generation = session.sessionDetailsGeneration
           const superseded =
             generation?.status === 'queued' || generation?.status === 'running'
-              ? ({
-                  ...generation,
-                  status: 'superseded',
-                  completedAt: now()
-                } as SessionDetailsGeneration)
+              ? supersededGeneration(generation, now())
               : generation
           return {
             kind: 'write',
@@ -776,8 +757,7 @@ export const createSessionDetailsOwner = (
       )
       if (!saved) throw new Error('Session not found.')
       if (currentAttempt) {
-        currentAttempt.manualFence = true
-        currentAttempt.controller.abort('Session details were manually edited.')
+        currentAttempt.controller.abort(MANUAL_EDIT_ABORT_REASON)
       }
       try {
         dependencies.lifecycle.publish(saved)

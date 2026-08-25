@@ -565,7 +565,6 @@ export type PersistedSessionDetailsGeneration =
 export type EditSessionDetailsRequest = Readonly<{
   projectId: string
   sessionId: string
-  expectedRevision: number
   title: string
   description: string
 }>
@@ -4090,11 +4089,13 @@ export const deleteSessionRequestSchema = z
   .object({ projectId: z.string(), sessionId: z.string() })
   .strict()
 
+// Manual details edits mutate only authority-owned display fields server-side, so they carry no
+// whole-Session revision: concurrent unrelated writes advance that revision constantly and must
+// not fence the edit.
 export const editSessionDetailsRequestSchema = z
   .object({
     projectId: z.string().min(1),
     sessionId: z.string().min(1),
-    expectedRevision: z.number().int().nonnegative().safe(),
     title: z.string(),
     description: z.string()
   })

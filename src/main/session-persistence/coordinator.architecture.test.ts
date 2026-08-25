@@ -60,7 +60,7 @@ const productionFiles = [
   'message-delivery-owner.ts',
   'reconciliation-owner.ts',
   'relay-projection.ts',
-  'session-authority-owner.ts',
+  'session-details-authority.ts',
   'side-chat-owner.ts',
   'state-owner.ts'
 ] as const
@@ -471,7 +471,7 @@ describe('Session persistence coordinator architecture', () => {
       ].sort()
     )
     expect(methods(facade, 'private')).toEqual(
-      ['notifyFilesChanged', 'notifySessionsDeleted'].sort()
+      ['assertMutable', 'notifyFilesChanged', 'notifySessionsDeleted'].sort()
     )
     expect(publicNonMethodMembers(facade)).toEqual([])
 
@@ -517,7 +517,6 @@ describe('Session persistence coordinator architecture', () => {
   it('composes each owner once and keeps mutable state with its sole owner', () => {
     expect(fields(facade)).toEqual(
       [
-        'authorityOwner',
         'computeJobs',
         'delegatedStartupRecoveryComplete',
         'deletedProjects',
@@ -977,7 +976,7 @@ describe('Session persistence coordinator architecture', () => {
         'deletion-owner.ts',
         'delegated-work-owner.ts',
         'reconciliation-owner.ts',
-        'session-authority-owner.ts',
+        'session-details-authority.ts',
         'side-chat-owner.ts',
         'state-owner.ts'
       ].sort()
@@ -987,7 +986,7 @@ describe('Session persistence coordinator architecture', () => {
       ['legacy-upload.ts', 'state-owner.ts'].sort()
     )
     expect(sessionDependencies('reconciliation-owner.ts')).toEqual(['legacy-upload.ts'])
-    expect(sessionDependencies('session-authority-owner.ts')).toEqual([])
+    expect(sessionDependencies('session-details-authority.ts')).toEqual([])
     expect(sessionDependencies('side-chat-owner.ts')).toEqual([])
     expect(sessionDependencies('message-delivery-owner.ts')).toEqual([])
     expect(sessionDependencies('delegated-question-owner.ts')).toEqual(

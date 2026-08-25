@@ -708,7 +708,7 @@
         "src/main/session-persistence/message-delivery-owner.ts",
         "src/main/session-persistence/reconciliation-owner.ts",
         "src/main/session-persistence/relay-projection.ts",
-        "src/main/session-persistence/session-authority-owner.ts",
+        "src/main/session-persistence/session-details-authority.ts",
         "src/main/session-persistence/side-chat-owner.ts",
         "src/main/session-persistence/state-owner.ts"
       ],

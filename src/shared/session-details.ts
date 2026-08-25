@@ -25,7 +25,27 @@ const safePathSegments = (value: string): string[] =>
 
 const safeBaseName = (value: string): string => safePathSegments(value).at(-1) ?? ''
 
-const safeRelativePath = (value: string): string => safePathSegments(value).join('/')
+const safeRelativePath = (value: string): string | undefined => {
+  const trimmed = value.trim()
+  if (
+    trimmed.length === 0 ||
+    /^[\\/]/u.test(trimmed) ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(trimmed) ||
+    trimmed.includes('\0')
+  ) {
+    return undefined
+  }
+
+  const segments = trimmed.split(/[\\/]+/u).map((segment) => collapseTitleWhitespace(segment))
+  if (segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')) {
+    return undefined
+  }
+
+  return segments.join('/')
+}
+
+const linkedFolderDisplayName = (relativePath: string, name: string): string =>
+  safeRelativePath(relativePath) || safeBaseName(name) || safeBaseName(relativePath)
 
 const displayNameForPart = (part: MessagePart): string => {
   switch (part.type) {
@@ -38,7 +58,7 @@ const displayNameForPart = (part: MessagePart): string => {
     case 'artifact':
       return `@${
         part.source === 'linked-folder'
-          ? safeRelativePath(part.relativePath) || safeBaseName(part.name)
+          ? linkedFolderDisplayName(part.relativePath, part.name)
           : safeBaseName(part.name)
       }`
   }

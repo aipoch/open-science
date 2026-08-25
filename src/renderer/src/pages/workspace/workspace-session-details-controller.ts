@@ -55,7 +55,6 @@ const useWorkspaceSessionDetailsController = (
     const request: EditSessionDetailsRequest = {
       projectId: dialog.session.projectId,
       sessionId: dialog.session.id,
-      expectedRevision: dialog.session.revision ?? 0,
       title: dialog.titleDraft,
       description: dialog.descriptionDraft
     }

@@ -69,7 +69,7 @@ describe('session details fallback', () => {
     expect(source).not.toContain('/private/')
   })
 
-  it('reduces path-shaped reference labels to safe relative display names', () => {
+  it('reduces path-shaped reference labels to safe display names', () => {
     const source = formatSessionDetailsGenerationSource(
       message({
         content: '',
@@ -105,9 +105,91 @@ describe('session details fallback', () => {
       })
     )
 
-    expect(source).toBe('@results.csv @private/folder/notes.md\n@observations.csv')
+    expect(source).toBe('@results.csv @notes.md\n@observations.csv')
     expect(source).not.toContain('/Users/')
     expect(source).not.toContain('C:\\')
+    expect(source).not.toContain('..')
+  })
+
+  it('preserves validated linked-folder relative paths and rejects unsafe path forms', () => {
+    const source = formatSessionDetailsGenerationSource(
+      message({
+        content: '',
+        parts: [
+          {
+            type: 'artifact',
+            id: 'artifact-relative',
+            name: 'results.csv',
+            source: 'linked-folder',
+            relativePath: 'experiments/2026/results.csv',
+            rootId: 'root-id'
+          },
+          { type: 'text', text: ' ' },
+          {
+            type: 'artifact',
+            id: 'artifact-posix',
+            name: 'posix.csv',
+            source: 'linked-folder',
+            relativePath: '/Users/person/private/posix.csv',
+            rootId: 'root-id'
+          },
+          { type: 'text', text: ' ' },
+          {
+            type: 'artifact',
+            id: 'artifact-windows',
+            name: 'windows.csv',
+            source: 'linked-folder',
+            relativePath: 'C:\\Users\\person\\private\\windows.csv',
+            rootId: 'root-id'
+          },
+          { type: 'text', text: ' ' },
+          {
+            type: 'artifact',
+            id: 'artifact-unc',
+            name: 'network.csv',
+            source: 'linked-folder',
+            relativePath: '\\\\server\\private\\network.csv',
+            rootId: 'root-id'
+          },
+          { type: 'text', text: ' ' },
+          {
+            type: 'artifact',
+            id: 'artifact-traversal',
+            name: 'outside.csv',
+            source: 'linked-folder',
+            relativePath: 'safe/../../private/outside.csv',
+            rootId: 'root-id'
+          },
+          { type: 'text', text: ' ' },
+          {
+            type: 'artifact',
+            id: 'artifact-uri',
+            name: 'uri.csv',
+            source: 'linked-folder',
+            relativePath: 'file:///Users/person/private/uri.csv',
+            rootId: 'root-id'
+          },
+          { type: 'text', text: ' ' },
+          {
+            type: 'artifact',
+            id: 'artifact-drive-relative',
+            name: 'drive-relative.csv',
+            source: 'linked-folder',
+            relativePath: 'C:Users\\person\\private\\drive-relative.csv',
+            rootId: 'root-id'
+          }
+        ]
+      })
+    )
+
+    expect(source).toBe(
+      '@experiments/2026/results.csv @posix.csv @windows.csv @network.csv @outside.csv @uri.csv @drive-relative.csv'
+    )
+    expect(source).not.toContain('/Users/person')
+    expect(source).not.toContain('C:\\Users')
+    expect(source).not.toContain('server/private')
+    expect(source).not.toContain('file:')
+    expect(source).not.toContain('C:Users')
     expect(source).not.toContain('..')
   })
 
