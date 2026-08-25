@@ -211,9 +211,13 @@ describe('JobPoller', () => {
 
     await poller.tick()
 
-    expect(connectionBroker.acquire).toHaveBeenCalledWith(job.provider_id, {
-      intent: 'job_poll'
-    })
+    expect(connectionBroker.acquire).toHaveBeenCalledWith(
+      job.provider_id,
+      expect.objectContaining({
+        intent: 'job_poll',
+        signal: expect.any(AbortSignal)
+      })
+    )
     expect(update).toHaveBeenCalledWith(
       'job-1',
       expect.objectContaining({ status: 'success', exitCode: 0 })
@@ -1503,7 +1507,7 @@ describe('JobPoller — harvest wiring', () => {
     await Promise.resolve()
 
     // The orphaned terminal+unharvested job should have been harvested
-    expect(harvestFn).toHaveBeenCalledWith(terminalJob)
+    expect(harvestFn).toHaveBeenCalledWith(terminalJob, expect.any(AbortSignal))
   })
 
   it('does not re-harvest already-harvested jobs in recovery scan', async () => {

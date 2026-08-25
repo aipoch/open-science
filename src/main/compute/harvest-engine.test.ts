@@ -277,16 +277,19 @@ describe('harvestJob — clean harvest', () => {
     const scp = makeScpRunner()
     const { repo: jobRepo, updates } = makeJobRepo(job)
     const connectionBroker = brokerFromRunners(ssh, scp)
+    const signal = new AbortController().signal
 
     await harvestJob(job, {
       connectionBroker,
       hostRepository: makeHostRepo(host),
       jobRepository: jobRepo,
-      storageRoot
+      storageRoot,
+      signal
     })
 
     expect(connectionBroker.acquire).toHaveBeenCalledWith(job.provider_id, {
-      intent: 'job_harvest'
+      intent: 'job_harvest',
+      signal
     })
     expect(vi.mocked(ssh.run).mock.calls[0]?.[1]).toContain(
       "find ~/'.openscience/jobs/job-1' -type f"

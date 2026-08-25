@@ -52,12 +52,8 @@ const POLLER_KILL_GRACE_SECONDS = 60
 // Maximum concurrent harvest operations (design.md §3: concurrency limit 2).
 const HARVEST_CONCURRENCY_LIMIT = 2
 
-/**
- * Injectable harvest function type. The poller calls this for each terminal job that needs
- * harvesting (design §3). In production this is `harvestJob` from harvest-engine.ts.
- * Accepting the full job object lets the function access all fields without extra lookups.
- */
-export type HarvestFn = (job: ComputeJob) => Promise<void>
+/** Injectable harvest operation. Production supplies `harvestJob` from harvest-engine.ts. */
+export type HarvestFn = (job: ComputeJob, signal?: AbortSignal) => Promise<void>
 
 export type JobPollerDeps = {
   connectionBroker: ComputeConnectionBrokerAcquirer
@@ -100,6 +96,7 @@ type VanishState = { ticks: number }
 export class JobPoller {
   private handle: ReturnType<typeof setInterval> | undefined
   private paused = false
+  private workAbortController = new AbortController()
   private readonly activeTicks = new Set<Promise<void>>()
   private readonly backgroundTasks = new Set<Promise<void>>()
   private readonly vanishCounters = new Map<string, VanishState>()
@@ -116,13 +113,10 @@ export class JobPoller {
   private readonly harvestFn: HarvestFn | undefined
   private readonly lifecycle: ComputeJobLifecycle
 
-  // Harvest concurrency state (design §3):
-  //   inFlightHarvests: jobIds whose harvest is currently running — prevents duplicate dispatches
-  //   harvestSemaphore: count of available harvest slots (starts at HARVEST_CONCURRENCY_LIMIT)
-  //   harvestQueue: jobs waiting for a semaphore slot
+  // Harvest concurrency state: deduplicate by job id and run at most two operations at once.
   private readonly inFlightHarvests = new Set<string>()
   private harvestSemaphore = HARVEST_CONCURRENCY_LIMIT
-  private readonly harvestQueue: ComputeJob[] = []
+  private readonly harvestQueue: Array<{ job: ComputeJob; signal: AbortSignal }> = []
   //   inFlightErrorNotifs: jobIds whose error-notification emit is in progress — prevents a second
   //   overlapping tick from re-emitting before notified_at is persisted (ticks are not serialized)
   private readonly inFlightErrorNotifs = new Set<string>()
@@ -136,11 +130,13 @@ export class JobPoller {
     this.lifecycle = new ComputeJobLifecycle(deps.jobRepository, deps.onJobUpdated)
   }
 
-  // Starts the poller. Polls once immediately (picks up jobs that were running before restart),
-  // then on every interval.
+  // Poll once immediately for restart recovery, then on every interval.
   start(): void {
     if (this.handle) return // already running
 
+    if (this.workAbortController.signal.aborted) {
+      this.workAbortController = new AbortController()
+    }
     this.paused = false
     this.runTick() // first tick immediately (restart recovery)
     this.handle = this.setIntervalFn(() => this.runTick(), POLL_INTERVAL_MS)
@@ -151,6 +147,10 @@ export class JobPoller {
     if (this.handle) {
       this.clearIntervalFn(this.handle)
       this.handle = undefined
+    }
+    this.workAbortController.abort()
+    for (const { job } of this.harvestQueue.splice(0)) {
+      this.inFlightHarvests.delete(job.job_id)
     }
     await this.drainTrackedWork()
   }
@@ -174,7 +174,7 @@ export class JobPoller {
 
   private runTick(): void {
     if (this.paused || this.activeTicks.size > 0) return
-    const task = this.tick()
+    const task = this.tick(this.workAbortController.signal)
     this.activeTicks.add(task)
     void task.then(
       () => this.activeTicks.delete(task),
@@ -190,15 +190,16 @@ export class JobPoller {
     )
   }
 
-  // One poll cycle: group non-terminal jobs by provider, poll each provider's jobs.
-  // Also runs the restart-recovery harvest scan (design §3): re-queues terminal+unharvested jobs.
-  async tick(): Promise<void> {
+  // Poll non-terminal jobs by provider and recover interrupted harvests.
+  async tick(signal: AbortSignal = this.workAbortController.signal): Promise<void> {
+    if (signal.aborted) return
     // Restart-recovery harvest scan: re-queue terminal jobs whose harvest was interrupted by restart.
     // harvestFn must be configured; without it, harvest is disabled entirely.
     if (this.harvestFn) {
       const unharvested = await this.deps.jobRepository.findTerminalUnharvested()
+      if (signal.aborted) return
       for (const job of unharvested) {
-        this._dispatchHarvest(job)
+        this._dispatchHarvest(job, signal)
       }
     }
 
@@ -210,6 +211,7 @@ export class JobPoller {
     if (this.deps.broadcast && this.deps.storageRoot) {
       const { broadcast, storageRoot } = this.deps
       const errorUnnotified = await this.deps.jobRepository.findErrorUnnotified()
+      if (signal.aborted) return
       for (const job of errorUnnotified) {
         // emitJobNotification guards on notified_at (idempotent), but that is a check-then-act
         // with a real window: ticks are not serialized, so a second tick could re-select this row
@@ -234,6 +236,7 @@ export class JobPoller {
     }
 
     const jobs = await this.deps.jobRepository.findNonTerminal()
+    if (signal.aborted) return
     if (jobs.length === 0) return
 
     // Group by provider.
@@ -247,7 +250,7 @@ export class JobPoller {
     // Poll each provider's jobs in parallel (different SSH connections, no ordering dependency).
     await Promise.all(
       Array.from(byProvider.entries()).map(([providerId, providerJobs]) =>
-        this._pollProvider(providerId, providerJobs)
+        this._pollProvider(providerId, providerJobs, signal)
       )
     )
   }
@@ -256,12 +259,9 @@ export class JobPoller {
   // Harvest dispatch helpers (design §3)
   // ---------------------------------------------------------------------------
 
-  // Dispatches a harvest for a terminal job. Fire-and-forget: does NOT await the harvest so the
-  // poller tick returns immediately (hard constraint: design §3 "never await in tick loop").
-  // Enforces: in-flight dedup (same job not re-dispatched while harvest is running), and the
-  // concurrency semaphore (at most HARVEST_CONCURRENCY_LIMIT harvests run simultaneously).
-  private _dispatchHarvest(job: ComputeJob): void {
-    if (!this.harvestFn) return
+  // Fire-and-forget harvest dispatch with in-flight deduplication and bounded concurrency.
+  private _dispatchHarvest(job: ComputeJob, signal: AbortSignal): void {
+    if (!this.harvestFn || signal.aborted) return
     // In-flight dedup: if already harvesting this job, skip.
     if (this.inFlightHarvests.has(job.job_id)) return
 
@@ -269,20 +269,20 @@ export class JobPoller {
 
     if (this.harvestSemaphore > 0) {
       // Slot available — start immediately.
-      this._runHarvest(job)
+      this._runHarvest(job, signal)
     } else {
       // No slot — enqueue; will be started when a running harvest completes.
-      this.harvestQueue.push(job)
+      this.harvestQueue.push({ job, signal })
     }
   }
 
   // Acquires a semaphore slot, runs harvestFn, then releases the slot and drains the queue.
-  private _runHarvest(job: ComputeJob): void {
+  private _runHarvest(job: ComputeJob, signal: AbortSignal): void {
     if (!this.harvestFn) return
     this.harvestSemaphore--
 
     // Fire-and-forget: intentionally not awaited.
-    const task = this.harvestFn(job)
+    const task = this.harvestFn(job, signal)
       .catch(() => {
         // Individual harvest failures must not propagate to the poller (design §3: error isolation).
       })
@@ -291,22 +291,23 @@ export class JobPoller {
         this.harvestSemaphore++
         // Drain one item from the queue if any are waiting.
         const next = this.harvestQueue.shift()
-        if (next) {
-          this._runHarvest(next)
+        if (next && !next.signal.aborted) {
+          this._runHarvest(next.job, next.signal)
+        } else if (next) {
+          this.inFlightHarvests.delete(next.job.job_id)
         }
       })
     this.trackBackground(task)
   }
 
   // Polls all jobs for one provider in a single SSH round-trip (where possible).
-  private async _pollProvider(providerId: string, jobs: ComputeJob[]): Promise<void> {
-    // Handle jobs stuck in 'submitted' with no pid. A job sits in this state for the whole dispatch
-    // window (mkdir + input staging + launch), and input staging can scp GB-scale files for up to
-    // 30 min. So 'submitted'+no-handle does NOT by itself mean a failed dispatch: it only means a
-    // failed dispatch if no dispatch is actively running for it in this process. The shared
-    // DispatchTracker disambiguates — an untracked such job was orphaned by an app restart and is
-    // marked error/dispatch_failed (design.md §8 boundary 3); a tracked one is still dispatching and
-    // is left alone until the dispatcher writes its terminal or running state.
+  private async _pollProvider(
+    providerId: string,
+    jobs: ComputeJob[],
+    signal: AbortSignal
+  ): Promise<void> {
+    // A submitted job without a handle may still be staging large inputs. Only an untracked job is
+    // an interrupted dispatch; DispatchTracker distinguishes it from live work in this process.
     const noHandle: ComputeJob[] = []
     const withHandle: ComputeJob[] = []
     for (const job of jobs) {
@@ -319,6 +320,7 @@ export class JobPoller {
     }
 
     for (const job of noHandle) {
+      if (signal.aborted) return
       const transition = await this.lifecycle.recoverInterruptedDispatch(job.job_id)
       if (transition.kind === 'ignored') continue
       const updated = transition.job
@@ -341,41 +343,36 @@ export class JobPoller {
 
     let connection: ComputeConnectionLease
     try {
-      connection = await this.deps.connectionBroker.acquire(providerId, { intent: 'job_poll' })
+      connection = await this.deps.connectionBroker.acquire(providerId, {
+        intent: 'job_poll',
+        signal
+      })
     } catch (error) {
+      if (signal.aborted) return
       const errorCode = error instanceof ComputeConnectionError ? error.code : 'host_unreachable'
-      await this._recordPollError(withHandle, errorCode)
+      await this._recordPollError(withHandle, errorCode, signal)
       return
     }
 
-    // Poll in sub-batches so the SSH output cap always fits every job's section. Each sub-batch is
-    // one SSH round-trip; batches for the same provider run sequentially to reuse one connection and
-    // avoid a fan-out of concurrent ssh processes per provider.
+    // Poll bounded sub-batches sequentially over one provider connection.
     for (let i = 0; i < withHandle.length; i += POLL_BATCH_MAX_JOBS) {
+      if (signal.aborted) return
       const batch = withHandle.slice(i, i + POLL_BATCH_MAX_JOBS)
-      await this._pollBatch(batch, connection)
+      await this._pollBatch(batch, connection, signal)
     }
   }
 
   // Polls one sub-batch of jobs (all with handles) in a single SSH round-trip, sizing the output cap
   // to the batch so no job's section is truncated away.
-  private async _pollBatch(jobs: ComputeJob[], connection: ComputeConnectionLease): Promise<void> {
-    // Per-tick random nonce prefixed onto every structural marker. Job stdout/stderr tails are
-    // interleaved into the same stream, so bare markers (JOB_START:/alive:/STDOUT_END:/...) printed
-    // by the job could otherwise hijack section splitting or field parsing. An unpredictable nonce
-    // the job cannot know makes such collisions effectively impossible.
+  private async _pollBatch(
+    jobs: ComputeJob[],
+    connection: ComputeConnectionLease,
+    signal: AbortSignal
+  ): Promise<void> {
+    // Prefix structural markers with an unpredictable nonce so job output cannot spoof them.
     const nonce = this.makeNonceFn()
 
-    // Build per-job check commands, batched into one SSH round-trip.
-    // Format per job (each marker carries the nonce prefix):
-    //   echo "<nonce>JOB_START:<jobId>"
-    //   resolve the canonical workdir and prove the pid still owns it
-    //   kill -0 <pid> 2>/dev/null && echo "<nonce>alive:1" || echo "<nonce>alive:0"
-    //   test -f <exit_code_path> && cat <exit_code_path> || echo ""
-    //   tail -c 65536 <stdout_path> 2>/dev/null || true
-    //   echo "<nonce>STDOUT_END:<jobId>"
-    //   tail -c 65536 <stderr_path> 2>/dev/null || true
-    //   echo "<nonce>STDERR_END:<jobId>"
+    // Build one ownership/status/tail command section per job.
     const parts: string[] = [REMOTE_PROCESS_OWNERSHIP_FUNCTION]
     const batched: ComputeJob[] = []
     for (const job of jobs) {
@@ -405,19 +402,23 @@ export class JobPoller {
       runResult = await connection.run(pollCmd, {
         timeoutMs: POLL_TIMEOUT_MS,
         loginShell: false,
-        maxOutputBytes
+        maxOutputBytes,
+        signal
       })
     } catch (err) {
+      if (signal.aborted) return
       // SSH threw — record lastPollError for each job but do NOT flip status (design.md §8 boundary 2).
       const errorCode = err instanceof ComputeConnectionError ? err.code : 'host_unreachable'
-      await this._recordPollError(batched, errorCode)
+      await this._recordPollError(batched, errorCode, signal)
       return
     }
+
+    if (signal.aborted) return
 
     const connectionFailure = classifyConnectionFailure(runResult, false)
     if (connectionFailure) {
       // Host unreachable — record error per job but do NOT flip status (design.md §8 boundary 2).
-      await this._recordPollError(batched, connectionFailure.code)
+      await this._recordPollError(batched, connectionFailure.code, signal)
       return
     }
 
@@ -425,7 +426,7 @@ export class JobPoller {
     // A truncated result should be impossible now that the cap is sized to the batch, but if it ever
     // happens the head is kept, so leading jobs still parse; any job whose section was dropped simply
     // stays non-terminal and is re-polled next tick (its remote exit_code file persists).
-    await this._parsePollOutput(runResult.stdout, batched, nonce, connection)
+    await this._parsePollOutput(runResult.stdout, batched, nonce, connection, signal)
   }
 
   private _parseHandle(raw: string | undefined): RemoteHandle | null {
@@ -439,8 +440,13 @@ export class JobPoller {
 
   // Records a transient SSH connectivity error for each job without changing job status.
   // Implements design.md §8 boundary 2: "host unreachable ≠ job failed".
-  private async _recordPollError(jobs: ComputeJob[], message: string): Promise<void> {
+  private async _recordPollError(
+    jobs: ComputeJob[],
+    message: string,
+    signal: AbortSignal
+  ): Promise<void> {
     for (const job of jobs) {
+      if (signal.aborted) return
       if (job.status !== 'submitted' && job.status !== 'running') continue
       await this.lifecycle.recordPollError(job.job_id, job.status, message)
     }
@@ -453,7 +459,8 @@ export class JobPoller {
     output: string,
     jobs: ComputeJob[],
     nonce: string,
-    connection: ComputeConnectionLease
+    connection: ComputeConnectionLease,
+    signal: AbortSignal
   ): Promise<void> {
     const parsedResults = parsePollOutput(output, jobs, nonce)
 
@@ -461,7 +468,9 @@ export class JobPoller {
       connection,
       parsedResults.flatMap(({ stdoutTail, stderrTail }) => [stdoutTail, stderrTail])
     )
+    if (signal.aborted) return
     for (const [index, result] of parsedResults.entries()) {
+      if (signal.aborted) return
       await this._applyPollResult(
         result.job,
         {
@@ -471,7 +480,8 @@ export class JobPoller {
           stdoutTail: safeTails[index * 2] ?? '',
           stderrTail: safeTails[index * 2 + 1] ?? ''
         },
-        connection
+        connection,
+        signal
       )
     }
   }
@@ -485,12 +495,13 @@ export class JobPoller {
       stdoutTail: string
       stderrTail: string
     },
-    connection: ComputeConnectionLease
+    connection: ComputeConnectionLease,
+    signal: AbortSignal
   ): Promise<void> {
     const previous = this.pollResultChains.get(job.job_id) ?? Promise.resolve()
     const current = previous
       .catch(() => undefined)
-      .then(() => this._applyPollResultExclusive(job, result, connection))
+      .then(() => this._applyPollResultExclusive(job, result, connection, signal))
     this.pollResultChains.set(job.job_id, current)
 
     try {
@@ -511,8 +522,10 @@ export class JobPoller {
       stdoutTail: string
       stderrTail: string
     },
-    connection: ComputeConnectionLease
+    connection: ComputeConnectionLease,
+    signal: AbortSignal
   ): Promise<void> {
+    if (signal.aborted) return
     const { alive, exitCode, hasExitCode, stdoutTail, stderrTail } = result
 
     // Terminal: exit_code file exists — this is authoritative.
@@ -555,7 +568,7 @@ export class JobPoller {
       if (transition.kind === 'ignored') return
       // Async-dispatch harvest for success/failed/timeout (design §3). Not awaited — must not
       // block the tick loop. 'error' status is never reached here (only in the noHandle path).
-      this._dispatchHarvest(transition.job)
+      this._dispatchHarvest(transition.job, signal)
       return
     }
 
@@ -574,7 +587,7 @@ export class JobPoller {
           stderrTail: stderrTail || null
         })
         // process_vanished is a terminal state — dispatch harvest (design §3).
-        if (transition.kind === 'applied') this._dispatchHarvest(transition.job)
+        if (transition.kind === 'applied') this._dispatchHarvest(transition.job, signal)
       }
       // else: keep running, check again next tick
       return
@@ -593,6 +606,7 @@ export class JobPoller {
         // Same-job poll results are serialized. Re-read after acquiring that chain so an earlier
         // terminal result can suppress this stale destructive observation before any remote kill.
         const current = await this.deps.jobRepository.get(job.job_id)
+        if (signal.aborted) return
         if (!current || (current.status !== 'submitted' && current.status !== 'running')) return
 
         const handle = this._parseHandle(current.remote_handle)
@@ -609,7 +623,8 @@ export class JobPoller {
               {
                 timeoutMs: 10_000,
                 loginShell: false,
-                maxOutputBytes: 64
+                maxOutputBytes: 64,
+                signal
               }
             )
           } catch {
@@ -624,12 +639,13 @@ export class JobPoller {
         })
         if (transition.kind === 'ignored') return
         // Poller-fallback timeout is a terminal state — dispatch harvest (design §3).
-        this._dispatchHarvest(transition.job)
+        this._dispatchHarvest(transition.job, signal)
         return
       }
     }
 
     if (job.status !== 'submitted' && job.status !== 'running') return
+    if (signal.aborted) return
     // Transition a submitted-with-handle recovery to running, or refresh an existing running row.
     // A successful poll also clears any stale connectivity projection.
     await this.lifecycle.observeRunning(job.job_id, job.status, {

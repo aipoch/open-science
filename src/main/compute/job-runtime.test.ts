@@ -100,4 +100,88 @@ describe('createComputeJobRuntime', () => {
     await stopping
     expect(stopped).toBe(true)
   })
+
+  it('cancels in-flight polling and harvest work when the runtime stops', async () => {
+    const runningJob = {
+      job_id: 'job-running',
+      provider_id: 'ssh:cluster',
+      status: 'running',
+      remote_handle: JSON.stringify({
+        pid: 1234,
+        exit_code_path: '~/.openscience/jobs/job-running/exit_code',
+        stdout_path: '~/.openscience/jobs/job-running/stdout',
+        stderr_path: '~/.openscience/jobs/job-running/stderr',
+        workdir: '~/.openscience/jobs/job-running'
+      })
+    } as ComputeJob
+    const terminalJob = {
+      ...runningJob,
+      job_id: 'job-terminal',
+      status: 'success'
+    } as ComputeJob
+    let pollSignal: AbortSignal | undefined
+    let harvestSignal: AbortSignal | undefined
+    let releasePoll!: () => void
+    let releaseHarvest!: () => void
+    const run = vi.fn(
+      () =>
+        new Promise<{
+          exitCode: number
+          stdout: string
+          stderr: string
+          timedOut: boolean
+          truncated: boolean
+        }>((resolve) => {
+          releasePoll = () =>
+            resolve({ exitCode: 0, stdout: '', stderr: '', timedOut: false, truncated: false })
+        })
+    )
+    const connectionBroker = {
+      acquire: vi.fn(async (_providerId: string, request: { signal?: AbortSignal }) => {
+        pollSignal = request.signal
+        request.signal?.addEventListener('abort', () => releasePoll(), { once: true })
+        return { run }
+      })
+    } as unknown as ComputeConnectionBroker
+    const harvest = vi.fn(
+      (_job: ComputeJob, deps: unknown) =>
+        new Promise<void>((resolve) => {
+          harvestSignal = (deps as { signal?: AbortSignal }).signal
+          releaseHarvest = resolve
+          harvestSignal?.addEventListener('abort', () => releaseHarvest(), { once: true })
+        })
+    )
+    const jobRepository = {
+      findTerminalUnharvested: vi.fn(async () => [terminalJob]),
+      findErrorUnnotified: vi.fn(async () => []),
+      findNonTerminal: vi.fn(async () => [runningJob])
+    } as unknown as ComputeJobRepository
+    const runtime = createComputeJobRuntime(
+      {
+        computeService: { handleJobUpdated: vi.fn() },
+        hostRepository: {} as ComputeHostRepository,
+        jobRepository,
+        connectionBroker,
+        storageRoot: '/data'
+      },
+      { harvest }
+    )
+
+    runtime.start()
+    await vi.waitFor(() => {
+      expect(harvest).toHaveBeenCalledOnce()
+      expect(run).toHaveBeenCalledOnce()
+    })
+
+    const stopping = runtime.stop()
+    try {
+      expect(pollSignal?.aborted).toBe(true)
+      expect(harvestSignal?.aborted).toBe(true)
+      await stopping
+    } finally {
+      releasePoll()
+      releaseHarvest()
+      await stopping
+    }
+  })
 })

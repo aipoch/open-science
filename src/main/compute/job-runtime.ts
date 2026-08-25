@@ -40,13 +40,14 @@ export const createComputeJobRuntime = (
     onJobUpdated: deps.computeService.handleJobUpdated,
     broadcast,
     storageRoot: deps.storageRoot,
-    harvestFn: (job) =>
+    harvestFn: (job, signal) =>
       harvest(job, {
         connectionBroker: deps.connectionBroker,
         hostRepository: deps.hostRepository,
         jobRepository: deps.jobRepository,
         storageRoot: deps.storageRoot,
-        broadcast
+        broadcast,
+        signal
       })
   }
 
