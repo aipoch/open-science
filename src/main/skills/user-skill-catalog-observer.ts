@@ -53,7 +53,7 @@ class UserSkillCatalogObserver {
   private watcher: FSWatcher | undefined
   private debounceTimer: ReturnType<typeof setTimeout> | undefined
   private reconcileTimer: ReturnType<typeof setInterval> | undefined
-  private fingerprint = ''
+  private fingerprint: string | undefined
   private reconcileDrain: Promise<void> | undefined
   private reconcilePending = false
   private reconcileForcePending = false
@@ -66,8 +66,6 @@ class UserSkillCatalogObserver {
     await Promise.all(
       OBSERVED_SOURCES.map((source) => mkdir(join(skillsRoot, source), { recursive: true }))
     )
-    this.fingerprint = catalogFingerprint(await this.options.catalog.list())
-
     try {
       this.watcher = (this.options.watchDirectory ?? watch)(skillsRoot, { recursive: true }, () =>
         this.scheduleReconcile()
@@ -86,6 +84,8 @@ class UserSkillCatalogObserver {
       })
       this.startPeriodicReconciliation()
     }
+
+    void this.enqueueReconcile(false)
   }
 
   notifyCatalogChanged(): Promise<void> {
@@ -157,7 +157,7 @@ class UserSkillCatalogObserver {
     if (this.disposed) return
     const fingerprint = catalogFingerprint(await this.options.catalog.list())
     if (this.disposed) return
-    const changed = fingerprint !== this.fingerprint
+    const changed = this.fingerprint !== undefined && fingerprint !== this.fingerprint
     this.fingerprint = fingerprint
     if (changed || force) await this.options.onCatalogChanged()
   }

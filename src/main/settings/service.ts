@@ -530,9 +530,9 @@ class SettingsService {
     return this.skills.buildSkillExport(id)
   }
 
-  // Specialist scopes intentionally see the installed catalog irrespective of Main Agent toggles.
-  // The result is rebuilt for every caller so future imports and removals take effect on the next turn.
-  async listSpecialistSkillCatalog(): Promise<
+  // Specialist scopes see the installed catalog irrespective of Main Agent toggles. Bundled
+  // Specialist startup validation can restrict this to immutable application resources.
+  async listSpecialistSkillCatalog(options: { bundledOnly?: boolean } = {}): Promise<
     Array<{
       id: string
       frameworkName: string
@@ -543,7 +543,7 @@ class SettingsService {
       compatibility?: string
     }>
   > {
-    return this.skills.listSpecialistSkillCatalog()
+    return this.skills.listSpecialistSkillCatalog(options)
   }
 
   // Returns the mcp-<id> skill names for connectors provisioned at the Main Agent level (enabled
