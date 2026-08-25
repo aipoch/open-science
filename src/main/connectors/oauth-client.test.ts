@@ -238,6 +238,24 @@ describe('PersistentOAuthClientProvider', () => {
     expect(openExternal).not.toHaveBeenCalled()
   })
 
+  it('clears a stale token before rejecting an unsafe authorization URL', async () => {
+    const saveState = vi.fn(async () => undefined)
+    const provider = new PersistentOAuthClientProvider({
+      serverId: 'server-1',
+      redirectUrl: 'http://127.0.0.1:4000/oauth/callback',
+      config: {},
+      state: { tokens: { access_token: 'stale', token_type: 'Bearer' } },
+      saveState,
+      openExternal: vi.fn()
+    })
+
+    await expect(
+      provider.redirectToAuthorization(new URL('http://auth.example.test/authorize'))
+    ).rejects.toThrow('OAuth authorization URL must use HTTPS or loopback HTTP.')
+    expect(provider.tokens()).toBeUndefined()
+    expect(saveState).toHaveBeenLastCalledWith({})
+  })
+
   it('retains tokens until auth reads a dynamic registration tied to an old callback', async () => {
     const saveState = vi.fn(async () => undefined)
     const provider = new PersistentOAuthClientProvider({

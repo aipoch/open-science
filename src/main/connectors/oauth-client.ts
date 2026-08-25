@@ -258,6 +258,13 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    // The SDK only redirects after the current token cannot authorize the connection. Clear that
+    // proven-stale token before opening the browser so a fast Cancel cannot preserve it by racing
+    // the manager's generation guard. A valid token never reaches this method.
+    if (this.oauthState.tokens) {
+      delete this.oauthState.tokens
+      await this.persist()
+    }
     const hostname = authorizationUrl.hostname
     if (
       authorizationUrl.protocol !== 'https:' &&
@@ -267,13 +274,6 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
       )
     ) {
       throw new Error('OAuth authorization URL must use HTTPS or loopback HTTP.')
-    }
-    // The SDK only redirects after the current token cannot authorize the connection. Clear that
-    // proven-stale token before opening the browser so a fast Cancel cannot preserve it by racing
-    // the manager's generation guard. A valid token never reaches this method.
-    if (this.oauthState.tokens) {
-      delete this.oauthState.tokens
-      await this.persist()
     }
     if (!this.openExternal) {
       throw new Error('OAuth authentication required. Sign in from Settings > Connectors.')
