@@ -95,6 +95,26 @@ describe('ComputeApprovalBroker', () => {
     expect(onSettled).toHaveBeenNthCalledWith(3, 'id-3', 'expired')
   })
 
+  it('cancels a pending approval when its request is aborted', async () => {
+    const timer = makeTimer()
+    const onSettled = vi.fn()
+    const controller = new AbortController()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      onSettled
+    })
+
+    const decision = broker.request(makeRequest(), undefined, controller.signal)
+    controller.abort()
+
+    expect(broker.getPending('id-1')).toBeNull()
+    await expect(decision).resolves.toBe('deny')
+    expect(onSettled).toHaveBeenCalledWith('id-1', 'cancelled')
+  })
+
   it('resolves with deny when user denies', async () => {
     const timer = makeTimer()
     let n = 0
@@ -248,6 +268,47 @@ describe('ComputeApprovalBroker', () => {
     replay.mockClear()
     broker.replayPending()
     expect(replay).not.toHaveBeenCalled()
+  })
+
+  it('cancels only pending approvals owned by a deleted Session', async () => {
+    const timer = makeTimer()
+    const onSettled = vi.fn()
+    let sequence = 0
+    const broker = new ComputeApprovalBroker({
+      generateId: () => `id-${++sequence}`,
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      onSettled
+    })
+    const deletedCall = broker.request(makeRequest(), {
+      sessionId: 'session-deleted',
+      projectId: 'project-1',
+      operation: 'call_command'
+    })
+    const deletedDownload = broker.request(makeDownloadRequest(), {
+      sessionId: 'session-deleted',
+      projectId: 'project-1',
+      operation: 'download'
+    })
+    const retainedCall = broker.request(makeRequest(), {
+      sessionId: 'session-retained',
+      projectId: 'project-1',
+      operation: 'call_command'
+    })
+
+    broker.cancelSession('session-deleted')
+
+    await expect(deletedCall).resolves.toBe('deny')
+    await expect(deletedDownload).resolves.toBe('deny')
+    expect(broker.getPending('id-1')).toBeNull()
+    expect(broker.getPending('id-2')).toBeNull()
+    expect(broker.getPending('id-3')).not.toBeNull()
+    expect(onSettled).toHaveBeenCalledWith('id-1', 'cancelled')
+    expect(onSettled).toHaveBeenCalledWith('id-2', 'cancelled')
+
+    broker.respond('id-3', 'deny')
+    await retainedCall
   })
 
   it('denies a pending approval when its compute provider is invalidated', async () => {

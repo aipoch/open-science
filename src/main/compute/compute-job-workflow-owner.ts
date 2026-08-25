@@ -162,7 +162,8 @@ export class ComputeJobWorkflowOwner {
       timeoutSeconds?: number
       workspaceCwd?: string
     },
-    context: { sessionId: string; projectId: string }
+    context: { sessionId: string; projectId: string },
+    signal?: AbortSignal
   ): Promise<SubmitJobResult> {
     if (!this.jobRepository) {
       throw new Error('ComputeJobRepository is required to call submitJob.')
@@ -268,7 +269,8 @@ export class ComputeJobWorkflowOwner {
         projectId: context.projectId,
         operation: 'submit_job',
         ownerId: host.id
-      }
+      },
+      signal
     )
 
     if (decision === 'deny') {

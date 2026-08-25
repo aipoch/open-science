@@ -152,7 +152,8 @@ export class ComputeService {
     intent: string,
     loginShell = true,
     timeoutSeconds?: number,
-    context?: { sessionId: string; projectId: string }
+    context?: { sessionId: string; projectId: string },
+    signal?: AbortSignal
   ): Promise<ExecResult> {
     return this.remoteOperations.callCommand(
       providerId,
@@ -160,7 +161,8 @@ export class ComputeService {
       intent,
       loginShell,
       timeoutSeconds,
-      context
+      context,
+      signal
     )
   }
 
@@ -168,9 +170,10 @@ export class ComputeService {
     providerId: string,
     remotePath: string,
     dest: DownloadDest,
-    context?: { sessionId: string; projectId: string }
+    context?: { sessionId: string; projectId: string },
+    signal?: AbortSignal
   ): Promise<LocalFile> {
-    return this.remoteOperations.download(providerId, remotePath, dest, context)
+    return this.remoteOperations.download(providerId, remotePath, dest, context, signal)
   }
 
   async submitJob(
@@ -186,9 +189,10 @@ export class ComputeService {
       timeoutSeconds?: number
       workspaceCwd?: string
     },
-    context: { sessionId: string; projectId: string }
+    context: { sessionId: string; projectId: string },
+    signal?: AbortSignal
   ): Promise<SubmitJobResult> {
-    return this.jobWorkflow.submitJob(providerId, intent, command, options, context)
+    return this.jobWorkflow.submitJob(providerId, intent, command, options, context, signal)
   }
 
   async getJobStatus(

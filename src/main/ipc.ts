@@ -2150,6 +2150,7 @@ const createApplicationModules = async (
       onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
       onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll(),
       beforeSessionDelete: async (sessionId) => {
+        computeIpcModule.handlers.approvalCancelSession(sessionId)
         await sideChatOwnerRef.current?.invalidateParents([sessionId])
         await notebookService.shutdownSession(sessionId)
       },

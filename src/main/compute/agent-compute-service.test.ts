@@ -131,10 +131,19 @@ describe('AgentComputeService', () => {
   it('delegates enabled provider calls with trusted context', async () => {
     const { raw, service } = createHarness()
     const context = { sessionId: 'session-1', projectId: 'project-1' }
+    const signal = new AbortController().signal
 
-    await service.callCommand(context, 'ssh:available', 'true', 'test', false, 5)
+    await service.callCommand(context, 'ssh:available', 'true', 'test', false, 5, signal)
 
-    expect(raw.callCommand).toHaveBeenCalledWith('ssh:available', 'true', 'test', false, 5, context)
+    expect(raw.callCommand).toHaveBeenCalledWith(
+      'ssh:available',
+      'true',
+      'test',
+      false,
+      5,
+      context,
+      signal
+    )
   })
 
   it('scopes job reads to the trusted Session and an enabled provider', async () => {

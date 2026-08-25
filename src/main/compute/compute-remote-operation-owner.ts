@@ -172,7 +172,8 @@ export class ComputeRemoteOperationOwner {
     intent: string,
     loginShell = true,
     timeoutSeconds?: number,
-    context?: { sessionId: string; projectId: string }
+    context?: { sessionId: string; projectId: string },
+    signal?: AbortSignal
   ): Promise<ExecResult> {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
@@ -191,13 +192,17 @@ export class ComputeRemoteOperationOwner {
       command_full: cmd
     }
     const decision = context
-      ? await this.approvalBroker.requestWithContext(approvalInfo, {
-          sessionId: context.sessionId,
-          projectId: context.projectId,
-          operation: 'call_command',
-          ownerId: host.id
-        })
-      : await this.approvalBroker.request(approvalInfo)
+      ? await this.approvalBroker.requestWithContext(
+          approvalInfo,
+          {
+            sessionId: context.sessionId,
+            projectId: context.projectId,
+            operation: 'call_command',
+            ownerId: host.id
+          },
+          signal
+        )
+      : await this.approvalBroker.request(approvalInfo, undefined, signal)
 
     if (decision === 'deny') {
       const error = new Error(
@@ -274,7 +279,8 @@ export class ComputeRemoteOperationOwner {
     providerId: string,
     remotePath: string,
     dest: DownloadDest,
-    context?: { sessionId: string; projectId: string }
+    context?: { sessionId: string; projectId: string },
+    signal?: AbortSignal
   ): Promise<LocalFile> {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
@@ -317,13 +323,17 @@ export class ComputeRemoteOperationOwner {
       remote_path: remotePath
     }
     const decision = context
-      ? await this.approvalBroker.requestWithContext(approvalInfo, {
-          sessionId: context.sessionId,
-          projectId: context.projectId,
-          operation: 'download',
-          ownerId: host.id
-        })
-      : await this.approvalBroker.request(approvalInfo)
+      ? await this.approvalBroker.requestWithContext(
+          approvalInfo,
+          {
+            sessionId: context.sessionId,
+            projectId: context.projectId,
+            operation: 'download',
+            ownerId: host.id
+          },
+          signal
+        )
+      : await this.approvalBroker.request(approvalInfo, undefined, signal)
 
     if (decision === 'deny') {
       const error = new Error(
