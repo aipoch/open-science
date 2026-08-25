@@ -2819,6 +2819,25 @@ describe('NotebookKernelExecutor spawn env', () => {
     expect(buildEnv('repl', request, '/tmp/figs').OPEN_SCIENCE_HANDOFF_DIR).toBe(expected)
   })
 
+  it('projects cache-only Data Storage paths for every kernel language', () => {
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
+    const request = { ...baseRequest('/tmp/os-cache-env'), code: 'x' }
+    const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
+    const cacheRoot = join(request.runtimeRoot, 'cache', 'notebook')
+
+    for (const kind of ['python', 'r', 'repl'] as const) {
+      expect(buildEnv(kind, request, '/tmp/figs')).toMatchObject({
+        OPEN_SCIENCE_NOTEBOOK_CACHE_DIR: cacheRoot,
+        PIP_CACHE_DIR: join(cacheRoot, 'pip'),
+        UV_CACHE_DIR: join(cacheRoot, 'uv'),
+        HF_HUB_CACHE: join(cacheRoot, 'huggingface', 'hub'),
+        HF_XET_CACHE: join(cacheRoot, 'huggingface', 'xet'),
+        HF_ASSETS_CACHE: join(cacheRoot, 'huggingface', 'assets'),
+        TORCH_HOME: join(cacheRoot, 'torch')
+      })
+    }
+  })
+
   it('gives the repl kernel ELECTRON_RUN_AS_NODE plus the connector RPC endpoint/token', () => {
     const executor = new NotebookKernelExecutor({ replLoopPath: '/tmp/repl_loop.js' })
     const request = {

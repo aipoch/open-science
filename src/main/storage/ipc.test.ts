@@ -93,6 +93,7 @@ const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
     dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
     getStoredSettings: vi.fn().mockResolvedValue({})
   },
+  cleanupRuntimeCache: vi.fn(() => true),
   relaunch: vi.fn(),
   ...overrides
 })
@@ -710,7 +711,7 @@ describe('storage IPC handlers', () => {
   it('commit-and-relaunch delegates production cleanup to the orderly app quit lifecycle', async () => {
     initDataRoot(dataRoot)
     // No injected relaunch: exercise the real app.relaunch -> app.quit handoff.
-    const cleanupRuntimeCache = vi.fn()
+    const cleanupRuntimeCache = vi.fn(() => true)
     const deps = fakeDeps({ relaunch: undefined, cleanupRuntimeCache })
     appQuit.mockImplementationOnce(() => {
       expect(currentApplicationShutdownTrigger()).toBe('migration-relaunch')
@@ -756,7 +757,7 @@ describe('storage IPC handlers', () => {
 
   it('commit-and-relaunch returns switchoverFailed and does NOT relaunch when setDataRoot throws', async () => {
     initDataRoot(dataRoot)
-    const cleanupRuntimeCache = vi.fn()
+    const cleanupRuntimeCache = vi.fn(() => true)
     const deps = fakeDeps({
       settingsService: {
         setDataRoot: vi.fn().mockRejectedValue(new Error('disk full')),
@@ -767,6 +768,7 @@ describe('storage IPC handlers', () => {
     })
     registerStorageIpcHandlers(deps)
     await invoke('storage:migrate', { parent: targetParent })
+    cleanupRuntimeCache.mockClear()
 
     const outcome = (await invoke('storage:commit-and-relaunch', { parent: targetParent })) as {
       ok: boolean

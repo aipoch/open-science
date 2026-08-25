@@ -19,6 +19,7 @@ import {
   type ProductionProvisionerDeps
 } from './provisioner'
 import { selectMicromambaCache } from './micromamba-cache'
+import { notebookWorkloadCacheRoot } from './notebook-workload-cache-paths'
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-start-'))
 const touchBin = (path: string): void => {
@@ -313,5 +314,47 @@ describe('createProductionProvisioner', () => {
       expect(call[3]).toEqual(expect.any(Function))
       expect(call[4]).toEqual(expect.any(Function))
     }
+  })
+
+  it('projects the workload cache environment into the default provisioning subprocess', async () => {
+    const root = makeRoot()
+    const mmPath = join(root, 'bin', micromambaBinName)
+    const lockPath = join(root, 'python.lock')
+    touchBin(mmPath)
+    writeFileSync(lockPath, '@EXPLICIT\n')
+    const spawnMicromamba = vi.fn<NonNullable<ProductionProvisionerDeps['runMicromamba']>>(
+      async (argv, _env, _signal, _onChild, onBeforeSpawn) => {
+        onBeforeSpawn?.()
+        const prefix = argv[argv.findIndex((arg) => arg === '-p' || arg === '--prefix') + 1]
+        touchBin(pythonBin(prefix))
+      }
+    )
+    const provisioner = createProductionProvisioner(
+      {
+        root,
+        channel: 'conda-forge',
+        micromamba: { env: { OPEN_SCIENCE_MICROMAMBA_BIN: mmPath } }
+      },
+      {
+        runner: { initialPath: mmPath, resolve: async () => mmPath },
+        fetchBundle: async () => ({ lockPath }),
+        maintainCache: async () => undefined,
+        runMicromamba: spawnMicromamba,
+        verify: async () => undefined,
+        retainWorkingCache: async () => async () => true,
+        captureExplicitLock: async () => '@EXPLICIT\n'
+      }
+    )
+
+    await provisioner.provisionPython(() => undefined)
+
+    const cacheRoot = notebookWorkloadCacheRoot(root)
+    expect(spawnMicromamba).toHaveBeenCalledOnce()
+    expect(spawnMicromamba.mock.calls[0]?.[1]).toMatchObject({
+      PIP_CACHE_DIR: join(cacheRoot, 'pip'),
+      UV_CACHE_DIR: join(cacheRoot, 'uv'),
+      HF_DATASETS_CACHE: join(cacheRoot, 'huggingface', 'datasets'),
+      TORCH_HOME: join(cacheRoot, 'torch')
+    })
   })
 })

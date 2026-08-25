@@ -198,6 +198,73 @@ describe('RuntimeOperationJournal', () => {
     expect(await journal.readState()).toBe('corrupt')
   })
 
+  it('validates persisted archive publication evidence fail-closed', async () => {
+    const path = await journalPath()
+    const journal = new RuntimeOperationJournal(path)
+    await mkdir(dirname(path), { recursive: true })
+    const publication = {
+      workingRoot: 'D:\\OpenScienceTmp\\m-test',
+      authorizations: [{ file: 'python-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }]
+    }
+
+    await writeFile(
+      path,
+      JSON.stringify([{ ...record(), archivePublications: [publication] }]),
+      'utf8'
+    )
+    expect(await journal.readState()).not.toBe('corrupt')
+
+    await writeFile(
+      path,
+      JSON.stringify([{ ...record(), archivePublicationPending: true }]),
+      'utf8'
+    )
+    expect(await journal.readState()).not.toBe('corrupt')
+
+    for (const invalidPending of [
+      { archivePublicationPending: false },
+      { archivePublicationPending: true, archivePublications: [publication] }
+    ]) {
+      await writeFile(path, JSON.stringify([{ ...record(), ...invalidPending }]), 'utf8')
+      expect(await journal.readState()).toBe('corrupt')
+    }
+
+    for (const archivePublications of [
+      [],
+      [{ ...publication, workingRoot: '' }],
+      [{ ...publication, authorizations: [] }],
+      [
+        {
+          ...publication,
+          authorizations: [
+            { file: '../python-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }
+          ]
+        }
+      ],
+      [
+        {
+          ...publication,
+          authorizations: [{ file: 'python-1.conda', algorithm: 'sha256', digest: 'bad' }]
+        }
+      ]
+    ]) {
+      await writeFile(path, JSON.stringify([{ ...record(), archivePublications }]), 'utf8')
+      expect(await journal.readState()).toBe('corrupt')
+    }
+
+    await writeFile(
+      path,
+      JSON.stringify([
+        {
+          ...record({ childPid: 4242, childStartedAt: 100 }),
+          archivePublications: [publication]
+        }
+      ]),
+      'utf8'
+    )
+    expect(await journal.readState()).toBe('corrupt')
+  })
+
   it('treats a record with a PRESENT-but-malformed childStartToken as corrupt (fail-closed)', async () => {
     const path = await journalPath()
     const journal = new RuntimeOperationJournal(path)

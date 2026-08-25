@@ -11,6 +11,7 @@ import { boundedFailureDiagnostic } from './failure-diagnostic'
 import { effectiveMirrorAsync, type ProbeDeps } from './mirror-probe'
 import { NotebookPackageAdmissionOwner } from './package-admission'
 import type { InstallDeps, InstallRequest, InstallResult } from './package-manager'
+import type { MicromambaWorkingCacheRetainer } from './windows-micromamba-working-cache'
 import { NotebookPackageMutationOwner } from './package-mutation'
 import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import {
@@ -89,6 +90,7 @@ type NotebookPackageOperationsOptions = {
   >
   installPackages: (request: InstallRequest, deps?: Partial<InstallDeps>) => Promise<InstallResult>
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
+  retainWorkingCache?: MicromambaWorkingCacheRetainer
   createEnvironmentCaptureTarget: (
     language: NotebookLanguage,
     environmentName: string,
@@ -137,6 +139,7 @@ class NotebookPackageOperations {
       environmentStateTracker: options.environmentStateTracker,
       installPackages: options.installPackages,
       micromambaRunner: options.micromambaRunner,
+      retainWorkingCache: options.retainWorkingCache,
       recheckRepair: (target) => this.admission.recheckRepair(target),
       runtimeRepair: options.runtimeRepair,
       blockUnconfirmedChild: ({ repairRuntimeId, journalTarget }) => {

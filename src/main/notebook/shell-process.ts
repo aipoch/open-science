@@ -6,6 +6,10 @@ import { terminateProcessTree } from '../process-tree'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import {
+  notebookWorkloadCacheEnv,
+  prepareNotebookWorkloadCache
+} from './notebook-workload-cache-paths'
+import {
   NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES,
   NOTEBOOK_TEXT_LIMIT_BYTES,
   limitUtf8
@@ -66,7 +70,9 @@ const WINDOWS_SHELL_ENV_ALLOWLIST = ['ComSpec', 'PATHEXT', 'SystemRoot', 'WINDIR
 const buildShellEnv = (
   handoffDir: string,
   platform: NodeJS.Platform = process.platform,
-  sourceEnv: NodeJS.ProcessEnv = process.env
+  sourceEnv: NodeJS.ProcessEnv = process.env,
+  runtimeRoot?: string,
+  workloadCacheEnv?: NodeJS.ProcessEnv
 ): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {}
   const keys =
@@ -100,6 +106,9 @@ const buildShellEnv = (
     }
   }
   env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
+  if (runtimeRoot) {
+    Object.assign(env, workloadCacheEnv ?? notebookWorkloadCacheEnv(runtimeRoot))
+  }
   return env
 }
 
@@ -273,6 +282,25 @@ const runShellCommand = (
       return
     }
 
+    let shellEnv: NodeJS.ProcessEnv
+    try {
+      const workloadCacheEnv = prepareNotebookWorkloadCache(options.runtimeRoot)
+      shellEnv = buildShellEnv(
+        options.handoffDir,
+        options.platform ?? process.platform,
+        process.env,
+        options.runtimeRoot,
+        workloadCacheEnv
+      )
+    } catch (error) {
+      resolve({
+        stdout: '',
+        stderr: error instanceof Error ? error.message : String(error),
+        exitCode: null
+      })
+      return
+    }
+
     const timeoutMs = options.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
     const platform = options.platform ?? process.platform
     const invocation = protectManagedRuntimeWrites(
@@ -282,7 +310,7 @@ const runShellCommand = (
     )
     const child = spawn(invocation.executable, invocation.args, {
       cwd: options.cwd,
-      env: buildShellEnv(options.handoffDir),
+      env: shellEnv,
       // On POSIX this makes the shell the leader of a private process group/session. Keep its handle
       // and stdio referenced (no unref), preserving normal completion while enabling safe -PGID kills.
       detached: platform !== 'win32'

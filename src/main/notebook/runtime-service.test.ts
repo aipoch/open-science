@@ -3458,8 +3458,9 @@ describe('notebook runtime service', () => {
     releaseRead()
     await Promise.all([first, second])
 
-    // One healthy recovery reads once for the fail-closed preflight and once for reconciliation.
-    expect(readState).toHaveBeenCalledTimes(2)
+    // One healthy recovery reads once for the fail-closed preflight, once for reconciliation, and
+    // once more before cache cleanup so a journal mutation during publication remains fail-closed.
+    expect(readState).toHaveBeenCalledTimes(3)
     readState.mockRestore()
   })
 

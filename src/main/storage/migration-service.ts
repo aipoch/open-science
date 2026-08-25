@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
@@ -65,6 +65,47 @@ const WINDOWS_MAX_USABLE_PATH = 259
 // Keep the migration guard aligned with the physical default prefix selected by runtime-paths plus
 // the longest linked package path. Logical names deliberately do not participate in this budget.
 const WINDOWS_ENV_PREFIX_RESERVE = windowsDefaultEnvPrefixReserve()
+
+const runtimeTreeContainsLink = async (path: string): Promise<boolean> => {
+  let state
+  try {
+    state = await lstat(path)
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT'
+  }
+  if (state.isSymbolicLink() || !state.isDirectory()) return state.isSymbolicLink()
+
+  let entries: Dirent[]
+  try {
+    entries = await readdir(path, { withFileTypes: true })
+  } catch {
+    return true
+  }
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) return true
+    if (entry.isDirectory() && (await runtimeTreeContainsLink(join(path, entry.name)))) return true
+  }
+  return false
+}
+
+// A move target may contain empty runtime scaffolding left by a prior Data Storage location, but it
+// must not contain files or links. Once the staging marker is written, migration failures remove the
+// whole target; accepting pre-existing runtime data here would therefore turn rollback into data loss.
+// Read failures also mean "contains data" so the migration fails closed without deleting the target.
+const runtimeTreeContainsData = async (runtimeRoot: string): Promise<boolean> => {
+  let entries: Dirent[]
+  try {
+    entries = await readdir(runtimeRoot, { withFileTypes: true })
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT'
+  }
+
+  for (const entry of entries) {
+    if (entry.isSymbolicLink() || !entry.isDirectory()) return true
+    if (await runtimeTreeContainsData(join(runtimeRoot, entry.name))) return true
+  }
+  return false
+}
 
 export const maxManagedEnvRelativePath = (dataRoot: string): number => {
   let maximum = DEFAULT_MAX_ENV_RELATIVE_PATH
@@ -366,9 +407,7 @@ const sameInventory = (left: MigrationInventory, right: MigrationInventory): boo
 type DataRootWriterPauseDeps = {
   logger?: Logger
   runtime: { disconnect: () => Promise<unknown> }
-  // Return ignored (awaited only), so kept as Promise<unknown> — mirrors runtime.disconnect above and
-  // stays compatible with both the real service (now returns { reaped }) and void test fakes.
-  notebook: { shutdownAll: () => Promise<unknown> }
+  notebook: { shutdownAll: () => Promise<{ reaped: boolean } | void> }
   // Releases the shared SQLite authority connection before migration validation opens its dedicated
   // checkpoint client. Injectable so ordering remains testable without module-level state.
   disconnectProjectDb?: () => Promise<void>
@@ -379,7 +418,10 @@ type DataRootWriterPauseDeps = {
 // while existing leases drain.
 export const pauseDataRootWriters = async (deps: DataRootWriterPauseDeps): Promise<void> => {
   await deps.runtime.disconnect()
-  await deps.notebook.shutdownAll()
+  const notebookShutdown = await deps.notebook.shutdownAll()
+  if (notebookShutdown?.reaped === false) {
+    throw new Error('Notebook processes could not be stopped before data migration.')
+  }
   await (deps.disconnectProjectDb ?? disconnectProjectDbClient)()
   await waitForDataRootWriters()
 }
@@ -387,6 +429,9 @@ export const pauseDataRootWriters = async (deps: DataRootWriterPauseDeps): Promi
 type MigrationCopyDeps = DataRootWriterPauseDeps & {
   currentDataRoot: string
   diagnosticCorrelationId?: string
+  // The composition root supplies Notebook-owned cache cleanup. A runtime-only target may contain
+  // rebuildable residue, but migration must not commit a stale or ownership-unverified cache.
+  cleanupRuntimeCache?: (runtimeRoot: string) => boolean
   // Exports each conda env under the old runtime to an @EXPLICIT lock at the new root (offline
   // reconstruction bundle). Returns the env names preserved; [] when nothing could be exported.
   // Injectable/optional so tests and non-notebook contexts skip it. Best-effort (must not throw).
@@ -460,15 +505,59 @@ export const runDataRootMigration = async (
     status: 'copying'
   }
   operation.phase('prepare-staging')
+  const targetRuntimeRoot = join(target, 'runtime')
+  if (await runtimeTreeContainsLink(targetRuntimeRoot)) {
+    const error = new Error('The new data location contains a linked runtime path.')
+    operation.fail(error)
+    return {
+      ok: false,
+      error:
+        'The new data location contains runtime data that Open Science cannot safely replace. Choose another location or remove that data first.'
+    }
+  }
+  let targetRuntimeCacheClean = true
+  try {
+    targetRuntimeCacheClean = deps.cleanupRuntimeCache?.(targetRuntimeRoot) ?? true
+  } catch {
+    targetRuntimeCacheClean = false
+  }
+  if (!targetRuntimeCacheClean) {
+    const error = new Error('The new data location contains an untrusted runtime cache.')
+    operation.fail(error)
+    return {
+      ok: false,
+      error:
+        'The new data location contains a Notebook cache that Open Science cannot safely replace. Choose another location or remove that cache first.'
+    }
+  }
   try {
     await mkdir(target, { recursive: true })
     // A runtime-only destination is a valid move target and may be residue from an earlier location.
-    // Drop only its path-keyed mutable Environment cache before staging; keep relocatable packages,
-    // exported locks, and every other rebuildable runtime file intact.
+    // The injected owner cleanup above removed verified rebuildable caches; now drop the path-keyed
+    // mutable Environment inventory. Any remaining runtime data is rejected below before the target
+    // becomes staging-owned, so rollback can never delete pre-existing archives or unknown files.
     await rm(join(target, RUNTIME_ENVIRONMENT_INVENTORY_DIR), { recursive: true, force: true })
+  } catch (err) {
+    operation.fail(err)
+    return { ok: false, error: 'Could not prepare the new data location. Please try again.' }
+  }
+
+  if (await runtimeTreeContainsData(targetRuntimeRoot)) {
+    const error = new Error('The new data location contains existing runtime data.')
+    operation.fail(error)
+    return {
+      ok: false,
+      error:
+        'The new data location contains runtime data that Open Science cannot safely replace. Choose another location or remove that data first.'
+    }
+  }
+
+  try {
     await writeMigrationMarker(target, marker)
   } catch (err) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    // The target is not staging-owned until its marker is complete. Remove only a possibly partial
+    // marker; preserving the target avoids deleting data written by another actor during preparation.
+    await removeMigrationMarker(target).catch(() => undefined)
     operation.fail(err)
     return { ok: false, error: 'Could not prepare the new data location. Please try again.' }
   }
@@ -502,9 +591,9 @@ export const runDataRootMigration = async (
   }
 
   // Preserve the runtime: export each env to an offline @EXPLICIT lock at the new root, then copy the
-  // (relocatable) pkgs cache alongside the user data so the envs can be rebuilt offline there. Both
-  // are best-effort — a failure just leaves the new root to re-provision defaults, never blocks the
-  // user-data copy. pkgs is copied only when at least one env was actually preserved.
+  // (relocatable) pkgs archive store alongside the user data. Exporting environment locks is
+  // best-effort, but already-published durable archives follow Data Storage independently of whether
+  // any environment could be exported.
   operation.phase('preserve-runtime')
   let preservedEnvs: string[] = []
   let runtimePreservationDegraded = false
@@ -515,8 +604,7 @@ export const runDataRootMigration = async (
       runtimePreservationDegraded = true
     }
   }
-  const migrateDirs =
-    preservedEnvs.length > 0 ? [...BASE_MIGRATION_DIRS, RUNTIME_PKGS_DIR] : [...BASE_MIGRATION_DIRS]
+  const migrateDirs = [...BASE_MIGRATION_DIRS, RUNTIME_PKGS_DIR]
 
   const doCopyAndVerify = deps.copyAndVerify ?? copyAndVerify
   let result: MigrationResult
@@ -674,7 +762,7 @@ export const commitDataRootSwitch = async (
   }
 
   const migratedDirs = marker.migratedDirs ?? [...MIGRATED_DIRS]
-  const requiredPaths = [RUNTIME_ENVIRONMENT_MANIFESTS_DIR].filter((path) =>
+  const requiredPaths = [RUNTIME_ENVIRONMENT_MANIFESTS_DIR, RUNTIME_PKGS_DIR].filter((path) =>
     existsSync(join(deps.currentDataRoot, path))
   )
   if (requiredPaths.some((path) => !migratedDirs.includes(path))) {

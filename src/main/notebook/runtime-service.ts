@@ -78,6 +78,7 @@ import type {
 } from '../../shared/notebook-runtime'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import { managedNotebookWorkingCache } from './windows-micromamba-working-cache'
 import { NotebookRuntimeRepairOwner } from './runtime-repair'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { NotebookEnvironmentOperations, type DefaultEnvProvisioner } from './environment-operations'
@@ -118,8 +119,7 @@ import {
 } from './content-limits'
 import { NotebookHelperModuleHost, type NotebookHelperModuleCatalog } from './helper-module-host'
 
-// Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
-// to public hosts, so this default never silently forces a CN mirror).
+// The default stays outside CN mirror routing when no explicit locale is injected.
 const DEFAULT_LOCALE = 'en-US'
 
 const EMPTY_NOTEBOOK_RUNTIME_SETTINGS: Pick<NotebookRuntimeSettings, 'getSnapshot'> = {
@@ -342,9 +342,6 @@ class NotebookRuntimeService {
   private readonly runtimeEnablementResolver:
     ((language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>) | undefined
   private readonly runtimeBindingOwner: NotebookRuntimeBindingOwner
-  // Owns startup-recovery promises, journal reconciliation, fail-closed block decisions, Reset
-  // allowlisting, and same-process live-unconfirmed tracking. The service retains its public recovery
-  // facade so Electron, Web, CLI, and IPC adapters keep the same contract.
   private readonly recoveryCoordinator: NotebookRecoveryCoordinator
   private readonly runtimeLogger?: RuntimeDiagnosticLogger
   private readonly environmentStateTracker: Pick<
@@ -372,8 +369,13 @@ class NotebookRuntimeService {
       }
     })
     const runtimeRoot = getRuntimeRoot(options.dataRoot)
+    const workingCache = managedNotebookWorkingCache(options.platform, !options.installPackagesImpl)
     this.repairPolicy = new NotebookRuntimeRepairPolicy(runtimeRoot)
-    this.recoveryCoordinator = new NotebookRecoveryCoordinator(runtimeRoot, this.repairPolicy)
+    this.recoveryCoordinator = new NotebookRecoveryCoordinator(
+      runtimeRoot,
+      this.repairPolicy,
+      workingCache
+    )
     this.mcpRpcConnectionResolver = options.getMcpRpcConnection
     const runtimeSettings = options.notebookRuntimeSettings ?? EMPTY_NOTEBOOK_RUNTIME_SETTINGS
     this.runtimeEnablementResolver = async (language) =>
@@ -492,6 +494,7 @@ class NotebookRuntimeService {
       environmentStateTracker: this.environmentStateTracker,
       installPackages: options.installPackagesImpl ?? installPackagesDefault,
       micromambaRunner: options.micromambaRunner,
+      ...workingCache,
       createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args)
     })
     this.dataExecutionAdmission = new NotebookDataExecutionAdmissionOwner({

@@ -254,6 +254,230 @@ describe('NotebookPackageMutationOwner', () => {
     expect(options.runtimeRepair.quarantineProtectedIdentity).not.toHaveBeenCalled()
   })
 
+  it('publishes a successful conda transaction before releasing its working cache', async () => {
+    let finishPublication!: (published: boolean) => void
+    const publication = new Promise<boolean>((resolve) => {
+      finishPublication = resolve
+    })
+    const release = vi.fn(() => publication)
+    const retainWorkingCache = vi.fn(() => release)
+    const installedPrefix = '/runtime/envs/analysis'
+    const archiveAuthorization = {
+      file: 'numpy-1.conda',
+      algorithm: 'sha256' as const,
+      digest: 'a'.repeat(64)
+    }
+    const workingRoot = '/working-cache'
+    const { owner, target, runtimeRoot } = ownerHarness({
+      retainWorkingCache,
+      installPackages: vi.fn(async (_request, deps) => {
+        deps?.onCondaArchiveAuthorizations?.([archiveAuthorization], workingRoot)
+        return {
+          ok: true,
+          needsRestart: false,
+          log: 'installed',
+          method: 'conda' as const,
+          prefix: installedPrefix,
+          attempts: [
+            {
+              groupOrdinal: 0,
+              installer: 'conda' as const,
+              packages: ['numpy'],
+              status: 'succeeded' as const,
+              mutationRisk: 'confirmed' as const
+            }
+          ]
+        }
+      })
+    })
+
+    const mutation = owner.mutate({ target, mirror: {} })
+
+    await vi.waitFor(async () => {
+      expect((await pending(runtimeRoot))[0]).toMatchObject({
+        archivePublications: [{ workingRoot, authorizations: [archiveAuthorization] }]
+      })
+    })
+    finishPublication(true)
+    await expect(mutation).resolves.toMatchObject({ ok: true })
+    expect(await pending(runtimeRoot)).toEqual([])
+
+    expect(retainWorkingCache).toHaveBeenCalledWith(runtimeRoot, expect.any(String))
+    expect(release).toHaveBeenCalledWith({
+      archivePublications: [{ workingRoot, authorizations: [archiveAuthorization] }],
+      completedOperationId: expect.any(String),
+      retainForRecovery: false
+    })
+  })
+
+  it('does not persist an empty archive publication', async () => {
+    const release = vi.fn().mockResolvedValue(true)
+    const { owner, target, runtimeRoot } = ownerHarness({
+      retainWorkingCache: vi.fn(() => release),
+      installPackages: vi.fn(async (_request, deps) => {
+        deps?.onCondaArchiveAuthorizations?.([], '/working-cache')
+        return { ok: true, needsRestart: false, log: 'already installed', method: 'conda' as const }
+      })
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).resolves.toMatchObject({ ok: true })
+
+    expect(release).toHaveBeenCalledWith({
+      archivePublications: [],
+      completedOperationId: expect.any(String),
+      retainForRecovery: false
+    })
+    expect(await pending(runtimeRoot)).toEqual([])
+  })
+
+  it('retains and blocks when a successful conda result has incomplete archive evidence', async () => {
+    const release = vi.fn().mockResolvedValue(false)
+    const { owner, options, target, runtimeRoot } = ownerHarness({
+      retainWorkingCache: vi.fn(() => release),
+      installPackages: vi.fn(async (_request, deps) => {
+        deps?.onCondaArchiveAuthorizations?.([], '/working-cache', false)
+        return { ok: true, needsRestart: false, log: 'installed', method: 'conda' as const }
+      })
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).rejects.toThrow(
+      'CACHE_ARCHIVE_EVIDENCE_INCOMPLETE'
+    )
+
+    expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target)
+    expect(release).toHaveBeenCalledWith({
+      archivePublications: [],
+      completedOperationId: expect.any(String),
+      retainForRecovery: true
+    })
+    expect(await pending(runtimeRoot)).toEqual([
+      expect.objectContaining({ archivePublicationPending: true })
+    ])
+  })
+
+  it('keeps external installs on normal repair recovery without retaining micromamba cache state', async () => {
+    const retainWorkingCache = vi.fn()
+    const { owner, target, runtimeRoot } = ownerHarness(
+      {
+        retainWorkingCache,
+        installPackages: vi.fn(async () => {
+          const [record] = await pending(runtimeRoot)
+          expect(record).not.toHaveProperty('archivePublicationPending')
+          return { ok: true, needsRestart: false, log: 'installed', method: 'pip' as const }
+        })
+      },
+      {
+        journalTarget: undefined,
+        environmentCaptureTarget: {
+          language: 'python',
+          environmentName: 'external-python',
+          runtimeSource: 'external',
+          command: 'C:\\Python\\python.exe'
+        }
+      }
+    )
+
+    await expect(owner.mutate({ target, mirror: {} })).resolves.toMatchObject({ ok: true })
+
+    expect(retainWorkingCache).not.toHaveBeenCalled()
+    expect(await pending(runtimeRoot)).toEqual([])
+  })
+
+  it('keeps an explicit managed pip install out of archive publication recovery', async () => {
+    const retainWorkingCache = vi.fn()
+    const { owner, target, runtimeRoot } = ownerHarness(
+      {
+        retainWorkingCache,
+        installPackages: vi.fn(async () => {
+          const [record] = await pending(runtimeRoot)
+          expect(record).not.toHaveProperty('archivePublicationPending')
+          return { ok: true, needsRestart: false, log: 'installed', method: 'pip' as const }
+        })
+      },
+      {
+        request: {
+          language: 'python',
+          packages: ['numpy'],
+          environment: 'analysis',
+          usePip: true
+        }
+      }
+    )
+
+    await expect(owner.mutate({ target, mirror: {} })).resolves.toMatchObject({ ok: true })
+
+    expect(retainWorkingCache).not.toHaveBeenCalled()
+    expect(await pending(runtimeRoot)).toEqual([])
+  })
+
+  it('retains and blocks when post-mutation archive authority cannot be persisted', async () => {
+    const updateFailure = new Error('journal publication update denied')
+    vi.spyOn(RuntimeOperationJournal.prototype, 'update').mockRejectedValueOnce(updateFailure)
+    const release = vi.fn().mockResolvedValue(false)
+    const archiveAuthorization = {
+      file: 'numpy-1.conda',
+      algorithm: 'sha256' as const,
+      digest: 'a'.repeat(64)
+    }
+    const { owner, options, target, runtimeRoot } = ownerHarness({
+      retainWorkingCache: vi.fn(() => release),
+      installPackages: vi.fn(async (_request, deps) => {
+        deps?.onCondaArchiveAuthorizations?.([archiveAuthorization], '/working-cache')
+        return { ok: true, needsRestart: false, log: 'installed', method: 'conda' as const }
+      })
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).rejects.toBe(updateFailure)
+
+    expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target)
+    expect(release).toHaveBeenCalledWith({
+      archivePublications: [
+        { workingRoot: '/working-cache', authorizations: [archiveAuthorization] }
+      ],
+      completedOperationId: expect.any(String),
+      retainForRecovery: true
+    })
+    const retained = await pending(runtimeRoot)
+    expect(retained).toEqual([expect.objectContaining({ archivePublicationPending: true })])
+    expect(retained[0].archivePublications).toBeUndefined()
+  })
+
+  it('still publishes a settled transaction when the mutation lock wrapper fails while unwinding', async () => {
+    const wrapperFailure = new Error('lock release failed')
+    const release = vi.fn().mockResolvedValue(true)
+    const archiveAuthorization = {
+      file: 'numpy-1.conda',
+      algorithm: 'sha256' as const,
+      digest: 'a'.repeat(64)
+    }
+    const { owner, target, runtimeRoot } = ownerHarness({
+      environmentOperations: {
+        runMutation: async <T>(_environment: string, operation: () => Promise<T>): Promise<T> => {
+          await operation()
+          throw wrapperFailure
+        },
+        logPackageFailure: vi.fn(),
+        logPackageResult: vi.fn()
+      },
+      retainWorkingCache: vi.fn(() => release),
+      installPackages: vi.fn(async (_request, deps) => {
+        deps?.onCondaArchiveAuthorizations?.([archiveAuthorization], '/working-cache')
+        return { ok: true, needsRestart: false, log: 'installed', method: 'conda' as const }
+      })
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).rejects.toBe(wrapperFailure)
+
+    expect(release).toHaveBeenCalledWith({
+      archivePublications: [
+        { workingRoot: '/working-cache', authorizations: [archiveAuthorization] }
+      ],
+      completedOperationId: expect.any(String),
+      retainForRecovery: false
+    })
+    expect(await pending(runtimeRoot)).toEqual([])
+  })
+
   it('clears settled cache-maintenance child evidence before the installer transaction', async () => {
     let operationId = ''
     const { owner, target, runtimeRoot } = ownerHarness({
@@ -432,7 +656,9 @@ describe('NotebookPackageMutationOwner', () => {
   it('retains sidecar and journal and blocks the target for an unconfirmed child', async () => {
     let operationId = ''
     const childFailure = new Error(`install failed: ${CHILD_UNCONFIRMED}`)
+    const release = vi.fn().mockResolvedValue(false)
     const { owner, options, target, runtimeRoot } = ownerHarness({
+      retainWorkingCache: vi.fn(() => release),
       environmentStateTracker: {
         markPackageMutationDirty: vi.fn(async (_target, mutation) => {
           operationId = mutation.operationId
@@ -449,6 +675,11 @@ describe('NotebookPackageMutationOwner', () => {
     await expect(owner.mutate({ target, mirror: {} })).rejects.toBe(childFailure)
 
     expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target)
+    expect(release).toHaveBeenCalledWith({
+      archivePublications: [],
+      completedOperationId: operationId,
+      retainForRecovery: true
+    })
     expect(await pending(runtimeRoot)).toEqual([expect.objectContaining({ operationId })])
     expect(readOperationChild(runtimeRoot, operationId)).toMatchObject({ spawning: true })
   })

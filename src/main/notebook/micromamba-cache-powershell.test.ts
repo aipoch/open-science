@@ -48,7 +48,7 @@ describe('Windows micromamba cache PowerShell invocation', () => {
 
     expect(hardenWindowsCacheAcl('D:\\osp-cache')).toBe(true)
 
-    expect(childProcessMocks.execFileSync).toHaveBeenCalledTimes(4)
+    expect(childProcessMocks.execFileSync).toHaveBeenCalledTimes(3)
     expect(childProcessMocks.execFileSync).toHaveBeenNthCalledWith(
       2,
       'C:\\Windows\\System32\\whoami.exe',
@@ -57,12 +57,6 @@ describe('Windows micromamba cache PowerShell invocation', () => {
     )
     expect(childProcessMocks.execFileSync).toHaveBeenNthCalledWith(
       3,
-      'C:\\Windows\\System32\\icacls.exe',
-      ['D:\\osp-cache', '/setowner', '*S-1-5-21-1000'],
-      { encoding: 'utf8', windowsHide: true }
-    )
-    expect(childProcessMocks.execFileSync).toHaveBeenNthCalledWith(
-      4,
       'C:\\Windows\\System32\\icacls.exe',
       [
         'D:\\osp-cache',
@@ -76,7 +70,17 @@ describe('Windows micromamba cache PowerShell invocation', () => {
     )
   })
 
-  it('propagates owner update failures from the fallback ACL tool', () => {
+  it('propagates current-user SID lookup failures from the fallback ACL tool', () => {
+    childProcessMocks.execFileSync.mockReset()
+    childProcessMocks.execFileSync.mockImplementationOnce(() => {
+      throw new Error('whoami failed')
+    })
+
+    expect(() => hardenWindowsCacheAclWithIcacls('D:\\osp-cache')).toThrow('whoami failed')
+    expect(childProcessMocks.execFileSync).toHaveBeenCalledOnce()
+  })
+
+  it('propagates DACL update failures from the fallback ACL tool', () => {
     childProcessMocks.execFileSync.mockReset()
     childProcessMocks.execFileSync.mockReturnValueOnce('CONTOSO\\alice,S-1-5-21-1000\r\n')
     childProcessMocks.execFileSync.mockImplementationOnce(() => {
@@ -87,24 +91,13 @@ describe('Windows micromamba cache PowerShell invocation', () => {
     expect(childProcessMocks.execFileSync).toHaveBeenCalledTimes(2)
   })
 
-  it('propagates DACL update failures from the fallback ACL tool', () => {
-    childProcessMocks.execFileSync.mockReset()
-    childProcessMocks.execFileSync.mockReturnValueOnce('CONTOSO\\alice,S-1-5-21-1000\r\n')
-    childProcessMocks.execFileSync.mockReturnValueOnce('owner updated')
-    childProcessMocks.execFileSync.mockImplementationOnce(() => {
-      throw new Error('icacls failed')
-    })
-
-    expect(() => hardenWindowsCacheAclWithIcacls('D:\\osp-cache')).toThrow('icacls failed')
-    expect(childProcessMocks.execFileSync).toHaveBeenCalledTimes(3)
-  })
-
-  it('does not hide PowerShell script failures behind the fallback', () => {
+  it('uses the independent ACL fallback for non-permission PowerShell failures too', () => {
     childProcessMocks.execFileSync.mockImplementationOnce(() => {
       throw Object.assign(new Error('PowerShell command failed'), { code: 'UNKNOWN' })
     })
+    childProcessMocks.execFileSync.mockReturnValueOnce('CONTOSO\\alice,S-1-5-21-1000\r\n')
 
-    expect(() => hardenWindowsCacheAcl('D:\\osp-cache')).toThrow('PowerShell command failed')
-    expect(childProcessMocks.execFileSync).toHaveBeenCalledOnce()
+    expect(hardenWindowsCacheAcl('D:\\osp-cache')).toBe(true)
+    expect(childProcessMocks.execFileSync).toHaveBeenCalledTimes(3)
   })
 })

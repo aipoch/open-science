@@ -29,6 +29,7 @@ import type { MicromambaRunner } from '../notebook/windows-micromamba-runner'
 import { captureMicromamba } from '../notebook/provisioner-runtime'
 import { exportRuntimeLocks } from '../notebook/runtime-relocation'
 import { removeMicromambaCacheForRoot } from '../notebook/micromamba-cache'
+import { removeNotebookWorkloadCache } from '../notebook/notebook-workload-cache-paths'
 import { detectActiveSessions } from './detect-active'
 import { isDataRootMissing } from './path-presence'
 import { beginMigration, clearMigrationPending, endMigrationCopy } from './migration-state'
@@ -82,7 +83,7 @@ type StorageCommandOwnerDeps = {
   showOpenDialog?: () => Promise<string | null>
   relaunch?: () => void
   broadcastProgress?: (progress: MigrationProgress) => void
-  cleanupRuntimeCache?: (runtimeRoot: string) => void
+  cleanupRuntimeCache?: (runtimeRoot: string) => boolean
   logger?: Logger
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   exportRuntimeLocks?: typeof exportRuntimeLocks
@@ -110,7 +111,13 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   let activeStaged:
     { token: string; target: string; correlationId: string; recovered: boolean } | undefined
   let resolutionInProgress = false
-  const cleanupRuntimeCache = deps.cleanupRuntimeCache ?? removeMicromambaCacheForRoot
+  const cleanupRuntimeCache =
+    deps.cleanupRuntimeCache ??
+    ((runtimeRoot: string): boolean => {
+      const workloadRemoved = removeNotebookWorkloadCache(runtimeRoot)
+      const micromambaRemoved = removeMicromambaCacheForRoot(runtimeRoot)
+      return workloadRemoved && micromambaRemoved
+    })
   const discardStagedCopyImpl = deps.discardStagedCopy ?? discardStagedCopy
   const runDataRootMigrationImpl = deps.runDataRootMigration ?? runDataRootMigration
   const pauseDataRootWritersImpl = deps.pauseDataRootWriters ?? pauseDataRootWriters
@@ -270,6 +277,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           diagnosticCorrelationId: correlationId,
           runtime: deps.runtime,
           notebook: deps.notebook,
+          cleanupRuntimeCache,
           // Preserve the runtime across the move by exporting each env to an offline lock at the
           // new root; the copied pkgs cache lets the provisioner rebuild them offline on relaunch.
           exportRuntimeLocks: async (fromDataRoot, toDataRoot) =>
