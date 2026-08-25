@@ -201,21 +201,40 @@ const imageNotificationMetadata = (
   }
 })
 
-// Extracts a bounded, text-only reason from a failed tool call's content for logging. Only text blocks
-// are read (never raw arguments, diffs, or terminal output) and the result is truncated, so a failure is
-// diagnosable without spilling large or sensitive tool output into the log.
-const extractToolFailureText = (content: ToolCallContent[] | undefined): string | undefined => {
-  if (!content) return undefined
+const boundedToolFailureText = (text: string): string | undefined => {
+  const trimmed = text.trim()
+  if (!trimmed) return undefined
+  return trimmed.length > TOOL_FAILURE_TEXT_LIMIT
+    ? `${trimmed.slice(0, TOOL_FAILURE_TEXT_LIMIT)}…`
+    : trimmed
+}
 
-  const text = content
+// Extracts a bounded, text-only reason from a failed tool call for logging. Codex MCP updates carry
+// the model-facing error under rawOutput.result.content instead of ACP content. Read only those text
+// blocks (never raw arguments, diffs, or terminal output) so the diagnostic remains useful and safe.
+const extractToolFailureText = (
+  content: ToolCallContent[] | undefined,
+  rawOutput?: unknown
+): string | undefined => {
+  const contentText = (content ?? [])
     .map((item) => (item.type === 'content' ? contentToText(item.content) : ''))
     .filter(Boolean)
     .join(' ')
-    .trim()
+  const contentReason = boundedToolFailureText(contentText)
+  if (contentReason) return contentReason
 
-  if (!text) return undefined
+  if (!isRecord(rawOutput) || !isRecord(rawOutput.result)) return undefined
+  const rawContent = rawOutput.result.content
+  if (!Array.isArray(rawContent)) return undefined
 
-  return text.length > TOOL_FAILURE_TEXT_LIMIT ? `${text.slice(0, TOOL_FAILURE_TEXT_LIMIT)}…` : text
+  return boundedToolFailureText(
+    rawContent
+      .map((item) =>
+        isRecord(item) && item.type === 'text' && typeof item.text === 'string' ? item.text : ''
+      )
+      .filter(Boolean)
+      .join(' ')
+  )
 }
 
 type ToolCallUpdate = Extract<
