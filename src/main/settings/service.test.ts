@@ -3386,10 +3386,11 @@ describe('SettingsService: official vendors', () => {
     mockedNet.fetch.mockClear()
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        status: 200,
-        json: () => Promise.resolve({ data: [{ id: 'deepseek-v5' }, { id: 'deepseek-v4-pro' }] })
-      })
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ data: [{ id: 'deepseek-v5' }, { id: 'deepseek-v4-pro' }] }))
+        )
     )
 
     const created = (
@@ -3652,10 +3653,11 @@ describe('SettingsService: image-input capability', () => {
     // A refresh surfaces a Claude id not shipped in the registry; it must still count as vision.
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        status: 200,
-        json: () => Promise.resolve({ data: [{ id: 'claude-opus-5-unreleased' }] })
-      })
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ data: [{ id: 'claude-opus-5-unreleased' }] }))
+        )
     )
 
     const created = (
@@ -3682,10 +3684,11 @@ describe('SettingsService: image-input capability', () => {
     // A refresh reorders Kimi's catalog so a text-only id leads, while the spawned default stays kimi-k3.
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        status: 200,
-        json: () => Promise.resolve({ data: [{ id: 'kimi-k2.7-code' }, { id: 'kimi-k3' }] })
-      })
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ data: [{ id: 'kimi-k2.7-code' }, { id: 'kimi-k3' }] }))
+        )
     )
     const created = (
       await service.upsertProvider({ type: 'official', name: 'Kimi', vendorId: 'kimi', key: 'k' })
