@@ -751,6 +751,35 @@ describe('ComposerAgentControlsMenu', () => {
     ).toBe('true')
   })
 
+  it('keeps Memory editable while replay locks other agent controls', () => {
+    const onMemoryChange = vi.fn()
+
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          memoryEnabled={false}
+          readOnly={true}
+          memoryReadOnly={false}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onMemoryChange={onMemoryChange}
+        />
+      )
+    })
+
+    expect(
+      findButton('Auto-reviewA reviewer agent checks every change before it lands.').disabled
+    ).toBe(true)
+    const memoryRow = findButton('MemoryLet the agent recall and save memory in this conversation.')
+    expect(memoryRow.disabled).toBe(false)
+
+    act(() => memoryRow.click())
+
+    expect(onMemoryChange).toHaveBeenCalledWith(true)
+  })
+
   it('keeps conversation grant actions available while profile controls are read-only', () => {
     const onRevokeGrant = vi.fn()
     const onClearGrants = vi.fn()

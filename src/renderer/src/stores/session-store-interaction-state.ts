@@ -44,6 +44,7 @@ export type SessionActionabilityProjection = Readonly<{
     branchFromMessage: SessionActionAvailability
     startSideChat: SessionActionAvailability
     changeAgentControls: SessionActionAvailability
+    changeMemory: SessionActionAvailability
     archive: SessionActionAvailability
   }>
 }>
@@ -175,6 +176,11 @@ export const projectSessionActionability = (
         : 'plan-approval-pending'
     : undefined
   const replayOrPendingReason = sessionPending ? 'session-pending' : undefined
+  const memoryDisabledReason = session.isPending
+    ? 'session-pending'
+    : running
+      ? 'session-running'
+      : (attentionDisabledReason ?? interactionDisabledReason)
   const activity = waitReason ? 'waiting' : running ? 'running' : 'inactive'
 
   return {
@@ -194,6 +200,8 @@ export const projectSessionActionability = (
         replayOrPendingReason ??
           (running ? 'session-running' : (attentionDisabledReason ?? interactionDisabledReason))
       ),
+      // A replay obligation remains intact while the settled Memory preference stays reversible.
+      changeMemory: actionAvailability(memoryDisabledReason),
       archive: actionAvailability(running ? 'session-running' : attentionDisabledReason)
     }
   }

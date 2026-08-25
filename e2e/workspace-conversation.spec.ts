@@ -9,6 +9,20 @@ const AGENT_REPLY = `Deterministic reply: ${USER_MESSAGE}`
 const PERMISSION_PROMPT = 'Request fixture permission.'
 const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
 
+const persistedMemoryState = async (
+  page: Page
+): Promise<{ memoryEnabled: boolean; pendingHistoryReplay: unknown } | null> =>
+  page.evaluate(async (title) => {
+    const session = (await window.api.sessions.loadAll()).sessions.find(
+      (candidate) => candidate.title === title
+    )
+    if (!session) return null
+    return {
+      memoryEnabled: session.memoryEnabled !== false,
+      pendingHistoryReplay: session.pendingHistoryReplay ?? null
+    }
+  }, USER_MESSAGE)
+
 const createProject = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -75,6 +89,43 @@ test('edits and navigates message revisions that persist after relaunch', async 
   await conversation.getByRole('button', { name: 'Next message revision' }).click()
   await expect(conversation.getByText(EDITED_USER_MESSAGE, { exact: true })).toBeVisible()
   await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText('2/2')
+})
+
+test('keeps Memory reversible while the replacement session awaits history replay', async ({
+  app
+}) => {
+  let page = await app.completeOnboarding()
+  page = await app.configureFakeAgent()
+  await page.evaluate(async () => window.api.memory.setEnabled({ enabled: true }))
+  await createProject(page)
+
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: /Agent controls:/ }).click()
+  const memory = page.getByRole('menuitem', {
+    name: 'Memory Let the agent recall and save memory in this conversation.'
+  })
+  await expect(memory).toBeEnabled()
+  await memory.click()
+
+  await expect
+    .poll(() => persistedMemoryState(page))
+    .toEqual({
+      memoryEnabled: false,
+      pendingHistoryReplay: { kind: 'all' }
+    })
+  await expect(memory).toBeEnabled()
+  await memory.click()
+
+  await expect
+    .poll(() => persistedMemoryState(page))
+    .toEqual({
+      memoryEnabled: true,
+      pendingHistoryReplay: { kind: 'all' }
+    })
+  await expect(memory).toBeEnabled()
 })
 
 test('resolves Agent permission requests through both Allow and Deny decisions', async ({

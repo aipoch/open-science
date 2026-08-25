@@ -601,6 +601,12 @@ const WorkspacePage = ({
     !activeSessionHasRuntimeInteraction &&
     !activeSession?.compacting &&
     conversation.queue.items.length === 0
+  const canChangeMemory =
+    isSessionPersistenceReady &&
+    activeSessionActionability?.actions.changeMemory.allowed !== false &&
+    !activeSessionHasRuntimeInteraction &&
+    !activeSession?.compacting &&
+    conversation.queue.items.length === 0
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
     !activeSessionHasSendPreparation &&
@@ -1133,6 +1139,7 @@ const WorkspacePage = ({
             }}
             agentControls={{
               canChange: canChangeAgentControls,
+              canChangeMemory,
               modelConfiguration: activeAgentConfiguration,
               modelUnavailable: agentConfigurationUnavailable,
               changeModelConfiguration: changeAgentConfiguration,

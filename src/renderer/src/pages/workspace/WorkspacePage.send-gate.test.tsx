@@ -256,6 +256,7 @@ describe('WorkspacePage send gate while compacting', () => {
       await renderPage()
 
       expect(conversationProps.agentControls.canChange).toBe(false)
+      expect(conversationProps.agentControls.canChangeMemory).toBe(false)
       expect(conversationProps.permissions.canChangePermissionProfile).toBe(true)
     }
   )
@@ -683,6 +684,7 @@ describe('WorkspacePage send gate while compacting', () => {
       'Send a message to reconnect this session before compacting.'
     )
     expect(conversationProps.agentControls.canChange).toBe(false)
+    expect(conversationProps.agentControls.canChangeMemory).toBe(true)
     expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
     expect(conversationProps.view.sideChatDisabledReason).toBe(
       'Resolve the current Session operation first.'

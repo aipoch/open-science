@@ -290,6 +290,7 @@ type ConversationPanelElicitation = {
 
 type ConversationPanelAgentControls = {
   canChange: boolean
+  canChangeMemory: boolean
   modelConfiguration?: SessionAgentConfiguration
   modelUnavailable?: boolean
   changeModelConfiguration?: (configuration: SessionAgentConfiguration) => void
@@ -448,6 +449,7 @@ const ConversationPanel = ({
   const { requests: pendingElicitations, respond: onRespondToElicitation } = elicitation
   const {
     canChange: canChangeAgentControls,
+    canChangeMemory,
     modelConfiguration,
     modelUnavailable = false,
     changeModelConfiguration = () => undefined,
@@ -1803,6 +1805,7 @@ const ConversationPanel = ({
                           autoReviewEnabled={autoReviewEnabled}
                           memoryEnabled={memoryEnabled}
                           readOnly={!canChangeAgentControls}
+                          memoryReadOnly={!canChangeMemory}
                           permissionProfileReadOnly={!canChangePermissionProfile}
                           grantActionsReadOnly={false}
                           autoReviewDisabled={!canEditDraft}

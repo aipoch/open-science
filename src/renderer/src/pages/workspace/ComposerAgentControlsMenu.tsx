@@ -81,6 +81,8 @@ type ComposerAgentControlsMenuProps = {
   // Read-only while a session is running: the menu stays openable and the permission
   // submenu still expands on hover, but profiles, auto-review, and compute stay immutable.
   readOnly?: boolean
+  // Memory may be reconfigured again after context replacement while transcript replay is pending.
+  memoryReadOnly?: boolean
   // Permission mode remains independently editable during a running prompt.
   permissionProfileReadOnly?: boolean
   // Grant revocation remains independently available while a turn is running.
@@ -156,6 +158,7 @@ const ComposerAgentControlsMenu = ({
   autoReviewEnabled,
   memoryEnabled = true,
   readOnly = false,
+  memoryReadOnly = readOnly,
   permissionProfileReadOnly = readOnly,
   grantActionsReadOnly = readOnly,
   autoReviewDisabled = false,
@@ -497,7 +500,7 @@ const ComposerAgentControlsMenu = ({
               </DropdownMenuItem>
 
               <DropdownMenuItem
-                disabled={readOnly}
+                disabled={memoryReadOnly}
                 className="items-center gap-2 px-2 py-1.5"
                 onSelect={(event) => {
                   event.preventDefault()

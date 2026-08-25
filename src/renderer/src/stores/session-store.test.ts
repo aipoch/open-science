@@ -182,7 +182,8 @@ describe('session store', () => {
       revise: { allowed: true },
       branchFromMessage: { allowed: false, disabledReason: 'session-pending' },
       startSideChat: { allowed: false, disabledReason: 'session-pending' },
-      changeAgentControls: { allowed: false, disabledReason: 'session-pending' }
+      changeAgentControls: { allowed: false, disabledReason: 'session-pending' },
+      changeMemory: { allowed: false, disabledReason: 'session-pending' }
     })
   })
 
@@ -204,7 +205,8 @@ describe('session store', () => {
       revise: { allowed: true },
       branchFromMessage: { allowed: false, disabledReason: 'session-pending' },
       startSideChat: { allowed: false, disabledReason: 'session-pending' },
-      changeAgentControls: { allowed: false, disabledReason: 'session-pending' }
+      changeAgentControls: { allowed: false, disabledReason: 'session-pending' },
+      changeMemory: { allowed: true }
     })
   })
 

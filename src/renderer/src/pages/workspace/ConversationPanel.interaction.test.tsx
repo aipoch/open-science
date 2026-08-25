@@ -475,6 +475,7 @@ const createPanelDefaults = (): PanelProps => ({
   },
   agentControls: {
     canChange: true,
+    canChangeMemory: true,
     autoReviewEnabled: true,
     enabledComputeHosts: [],
     selectedComputeHosts: [],
