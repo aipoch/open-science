@@ -43,6 +43,10 @@ describe('resolveCanonicalMcpToolIdentity', () => {
     expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
       'Never call `update_step_status` while approval is pending'
     )
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
+      'delegations: [{ name, steps: [{ title, description }] }]'
+    )
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain('do not repeat an unchanged invalid call')
   })
 
   it('keeps Plan-first guidance focused on turn-specific preparation', () => {

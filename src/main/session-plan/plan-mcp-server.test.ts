@@ -56,7 +56,9 @@ describe('Session Plan MCP server', () => {
       })
       expect(inputSchema.properties?.phases).toMatchObject({
         type: 'array',
-        description: expect.stringContaining('one or more delegations'),
+        description: expect.stringContaining(
+          'delegations: [{ name, steps: [{ title, description }] }]'
+        ),
         items: {
           type: 'object',
           properties: {
@@ -70,7 +72,7 @@ describe('Session Plan MCP server', () => {
                   name: { type: 'string', description: expect.any(String) },
                   steps: {
                     type: 'array',
-                    description: expect.stringContaining('at least one step'),
+                    description: expect.stringContaining('non-empty array'),
                     items: {
                       type: 'object',
                       properties: {
@@ -531,6 +533,39 @@ describe('Session Plan MCP server', () => {
     })
   })
 
+  it('explains how to repair a delegation that omits its steps array', async () => {
+    await withPlanMcpClient(
+      'plan-missing-steps-test',
+      {
+        generate: vi.fn(),
+        approve: vi.fn(),
+        reject: vi.fn(),
+        updateStepStatus: vi.fn()
+      },
+      async (client) => {
+        const result = await client.callTool({
+          name: 'generate_plan',
+          arguments: {
+            task_summary: 'Analyze one dataset',
+            phases: [
+              {
+                name: 'Analysis',
+                delegations: [{ name: 'Primary agent' }]
+              }
+            ],
+            desired_outputs: [],
+            feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+          }
+        })
+        const text = (result as { content: Array<{ text: string }> }).content[0].text
+
+        expect(text).toContain(
+          'Every delegation must include a non-empty `steps` array of `{ title, description }` objects.'
+        )
+      }
+    )
+  })
+
   it('preserves approval-already-pending as a structured MCP error', async () => {
     const rpcServer = createServer((_request, response) => {
       response.writeHead(409, { 'content-type': 'application/json' })
@@ -677,6 +712,10 @@ describe('Session Plan MCP server', () => {
     expect(generateTool).toBeDefined()
     expect(generateTool?.description).toContain('kind:feedback')
     expect(generateTool?.description).toContain('decision:"approved"')
+    expect(generateTool?.description).toContain(
+      'every delegation must include its own non-empty `steps` array'
+    )
+    expect(generateTool?.description).toContain('never resend the same invalid arguments unchanged')
     await client.callTool({
       name: 'generate_plan',
       arguments: {

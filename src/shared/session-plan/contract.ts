@@ -24,8 +24,13 @@ export const planDelegationSchema = z
   .object({
     name: z.string().describe('A human-readable name for this independent work track.'),
     steps: z
-      .array(planStepSchema)
-      .describe('The ordered executable steps for this delegation. Include at least one step.')
+      .array(planStepSchema, {
+        error:
+          'Every delegation must include a non-empty `steps` array of `{ title, description }` objects.'
+      })
+      .describe(
+        'Required ordered executable steps for this delegation. Use a non-empty array of `{ title, description }` objects.'
+      )
   })
   .describe('An independent work track within a phase.')
 
@@ -58,7 +63,9 @@ export const generatePlanContentSchema = z
       ),
     phases: z
       .array(planPhaseSchema)
-      .describe('The ordered phases of work, each containing one or more delegations.'),
+      .describe(
+        'The ordered phases of work. Shape each item as `{ name, delegations: [{ name, steps: [{ title, description }] }] }`; every phase, delegation, and steps array must be non-empty.'
+      ),
     desired_outputs: z
       .array(
         z.string().describe('A concrete artifact, finding, or decision expected from the Plan.')
