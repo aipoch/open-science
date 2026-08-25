@@ -102,6 +102,20 @@ describe('LocalePreferenceOwner', () => {
     expect(listener).not.toHaveBeenCalled()
   })
 
+  it('keeps a committed preference successful when a listener throws', async () => {
+    const repository = await createRepository()
+    const owner = new LocalePreferenceOwner(['en-US'], repository)
+    owner.subscribe(() => {
+      throw new Error('renderer broadcast failed')
+    })
+
+    await expect(owner.setPreference('ja')).resolves.toEqual({
+      preference: 'ja',
+      locale: 'ja'
+    })
+    await expect(repository.getSettings()).resolves.toMatchObject({ localePreference: 'ja' })
+  })
+
   it('imports the historical renderer cache only when settings has no locale', async () => {
     const repository = await createRepository()
     const owner = new LocalePreferenceOwner(['en-US'], repository)

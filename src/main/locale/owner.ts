@@ -5,6 +5,7 @@ import {
   type LanguagePreference,
   type LocalePreferenceSnapshot
 } from '../../shared/locale'
+import { createLogger, errorLogFields } from '../logger'
 import type { SettingsRepository } from '../settings/repository'
 import {
   createNativeI18n,
@@ -13,6 +14,8 @@ import {
 } from './main-process-messages'
 
 type LocalePreferenceListener = (snapshot: LocalePreferenceSnapshot) => void
+
+const log = createLogger('locale-preference')
 
 // Main-process owner for desktop locale behavior. SettingsRepository remains the single semantic
 // route into settings.json; this Module serializes preference commits, resolves native locale, and
@@ -66,7 +69,15 @@ export class LocalePreferenceOwner {
     const snapshot = this.snapshot()
     if (changed) {
       await this.i18n.changeLanguage(snapshot.locale)
-      for (const listener of this.listeners) listener(snapshot)
+      for (const listener of this.listeners) {
+        try {
+          listener(snapshot)
+        } catch (error) {
+          // Persistence is already committed. A failed projection may leave one consumer stale, but
+          // it must not turn the successful preference command into a reported failure.
+          log.warn('post-commit locale notification failed', errorLogFields(error))
+        }
+      }
     }
     return snapshot
   }

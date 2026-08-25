@@ -65,6 +65,12 @@ const rendererCatalogs = {
 } as const
 
 const TRANSLATED = LOCALES.filter((locale): locale is TranslatedLocale => locale !== 'en')
+const MANDATORY_GENERIC_PRODUCT_NOUNS: ReadonlySet<string> = new Set([
+  'Subagent',
+  'Skill',
+  'Specialist',
+  'Connector'
+])
 
 const catalog = (locale: TranslatedLocale): Catalog => sourceCatalogs[locale] as Catalog
 
@@ -542,6 +548,59 @@ describe.each(TRANSLATED)('%s native catalog', (locale) => {
 })
 
 describe('process catalog boundaries', () => {
+  it.each([
+    {
+      locale: 'fr' as const,
+      expected: {
+        Subagent: 'Sous-agent',
+        Skill: 'Compétence',
+        Specialist: 'Spécialiste',
+        Connector: 'Connecteur'
+      }
+    },
+    {
+      locale: 'ja' as const,
+      expected: {
+        Subagent: 'サブエージェント',
+        Skill: 'スキル',
+        Specialist: 'スペシャリスト',
+        Connector: 'コネクタ'
+      }
+    },
+    {
+      locale: 'ko' as const,
+      expected: {
+        Subagent: '서브에이전트',
+        Skill: '스킬',
+        Specialist: '스페셜리스트',
+        Connector: '커넥터'
+      }
+    },
+    {
+      locale: 'ru' as const,
+      expected: {
+        Subagent: 'Субагент',
+        Skill: 'Навык',
+        Specialist: 'Специалист',
+        Connector: 'Коннектор'
+      }
+    },
+    {
+      locale: 'zh-Hans' as const,
+      expected: { Subagent: '子智能体', Skill: '技能', Specialist: '专家', Connector: '连接器' }
+    },
+    {
+      locale: 'zh-Hant' as const,
+      expected: { Subagent: '子智能體', Skill: '技能', Specialist: '專家', Connector: '連接器' }
+    }
+  ])('shares mandatory generic product nouns with main for $locale', ({ locale, expected }) => {
+    const main = createNativeI18n(locale)
+
+    expect(
+      Object.fromEntries([...MANDATORY_GENERIC_PRODUCT_NOUNS].map((key) => [key, main.t(key)]))
+    ).toEqual(expected)
+  })
+
   it('loads only common and native namespaces in main', () => {
     expect(
       Object.fromEntries(
@@ -3413,13 +3472,13 @@ describe('main NativeTranslator catalog guard', () => {
     expect(orphans).toEqual([])
   })
 
-  it.each(TRANSLATED)('every %s common key still matches a main source literal', (locale) => {
+  it.each(TRANSLATED)('every %s common key has a main source or runtime contract', (locale) => {
     const orphans = orphanedCatalogKeys(
       Object.keys(commonCatalogs[locale]),
       sites,
       REQUIRED_PLURAL_CATEGORIES[locale],
       'common'
-    )
+    ).filter((key) => !MANDATORY_GENERIC_PRODUCT_NOUNS.has(key))
 
     expect(orphans).toEqual([])
   })
