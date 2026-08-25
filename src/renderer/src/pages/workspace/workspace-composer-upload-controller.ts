@@ -64,7 +64,11 @@ type WorkspaceComposerUploadController = {
   actions: {
     changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     stageFiles: (files: File[]) => void
-    stagePastedText: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
+    stagePastedText: (
+      doc: ComposerDoc,
+      node: ComposerPastedTextStage,
+      caret?: ComposerCaretPosition
+    ) => void
     cancelTransfer: (transfer: ComposerUploadTransfer) => void
     removeAttachment: (attachment: UploadedAttachment) => void
     restorePastedText: (pastedTextId: string) => void
@@ -498,12 +502,17 @@ export const useWorkspaceComposerUploadController = ({
   )
 
   const stagePastedText = useCallback(
-    (nextDoc: ComposerDoc, staged: ComposerPastedTextStage, preserveRemovalUndo = false): void => {
+    (
+      nextDoc: ComposerDoc,
+      staged: ComposerPastedTextStage,
+      preserveRemovalUndo = false,
+      caret?: ComposerCaretPosition
+    ): void => {
       const draftKey = activeDraftKeyRef.current
       if (!preserveRemovalUndo) clearPastedTextUndo(draftKey)
       clearHistory(draftKey)
       markChanged(draftKey)
-      if (!preserveRemovalUndo) captureUndo(draftKey)
+      if (!preserveRemovalUndo) captureUndo(draftKey, caret)
       const releasedSlots = reconcileRemovedPastedTextUploads(nextDoc, draftKey)
       const nodes: readonly ComposerPastedTextNode[] = Array.isArray(staged)
         ? staged
@@ -905,7 +914,7 @@ export const useWorkspaceComposerUploadController = ({
     actions: {
       changeDoc,
       stageFiles,
-      stagePastedText,
+      stagePastedText: (doc, node, caret) => stagePastedText(doc, node, false, caret),
       cancelTransfer,
       removeAttachment,
       restorePastedText,

@@ -51,7 +51,11 @@ type ComposerEditorProps = {
   onDocChange: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
   onSubmit: () => void
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
-  onLongTextPaste?: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
+  onLongTextPaste?: (
+    doc: ComposerDoc,
+    node: ComposerPastedTextStage,
+    caret?: ComposerCaretPosition
+  ) => void
   onLocatePastedText?: (pastedTextId: string) => void
   onUndo?: () => boolean
   disabled?: boolean
@@ -702,7 +706,8 @@ export const ComposerEditor = ({
         ? insertComposerClipboardFragmentAtCaret(root, internalFragment)
         : []
       if (root && pastedTextNodes.length > 0) {
-        onLongTextPaste(domToDoc(root), pastedTextNodes)
+        onLongTextPaste(domToDoc(root), pastedTextNodes, undoCaretRef.current)
+        undoCaretRef.current = undefined
       }
       return
     }
@@ -717,7 +722,10 @@ export const ComposerEditor = ({
           id: crypto.randomUUID(),
           text
         }
-        if (root && insertPastedTextAtCaret(root, node)) onLongTextPaste(domToDoc(root), node)
+        if (root && insertPastedTextAtCaret(root, node)) {
+          onLongTextPaste(domToDoc(root), node, undoCaretRef.current)
+          undoCaretRef.current = undefined
+        }
       } else {
         if (root && insertPlainTextAtCaret(root, text)) emitDocFromDom()
       }

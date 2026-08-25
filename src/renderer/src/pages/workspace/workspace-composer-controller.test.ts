@@ -287,11 +287,17 @@ describe('workspace composer controller', () => {
     mounted.push(hook)
     const node: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-1', text: 'payload' }
 
-    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    act(() =>
+      hook.result.current.actions.stagePastedText(pastedDoc(node), node, {
+        nodeIndex: 0,
+        offset: 3
+      })
+    )
     await flushAsyncWork()
     act(() => expect(hook.result.current.actions.undo()).toBe(true))
 
     expect(hook.result.current.view.doc).toEqual(emptyDoc)
+    expect(hook.result.current.view.caretRequest?.position).toEqual({ nodeIndex: 0, offset: 3 })
     expect(hook.result.current.view.attachments).toEqual([])
     expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/paste.txt' })
   })

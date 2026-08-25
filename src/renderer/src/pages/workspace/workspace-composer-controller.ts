@@ -70,7 +70,11 @@ type WorkspaceComposerController = {
     changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     navigateHistory: (direction: 'previous' | 'next') => boolean
     stageFiles: (files: File[]) => void
-    stagePastedText: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
+    stagePastedText: (
+      doc: ComposerDoc,
+      node: ComposerPastedTextStage,
+      caret?: ComposerCaretPosition
+    ) => void
     cancelTransfer: (transfer: ComposerUploadTransfer) => void
     removeAttachment: (attachment: UploadedAttachment) => void
     restorePastedText: (pastedTextId: string) => void

@@ -663,11 +663,16 @@ describe('ComposerEditor', () => {
     })
 
     expect(onDocChange).not.toHaveBeenCalled()
-    const [nextDoc, node] = onLongTextPaste.mock.calls[0] as [ComposerDoc, ComposerPastedTextNode]
+    const [nextDoc, node, caret] = onLongTextPaste.mock.calls[0] as [
+      ComposerDoc,
+      ComposerPastedTextNode,
+      { nodeIndex: number; offset: number }
+    ]
     expect(node).toMatchObject({ type: 'pasted-text', text: payload })
     expect(nextDoc).toEqual({
       nodes: [{ type: 'text', text: 'before ' }, node, { type: 'text', text: ' after' }]
     })
+    expect(caret).toEqual({ nodeIndex: 0, offset: 'before '.length })
     expect(editor().textContent).not.toContain(payload)
   })
 
