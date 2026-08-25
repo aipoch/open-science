@@ -6,6 +6,7 @@ export type SearchableSession = {
   id: string
   projectId: string
   title: string
+  number?: number
   updatedAt: number
   artifactCount: number
   isPending?: boolean
@@ -30,6 +31,9 @@ const foldAsciiCase = (value: string): string =>
 const compareByRecency = (left: SearchableSession, right: SearchableSession): number =>
   right.updatedAt - left.updatedAt || right.id.localeCompare(left.id)
 
+const validSessionNumber = (number: number | undefined): number | undefined =>
+  number !== undefined && Number.isSafeInteger(number) && number > 0 ? number : undefined
+
 const toResult = (
   session: SearchableSession,
   projectNames: Map<string, string>
@@ -39,8 +43,9 @@ const toResult = (
   projectName: projectNames.get(session.projectId)
 })
 
-// Session titles are already hydrated in the renderer. Keep this local filter deliberately narrow
-// so global search does not accidentally become message-body or metadata search.
+// Session titles and numbers are already hydrated in the renderer. Keep this local filter
+// deliberately narrow so global search does not accidentally become message-body or metadata
+// search. A numeric query is an identity lookup: exact number first, then number prefixes.
 export const searchSessionTitles = ({
   sessions,
   projectNames,
@@ -55,14 +60,25 @@ export const searchSessionTitles = ({
   visiblePrimaryCount: number
 }): SessionSearchGroups => {
   const foldedQuery = foldAsciiCase(query.trim())
+  const numericQuery = /^\d+$/.test(foldedQuery) ? foldedQuery : undefined
   const matches = sessions
     .filter(
       (session) =>
         !session.isPending &&
         projectNames.has(session.projectId) &&
-        foldAsciiCase(session.title).includes(foldedQuery)
+        (numericQuery
+          ? String(validSessionNumber(session.number) ?? '').startsWith(numericQuery)
+          : foldAsciiCase(session.title).includes(foldedQuery))
     )
-    .sort(compareByRecency)
+    .sort((left, right) => {
+      if (numericQuery) {
+        const exactOrder =
+          Number(String(validSessionNumber(right.number)) === numericQuery) -
+          Number(String(validSessionNumber(left.number)) === numericQuery)
+        if (exactOrder !== 0) return exactOrder
+      }
+      return compareByRecency(left, right)
+    })
   const primaryMatches = primaryProjectId
     ? matches.filter((session) => session.projectId === primaryProjectId)
     : matches
