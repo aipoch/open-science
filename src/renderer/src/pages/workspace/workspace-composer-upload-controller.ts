@@ -495,6 +495,7 @@ export const useWorkspaceComposerUploadController = ({
               } else {
                 updateTransfer({ status: 'error', error: message })
               }
+              delete transferFilesRef.current[transfer.transferId]
               if (activeDraftKeyRef.current === draftKey) setError(message)
             }
           } finally {
@@ -729,6 +730,7 @@ export const useWorkspaceComposerUploadController = ({
           attachmentDoc: docRef.current
         }
       ].slice(-10)
+      clearRedo(draftKey)
       clearHistory(draftKey)
       markChanged(draftKey)
       restorePastedTextInline(draftKey, pastedTextId)
@@ -737,6 +739,7 @@ export const useWorkspaceComposerUploadController = ({
     [
       activeDraftKeyRef,
       clearHistory,
+      clearRedo,
       deletePastedTextUpload,
       docRef,
       markChanged,
@@ -836,6 +839,11 @@ export const useWorkspaceComposerUploadController = ({
             targetTransfers.push(active)
             continue
           }
+          if (previous.status === 'error') {
+            targetTransfers.push(previous)
+            continue
+          }
+          if (previous.status !== 'queued' && previous.status !== 'uploading') continue
           const file = transferFilesRef.current[previous.transferId]
           if (!file) continue
           const transfer: ComposerUploadTransfer = {

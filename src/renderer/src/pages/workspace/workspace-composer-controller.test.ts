@@ -279,6 +279,31 @@ describe('workspace composer controller', () => {
     expect(uploadApi.stageLocalFile).toHaveBeenCalledTimes(2)
   })
 
+  it('restores a failed upload on redo without retrying it', async () => {
+    const stageLocalFile = vi.fn().mockRejectedValue(new Error('disk full'))
+    const hook = renderController(uploads(stageLocalFile))
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.stageFiles([new File(['paper'], 'paper.pdf')]))
+    await flushAsyncWork()
+    expect(hook.result.current.view.transfers[0]).toMatchObject({
+      name: 'paper.pdf',
+      status: 'error',
+      error: 'disk full'
+    })
+
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(hook.result.current.view.transfers).toEqual([])
+    act(() => expect(hook.result.current.actions.redo()).toBe(true))
+
+    expect(hook.result.current.view.transfers[0]).toMatchObject({
+      name: 'paper.pdf',
+      status: 'error',
+      error: 'disk full'
+    })
+    expect(stageLocalFile).toHaveBeenCalledOnce()
+  })
+
   it('preserves a shared pending transfer while undoing and redoing a later text edit', () => {
     const pending = deferred<UploadedAttachment | null>()
     const stageLocalFile = vi.fn(() => pending.promise)
@@ -660,9 +685,16 @@ describe('workspace composer controller', () => {
     await flushAsyncWork()
 
     expect(hook.result.current.view.attachments).toHaveLength(1)
+    act(() =>
+      hook.result.current.actions.changeDoc({
+        nodes: [...hook.result.current.view.doc.nodes, { type: 'text', text: ' typed' }]
+      })
+    )
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
     act(() => hook.result.current.actions.restorePastedText('paste-1'))
 
     expect(hook.result.current.view.doc).toEqual(textDoc('before payload after'))
+    expect(hook.result.current.actions.redo()).toBe(false)
     expect(hook.result.current.view.attachments).toEqual([])
     expect(hook.result.current.view.caretRequest?.position).toEqual({
       nodeIndex: 0,
