@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import type { CustomizePrefillIntent } from '@/stores/navigation-store'
 
 import type { UploadStagingApi } from './composer-upload-transfer'
 import {
@@ -60,6 +61,7 @@ const uploads = (
 type ControllerHook = {
   result: { current: ReturnType<typeof useWorkspaceComposerController> }
   selectDraft: (draftKey: string) => void
+  setCustomizePrefill: (prefill: CustomizePrefillIntent) => void
   unmount: () => void
 }
 
@@ -69,6 +71,7 @@ const renderController = (
   historyEntries: ComposerHistoryEntry[] = []
 ): ControllerHook => {
   let currentDraftKey = 'session-a'
+  let pendingCustomizePrefill: CustomizePrefillIntent | undefined
   const container = document.createElement('div')
   const root = createRoot(container)
   const result = {
@@ -79,7 +82,7 @@ const renderController = (
       currentDraftKey,
       newConversationDraftKey: 'new:project',
       activeProjectId: 'project',
-      pendingCustomizePrefill: undefined,
+      pendingCustomizePrefill,
       onCustomizePrefillApplied: vi.fn(),
       historyEntries,
       hasActiveSession: true,
@@ -107,6 +110,11 @@ const renderController = (
     result,
     selectDraft: (draftKey: string): void => {
       currentDraftKey = draftKey
+      render()
+    },
+    setCustomizePrefill: (prefill: CustomizePrefillIntent): void => {
+      pendingCustomizePrefill = prefill
+      currentDraftKey = 'new:project'
       render()
     },
     unmount: (): void => act(() => root.unmount())
@@ -221,6 +229,22 @@ describe('workspace composer controller', () => {
     act(() => expect(hook.result.current.actions.navigateHistory('previous')).toBe(true))
 
     expect(hook.result.current.view.doc).toEqual(textDoc('history prompt'))
+    expect(hook.result.current.actions.undo()).toBe(false)
+  })
+
+  it('clears draft undo when a customize prefill replaces the Composer document', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    hook.selectDraft('new:project')
+    act(() => hook.result.current.actions.changeDoc(textDoc('scratch')))
+
+    hook.setCustomizePrefill({
+      requestId: 1,
+      projectId: 'project',
+      goal: 'specialist'
+    })
+
+    expect(docToText(hook.result.current.view.doc)).not.toBe('scratch')
     expect(hook.result.current.actions.undo()).toBe(false)
   })
 
@@ -425,6 +449,45 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.doc).toEqual(textDoc('before payload after'))
     expect(hook.result.current.view.attachments).toEqual([])
     expect(hook.result.current.view.error).toBe('disk full')
+    expect(hook.result.current.actions.undo()).toBe(false)
+  })
+
+  it('rebinds an undo snapshot when a pending long paste finishes uploading', async () => {
+    const pending = deferred<UploadedAttachment | null>()
+    const hook = renderController(uploads(vi.fn(() => pending.promise)))
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-1', text: 'payload' }
+
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    act(() =>
+      hook.result.current.actions.changeDoc({
+        nodes: [...hook.result.current.view.doc.nodes, { type: 'text', text: ' question' }]
+      })
+    )
+    await act(async () => {
+      pending.resolve({
+        id: 'upload-paste',
+        sessionId: '.pending',
+        name: 'Pastedtext-payload.txt',
+        originalName: 'Pastedtext-payload.txt',
+        path: '/uploads/paste.txt',
+        mimeType: 'text/plain',
+        size: 7
+      })
+      await pending.promise
+      await Promise.resolve()
+    })
+
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+
+    expect(hook.result.current.view.doc.nodes[1]).toMatchObject({
+      type: 'pasted-text',
+      id: 'paste-1',
+      attachmentId: 'upload-paste',
+      transferId: undefined
+    })
+    expect(hook.result.current.view.attachments.map(({ id }) => id)).toEqual(['upload-paste'])
+    expect(hook.result.current.view.transfers).toEqual([])
   })
 
   it('keeps the long paste inline when the composer attachment cap is already full', () => {

@@ -191,8 +191,15 @@ const useWorkspaceComposerController = ({
     if (appliedCustomizePrefill?.projectId === activeProjectId) {
       delete historyRef.current[newConversationDraftKey]
       clearPastedTextUndo(newConversationDraftKey)
+      clearUndo(newConversationDraftKey)
     }
-  }, [activeProjectId, appliedCustomizePrefill, clearPastedTextUndo, newConversationDraftKey])
+  }, [
+    activeProjectId,
+    appliedCustomizePrefill,
+    clearPastedTextUndo,
+    clearUndo,
+    newConversationDraftKey
+  ])
 
   useLayoutEffect(() => {
     docRef.current = doc

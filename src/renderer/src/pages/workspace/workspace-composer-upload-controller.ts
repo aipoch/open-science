@@ -282,6 +282,13 @@ export const useWorkspaceComposerUploadController = ({
         snapshot.attachmentTransfers.some((transfer) => transfer.transferId === transferId)
           ? {
               ...snapshot,
+              doc: pastedTextId
+                ? updatePastedTextNode(snapshot.doc, pastedTextId, (node) => ({
+                    ...node,
+                    transferId: undefined,
+                    attachmentId: attachment.id
+                  }))
+                : snapshot.doc,
               attachmentTransfers: snapshot.attachmentTransfers.filter(
                 (transfer) => transfer.transferId !== transferId
               ),
@@ -362,6 +369,7 @@ export const useWorkspaceComposerUploadController = ({
               const message = asText(uploadError)
               if (transfer.pastedTextId) {
                 updateTransfer({ remove: true })
+                clearUndo(draftKey)
                 restorePastedTextInline(draftKey, transfer.pastedTextId)
               } else {
                 updateTransfer({ status: 'error', error: message })
@@ -379,6 +387,7 @@ export const useWorkspaceComposerUploadController = ({
       activeDraftKeyRef,
       commitDraftAttachment,
       restorePastedTextInline,
+      clearUndo,
       updateDraftTransfers,
       uploads
     ]
@@ -550,6 +559,7 @@ export const useWorkspaceComposerUploadController = ({
   const removePastedText = useCallback(
     (node: ComposerPastedTextNode): void => {
       const draftKey = activeDraftKeyRef.current
+      clearUndo(draftKey)
       const stack = removedPastedTextRef.current[draftKey] ?? []
       removedPastedTextRef.current[draftKey] = [
         ...stack,
@@ -563,7 +573,15 @@ export const useWorkspaceComposerUploadController = ({
       setActiveDoc(removePastedTextNode(docRef.current, node.id))
       deletePastedTextUpload(node, draftKey)
     },
-    [activeDraftKeyRef, clearHistory, deletePastedTextUpload, docRef, markChanged, setActiveDoc]
+    [
+      activeDraftKeyRef,
+      clearHistory,
+      clearUndo,
+      deletePastedTextUpload,
+      docRef,
+      markChanged,
+      setActiveDoc
+    ]
   )
 
   const restorePastedText = useCallback(
