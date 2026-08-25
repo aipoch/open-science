@@ -2916,7 +2916,7 @@
     "Retry project recovery before deleting projects.": "プロジェクトを削除する前に、プロジェクトの回復を再試行してください。",
     "Finish or stop active sessions before archiving this project.": "このプロジェクトをアーカイブする前に、アクティブなセッションを終了または停止してください。",
     "Message queue": "メッセージキュー",
-    "Queue ({{count}})_other": "キュー ({{count}})",
+    "Queue ({{count}}) · Not saved_other": "キュー ({{count}})・未保存",
     "Attachment message": "添付メッセージ",
     "Reorder queued message {{index}}": "キューに入れられたメッセージ {{index}} を並べ替えます",
     "Drag or use arrow keys to reorder": "ドラッグするか矢印キーを使用して順序を変更します",

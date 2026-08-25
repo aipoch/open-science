@@ -2926,7 +2926,7 @@
     "Retry project recovery before deleting projects.": "프로젝트를 삭제하기 전에 프로젝트 복구를 다시 시도하세요.",
     "Finish or stop active sessions before archiving this project.": "프로젝트를 보관하기 전에 활성 세션을 완료하거나 중지하세요.",
     "Message queue": "메시지 대기열",
-    "Queue ({{count}})_other": "대기열 ({{count}})",
+    "Queue ({{count}}) · Not saved_other": "대기열 ({{count}}) · 저장되지 않음",
     "Attachment message": "첨부파일 메시지",
     "Reorder queued message {{index}}": "대기 중인 메시지 {{index}} 순서 변경",
     "Drag or use arrow keys to reorder": "재정렬하려면 드래그하거나 화살표 키를 사용하세요.",

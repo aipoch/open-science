@@ -2987,7 +2987,7 @@
     "Retry project recovery before deleting projects.": "刪除專案前請先重試專案復原。",
     "Finish or stop active sessions before archiving this project.": "封存專案前，請先完成或停止進行中的工作階段。",
     "Message queue": "訊息佇列",
-    "Queue ({{count}})_other": "佇列（{{count}}）",
+    "Queue ({{count}}) · Not saved_other": "佇列（{{count}}）· 未儲存",
     "Attachment message": "附件訊息",
     "Reorder queued message {{index}}": "調整第 {{index}} 則佇列訊息的順序",
     "Drag or use arrow keys to reorder": "拖曳或使用方向鍵調整順序",
