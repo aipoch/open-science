@@ -311,6 +311,28 @@ describe('ComputeApprovalBroker', () => {
     await retainedCall
   })
 
+  it('allows new approvals if Session deletion fails after pending requests are cancelled', async () => {
+    const timer = makeTimer()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear
+    })
+    const context = {
+      sessionId: 'session-retained',
+      projectId: 'project-1',
+      operation: 'call_command'
+    }
+
+    broker.cancelSession('session-retained')
+    const retried = broker.request(makeRequest(), context)
+
+    expect(broker.getPending('id-1')).not.toBeNull()
+    broker.respond('id-1', 'once')
+    await expect(retried).resolves.toBe('once')
+  })
+
   it('denies a pending approval when its compute provider is invalidated', async () => {
     const timer = makeTimer()
     const remember = vi.fn()
@@ -408,36 +430,6 @@ describe('ComputeApprovalBroker', () => {
     expect(broadcast).not.toHaveBeenCalled()
   })
 
-  it('does not allow a remembered grant after its Session is deleted during lookup', async () => {
-    let finishGrantLookup: ((scope: 'project') => void) | undefined
-    const resolveGrant = vi.fn(
-      () =>
-        new Promise<'project'>((resolve) => {
-          finishGrantLookup = resolve
-        })
-    )
-    const broadcast = vi.fn()
-    const broker = new ComputeApprovalBroker({
-      generateId: () => 'id-1',
-      broadcast,
-      permissionGrants: { resolve: resolveGrant, remember: vi.fn() } as never
-    })
-
-    const decision = broker.requestWithContext(makeRequest(), {
-      sessionId: 'session-deleted',
-      projectId: 'project-1',
-      operation: 'call_command',
-      ownerId: 'host-row-1'
-    })
-    await vi.waitFor(() => expect(resolveGrant).toHaveBeenCalledOnce())
-
-    broker.cancelSession('session-deleted')
-    finishGrantLookup?.('project')
-
-    await expect(decision).resolves.toBe('deny')
-    expect(broadcast).not.toHaveBeenCalled()
-  })
-
   it('does not remember approval when the provider id belongs to a recreated host', async () => {
     const timer = makeTimer()
     const remember = vi.fn()
@@ -507,6 +499,54 @@ describe('ComputeApprovalBroker', () => {
     await invalidation
     await expect(decision).resolves.toBe('deny')
     broker.completeProviderInvalidation('ssh:biowulf')
+  })
+
+  it('aborts the operation but preserves a broad scope the user approved before cancellation', async () => {
+    const timer = makeTimer()
+    let releaseRemember: (() => void) | undefined
+    const remember = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRemember = resolve
+        })
+    )
+    const controller = new AbortController()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      permissionGrants: { resolve: vi.fn(), remember } as never,
+      isProviderCurrent: vi.fn().mockResolvedValue(true)
+    })
+
+    const decision = broker.requestWithContext(
+      makeRequest(),
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        operation: 'call_command',
+        ownerId: 'host-row-1'
+      },
+      controller.signal
+    )
+    await Promise.resolve()
+    broker.respond('id-1', 'project')
+    await vi.waitFor(() => expect(remember).toHaveBeenCalledOnce())
+
+    controller.abort()
+    releaseRemember?.()
+
+    await expect(decision).rejects.toMatchObject({ name: 'AbortError' })
+    expect(remember).toHaveBeenCalledWith(
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        operation: 'call_command',
+        providerId: 'ssh:biowulf'
+      },
+      'project'
+    )
   })
 
   it('denies new requests while provider deletion is draining', async () => {

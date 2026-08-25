@@ -75,9 +75,6 @@ type PendingComputeApproval = {
 export class ComputeApprovalBroker {
   private readonly pending = new Map<string, PendingComputeApproval>()
   private readonly pausedSessions = new Set<string>()
-  // Session deletion is terminal; retain a process-local tombstone so an async grant lookup cannot
-  // create or authorize work after the pending-card sweep has completed.
-  private readonly cancelledSessions = new Set<string>()
 
   private readonly providerGenerations = new Map<string, number>()
   private readonly invalidatingProviders = new Set<string>()
@@ -106,7 +103,6 @@ export class ComputeApprovalBroker {
     signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {
     signal?.throwIfAborted()
-    if (context && this.cancelledSessions.has(context.sessionId)) return Promise.resolve('deny')
     const id = this.deps.generateId()
     const providerId = info.provider_id
     const request = { id, ...info }
@@ -156,7 +152,6 @@ export class ComputeApprovalBroker {
     signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {
     signal?.throwIfAborted()
-    if (this.cancelledSessions.has(ctx.sessionId)) return Promise.resolve('deny')
     const providerId = info.provider_id
     if (this.invalidatingProviders.has(providerId)) return Promise.resolve('deny')
 
@@ -179,10 +174,6 @@ export class ComputeApprovalBroker {
     const { sessionId, projectId, operation } = ctx
     const providerId = info.provider_id
     const providerGeneration = this.providerGenerations.get(providerId) ?? 0
-    const sessionWasCancelled = (): boolean => {
-      signal?.throwIfAborted()
-      return this.cancelledSessions.has(sessionId)
-    }
 
     if (this.deps.permissionGrants) {
       const durableScope = await this.deps.permissionGrants.resolve({
@@ -191,16 +182,15 @@ export class ComputeApprovalBroker {
         operation,
         providerId
       })
-      if (sessionWasCancelled()) return 'deny'
+      signal?.throwIfAborted()
       if (durableScope) {
         const providerIsCurrent = await this.isProviderCurrent(
           providerId,
           ctx.ownerId,
           providerGeneration
         )
-        if (sessionWasCancelled() || !providerIsCurrent) {
-          return 'deny'
-        }
+        signal?.throwIfAborted()
+        if (!providerIsCurrent) return 'deny'
         if (durableScope === 'session') return 'conversation'
         return durableScope
       }
@@ -209,14 +199,15 @@ export class ComputeApprovalBroker {
     // ── legacy project grant check (persistent) ───────────────────────────────────
     if (this.deps.checkProjectGrant) {
       const hasProject = await this.deps.checkProjectGrant({ projectId, operation, providerId })
-      if (sessionWasCancelled()) return 'deny'
+      signal?.throwIfAborted()
       if (hasProject) {
         const providerIsCurrent = await this.isProviderCurrent(
           providerId,
           ctx.ownerId,
           providerGeneration
         )
-        if (sessionWasCancelled() || !providerIsCurrent) return 'deny'
+        signal?.throwIfAborted()
+        if (!providerIsCurrent) return 'deny'
         return 'project'
       }
     }
@@ -229,7 +220,8 @@ export class ComputeApprovalBroker {
         ctx.ownerId,
         providerGeneration
       )
-      if (sessionWasCancelled() || !providerIsCurrent) return 'deny'
+      signal?.throwIfAborted()
+      if (!providerIsCurrent) return 'deny'
       return 'conversation'
     }
 
@@ -238,7 +230,6 @@ export class ComputeApprovalBroker {
     // entered the in-flight set but before it reached the approval card. Fail closed here so the
     // invalidator cannot miss a newly-created pending request and wait on it indefinitely.
     if (
-      sessionWasCancelled() ||
       this.invalidatingProviders.has(providerId) ||
       (this.providerGenerations.get(providerId) ?? 0) !== providerGeneration
     ) {
@@ -255,10 +246,12 @@ export class ComputeApprovalBroker {
         ctx.ownerId,
         providerGeneration
       )
-      if (sessionWasCancelled() || !providerIsCurrent) return 'deny'
+      signal?.throwIfAborted()
+      if (!providerIsCurrent) return 'deny'
     }
 
-    // Record grant if applicable.
+    // Record the scope the user already selected. A later request/Session cancellation still stops
+    // this operation at the final check below, but must not revoke an approved Project/Global grant.
     if (this.deps.permissionGrants) {
       await this.deps.permissionGrants.remember(
         { sessionId, projectId, operation, providerId },
@@ -276,7 +269,8 @@ export class ComputeApprovalBroker {
         ctx.ownerId,
         providerGeneration
       )
-      if (sessionWasCancelled() || !providerIsCurrent) return 'deny'
+      signal?.throwIfAborted()
+      if (!providerIsCurrent) return 'deny'
     }
 
     return decision
@@ -310,7 +304,6 @@ export class ComputeApprovalBroker {
   }
 
   cancelSession(sessionId: string): void {
-    this.cancelledSessions.add(sessionId)
     this.pausedSessions.delete(sessionId)
     for (const key of this.conversationGrants) {
       if (key.startsWith(`${sessionId}:`)) this.conversationGrants.delete(key)
