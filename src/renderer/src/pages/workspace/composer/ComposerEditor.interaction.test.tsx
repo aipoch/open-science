@@ -896,7 +896,7 @@ describe('ComposerEditor', () => {
     dispatchKey(editor(), 'Backspace')
 
     expect(editor().querySelector('[data-skill-id]')).toBeNull()
-    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc)
+    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc, { nodeIndex: 1, offset: 0 })
   })
 
   it('suppresses the popup once a skill chip exists (one skill per message)', () => {
@@ -1088,7 +1088,7 @@ describe('ComposerEditor', () => {
     dispatchKey(editor(), 'Backspace')
 
     expect(editor().querySelector('[data-mention-type="artifact"]')).toBeNull()
-    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc)
+    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc, { nodeIndex: 1, offset: 0 })
   })
 
   it('opens a linked-folder chip in the preview workbench on click', () => {

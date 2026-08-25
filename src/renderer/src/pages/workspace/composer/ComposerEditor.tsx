@@ -370,10 +370,14 @@ const moveCaretToEnd = (root: HTMLElement): void => {
 
 const moveCaretToPosition = (root: HTMLElement, position: ComposerCaretPosition): void => {
   const node = root.childNodes[position.nodeIndex]
-  if (!node || node.nodeType !== Node.TEXT_NODE) return moveCaretToEnd(root)
   root.focus()
   const range = document.createRange()
-  range.setStart(node, Math.min(position.offset, node.textContent?.length ?? 0))
+  if (!node) range.setStart(root, root.childNodes.length)
+  else if (node.nodeType === Node.TEXT_NODE) {
+    range.setStart(node, Math.min(position.offset, node.textContent?.length ?? 0))
+  } else {
+    range.setStart(root, position.nodeIndex)
+  }
   range.collapse(true)
   const selection = window.getSelection()
   selection?.removeAllRanges()
@@ -385,6 +389,9 @@ const currentCaretPosition = (root: HTMLElement): ComposerCaretPosition | undefi
   if (!selection || selection.rangeCount === 0) return undefined
   const range = selection.getRangeAt(0)
   if (!range.collapsed || !root.contains(range.startContainer)) return undefined
+  if (range.startContainer === root) {
+    return { nodeIndex: Math.min(range.startOffset, root.childNodes.length), offset: 0 }
+  }
   let topLevel: Node = range.startContainer
   while (topLevel.parentNode && topLevel.parentNode !== root) topLevel = topLevel.parentNode
   const nodeIndex = Array.prototype.indexOf.call(root.childNodes, topLevel) as number
@@ -655,6 +662,7 @@ export const ComposerEditor = ({
       const chip = root && chipBesideCaret(root, event.key === 'Backspace' ? 'before' : 'after')
       if (chip) {
         event.preventDefault()
+        undoCaretRef.current = currentCaretPosition(root)
         chip.remove()
         emitDocFromDom()
         return
