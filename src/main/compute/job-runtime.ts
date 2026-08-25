@@ -54,9 +54,9 @@ export const createComputeJobRuntime = (
   const unbindDeletionRuntime = deps.jobDeletionOwner?.bindRuntime(poller)
   return {
     start: () => poller.start(),
-    stop: () => {
+    stop: async () => {
       unbindDeletionRuntime?.()
-      poller.stop()
+      await poller.stop()
     }
   }
 }

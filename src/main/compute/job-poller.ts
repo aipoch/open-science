@@ -146,16 +146,21 @@ export class JobPoller {
     this.handle = this.setIntervalFn(() => this.runTick(), POLL_INTERVAL_MS)
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.paused = true
     if (this.handle) {
       this.clearIntervalFn(this.handle)
       this.handle = undefined
     }
+    await this.drainTrackedWork()
   }
 
   async pause(): Promise<void> {
     this.paused = true
+    await this.drainTrackedWork()
+  }
+
+  private async drainTrackedWork(): Promise<void> {
     while (this.activeTicks.size > 0 || this.backgroundTasks.size > 0) {
       await Promise.allSettled([...this.activeTicks, ...this.backgroundTasks])
     }
