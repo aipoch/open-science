@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
+import { SettingsSegmentedControl } from '@/pages/settings/SettingsSegmentedControl'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatSession } from '@/stores/session-store'
 import {
@@ -25,7 +26,7 @@ import {
   X,
   type LucideIcon
 } from 'lucide-react'
-import { Dialog, RadioGroup } from 'radix-ui'
+import { Dialog } from 'radix-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatDisplayNumber } from '@/lib/locale-format'
@@ -1201,31 +1202,15 @@ const ContextWindowDialog = ({
             className="flex flex-col gap-2 border-b border-border px-5 py-3 sm:flex-row sm:items-center sm:justify-between"
             data-slot="context-window-toolbar"
           >
-            <RadioGroup.Root
+            <SettingsSegmentedControl
               value={granularity}
-              onValueChange={(value) => setGranularity(value as ContextWindowGranularity)}
-              orientation="horizontal"
-              aria-label={t('Usage detail level')}
-              className="grid w-full grid-cols-2 items-center gap-1 rounded-lg bg-muted p-1 sm:w-auto"
-            >
-              {(
-                [
-                  ['turn', t('Turns')],
-                  ['call', t('Calls')]
-                ] as const
-              ).map(([value, label]) => (
-                <RadioGroup.Item
-                  key={value}
-                  value={value}
-                  className={cn(
-                    'h-11 whitespace-nowrap rounded-md px-4 text-xs font-medium text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-card/70 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none',
-                    granularity === value && 'bg-card text-foreground shadow-sm'
-                  )}
-                >
-                  {label}
-                </RadioGroup.Item>
-              ))}
-            </RadioGroup.Root>
+              options={[
+                { value: 'turn', label: t('Turns') },
+                { value: 'call', label: t('Calls') }
+              ]}
+              onValueChange={setGranularity}
+              ariaLabel={t('Usage detail level')}
+            />
           </div>
 
           <div
