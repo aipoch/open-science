@@ -133,6 +133,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   onSessionUnavailable?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
   onDisconnected?: () => void
+  onSessionDeleteStarted?: (sessionId: string) => void
   beforeSessionDelete?: (sessionId: string) => Promise<void>
   afterSessionDelete?: (sessionId: string, retained: boolean) => void
   profileService?: ProfileService
@@ -181,6 +182,7 @@ const createAcpRuntime = ({
   onSessionUnavailable,
   onAllSessionsCancellationRequested,
   onDisconnected,
+  onSessionDeleteStarted,
   beforeSessionDelete,
   afterSessionDelete,
   profileService,
@@ -533,6 +535,7 @@ const createAcpRuntime = ({
       onSkillImportAttachmentEligible,
       onSessionCancellationRequested,
       onAllSessionsCancellationRequested,
+      onSessionDeleteStarted,
       beforeSessionDelete,
       afterSessionDelete
     },

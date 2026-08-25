@@ -63,6 +63,7 @@ type AcpRuntimeCoordinatorTeardownCallbacks = {
   ) => void
   onSessionCancellationRequested?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
+  onSessionDeleteStarted?: (sessionId: string) => void
   beforeSessionDelete?: (sessionId: string) => Promise<void>
   // Runs after the runtime deletion attempt. `retained` is true after failure or when a concurrent
   // runtime adoption kept the logical Session alive.
@@ -1189,6 +1190,7 @@ class AcpRuntimeCoordinator {
 
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
     this.invalidateSessionTurn(request.sessionId)
+    this.teardownCallbacks.onSessionDeleteStarted?.(request.sessionId)
     this.activePromptRequests.delete(request.sessionId)
     this.pendingResumeReconciliations.delete(request.sessionId)
     const runtime = this.runtimeForSession(request.sessionId)

@@ -3554,8 +3554,20 @@ describe('AcpRuntimeCoordinator', () => {
 
   it('holds the Session deletion lifecycle until runtime deletion settles', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
+    const onSessionDeleteStarted = vi.fn()
     const beforeSessionDelete = vi.fn().mockResolvedValue(undefined)
     const afterSessionDelete = vi.fn()
+    const delegatedDeletion = createDeferred<void>()
+    const delegatedWork: RootDelegatedWorkControl = {
+      pendingPermissions: () => [],
+      subscribe: () => () => undefined,
+      respondToPermission: async () => false,
+      setPermissionProfile: async () => undefined,
+      stopSession: async () => undefined,
+      stopAll: async () => undefined,
+      deleteSession: vi.fn(() => delegatedDeletion.promise),
+      deleteProject: async () => undefined
+    }
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) => {
         const fake = createFakeRuntime({
@@ -3571,13 +3583,25 @@ describe('AcpRuntimeCoordinator', () => {
       undefined,
       undefined,
       undefined,
-      { beforeSessionDelete, afterSessionDelete }
+      { onSessionDeleteStarted, beforeSessionDelete, afterSessionDelete },
+      undefined,
+      delegatedWork
     )
     const deletion = createDeferred<AcpStateSnapshot>()
     created[0].deleteSession.mockReturnValueOnce(deletion.promise)
 
     await coordinator.createSession()
     const deleting = coordinator.deleteSession({ sessionId: 'session-1' })
+    await vi.waitFor(() => expect(delegatedWork.deleteSession).toHaveBeenCalledOnce())
+
+    expect(onSessionDeleteStarted).toHaveBeenCalledWith('session-1')
+    expect(onSessionDeleteStarted.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(delegatedWork.deleteSession).mock.invocationCallOrder[0]
+    )
+    expect(beforeSessionDelete).not.toHaveBeenCalled()
+    expect(afterSessionDelete).not.toHaveBeenCalled()
+
+    delegatedDeletion.resolve()
     await vi.waitFor(() => expect(created[0].deleteSession).toHaveBeenCalledOnce())
 
     expect(beforeSessionDelete).toHaveBeenCalledWith('session-1')

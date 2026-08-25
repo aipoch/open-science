@@ -2162,8 +2162,9 @@ const createApplicationModules = async (
       onSessionUnavailable: approvalSessionLifecycle.onSessionUnavailable,
       onAllSessionsCancellationRequested:
         approvalSessionLifecycle.onAllSessionsCancellationRequested,
+      onSessionDeleteStarted: (sessionId) =>
+        computeIpcModule.handlers.approvalBeginSessionDeletion(sessionId),
       beforeSessionDelete: async (sessionId) => {
-        computeIpcModule.handlers.approvalBeginSessionDeletion(sessionId)
         await sideChatOwnerRef.current?.invalidateParents([sessionId])
         await notebookService.shutdownSession(sessionId)
       },
