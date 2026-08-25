@@ -451,6 +451,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
       throw new Error('free-space query returned an invalid value')
     }
   } catch (err) {
+    if (deps.signal?.aborted) throw err
     const msg = err instanceof Error ? err.message : String(err)
     await finalizeAndReturn(`free-space check failed: ${msg}`, '[]')
     return

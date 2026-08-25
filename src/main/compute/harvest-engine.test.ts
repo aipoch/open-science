@@ -356,6 +356,29 @@ describe('harvestJob — data-root migration gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — harvest_failed', () => {
+  it('does not finalize a harvest cancelled during the initial free-space query', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob()
+    const controller = new AbortController()
+    const { repo: jobRepo, updates } = makeJobRepo(job)
+    const freeSpaceError = new Error('free-space query failed during shutdown')
+
+    await expect(
+      harvestJob(job, {
+        connectionBroker: brokerFromRunners(makeSshRunner(findOutput([])), makeScpRunner()),
+        hostRepository: makeHostRepo(sampleHost()),
+        jobRepository: jobRepo,
+        storageRoot,
+        signal: controller.signal,
+        getFreeDiskBytesFn: async () => {
+          controller.abort()
+          throw freeSpaceError
+        }
+      })
+    ).rejects.toThrow(freeSpaceError.message)
+    expect(updates).toEqual([])
+  })
+
   it.each(['ssh_config', 'password'] as const)(
     'leaves %s connection failures unharvested so restart recovery can retry safely',
     async () => {
