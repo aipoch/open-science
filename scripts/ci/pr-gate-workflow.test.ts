@@ -452,6 +452,10 @@ describe('PR Gate workflow', () => {
     )
   })
 
+  it('budgets the complete Windows E2E path beyond dependency and build setup', () => {
+    expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(25)
+  })
+
   it('runs Windows accessibility only for a legacy selected lane', () => {
     const compatibility = workflow.jobs.windows_e2e.steps?.find(
       ({ name }) => name === 'Run legacy Windows accessibility compatibility'
