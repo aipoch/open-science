@@ -2649,7 +2649,6 @@
   "{{visible}} of {{total}}": "{{visible}} sur {{total}}",
   "· hash {{hash}}": "· hachage {{hash}}",
   "· not usable with this framework": "· non utilisable avec ce framework",
-  "· taking longer than usual": "· prend plus de temps que d'habitude",
   "· {{count}} running_one": "· {{count}} en cours d'exécution",
   "· {{count}} running_other": "· {{count}} en cours d'exécution",
   "· {{count}} running_many": "· {{count}} en cours d'exécution",

@@ -2726,7 +2726,6 @@
   "{{visible}} of {{total}}": "{{visible}} из {{total}}",
   "· hash {{hash}}": "· хэш {{hash}}",
   "· not usable with this framework": "· не поддерживается в этом фреймворке",
-  "· taking longer than usual": "· занимается дольше, чем обычно",
   "· {{count}} running_one": "· выполняется: {{count}}",
   "· {{count}} running_few": "· выполняется: {{count}}",
   "· {{count}} running_many": "· выполняется: {{count}}",

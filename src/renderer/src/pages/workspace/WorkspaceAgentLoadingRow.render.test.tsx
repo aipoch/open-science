@@ -76,18 +76,16 @@ describe('WorkspaceAgentLoadingRow', () => {
       (element) => element.textContent === 'Thinking'
     )
     expect(thinkingLabel?.getAttribute('aria-hidden')).toBeNull()
-    expect(container.textContent).not.toContain('taking longer than usual')
     const statusRow = container.querySelector('[role="status"] > div')
     expect(statusRow?.classList.contains('text-text-000/70')).toBe(true)
     expect(statusRow?.classList.contains('text-text-300')).toBe(false)
   })
 
-  it('shows the slow hint when the Session has already been thinking long enough', () => {
+  it('shows only the elapsed time even after a long silent wait', () => {
     seedRunningSession(45_000)
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))
 
     expect(container.textContent).toContain('0:45')
-    expect(container.textContent).toContain('taking longer than usual')
   })
 
   it('updates the elapsed time live while the turn runs', () => {
@@ -103,21 +101,6 @@ describe('WorkspaceAgentLoadingRow', () => {
 
     expect(container.textContent).toContain('0:08')
     expect(container.textContent).not.toContain('0:05')
-  })
-
-  it('crosses into the "taking longer than usual" hint as time passes the threshold', () => {
-    seedRunningSession(18_000)
-    act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))
-
-    expect(container.textContent).toContain('0:18')
-    expect(container.textContent).not.toContain('taking longer than usual')
-
-    act(() => {
-      vi.advanceTimersByTime(3000)
-    })
-
-    expect(container.textContent).toContain('0:21')
-    expect(container.textContent).toContain('taking longer than usual')
   })
 
   it('keeps elapsed time after navigating away and returning', () => {
@@ -179,7 +162,7 @@ describe('WorkspaceAgentLoadingRow', () => {
     expect(statusLine?.classList.contains('text-text-300/80')).toBe(false)
   })
 
-  it('shows tool interaction without elapsed time or a slow hint', () => {
+  it('shows tool interaction without elapsed time', () => {
     seedRunningSession(45_000, 'retrying request…')
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="interacting-with-tools" />))
 
@@ -187,7 +170,6 @@ describe('WorkspaceAgentLoadingRow', () => {
     expect(container.textContent).not.toContain('Thinking')
     expect(container.textContent).not.toContain('· Interacting with tools')
     expect(container.textContent).not.toContain('0:00')
-    expect(container.textContent).not.toContain('taking longer than usual')
     expect(container.textContent).not.toContain('retrying request…')
   })
 
@@ -201,7 +183,6 @@ describe('WorkspaceAgentLoadingRow', () => {
     expect(container.textContent).toContain(label)
     expect(container.textContent).not.toContain('Interacting with tools')
     expect(container.textContent).not.toContain('0:45')
-    expect(container.textContent).not.toContain('taking longer than usual')
     expect(container.textContent).not.toContain('retrying request…')
   })
 

@@ -2502,7 +2502,6 @@
   "{{visible}} of {{total}}": "已显示 {{visible}} / {{total}}",
   "· hash {{hash}}": "· 哈希 {{hash}}",
   "· not usable with this framework": "· 不适用于此框架",
-  "· taking longer than usual": "· 响应比平时慢",
   "· {{count}} running_other": "· {{count}} 个进行中",
   "× Blocked": "× 已阻止",
   "× Not installable": "× 无法安装",

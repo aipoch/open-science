@@ -2442,7 +2442,6 @@
   "{{visible}} of {{total}}": "{{visible}} 중 {{total}}",
   "· hash {{hash}}": "· 해시 {{hash}}",
   "· not usable with this framework": "· 이 프레임워크에서는 사용할 수 없습니다.",
-  "· taking longer than usual": "· 평소보다 시간이 오래 걸립니다",
   "· {{count}} running_other": "· {{count}}개 실행 중",
   "× Blocked": "× 차단됨",
   "× Not installable": "× 설치 불가",

@@ -2499,7 +2499,6 @@
   "{{visible}} of {{total}}": "已顯示 {{visible}} / {{total}}",
   "· hash {{hash}}": "· 雜湊 {{hash}}",
   "· not usable with this framework": "· 不適用於此框架",
-  "· taking longer than usual": "· 比平常花費更長時間",
   "· {{count}} running_other": "· {{count}} 個進行中",
   "● error": "● 錯誤",
   "● ok": "● 正常",

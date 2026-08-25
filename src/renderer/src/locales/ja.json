@@ -2431,7 +2431,6 @@
   "{{visible}} of {{total}}": "{{visible}} / {{total}}",
   "· hash {{hash}}": "· ハッシュ {{hash}}",
   "· not usable with this framework": "· このフレームワークでは使用できません",
-  "· taking longer than usual": "・通常より時間がかかる",
   "· {{count}} running_other": "· {{count}} が実行中",
   "× Blocked": "× ブロック中",
   "× Not installable": "× 取り付け不可",
