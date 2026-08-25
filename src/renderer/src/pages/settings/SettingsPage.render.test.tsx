@@ -1584,6 +1584,32 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('reports when post-save Provider validation does not complete', async () => {
+    installCustomProviderSnapshot()
+    const validateProvider = vi.fn().mockRejectedValue(new Error('settings IPC unavailable'))
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
+      validateProvider
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+
+    await waitFor(() => {
+      expect(validateProvider).toHaveBeenCalledWith({ providerId: 'custom-messages' })
+      expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+        'Could not test the provider connection.'
+      )
+    })
+  })
+
   it('switches to the General panel and shows the diagnostic log file', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)

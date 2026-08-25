@@ -387,6 +387,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // Shared with ProvidersPanel: the post-save validation and the list's manual test both mark the
   // provider busy so its card shows "Testing…".
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
+  const [postSaveValidationFailed, setPostSaveValidationFailed] = useState(false)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
   useEffect(() => {
@@ -778,13 +779,18 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setStatusMessage(undefined)
   }
 
-  const openCreate = (): void => navigate({ panel: 'model', view: { kind: 'create' } })
+  const openCreate = (): void => {
+    setPostSaveValidationFailed(false)
+    navigate({ panel: 'model', view: { kind: 'create' } })
+  }
 
-  const openEdit = (provider: ProviderView): void =>
+  const openEdit = (provider: ProviderView): void => {
+    setPostSaveValidationFailed(false)
     navigate({
       panel: 'model',
       view: { kind: 'edit', providerId: provider.id }
     })
+  }
 
   const closeForm = (): void => navigate({ panel: 'model', view: { kind: 'list' } })
 
@@ -792,6 +798,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     if (providerEditTargetMissing) return
     setIsSaving(true)
     setStatusMessage(undefined)
+    setPostSaveValidationFailed(false)
 
     try {
       // Persist first and return to the provider list immediately — don't hold the form open waiting
@@ -806,7 +813,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
       if (providerId) {
         setBusyProviderId(providerId)
-        void validateProvider({ providerId }).finally(() => setBusyProviderId(undefined))
+        void validateProvider({ providerId })
+          .catch(() => setPostSaveValidationFailed(true))
+          .finally(() => setBusyProviderId(undefined))
       }
     } catch (error) {
       setStatusOk(false)
@@ -1439,12 +1448,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </div>
                     </div>
                   ) : (
-                    <ProvidersPanel
-                      onCreateProvider={openCreate}
-                      onEditProvider={openEdit}
-                      busyProviderId={busyProviderId}
-                      onBusyProviderChange={setBusyProviderId}
-                    />
+                    <>
+                      {postSaveValidationFailed ? (
+                        <p className="mx-5 mt-5 text-sm text-destructive" role="alert">
+                          {t('Could not test the provider connection.')}
+                        </p>
+                      ) : null}
+                      <ProvidersPanel
+                        onCreateProvider={openCreate}
+                        onEditProvider={openEdit}
+                        busyProviderId={busyProviderId}
+                        onBusyProviderChange={(providerId) => {
+                          setBusyProviderId(providerId)
+                          if (providerId) setPostSaveValidationFailed(false)
+                        }}
+                      />
+                    </>
                   )}
                 </SettingsPanelLoadingBoundary>
               </div>
