@@ -139,8 +139,7 @@ export type SettingsServiceOptions = {
   // The machine's own Claude config dir, used by the shared provider for auth/spawn and scanned as a
   // user skill source. Injectable so tests don't touch the real ~/.claude.
   userClaudeDir?: string
-  // The machine's own Codex config dir, scanned for installed skills while Codex is active.
-  // Injectable for the same reason as userClaudeDir.
+  // The machine's own Codex config dir, scanned for installed skills; injectable like userClaudeDir.
   userCodexDir?: string
   // The framework-neutral Agents config dir. Codex and other compatible agents discover skills
   // under ~/.agents/skills; it is scanned regardless of the active framework.
