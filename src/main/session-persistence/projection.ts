@@ -20,6 +20,14 @@ const PROJECTION_VERSION = 2
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const MAX_SQLITE_INT = 2_147_483_647
+const PERSISTED_SESSION_STATUSES: ReadonlySet<string> = new Set([
+  'idle',
+  'running',
+  'waiting-for-user',
+  'waiting-permission',
+  'waiting-plan-approval',
+  'error'
+] satisfies readonly PersistedSessionStatus[])
 
 type ProjectionClient = () => Promise<PrismaClient>
 
@@ -62,6 +70,16 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
       throw new Error(`Session projection ${field} must be a string.`)
     }
   }
+  const assertNonEmptyText = (value: unknown, field: string): void => {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new Error(`Session projection ${field} must be a non-empty string.`)
+    }
+  }
+  const assertStatus = (value: unknown, field: string): void => {
+    if (typeof value !== 'string' || !PERSISTED_SESSION_STATUSES.has(value)) {
+      throw new Error(`Session projection ${field} must be a persisted Session status.`)
+    }
+  }
   const assertInt = (value: number, field: string): void => {
     if (!Number.isSafeInteger(value) || value < 0 || value > MAX_SQLITE_INT) {
       throw new Error(`Session projection ${field} must fit a non-negative SQLite Int.`)
@@ -77,8 +95,8 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
       throw new Error(`Session projection ${field} must be a non-negative safe integer.`)
     }
   }
-  const assertNullableText = (value: string | null, field: string): void => {
-    if (value !== null) assertText(value, field)
+  const assertNullableNonEmptyText = (value: string | null, field: string): void => {
+    if (value !== null) assertNonEmptyText(value, field)
   }
   const assertNullableBigInt = (value: bigint | null, field: string): void => {
     if (value !== null) assertBigInt(value, field)
@@ -94,9 +112,12 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
     }
   }
 
-  for (const field of ['id', 'projectId', 'title', 'status', 'presentedStatus'] as const) {
-    assertText(projection.summary[field], field)
+  for (const field of ['id', 'projectId'] as const) {
+    assertNonEmptyText(projection.summary[field], field)
   }
+  assertText(projection.summary.title, 'title')
+  assertStatus(projection.summary.status, 'status')
+  assertStatus(projection.summary.presentedStatus, 'presentedStatus')
   for (const field of ['activeMessageCount', 'artifactCount', 'filesRevision'] as const) {
     assertInt(projection.summary[field], field)
   }
@@ -111,7 +132,7 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
   }
 
   for (const usage of projection.turnUsage) {
-    assertText(usage.messageId, 'turnUsage.messageId')
+    assertNonEmptyText(usage.messageId, 'turnUsage.messageId')
     assertBigInt(usage.completedAtMs, 'turnUsage.completedAtMs')
     assertBigInt(usage.inputTokens, 'turnUsage.inputTokens')
     assertBigInt(usage.cacheTokens, 'turnUsage.cacheTokens')
@@ -125,13 +146,13 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
     'turnUsage.messageId'
   )
   for (const call of projection.modelCalls) {
-    assertText(call.messageId, 'modelCall.messageId')
-    assertText(call.callId, 'modelCall.callId')
+    assertNonEmptyText(call.messageId, 'modelCall.messageId')
+    assertNonEmptyText(call.callId, 'modelCall.callId')
     assertInt(call.callIndex, 'modelCall.callIndex')
-    assertNullableText(call.sourceInvocationId, 'modelCall.sourceInvocationId')
-    assertNullableText(call.frameworkId, 'modelCall.frameworkId')
-    assertNullableText(call.backendId, 'modelCall.backendId')
-    assertNullableText(call.model, 'modelCall.model')
+    assertNullableNonEmptyText(call.sourceInvocationId, 'modelCall.sourceInvocationId')
+    assertNullableNonEmptyText(call.frameworkId, 'modelCall.frameworkId')
+    assertNullableNonEmptyText(call.backendId, 'modelCall.backendId')
+    assertNullableNonEmptyText(call.model, 'modelCall.model')
     assertBigInt(call.inputTokens, 'modelCall.inputTokens')
     assertBigInt(call.cacheTokens, 'modelCall.cacheTokens')
     assertNullableBigInt(call.cachedReadTokens, 'modelCall.cachedReadTokens')
@@ -149,7 +170,7 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
     'modelCall.messageId/callIndex'
   )
   for (const run of projection.runs) {
-    assertText(run.messageId, 'run.messageId')
+    assertNonEmptyText(run.messageId, 'run.messageId')
     assertBigInt(run.createdAtMs, 'run.createdAtMs')
   }
   assertUnique(
@@ -157,7 +178,7 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
     'run.messageId'
   )
   for (const artifact of projection.artifactRefs) {
-    assertText(artifact.artifactId, 'artifactRef.artifactId')
+    assertNonEmptyText(artifact.artifactId, 'artifactRef.artifactId')
     if (artifact.artifactCreatedAtMs !== null) {
       assertBigInt(artifact.artifactCreatedAtMs, 'artifactRef.artifactCreatedAtMs')
     }
