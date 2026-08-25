@@ -205,6 +205,19 @@ describe('ContextWindowDialog', () => {
         ?.querySelector('[data-slot="current-composition"] [data-slot="context-category-legend"]')
         ?.className.includes('grid-cols-1')
     ).toBe(true)
+    // The full-width ratio strip leads the composition card above the legend and uses the muted
+    // design-system chart tokens instead of the vivid Tailwind palette.
+    const composition = dialog?.querySelector('[data-slot="current-composition"]')
+    const strip = composition?.querySelector('[data-slot="context-composition-strip"]')
+    const legend = composition?.querySelector('[data-slot="context-category-legend"]')
+    expect(strip?.className).toContain('h-4')
+    expect(strip && legend ? strip.compareDocumentPosition(legend) : 0).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(strip?.querySelector('.bg-chart-2')).not.toBeNull()
+    expect(strip?.querySelector('.bg-cyan-400')).toBeNull()
+    // The legend carries swatch + label + value only; per-row mini bars would duplicate the strip.
+    expect(legend?.querySelectorAll('.h-1')).toHaveLength(0)
     expect(dialog?.querySelector('[role="group"]')?.className.includes('min-w-full')).toBe(true)
     expect(
       dialog?.querySelector('[role="group"] > div:last-child')?.className.includes('justify-start')
@@ -318,6 +331,16 @@ describe('ContextWindowDialog', () => {
     const bands = chart?.querySelectorAll('[data-slot="context-call-band"]')
     expect(bands).toHaveLength(1)
     expect(bands?.[0]?.textContent).toContain('T1')
+    // Turn bands group calls with a gray lane carrying the T{n} label, not a vertical divider.
+    expect(bands?.[0]?.className).not.toContain('border-l')
+    const lane = bands?.[0]?.querySelector('span.bg-muted')
+    expect(lane?.textContent).toContain('T1')
+    // Call bars use the muted design-system chart tokens, matching the per-message usage bars.
+    const firstBar = chart?.querySelector('[data-slot="context-call-bar"]')
+    expect(firstBar?.querySelector('.bg-chart-2')).not.toBeNull()
+    expect(firstBar?.querySelector('.bg-chart-4')).not.toBeNull()
+    expect(firstBar?.querySelector('.bg-chart-1')).not.toBeNull()
+    expect(firstBar?.querySelector('.bg-cyan-400')).toBeNull()
 
     const history = document.body.querySelector('[data-slot="context-call-history"]')
     // These calls report aggregate cache only, so the legend shows a single Cache chip.

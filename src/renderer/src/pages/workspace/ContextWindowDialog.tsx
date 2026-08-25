@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-/* Hallmark · component: context-window dialog · turns: composition + pinned run history; calls: 3-metric summary + stacked per-call chart with turn bands and pinned call details · genre: modern-minimal · theme: product tokens · contrast: pass (40–41) · mobile: pass (34, 49, 50–57) · slop: pass (1–58) */
+/* Hallmark · component: context-window dialog · turns: composition (full-width ratio strip) + pinned run history; calls: 3-metric summary + stacked per-call chart with gray turn lanes and pinned call details · genre: modern-minimal · theme: product tokens (chart-1..5) · contrast: pass (40–41) · mobile: pass (34, 49, 50–57) · slop: pass (1–58) */
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
@@ -75,13 +75,15 @@ const formatTokens = (tokens: number): string => {
 }
 
 // Catalog keys stay unresolved at module scope so changing locale updates every render site.
+// Colors use the muted design-system chart tokens (main.css --chart-1..5), not the vivid Tailwind
+// palette, and match the per-message usage bars in WorkspaceMessageItem.
 const categoryPresentation: Record<AcpContextUsageCategoryKey, { label: string; color: string }> = {
-  system: { label: 'System prompt', color: 'bg-emerald-500' },
-  tools: { label: 'Tools and agents', color: 'bg-amber-400' },
-  messages: { label: 'Messages', color: 'bg-violet-500' },
-  mcp: { label: 'Connectors and MCP', color: 'bg-cyan-400' },
-  skills: { label: 'Skills', color: 'bg-blue-500' },
-  other: { label: 'Agent/framework overhead', color: 'bg-slate-400' }
+  system: { label: 'System prompt', color: 'bg-chart-2' },
+  tools: { label: 'Tools and agents', color: 'bg-chart-3' },
+  messages: { label: 'Messages', color: 'bg-chart-4' },
+  mcp: { label: 'Connectors and MCP', color: 'bg-chart-1' },
+  skills: { label: 'Skills', color: 'bg-chart-5' },
+  other: { label: 'Agent/framework overhead', color: 'bg-muted-foreground/40' }
 }
 
 const visibleCategories = (usage: AcpContextUsage): AcpContextUsageCategory[] =>
@@ -92,12 +94,14 @@ const visibleCategories = (usage: AcpContextUsage): AcpContextUsageCategory[] =>
 type CallSegmentKey = 'input' | 'cache-read' | 'cache-write' | 'cache' | 'output'
 
 // Catalog keys stay unresolved at module scope so changing locale updates every render site.
+// Segment colors mirror WorkspaceMessageItem: Input=chart-2, Cache read=chart-4,
+// Cache write=chart-3, Output=chart-1 — the same metric keeps the same color app-wide.
 const callSegmentPresentation: Record<CallSegmentKey, { label: string; color: string }> = {
-  input: { label: 'Input', color: 'bg-blue-500' },
-  'cache-read': { label: 'Cache read', color: 'bg-cyan-400' },
-  'cache-write': { label: 'Cache write', color: 'bg-emerald-500' },
-  cache: { label: 'Cache', color: 'bg-cyan-400' },
-  output: { label: 'Output', color: 'bg-amber-400' }
+  input: { label: 'Input', color: 'bg-chart-2' },
+  'cache-read': { label: 'Cache read', color: 'bg-chart-4' },
+  'cache-write': { label: 'Cache write', color: 'bg-chart-3' },
+  cache: { label: 'Cache', color: 'bg-chart-4' },
+  output: { label: 'Output', color: 'bg-chart-1' }
 }
 
 type CallTokenSegment = Readonly<{ key: CallSegmentKey; tokens: number }>
@@ -165,7 +169,13 @@ const sourceLabel = {
   'local-estimate': 'Local estimate'
 } as const
 
-const CompositionStrip = ({ usage }: { usage: AcpContextUsage }): React.JSX.Element => {
+const CompositionStrip = ({
+  usage,
+  className = 'h-3'
+}: {
+  usage: AcpContextUsage
+  className?: string
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const categories = visibleCategories(usage)
   const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0)
@@ -174,7 +184,7 @@ const CompositionStrip = ({ usage }: { usage: AcpContextUsage }): React.JSX.Elem
 
   return (
     <div
-      className="flex h-3 overflow-hidden rounded-full bg-muted"
+      className={cn('flex overflow-hidden rounded-full bg-muted', className)}
       data-slot="context-composition-strip"
       aria-label={
         usage.size
@@ -227,20 +237,6 @@ const CategoryLegend = ({ usage }: { usage: AcpContextUsage }): React.JSX.Elemen
             />
             <span className="min-w-0 truncate text-foreground">
               {t(categoryPresentation[category.key].label)}
-            </span>
-            <span
-              className="h-1 min-w-6 flex-1 overflow-hidden rounded-full bg-muted"
-              aria-hidden="true"
-            >
-              <span
-                className={cn(
-                  'block h-full rounded-full',
-                  categoryPresentation[category.key].color
-                )}
-                style={{
-                  width: `${categoryTotal ? (category.tokens / categoryTotal) * 100 : 0}%`
-                }}
-              />
             </span>
           </span>
           <span className="shrink-0 tabular-nums text-muted-foreground">
@@ -300,45 +296,48 @@ const CurrentComposition = ({
       className="overflow-hidden rounded-lg border border-border bg-card"
       data-slot="current-composition"
     >
-      <div className="grid min-w-0 gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(12rem,0.72fr)_minmax(0,1.28fr)] lg:gap-8">
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-            <h3 id="current-composition-title" className="text-sm font-medium text-foreground">
-              {t('Current composition')}
-            </h3>
-            {model ? (
-              <span className="min-w-0 truncate text-xs text-muted-foreground">{model}</span>
-            ) : null}
-          </div>
-          <div className="mt-3 flex min-w-0 flex-wrap items-baseline gap-x-2">
-            <span className="text-3xl font-semibold tracking-tight tabular-nums text-foreground">
-              {formatTokens(usage.used)}
-            </span>
-            <span className="text-sm tabular-nums text-muted-foreground">
-              {usage.size
-                ? t('/ {{size}} tokens', { size: formatTokens(usage.size) })
-                : t('tokens')}
-            </span>
-          </div>
-          {percent === undefined ? null : (
-            <div className="mt-1 text-xs font-medium tabular-nums text-primary">{percent}%</div>
-          )}
-          <div className="mt-3">
-            <BreakdownDiagnostics usage={usage} />
-          </div>
+      <div className="p-4 sm:p-5">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+          <h3 id="current-composition-title" className="text-sm font-medium text-foreground">
+            {t('Current composition')}
+          </h3>
+          {model ? (
+            <span className="min-w-0 truncate text-xs text-muted-foreground">{model}</span>
+          ) : null}
         </div>
-
-        <div className="min-w-0 border-t border-border pt-4 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
-          <CompositionStrip usage={usage} />
-          {categories.length ? (
-            <div className="mt-4">
-              <CategoryLegend usage={usage} />
+        {/* The ratio strip leads the card at full width so the category mix reads at a glance. */}
+        <div className="mt-3">
+          <CompositionStrip usage={usage} className="h-4" />
+        </div>
+        <div className="mt-4 grid min-w-0 gap-5 lg:grid-cols-[minmax(12rem,0.72fr)_minmax(0,1.28fr)] lg:gap-8">
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+              <span className="text-3xl font-semibold tracking-tight tabular-nums text-foreground">
+                {formatTokens(usage.used)}
+              </span>
+              <span className="text-sm tabular-nums text-muted-foreground">
+                {usage.size
+                  ? t('/ {{size}} tokens', { size: formatTokens(usage.size) })
+                  : t('tokens')}
+              </span>
             </div>
-          ) : (
-            <p className="mt-3 text-xs text-muted-foreground">
-              {t('Category breakdown is unavailable for this snapshot.')}
-            </p>
-          )}
+            {percent === undefined ? null : (
+              <div className="mt-1 text-xs font-medium tabular-nums text-primary">{percent}%</div>
+            )}
+            <div className="mt-3">
+              <BreakdownDiagnostics usage={usage} />
+            </div>
+          </div>
+
+          <div className="min-w-0 border-t border-border pt-4 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+            {categories.length ? (
+              <CategoryLegend usage={usage} />
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {t('Category breakdown is unavailable for this snapshot.')}
+              </p>
+            )}
+          </div>
         </div>
       </div>
     </section>
@@ -579,7 +578,10 @@ const ContextHistoryChart = ({
                     ) : null}
                     <span
                       className={cn(
-                        'relative flex min-h-0 w-8 flex-col-reverse overflow-hidden rounded-t-[2px] bg-primary ring-2 transition-shadow duration-150 motion-reduce:transition-none group-hover:ring-ring/40 group-focus-visible:ring-ring/60',
+                        'relative flex min-h-0 w-8 flex-col-reverse overflow-hidden rounded-t-[2px] ring-2 transition-shadow duration-150 motion-reduce:transition-none group-hover:ring-ring/40 group-focus-visible:ring-ring/60',
+                        // Solid primary only as the no-breakdown fallback; with categories the
+                        // segments fill the bar and a base color would bleed through the seams.
+                        categories.length === 0 && 'bg-primary',
                         state.ring,
                         isActive && 'ring-ring/60',
                         isPinned && 'ring-foreground'
@@ -829,7 +831,7 @@ const ContextCallChart = ({
                 key={band.turnNumber}
                 className={cn(
                   'relative flex h-full items-end gap-0.5 pb-7 pt-2',
-                  bandIndex > 0 && 'ml-3 border-l border-border pl-3'
+                  bandIndex > 0 && 'ml-3'
                 )}
                 data-slot="context-call-band"
               >
@@ -883,7 +885,9 @@ const ContextCallChart = ({
                     </div>
                   )
                 })}
-                <span className="pointer-events-none absolute inset-x-0 bottom-1 text-center text-[10px] tabular-nums text-muted-foreground">
+                {/* One gray lane per turn: the label sits inside the lane so each turn reads as
+                    a single grouped block under its calls. */}
+                <span className="pointer-events-none absolute inset-x-0 bottom-1 flex h-5 items-center justify-center rounded-md bg-muted text-[10px] tabular-nums text-muted-foreground">
                   {t('T{{turn}}', { turn: band.turnNumber })}
                 </span>
               </div>
