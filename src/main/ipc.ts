@@ -1992,7 +1992,9 @@ const createApplicationModules = async (
     appVersion: app.getVersion(),
     configRoot,
     profileNamespace: 'vision-evidence',
-    resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
+    resolveTarget: (target, context) =>
+      settingsService.resolveExplicitAgentBackend(target, context),
+    allowNativeCodexSubscription: true
   })
   void visionInferenceRunner
     .sweepStaleProfiles()

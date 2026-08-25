@@ -66,6 +66,7 @@ type RestrictedInferenceRunnerOptions = Readonly<{
   ) => Promise<ResolvedAgentBackend>
   now?: () => number
   createRuntime?: (options: AcpRuntimeOptions) => RestrictedInferenceRuntime
+  allowNativeCodexSubscription?: boolean
 }>
 
 type ActiveRun = {
@@ -117,7 +118,11 @@ class RestrictedInferenceRunner {
   }
 
   supportsTarget(target: ExplicitAgentBackendTarget): boolean {
-    return !(target.frameworkId === 'codex' && isCodexSubscriptionProviderId(target.providerId))
+    return !(
+      target.frameworkId === 'codex' &&
+      isCodexSubscriptionProviderId(target.providerId) &&
+      this.options.allowNativeCodexSubscription !== true
+    )
   }
 
   async sweepStaleProfiles(): Promise<void> {
@@ -224,8 +229,13 @@ class RestrictedInferenceRunner {
       backend = resolvedBackend
       ensureActive()
       const bridge = resolvedBackend.responsesBridgeLease
+      const nativeCodexSubscriptionToolingDisabled =
+        resolvedBackend.framework.id === 'codex' &&
+        isCodexSubscriptionProviderId(input.target.providerId) &&
+        this.options.allowNativeCodexSubscription === true
       if (
         resolvedBackend.framework.id === 'codex' &&
+        !nativeCodexSubscriptionToolingDisabled &&
         (!bridge?.registerToolLessSession || !bridge.unregisterToolLessSession)
       ) {
         throw new RestrictedInferenceError(

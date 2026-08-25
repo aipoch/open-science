@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -129,6 +129,7 @@ const makeRunner = async (
     configRoot: temporaryRoot,
     profileNamespace: 'test-inference',
     resolveTarget,
+    allowNativeCodexSubscription: true,
     createRuntime: (options) => {
       runtime.onRuntime?.()
       const created = runtimeHarness(options, runtime)
@@ -151,6 +152,54 @@ const runInput = (
 })
 
 describe('RestrictedInferenceRunner', () => {
+  it('builds a disposable tool-less profile from app-owned Codex subscription auth', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-codex-subscription-'))
+    const sourceHome = join(temporaryRoot, 'subscription-home')
+    await mkdir(sourceHome)
+    await writeFile(join(sourceHome, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+
+    const prepared = await prepareRestrictedBackend(
+      backend(codexFramework, {
+        backendId: `codex:${CODEX_SHARED_PROVIDER_ID}`,
+        env: {
+          CODEX_HOME: sourceHome,
+          CODEX_CONFIG: JSON.stringify({
+            developer_instructions: 'load every tool',
+            features: { multi_agent: false }
+          })
+        }
+      }),
+      temporaryRoot,
+      {
+        agentName: 'restricted-fixture',
+        description: 'Synthetic restricted inference fixture.',
+        systemPrompt: 'Do not use tools.',
+        openCodePermissions: { '*': 'deny' }
+      }
+    )
+
+    expect(await readFile(join(prepared.env.CODEX_HOME!, 'auth.json'), 'utf8')).toContain('secret')
+    expect(await readFile(join(prepared.env.CODEX_HOME!, 'config.toml'), 'utf8')).toContain(
+      'cli_auth_credentials_store = "file"'
+    )
+    expect(JSON.parse(prepared.env.CODEX_CONFIG!)).toMatchObject({
+      experimental_use_unified_exec_tool: false,
+      features: {
+        multi_agent: false,
+        shell_tool: false,
+        code_mode: false,
+        code_mode_host: false,
+        apply_patch_freeform: false,
+        apps: false,
+        browser_use: false,
+        computer_use: false,
+        image_generation: false,
+        workspace_dependencies: false
+      },
+      tools: { web_search: false }
+    })
+  })
+
   it('removes the Claude Skill projection and loader from restricted Session setup', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-inference-'))
     const projectionRoot = '/runtime-support/agent-skills/claude/revision'
@@ -208,17 +257,19 @@ describe('RestrictedInferenceRunner', () => {
     expect(JSON.stringify(claudeOptions)).not.toContain(LOAD_SKILL_TOOL_CALLABLE_NAME)
   })
 
-  it('fails closed only for native Codex subscription targets', async () => {
-    const { runner } = await makeRunner(backend(claudeCodeFramework))
+  it('runs a native Codex subscription target through its restricted profile', async () => {
+    const { runner } = await makeRunner(backend(codexFramework), {
+      events: [event({ role: 'assistant', text: 'PONG' })]
+    })
 
     expect(runner.supportsTarget(target('claude-code'))).toBe(true)
     expect(runner.supportsTarget(target('opencode'))).toBe(true)
     expect(runner.supportsTarget(target('codex'))).toBe(true)
-    expect(runner.supportsTarget(target('codex', CODEX_SHARED_PROVIDER_ID))).toBe(false)
     await expect(
       runner.run(runInput({ target: target('codex', CODEX_SHARED_PROVIDER_ID) }))
-    ).rejects.toMatchObject({
-      code: 'transport-unavailable'
+    ).resolves.toMatchObject({
+      text: 'PONG',
+      frameworkId: 'codex'
     })
   })
 
