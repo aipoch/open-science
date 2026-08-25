@@ -75,10 +75,16 @@ type PendingComputeApproval = {
 export class ComputeApprovalBroker {
   private readonly pending = new Map<string, PendingComputeApproval>()
   private readonly pausedSessions = new Set<string>()
+  private readonly cancellingSessions = new Set<string>()
+  private readonly completingSessionCancellations = new Set<string>()
 
   private readonly providerGenerations = new Map<string, number>()
   private readonly invalidatingProviders = new Set<string>()
   private readonly inFlightRequests = new Map<string, Set<Promise<ComputeApprovalDecision>>>()
+  private readonly inFlightSessionRequests = new Map<
+    string,
+    Set<Promise<ComputeApprovalDecision>>
+  >()
 
   // Legacy fallback used only when no durable adapter is supplied.
   private readonly conversationGrants = new Set<string>()
@@ -103,6 +109,7 @@ export class ComputeApprovalBroker {
     signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {
     signal?.throwIfAborted()
+    if (context && this.cancellingSessions.has(context.sessionId)) return Promise.resolve('deny')
     const id = this.deps.generateId()
     const providerId = info.provider_id
     const request = { id, ...info }
@@ -152,6 +159,7 @@ export class ComputeApprovalBroker {
     signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {
     signal?.throwIfAborted()
+    if (this.cancellingSessions.has(ctx.sessionId)) return Promise.resolve('deny')
     const providerId = info.provider_id
     if (this.invalidatingProviders.has(providerId)) return Promise.resolve('deny')
 
@@ -159,9 +167,12 @@ export class ComputeApprovalBroker {
     const requests = this.inFlightRequests.get(providerId) ?? new Set()
     requests.add(request)
     this.inFlightRequests.set(providerId, requests)
+    const sessionRequests = this.inFlightSessionRequests.get(ctx.sessionId) ?? new Set()
+    sessionRequests.add(request)
+    this.inFlightSessionRequests.set(ctx.sessionId, sessionRequests)
     void request.then(
-      () => this.releaseInFlightRequest(providerId, request),
-      () => this.releaseInFlightRequest(providerId, request)
+      () => this.releaseInFlightRequest(providerId, ctx.sessionId, request),
+      () => this.releaseInFlightRequest(providerId, ctx.sessionId, request)
     )
     return request
   }
@@ -174,6 +185,10 @@ export class ComputeApprovalBroker {
     const { sessionId, projectId, operation } = ctx
     const providerId = info.provider_id
     const providerGeneration = this.providerGenerations.get(providerId) ?? 0
+    const requestWasCancelled = (): boolean => {
+      signal?.throwIfAborted()
+      return this.cancellingSessions.has(sessionId)
+    }
 
     if (this.deps.permissionGrants) {
       const durableScope = await this.deps.permissionGrants.resolve({
@@ -182,15 +197,14 @@ export class ComputeApprovalBroker {
         operation,
         providerId
       })
-      signal?.throwIfAborted()
+      if (requestWasCancelled()) return 'deny'
       if (durableScope) {
         const providerIsCurrent = await this.isProviderCurrent(
           providerId,
           ctx.ownerId,
           providerGeneration
         )
-        signal?.throwIfAborted()
-        if (!providerIsCurrent) return 'deny'
+        if (requestWasCancelled() || !providerIsCurrent) return 'deny'
         if (durableScope === 'session') return 'conversation'
         return durableScope
       }
@@ -199,15 +213,14 @@ export class ComputeApprovalBroker {
     // ── legacy project grant check (persistent) ───────────────────────────────────
     if (this.deps.checkProjectGrant) {
       const hasProject = await this.deps.checkProjectGrant({ projectId, operation, providerId })
-      signal?.throwIfAborted()
+      if (requestWasCancelled()) return 'deny'
       if (hasProject) {
         const providerIsCurrent = await this.isProviderCurrent(
           providerId,
           ctx.ownerId,
           providerGeneration
         )
-        signal?.throwIfAborted()
-        if (!providerIsCurrent) return 'deny'
+        if (requestWasCancelled() || !providerIsCurrent) return 'deny'
         return 'project'
       }
     }
@@ -220,8 +233,7 @@ export class ComputeApprovalBroker {
         ctx.ownerId,
         providerGeneration
       )
-      signal?.throwIfAborted()
-      if (!providerIsCurrent) return 'deny'
+      if (requestWasCancelled() || !providerIsCurrent) return 'deny'
       return 'conversation'
     }
 
@@ -230,6 +242,7 @@ export class ComputeApprovalBroker {
     // entered the in-flight set but before it reached the approval card. Fail closed here so the
     // invalidator cannot miss a newly-created pending request and wait on it indefinitely.
     if (
+      requestWasCancelled() ||
       this.invalidatingProviders.has(providerId) ||
       (this.providerGenerations.get(providerId) ?? 0) !== providerGeneration
     ) {
@@ -246,8 +259,7 @@ export class ComputeApprovalBroker {
         ctx.ownerId,
         providerGeneration
       )
-      signal?.throwIfAborted()
-      if (!providerIsCurrent) return 'deny'
+      if (requestWasCancelled() || !providerIsCurrent) return 'deny'
     }
 
     // Record the scope the user already selected. A later request/Session cancellation still stops
@@ -269,8 +281,7 @@ export class ComputeApprovalBroker {
         ctx.ownerId,
         providerGeneration
       )
-      signal?.throwIfAborted()
-      if (!providerIsCurrent) return 'deny'
+      if (requestWasCancelled() || !providerIsCurrent) return 'deny'
     }
 
     return decision
@@ -304,6 +315,8 @@ export class ComputeApprovalBroker {
   }
 
   cancelSession(sessionId: string): void {
+    this.cancellingSessions.add(sessionId)
+    this.completingSessionCancellations.delete(sessionId)
     this.pausedSessions.delete(sessionId)
     for (const key of this.conversationGrants) {
       if (key.startsWith(`${sessionId}:`)) this.conversationGrants.delete(key)
@@ -311,6 +324,15 @@ export class ComputeApprovalBroker {
     for (const [id, entry] of this.pending) {
       if (entry.context?.sessionId === sessionId) this.settle(id, 'deny', 'cancelled')
     }
+  }
+
+  completeSessionCancellation(sessionId: string): void {
+    if (!this.cancellingSessions.has(sessionId)) return
+    if (this.inFlightSessionRequests.has(sessionId)) {
+      this.completingSessionCancellations.add(sessionId)
+      return
+    }
+    this.cancellingSessions.delete(sessionId)
   }
 
   private schedule(id: string, entry: PendingComputeApproval): void {
@@ -344,11 +366,20 @@ export class ComputeApprovalBroker {
 
   private releaseInFlightRequest(
     providerId: string,
+    sessionId: string,
     request: Promise<ComputeApprovalDecision>
   ): void {
     const requests = this.inFlightRequests.get(providerId)
     requests?.delete(request)
     if (requests?.size === 0) this.inFlightRequests.delete(providerId)
+
+    const sessionRequests = this.inFlightSessionRequests.get(sessionId)
+    sessionRequests?.delete(request)
+    if (sessionRequests?.size !== 0) return
+    this.inFlightSessionRequests.delete(sessionId)
+    if (this.completingSessionCancellations.delete(sessionId)) {
+      this.cancellingSessions.delete(sessionId)
+    }
   }
 
   private async isProviderCurrent(

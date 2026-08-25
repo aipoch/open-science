@@ -2151,8 +2151,12 @@ const createApplicationModules = async (
       onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll(),
       beforeSessionDelete: async (sessionId) => {
         computeIpcModule.handlers.approvalCancelSession(sessionId)
-        await sideChatOwnerRef.current?.invalidateParents([sessionId])
-        await notebookService.shutdownSession(sessionId)
+        try {
+          await sideChatOwnerRef.current?.invalidateParents([sessionId])
+          await notebookService.shutdownSession(sessionId)
+        } finally {
+          computeIpcModule.handlers.approvalCompleteSessionCancellation(sessionId)
+        }
       },
       initializationBarrier: initialConnectorSkillsReady,
       profileService,

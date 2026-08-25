@@ -191,6 +191,7 @@ type ComputeHandlers = {
   approvalPauseSession: (sessionId: string) => void
   approvalResumeSession: (sessionId: string) => void
   approvalCancelSession: (sessionId: string) => void
+  approvalCompleteSessionCancellation: (sessionId: string) => void
   // Returns JobSummary[] for a session, optionally filtered by status (renderer feed, issue 05).
   jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
@@ -438,6 +439,8 @@ const createComputeHandlers = (
     approvalPauseSession: (sessionId) => broker.pauseSession(sessionId),
     approvalResumeSession: (sessionId) => broker.resumeSession(sessionId),
     approvalCancelSession: (sessionId) => broker.cancelSession(sessionId),
+    approvalCompleteSessionCancellation: (sessionId) =>
+      broker.completeSessionCancellation(sessionId),
     jobsList: async (filter) => {
       if (!jobRepository || !storageRoot) return []
       const hosts = await repository.list()

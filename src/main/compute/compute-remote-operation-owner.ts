@@ -218,7 +218,10 @@ export class ComputeRemoteOperationOwner {
 
     let connection
     try {
-      connection = await this.connectionBroker.acquire(providerId, { intent: 'direct_command' })
+      connection = await this.connectionBroker.acquire(providerId, {
+        intent: 'direct_command',
+        ...(signal ? { signal } : {})
+      })
     } catch (error) {
       throw computeCallConnectionError(error)
     }
@@ -236,7 +239,8 @@ export class ComputeRemoteOperationOwner {
       runResult = await connection.run(wrappedCommand, {
         timeoutMs,
         loginShell,
-        maxOutputBytes: CALL_COMMAND_MAX_OUTPUT_BYTES
+        maxOutputBytes: CALL_COMMAND_MAX_OUTPUT_BYTES,
+        ...(signal ? { signal } : {})
       })
     } catch (error) {
       throw computeCallConnectionError(error)
@@ -299,7 +303,10 @@ export class ComputeRemoteOperationOwner {
 
     let connection
     try {
-      connection = await this.connectionBroker.acquire(providerId, { intent: 'direct_download' })
+      connection = await this.connectionBroker.acquire(providerId, {
+        intent: 'direct_download',
+        ...(signal ? { signal } : {})
+      })
     } catch (error) {
       throw remoteConnectionError(error)
     }

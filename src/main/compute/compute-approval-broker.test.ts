@@ -326,6 +326,7 @@ describe('ComputeApprovalBroker', () => {
     }
 
     broker.cancelSession('session-retained')
+    broker.completeSessionCancellation('session-retained')
     const retried = broker.request(makeRequest(), context)
 
     expect(broker.getPending('id-1')).not.toBeNull()
@@ -427,6 +428,37 @@ describe('ComputeApprovalBroker', () => {
     finishGrantLookup?.('project')
 
     await expect(decision).rejects.toMatchObject({ name: 'AbortError' })
+    expect(broadcast).not.toHaveBeenCalled()
+  })
+
+  it('does not publish an approval after Session cancellation starts during grant lookup', async () => {
+    let finishGrantLookup: (() => void) | undefined
+    const resolveGrant = vi.fn(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finishGrantLookup = () => resolve(undefined)
+        })
+    )
+    const broadcast = vi.fn()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast,
+      permissionGrants: { resolve: resolveGrant, remember: vi.fn() } as never
+    })
+
+    const decision = broker.requestWithContext(makeRequest(), {
+      sessionId: 'session-deleting',
+      projectId: 'project-1',
+      operation: 'call_command',
+      ownerId: 'host-row-1'
+    })
+    await vi.waitFor(() => expect(resolveGrant).toHaveBeenCalledOnce())
+
+    broker.cancelSession('session-deleting')
+    broker.completeSessionCancellation('session-deleting')
+    finishGrantLookup?.()
+
+    await expect(decision).resolves.toBe('deny')
     expect(broadcast).not.toHaveBeenCalled()
   })
 
