@@ -157,6 +157,20 @@ describe('RestrictedInferenceRunner', () => {
     const sourceHome = join(temporaryRoot, 'subscription-home')
     await mkdir(sourceHome)
     await writeFile(join(sourceHome, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+    await writeFile(
+      join(sourceHome, 'config.toml'),
+      [
+        'cli_auth_credentials_store = "file"',
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers."subscription-route"]',
+        'name = "Subscription route"',
+        'base_url = "http://127.0.0.1:43123/v1"',
+        'wire_api = "responses"',
+        'requires_openai_auth = true',
+        ''
+      ].join('\n')
+    )
 
     const prepared = await prepareRestrictedBackend(
       backend(codexFramework, {
@@ -179,9 +193,10 @@ describe('RestrictedInferenceRunner', () => {
     )
 
     expect(await readFile(join(prepared.env.CODEX_HOME!, 'auth.json'), 'utf8')).toContain('secret')
-    expect(await readFile(join(prepared.env.CODEX_HOME!, 'config.toml'), 'utf8')).toContain(
-      'cli_auth_credentials_store = "file"'
-    )
+    const configToml = await readFile(join(prepared.env.CODEX_HOME!, 'config.toml'), 'utf8')
+    expect(configToml).toContain('cli_auth_credentials_store = "file"')
+    expect(configToml).toContain('model_provider = "subscription-route"')
+    expect(configToml).toContain('base_url = "http://127.0.0.1:43123/v1"')
     expect(JSON.parse(prepared.env.CODEX_CONFIG!)).toMatchObject({
       experimental_use_unified_exec_tool: false,
       features: {
@@ -258,7 +273,7 @@ describe('RestrictedInferenceRunner', () => {
   })
 
   it('runs a native Codex subscription target through its restricted profile', async () => {
-    const { runner } = await makeRunner(backend(codexFramework), {
+    const { runner, resolveTarget } = await makeRunner(backend(codexFramework), {
       events: [event({ role: 'assistant', text: 'PONG' })]
     })
 
@@ -270,6 +285,10 @@ describe('RestrictedInferenceRunner', () => {
     ).resolves.toMatchObject({
       text: 'PONG',
       frameworkId: 'codex'
+    })
+    expect(resolveTarget).toHaveBeenCalledWith(target('codex', CODEX_SHARED_PROVIDER_ID), {
+      systemPromptAppends: ['Do not use tools.'],
+      includeSkillAndConnectorContext: false
     })
   })
 

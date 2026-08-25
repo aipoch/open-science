@@ -61,7 +61,7 @@ type RestrictedInferenceRunnerOptions = Readonly<{
     context: {
       systemPromptAppends: string[]
       includeSkillAndConnectorContext: false
-      forceCodexNativeResponsesCompatibility: true
+      forceCodexNativeResponsesCompatibility?: true
     }
   ) => Promise<ResolvedAgentBackend>
   now?: () => number
@@ -213,10 +213,14 @@ class RestrictedInferenceRunner {
       const cwd = join(jobRoot, 'cwd')
       const profileRoot = join(jobRoot, 'profile')
       await Promise.all([mkdir(cwd), mkdir(profileRoot)])
+      const nativeCodexSubscriptionAllowed =
+        input.target.frameworkId === 'codex' &&
+        isCodexSubscriptionProviderId(input.target.providerId) &&
+        this.options.allowNativeCodexSubscription === true
       backend = await this.options.resolveTarget(input.target, {
         systemPromptAppends: [input.systemPrompt],
         includeSkillAndConnectorContext: false,
-        forceCodexNativeResponsesCompatibility: true
+        ...(nativeCodexSubscriptionAllowed ? {} : { forceCodexNativeResponsesCompatibility: true })
       })
       ensureActive()
       const resolvedBackend = await prepareRestrictedBackend(backend, profileRoot, {
@@ -230,9 +234,7 @@ class RestrictedInferenceRunner {
       ensureActive()
       const bridge = resolvedBackend.responsesBridgeLease
       const nativeCodexSubscriptionToolingDisabled =
-        resolvedBackend.framework.id === 'codex' &&
-        isCodexSubscriptionProviderId(input.target.providerId) &&
-        this.options.allowNativeCodexSubscription === true
+        resolvedBackend.framework.id === 'codex' && nativeCodexSubscriptionAllowed
       if (
         resolvedBackend.framework.id === 'codex' &&
         !nativeCodexSubscriptionToolingDisabled &&

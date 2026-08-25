@@ -60,6 +60,22 @@ const copyCodexAuthentication = async (
   }
 }
 
+const copyCodexConfig = async (
+  sourceHome: string | undefined,
+  targetHome: string
+): Promise<boolean> => {
+  if (!sourceHome || sourceHome === targetHome) return false
+  try {
+    const target = join(targetHome, 'config.toml')
+    await copyFile(join(sourceHome, 'config.toml'), target)
+    await chmod(target, 0o600)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+
 const removeClaudeSkillRuntimeCapability = (
   source: Readonly<Record<string, unknown>> | undefined
 ): Record<string, unknown> => {
@@ -144,12 +160,17 @@ const prepareCodexBackend = async (
 ): Promise<ResolvedAgentBackend> => {
   const codexHome = join(profileRoot, 'codex')
   await mkdir(codexHome, { recursive: true })
-  const hasFileAuthentication = await copyCodexAuthentication(backend.env.CODEX_HOME, codexHome)
-  await writeFile(
-    join(codexHome, 'config.toml'),
-    `cli_auth_credentials_store = "${hasFileAuthentication ? 'file' : 'ephemeral'}"\n`,
-    { encoding: 'utf8', mode: 0o600 }
-  )
+  const [hasFileAuthentication, hasAppOwnedConfig] = await Promise.all([
+    copyCodexAuthentication(backend.env.CODEX_HOME, codexHome),
+    copyCodexConfig(backend.env.CODEX_HOME, codexHome)
+  ])
+  if (!hasAppOwnedConfig) {
+    await writeFile(
+      join(codexHome, 'config.toml'),
+      `cli_auth_credentials_store = "${hasFileAuthentication ? 'file' : 'ephemeral'}"\n`,
+      { encoding: 'utf8', mode: 0o600 }
+    )
+  }
   const codexConfig = record(JSON.parse(backend.env.CODEX_CONFIG ?? '{}'))
   delete codexConfig.developer_instructions
   codexConfig.experimental_use_unified_exec_tool = false
