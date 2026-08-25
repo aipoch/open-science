@@ -174,15 +174,33 @@ export const useWorkspaceComposerUploadController = ({
   useEffect(
     () => () => {
       const transferIds = new Set(Object.keys(controllersRef.current))
+      const retainedAttachmentPaths = new Set(attachmentsRef.current.map(({ path }) => path))
+      const historyAttachments = new Map<string, UploadedAttachment>()
       for (const transfer of transfersRef.current) transferIds.add(transfer.transferId)
       for (const draft of Object.values(draftsRef.current)) {
         for (const transfer of draft.attachmentTransfers) transferIds.add(transfer.transferId)
+        for (const attachment of draft.attachments) retainedAttachmentPaths.add(attachment.path)
+      }
+      for (const history of [undoRef.current, redoRef.current]) {
+        for (const stack of Object.values(history)) {
+          for (const snapshot of stack) {
+            for (const transfer of snapshot.attachmentTransfers)
+              transferIds.add(transfer.transferId)
+            for (const attachment of snapshot.attachments)
+              historyAttachments.set(attachment.path, attachment)
+          }
+        }
       }
       for (const transferId of transferIds) {
         cancelledTransfersRef.current.add(transferId)
         controllersRef.current[transferId]?.abort()
-        void uploads.abortTransfer({ transferId })
+        void uploads.abortTransfer({ transferId }).catch(() => undefined)
       }
+      for (const [path] of historyAttachments) {
+        if (!retainedAttachmentPaths.has(path))
+          void uploads.deleteUpload({ path }).catch(() => undefined)
+      }
+      transferFilesRef.current = {}
     },
     [draftsRef, uploads]
   )

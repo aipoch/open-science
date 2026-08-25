@@ -227,6 +227,33 @@ describe('workspace composer controller', () => {
     expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/figure.png' })
   })
 
+  it('deletes an attachment retained only by redo history when the controller unmounts', async () => {
+    const image = {
+      id: 'upload-image',
+      sessionId: '.pending',
+      name: 'figure.png',
+      originalName: 'figure.png',
+      path: '/uploads/figure.png',
+      mimeType: 'image/png',
+      size: 5
+    }
+    const uploadApi = uploads(vi.fn().mockResolvedValue(image))
+    const hook = renderController(uploadApi)
+
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['image'], 'figure.png', { type: 'image/png' })
+      ])
+    )
+    await flushAsyncWork()
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(uploadApi.deleteUpload).not.toHaveBeenCalled()
+
+    hook.unmount()
+
+    expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/figure.png' })
+  })
+
   it('undoes a pasted image while its upload is still pending', () => {
     const pending = deferred<UploadedAttachment | null>()
     const uploadApi = uploads(vi.fn(() => pending.promise))
