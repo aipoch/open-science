@@ -94,14 +94,15 @@ const visibleCategories = (usage: AcpContextUsage): AcpContextUsageCategory[] =>
 type CallSegmentKey = 'input' | 'cache-read' | 'cache-write' | 'cache' | 'output'
 
 // Catalog keys stay unresolved at module scope so changing locale updates every render site.
-// Segment colors mirror WorkspaceMessageItem: Input=chart-2, Cache read=chart-4,
-// Cache write=chart-3, Output=chart-1 — the same metric keeps the same color app-wide.
+// Segment colors mirror the message Usage popover in WorkspaceMessageItem: Input is the deep
+// blue chart-1, Cache read its light tint (cache is reused input), Cache write amber chart-3,
+// Output green chart-2 — the same metric keeps the same color app-wide.
 const callSegmentPresentation: Record<CallSegmentKey, { label: string; color: string }> = {
-  input: { label: 'Input', color: 'bg-chart-2' },
-  'cache-read': { label: 'Cache read', color: 'bg-chart-4' },
+  input: { label: 'Input', color: 'bg-chart-1' },
+  'cache-read': { label: 'Cache read', color: 'bg-chart-1/40' },
   'cache-write': { label: 'Cache write', color: 'bg-chart-3' },
-  cache: { label: 'Cache', color: 'bg-chart-4' },
-  output: { label: 'Output', color: 'bg-chart-1' }
+  cache: { label: 'Cache', color: 'bg-chart-1/40' },
+  output: { label: 'Output', color: 'bg-chart-2' }
 }
 
 type CallTokenSegment = Readonly<{ key: CallSegmentKey; tokens: number }>
@@ -311,19 +312,23 @@ const CurrentComposition = ({
         </div>
         <div className="mt-4 grid min-w-0 gap-5 lg:grid-cols-[minmax(12rem,0.72fr)_minmax(0,1.28fr)] lg:gap-8">
           <div className="min-w-0">
-            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-              <span className="text-3xl font-semibold tracking-tight tabular-nums text-foreground">
-                {formatTokens(usage.used)}
-              </span>
-              <span className="text-sm tabular-nums text-muted-foreground">
-                {usage.size
-                  ? t('/ {{size}} tokens', { size: formatTokens(usage.size) })
-                  : t('tokens')}
-              </span>
+            <div className="flex min-w-0 items-baseline justify-between gap-x-3">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                <span className="text-3xl font-semibold tracking-tight tabular-nums text-foreground">
+                  {formatTokens(usage.used)}
+                </span>
+                <span className="text-sm tabular-nums text-muted-foreground">
+                  {usage.size
+                    ? t('/ {{size}} tokens', { size: formatTokens(usage.size) })
+                    : t('tokens')}
+                </span>
+              </div>
+              {percent === undefined ? null : (
+                <span className="shrink-0 text-xs font-medium tabular-nums text-primary">
+                  {percent}%
+                </span>
+              )}
             </div>
-            {percent === undefined ? null : (
-              <div className="mt-1 text-xs font-medium tabular-nums text-primary">{percent}%</div>
-            )}
             <div className="mt-3">
               <BreakdownDiagnostics usage={usage} />
             </div>

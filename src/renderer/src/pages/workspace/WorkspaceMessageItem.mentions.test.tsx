@@ -456,19 +456,19 @@ describe('WorkspaceMessageItem turn token usage', () => {
       breakdown?.querySelectorAll<HTMLElement>('[data-slot="turn-token-usage-segment"]') ?? []
     )
     expect(segments).toHaveLength(3)
-    expect(segments[0]?.className).toContain('bg-chart-2')
+    expect(segments[0]?.className).toContain('bg-chart-1')
     expect(segments[0]?.style.flexGrow).toBe('12345')
-    expect(segments[1]?.className).toContain('bg-chart-4')
+    expect(segments[1]?.className).toContain('bg-chart-1/40')
     expect(segments[1]?.style.flexGrow).toBe('678')
-    expect(segments[2]?.className).toContain('bg-chart-1')
+    expect(segments[2]?.className).toContain('bg-chart-2')
     expect(segments[2]?.style.flexGrow).toBe('90')
     const markers = Array.from(
       usagePopover?.querySelectorAll('[data-slot="turn-token-usage-marker"]') ?? []
     )
     expect(markers).toHaveLength(3)
-    expect(markers[0]?.className).toContain('bg-chart-2')
-    expect(markers[1]?.className).toContain('bg-chart-4')
-    expect(markers[2]?.className).toContain('bg-chart-1')
+    expect(markers[0]?.className).toContain('bg-chart-1')
+    expect(markers[1]?.className).toContain('bg-chart-1/40')
+    expect(markers[2]?.className).toContain('bg-chart-2')
     expect(
       usagePopover?.querySelector('[data-slot="turn-token-usage-total"]')?.className
     ).toContain('border-t')
@@ -619,10 +619,10 @@ describe('WorkspaceMessageItem turn token usage', () => {
     )
     expect(segments).toHaveLength(4)
     expect(segments.map((segment) => segment.style.flexGrow)).toEqual(['100', '30', '20', '10'])
-    expect(segments[0]?.className).toContain('bg-chart-2')
-    expect(segments[1]?.className).toContain('bg-chart-4')
+    expect(segments[0]?.className).toContain('bg-chart-1')
+    expect(segments[1]?.className).toContain('bg-chart-1/40')
     expect(segments[2]?.className).toContain('bg-chart-3')
-    expect(segments[3]?.className).toContain('bg-chart-1')
+    expect(segments[3]?.className).toContain('bg-chart-2')
   })
 
   it('keeps the Usage popover open while the pointer crosses into it, then closes it', async () => {

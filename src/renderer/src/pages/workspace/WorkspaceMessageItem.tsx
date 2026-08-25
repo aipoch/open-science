@@ -210,15 +210,15 @@ const TurnTokenUsage = ({
     usage?.cachedReadTokens !== undefined && usage.cachedWriteTokens !== undefined
   const entries: readonly TurnTokenUsageEntry[] = hasCacheBreakdown
     ? [
-        [t('Input'), usage.inputTokens, 'bg-chart-2'],
-        [t('Cache read'), usage.cachedReadTokens, 'bg-chart-4'],
+        [t('Input'), usage.inputTokens, 'bg-chart-1'],
+        [t('Cache read'), usage.cachedReadTokens, 'bg-chart-1/40'],
         [t('Cache write'), usage.cachedWriteTokens, 'bg-chart-3'],
-        [t('Output'), usage.outputTokens, 'bg-chart-1']
+        [t('Output'), usage.outputTokens, 'bg-chart-2']
       ]
     : [
-        [t('Input'), usage?.inputTokens, 'bg-chart-2'],
-        [t('Cache'), usage?.cacheTokens, 'bg-chart-4'],
-        [t('Output'), usage?.outputTokens, 'bg-chart-1']
+        [t('Input'), usage?.inputTokens, 'bg-chart-1'],
+        [t('Cache'), usage?.cacheTokens, 'bg-chart-1/40'],
+        [t('Output'), usage?.outputTokens, 'bg-chart-2']
       ]
   const totalTokens = usage ? usage.inputTokens + usage.cacheTokens + usage.outputTokens : undefined
   const safeTotalTokens = Number.isSafeInteger(totalTokens) ? totalTokens : undefined

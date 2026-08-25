@@ -283,7 +283,7 @@ describe('workspace page component boundaries', () => {
     const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
     const messageItemSource = readFileSync(workspaceMessageItemPath, 'utf8')
 
-    for (const token of ['chart-1', 'chart-2', 'chart-3', 'chart-4']) {
+    for (const token of ['chart-1', 'chart-2', 'chart-3']) {
       expect(messageItemSource).toContain(`bg-${token}`)
       expect(mainCssSource).toContain(`--color-${token}: var(--${token});`)
       expect(mainCssSource.match(new RegExp(`--${token}:`, 'g'))).toHaveLength(2)

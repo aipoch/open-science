@@ -335,11 +335,12 @@ describe('ContextWindowDialog', () => {
     expect(bands?.[0]?.className).not.toContain('border-l')
     const lane = bands?.[0]?.querySelector('span.bg-muted')
     expect(lane?.textContent).toContain('T1')
-    // Call bars use the muted design-system chart tokens, matching the per-message usage bars.
+    // Call bars use the muted design-system chart tokens, matching the message Usage popover:
+    // Input deep blue, Cache a light tint of the same blue, Output green.
     const firstBar = chart?.querySelector('[data-slot="context-call-bar"]')
-    expect(firstBar?.querySelector('.bg-chart-2')).not.toBeNull()
-    expect(firstBar?.querySelector('.bg-chart-4')).not.toBeNull()
     expect(firstBar?.querySelector('.bg-chart-1')).not.toBeNull()
+    expect(firstBar?.querySelector('[class*="bg-chart-1/40"]')).not.toBeNull()
+    expect(firstBar?.querySelector('.bg-chart-2')).not.toBeNull()
     expect(firstBar?.querySelector('.bg-cyan-400')).toBeNull()
 
     const history = document.body.querySelector('[data-slot="context-call-history"]')
