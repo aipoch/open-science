@@ -355,6 +355,10 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
   }
 }
 
+export const assertSessionProjectionStorageShape = (session: PersistedChatSession): void => {
+  assertProjectionStorageShape(buildSessionProjection(session))
+}
+
 const sessionData = (
   projection: SessionProjection,
   number: number
@@ -559,8 +563,9 @@ export class SessionProjectionRepository {
   async commitSave(session: PersistedChatSession): Promise<void> {
     const number = session.number
     if (number === undefined) throw new Error('Session projection requires a number.')
-    const client = await this.client()
     const projection = buildSessionProjection(session)
+    assertProjectionStorageShape(projection)
+    const client = await this.client()
     await client.$transaction(async (tx) => {
       const project = await tx.project.findFirst({
         where: { id: session.projectId, deletedAt: null },
@@ -587,8 +592,9 @@ export class SessionProjectionRepository {
   // Session row and number were allocated when the pending marker was created, so reconciliation
   // updates only that existing identity and cannot create new authority for a deleted Project.
   async commitReconciliation(session: PersistedChatSession): Promise<void> {
-    const client = await this.client()
     const projection = buildSessionProjection(session)
+    assertProjectionStorageShape(projection)
+    const client = await this.client()
     await client.$transaction(async (tx) => {
       const existing = await tx.session.findUnique({ where: { id: session.id } })
       if (!existing) throw new Error('Pending Session projection identity is missing.')
@@ -658,7 +664,9 @@ export class SessionProjectionRepository {
       .map((session) => {
         const number = session.number
         if (number === undefined) throw new Error('Backfilled Session is missing its number.')
-        return { session: { ...session, number }, projection: buildSessionProjection(session) }
+        const projection = buildSessionProjection(session)
+        assertProjectionStorageShape(projection)
+        return { session: { ...session, number }, projection }
       })
     const turnUsage = projected.flatMap(({ session, projection }) =>
       projection.turnUsage.map((usage) => ({ sessionId: session.id, ...usage }))

@@ -21,7 +21,11 @@ import {
 } from '../../shared/session-persistence'
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
-import { buildSessionProjection, type SessionProjectionRepository } from './projection'
+import {
+  assertSessionProjectionStorageShape,
+  buildSessionProjection,
+  type SessionProjectionRepository
+} from './projection'
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
@@ -448,6 +452,7 @@ class SessionRepository {
       if (freshResult.diagnostics?.isComplete === false) {
         return { result: freshResult, sessions: projectIncompleteSummaries(freshResult) }
       }
+      for (const session of freshResult.sessions) assertSessionProjectionStorageShape(session)
       const assignments = await this.projection!.numberAssignments()
       const existingNumberById = new Map(assignments.map(({ id, number }) => [id, number]))
       const existingIdByNumber = new Map(assignments.map(({ id, number }) => [number, id]))
@@ -770,6 +775,9 @@ class SessionRepository {
       }
     }
 
+    if (this.projection && this.projectionWritesSuspended) {
+      assertSessionProjectionStorageShape(session)
+    }
     const projectedSession =
       this.projection && !this.projectionWritesSuspended
         ? await this.projection.prepareSave(session)

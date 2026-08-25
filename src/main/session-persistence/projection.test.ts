@@ -108,6 +108,10 @@ const session = (id: string, createdAt = 100): PersistedChatSession => ({
   updatedAt: createdAt + 5
 })
 
+const sessionWithInvalidProjection = (id: string, createdAt = 100): PersistedChatSession => {
+  return { ...session(id, createdAt), updatedAt: Number.MAX_VALUE }
+}
+
 describe('Session projection', () => {
   let client: PrismaClient | undefined
   let storageRoot: string | undefined
@@ -317,6 +321,45 @@ describe('Session projection', () => {
 
     expect.soft(await readFile(authorityPath, 'utf8')).toBe(originalAuthority)
     await expect(projection.pending()).resolves.toEqual([])
+  })
+
+  it('rejects an invalid Session save while projection publication is suspended', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-suspended-validation-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const files = new SessionRepository(storageRoot)
+    await files.saveSession(session('older', 100))
+    const stale = await files.loadAll()
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const authorityStarted = createDeferred<void>()
+    const authorityReleased = createDeferred<void>()
+    const initializing = repository.ensureSessionProjection(async () => {
+      authorityStarted.resolve()
+      await authorityReleased.promise
+      return stale
+    })
+
+    await authorityStarted.promise
+    const saveError = await repository
+      .saveSession(sessionWithInvalidProjection('invalid', 200))
+      .then(() => undefined)
+      .catch((error: unknown) => error)
+    const authorityPath = join(storageRoot, 'sessions', 'project-1', 'invalid.json')
+    const authority = await readFile(authorityPath, 'utf8').catch(() => undefined)
+    authorityReleased.resolve()
+    const initializationError = await initializing
+      .then(() => undefined)
+      .catch((error: unknown) => error)
+
+    expect(saveError).toEqual(
+      expect.objectContaining({
+        message: 'Session projection updatedAt must be a non-negative safe integer.'
+      })
+    )
+    expect(authority).toBeUndefined()
+    expect(initializationError).toBeUndefined()
   })
 
   it('keeps a deleted metadata tombstone, excludes its facts, and never reuses its number', async () => {
@@ -628,6 +671,34 @@ describe('Session projection', () => {
     await expect(
       client.sessionNumberSequence.findUnique({ where: { id: 'global' } })
     ).resolves.toMatchObject({ nextNumber: 3 })
+  })
+
+  it('rejects an invalid backfill before clearing the existing projection', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-rebuild-validation-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const retained = await repository.saveSession(session('retained', 100))
+    await projection.replaceAll([retained])
+    await client.sessionProjectionState.update({
+      where: { id: 'session-projection' },
+      data: { projectionVersion: 1 }
+    })
+    const files = new SessionRepository(storageRoot)
+    await files.saveSession(sessionWithInvalidProjection('invalid', 200))
+
+    await expect(repository.ensureSessionProjection(() => files.loadAll())).rejects.toThrow(
+      'Session projection updatedAt must be a non-negative safe integer.'
+    )
+    await expect(client.session.findUnique({ where: { id: retained.id } })).resolves.toMatchObject({
+      id: retained.id,
+      deletedAtMs: null
+    })
+    await expect(
+      client.sessionProjectionState.findUnique({ where: { id: 'session-projection' } })
+    ).resolves.toMatchObject({ projectionVersion: 1 })
   })
 
   it('derives degraded summaries from read-only authority instead of stale SQLite rows', async () => {
