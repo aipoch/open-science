@@ -154,6 +154,12 @@ describe('GlobalSearchDialog', () => {
     expect(sessionRow.querySelector('[data-testid="global-search-session-icon"]')).not.toBeNull()
     expect(sessionRow.querySelector('.font-mono.tabular-nums')?.textContent).toBe('#12')
     expect(document.body.textContent).toContain('New session')
+    const newSession = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (element) => element.textContent?.includes('New session')
+    )
+    const newSessionIcon = newSession?.querySelector('[data-testid="global-search-command-icon"]')
+    expect(newSessionIcon?.classList.contains('size-10')).toBe(true)
+    expect(newSessionIcon?.classList.contains('shrink-0')).toBe(true)
     const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
     expect(input?.placeholder).toBe('Search this project…')
     expect(input?.parentElement?.textContent).toContain('Alpha')
@@ -743,6 +749,9 @@ describe('GlobalSearchDialog', () => {
     const newProject = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
       (element) => element.textContent?.includes('New project')
     )
+    const newProjectIcon = newProject?.querySelector('[data-testid="global-search-command-icon"]')
+    expect(newProjectIcon?.classList.contains('size-10')).toBe(true)
+    expect(newProjectIcon?.classList.contains('shrink-0')).toBe(true)
     await act(async () => newProject?.click())
     expect(useNavigationStore.getState()).toMatchObject({
       view: 'home',

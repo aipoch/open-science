@@ -948,11 +948,17 @@ export const GlobalSearchDialog = ({
                       activate({ kind: isProjectScope ? 'new-session' : 'new-project' })
                     }
                   >
-                    {isProjectScope ? (
-                      <MessageCircle className="size-5 text-primary" aria-hidden="true" />
-                    ) : (
-                      <Zap className="size-5 text-primary" aria-hidden="true" />
-                    )}
+                    <span
+                      data-testid="global-search-command-icon"
+                      className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border-300/50 bg-bg-200 text-primary"
+                      aria-hidden="true"
+                    >
+                      {isProjectScope ? (
+                        <MessageCircle className="size-5" />
+                      ) : (
+                        <Zap className="size-5" />
+                      )}
+                    </span>
                     <span className="text-sm font-medium">
                       {isProjectScope ? t('New session') : t('New project')}
                     </span>
