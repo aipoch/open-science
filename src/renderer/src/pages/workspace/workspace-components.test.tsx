@@ -30,7 +30,7 @@ const componentFileNames = [
   'WorkspaceSidebar.tsx',
   'ConversationPanel.tsx',
   'PreviewPanel.tsx',
-  'RenameSessionDialog.tsx',
+  'EditSessionDialog.tsx',
   'DeleteSessionDialog.tsx'
 ]
 
@@ -181,7 +181,7 @@ describe('workspace page component boundaries', () => {
       readFileSync(workspaceToolActivityStylePath, 'utf8'),
       readFileSync(workspaceWebSearchActivityRowPath, 'utf8'),
       readFileSync(resolve(__dirname, 'DeleteSessionDialog.tsx'), 'utf8'),
-      readFileSync(resolve(__dirname, 'RenameSessionDialog.tsx'), 'utf8'),
+      readFileSync(resolve(__dirname, 'EditSessionDialog.tsx'), 'utf8'),
       readFileSync(resolve(__dirname, 'SessionNotebookDialog.tsx'), 'utf8'),
       readFileSync(resolve(__dirname, 'notebook-code.tsx'), 'utf8')
     ].join('\n')
@@ -214,7 +214,7 @@ describe('workspace page component boundaries', () => {
       readFileSync(workspaceToolActivityStylePath, 'utf8'),
       readFileSync(workspaceWebSearchActivityRowPath, 'utf8'),
       readFileSync(resolve(__dirname, 'DeleteSessionDialog.tsx'), 'utf8'),
-      readFileSync(resolve(__dirname, 'RenameSessionDialog.tsx'), 'utf8'),
+      readFileSync(resolve(__dirname, 'EditSessionDialog.tsx'), 'utf8'),
       readFileSync(resolve(__dirname, 'SessionNotebookDialog.tsx'), 'utf8'),
       readFileSync(resolve(__dirname, 'notebook-code.tsx'), 'utf8')
     ].join('\n')
@@ -312,16 +312,16 @@ describe('workspace page component boundaries', () => {
   })
 
   it('keeps first-batch workspace dialogs on the settings dialog chrome', () => {
-    const renameSource = readFileSync(resolve(__dirname, 'RenameSessionDialog.tsx'), 'utf8')
+    const editSource = readFileSync(resolve(__dirname, 'EditSessionDialog.tsx'), 'utf8')
     const deleteSource = readFileSync(resolve(__dirname, 'DeleteSessionDialog.tsx'), 'utf8')
     const notebookSource = readFileSync(resolve(__dirname, 'SessionNotebookDialog.tsx'), 'utf8')
 
-    for (const source of [renameSource, notebookSource]) {
+    for (const source of [editSource, notebookSource]) {
       expect(source).toContain('dialogOverlayClassName')
       expect(source).toContain('dialogPanelClassName')
-      expect(source).toContain('onInteractOutside={(event) => event.preventDefault()}')
       expect(source).not.toContain('backdrop-blur')
     }
+    expect(notebookSource).toContain('onInteractOutside={(event) => event.preventDefault()}')
 
     expect(deleteSource).toContain('dialogOverlayClassName')
     expect(deleteSource).toContain('dialogPanelClassName')

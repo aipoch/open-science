@@ -5,6 +5,7 @@ import {
   type ProjectFilesFilterPreference,
   type ReasoningEffort,
   type ReviewerModelConfiguration,
+  type SessionDetailsModelConfiguration,
   type SubagentModelConfiguration,
   type VisionModelConfiguration
 } from '../../shared/settings'
@@ -69,6 +70,39 @@ const readSubagentModel = (request: unknown): SubagentModelConfiguration =>
 
 const readReviewerModel = (request: unknown): ReviewerModelConfiguration =>
   readModelConfiguration(request, 'Reviewer')
+
+const readSessionDetailsModel = (request: unknown): SessionDetailsModelConfiguration => {
+  const configuration = readField(request, 'configuration')
+  if (typeof configuration !== 'object' || configuration === null || Array.isArray(configuration)) {
+    throw new Error('Invalid Session details model configuration.')
+  }
+  const value = configuration as Record<string, unknown>
+  if (value.mode === 'disabled' && Object.keys(value).length === 1) return { mode: 'disabled' }
+  if (
+    value.mode === 'inherit' &&
+    Object.keys(value).length === 2 &&
+    isReasoningEffort(value.reasoningEffort)
+  ) {
+    return { mode: 'inherit', reasoningEffort: value.reasoningEffort }
+  }
+  if (
+    value.mode === 'fixed' &&
+    Object.keys(value).length === 4 &&
+    typeof value.providerId === 'string' &&
+    value.providerId.trim() !== '' &&
+    typeof value.model === 'string' &&
+    value.model.trim() !== '' &&
+    isReasoningEffort(value.reasoningEffort)
+  ) {
+    return {
+      mode: 'fixed',
+      providerId: value.providerId,
+      model: value.model,
+      reasoningEffort: value.reasoningEffort
+    }
+  }
+  throw new Error('Invalid Session details model configuration.')
+}
 
 const readVisionModel = (request: unknown): VisionModelConfiguration | undefined => {
   const configuration = readField(request, 'configuration')
@@ -181,6 +215,7 @@ export {
   readProjectFilesFilter,
   readReasoningEffort,
   readReviewerModel,
+  readSessionDetailsModel,
   readSubagentModel,
   readVisionModel
 }

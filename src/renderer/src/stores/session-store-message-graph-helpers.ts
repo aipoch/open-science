@@ -25,6 +25,7 @@ import {
   type ChatSession,
   type ToolActivity
 } from './session-store-persistence-owner'
+import { formatSessionDetailsTitle } from '../../../shared/session-details'
 
 export type AppendUserMessageInput = {
   sessionId: string
@@ -279,8 +280,7 @@ export const projectElicitationRevision = (
 }
 
 export const createTitleFromMessage = (content: string): string => {
-  const normalizedTitle = content.replace(/\s+/g, ' ').trim()
-  return normalizedTitle.length > 48 ? `${normalizedTitle.slice(0, 48)}...` : normalizedTitle
+  return formatSessionDetailsTitle({ content })
 }
 
 export const createBranchTitleFromMessage = (content: string): string =>

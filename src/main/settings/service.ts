@@ -2,7 +2,6 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import type { CloseActionPreference } from '../../shared/window-controls'
-
 import type {
   ClaudeDetectResult,
   ClaudeInstallEvent,
@@ -51,6 +50,7 @@ import type {
   ProjectFilesFilterPreference,
   ReasoningEffort,
   ReviewerModelConfiguration,
+  SessionDetailsModelConfiguration as SessionDetailsModel,
   SubagentModelConfiguration,
   VisionModelConfiguration as VisionModel,
   SkillBundlePreviewResult,
@@ -108,10 +108,7 @@ import type { FetchLike } from '../skills/github-import'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredSettings } from './types'
 import type { CodexAuthControllerPort } from './codex-auth'
 import { createSettingsIdSequence } from './id-sequence'
-import { createSubagentModels, SubagentModelOwner } from './subagent-model-owner'
-import { createReviewerModels, ReviewerModelOwner } from './reviewer-model-owner'
-import { createVisionModels, VisionModelOwner } from './vision-model-owner'
-
+import { ScenarioModelOwner, createScenarioModels } from './scenario-model-owner'
 import type { SystemProxyEnvironment } from './system-proxy'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
@@ -192,9 +189,7 @@ class SettingsService {
   private readonly providers: ProviderAccountsModule
   private readonly runtimeManager: AgentRuntimeManager
   private readonly backendResolver: AgentBackendResolver
-  private readonly subagentModels: SubagentModelOwner
-  private readonly reviewerModels: ReviewerModelOwner
-  private readonly visionModels: VisionModelOwner
+  private readonly scenarioModels: ScenarioModelOwner
   private readonly storageRoot: string
   private readonly applyNetworkProxy: (settings: NetworkProxySettings) => Promise<void>
   private readonly userClaudeDir: string
@@ -265,17 +260,7 @@ class SettingsService {
       skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? '',
       getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh)
     })
-    this.subagentModels = createSubagentModels(
-      this.repository,
-      this.providers,
-      this.backendResolver
-    )
-    this.reviewerModels = createReviewerModels(
-      this.repository,
-      this.providers,
-      this.backendResolver
-    )
-    this.visionModels = createVisionModels(this.repository, this.providers, this.backendResolver)
+    this.scenarioModels = createScenarioModels(this.repository, this.providers, this.backendResolver)
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
@@ -394,26 +379,37 @@ class SettingsService {
   }
 
   async setSubagentModel(configuration: SubagentModelConfiguration): Promise<SettingsSnapshot> {
-    await this.subagentModels.set(configuration)
+    await this.scenarioModels.subagent.set(configuration)
     return this.getSettingsView()
   }
 
   async setReviewerModel(configuration: ReviewerModelConfiguration): Promise<SettingsSnapshot> {
-    await this.reviewerModels.set(configuration)
+    await this.scenarioModels.reviewer.set(configuration)
     return this.getSettingsView()
+  }
+
+  async setSessionDetailsModel(configuration: SessionDetailsModel): Promise<SettingsSnapshot> {
+    await this.scenarioModels.sessionDetails.set(configuration)
+    return this.getSettingsView()
+  }
+
+  async admitSessionDetailsExecutionTarget(
+    ...args: Parameters<ScenarioModelOwner['sessionDetails']['admit']>
+  ): ReturnType<ScenarioModelOwner['sessionDetails']['admit']> {
+    return this.scenarioModels.sessionDetails.admit(...args)
   }
 
   async setVisionModel(configuration: VisionModel | undefined): Promise<SettingsSnapshot> {
-    await this.visionModels.set(configuration)
+    await this.scenarioModels.vision.set(configuration)
     return this.getSettingsView()
   }
 
-  async admitVisionModel(): ReturnType<VisionModelOwner['admit']> {
-    return this.visionModels.admit()
+  async admitVisionModel(): ReturnType<ScenarioModelOwner['vision']['admit']> {
+    return this.scenarioModels.vision.admit()
   }
 
-  async admitReviewerExecutionModel(): ReturnType<ReviewerModelOwner['admit']> {
-    return this.reviewerModels.admit()
+  async admitReviewerExecutionModel(): ReturnType<ScenarioModelOwner['reviewer']['admit']> {
+    return this.scenarioModels.reviewer.admit()
   }
 
   // Projects one of the app's five stable user-intent slots through the active model's static effort
@@ -424,15 +420,15 @@ class SettingsService {
   }
 
   async admitSubagentExecutionModel(
-    ...args: Parameters<SubagentModelOwner['admit']>
-  ): ReturnType<SubagentModelOwner['admit']> {
-    return this.subagentModels.admit(...args)
+    ...args: Parameters<ScenarioModelOwner['subagent']['admit']>
+  ): ReturnType<ScenarioModelOwner['subagent']['admit']> {
+    return this.scenarioModels.subagent.admit(...args)
   }
 
   async resolveSubagentExecutionModel(
-    ...args: Parameters<SubagentModelOwner['resolve']>
-  ): ReturnType<SubagentModelOwner['resolve']> {
-    return this.subagentModels.resolve(...args)
+    ...args: Parameters<ScenarioModelOwner['subagent']['resolve']>
+  ): ReturnType<ScenarioModelOwner['subagent']['resolve']> {
+    return this.scenarioModels.subagent.resolve(...args)
   }
 
   async resolveActiveModelChangeTarget(): Promise<AgentModelChangeTarget | undefined> {
@@ -1050,9 +1046,9 @@ class SettingsService {
   }
 
   async resolveAdmittedSubagentBackend(
-    ...args: Parameters<SubagentModelOwner['resolveAdmittedBackend']>
-  ): ReturnType<SubagentModelOwner['resolveAdmittedBackend']> {
-    return this.subagentModels.resolveAdmittedBackend(...args)
+    ...args: Parameters<ScenarioModelOwner['subagent']['resolveAdmittedBackend']>
+  ): ReturnType<ScenarioModelOwner['subagent']['resolveAdmittedBackend']> {
+    return this.scenarioModels.subagent.resolveAdmittedBackend(...args)
   }
 
   async resolveAgentBackend(

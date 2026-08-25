@@ -18,6 +18,7 @@ import type {
   SetNetworkProxyRequest,
   SetProjectFilesFilterRequest,
   SetReviewerModelRequest,
+  SetSessionDetailsModelRequest,
   SetSubagentModelRequest,
   SetVisionModelRequest,
   ValidateProviderRequest
@@ -38,6 +39,7 @@ import {
   readNotificationsEnabled,
   readProjectFilesFilter,
   readReviewerModel,
+  readSessionDetailsModel,
   readSubagentModel,
   readVisionModel
 } from './transport-validation'
@@ -80,6 +82,7 @@ type CoreSettingsCommandStore = Pick<
   | 'setNetworkProxy'
   | 'setProjectFilesFilter'
   | 'setReviewerModel'
+  | 'setSessionDetailsModel'
   | 'setSubagentModel'
   | 'setVisionModel'
   | 'validateProvider'
@@ -275,6 +278,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetReviewerModelRequest],
     StoreResult<'setReviewerModel'>
   >('settings:set-reviewer-model'),
+  setSessionDetailsModel: defineApplicationCommand<
+    'settings:set-session-details-model',
+    readonly [request: SetSessionDetailsModelRequest],
+    StoreResult<'setSessionDetailsModel'>
+  >('settings:set-session-details-model'),
   setSubagentModel: defineApplicationCommand<
     'settings:set-subagent-model',
     readonly [request: SetSubagentModelRequest],
@@ -330,6 +338,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setNetworkProxy,
   settingsCoreApplicationCommands.setProjectFilesFilter,
   settingsCoreApplicationCommands.setReviewerModel,
+  settingsCoreApplicationCommands.setSessionDetailsModel,
   settingsCoreApplicationCommands.setSubagentModel,
   settingsCoreApplicationCommands.setVisionModel,
   settingsCoreApplicationCommands.validateProvider
@@ -448,6 +457,8 @@ const registerCoreSettingsApplicationCommands = (
       },
       'settings:set-reviewer-model': ({ args }) =>
         dependencies.service.setReviewerModel(readReviewerModel(args[0])),
+      'settings:set-session-details-model': ({ args }) =>
+        dependencies.service.setSessionDetailsModel(readSessionDetailsModel(args[0])),
       'settings:set-subagent-model': ({ args }) =>
         dependencies.service.setSubagentModel(readSubagentModel(args[0])),
       'settings:set-vision-model': ({ args }) =>

@@ -8,6 +8,7 @@ import { sanitizeSettings } from './document-codec'
 describe('settings document codec', () => {
   it('exposes one pure document boundary', async () => {
     expect(Object.keys(await import('./document-codec')).sort()).toEqual([
+      'sanitizeSessionDetailsModel',
       'sanitizeSettings',
       'sanitizeSubagentModel'
     ])
@@ -72,5 +73,41 @@ describe('settings document codec', () => {
     ])
     expect(settings.providers[0]).not.toHaveProperty('apiKey')
     expect(settings).not.toHaveProperty('unknown')
+  })
+})
+
+describe('sanitizeSessionDetailsModel', () => {
+  it('defaults missing and malformed values to inherit with Low effort', async () => {
+    const { sanitizeSessionDetailsModel } = await import('./document-codec')
+    expect(sanitizeSessionDetailsModel(undefined)).toEqual({
+      mode: 'inherit',
+      reasoningEffort: 'low'
+    })
+    expect(sanitizeSessionDetailsModel({ mode: 'inherit' })).toEqual({
+      mode: 'inherit',
+      reasoningEffort: 'low'
+    })
+  })
+
+  it('round-trips inherit, fixed, and disabled policies', async () => {
+    const { sanitizeSessionDetailsModel } = await import('./document-codec')
+    expect(sanitizeSessionDetailsModel({ mode: 'inherit', reasoningEffort: 'high' })).toEqual({
+      mode: 'inherit',
+      reasoningEffort: 'high'
+    })
+    expect(
+      sanitizeSessionDetailsModel({
+        mode: 'fixed',
+        providerId: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'low'
+      })
+    ).toEqual({
+      mode: 'fixed',
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'low'
+    })
+    expect(sanitizeSessionDetailsModel({ mode: 'disabled' })).toEqual({ mode: 'disabled' })
   })
 })

@@ -308,6 +308,8 @@ export const projectFinishedRun = (
     status: keepArtifactError ? 'error' : planAwaitingApproval ? 'waiting-plan-approval' : 'idle',
     error: keepArtifactError ? session.error : undefined,
     errorReportable: keepArtifactError ? session.errorReportable : undefined,
+    resumeRecovery: undefined,
+    interrupted: undefined,
     messages,
     activities,
     activityGroups,

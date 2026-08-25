@@ -1,17 +1,17 @@
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
-import type {
-  DelegationPolicy,
-  LoadAllSessionsResult,
-  PersistedChatMessage,
-  PersistedChatSession,
-  PersistedSideChat,
-  PersistedSideChatRelay,
-  SaveSessionOptions,
-  SaveSessionManifestRequest,
-  UpdateSessionArchiveRequest,
-  SessionRuntimeContext,
-  SessionLoadFailure,
-  SessionLoadWarning
+import {
+  type DelegationPolicy,
+  type LoadAllSessionsResult,
+  type PersistedChatMessage,
+  type PersistedChatSession,
+  type PersistedSideChat,
+  type PersistedSideChatRelay,
+  type SaveSessionOptions,
+  type SaveSessionManifestRequest,
+  type UpdateSessionArchiveRequest,
+  type SessionRuntimeContext,
+  type SessionLoadFailure,
+  type SessionLoadWarning
 } from '../../shared/session-persistence'
 import type {
   AttachDelegatedMessageArtifactsInput,
@@ -78,6 +78,7 @@ import {
   type SessionUpdatePublisher
 } from './session-update-publication'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
+import { SessionPersistenceAuthorityOwner } from './session-authority-owner'
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
@@ -163,21 +164,6 @@ const emitRecoverableDiagnostic = (
   }
 }
 
-const assertSessionIdentityOwnership = async (
-  repository: SessionMutationRepository,
-  stateOwner: Pick<SessionPersistenceStateOwner, 'metadataSnapshot'>,
-  session: Pick<PersistedChatSession, 'id' | 'projectId'>
-): Promise<void> => {
-  const metadata = stateOwner.metadataSnapshot()
-  const existingProjectId = metadata.sessions.find((item) => item.id === session.id)?.projectId
-  if (existingProjectId !== undefined && existingProjectId !== session.projectId) {
-    throw new Error('Cannot save a Session id that is already owned by another Project.')
-  }
-  if (metadata.isComplete) return
-
-  await repository.assertSessionIdentityOwnership(session.id, session.projectId)
-}
-
 // Serializes authoritative Session JSON and derived file-index mutations at their owning Project and
 // Session scopes. Catalog-wide reconciliation uses an exclusive barrier so unrelated Projects overlap
 // without allowing a late save to race or revive durable deletion authority.
@@ -190,6 +176,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   private readonly deletionOwner: SessionPersistenceDeletionOwner
   private readonly reconciliationOwner: SessionPersistenceReconciliationOwner
   private readonly delegatedWorkOwner: SessionDelegatedWorkPersistenceOwner
+  private readonly authorityOwner: SessionPersistenceAuthorityOwner
   private destructiveStartupWindowOpen = true
   private delegatedStartupRecoveryComplete = false
   private sessionDeletionHandlers: SessionDeletionHandlers | undefined
@@ -275,6 +262,14 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       },
       notifySessionUpdated: (session) => publishSessionUpdate(session, 'delegated-work')
     })
+    this.authorityOwner = new SessionPersistenceAuthorityOwner({
+      repository,
+      assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
+      recordSession: (session) => this.stateOwner.recordSession(session),
+      invalidateBindingTopology: (projectId, sessionId) =>
+        this.stateOwner.invalidateBindingTopology(projectId, sessionId),
+      metadataSnapshot: () => this.stateOwner.metadataSnapshot()
+    })
   }
 
   containsMessageOnActiveBranch(
@@ -288,13 +283,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   }
 
   loadSessionForContinuation(projectId: string, sessionId: string): Promise<PersistedChatSession> {
-    return this.operationScheduler.runSession(projectId, sessionId, async () => {
-      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
-      if (loaded.status !== 'found') {
-        throw new Error(`Cannot prepare a durable continuation for a ${loaded.status} Session.`)
-      }
-      return structuredClone(loaded.session)
-    })
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.authorityOwner.loadForContinuation(projectId, sessionId)
+    )
   }
 
   setSessionDeletionHandlers(handlers: SessionDeletionHandlers): void {
@@ -737,7 +728,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     options: SaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, async () => {
-      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
+      await this.authorityOwner.assertIdentityOwnership(session)
       return this.stateOwner.saveSession(session, sanitizeRendererSaveSessionOptions(options))
     })
   }
@@ -748,7 +739,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     specialistBindingPending = false
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, async () => {
-      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
+      await this.authorityOwner.assertIdentityOwnership(session)
       return this.stateOwner.saveSessionSpecialistBinding(
         session,
         specialistId,
@@ -814,20 +805,23 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     sessionId: string,
     mutation: () => Promise<Result>
   ): Promise<Result> {
-    return this.operationScheduler.runSession(projectId, sessionId, async () => {
-      if (this.deletedProjects.has(projectId)) {
-        throw new Error('Cannot mutate a session whose project has been deleted.')
-      }
-      if (this.deletedSessions.has(sessionKey(projectId, sessionId))) {
-        throw new Error('Cannot mutate a session that has been deleted.')
-      }
-      try {
-        return await mutation()
-      } finally {
-        // Force the next save to validate Artifact finalization's binding before reusing topology.
-        this.stateOwner.invalidateBindingTopology(projectId, sessionId)
-      }
-    })
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.authorityOwner.runMutation(projectId, sessionId, mutation)
+    )
+  }
+
+  // Session details is Main-owned metadata: its background lifecycle and the manual edit command
+  // must compare and replace one authoritative Session inside the same lane as every other Session
+  // mutation. It does not change transcript/file bindings, so the normal file-index and provenance
+  // reconciliation performed by a whole renderer save would be unnecessary work here.
+  mutateSessionDetailsAuthority(
+    projectId: string,
+    sessionId: string,
+    mutation: (session: PersistedChatSession) => PersistedChatSession | undefined
+  ): Promise<PersistedChatSession | undefined> {
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.authorityOwner.mutateSessionDetails(projectId, sessionId, mutation)
+    )
   }
 
   /**

@@ -9,6 +9,7 @@ import {
   MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
   MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID,
+  MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID,
   type ProjectDeletedEvent,
   type SessionDeletedEvent,
   type SessionUpsertEvent
@@ -817,6 +818,71 @@ describe('useLifecycleSync', () => {
       'Keep this Main-owned reply'
     ])
     expect(projected.activeRun?.promptMessageId).toBe(prompt?.messageId)
+  })
+
+  it('applies Main-owned Session details without replacing a live prompt or streaming output', async () => {
+    useSessionStore.getState().hydrateSessions([{ ...session, revision: 2 }])
+    const prompt = useSessionStore.getState().appendUserMessage({
+      sessionId: session.id,
+      content: 'Explain why the banner appears'
+    })
+    const durableBeforeOutput = toPersistedSession(useSessionStore.getState().sessions[0])
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: session.id,
+      streamId: 'run-1',
+      eventId: 'agent-message-1',
+      promptMessageId: prompt?.messageId,
+      content: 'The live answer must remain.'
+    })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...durableBeforeOutput,
+          revision: 5,
+          title: 'Interrupted banner investigation',
+          description: 'Investigate why an active Session shows an interrupted banner.',
+          sessionDetailsSource: 'generated',
+          sessionDetailsGenerationEligible: undefined,
+          sessionDetailsGeneration: {
+            status: 'succeeded',
+            sourceMessageId: prompt!.messageId,
+            requestId: 'details-1',
+            queuedAt: 10,
+            startedAt: 11,
+            frameworkId: 'codex',
+            providerId: 'provider-1',
+            model: 'gpt-5.6-sol',
+            reasoningEffort: 'low',
+            completedAt: 12,
+            usageUnavailable: true
+          },
+          status: 'error',
+          activeRun: undefined,
+          error: 'Session was interrupted before the app closed.',
+          resumeRecovery: { kind: 'resume-required', cause: 'app-restart' }
+        }
+      })
+    })
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected).toMatchObject({
+      revision: 5,
+      title: 'Interrupted banner investigation',
+      description: 'Investigate why an active Session shows an interrupted banner.',
+      sessionDetailsSource: 'generated',
+      sessionDetailsGeneration: { status: 'succeeded' },
+      status: 'running',
+      activeRun: { promptMessageId: prompt?.messageId }
+    })
+    expect(projected.messages.map((message) => message.content)).toEqual([
+      'Explain why the banner appears',
+      'The live answer must remain.'
+    ])
+    expect(projected.error).toBeUndefined()
+    expect(projected.resumeRecovery).toBeUndefined()
+    expect(projected.interrupted).toBeUndefined()
   })
 
   it('applies a Main-owned continuation prompt before projecting later artifact events', async () => {

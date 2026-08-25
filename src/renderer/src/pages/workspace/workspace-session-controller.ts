@@ -39,6 +39,7 @@ import {
   useWorkspaceSpecialistReconfiguration,
   type WorkspaceSpecialistReconfigureError as ReconfigureError
 } from './workspace-specialist-reconfiguration'
+import { useWorkspaceSessionDetailsController } from './workspace-session-details-controller'
 
 type WorkspaceSessionControllerOptions = {
   activeSession: ChatSession | undefined
@@ -71,7 +72,12 @@ type SpecialistSendIntent = {
 type WorkspaceSessionController = {
   view: {
     dialogs: {
-      rename: { session: ChatSession; draft: string } | null
+      edit: {
+        session: ChatSession
+        titleDraft: string
+        descriptionDraft: string
+        isSaving: boolean
+      } | null
       delete: SessionDeleteDialogState | null
       downloadArtifacts: ChatSession | null
       notebook: ChatSession | null
@@ -92,10 +98,11 @@ type WorkspaceSessionController = {
   }
   actions: {
     clearExportError: () => void
-    openRename: (session: ChatSession) => void
-    closeRename: () => void
-    changeRenameDraft: (draft: string) => void
-    confirmRename: (event: FormEvent<HTMLFormElement>) => void
+    openEdit: (session: ChatSession) => void
+    closeEdit: () => void
+    changeEditTitleDraft: (draft: string) => void
+    changeEditDescriptionDraft: (draft: string) => void
+    confirmEdit: (event: FormEvent<HTMLFormElement>) => void
     togglePin: (session: ChatSession) => void
     archive: (session: ChatSession) => void
     openExportConversation: (session: ChatSession) => void
@@ -144,7 +151,6 @@ const useWorkspaceSessionController = ({
   deleteSession
 }: WorkspaceSessionControllerOptions): WorkspaceSessionController => {
   const { t } = useTranslation()
-  const renameSession = useSessionStore((state) => state.renameSession)
   const togglePinned = useSessionStore((state) => state.togglePinned)
   const updateSessionArchive = useSessionStore((state) => state.updateSessionArchive)
   const clearSelection = useSessionStore((state) => state.clearSelection)
@@ -171,10 +177,9 @@ const useWorkspaceSessionController = ({
   )
   const specialistItemsRef = useRef(specialistItems)
   const [exportError, setExportError] = useState<string | null>(null)
-  const [renameDialog, setRenameDialog] = useState<{
-    session: ChatSession
-    draft: string
-  } | null>(null)
+  const sessionDetails = useWorkspaceSessionDetailsController(isPersistenceReady, () =>
+    setExportError(t('Could not load this session for editing.'))
+  )
   const [deleteDialog, setDeleteDialog] = useState<SessionDeleteDialogState | null>(null)
   const [downloadArtifactsDialog, setDownloadArtifactsDialog] = useState<ChatSession | null>(null)
   const [notebookDialog, setNotebookDialog] = useState<ChatSession | null>(null)
@@ -240,16 +245,6 @@ const useWorkspaceSessionController = ({
       hasRunningWork: hasCurrentRunningDelegatedAttempt(session)
     }).actions.archive.allowed &&
     !hasUnfinishedTransfers(session.id)
-  const openRename = (session: ChatSession): void => {
-    if (isPersistenceReady) setRenameDialog({ session, draft: session.title })
-  }
-  const closeRename = (): void => setRenameDialog(null)
-  const confirmRename = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault()
-    if (!isPersistenceReady || !renameDialog || renameDialog.draft.trim().length === 0) return
-    renameSession(renameDialog.session.id, renameDialog.draft)
-    closeRename()
-  }
   const archive = (session: ChatSession): void => {
     if (!canArchive(session)) return
     setArchivingIds((current) => new Set(current).add(session.id))
@@ -617,7 +612,7 @@ const useWorkspaceSessionController = ({
   return {
     view: {
       dialogs: {
-        rename: renameDialog,
+        edit: sessionDetails.dialog,
         delete: deleteDialog,
         downloadArtifacts: downloadArtifactsDialog,
         notebook: notebookDialog,
@@ -638,11 +633,11 @@ const useWorkspaceSessionController = ({
     },
     actions: {
       clearExportError: () => setExportError(null),
-      openRename,
-      closeRename,
-      changeRenameDraft: (draft: string) =>
-        setRenameDialog((current) => (current ? { ...current, draft } : current)),
-      confirmRename,
+      openEdit: sessionDetails.open,
+      closeEdit: sessionDetails.close,
+      changeEditTitleDraft: sessionDetails.changeTitle,
+      changeEditDescriptionDraft: sessionDetails.changeDescription,
+      confirmEdit: sessionDetails.confirm,
       togglePin: (session: ChatSession) => {
         if (isPersistenceReady) togglePinned(session.id)
       },

@@ -25,6 +25,7 @@ import {
 import {
   isReasoningEffort,
   type AgentFrameworkId,
+  type ReasoningEffort,
   type SessionAgentConfiguration
 } from './settings'
 import type { ResolvedReasoningEffort } from './reasoning-effort'
@@ -503,6 +504,72 @@ export type PersistedSessionBranchSource = {
   headMessageId?: string
 }
 
+export const SESSION_DETAILS_TITLE_MAX_LENGTH = 80
+export const SESSION_DETAILS_DESCRIPTION_MAX_LENGTH = 1_000
+
+export type PersistedSessionDetailsSource = 'fallback' | 'generated' | 'manual'
+
+export type SessionDetailsClaim = Readonly<{
+  sourceMessageId: string
+  requestId: string
+  queuedAt: number
+}>
+
+export type SessionDetailsAdmission = Readonly<{
+  startedAt: number
+  frameworkId: AgentFrameworkId
+  providerId?: string
+  model: string
+  reasoningEffort: ReasoningEffort
+}>
+
+export type SessionDetailsUsageCapture =
+  | Readonly<{ usage: AcpTurnTokenUsage; usageUnavailable?: never }>
+  | Readonly<{ usage?: never; usageUnavailable: true }>
+
+type SessionDetailsNoAdmission = Readonly<{
+  startedAt?: never
+  frameworkId?: never
+  providerId?: never
+  model?: never
+  reasoningEffort?: never
+}>
+
+type SessionDetailsNoUsage = Readonly<{ usage?: never; usageUnavailable?: never }>
+type SessionDetailsOptionalUsage = SessionDetailsUsageCapture | SessionDetailsNoUsage
+
+export type PersistedSessionDetailsGeneration =
+  | (SessionDetailsClaim & Readonly<{ status: 'queued' }>)
+  | (SessionDetailsClaim & SessionDetailsAdmission & Readonly<{ status: 'running' }>)
+  | (SessionDetailsClaim &
+      SessionDetailsAdmission &
+      SessionDetailsUsageCapture &
+      Readonly<{ status: 'succeeded'; completedAt: number }>)
+  | (SessionDetailsClaim &
+      Readonly<{ status: 'failed'; completedAt: number }> &
+      (
+        | (SessionDetailsNoAdmission & Readonly<{ usageUnavailable: true }>)
+        | (SessionDetailsAdmission & SessionDetailsUsageCapture)
+      ))
+  | (SessionDetailsClaim &
+      SessionDetailsNoAdmission &
+      SessionDetailsNoUsage &
+      Readonly<{ status: 'disabled'; completedAt: number }>)
+  | (SessionDetailsClaim &
+      Readonly<{ status: 'superseded'; completedAt: number }> &
+      (
+        | (SessionDetailsNoAdmission & SessionDetailsNoUsage)
+        | (SessionDetailsAdmission & SessionDetailsOptionalUsage)
+      ))
+
+export type EditSessionDetailsRequest = Readonly<{
+  projectId: string
+  sessionId: string
+  expectedRevision: number
+  title: string
+  description: string
+}>
+
 export type PersistedChatSession = {
   id: string
   // App-wide, one-based sequence allocated by SQLite. Historical Session files omit it until the
@@ -517,6 +584,12 @@ export type PersistedChatSession = {
   // Branch in new session. Historical Sessions omit it and remain unrelated.
   branchSource?: PersistedSessionBranchSource
   title: string
+  description?: string
+  sessionDetailsSource?: PersistedSessionDetailsSource
+  sessionDetailsGeneration?: PersistedSessionDetailsGeneration
+  // Durable one-shot eligibility exists only on newly-created root Sessions that have not yet
+  // saved their first visible human message. Legacy and Branch Sessions omit it.
+  sessionDetailsGenerationEligible?: true
   cwd: string
   status: PersistedSessionStatus
   agentFrameworkId?: AgentFrameworkId
@@ -1178,6 +1251,162 @@ const DELEGATED_WORK_CANCELLATION_REASONS = new Set<DelegatedWorkCancellationRea
 
 const hasOnlyFields = (value: Record<string, unknown>, fields: readonly string[]): boolean =>
   Object.keys(value).every((field) => fields.includes(field))
+
+const SESSION_DETAILS_CLAIM_FIELDS = ['status', 'sourceMessageId', 'requestId', 'queuedAt'] as const
+const SESSION_DETAILS_ADMISSION_FIELDS = [
+  'startedAt',
+  'frameworkId',
+  'providerId',
+  'model',
+  'reasoningEffort'
+] as const
+const SESSION_DETAILS_USAGE_FIELDS = ['usage', 'usageUnavailable'] as const
+
+const isSessionDetailsTimestamp = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
+const sanitizeSessionDetailsGeneration = (
+  value: unknown
+): PersistedSessionDetailsGeneration | undefined => {
+  if (!isRecord(value)) return undefined
+  const sourceMessageId = asString(value.sourceMessageId)
+  const requestId = asString(value.requestId)
+  if (!sourceMessageId || !requestId || !isSessionDetailsTimestamp(value.queuedAt)) return undefined
+
+  const claim: SessionDetailsClaim = {
+    sourceMessageId,
+    requestId,
+    queuedAt: value.queuedAt
+  }
+  const admission = (): SessionDetailsAdmission | undefined => {
+    const frameworkId = asString(value.frameworkId) as AgentFrameworkId | undefined
+    const providerId = asString(value.providerId)
+    const model = asString(value.model)
+    if (
+      !isSessionDetailsTimestamp(value.startedAt) ||
+      !frameworkId ||
+      !AGENT_FRAMEWORK_IDS.has(frameworkId) ||
+      !model ||
+      !isReasoningEffort(value.reasoningEffort) ||
+      (value.providerId !== undefined && !providerId)
+    ) {
+      return undefined
+    }
+    return {
+      startedAt: value.startedAt,
+      frameworkId,
+      ...(providerId ? { providerId } : {}),
+      model,
+      reasoningEffort: value.reasoningEffort
+    }
+  }
+  const usageCapture = (): SessionDetailsUsageCapture | undefined => {
+    if (value.usageUnavailable === true && value.usage === undefined) {
+      return { usageUnavailable: true }
+    }
+    if (value.usageUnavailable === undefined && value.usage !== undefined) {
+      const usage = sanitizeAcpTurnTokenUsage(value.usage)
+      return usage ? { usage } : undefined
+    }
+    return undefined
+  }
+  const completedAt = value.completedAt
+
+  switch (value.status) {
+    case 'queued':
+      return hasOnlyFields(value, SESSION_DETAILS_CLAIM_FIELDS)
+        ? { ...claim, status: 'queued' }
+        : undefined
+    case 'running': {
+      if (
+        !hasOnlyFields(value, [
+          ...SESSION_DETAILS_CLAIM_FIELDS,
+          ...SESSION_DETAILS_ADMISSION_FIELDS
+        ])
+      ) {
+        return undefined
+      }
+      const admitted = admission()
+      return admitted ? { ...claim, ...admitted, status: 'running' } : undefined
+    }
+    case 'succeeded': {
+      if (
+        !hasOnlyFields(value, [
+          ...SESSION_DETAILS_CLAIM_FIELDS,
+          ...SESSION_DETAILS_ADMISSION_FIELDS,
+          ...SESSION_DETAILS_USAGE_FIELDS,
+          'completedAt'
+        ]) ||
+        !isSessionDetailsTimestamp(completedAt)
+      ) {
+        return undefined
+      }
+      const admitted = admission()
+      const captured = usageCapture()
+      return admitted && captured
+        ? { ...claim, ...admitted, ...captured, status: 'succeeded', completedAt }
+        : undefined
+    }
+    case 'failed': {
+      if (
+        !hasOnlyFields(value, [
+          ...SESSION_DETAILS_CLAIM_FIELDS,
+          ...SESSION_DETAILS_ADMISSION_FIELDS,
+          ...SESSION_DETAILS_USAGE_FIELDS,
+          'completedAt'
+        ]) ||
+        !isSessionDetailsTimestamp(completedAt)
+      ) {
+        return undefined
+      }
+      const admitted = admission()
+      const captured = usageCapture()
+      if (admitted && captured) {
+        return { ...claim, ...admitted, ...captured, status: 'failed', completedAt }
+      }
+      const hasAdmissionField = SESSION_DETAILS_ADMISSION_FIELDS.some(
+        (field) => value[field] !== undefined
+      )
+      return !hasAdmissionField && value.usageUnavailable === true && value.usage === undefined
+        ? { ...claim, status: 'failed', completedAt, usageUnavailable: true }
+        : undefined
+    }
+    case 'disabled':
+      return hasOnlyFields(value, [...SESSION_DETAILS_CLAIM_FIELDS, 'completedAt']) &&
+        isSessionDetailsTimestamp(completedAt)
+        ? { ...claim, status: 'disabled', completedAt }
+        : undefined
+    case 'superseded': {
+      if (
+        !hasOnlyFields(value, [
+          ...SESSION_DETAILS_CLAIM_FIELDS,
+          ...SESSION_DETAILS_ADMISSION_FIELDS,
+          ...SESSION_DETAILS_USAGE_FIELDS,
+          'completedAt'
+        ]) ||
+        !isSessionDetailsTimestamp(completedAt)
+      ) {
+        return undefined
+      }
+      const hasAdmissionField = SESSION_DETAILS_ADMISSION_FIELDS.some(
+        (field) => value[field] !== undefined
+      )
+      const hasUsageField = SESSION_DETAILS_USAGE_FIELDS.some((field) => value[field] !== undefined)
+      if (!hasAdmissionField && !hasUsageField) {
+        return { ...claim, status: 'superseded', completedAt }
+      }
+      const admitted = admission()
+      if (!admitted) return undefined
+      if (!hasUsageField) return { ...claim, ...admitted, status: 'superseded', completedAt }
+      const captured = usageCapture()
+      return captured
+        ? { ...claim, ...admitted, ...captured, status: 'superseded', completedAt }
+        : undefined
+    }
+    default:
+      return undefined
+  }
+}
 
 const sanitizeDelegatedWorkResolvedAgent = (
   value: unknown
@@ -2256,7 +2485,10 @@ const recoverInterruptedPermissionAfterRestore = (
 
 const normalizeSessionAfterRestore = (
   session: PersistedChatSession,
-  options: { deferPermissionValidation?: boolean } = {}
+  options: {
+    deferPermissionValidation?: boolean
+    reconcileCompletedRecovery?: boolean
+  } = {}
 ): PersistedChatSession => {
   const persistedRuntimeContext = session.runtimeContext
   const continuingPermission = persistedRuntimeContext?.permission
@@ -2302,6 +2534,27 @@ const normalizeSessionAfterRestore = (
     }
   }
   if (continuingPermission) return recoverInterruptedPermissionAfterRestore(session)
+  const recoveredPromptMessageId = session.resumeRecovery?.promptMessageId
+  const latestRecoveredPromptResponse = recoveredPromptMessageId
+    ? [...session.messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.role === 'agent' && message.responseToMessageId === recoveredPromptMessageId
+        )
+    : undefined
+  const hasCompletedResponse =
+    session.status === 'idle' &&
+    session.error === undefined &&
+    session.resumeRecovery?.cause === 'app-restart' &&
+    latestRecoveredPromptResponse?.status === 'complete'
+  if (options.reconcileCompletedRecovery && hasCompletedResponse) {
+    return {
+      ...session,
+      resumeRecovery: undefined,
+      messages: session.messages.map(normalizeMessageAfterRestore)
+    }
+  }
   if (
     session.status === 'waiting-plan-approval' &&
     session.runtimeContext?.plan?.approval === 'pending'
@@ -3472,6 +3725,16 @@ const sanitizeSession = (
   const providerContinuityToken = asString(session.providerContinuityToken)
   const agentModel = asString(session.agentModel)
   const agentConfiguration = sanitizeSessionAgentConfiguration(session.agentConfiguration)
+  const description = asString(session.description)
+  const sessionDetailsSource =
+    session.sessionDetailsSource === 'fallback' ||
+    session.sessionDetailsSource === 'generated' ||
+    session.sessionDetailsSource === 'manual'
+      ? session.sessionDetailsSource
+      : undefined
+  const sessionDetailsGeneration = sanitizeSessionDetailsGeneration(
+    session.sessionDetailsGeneration
+  )
   const enabledComputeHosts = Array.isArray(session.enabledComputeHosts)
     ? session.enabledComputeHosts.filter(
         (item): item is string => typeof item === 'string' && item.startsWith('ssh:')
@@ -3508,6 +3771,10 @@ const sanitizeSession = (
   if (providerContinuityToken) sanitized.providerContinuityToken = providerContinuityToken
   if (agentModel) sanitized.agentModel = agentModel
   if (agentConfiguration) sanitized.agentConfiguration = agentConfiguration
+  if (description !== undefined && description.length <= SESSION_DETAILS_DESCRIPTION_MAX_LENGTH) {
+    sanitized.description = description
+  }
+  if (sessionDetailsSource) sanitized.sessionDetailsSource = sessionDetailsSource
   // Restore the pin only from an explicit true so malformed or legacy files stay unpinned.
   if (session.pinned === true) sanitized.pinned = true
   const archivedAt = asNumber(session.archivedAt)
@@ -3584,9 +3851,29 @@ const sanitizeSession = (
     })
   }
 
+  const firstSessionDetailsMessageId = sanitized.messages.find(
+    (message) => isHumanUserMessage(message) && !isHiddenControlMessage(message)
+  )?.id
+  if (
+    sessionDetailsGeneration &&
+    !branchSource &&
+    sessionDetailsGeneration.sourceMessageId === firstSessionDetailsMessageId
+  ) {
+    sanitized.sessionDetailsGeneration = sessionDetailsGeneration
+  }
+  if (
+    session.sessionDetailsGenerationEligible === true &&
+    !branchSource &&
+    session.sessionDetailsGeneration === undefined
+  ) {
+    sanitized.sessionDetailsGenerationEligible = true
+  }
+
   // Normalize only after resolving the canonical active Branch. Recovery references and the durable
   // interrupted marker must never be inferred from an abandoned Branch.
-  if (!options.preserveRuntimeState) sanitized = normalizeSessionAfterRestore(sanitized)
+  if (!options.preserveRuntimeState) {
+    sanitized = normalizeSessionAfterRestore(sanitized, { reconcileCompletedRecovery: true })
+  }
   if (!options.preserveRuntimeState) {
     const permissionAuthority = resolveRestorablePermissionToolAuthority(sanitized)
     sanitized = {
@@ -3803,6 +4090,16 @@ export const deleteSessionRequestSchema = z
   .object({ projectId: z.string(), sessionId: z.string() })
   .strict()
 
+export const editSessionDetailsRequestSchema = z
+  .object({
+    projectId: z.string().min(1),
+    sessionId: z.string().min(1),
+    expectedRevision: z.number().int().nonnegative().safe(),
+    title: z.string(),
+    description: z.string()
+  })
+  .strict()
+
 export type DeleteSessionRequest = z.infer<typeof deleteSessionRequestSchema>
 
 // zod v4 requires unique discriminator values, and both failure branches share status 'failed',
@@ -3846,5 +4143,18 @@ export const sessionApplicationCommandContracts = Object.freeze({
   delete: defineApplicationCommandContract(
     validationCodec(z.tuple([deleteSessionRequestSchema])),
     validationCodec(sessionDeletionResultSchema)
+  ),
+  editDetails: defineApplicationCommandContract(
+    validationCodec(z.tuple([editSessionDetailsRequestSchema])),
+    validationCodec(
+      z.custom<PersistedChatSession>(
+        (value) =>
+          isRecord(value) &&
+          typeof value.id === 'string' &&
+          typeof value.projectId === 'string' &&
+          typeof value.title === 'string' &&
+          Array.isArray(value.messages)
+      )
+    )
   )
 })

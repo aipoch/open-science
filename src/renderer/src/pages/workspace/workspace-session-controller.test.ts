@@ -170,6 +170,83 @@ afterEach(() => {
 })
 
 describe('workspace session controller', () => {
+  it('loads an unopened Session before opening Edit session', async () => {
+    const summary = session({ contentLoaded: false, activeMessageCount: 1 })
+    const persisted: PersistedChatSession = {
+      id: summary.id,
+      projectId: summary.projectId,
+      revision: 3,
+      title: summary.title,
+      description: 'Durable description',
+      cwd: summary.cwd,
+      status: summary.status,
+      messages: [],
+      createdAt: summary.createdAt,
+      updatedAt: 2
+    }
+    const loadOne = vi.fn().mockResolvedValue(persisted)
+    window.api = { sessions: { loadOne } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
+    const hook = renderController({ activeSession: summary })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.openEdit(summary)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project-a', sessionId: 'session-a' })
+    expect(hook.result.current.view.dialogs.edit).toMatchObject({
+      titleDraft: 'Original title',
+      descriptionDraft: 'Durable description',
+      isSaving: false
+    })
+  })
+
+  it('submits title and description through the dedicated edit command and applies its authority', async () => {
+    const active = session({ revision: 2, description: 'Before' })
+    const edited: PersistedChatSession = {
+      ...active,
+      title: 'After',
+      description: '',
+      sessionDetailsSource: 'manual',
+      revision: 3,
+      updatedAt: 3
+    }
+    const editDetails = vi.fn().mockResolvedValue(edited)
+    window.api = { sessions: { editDetails } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+
+    act(() => {
+      hook.result.current.actions.openEdit(active)
+      hook.result.current.actions.changeEditTitleDraft('  After  ')
+      hook.result.current.actions.changeEditDescriptionDraft('')
+    })
+    act(() => hook.result.current.actions.confirmEdit({ preventDefault: vi.fn() } as never))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(editDetails).toHaveBeenCalledWith({
+      projectId: active.projectId,
+      sessionId: active.id,
+      expectedRevision: 2,
+      title: '  After  ',
+      description: ''
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'After',
+      description: '',
+      sessionDetailsSource: 'manual',
+      revision: 3
+    })
+    expect(hook.result.current.view.dialogs.edit).toBeNull()
+  })
+
   it('loads an unopened Session before opening conversation export', async () => {
     const summary = session({ contentLoaded: false, activeMessageCount: 1 })
     const persisted: PersistedChatSession = {
@@ -260,23 +337,6 @@ describe('workspace session controller', () => {
     })
 
     expect(hook.result.current.view.exportError).toBe('Could not load this session for export.')
-  })
-
-  it('keeps rename whitespace while using trim only as the empty-title gate', () => {
-    const active = session()
-    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
-    const renameSession = vi.spyOn(useSessionStore.getState(), 'renameSession')
-    const hook = renderController({ activeSession: active })
-    mounted.push(hook)
-
-    act(() => {
-      hook.result.current.actions.openRename(active)
-      hook.result.current.actions.changeRenameDraft('  Retained title  ')
-    })
-    act(() => hook.result.current.actions.confirmRename({ preventDefault: vi.fn() } as never))
-
-    expect(renameSession).toHaveBeenCalledWith(active.id, '  Retained title  ')
-    expect(hook.result.current.view.dialogs.rename).toBeNull()
   })
 
   it('preserves an own pending Main value when capturing a branch intent', () => {

@@ -118,12 +118,34 @@ type SessionLoadDiagnostics = {
 
 type SessionScanOptions = {
   mode?: 'repair' | 'read-only'
+  // Main-owned same-process mutations read durable authority without applying app-restart recovery.
+  preserveRuntimeState?: boolean
 }
 
 type SessionLoadDiagnostic =
   | { status: 'found'; session: PersistedChatSession }
   | { status: 'missing' }
   | { status: 'unreadable' }
+
+type SessionMutationAuthorityRepository = {
+  loadSessionWithDiagnostics(
+    projectId: string,
+    sessionId: string,
+    options?: SessionScanOptions
+  ): Promise<SessionLoadDiagnostic>
+}
+
+// Same-process read-modify-write paths must observe the durable runtime state verbatim. Startup
+// hydration deliberately does not use this seam because it owns app-restart recovery.
+export const loadSessionMutationAuthority = (
+  repository: SessionMutationAuthorityRepository,
+  projectId: string,
+  sessionId: string
+): Promise<SessionLoadDiagnostic> =>
+  repository.loadSessionWithDiagnostics(projectId, sessionId, {
+    mode: 'read-only',
+    preserveRuntimeState: true
+  })
 
 type ProjectSessionLoadDiagnostics = {
   sessions: PersistedChatSession[]
@@ -142,6 +164,7 @@ type SessionDirectoryEntry = {
 
 type SessionRepositoryDependencies = {
   hasActiveRuntimePrompt(projectId: string, sessionId: string): boolean
+  hasLiveRuntimeSession(projectId: string, sessionId: string): boolean
   remove(path: string, options: { force: boolean; recursive: boolean }): Promise<void>
   readDirectoryEntries(path: string): Promise<SessionDirectoryEntry[]>
   readManifestFile(path: string): Promise<string>
@@ -152,6 +175,7 @@ type SessionRepositoryDependencies = {
 
 const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
   hasActiveRuntimePrompt: () => false,
+  hasLiveRuntimeSession: () => false,
   remove: (path, options) => rm(path, options),
   readDirectoryEntries: (path) => readdir(path, { withFileTypes: true }),
   readManifestFile: (path) => readFile(path, 'utf8'),
@@ -264,6 +288,8 @@ class SessionRepository {
     this.dependencies = {
       hasActiveRuntimePrompt:
         dependencies.hasActiveRuntimePrompt ?? DEFAULT_DEPENDENCIES.hasActiveRuntimePrompt,
+      hasLiveRuntimeSession:
+        dependencies.hasLiveRuntimeSession ?? DEFAULT_DEPENDENCIES.hasLiveRuntimeSession,
       remove: dependencies.remove ?? DEFAULT_DEPENDENCIES.remove,
       readDirectoryEntries:
         dependencies.readDirectoryEntries ?? DEFAULT_DEPENDENCIES.readDirectoryEntries,
@@ -570,7 +596,10 @@ class SessionRepository {
     const read = await this.readSessionFile(
       this.sessionFilePath(safeProjectId, safeSessionId),
       safeProjectId,
-      { quarantineInvalidFiles: options.mode !== 'read-only' }
+      {
+        quarantineInvalidFiles: options.mode !== 'read-only',
+        preserveRuntimeState: options.preserveRuntimeState
+      }
     )
     if (!read.isComplete || read.wasQuarantined) return { status: 'unreadable' }
 
@@ -731,9 +760,7 @@ class SessionRepository {
       if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
         throw new Error('Session expected revision must be a non-negative integer.')
       }
-      const current = await this.loadSessionWithDiagnostics(session.projectId, session.id, {
-        mode: 'read-only'
-      })
+      const current = await loadSessionMutationAuthority(this, session.projectId, session.id)
       if (current.status === 'unreadable') {
         throw new Error('Cannot compare Session revision because durable JSON is unreadable.')
       }
@@ -1294,6 +1321,7 @@ class SessionRepository {
       missingIsIncomplete?: boolean
       quarantineInvalidFiles?: boolean
       scanMetrics?: SessionScanMetrics
+      preserveRuntimeState?: boolean
     } = {}
   ): Promise<{
     session?: PersistedChatSession
@@ -1307,7 +1335,8 @@ class SessionRepository {
     try {
       read = await readDurableJsonFile(
         filePath,
-        (contents) => this.decodeSessionContents(filePath, projectId, contents),
+        (contents) =>
+          this.decodeSessionContents(filePath, projectId, contents, options.preserveRuntimeState),
         {
           readDirectoryEntries: this.dependencies.readDirectoryEntries,
           readFile: this.dependencies.readSessionFile,
@@ -1381,12 +1410,17 @@ class SessionRepository {
   private decodeSessionContents(
     filePath: string,
     projectId: string,
-    contents: string
+    contents: string,
+    preserveRuntimeState?: boolean
   ): { session: PersistedChatSession; bytes: number } {
     const decoded = decodeSessionFile(JSON.parse(contents) as unknown, {
       preserveLegacyUploadPaths: true,
-      preserveRuntimeState: (sessionId) =>
-        this.dependencies.hasActiveRuntimePrompt(projectId, sessionId)
+      preserveRuntimeState:
+        preserveRuntimeState === true
+          ? true
+          : (sessionId) =>
+              this.dependencies.hasActiveRuntimePrompt(projectId, sessionId) ||
+              this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
     })
     if (decoded.status === 'unsupported-version') throw new UnsupportedSessionFileError()
     if (decoded.status === 'invalid') throw new Error('Invalid Session file')

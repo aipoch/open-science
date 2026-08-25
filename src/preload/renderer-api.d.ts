@@ -210,6 +210,7 @@ import type {
 } from '../shared/project-files'
 import type {
   DeleteSessionRequest,
+  EditSessionDetailsRequest,
   SessionDeletionResult,
   LoadAllSessionsResult,
   ListSessionSummariesResult,
@@ -253,6 +254,7 @@ import type {
   SetAppIconVariantRequest,
   SetReasoningEffortRequest,
   SetReviewerModelRequest,
+  SetSessionDetailsModelRequest,
   SetSubagentModelRequest,
   SetVisionModelRequest,
   SetSkillEnabledRequest,
@@ -487,6 +489,7 @@ export interface OpenScienceAPI {
       session: PersistedChatSession,
       options?: SaveSessionOptions
     ): Promise<PersistedChatSession>
+    editDetails(request: EditSessionDetailsRequest): Promise<PersistedChatSession>
     updateArchive(request: UpdateSessionArchiveRequest): Promise<PersistedChatSession>
     deleteSession(request: DeleteSessionRequest): Promise<SessionDeletionResult>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
@@ -519,6 +522,7 @@ export interface OpenScienceAPI {
     setAgentFramework(request: SetAgentFrameworkRequest): Promise<SettingsSnapshot>
     setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
     setReviewerModel(request: SetReviewerModelRequest): Promise<SettingsSnapshot>
+    setSessionDetailsModel(request: SetSessionDetailsModelRequest): Promise<SettingsSnapshot>
     setSubagentModel(request: SetSubagentModelRequest): Promise<SettingsSnapshot>
     setVisionModel(request: SetVisionModelRequest): Promise<SettingsSnapshot>
     onChanged(listener: (snapshot: SettingsSnapshot) => void): () => void

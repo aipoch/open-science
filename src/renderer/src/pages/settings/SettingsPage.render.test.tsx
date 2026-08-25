@@ -799,7 +799,7 @@ describe('SettingsPage layout', () => {
       'lg:grid-cols-[minmax(0,1fr)_auto]'
     )
     expect(document.body.textContent).toContain(
-      'Models for subagents, review, and image understanding.'
+      'Models for session details, subagents, review, and image understanding.'
     )
     // The add action lives with the list as a dashed ghost row, not a section-header button.
     const addRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(

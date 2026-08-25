@@ -1,5 +1,4 @@
 import { isDeepStrictEqual } from 'node:util'
-
 import type {
   AgentFrameworkId,
   AppIconVariant,
@@ -44,6 +43,7 @@ import {
 } from './custom-server-identity'
 import {
   buildReviewerModelMutation,
+  buildSessionDetailsModelMutation,
   buildSubagentModelMutation,
   buildVisionModelMutation
 } from './subagent-model-settings'
@@ -291,25 +291,26 @@ class SettingsRepository {
   async setReasoningEffort(effort: ReasoningEffort): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, reasoningEffort: effort }))
   }
-
   async setSubagentModel(
     ...args: Parameters<typeof buildSubagentModelMutation>
   ): Promise<StoredSettings> {
     return this.mutate(buildSubagentModelMutation(...args))
   }
-
   async setReviewerModel(
     ...args: Parameters<typeof buildReviewerModelMutation>
   ): Promise<StoredSettings> {
     return this.mutate(buildReviewerModelMutation(...args))
   }
-
+  async setSessionDetailsModel(
+    ...args: Parameters<typeof buildSessionDetailsModelMutation>
+  ): Promise<StoredSettings> {
+    return this.mutate(buildSessionDetailsModelMutation(...args))
+  }
   async setVisionModel(
     ...args: Parameters<typeof buildVisionModelMutation>
   ): Promise<StoredSettings> {
     return this.mutate(buildVisionModelMutation(...args))
   }
-
   async setNotificationsEnabled(enabled: boolean): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, notificationsEnabled: enabled }))
   }
@@ -317,7 +318,6 @@ class SettingsRepository {
   async setConversationSkillImportEnabled(enabled: boolean): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, conversationSkillImportEnabled: enabled }))
   }
-
   async setLocalePreference(preference: LanguagePreference): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, localePreference: preference }))
   }

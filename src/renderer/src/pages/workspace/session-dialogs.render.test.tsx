@@ -1,6 +1,5 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from 'react'
 import type { ChatSession } from '@/stores/session-store'
-import { expectDialogFormFieldClassName } from '@/test-utils/dialog-form'
 import { describe, expect, it, vi } from 'vitest'
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
@@ -19,6 +18,10 @@ vi.mock('@/components/ui/button', () => ({
 
 vi.mock('@/components/ui/input', () => ({
   Input: (props: Record<string, unknown>) => <input {...props} />
+}))
+
+vi.mock('@/components/ui/textarea', () => ({
+  Textarea: (props: Record<string, unknown>) => <textarea {...props} />
 }))
 
 // These structure tests call the components as pure functions; lifecycle behavior is covered by the
@@ -118,67 +121,73 @@ describe('workspace session dialogs behavior wiring', () => {
     expect(closeButton?.props.onClick).toBe(expectedClose)
   }
 
-  it('wires rename input, cancel, and submit callbacks', async () => {
-    const { RenameSessionDialog } = await import('./RenameSessionDialog')
-    const onRenameDraftChange = vi.fn()
-    const onCancel = vi.fn()
-    const onConfirmRename = vi.fn()
-    const tree = RenameSessionDialog({
-      session: createSession(),
-      renameDraft: 'Notebook review',
-      onRenameDraftChange,
-      onCancel,
-      onConfirmRename
+  it('edits title and description atomically with bounded fields and counters', async () => {
+    const { EditSessionDialog } = await import('./EditSessionDialog')
+    const onTitleDraftChange = vi.fn()
+    const onDescriptionDraftChange = vi.fn()
+    const onConfirmEdit = vi.fn()
+    const tree = EditSessionDialog({
+      session: createSession({ description: 'Existing summary' }),
+      titleDraft: 'Notebook review',
+      descriptionDraft: 'Existing summary',
+      onTitleDraftChange,
+      onDescriptionDraftChange,
+      onCancel: vi.fn(),
+      onConfirmEdit
     })
     const elements = collectElements(tree)
-    const root = elements[0]
-    const input = elements.find((element) => element.props['aria-label'] === 'Session name')
-    const cancelButton = elements.find(
-      (element) => getTextContent(element).trim() === 'Cancel' && element.props.onClick
-    )
+    const title = elements.find((element) => element.props.id === 'edit-session-title')
+    const description = elements.find((element) => element.props.id === 'edit-session-description')
     const form = elements.find((element) => element.type === 'form')
+    const closeTooltip = elements.find(
+      (element) => typeof element.type === 'function' && element.type.name === 'TooltipContent'
+    )
+    const closeTooltipTrigger = elements.find(
+      (element) => typeof element.props.onFocus === 'function'
+    )
 
-    expect(root.props.onOpenChange).toBeTypeOf('function')
-    ;(root.props.onOpenChange as (open: boolean) => void)(false)
-    expect(onCancel).toHaveBeenCalledOnce()
-
-    expect(input?.props.onChange).toBeTypeOf('function')
-    expect(input?.props.id).toBe('rename-session-name')
-    expectDialogFormFieldClassName(input?.props.className)
-    expect(
-      elements.find((element) => element.props.htmlFor === 'rename-session-name')?.props.className
-    ).toContain('block text-sm font-medium text-foreground mb-1')
-    ;(input?.props.onChange as (event: { target: { value: string } }) => void)({
-      target: { value: 'Updated title' }
+    expect(title?.props.maxLength).toBe(80)
+    expect(description?.props.maxLength).toBe(1_000)
+    expect(getTextContent(tree)).toContain('15/80')
+    expect(getTextContent(tree)).toContain('16/1000')
+    expect(getTextContent(closeTooltip)).toBe('Close')
+    const focusEvent = {
+      currentTarget: { matches: vi.fn(() => false) },
+      preventDefault: vi.fn()
+    }
+    ;(closeTooltipTrigger?.props.onFocus as (event: typeof focusEvent) => void)(focusEvent)
+    expect(focusEvent.preventDefault).toHaveBeenCalledOnce()
+    ;(title?.props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: 'New title' }
     })
-    expect(onRenameDraftChange).toHaveBeenCalledWith('Updated title')
-
-    expect(cancelButton?.props.onClick).toBeTypeOf('function')
-    expect(cancelButton?.props.variant).toBe('ghost')
-    expect(cancelButton?.props.className).toContain('cursor-pointer')
-    expect(cancelButton?.props.className).toContain('border-0')
-    expect(cancelButton?.props.className).toContain('shadow-none')
-    expect(cancelButton?.props.className).toContain('hover:bg-bg-200')
-    ;(cancelButton?.props.onClick as () => void)()
-    expect(onCancel).toHaveBeenCalledTimes(2)
-
-    expect(form?.props.onSubmit).toBeTypeOf('function')
+    ;(description?.props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: '' }
+    })
+    expect(onTitleDraftChange).toHaveBeenCalledWith('New title')
+    expect(onDescriptionDraftChange).toHaveBeenCalledWith('')
     ;(form?.props.onSubmit as (event: unknown) => void)('submit-event')
-    expect(onConfirmRename).toHaveBeenCalledWith('submit-event')
+    expect(onConfirmEdit).toHaveBeenCalledWith('submit-event')
   })
 
-  it('renders rename with settings dialog chrome and an explicit close control', async () => {
-    const { RenameSessionDialog } = await import('./RenameSessionDialog')
-    const onCancel = vi.fn()
-    const tree = RenameSessionDialog({
-      session: createSession(),
-      renameDraft: 'Notebook review',
-      onRenameDraftChange: vi.fn(),
-      onCancel,
-      onConfirmRename: vi.fn()
-    })
+  it('allows an empty description but disables Save for a blank title', async () => {
+    const { EditSessionDialog } = await import('./EditSessionDialog')
+    const render = (titleDraft: string): ElementWithProps[] =>
+      collectElements(
+        EditSessionDialog({
+          session: createSession(),
+          titleDraft,
+          descriptionDraft: '',
+          onTitleDraftChange: vi.fn(),
+          onDescriptionDraftChange: vi.fn(),
+          onCancel: vi.fn(),
+          onConfirmEdit: vi.fn()
+        })
+      )
+    const saveButton = (elements: ElementWithProps[]): ElementWithProps | undefined =>
+      elements.find((element) => getTextContent(element).trim() === 'Save')
 
-    expectSettingsDialogChrome(tree, 'w-[min(420px,calc(100vw-2rem))]', onCancel)
+    expect(saveButton(render('   '))?.props.disabled).toBe(true)
+    expect(saveButton(render('Valid'))?.props.disabled).toBe(false)
   })
 
   it('wires delete close and confirm callbacks while rendering the session title', async () => {

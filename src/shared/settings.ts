@@ -380,6 +380,19 @@ export const DEFAULT_REVIEWER_MODEL_CONFIGURATION: ReviewerModelConfiguration = 
   mode: 'inherit'
 })
 
+export type SessionDetailsModelConfiguration =
+  | Readonly<{ mode: 'inherit'; reasoningEffort: ReasoningEffort }>
+  | Readonly<{
+      mode: 'fixed'
+      providerId: string
+      model: string
+      reasoningEffort: ReasoningEffort
+    }>
+  | Readonly<{ mode: 'disabled' }>
+
+export const DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION: SessionDetailsModelConfiguration =
+  Object.freeze({ mode: 'inherit', reasoningEffort: 'low' })
+
 // Optional fixed target used only to translate image input for a text-only active model. Absence is
 // disabled; unlike Subagent and Reviewer routing there is no inherited active-model mode.
 export type VisionModelConfiguration = Readonly<{
@@ -483,6 +496,7 @@ export type SettingsSnapshot = {
   reasoningEffort: ReasoningEffort
   subagentModel?: SubagentModelConfiguration
   reviewerModel?: ReviewerModelConfiguration
+  sessionDetailsModel?: SessionDetailsModelConfiguration
   visionModel?: VisionModelConfiguration
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
@@ -527,6 +541,10 @@ export type SetSubagentModelRequest = {
 
 export type SetReviewerModelRequest = {
   configuration: ReviewerModelConfiguration
+}
+
+export type SetSessionDetailsModelRequest = {
+  configuration: SessionDetailsModelConfiguration
 }
 
 export type SetVisionModelRequest = {

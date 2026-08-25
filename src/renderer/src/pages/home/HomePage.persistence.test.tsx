@@ -49,6 +49,13 @@ vi.mock('./DeleteProjectDialog', () => ({
   )
 }))
 vi.mock('radix-ui', () => ({
+  Tooltip: {
+    Provider: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Root: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Trigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Portal: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Content: ({ children }: { children: ReactNode }) => <>{children}</>
+  },
   DropdownMenu: {
     Root: ({ children }: { children: ReactNode }) => <>{children}</>,
     Trigger: ({ children }: { children: ReactNode }) => <>{children}</>,

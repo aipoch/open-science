@@ -439,6 +439,22 @@ describe('RestrictedInferenceRunner', () => {
     }
   })
 
+  it('preserves provider usage reported before a restricted-inference failure', async () => {
+    const usage: AcpTurnTokenUsage = {
+      inputTokens: 12,
+      cacheTokens: 3,
+      outputTokens: 4
+    }
+    const { runner } = await makeRunner(backend(claudeCodeFramework), {
+      events: [event({ kind: 'tool' }), event({ kind: 'stop', text: 'end_turn', turnUsage: usage })]
+    })
+
+    await expect(runner.run(runInput())).rejects.toMatchObject({
+      code: 'tool-violation',
+      usage
+    })
+  })
+
   it.each([
     ['claude-code', claudeCodeFramework, target('claude-code')],
     ['opencode', opencodeFramework, target('opencode')],

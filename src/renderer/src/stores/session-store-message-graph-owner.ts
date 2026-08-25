@@ -33,7 +33,7 @@ import {
   type ChatSession,
   type SessionStoreData
 } from './session-store-persistence-owner'
-
+import * as sessionDetails from './session-store-session-details'
 let messageSequence = 0
 let pendingSessionSequence = 0
 let timelineSequence = 0
@@ -252,7 +252,6 @@ export const createSessionMessageGraphOwner = <
       promptMessageId: userMessage.id,
       startedAt: now
     }
-
     if (existingSession) {
       const replayPromptIndex = existingSession.pendingContextReplayMessageId
         ? existingSession.messages.findIndex(
@@ -283,11 +282,10 @@ export const createSessionMessageGraphOwner = <
                     }
                   : {}),
                 agentModel: normalizedAgentModel,
-                // Existing Sessions keep their Composer preference. Fill only when none is stored
-                // so a send-time snapshot cannot replace a newer picker selection.
                 ...(agentConfiguration && !session.agentConfiguration
                   ? { agentConfiguration }
                   : {}),
+                ...sessionDetails.prepareExistingSessionDetails(existingSession, userMessage),
                 agentStatus: undefined,
                 error: undefined,
                 errorReportable: undefined,
@@ -312,7 +310,10 @@ export const createSessionMessageGraphOwner = <
         id: sessionId,
         projectId: projectId ?? '',
         isPending: isPending ? true : undefined,
-        title: createTitleFromMessage(trimmedContent || createTitleFromUploads(uploads)),
+        ...sessionDetails.prepareNewRootSessionDetails(
+          userMessage,
+          createTitleFromMessage(trimmedContent || createTitleFromUploads(uploads))
+        ),
         cwd: cwd ?? '',
         status: 'running',
         permissionProfile: permissionProfile ?? DEFAULT_PERMISSION_PROFILE,

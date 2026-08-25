@@ -10,6 +10,7 @@ import {
   readProjectFilesFilter,
   readReasoningEffort,
   readReviewerModel,
+  readSessionDetailsModel,
   readSubagentModel
 } from './transport-validation'
 
@@ -88,6 +89,20 @@ describe('Settings transport validation', () => {
     })
     expect(() => readReviewerModel({ configuration: { mode: 'fixed' } })).toThrow(
       'Invalid Reviewer model configuration.'
+    )
+  })
+
+  it('accepts the three Session details policies and requires independent inherited effort', () => {
+    expect(
+      readSessionDetailsModel({
+        configuration: { mode: 'inherit', reasoningEffort: 'low' }
+      })
+    ).toEqual({ mode: 'inherit', reasoningEffort: 'low' })
+    expect(readSessionDetailsModel({ configuration: { mode: 'disabled' } })).toEqual({
+      mode: 'disabled'
+    })
+    expect(() => readSessionDetailsModel({ configuration: { mode: 'inherit' } })).toThrow(
+      'Invalid Session details model configuration.'
     )
   })
 

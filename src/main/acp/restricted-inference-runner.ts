@@ -22,7 +22,8 @@ type RestrictedInferenceErrorCode =
 class RestrictedInferenceError extends Error {
   constructor(
     readonly code: RestrictedInferenceErrorCode,
-    message: string
+    message: string,
+    readonly usage?: AcpTurnTokenUsage
   ) {
     super(message)
   }
@@ -312,6 +313,21 @@ class RestrictedInferenceRunner {
         stopReason: response.stopReason,
         ...(turnUsage ? { usage: Object.freeze({ ...turnUsage }) } : {})
       })
+    } catch (error) {
+      if (turnUsage && error instanceof RestrictedInferenceError && !error.usage) {
+        throw new RestrictedInferenceError(
+          error.code,
+          error.message,
+          Object.freeze({ ...turnUsage })
+        )
+      }
+      if (turnUsage && error instanceof Error && Object.isExtensible(error)) {
+        Object.defineProperty(error, 'usage', {
+          value: Object.freeze({ ...turnUsage }),
+          enumerable: true
+        })
+      }
+      throw error
     } finally {
       input.signal?.removeEventListener('abort', forwardAbort)
       active.controller.signal.removeEventListener('abort', onAbort)

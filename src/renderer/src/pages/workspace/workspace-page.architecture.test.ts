@@ -35,6 +35,7 @@ const ownerPaths = {
   branchSwitchGuard: resolve(workspaceDirectory, 'use-workspace-branch-switch-guard.ts'),
   sideChat: resolve(workspaceDirectory, 'use-side-chat-controller.ts'),
   session: resolve(workspaceDirectory, 'workspace-session-controller.ts'),
+  sessionDetails: resolve(workspaceDirectory, 'workspace-session-details-controller.ts'),
   sessionAgentConfiguration: resolve(
     workspaceDirectory,
     'workspace-session-agent-configuration-controller.ts'
@@ -169,6 +170,7 @@ describe('workspace page architecture', () => {
       ownerPaths.branchSwitchGuard,
       ownerPaths.sideChat,
       ownerPaths.session,
+      ownerPaths.sessionDetails,
       ownerPaths.sessionAgentConfiguration
     ]) {
       expect(rawLineCount(readSource(ownerPath)), basename(ownerPath)).toBeLessThanOrEqual(700)

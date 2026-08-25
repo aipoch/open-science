@@ -78,6 +78,9 @@ type PreviewApplicationCommandOwner = Readonly<{
 }>
 
 type SessionApplicationCommandOwner = Omit<SessionPersistenceHandlers, 'deleteSession'> & {
+  editDetails(
+    request: SessionPersistence.EditSessionDetailsRequest
+  ): Promise<SessionPersistence.PersistedChatSession>
   deleteSession(
     request: SessionPersistence.DeleteSessionRequest
   ): Promise<SessionPersistence.SessionDeletionResult>
@@ -256,6 +259,11 @@ const dataContentApplicationCommands = Object.freeze({
     'deleteSession',
     SessionPersistence.sessionApplicationCommandContracts.delete
   ),
+  sessionEditDetails: sessionCommand(
+    'sessions:edit-details',
+    'editDetails',
+    SessionPersistence.sessionApplicationCommandContracts.editDetails
+  ),
   sessionExportConversation: electronCommand(
     'sessions:export-conversation',
     'exportConversationFromInvokingWindow'
@@ -338,6 +346,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
   ] as const),
   defineApplicationCommandGroup('sessions', [
     dataContentApplicationCommands.sessionDelete,
+    dataContentApplicationCommands.sessionEditDetails,
     dataContentApplicationCommands.sessionExportConversation,
     dataContentApplicationCommands.sessionList,
     dataContentApplicationCommands.sessionLoadAll,
@@ -517,6 +526,21 @@ const registerDataContentApplicationCommands = (
           publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionDeleted, args[0])
         }
         return result
+      },
+      'sessions:edit-details': (invocation) => {
+        return dependencies.withDataRootWrite(async () => {
+          try {
+            return await dependencies.sessions.editDetails(invocation.args[0])
+          } catch (error) {
+            if (SessionPersistence.isSessionRevisionConflictError(error)) {
+              throw new ApplicationCommandError(
+                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                error instanceof Error ? error.message : 'Session revision conflict.'
+              )
+            }
+            throw error
+          }
+        })
       },
       'sessions:export-conversation': (invocation) => {
         assertElectronCaller(

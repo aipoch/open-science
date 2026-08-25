@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight, Eye, SearchCheck, Workflow, type LucideIcon } from 'lucide-react'
+import { ChevronRight, Eye, SearchCheck, Sparkles, Workflow, type LucideIcon } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
@@ -18,16 +18,21 @@ import {
   type ReasoningEffortProfile
 } from '../../../../shared/reasoning-effort'
 import { SettingsSection } from './SettingsLayout'
-import { ReviewerModelSelect, SubagentModelSelect, VisionModelSelect } from './SubagentModelSelect'
+import {
+  ReviewerModelSelect,
+  SessionDetailsModelSelect,
+  SubagentModelSelect,
+  VisionModelSelect
+} from './SubagentModelSelect'
 import { providerKindKey } from './provider-form-value'
 import { ProviderKindIcon } from './provider-icons'
 
-type ScenarioId = 'subagent' | 'reviewer' | 'vision'
+type ScenarioId = 'session-details' | 'subagent' | 'reviewer' | 'vision'
 
 // One-line summary of a scenario's routing policy, derived from the same catalog the in-row
 // selectors use so the row and the expanded selector never disagree on availability.
 type ScenarioSummary =
-  | Readonly<{ kind: 'inherit'; label: string }>
+  | Readonly<{ kind: 'inherit'; label: string; effortLabel?: string }>
   | Readonly<{ kind: 'unconfigured' }>
   | Readonly<{
       kind: 'fixed'
@@ -58,7 +63,7 @@ const resolveProjectedEffortLabel = (
   const control = resolveReasoningEffortControl(intent, profile)
   const selected = control.options.find((option) => option.value === control.selectedValue)
   // Defensive only: every slot value appears in control.options, so selected is always found.
-  return selected?.label ?? t('Default')
+  return selected ? t(selected.label) : t('Default')
 }
 
 const resolveFixedSummary = (
@@ -99,6 +104,32 @@ const resolveFixedSummary = (
       }
 }
 
+const resolveInheritedEffortLabel = (
+  intent: ReasoningEffort,
+  provider: ProviderView | undefined,
+  model: string | undefined,
+  t: TFunction
+): string => {
+  if (!model) {
+    switch (intent) {
+      case 'default':
+        return t('Default')
+      case 'low':
+        return t('Low')
+      case 'medium':
+        return t('Medium')
+      case 'high':
+        return t('High')
+      case 'xhigh':
+        return t('XHigh')
+      case 'max':
+        return t('Max')
+    }
+  }
+  const profile = resolveProviderReasoningEffortProfile(provider, model)
+  return profile.supported ? resolveProjectedEffortLabel(intent, profile, t) : t('Not supported')
+}
+
 // Teal status-info badge for an explicit selection, kept even when the target went unavailable.
 const FixedEffortBadge = ({ label }: { label: string }): React.JSX.Element => (
   <Badge className="bg-status-info-surface text-status-info-foreground dark:bg-status-info-dark-surface dark:text-status-info-dark-foreground">
@@ -132,7 +163,12 @@ const ScenarioRowCluster = ({ summary }: { summary: ScenarioSummary }): React.JS
 
   switch (summary.kind) {
     case 'inherit':
-      return <span className="truncate text-sm text-muted-foreground">{summary.label}</span>
+      return (
+        <>
+          <span className="truncate text-sm text-muted-foreground">{summary.label}</span>
+          {summary.effortLabel ? <FixedEffortBadge label={summary.effortLabel} /> : null}
+        </>
+      )
     case 'unconfigured':
       return <span className="truncate text-sm text-muted-foreground">{t('Not configured')}</span>
     case 'unavailable':
@@ -222,19 +258,22 @@ const ScenarioModelRow = ({
   )
 }
 
-// The Scenario models card: one summary row per routing scenario (Subagent, Reviewer, Vision).
+// The Scenario models card: one summary row per routing scenario, with Session details directly
+// after Vision so the image-routing and metadata-routing helpers stay adjacent.
 // Rows expand inline as an accordion — a single useState, purely local UI state — and reuse the
 // existing policy selectors unchanged, so a selection still saves optimistically through the store.
 const ScenarioModelList = (): React.JSX.Element => {
   const { t } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const activeModel = useSettingsStore((state) => state.activeModel)
   const claudeSubscriptionProviderId = useSettingsStore(
     (state) => state.claudeSubscriptionProviderId
   )
   const frameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const subagentModel = useSettingsStore((state) => state.subagentModel)
+  const sessionDetailsModel = useSettingsStore((state) => state.sessionDetailsModel)
   const reviewerModel = useSettingsStore((state) => state.reviewerModel)
   const visionModel = useSettingsStore((state) => state.visionModel)
 
@@ -285,6 +324,32 @@ const ScenarioModelList = (): React.JSX.Element => {
         ? resolveFixedSummary(visionModel, visionCatalog, providers, t)
         : { kind: 'unconfigured' },
       selector: <VisionModelSelect />
+    },
+    {
+      id: 'session-details',
+      icon: Sparkles,
+      name: t('Session details'),
+      description:
+        sessionDetailsModel.mode === 'disabled'
+          ? t('Automatic title and description generation is disabled for future sessions.')
+          : t('Generates a title and description after the first message is saved.'),
+      summary:
+        sessionDetailsModel.mode === 'disabled'
+          ? { kind: 'unconfigured' }
+          : sessionDetailsModel.mode === 'inherit'
+            ? {
+                kind: 'inherit',
+                label: t('Same as main model'),
+                effortLabel: resolveInheritedEffortLabel(
+                  sessionDetailsModel.reasoningEffort,
+                  providers.find((provider) => provider.id === activeProviderId),
+                  activeModel ??
+                    providers.find((provider) => provider.id === activeProviderId)?.model,
+                  t
+                )
+              }
+            : resolveFixedSummary(sessionDetailsModel, catalog, providers, t),
+      selector: <SessionDetailsModelSelect />
     }
   ]
 
@@ -292,7 +357,7 @@ const ScenarioModelList = (): React.JSX.Element => {
     <SettingsSection
       title={t('Scenario models')}
       aria-label={t('Scenario models')}
-      description={t('Models for subagents, review, and image understanding.')}
+      description={t('Models for session details, subagents, review, and image understanding.')}
     >
       <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
         {scenarios.map((scenario) => (
