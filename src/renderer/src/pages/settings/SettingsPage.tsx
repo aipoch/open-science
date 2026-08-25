@@ -388,6 +388,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // provider busy so its card shows "Testing…".
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
   const [postSaveValidationFailed, setPostSaveValidationFailed] = useState(false)
+  const postSaveValidationGeneration = useRef(0)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
   useEffect(() => {
@@ -780,11 +781,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   }
 
   const openCreate = (): void => {
+    postSaveValidationGeneration.current += 1
+    setBusyProviderId(undefined)
     setPostSaveValidationFailed(false)
     navigate({ panel: 'model', view: { kind: 'create' } })
   }
 
   const openEdit = (provider: ProviderView): void => {
+    postSaveValidationGeneration.current += 1
+    setBusyProviderId(undefined)
     setPostSaveValidationFailed(false)
     navigate({
       panel: 'model',
@@ -796,6 +801,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const handleSave = async (): Promise<void> => {
     if (providerEditTargetMissing) return
+    postSaveValidationGeneration.current += 1
+    setBusyProviderId(undefined)
     setIsSaving(true)
     setStatusMessage(undefined)
     setPostSaveValidationFailed(false)
@@ -812,10 +819,24 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       navigate({ panel: 'model', view: { kind: 'list' } })
 
       if (providerId) {
+        const validationGeneration = ++postSaveValidationGeneration.current
         setBusyProviderId(providerId)
         void validateProvider({ providerId })
-          .catch(() => setPostSaveValidationFailed(true))
-          .finally(() => setBusyProviderId(undefined))
+          .then(() => {
+            if (postSaveValidationGeneration.current === validationGeneration) {
+              setPostSaveValidationFailed(false)
+            }
+          })
+          .catch(() => {
+            if (postSaveValidationGeneration.current === validationGeneration) {
+              setPostSaveValidationFailed(true)
+            }
+          })
+          .finally(() => {
+            if (postSaveValidationGeneration.current === validationGeneration) {
+              setBusyProviderId(undefined)
+            }
+          })
       }
     } catch (error) {
       setStatusOk(false)
@@ -1460,7 +1481,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         busyProviderId={busyProviderId}
                         onBusyProviderChange={(providerId) => {
                           setBusyProviderId(providerId)
-                          if (providerId) setPostSaveValidationFailed(false)
+                          if (providerId) {
+                            postSaveValidationGeneration.current += 1
+                            setPostSaveValidationFailed(false)
+                          }
                         }}
                       />
                     </>

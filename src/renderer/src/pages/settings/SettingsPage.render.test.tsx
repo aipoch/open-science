@@ -1610,6 +1610,61 @@ describe('SettingsPage layout', () => {
     })
   })
 
+  it('ignores an older post-save Provider validation failure', async () => {
+    installCustomProviderSnapshot()
+    let rejectFirstValidation: ((error: Error) => void) | undefined
+    let resolveSecondValidation: (() => void) | undefined
+    const validateProvider = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectFirstValidation = reject
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSecondValidation = resolve
+          })
+      )
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
+      validateProvider
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+    await waitFor(() => expect(validateProvider).toHaveBeenCalledTimes(1))
+
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+    await waitFor(() => expect(validateProvider).toHaveBeenCalledTimes(2))
+
+    await act(async () => rejectFirstValidation?.(new Error('stale settings IPC failure')))
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent ?? '').not.toContain(
+      'Could not test the provider connection.'
+    )
+    expect(document.body.textContent).toContain('Testing…')
+
+    await act(async () => resolveSecondValidation?.())
+    await waitFor(() => expect(document.body.textContent).not.toContain('Testing…'))
+  })
+
   it('switches to the General panel and shows the diagnostic log file', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
