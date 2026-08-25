@@ -260,7 +260,11 @@ class SettingsService {
       skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? '',
       getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh)
     })
-    this.scenarioModels = createScenarioModels(this.repository, this.providers, this.backendResolver)
+    this.scenarioModels = createScenarioModels(
+      this.repository,
+      this.providers,
+      this.backendResolver
+    )
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
