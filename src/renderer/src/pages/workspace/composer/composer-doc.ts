@@ -302,7 +302,6 @@ const SESSION_MENTION_TYPE = 'session'
 const PASTED_TEXT_NODE_TYPE = 'pasted-text'
 export const PASTED_TEXT_CARET_MARKER = '\u2060'
 const pastedTextByAnchor = new WeakMap<HTMLElement, ComposerPastedTextNode>()
-const pastedTextCaretHosts = new WeakSet<Text>()
 
 // Read one artifact chip element back into a node; returns null when required attributes are missing.
 const artifactNodeFromEl = (el: HTMLElement): ComposerArtifactNode | null => {
@@ -332,9 +331,9 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
   for (const child of Array.from(root.childNodes)) {
     if (child.nodeType === Node.TEXT_NODE) {
       const rawText = child.textContent ?? ''
-      const text = pastedTextCaretHosts.has(child as Text)
-        ? rawText.replace(PASTED_TEXT_CARET_MARKER, '')
-        : rawText
+      // The browser can split a caret-host Text node during range insertion, losing its object
+      // identity. Treat the reserved marker as renderer-only wherever the split leaves it.
+      const text = rawText.replaceAll(PASTED_TEXT_CARET_MARKER, '')
       if (text === '') continue
       const last = nodes[nodes.length - 1]
       // Merge into a preceding text node so adjacent text collapses.
@@ -483,9 +482,7 @@ export const createPastedTextAnchor = (node: ComposerPastedTextNode): HTMLSpanEl
 }
 
 export const createPastedTextCaretHost = (): Text => {
-  const host = document.createTextNode(PASTED_TEXT_CARET_MARKER)
-  pastedTextCaretHosts.add(host)
-  return host
+  return document.createTextNode(PASTED_TEXT_CARET_MARKER)
 }
 
 // Refresh renderer-only upload metadata without replacing anchor elements, which would discard the

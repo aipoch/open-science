@@ -622,6 +622,35 @@ describe('ComposerEditor', () => {
     expect(editor().textContent).not.toContain(payload)
   })
 
+  it('does not serialize a split trailing caret marker after another long paste', () => {
+    const onLongTextPaste = vi.fn()
+    const firstPaste = { type: 'pasted-text' as const, id: 'paste-1', text: 'first payload' }
+    renderEditor({
+      doc: { nodes: [firstPaste] },
+      onLongTextPaste,
+      focusRequest: 'session-a'
+    })
+    const payload = 'x'.repeat(LONG_PASTE_CHARACTER_THRESHOLD + 1)
+
+    act(() => {
+      const event = new Event('paste', { bubbles: true, cancelable: true }) as Event & {
+        clipboardData: unknown
+      }
+      event.clipboardData = {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? payload : '')
+      }
+      editor().dispatchEvent(event)
+    })
+
+    const [nextDoc, secondPaste] = onLongTextPaste.mock.calls[0] as [
+      ComposerDoc,
+      ComposerPastedTextNode
+    ]
+    expect(nextDoc.nodes).toEqual([firstPaste, secondPaste])
+    expect(nextDoc.nodes).not.toContainEqual({ type: 'text', text: '\u2060' })
+  })
+
   it('copies pasted-text markers as fresh independent anchors when pasted in the composer', () => {
     renderEditor({
       doc: {
