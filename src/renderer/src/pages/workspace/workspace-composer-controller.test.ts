@@ -505,6 +505,67 @@ describe('workspace composer controller', () => {
     expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/old.txt' })
   })
 
+  it('releases a re-staged pasted attachment replaced by repeated undo and redo', async () => {
+    const stageLocalFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'upload-old',
+        sessionId: '.pending',
+        name: 'old.txt',
+        originalName: 'old.txt',
+        path: '/uploads/old.txt',
+        mimeType: 'text/plain',
+        size: 3
+      })
+      .mockResolvedValueOnce({
+        id: 'upload-new',
+        sessionId: '.pending',
+        name: 'new.txt',
+        originalName: 'new.txt',
+        path: '/uploads/new.txt',
+        mimeType: 'text/plain',
+        size: 3
+      })
+      .mockResolvedValueOnce({
+        id: 'upload-old-restaged',
+        sessionId: '.pending',
+        name: 'old-restaged.txt',
+        originalName: 'old-restaged.txt',
+        path: '/uploads/old-restaged.txt',
+        mimeType: 'text/plain',
+        size: 3
+      })
+      .mockResolvedValueOnce({
+        id: 'upload-old-restaged-again',
+        sessionId: '.pending',
+        name: 'old-restaged-again.txt',
+        originalName: 'old-restaged-again.txt',
+        path: '/uploads/old-restaged-again.txt',
+        mimeType: 'text/plain',
+        size: 3
+      })
+    const uploadApi = uploads(stageLocalFile)
+    const hook = renderController(uploadApi)
+    mounted.push(hook)
+    const oldPaste: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-old', text: 'old' }
+    const newPaste: ComposerPastedTextNode = { type: 'pasted-text', id: 'paste-new', text: 'new' }
+
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(oldPaste), oldPaste))
+    await flushAsyncWork()
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(newPaste), newPaste))
+    await flushAsyncWork()
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    await flushAsyncWork()
+    expect(hook.result.current.view.attachments[0]?.id).toBe('upload-old-restaged')
+
+    act(() => expect(hook.result.current.actions.redo()).toBe(true))
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.attachments[0]?.id).toBe('upload-old-restaged-again')
+    expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/old-restaged.txt' })
+  })
+
   it('stages copied pasted-text anchors as one independent upload batch', async () => {
     const stageLocalFile = vi
       .fn()

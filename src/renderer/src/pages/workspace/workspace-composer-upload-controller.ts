@@ -813,6 +813,7 @@ export const useWorkspaceComposerUploadController = ({
   const applySnapshot = useCallback(
     (snapshot: ComposerHistorySnapshot, restartTransfers: boolean): void => {
       const draftKey = activeDraftKeyRef.current
+      const resourcesToRelease = [currentSnapshot(), snapshot]
       let targetDoc = snapshot.doc
       const currentAttachmentIds = new Set(attachmentsRef.current.map(({ id }) => id))
       const targetAttachments = restartTransfers
@@ -913,13 +914,16 @@ export const useWorkspaceComposerUploadController = ({
         setActiveDoc(targetDoc)
       }
       if (pending.length > 0) runPendingUploads(draftKey, pending)
+      releaseHistoryResources(resourcesToRelease)
       requestCaret(snapshot.caret ?? { nodeIndex: targetDoc.nodes.length, offset: 0 })
     },
     [
       activeDraftKeyRef,
       clearHistory,
+      currentSnapshot,
       markChanged,
       reconcileHistorySnapshots,
+      releaseHistoryResources,
       requestCaret,
       runPendingUploads,
       setActiveAttachments,
