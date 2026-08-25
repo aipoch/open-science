@@ -5312,6 +5312,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/agent-loading-message.ts',
       'src/renderer/src/pages/workspace/artifact-preview-utils.ts',
       'src/renderer/src/pages/workspace/artifact-preview.tsx',
+      'src/renderer/src/pages/workspace/composer/SessionMentionPopup.tsx',
       'src/renderer/src/pages/workspace/composer/composer-history.ts',
       'src/renderer/src/pages/workspace/context-window-trend.ts',
       'src/renderer/src/pages/workspace/generate-plan-activity-projection.ts',
