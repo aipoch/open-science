@@ -138,10 +138,15 @@ describe('readReleaseNotes', () => {
     writeFileSync(join(dir, 'en.md'), '  English notes\n')
     writeFileSync(join(dir, 'zh-Hans.md'), '  简体中文说明\n')
     writeFileSync(join(dir, 'fr.md'), '  Notes françaises\n')
+    writeFileSync(join(dir, 'es.md'), '  Notas en español\n')
 
     expect(readReleaseNotes(dir)).toEqual({
       notes: 'English notes',
-      localizedNotes: { 'zh-Hans': '简体中文说明', fr: 'Notes françaises' }
+      localizedNotes: {
+        'zh-Hans': '简体中文说明',
+        fr: 'Notes françaises',
+        es: 'Notas en español'
+      }
     })
   })
 

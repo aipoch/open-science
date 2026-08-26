@@ -2,8 +2,9 @@
 
 ## i18n — translating new user-visible strings
 
-The renderer ships six translated locales: **fr** (French), **zh-Hans** (Simplified Chinese),
-**zh-Hant** (Traditional Chinese), **ja** (Japanese), **ko** (Korean), and **ru** (Russian). Every
+The renderer ships seven translated locales: **es** (Spanish), **fr** (French), **zh-Hans**
+(Simplified Chinese), **zh-Hant** (Traditional Chinese), **ja** (Japanese), **ko** (Korean), and
+**ru** (Russian). Every
 user-visible string added to the renderer must have a corresponding entry in the `renderer`
 namespace for all translated locales unless the same meaning is intentionally shared with Electron
 main through the `common` namespace:
@@ -15,6 +16,7 @@ src/shared/i18n/locales/ja.json
 src/shared/i18n/locales/ko.json
 src/shared/i18n/locales/fr.json
 src/shared/i18n/locales/ru.json
+src/shared/i18n/locales/es.json
 ```
 
 Each locale file has exactly three top-level namespace objects: `common`, `native`, and `renderer`.
@@ -74,11 +76,11 @@ English**, so a missing key renders in English instead of borrowing another tran
 ### Plurals
 
 Chinese, Japanese, and Korean have a single plural category. Use the `_other` suffix only — never `_one`,
-`_few`, etc. French has `_one`, `_many`, and `_other` categories, so all three entries are required;
-`_many` is selected for values such as 1,000,000 and can usually reuse the `_other` translation. The
-Russian uses `_one`, `_few`, `_many`, and `_other`; every counted Russian key must provide all four
-forms. The English singular is passed as `defaultValue_one` at the call site and never needs a catalog
-entry.
+`_few`, etc. French and Spanish have `_one`, `_many`, and `_other` categories, so all three entries
+are required; `_many` is selected for values such as 1,000,000 and can usually reuse the `_other`
+translation. Russian uses `_one`, `_few`, `_many`, and `_other`; every counted Russian key must
+provide all four forms. The English singular is passed as `defaultValue_one` at the call site and
+never needs a catalog entry.
 
 ```tsx
 // Call site — English needs no catalog entry
@@ -93,6 +95,10 @@ t('{{count}} files', { count: n, defaultValue_one: '{{count}} file' })
 "{{count}} files_one": "{{count}} fichier"      // fr
 "{{count}} files_many": "{{count}} fichiers"    // fr
 "{{count}} files_other": "{{count}} fichiers"   // fr
+
+"{{count}} files_one": "{{count}} archivo"     // es
+"{{count}} files_many": "{{count}} archivos"   // es
+"{{count}} files_other": "{{count}} archivos"  // es
 
 // ru uses all four CLDR categories
 "{{count}} files_one": "{{count}} файл",
@@ -134,6 +140,23 @@ for a known set of script-specific characters and will fail on cross-script cont
 | Main model           | **Modèle principal** | **主模型**   | **主模型**   | **メインモデル**       | **메인 모델**     | **Основная модель**      | Settings main-model label; not a Main Agent role  |
 | Subagent / Subagents | **Sous-agent(s)**    | **子智能体** | **子智能體** | **サブエージェント**   | **서브에이전트**  | **Субагент / Субагенты** | Translate as a complete compound                  |
 | Shell                | **Terminal**         | **命令行**   | **命令列**   | **シェル**             | **셸**            | **Командная строка**     | User-facing label; `Notebook` remains English     |
+
+Spanish entries use these binding terms:
+
+| Term                 | es                          | Note                                              |
+| -------------------- | --------------------------- | ------------------------------------------------- |
+| Skill / Skills       | **Habilidad / Habilidades** | Translate user-visible prose                      |
+| Agent / Agents       | **Agente / Agentes**        | Translate user-visible prose                      |
+| Notebook             | **Notebook**                | Keep as-is                                        |
+| token (model usage)  | **token / tokens**          | Model input, output, context, and usage counts    |
+| token (credential)   | **token / tokens**          | Authentication and personal access credentials    |
+| Specialist           | **Especialista**            | Generic role; translate                           |
+| Marketplace          | **Mercado**                 | Generic surface; retain third-party product names |
+| Connector            | **Conector**                | Generic noun; retain exact directory names        |
+| Main Agent           | **Agente principal**        | Translate as a complete compound                  |
+| Main model           | **Modelo principal**        | Settings main-model label; not a Main Agent role  |
+| Subagent / Subagents | **Subagente / Subagentes**  | Translate as a complete compound                  |
+| Shell                | **Línea de comandos**       | User-facing label; `Notebook` remains English     |
 
 Exact technical identifiers are exempt from prose translation. Keep file names, extensions,
 commands, paths, protocol identifiers, and code spans unchanged, including `SKILL.md`, `.skill`,

@@ -17,6 +17,7 @@ import { I18nextProvider, Trans } from 'react-i18next'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import es from '../../../shared/i18n/locales/es.json'
 import fr from '../../../shared/i18n/locales/fr.json'
 import ja from '../../../shared/i18n/locales/ja.json'
 import ko from '../../../shared/i18n/locales/ko.json'
@@ -38,6 +39,7 @@ type Catalog = Record<string, string>
 type TranslatedLocale = Exclude<(typeof LOCALES)[number], 'en'>
 
 const commonCatalogs = {
+  es: es.common,
   fr: fr.common,
   ja: ja.common,
   ko: ko.common,
@@ -47,6 +49,7 @@ const commonCatalogs = {
 } as const
 
 const sourceCatalogs = {
+  es: { ...es.common, ...es.renderer },
   fr: { ...fr.common, ...fr.renderer },
   ja: { ...ja.common, ...ja.renderer },
   ko: { ...ko.common, ...ko.renderer },
@@ -56,6 +59,7 @@ const sourceCatalogs = {
 } as const satisfies Record<TranslatedLocale, Catalog>
 
 const rendererCatalogs = {
+  es: es.renderer,
   fr: fr.renderer,
   ja: ja.renderer,
   ko: ko.renderer,
@@ -147,6 +151,7 @@ const CONTEXT_SUFFIXES = new Set([
   'window'
 ])
 const REQUIRED_PLURAL_CATEGORIES = {
+  es: ['one', 'many', 'other'],
   fr: ['one', 'many', 'other'],
   ja: ['other'],
   ko: ['other'],
@@ -500,6 +505,12 @@ describe.each(TRANSLATED)('%s native catalog', (locale) => {
 
   it('localizes mandatory generic product nouns', () => {
     const expected = {
+      es: {
+        subagent: 'subagente',
+        skill: 'habilidad',
+        specialist: 'especialista',
+        connector: 'conector'
+      },
       fr: {
         subagent: 'sous-agent',
         skill: 'compétence',
@@ -893,6 +904,28 @@ describe('mandatory product glossary', () => {
   })
 
   const chosenGenericTerms = {
+    es: {
+      Agent: 'Agente',
+      'Agent framework': 'Framework de agentes',
+      'Command line tool': 'Herramienta de línea de comandos',
+      Diagnostics: 'Diagnóstico',
+      failed: 'falló',
+      Skills: 'Habilidades',
+      Specialist: 'Especialista',
+      Specialists: 'Especialistas',
+      Marketplace: 'Mercado',
+      Connector: 'Conector',
+      Main: 'Agente principal',
+      Light: 'Claro',
+      Resume: 'Reanudar',
+      Running: 'En ejecución',
+      running: 'en ejecución',
+      Terminal: 'Terminal',
+      Shell: 'Línea de comandos',
+      'Token usage': 'Uso de tokens',
+      'Claude setup token': 'Token de configuración de Claude',
+      'Token: {{masked}}': 'Token: {{masked}}'
+    },
     fr: {
       Agent: 'Agent',
       'Agent framework': "Framework d'agents",
@@ -996,6 +1029,7 @@ describe('mandatory product glossary', () => {
 
   const compoundGlossaryPatterns = {
     mainModel: {
+      es: /modelo principal/iu,
       fr: /modèle principal/iu,
       'zh-Hans': /主模型/u,
       'zh-Hant': /主模型/u,
@@ -1004,6 +1038,7 @@ describe('mandatory product glossary', () => {
       ru: /основн\p{L}*\s+модел/iu
     },
     mainAgent: {
+      es: /agente principal/iu,
       fr: /agent principal/iu,
       'zh-Hans': /主智能体/u,
       'zh-Hant': /主智能體/u,
@@ -1012,6 +1047,7 @@ describe('mandatory product glossary', () => {
       ru: /главн\p{L}*\s+агент/iu
     },
     subagent: {
+      es: /subagentes?/iu,
       fr: /sous-agents?/iu,
       'zh-Hans': /子智能体/u,
       'zh-Hant': /子智能體/u,
@@ -1102,6 +1138,7 @@ describe('mandatory product glossary', () => {
     expect(
       Object.fromEntries(TRANSLATED.map((locale) => [locale, catalog(locale)['provider default']]))
     ).toEqual({
+      es: 'por defecto del proveedor',
       fr: 'réglage du fournisseur',
       ja: 'プロバイダー設定を使用',
       ko: '모델 제공업체 설정 사용',
@@ -1325,6 +1362,7 @@ describe('mandatory product glossary', () => {
 
   it.each(TRANSLATED)('%s uses the chosen Shell spelling in every Shell label', (locale) => {
     const expected = {
+      es: /líneas? de comandos/iu,
       fr: /\btermin(?:al|aux)\b/i,
       'zh-Hans': /命令行/,
       'zh-Hant': /命令列/,
@@ -1434,6 +1472,12 @@ describe('mandatory product glossary', () => {
   })
 
   const localizedFeatureTerms = {
+    es: {
+      agent: /agentes?/iu,
+      skill: /habilidad(?:es)?/iu,
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
     fr: {
       agent: 'agent',
       skill: 'compétence',
@@ -1518,6 +1562,7 @@ describe('mandatory product glossary', () => {
     /^Token:/
   ]
   const localizedTokenTerms = {
+    es: { credential: 'token', model: 'token' },
     fr: { credential: 'jeton', model: 'jeton' },
     'zh-Hans': { credential: '令牌', model: '词元' },
     'zh-Hant': { credential: '權杖', model: '詞元' },
@@ -1537,7 +1582,7 @@ describe('mandatory product glossary', () => {
         ? expected.credential
         : expected.model
       return !prose.toLocaleLowerCase(locale).includes(term.toLocaleLowerCase(locale)) ||
-        /\btokens?\b/i.test(prose)
+        (locale !== 'es' && /\btokens?\b/i.test(prose))
         ? [`${key}: ${term}`]
         : []
     })
@@ -1570,6 +1615,263 @@ describe('mandatory product glossary', () => {
         )
         .map(() => key)
     })
+
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps Spanish UI copy free of known literal machine-translation errors', () => {
+    const invalid = /\b(?:currículum|carcasa|proyectil|fichas?|código postal|antrópico)\b/iu
+    const offenders = allCatalogEntries('es')
+      .filter(([, value]) => invalid.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps reviewed Spanish controls and guidance idiomatic and formally addressed', () => {
+    const expected = {
+      Markdown: 'Markdown',
+      Cartoon: 'Cintas',
+      'Cartoon requires a protein or nucleic-acid backbone':
+        'La representación de cintas requiere una cadena principal de proteína o ácido nucleico',
+      Archive_verb: 'Archivar',
+      'Archive limits': 'Límites de archivado',
+      'Archive state changed elsewhere.': 'El estado de archivado cambió en otro lugar.',
+      'Approval applies to this call only.': 'La aprobación se aplica solo a esta llamada.',
+      'Copy command': 'Copiar comando',
+      'All caught up': 'Todo al día',
+      'All required environment checks passed.':
+        'Se superaron todas las comprobaciones obligatorias del entorno.',
+      'Allowed this session': 'Permitido durante esta sesión',
+      'A task completed.': 'Se completó una tarea.',
+      'A Skill import needs your approval.':
+        'La importación de una habilidad necesita su aprobación.',
+      Update_verb: 'Actualizar',
+      ' or ': ' o ',
+      Repair: 'Reparar',
+      Switch: 'Cambiar',
+      'Test connection': 'Probar conexión',
+      'View plan': 'Ver plan',
+      'Repair index': 'Reparar índice',
+      'Filter notebook runs by Agent': 'Filtrar ejecuciones de Notebook por agente',
+      'Filter packages': 'Filtrar paquetes',
+      'Filter packages…': 'Filtrar paquetes…',
+      'Beginning of notebook history': 'Inicio del historial de Notebook',
+      'Loading Connector…': 'Cargando conector…',
+      'Loading permissions': 'Cargando permisos',
+      'Retry loading sessions': 'Reintentar cargar sesiones',
+      'Refreshing Marketplace…': 'Actualizando el Mercado…',
+      'Star on GitHub': 'Dar una estrella en GitHub',
+      'Star {{app}} on GitHub': 'Dar una estrella a {{app}} en GitHub',
+      'Keep installed Skill': 'Mantener la habilidad instalada',
+      'Use package Skill': 'Usar la habilidad del paquete',
+      'Turn limit': 'Límite de turnos',
+      'Turn limit reached': 'Límite de turnos alcanzado',
+      'Continued with {{target}}': 'Continuó con {{target}}',
+      'Search connectors': 'Buscar conectores',
+      'Search connectors…': 'Buscar conectores…',
+      'Search skills': 'Buscar habilidades',
+      'Search skills…': 'Buscar habilidades…',
+      'Search specialists': 'Buscar especialistas',
+      'Search specialists…': 'Buscar especialistas…',
+      'Search Tags': 'Buscar etiquetas',
+      'Search Tags…': 'Buscar etiquetas…',
+      'Search Marketplace': 'Buscar en el Mercado',
+      'Resend on a new branch?': '¿Reenviar en una nueva rama?',
+      'This queued message belongs to another message branch. Return to that branch to send it.':
+        'Este mensaje en cola pertenece a otra rama de mensajes. Regrese a esa rama para enviarlo.',
+      'Test and update': 'Probar y actualizar',
+      'All ({{count}})_many': 'Todos ({{count}})',
+      Turns: 'Turnos',
+      'Turn {{turn}} · Call {{call}}': 'Turno {{turn}} · Llamada {{call}}',
+      'Turn {{turn}} · Call {{call}}, {{tokens}} tokens':
+        'Turno {{turn}} · Llamada {{call}}, {{tokens}} tokens',
+      'Call usage chart across {{count}} model calls_one':
+        'Gráfico de uso de {{count}} llamada al modelo',
+      'Call usage chart across {{count}} model calls_other':
+        'Gráfico de uso de {{count}} llamadas al modelo',
+      'Call usage chart across {{count}} model calls_many':
+        'Gráfico de uso de {{count}} llamadas al modelo',
+      'Context window chart across {{count}} terminal outcomes_one':
+        'Gráfico de la ventana de contexto en {{count}} resultado final',
+      'Context window chart across {{count}} terminal outcomes_other':
+        'Gráfico de la ventana de contexto en {{count}} resultados finales',
+      'Context window chart across {{count}} terminal outcomes_many':
+        'Gráfico de la ventana de contexto en {{count}} resultados finales',
+      "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.":
+        'Las conversaciones que aún estén vinculadas a <name>{{name}}</name> pasarán a estar <em>no disponibles</em> y <em>no</em> cambiarán automáticamente al Agente principal. Para cada conversación afectada, elegirá explícitamente un nuevo especialista o el Agente principal antes de que pueda volver a enviar mensajes.',
+      "Couldn't restore permission. Retry.": 'No se pudo restaurar el permiso. Inténtelo de nuevo.',
+      'Test failed: could not reach the endpoint — check the base URL/connection.':
+        'La prueba falló: no se pudo acceder al endpoint; compruebe la URL base o la conexión.',
+      'One xAI login, every agent': 'Un solo inicio de sesión en xAI para todos los agentes',
+      'Open GitHub issue': 'Abrir una incidencia en GitHub',
+      'Delete Specialist': 'Eliminar Especialista',
+      'Export Markdown': 'Exportar Markdown',
+      Pin: 'Fijar',
+      'Install Specialist': 'Instalar Especialista',
+      'Update Specialist': 'Actualizar Especialista',
+      'Agent framework: {{name}}': 'Framework de agentes: {{name}}',
+      'Follow the system setting, or force light or dark.':
+        'Usar la configuración del sistema o forzar el tema claro u oscuro.',
+      'GitHub request failed.': 'Falló la solicitud a GitHub.',
+      'GitHub token settings': 'Configuración del token de GitHub',
+      'GitHub repository': 'Repositorio de GitHub',
+      'New version {{version}} is available': 'La nueva versión {{version}} está disponible',
+      'Not signed in': 'No ha iniciado sesión',
+      'No review for this version': 'No hay ninguna revisión para esta versión',
+      'Export Connector configuration': 'Exportar configuración del conector',
+      'Specialist ZIP': 'ZIP de Especialista',
+      'Agent/framework overhead': 'Sobrecarga del agente/framework',
+      'Always light': 'Siempre claro',
+      'Attach connector': 'Adjuntar conector',
+      'Choose another location': 'Elija otra ubicación',
+      'Choose another specialist': 'Elija otro especialista',
+      'Choose different files': 'Elija otros archivos',
+      'Close Provenance': 'Cerrar procedencia',
+      'Codex ACP is required for this framework. Install it below, or install it manually and re-detect.':
+        'Se requiere Codex ACP para este framework. Instálelo a continuación o instálelo manualmente y vuelva a detectarlo.',
+      'Codex login stored separately by Open Science':
+        'Inicio de sesión de Codex almacenado por separado por Open Science',
+      'Check Codex login': 'Comprobar el inicio de sesión de Codex',
+      'Re-import Codex login': 'Volver a importar el inicio de sesión de Codex',
+      'Codex authentication': 'Autenticación de Codex',
+      'Codex subscription': 'Suscripción de Codex',
+      'Codex sign-out did not complete. Try again.':
+        'No se completó el cierre de sesión de Codex. Inténtelo de nuevo.',
+      'Claude authentication': 'Autenticación de Claude',
+      'Claude subscription': 'Suscripción de Claude',
+      'Claude sign-out did not complete. Try again.':
+        'No se completó el cierre de sesión de Claude. Inténtelo de nuevo.',
+      'Node v': 'Node v',
+      'Official install.ps1': 'install.ps1 oficial',
+      'Official install.sh': 'install.sh oficial',
+      'MCP Registry server.json manifests cannot be imported as installed MCP client configurations.':
+        'Los manifiestos server.json del registro MCP no se pueden importar como configuraciones de cliente MCP instaladas.',
+      'Save this provider, then sign in from its card with a device code. Open Science securely refreshes the login and exposes Messages, Chat Completions, and Responses locally.':
+        'Guarde este proveedor y luego inicie sesión desde su tarjeta con un código de dispositivo. Open Science actualiza el inicio de sesión de forma segura y expone Messages, Chat Completions y Responses localmente.',
+      'Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>.':
+        'Cancele esta actualización y use Revelar en Configuración → General → Diagnóstico para localizar el archivo de registro. Salga de Open Science, vuelva a abrirlo e intente actualizar de nuevo. Si el problema reaparece, revise el registro para detectar rutas de archivos locales y entrégueselo a un desarrollador o <issueLink>abra una incidencia en GitHub</issueLink>.',
+      Runtime: 'Entorno de ejecución',
+      Runtimes: 'Entornos de ejecución',
+      Runtime_duration: 'Duración de la ejecución',
+      'Elapsed run time': 'Tiempo transcurrido de la ejecución',
+      'Notebook runtime': 'Entorno de ejecución de Notebook',
+      'Notebook runtime (optional)': 'Entorno de ejecución de Notebook (opcional)',
+      'Notebook runtimes': 'Entornos de ejecución de Notebook',
+      'Notebook code shown': 'Código de Notebook mostrado',
+      'Notebook state': 'Estado de Notebook',
+      'Notebook restart': 'Reinicio de Notebook',
+      'Notebook shutdown': 'Cierre de Notebook',
+      'Notebooks run in an app-managed Python environment by default. You can change any of this later in Settings → Runtimes.':
+        'Los Notebooks se ejecutan de forma predeterminada en un entorno de Python gestionado por la aplicación. Puede cambiarlo más adelante en Configuración → Entornos de ejecución.',
+      'Overwrite existing notebooks?': '¿Sobrescribir los Notebooks existentes?',
+      'Notebook run': 'Ejecución de Notebook',
+      'Start Notebook run': 'Iniciar ejecución de Notebook',
+      'completed {{count}} Notebook runs_one': 'Se completó {{count}} ejecución de Notebook',
+      'completed {{count}} Notebook runs_other': 'Se completaron {{count}} ejecuciones de Notebook',
+      'completed {{count}} Notebook runs_many': 'Se completaron {{count}} ejecuciones de Notebook',
+      Open: 'Abrir',
+      'Open notebook': 'Abrir Notebook',
+      'Open {{name}}': 'Abrir {{name}}',
+      'Open {{scope}}': 'Abrir {{scope}}',
+      'Open Provenance for {{title}}': 'Abrir procedencia de {{title}}',
+      'Open actions for {{name}}': 'Abrir acciones de {{name}}',
+      'Open skill {{name}}': 'Abrir habilidad {{name}}',
+      'Open session {{title}}': 'Abrir sesión {{title}}',
+      'System prompt': 'Mensaje del sistema',
+      'Subagent model Model': 'Modelo del subagente',
+      'Reviewer model Model': 'Modelo del revisor',
+      'Vision model Model': 'Modelo de visión',
+      'Subagent model Reasoning effort': 'Esfuerzo de razonamiento del modelo del subagente',
+      'Reviewer model Reasoning effort': 'Esfuerzo de razonamiento del modelo del revisor',
+      'Vision model Reasoning effort': 'Esfuerzo de razonamiento del modelo de visión',
+      'Imported {{count}}; {{failureCount}} failed. {{error}}_one':
+        'Importación correcta: {{count}}; con error: {{failureCount}}. {{error}}',
+      'Imported {{count}}; {{failureCount}} failed. {{error}}_other':
+        'Importaciones correctas: {{count}}; con error: {{failureCount}}. {{error}}',
+      'Imported {{count}}; {{failureCount}} failed. {{error}}_many':
+        'Importaciones correctas: {{count}}; con error: {{failureCount}}. {{error}}',
+      '{{count}} failed_one': 'Con errores: {{count}}',
+      '{{count}} failed_other': 'Con errores: {{count}}',
+      '{{count}} failed_many': 'Con errores: {{count}}',
+      'App storage permission': 'Permiso de almacenamiento de la aplicación',
+      'Application storage': 'Almacenamiento de la aplicación',
+      'App-managed environment': 'Entorno gestionado por la aplicación',
+      'ZIP archive': 'Archivo ZIP',
+      Stick: 'Varillas',
+      'Select a Specialist ZIP': 'Seleccione un ZIP de especialista',
+      'GitHub issue prefill': 'Contenido prellenado de la incidencia de GitHub',
+      'GitHub keyword or repository': 'Palabra clave o repositorio de GitHub',
+      'Import selected ({{count}})_one': 'Importación seleccionada ({{count}})',
+      'Import selected ({{count}})_other': 'Importaciones seleccionadas ({{count}})',
+      'Import selected ({{count}})_many': 'Importaciones seleccionadas ({{count}})',
+      'Remembered approvals: {{count}}_one': 'Aprobación recordada: {{count}}',
+      'Repositories ({{count}})_one': 'Repositorio ({{count}})',
+      'Queue ({{count}}) · Not saved_one': 'Cola ({{count}}) · Sin guardar',
+      'Queue ({{count}}) · Not saved_other': 'Cola ({{count}}) · Sin guardar',
+      'Queue ({{count}}) · Not saved_many': 'Cola ({{count}}) · Sin guardar',
+      'Side chat follow up': 'Seguimiento del chat lateral',
+      'Specialist ZIP preview': 'Vista previa del ZIP de Especialista',
+      Scratch: 'Directorio temporal',
+      'Notebook control': 'Control de Notebook',
+      'Upload a SKILL.md or text file': 'Suba un SKILL.md o un archivo de texto'
+    }
+    const actual = Object.fromEntries(
+      Object.keys(expected).map((key) => [key, catalog('es')[key] ?? nativeCatalog('es')[key]])
+    )
+
+    expect(actual).toEqual(expected)
+  })
+
+  it('addresses Spanish users formally', () => {
+    const informal =
+      /\b(?:tú|tu|tus|contigo|inténtalo|inténtala|descárgalo|descárgala|destácalo|sigues|puedes|debes|investigarás|arrastra)\b|\b(?:Actualiza la aplicación|Inicia sesión con|Elimina esta Habilidad|Conserva los archivos|ven a construir)\b/iu
+    const offenders = [...Object.entries(catalog('es')), ...Object.entries(nativeCatalog('es'))]
+      .filter(([, value]) => informal.test(value))
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('preserves Spanish multi-word product and API identifiers', () => {
+    const identifiers = ['Claude Code', 'Messages API', 'Chat Completions', 'Responses API']
+    const offenders = allCatalogEntries('es')
+      .filter(([key, value]) =>
+        identifiers.some(
+          (identifier) => englishOf(key).includes(identifier) && !value.includes(identifier)
+        )
+      )
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses the same Spanish plural wording for CLDR many and other categories', () => {
+    const entries = catalog('es')
+    const manyKeys = Object.keys(entries).filter((key) => key.endsWith('_many'))
+    const mismatched = manyKeys.filter(
+      (key) => entries[key] !== entries[`${key.slice(0, -'_many'.length)}_other`]
+    )
+
+    expect(mismatched).toEqual([])
+  })
+
+  it.each([
+    [1, '1 archivo', 'Se encontró 1 habilidad.'],
+    [2, '2 archivos', 'Se encontraron 2 habilidades.'],
+    [1_000_000, '1000000 archivos', 'Se encontraron 1000000 habilidades.']
+  ])('selects grammatical Spanish plural copy for count %d', (count, files, foundSkills) => {
+    const instance = initI18n('es')
+
+    expect(instance.t('{{count}} files', { count })).toBe(files)
+    expect(instance.t('Found {{count}} skills.', { count })).toBe(foundSkills)
+  })
+
+  it('keeps Spanish entries within their source-key line boundaries', () => {
+    const lineBreakCount = (value: string): number => value.match(/\n/g)?.length ?? 0
+    const offenders = allCatalogEntries('es')
+      .filter(([key, value]) => lineBreakCount(englishOf(key)) !== lineBreakCount(value))
+      .map(([key]) => key)
 
     expect(offenders).toEqual([])
   })

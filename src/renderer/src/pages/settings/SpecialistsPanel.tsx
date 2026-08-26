@@ -1705,7 +1705,7 @@ const InstalledSpecialistsPanel = ({
                             })
                           }
                         >
-                          {t('Update')}
+                          {t('Update', { context: 'verb' })}
                         </Button>
                       ) : null}
                       <SettingsToggle

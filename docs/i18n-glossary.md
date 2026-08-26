@@ -1,7 +1,7 @@
 # Localization Glossary
 
 The binding reference for the `common`, `native`, and `renderer` namespaces in
-`src/shared/i18n/locales/fr.json`, `ja.json`, `ko.json`, `ru.json`, `zh-Hans.json`, and
+`src/shared/i18n/locales/es.json`, `fr.json`, `ja.json`, `ko.json`, `ru.json`, `zh-Hans.json`, and
 `zh-Hant.json`. There is no English catalog: **the key is the English source text**.
 `t('Data folder not found')` renders that sentence verbatim in English and looks it up in the
 localized catalogs, so a missing translation falls back to correct English rather than a raw key
@@ -10,8 +10,8 @@ path. This keeps the English legible in a code diff, which is where copy actuall
 Traditional Chinese is a **separate translation**, not a character conversion of Simplified. The
 software vocabulary genuinely differs (`file` is 文件 in Simplified but 檔案 in Traditional, where
 文件 means _document_), so running a converter over `zh-Hans` produces wrong copy. Translate from the
-English key and consult the tables below. French, Japanese, Korean, and Russian are also translated
-independently from the English key; do not derive them from another catalog.
+English key and consult the tables below. Spanish, French, Japanese, Korean, and Russian are also
+translated independently from the English key; do not derive them from another catalog.
 
 ## Key conventions
 
@@ -24,10 +24,10 @@ are off, so the periods and colons inside an English sentence stay part of the k
 - **Plurals**: the key is the English _plural_ form and the call site passes the singular:
   `t('{{count}} files selected', { count, defaultValue_one: '{{count}} file selected' })`. Chinese,
   Japanese, and Korean have one plural category, so their entries take the `_other` suffix and `_one`
-  entries are rejected. French has `one`, `many`, and `other` categories, so `_one`, `_many`, and
-  `_other` entries are required. The `_many` category is selected for values such as 1,000,000 and
-  can usually reuse the `_other` translation. Russian requires the complete `_one`, `_few`, `_many`,
-  and `_other` set for every counted key.
+  entries are rejected. French and Spanish have `one`, `many`, and `other` categories, so `_one`,
+  `_many`, and `_other` entries are required. The `_many` category is selected for values such as
+  1,000,000 and can usually reuse the `_other` translation. Russian requires the complete `_one`,
+  `_few`, `_many`, and `_other` set for every counted key.
 - **Context** disambiguates two different meanings that share one English string — `t('Compute', {
 context: 'noun' })` keys `Compute_noun`. Only translated catalogs carry the suffixed entry;
   English ignores context and renders the base key.
@@ -50,7 +50,8 @@ Never translated, in any catalog:
 - Translate generic `Skill` and `Agent` prose according to the core table below. Keep exact file
   names, commands, paths, protocol identifiers, and code spans unchanged, including `SKILL.md`,
   `.skill`, `skill://`, `skills/`, `.agents/skills`, `AGENTS.md`, `ssh-agent`, and `setup-token`.
-- Translate `token` by meaning: French uses jeton for both meanings; model input, output, context,
+- Translate `token` by meaning: Spanish retains token and French uses jeton for both meanings;
+  model input, output, context,
   and usage counts use 词元 / 詞元 / トークン / 토큰 / токен; authentication credentials use 令牌 /
   權杖 / トークン / 토큰 / токен. API field names such as `max_tokens` remain unchanged.
 - The `Open Science` name is fixed by `docs/design.md`, but the home tagline beneath it **is**
@@ -173,6 +174,36 @@ this pair backwards is the single most common failure in Simplified-to-Tradition
 | Data root             | Racine des données         | データルート               | 데이터 루트            | Корневая папка данных        | 数据目录           | 資料目錄           |
 | Command line tool     | Outil en ligne de commande | コマンドラインツール       | 명령줄 도구            | Инструмент командной строки  | 命令行工具         | 命令列工具         |
 
+## Spanish terminology
+
+Spanish is translated directly from the English source key. These terms are binding for prose in
+the `common`, `native`, and `renderer` namespaces:
+
+| en               | es                       |
+| ---------------- | ------------------------ |
+| project          | proyecto                 |
+| session          | sesión                   |
+| workspace        | espacio de trabajo       |
+| agent            | agente                   |
+| subagent         | subagente                |
+| agent framework  | framework de agentes     |
+| main agent       | agente principal         |
+| model            | modelo                   |
+| main model       | modelo principal         |
+| provider         | proveedor                |
+| skill            | habilidad                |
+| specialist       | especialista             |
+| marketplace      | mercado                  |
+| connector        | conector                 |
+| shell            | línea de comandos        |
+| token            | token                    |
+| runtime          | entorno de ejecución     |
+| reasoning effort | esfuerzo de razonamiento |
+| running          | en ejecución             |
+| failed           | falló                    |
+| resume           | reanudar                 |
+| light (theme)    | claro                    |
+
 ## Style rules
 
 - Full-width punctuation (`，。：；？`) in Chinese prose. Code, paths, and commands keep their
@@ -197,5 +228,5 @@ this pair backwards is the single most common failure in Simplified-to-Tradition
 - No exclamation points, per `docs/design.md`.
 - Don't pad imperatives with 请. `Check the network` is 检查网络连接, not 请检查网络连接.
 - Language names in the language picker are written in their own language and never translated:
-  `English`, `Français`, `日本語`, `한국어`, `Русский`, `简体中文`, `繁體中文`. Only the `System`
+  `English`, `Español`, `Français`, `日本語`, `한국어`, `Русский`, `简体中文`, `繁體中文`. Only the `System`
   option follows the interface language.

@@ -192,6 +192,24 @@ const localizedSettingsCases = [
     reasoningEffort: 'Effort de raisonnement',
     defaultEffort: 'Par défaut',
     closeSettings: 'Fermer les paramètres'
+  },
+  {
+    language: 'Spanish',
+    pickerLabel: 'Español',
+    locale: 'es',
+    projects: 'Proyectos',
+    modelSettings: 'Configuración del modelo',
+    settings: 'Configuración',
+    openNavigation: 'Abrir navegación de configuración',
+    general: 'General',
+    appearance: 'Apariencia',
+    interfaceLanguage: 'Idioma de la interfaz',
+    mainModel: 'Modelo principal',
+    scenarioModels: 'Modelos de escenario',
+    expandSubagent: 'Expandir configuración de Subagente',
+    reasoningEffort: 'Esfuerzo de razonamiento',
+    defaultEffort: 'Predeterminado',
+    closeSettings: 'Cerrar configuración'
   }
 ] as const
 
