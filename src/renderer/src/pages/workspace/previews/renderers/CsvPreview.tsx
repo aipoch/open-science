@@ -31,11 +31,11 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
 
   if (state.status === 'loading') return <PreviewLoadingContent />
 
-  if (state.status === 'error' || state.preview.encoding !== 'utf8') {
+  if (state.status === 'error') {
     return (
       <PreviewErrorCard
         name={item.name}
-        error={state.status === 'error' ? state.error : undefined}
+        error={state.error}
         fallbackMessage={t("CSV couldn't be read for preview")}
       />
     )

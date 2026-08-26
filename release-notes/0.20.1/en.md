@@ -16,6 +16,8 @@
 
 ## 🔧 Improvements
 
+- Zhipu AI (GLM) gains the GLM-4.5-Air model. (#1762)
+- Zhipu AI (GLM) gains the GLM-5.3 model. (#1766)
 - Downloads are validated and external links classified consistently before opening. (#1744)
 - All networking — including downloads and spawned requests — honors the configured proxy mode uniformly. (#1753)
 - Context-window history computation is deferred until the dialog opens, notification snapshot refresh bursts are coalesced, and user-skill startup scanning is deferred, shortening startup. (#1745, #1702, #1700)
