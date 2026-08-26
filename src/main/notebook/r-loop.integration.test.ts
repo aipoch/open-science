@@ -136,13 +136,19 @@ gate('r_loop.R', () => {
         "x <- 41L; label <- '活跃变量'; .private <- 'hidden'; " +
           'items <- seq_len(100000L); blob <- raw(2000000L); huge_label <- strrep("活", 1000000L); ' +
           'makeActiveBinding("active_value", function() stop("must not evaluate"), .GlobalEnv); ' +
-          'delayedAssign("lazy_value", stop("must not force"), assign.env = .GlobalEnv)'
+          'delayedAssign("lazy_value", stop("must not force"), assign.env = .GlobalEnv); ' +
+          'create_lazy <- base::delayedAssign; ' +
+          'create_lazy("indirect_lazy", stop("must not force"), assign.env = .GlobalEnv); ' +
+          'assign("indirect_eager", 99L, envir = .GlobalEnv)'
       )
       const first = await inspect()
       expect(first.namespace?.variables.map(({ name }) => name)).toEqual([
         'active_value',
         'blob',
+        'create_lazy',
         'huge_label',
+        'indirect_eager',
+        'indirect_lazy',
         'items',
         'label',
         'lazy_value',
@@ -168,16 +174,34 @@ gate('r_loop.R', () => {
         type: 'lazy binding',
         preview: '<not evaluated>'
       })
+      expect(first.namespace?.variables.find(({ name }) => name === 'indirect_lazy')).toMatchObject(
+        {
+          type: 'binding',
+          preview: '<not evaluated>'
+        }
+      )
+      expect(
+        first.namespace?.variables.find(({ name }) => name === 'indirect_eager')
+      ).toMatchObject({
+        type: 'binding',
+        preview: '<not evaluated>'
+      })
       expect(Buffer.byteLength(JSON.stringify(first), 'utf8')).toBeLessThan(256 * 1024)
 
-      await send('x <- 42L; rm(label); added <- list(ok = TRUE); lazy_value <- 7L')
+      await send(
+        'x <- 42L; rm(label); added <- list(ok = TRUE); lazy_value <- 7L; ' +
+          'indirect_lazy <- 9L; indirect_eager <- 100L'
+      )
       const refreshed = await inspect(true)
       expect(refreshed.namespace?.variables.map(({ name }) => name)).toEqual([
         '.private',
         'active_value',
         'added',
         'blob',
+        'create_lazy',
         'huge_label',
+        'indirect_eager',
+        'indirect_lazy',
         'items',
         'lazy_value',
         'x'
@@ -186,6 +210,12 @@ gate('r_loop.R', () => {
       expect(
         refreshed.namespace?.variables.find(({ name }) => name === 'lazy_value')?.preview
       ).toBe('7')
+      expect(
+        refreshed.namespace?.variables.find(({ name }) => name === 'indirect_lazy')?.preview
+      ).toBe('9')
+      expect(
+        refreshed.namespace?.variables.find(({ name }) => name === 'indirect_eager')?.preview
+      ).toBe('100')
       expect(refreshed.namespace?.variables.find(({ name }) => name === '.private')).toMatchObject({
         private: true
       })

@@ -585,11 +585,11 @@ namespace_response_limit_bytes <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_N
 namespace_state <- new.env(parent = emptyenv())
 namespace_state$internal_names <- character()
 namespace_state$lazy_names <- character()
+namespace_state$eager_names <- character()
 
 # Base R intentionally does not expose whether an arbitrary environment binding is a promise.
-# Track direct delayedAssign() calls before they execute so the inspector can leave the common
-# case untouched. Unknown/indirect cases are still protected by the per-binding and request-level
-# inspection deadlines below.
+# Track direct delayedAssign() calls before they execute for a precise label. Unknown promise
+# expressions are still detected without evaluation by inspect_namespace() below.
 namespace_tracker <- base::local({
   delayed_assign_call <- function(expr) {
     if (!is.call(expr)) return(FALSE)
@@ -631,18 +631,22 @@ namespace_tracker <- base::local({
 
   list(
     prepare = function(expr) {
-      namespace_state$lazy_names <- union(namespace_state$lazy_names, delayed_names(expr))
+      lazy_names <- delayed_names(expr)
+      namespace_state$lazy_names <- union(namespace_state$lazy_names, lazy_names)
+      namespace_state$eager_names <- setdiff(namespace_state$eager_names, lazy_names)
       invisible(NULL)
     },
     commit = function(expr) {
+      written_names <- direct_written_names(expr)
       # Only clear names for a completed, direct top-level write. Nested control flow remains
       # conservatively marked lazy because not all paths necessarily executed.
       if (!delayed_assign_call(expr)) {
-        namespace_state$lazy_names <- setdiff(
-          namespace_state$lazy_names,
-          direct_written_names(expr)
-        )
+        namespace_state$lazy_names <- setdiff(namespace_state$lazy_names, written_names)
       }
+      namespace_state$eager_names <- union(namespace_state$eager_names, written_names)
+      current_names <- ls(envir = .GlobalEnv, all.names = TRUE)
+      namespace_state$lazy_names <- intersect(namespace_state$lazy_names, current_names)
+      namespace_state$eager_names <- intersect(namespace_state$eager_names, current_names)
       invisible(NULL)
     }
   )
@@ -732,6 +736,14 @@ inspect_namespace <- base::local({
           list(
             name_base64 = encoded_text(name, 1024L),
             type_base64 = encoded_text("lazy binding"),
+            preview_base64 = encoded_text("<not evaluated>")
+          )
+        } else if (!(name %in% namespace_state$eager_names)) {
+          # Base R has no stable public API for detecting arbitrary promise bindings. Only inspect
+          # names confirmed by a completed direct assignment; unknown bindings stay read-only.
+          list(
+            name_base64 = encoded_text(name, 1024L),
+            type_base64 = encoded_text("binding"),
             preview_base64 = encoded_text("<not evaluated>")
           )
         } else {
