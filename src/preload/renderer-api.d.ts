@@ -839,6 +839,7 @@ export interface OpenScienceAPI {
     onState(listener: (state: OfficePreviewRuntimeState) => void): RemoveListener
   }
   sourcePreview?: {
+    release(sourceUrl: string): void
     onLoadState(listener: (state: SourcePreviewLoadState) => void): RemoveListener
   }
   artifacts: {

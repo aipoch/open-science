@@ -1,5 +1,6 @@
 const SOURCE_PREVIEW_FRAME_NAME = 'open-science-source-preview'
 const SOURCE_PREVIEW_LOAD_STATE_CHANNEL = 'source-preview:load-state'
+const SOURCE_PREVIEW_RELEASE_CHANNEL = 'source-preview:release'
 
 type SourcePreviewLoadBase = {
   navigationId: number
@@ -34,5 +35,10 @@ const parseHttpsSourceUrl = (value: string): URL | undefined => {
   }
 }
 
-export { SOURCE_PREVIEW_FRAME_NAME, SOURCE_PREVIEW_LOAD_STATE_CHANNEL, parseHttpsSourceUrl }
+export {
+  SOURCE_PREVIEW_FRAME_NAME,
+  SOURCE_PREVIEW_LOAD_STATE_CHANNEL,
+  SOURCE_PREVIEW_RELEASE_CHANNEL,
+  parseHttpsSourceUrl
+}
 export type { SourcePreviewLoadState }

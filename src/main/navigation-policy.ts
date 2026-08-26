@@ -14,12 +14,11 @@ type NavigationFrame = {
   readonly parent: NavigationFrame | null
 }
 
-type FrameNavigationGuard = (
-  url: string,
-  isMainFrame: boolean,
-  currentUrl?: string,
-  frame?: NavigationFrame | null
-) => boolean
+type FrameNavigationGuard = {
+  (url: string, isMainFrame: boolean, currentUrl?: string, frame?: NavigationFrame | null): boolean
+  releaseSource: (sourceUrl: string) => void
+  clearAll: () => void
+}
 
 type SourcePreviewRootListener = (frame: NavigationFrame, sourceUrl: string) => void
 
@@ -56,19 +55,41 @@ const isAllowedMainFrameNavigation = (url: string, currentUrl: string): boolean 
   }
 }
 
+const isAllowedSourceDescendantNavigation = (url: string): boolean => {
+  try {
+    const target = new URL(url)
+    if (target.protocol === 'https:') return true
+    if (target.protocol === 'about:') {
+      return target.pathname === 'blank' || target.pathname === 'srcdoc'
+    }
+    return target.protocol === 'blob:' && new URL(target.origin).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 const createFrameNavigationGuard = (
   mainFrame: NavigationFrame,
   onSourcePreviewRoot?: SourcePreviewRootListener
 ): FrameNavigationGuard => {
-  const sourcePreviewRootIds = new Set<number>()
+  const sourceUrlsByRootFrameId = new Map<number, string>()
 
-  return (url, isMainFrame, currentUrl = '', frame): boolean => {
+  const releaseSource = (sourceUrl: string): void => {
+    for (const [frameTreeNodeId, trackedSourceUrl] of sourceUrlsByRootFrameId) {
+      if (trackedSourceUrl === sourceUrl) sourceUrlsByRootFrameId.delete(frameTreeNodeId)
+    }
+  }
+
+  const guard = ((url, isMainFrame, currentUrl = '', frame): boolean => {
     if (isMainFrame) return isAllowedMainFrameNavigation(url, currentUrl)
 
     const protocol = getProtocol(url)
     if (frame) {
       for (let ancestor: NavigationFrame | null = frame; ancestor; ancestor = ancestor.parent) {
-        if (sourcePreviewRootIds.has(ancestor.frameTreeNodeId)) return protocol === 'https:'
+        if (!sourceUrlsByRootFrameId.has(ancestor.frameTreeNodeId)) continue
+        return ancestor.frameTreeNodeId === frame.frameTreeNodeId
+          ? protocol === 'https:'
+          : isAllowedSourceDescendantNavigation(url)
       }
     }
     if (protocol !== undefined && ALLOWED_PREVIEW_PROTOCOLS.has(protocol)) return true
@@ -83,19 +104,23 @@ const createFrameNavigationGuard = (
       (frame.url === '' || frame.url === 'about:blank')
     if (!isNewSourceRoot) return false
 
-    sourcePreviewRootIds.add(frame.frameTreeNodeId)
+    releaseSource(url)
+    sourceUrlsByRootFrameId.set(frame.frameTreeNodeId, url)
     onSourcePreviewRoot?.(frame, url)
     return true
-  }
+  }) as FrameNavigationGuard
+  guard.releaseSource = releaseSource
+  guard.clearAll = () => sourceUrlsByRootFrameId.clear()
+  return guard
 }
 
 // Decides whether a window-open request (target="_blank" / window.open) may be handed to the OS. It
 // gates on the protocol allowlist alone, deliberately NOT on the initiating referrer: app links use
 // rel="noreferrer" and the packaged app runs on a file:// origin (which Chromium strips from
-// cross-origin referrers), so the referrer is reliably empty for legitimate main-frame links. Nothing
-// is lost by dropping it — untrusted preview iframes omit "allow-popups", so they cannot reach
-// setWindowOpenHandler at all. In-frame navigations are confined separately by protocol and the
-// main-process source-preview frame registry in createFrameNavigationGuard.
+// cross-origin referrers), so the referrer is reliably empty for legitimate main-frame links.
+// Source-preview popups reach this handler, but are denied in-app and only allowlisted protocols are
+// handed to the OS. In-frame navigations remain confined by the source-preview frame registry.
 const isAllowedExternalNavigation = (url: string): boolean => isAllowedExternalUrl(url)
 
 export { createFrameNavigationGuard, isAllowedExternalNavigation, isAllowedExternalUrl }
+export type { FrameNavigationGuard }

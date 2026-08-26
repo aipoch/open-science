@@ -707,7 +707,7 @@ if (process.argv.includes('--version')) {
           reply = ''
         } else if (prompt.includes(CITATION_PREVIEW_PROMPT)) {
           reply =
-            'The fixture evidence supports this claim ([Torre et al. 2026](https://citation.example/paper "Fixture study")).'
+            'The fixture evidence supports this claim ([Torre et al. 2026](https://citation.example/paper "Fixture study")), with an independent replication ([Chen et al. 2026](https://citation.example/replication "Replication study")).'
         } else if (
           await submitReviewerPass(sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [])
         ) {

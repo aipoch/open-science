@@ -19,8 +19,14 @@ import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
 import { createLogger } from './logger'
 import { createSourcePreviewLoadMonitor } from './source-preview-load-monitor'
+import { createSourcePreviewEmbedPolicy } from './source-preview-embed-policy'
+import { registerSourcePreviewWebRequestOwner } from './source-preview-web-request-owner'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
-import { SOURCE_PREVIEW_LOAD_STATE_CHANNEL } from '../shared/source-preview'
+import {
+  SOURCE_PREVIEW_LOAD_STATE_CHANNEL,
+  SOURCE_PREVIEW_RELEASE_CHANNEL,
+  parseHttpsSourceUrl
+} from '../shared/source-preview'
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
@@ -58,8 +64,18 @@ const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
   'integrity-failure'
 ])
 const sourcePreviewLoadMonitors = new WeakMap<BrowserWindow, SourcePreviewLoadMonitor>()
+const sourcePreviewEmbedPolicies = new WeakMap<BrowserWindow, SourcePreviewEmbedPolicy>()
+const sourcePreviewNavigationGuards = new WeakMap<BrowserWindow, SourcePreviewNavigationGuard>()
 
 type SourcePreviewLoadMonitor = ReturnType<typeof createSourcePreviewLoadMonitor>
+type SourcePreviewEmbedPolicy = ReturnType<typeof createSourcePreviewEmbedPolicy>
+type SourcePreviewNavigationGuard = ReturnType<typeof createFrameNavigationGuard>
+
+const clearSourcePreviewState = (window: BrowserWindow): void => {
+  sourcePreviewLoadMonitors.get(window)?.clearAll()
+  sourcePreviewEmbedPolicies.get(window)?.clearAll()
+  sourcePreviewNavigationGuards.get(window)?.clearAll()
+}
 
 const loadRenderer = (window: BrowserWindow): void => {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -108,11 +124,27 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   const sourcePreviewLoadMonitor = createSourcePreviewLoadMonitor((state) => {
     window.webContents.send(SOURCE_PREVIEW_LOAD_STATE_CHANNEL, state)
   })
+  const sourcePreviewEmbedPolicy = createSourcePreviewEmbedPolicy(window.webContents.id)
+  const unregisterSourcePreviewWebRequestOwner = registerSourcePreviewWebRequestOwner(
+    window.webContents.session,
+    window.webContents.id,
+    sourcePreviewLoadMonitor,
+    sourcePreviewEmbedPolicy
+  )
+  window.on('closed', () => {
+    clearSourcePreviewState(window)
+    unregisterSourcePreviewWebRequestOwner()
+  })
   sourcePreviewLoadMonitors.set(window, sourcePreviewLoadMonitor)
+  sourcePreviewEmbedPolicies.set(window, sourcePreviewEmbedPolicy)
   const isAllowedFrameNavigation = createFrameNavigationGuard(
     window.webContents.mainFrame,
-    sourcePreviewLoadMonitor.registerRoot
+    (frame, sourceUrl) => {
+      sourcePreviewLoadMonitor.registerRoot(frame, sourceUrl)
+      sourcePreviewEmbedPolicy.registerRoot(frame, sourceUrl)
+    }
   )
+  sourcePreviewNavigationGuards.set(window, isAllowedFrameNavigation)
   type FrameNavigationDetails = {
     url: string
     isMainFrame: boolean
@@ -276,12 +308,22 @@ const createMainWindow = (
     findOverlay.updateAppearance(appearance)
     mainWindowCloseOptions.get(window)?.onAppearanceChanged?.(appearance)
   }
+  const onSourcePreviewRelease = (event: IpcMainEvent, value: unknown): void => {
+    if (event.sender !== window.webContents || typeof value !== 'string') return
+    const sourceUrl = parseHttpsSourceUrl(value)
+    if (!sourceUrl) return
+
+    sourcePreviewLoadMonitors.get(window)?.releaseSource(sourceUrl.href)
+    sourcePreviewEmbedPolicies.get(window)?.releaseSource(sourceUrl.href)
+    sourcePreviewNavigationGuards.get(window)?.releaseSource(sourceUrl.href)
+  }
   ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
   ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
   ipcMain.on(WINDOW_FIND_READY_CHANNEL, onWindowFindReady)
   ipcMain.on(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
   ipcMain.on(WINDOW_FIND_CONTENT_READY_CHANNEL, onWindowFindContentReady)
   ipcMain.on(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, onWindowFindAppearanceChanged)
+  ipcMain.on(SOURCE_PREVIEW_RELEASE_CHANNEL, onSourcePreviewRelease)
   // A top-level document swap replaces the mounted hook, which must re-subscribe; a dead render process
   // took its listener with it. Both revoke readiness until the next READY handshake. Gate on the main
   // frame and a real document change so a dynamic preview iframe loading (or a same-document hash /
@@ -291,6 +333,7 @@ const createMainWindow = (
       .get(window)
       ?.startNavigation(details.frame, details.url, details.isSameDocument)
     if (details.isMainFrame && !details.isSameDocument) {
+      clearSourcePreviewState(window)
       rendererListenerReady = false
       windowFindListenerReady = false
       windowFindOpenPending = false
@@ -343,6 +386,7 @@ const createMainWindow = (
     windowFindOpenPending = false
     clearRendererHangState()
     findOverlay.close()
+    clearSourcePreviewState(window)
 
     if (!RECOVERABLE_RENDERER_EXIT_REASONS.has(details.reason) || window.isDestroyed()) return
 
@@ -424,6 +468,7 @@ const createMainWindow = (
     ipcMain.removeListener(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
     ipcMain.removeListener(WINDOW_FIND_CONTENT_READY_CHANNEL, onWindowFindContentReady)
     ipcMain.removeListener(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, onWindowFindAppearanceChanged)
+    ipcMain.removeListener(SOURCE_PREVIEW_RELEASE_CHANNEL, onSourcePreviewRelease)
     findOverlay.destroy()
   })
 

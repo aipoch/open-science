@@ -501,12 +501,19 @@ const PreviewToolPanel = ({
   )
 }
 
-const PreviewSourcePanel = ({ item }: { item: PreviewSourceItem }): React.JSX.Element => (
+const PreviewSourcePanel = ({
+  item,
+  isActive
+}: {
+  item: PreviewSourceItem
+  isActive: boolean
+}): React.JSX.Element => (
   <section
     role="tabpanel"
     id={getPreviewPanelId(item.id)}
     aria-labelledby={getPreviewTabId(item.id)}
     tabIndex={0}
+    hidden={!isActive}
     className="size-full min-h-0 overflow-hidden"
   >
     <SourceWebPreview item={item} />
@@ -525,7 +532,7 @@ const PreviewPanelSurface = ({
   const activateItem = usePreviewWorkbenchStore((state) => state.activateItem)
   const removeItem = usePreviewWorkbenchStore((state) => state.removeItem)
   const activeItem = items.find((item) => item.id === activeItemId)
-  // Remount replaced files and unmount collapsed content so renderer-owned resources are released.
+  // Remount replaced file previews and release their renderer-owned resources while collapsed.
   const activeContentKey =
     activeItem?.type === 'file'
       ? JSON.stringify([
@@ -584,17 +591,9 @@ const PreviewPanelSurface = ({
           }
 
           if (item.type === 'source') {
-            return isActivePanel ? (
-              <PreviewSourcePanel key={item.id} item={item} />
-            ) : (
-              <section
-                key={item.id}
-                role="tabpanel"
-                id={getPreviewPanelId(item.id)}
-                aria-labelledby={getPreviewTabId(item.id)}
-                hidden
-              />
-            )
+            // Source frames stay mounted while their tabs exist so browser and failure state survive
+            // tab switches. Removing the item still unmounts the whole subtree and releases the page.
+            return <PreviewSourcePanel key={item.id} item={item} isActive={isActivePanel} />
           }
 
           return isActivePanel ? (

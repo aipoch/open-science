@@ -657,6 +657,8 @@ const api: OpenScienceAPI = {
     onState: (listener) => electronRendererContracts.subscribe('officePreview.onState', listener)
   },
   sourcePreview: {
+    release: (sourceUrl: string) =>
+      electronRendererContracts.send('sourcePreview.release', sourceUrl),
     onLoadState: (listener: (state: SourcePreviewLoadState) => void) =>
       electronRendererContracts.subscribe('sourcePreview.onLoadState', listener)
   },

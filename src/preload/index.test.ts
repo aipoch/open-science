@@ -145,6 +145,7 @@ type PreloadApi = {
     reportState: (sessionId: string, state: unknown) => void
   }
   sourcePreview: {
+    release: (sourceUrl: string) => void
     onLoadState: (listener: (state: unknown) => void) => () => void
   }
   uploads: {
@@ -556,6 +557,7 @@ describe('preload bridge — public surface inventory', () => {
       'sideChat.send',
       'sideChat.start',
       'sourcePreview.onLoadState',
+      'sourcePreview.release',
       'specialist.addMarketplaceSource',
       'specialist.cancelHandoff',
       'specialist.cancelMarketplaceCandidate',
@@ -1487,6 +1489,17 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
       ((_event: unknown, payload: unknown) => void) | undefined
     wrappedListener?.({}, state)
     expect(listener).toHaveBeenCalledWith(state)
+  })
+
+  it('releases source-preview tracking through a one-way renderer message', () => {
+    const sourcePreview = api.sourcePreview as typeof api.sourcePreview & {
+      release?: (sourceUrl: string) => void
+    }
+
+    expect(sourcePreview.release).toBeTypeOf('function')
+    sourcePreview.release?.('https://example.com/paper')
+
+    expect(sendMock).toHaveBeenCalledWith('source-preview:release', 'https://example.com/paper')
   })
 
   it('resolves native upload paths in preload and sends only metadata to main', async () => {

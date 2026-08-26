@@ -77,6 +77,7 @@ const SourceWebPreviewContent = ({
   const minimumNavigationIdRef = useRef(0)
   const progressTimerRef = useRef<number | undefined>(undefined)
   const completionTimerRef = useRef<number | undefined>(undefined)
+  const isMountedRef = useRef(false)
 
   const finishProgress = useCallback((): void => {
     window.clearTimeout(progressTimerRef.current)
@@ -123,6 +124,18 @@ const SourceWebPreviewContent = ({
       removeListener()
     }
   }, [finishProgress, sourceUrl.href, stopProgress])
+
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+      // StrictMode immediately replays mount effects without removing the iframe. Defer release so
+      // that replay can retain the active main-process tracking record; a real unmount stays false.
+      void Promise.resolve().then(() => {
+        if (!isMountedRef.current) window.api?.sourcePreview?.release?.(sourceUrl.href)
+      })
+    }
+  }, [sourceUrl.href])
 
   useEffect(() => {
     let currentProgress = INITIAL_PROGRESS
@@ -248,7 +261,7 @@ const SourceWebPreviewContent = ({
             name={SOURCE_PREVIEW_FRAME_NAME}
             title={t('Source preview: {{title}}', { title: item.title })}
             src={sourceUrl.href}
-            sandbox="allow-same-origin allow-scripts"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
             referrerPolicy="no-referrer"
             aria-hidden={loadState.phase === 'failed' || undefined}
             className={cn(

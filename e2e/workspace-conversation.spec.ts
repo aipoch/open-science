@@ -184,6 +184,14 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
       body: '<!doctype html><html><body><main><h1>Fixture source</h1><p>Peer-reviewed evidence.</p></main></body></html>'
     })
   })
+  let replicationDocumentRequestCount = 0
+  await page.route('https://citation.example/replication', async (route) => {
+    replicationDocumentRequestCount += 1
+    await route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><html><body><main><h1>Replication source</h1></main></body></html>'
+    })
+  })
   await createProject(page)
 
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(CITATION_PREVIEW_PROMPT)
@@ -323,7 +331,9 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
     'aria-selected',
     'true'
   )
-  const sourceFrame = page.locator('[data-source-preview-frame]')
+  const sourceFrame = page.locator(
+    '[data-source-preview-frame][src="https://citation.example/paper"]'
+  )
   await expect(sourceFrame).toHaveAttribute('src', 'https://citation.example/paper')
   await expect.poll(() => sourceDocumentRequestCount).toBe(1)
   const sourceProgress = page.locator('[data-source-preview-progress]')
@@ -332,7 +342,10 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(sourceSkeleton).toBeVisible()
   expect(await sourceProgress.evaluate((element) => getComputedStyle(element).height)).toBe('2px')
   await page.screenshot({ path: testInfo.outputPath('source-preview-loading.png') })
-  await expect(sourceFrame).toHaveAttribute('sandbox', 'allow-same-origin allow-scripts')
+  await expect(sourceFrame).toHaveAttribute(
+    'sandbox',
+    'allow-same-origin allow-scripts allow-forms allow-popups'
+  )
   await expect(sourceFrame).toHaveAttribute('referrerpolicy', 'no-referrer')
   await expect(sourceFrame).toHaveAttribute('name', 'open-science-source-preview')
   const sourceHeader = page.locator('[data-source-preview-header]')
@@ -368,23 +381,43 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(sourceSkeleton).toHaveCount(0)
 
   await page.screenshot({ path: testInfo.outputPath('citation-source-preview.png') })
+
+  const replicationLink = page.getByRole('link', { name: 'Chen et al. 2026' })
+  await replicationLink.hover()
+  await page.locator('[data-source-preview-hover-url]').click()
+  await expect(page.getByRole('tab', { name: 'Replication study' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  await expect.poll(() => replicationDocumentRequestCount).toBe(1)
+  await expect(page.locator('[data-source-preview-frame]')).toHaveCount(2)
+
+  const fixtureTab = page.getByRole('tab', { name: 'Fixture study' })
+  await fixtureTab.click()
+  await expect(fixtureTab).toHaveAttribute('aria-selected', 'true')
+  await expect(sourceFrame).toBeVisible()
+  expect(sourceDocumentRequestCount).toBe(1)
+
+  await page.locator('[data-preview-close="Fixture study"]').click()
+  await expect(sourceFrame).toHaveCount(0)
+  await sourceLink.hover()
+  await page.locator('[data-source-preview-hover-url]').click()
+  await expect.poll(() => sourceDocumentRequestCount).toBe(2)
 })
 
-test('shows the Electron failure reason when a source returns an HTTP error', async ({
-  app
-}, testInfo) => {
+test('shows the Electron failure reason when a source request fails', async ({ app }, testInfo) => {
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
-  app.allowRendererConsoleError(
-    'Failed to load resource: the server responded with a status of 503 (Service Unavailable)'
-  )
+  app.allowRendererConsoleError('Failed to load resource: net::ERR_CONNECTION_REFUSED')
   let sourceDocumentRequestCount = 0
   await page.route('https://citation.example/paper', async (route) => {
     sourceDocumentRequestCount += 1
+    await route.abort('connectionrefused')
+  })
+  await page.route('https://citation.example/replication', async (route) => {
     await route.fulfill({
-      status: 503,
       contentType: 'text/html',
-      body: '<!doctype html><html><body><h1>Unavailable source</h1></body></html>'
+      body: '<!doctype html><html><body><main><h1>Replication source</h1></main></body></html>'
     })
   })
   await createProject(page)
@@ -398,16 +431,26 @@ test('shows the Electron failure reason when a source returns an HTTP error', as
 
   const sourceError = page.locator('[data-source-preview-error]')
   await expect(sourceError).toContainText('Could not load this source')
-  await expect(sourceError).toContainText('The source returned an HTTP error.')
-  await expect(sourceError).toContainText('HTTP 503 Service Unavailable')
+  await expect(sourceError).toContainText('The source could not be reached.')
+  await expect(sourceError).toContainText('ERR_CONNECTION_REFUSED (-102)')
   await expect(page.locator('[data-source-preview-skeleton]')).toHaveCount(0)
   await expect(page.locator('[data-source-preview-progress]')).toHaveCount(0)
   expect(sourceDocumentRequestCount).toBe(1)
   await page.screenshot({ path: testInfo.outputPath('source-preview-error.png') })
 
+  await page.getByRole('link', { name: 'Chen et al. 2026' }).hover()
+  await page.locator('[data-source-preview-hover-url]').click()
+  await expect(page.getByRole('tab', { name: 'Replication study' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  await page.getByRole('tab', { name: 'Fixture study' }).click()
+  await expect(sourceError).toContainText('ERR_CONNECTION_REFUSED (-102)')
+  expect(sourceDocumentRequestCount).toBe(1)
+
   await sourceError.getByRole('button', { name: 'Try again' }).click()
   await expect.poll(() => sourceDocumentRequestCount).toBe(2)
-  await expect(sourceError).toContainText('HTTP 503 Service Unavailable')
+  await expect(sourceError).toContainText('ERR_CONNECTION_REFUSED (-102)')
 })
 
 test('archives a completed session from its mobile sidebar actions', async ({ app }) => {
