@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import { useUpdateStore } from '@/stores/update-store'
 import { UpdateDialog } from './UpdateDialog'
 import { APP } from '../../../shared/app-config'
@@ -91,6 +92,48 @@ describe('UpdateDialog', () => {
     expect(document.body.textContent).toContain('v0.1.0')
     expect(document.body.textContent).toContain('v0.2.0')
     expect(document.body.textContent).toContain('Shiny new things')
+  })
+
+  it('selects localized notes and reacts to a live language change', async () => {
+    await act(async () => i18next.changeLanguage('en'))
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'available',
+        current: '0.18.0',
+        latest: '0.19.0',
+        notes: 'English notes',
+        localizedNotes: { 'zh-Hans': '简体中文说明' }
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    expect(document.body.textContent).toContain('English notes')
+
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    expect(document.body.textContent).toContain('简体中文说明')
+    expect(document.body.textContent).not.toContain('English notes')
+    expect(document.body.textContent).not.toContain('暂无本地化发行说明')
+    await act(async () => i18next.changeLanguage('en'))
+  })
+
+  it('clearly identifies the English fallback when localized notes are missing', async () => {
+    await act(async () => i18next.changeLanguage('fr'))
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'available',
+        current: '0.18.0',
+        latest: '0.19.0',
+        notes: 'English notes'
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+
+    expect(document.body.textContent).toContain('English notes')
+    expect(document.body.textContent).toContain(
+      'Les notes de version localisées ne sont pas disponibles'
+    )
+    await act(async () => i18next.changeLanguage('en'))
   })
 
   it('links to the matching GitHub release when notes are missing', () => {

@@ -145,7 +145,7 @@ describe('project repository', () => {
         deletedAt: null,
         updatedAt: new Date(1710000000100)
       },
-      data: { name: 'Renamed' }
+      data: { name: 'Renamed', updatedAt: expect.any(Date) }
     })
     expect(project.update).not.toHaveBeenCalled()
   })
@@ -219,13 +219,12 @@ describe('project repository', () => {
   })
 
   it('changes archive visibility with compare-and-set while preserving activity time', async () => {
-    const current = createRow({ updatedAt: new Date(1710000000100), archivedAt: null })
     const archived = createRow({
       updatedAt: new Date(1710000000100),
       archivedAt: new Date(1710000000200)
     })
-    const findUnique = vi.fn().mockResolvedValueOnce(current).mockResolvedValueOnce(archived)
-    const { client, project } = createMockClient({
+    const findUnique = vi.fn().mockResolvedValue(archived)
+    const { client, executeRaw, project } = createMockClient({
       findUnique,
       updateMany: () => Promise.resolve({ count: 1 })
     })
@@ -238,13 +237,8 @@ describe('project repository', () => {
       )
     ).resolves.toMatchObject({ archivedAt: 1710000000200, updatedAt: 1710000000100 })
 
-    expect(project.updateMany).toHaveBeenCalledWith({
-      where: { id: 'project-1', deletedAt: null, archivedAt: null },
-      data: {
-        archivedAt: new Date(1710000000200),
-        updatedAt: new Date(1710000000100)
-      }
-    })
+    expect(executeRaw).toHaveBeenCalledOnce()
+    expect(project.updateMany).not.toHaveBeenCalled()
   })
 
   it('persists, lists, and clears project deletion intents', async () => {
@@ -302,7 +296,7 @@ describe('project repository', () => {
         deletedAt: null,
         updatedAt: new Date(1710000000100)
       },
-      data: { agentContext: 'Prefer Python.' }
+      data: { agentContext: 'Prefer Python.', updatedAt: expect.any(Date) }
     })
   })
 
@@ -330,7 +324,11 @@ describe('project repository', () => {
         deletedAt: null,
         updatedAt: new Date(1710000000100)
       },
-      data: { pinned: true, agentContext: 'Always cite DOIs.' }
+      data: {
+        pinned: true,
+        agentContext: 'Always cite DOIs.',
+        updatedAt: expect.any(Date)
+      }
     })
   })
 

@@ -1,5 +1,6 @@
 import type {
   ReviewerModelConfiguration,
+  SessionDetailsModelConfiguration,
   SubagentModelConfiguration,
   VisionModelConfiguration
 } from '../../shared/settings'
@@ -20,6 +21,11 @@ type VisionModelValidator = (
   configuration: VisionModelConfiguration
 ) => VisionModelConfiguration | void
 
+type SessionDetailsModelValidator = (
+  settings: StoredSettings,
+  configuration: SessionDetailsModelConfiguration
+) => SessionDetailsModelConfiguration | void
+
 const buildSubagentModelMutation =
   (configuration: SubagentModelConfiguration, validate?: SubagentModelValidator) =>
   (settings: StoredSettings): StoredSettings => ({
@@ -34,6 +40,13 @@ const buildReviewerModelMutation =
     reviewerModel: structuredClone(validate?.(settings, configuration) ?? configuration)
   })
 
+const buildSessionDetailsModelMutation =
+  (configuration: SessionDetailsModelConfiguration, validate?: SessionDetailsModelValidator) =>
+  (settings: StoredSettings): StoredSettings => ({
+    ...settings,
+    sessionDetailsModel: structuredClone(validate?.(settings, configuration) ?? configuration)
+  })
+
 const buildVisionModelMutation =
   (configuration: VisionModelConfiguration | undefined, validate?: VisionModelValidator) =>
   (settings: StoredSettings): StoredSettings => {
@@ -46,5 +59,15 @@ const buildVisionModelMutation =
     return next
   }
 
-export { buildReviewerModelMutation, buildSubagentModelMutation, buildVisionModelMutation }
-export type { ReviewerModelValidator, SubagentModelValidator, VisionModelValidator }
+export {
+  buildReviewerModelMutation,
+  buildSessionDetailsModelMutation,
+  buildSubagentModelMutation,
+  buildVisionModelMutation
+}
+export type {
+  ReviewerModelValidator,
+  SessionDetailsModelValidator,
+  SubagentModelValidator,
+  VisionModelValidator
+}

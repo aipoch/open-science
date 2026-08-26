@@ -40,8 +40,12 @@ const createHarness = (): ConnectorApplicationHarness => {
     resumeSession: vi.fn()
   }
   const skillImportApprovals = {
-    createCancellationGuard: vi.fn().mockReturnValue({ isCancelled: () => false }),
-    createSessionCancellationGuard: vi.fn().mockReturnValue({ isCancelled: () => false }),
+    createCancellationGuard: vi
+      .fn()
+      .mockReturnValue({ signal: new AbortController().signal, isCancelled: () => false }),
+    createSessionCancellationGuard: vi
+      .fn()
+      .mockReturnValue({ signal: new AbortController().signal, isCancelled: () => false }),
     request: vi.fn(),
     respond: vi.fn(),
     replayPending: vi.fn(),
@@ -99,6 +103,35 @@ describe('Connector application composition', () => {
 
     await runtime.dispose()
     expect(mcpClientManager.closeAll).toHaveBeenCalledOnce()
+  })
+
+  it('forwards the conversation cancellation signal to GitHub scanning', async () => {
+    const { settings, skillImportApprovals, deps } = createHarness()
+    const controller = new AbortController()
+    skillImportApprovals.createSessionCancellationGuard.mockReturnValue({
+      signal: controller.signal,
+      isCancelled: () => false
+    })
+    const runtime = await composeApplicationRuntime(async (modules) => ({
+      application: await modules.add(deps, createConnectorApplicationModule)
+    }))
+
+    await expect(
+      runtime.interfaces.application.skillImporter.request({
+        sessionId: 'session-1',
+        githubUrl: 'https://github.com/acme/skills'
+      })
+    ).rejects.toThrow('No importable Skills were found')
+    expect(settings.scanRepoSkills).toHaveBeenCalledWith(
+      { repo: 'https://github.com/acme/skills' },
+      expect.any(AbortSignal)
+    )
+    const forwardedSignal = settings.scanRepoSkills.mock.calls[0][1] as AbortSignal
+    expect(forwardedSignal.aborted).toBe(false)
+    controller.abort()
+    expect(forwardedSignal.aborted).toBe(true)
+
+    await runtime.dispose()
   })
 
   it('closes the MCP manager when construction fails before runtime ownership', async () => {

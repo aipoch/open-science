@@ -102,7 +102,11 @@ describe('Artifact code reconstruction backend profiles', () => {
     )
 
     expect(prepared.env.CODEX_HOME).toBe(join(temporaryRoot, 'codex'))
-    expect(JSON.parse(prepared.env.CODEX_CONFIG!)).toEqual({ model_provider: 'open-science' })
+    expect(JSON.parse(prepared.env.CODEX_CONFIG!)).toMatchObject({
+      model_provider: 'open-science',
+      features: { shell_tool: false },
+      tools: { web_search: false }
+    })
     await expect(
       readFile(join(prepared.env.CODEX_HOME!, 'config.toml'), 'utf8')
     ).resolves.toContain('cli_auth_credentials_store = "ephemeral"')

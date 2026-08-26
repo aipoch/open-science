@@ -611,13 +611,6 @@ export const validateSpecialistPackage = (
       path: file.path
     })
   }
-  const allowedTopLevel = new Set([
-    'manifest.json',
-    'specialist.json',
-    'README.txt',
-    'LICENSE',
-    'skills'
-  ])
   for (const file of packageFiles) {
     if (
       /(?:^|\/)(?:scripts?\/|[^/]+\.(?:sh|bash|zsh|fish|ps1|bat|cmd|exe|com|msi|app|dll|so|dylib|py|pl|rb|js|mjs|cjs))$/i.test(
@@ -628,14 +621,6 @@ export const validateSpecialistPackage = (
         diagnostics,
         'package.executable-content-present',
         'The package contains script or executable content; preview never executes it.',
-        file.path
-      )
-    }
-    if (!allowedTopLevel.has(file.path.split('/')[0])) {
-      diagnostic(
-        diagnostics,
-        'package.top-level-content-forbidden',
-        'The package contains unsupported top-level content.',
         file.path
       )
     }

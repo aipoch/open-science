@@ -58,6 +58,8 @@ type PendingComputeApproval = {
   timerStartedAt?: number
   providerId: string
   context?: ComputeApprovalContext
+  signal?: AbortSignal
+  abortListener?: () => void
 }
 
 // Bridges the main-process compute gate to the renderer approval card. Holds the call_command
@@ -73,10 +75,18 @@ type PendingComputeApproval = {
 export class ComputeApprovalBroker {
   private readonly pending = new Map<string, PendingComputeApproval>()
   private readonly pausedSessions = new Set<string>()
+  private readonly cancellingSessions = new Set<string>()
+  private readonly deletingSessions = new Set<string>()
+  private readonly completingSessionCancellations = new Set<string>()
+  private globalCancellationActive = false
 
   private readonly providerGenerations = new Map<string, number>()
   private readonly invalidatingProviders = new Set<string>()
   private readonly inFlightRequests = new Map<string, Set<Promise<ComputeApprovalDecision>>>()
+  private readonly inFlightSessionRequests = new Map<
+    string,
+    Set<Promise<ComputeApprovalDecision>>
+  >()
 
   // Legacy fallback used only when no durable adapter is supplied.
   private readonly conversationGrants = new Set<string>()
@@ -97,8 +107,12 @@ export class ComputeApprovalBroker {
   // Does NOT check grants — use requestWithContext for that.
   request(
     info: Omit<ComputeApprovalRequest, 'id'>,
-    context?: ComputeApprovalContext
+    context?: ComputeApprovalContext,
+    signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {
+    signal?.throwIfAborted()
+    if (this.globalCancellationActive) return Promise.resolve('deny')
+    if (context && this.cancellingSessions.has(context.sessionId)) return Promise.resolve('deny')
     const id = this.deps.generateId()
     const providerId = info.provider_id
     const request = { id, ...info }
@@ -109,9 +123,18 @@ export class ComputeApprovalBroker {
         resolve,
         remainingMs: this.timeoutMs,
         providerId,
-        context
+        context,
+        signal
       }
       this.pending.set(id, entry)
+      if (signal) {
+        entry.abortListener = () => this.settle(id, 'deny', 'cancelled')
+        signal.addEventListener('abort', entry.abortListener, { once: true })
+        if (signal.aborted) {
+          this.settle(id, 'deny', 'cancelled')
+          return
+        }
+      }
       this.schedule(id, entry)
       this.deps.broadcast(request, context)
     })
@@ -135,29 +158,41 @@ export class ComputeApprovalBroker {
   // immediately without broadcasting. When the user responds with a scope that has memory, records it.
   requestWithContext(
     info: Omit<ComputeApprovalRequest, 'id'>,
-    ctx: ComputeApprovalContext
+    ctx: ComputeApprovalContext,
+    signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {
+    signal?.throwIfAborted()
+    if (this.globalCancellationActive) return Promise.resolve('deny')
+    if (this.cancellingSessions.has(ctx.sessionId)) return Promise.resolve('deny')
     const providerId = info.provider_id
     if (this.invalidatingProviders.has(providerId)) return Promise.resolve('deny')
 
-    const request = this.requestWithContextOperation(info, ctx)
+    const request = this.requestWithContextOperation(info, ctx, signal)
     const requests = this.inFlightRequests.get(providerId) ?? new Set()
     requests.add(request)
     this.inFlightRequests.set(providerId, requests)
+    const sessionRequests = this.inFlightSessionRequests.get(ctx.sessionId) ?? new Set()
+    sessionRequests.add(request)
+    this.inFlightSessionRequests.set(ctx.sessionId, sessionRequests)
     void request.then(
-      () => this.releaseInFlightRequest(providerId, request),
-      () => this.releaseInFlightRequest(providerId, request)
+      () => this.releaseInFlightRequest(providerId, ctx.sessionId, request),
+      () => this.releaseInFlightRequest(providerId, ctx.sessionId, request)
     )
     return request
   }
 
   private async requestWithContextOperation(
     info: Omit<ComputeApprovalRequest, 'id'>,
-    ctx: ComputeApprovalContext
+    ctx: ComputeApprovalContext,
+    signal?: AbortSignal
   ): Promise<ComputeApprovalDecision> {
     const { sessionId, projectId, operation } = ctx
     const providerId = info.provider_id
     const providerGeneration = this.providerGenerations.get(providerId) ?? 0
+    const requestWasCancelled = (): boolean => {
+      signal?.throwIfAborted()
+      return this.globalCancellationActive || this.cancellingSessions.has(sessionId)
+    }
 
     if (this.deps.permissionGrants) {
       const durableScope = await this.deps.permissionGrants.resolve({
@@ -166,10 +201,14 @@ export class ComputeApprovalBroker {
         operation,
         providerId
       })
+      if (requestWasCancelled()) return 'deny'
       if (durableScope) {
-        if (!(await this.isProviderCurrent(providerId, ctx.ownerId, providerGeneration))) {
-          return 'deny'
-        }
+        const providerIsCurrent = await this.isProviderCurrent(
+          providerId,
+          ctx.ownerId,
+          providerGeneration
+        )
+        if (requestWasCancelled() || !providerIsCurrent) return 'deny'
         if (durableScope === 'session') return 'conversation'
         return durableScope
       }
@@ -178,19 +217,28 @@ export class ComputeApprovalBroker {
     // ── legacy project grant check (persistent) ───────────────────────────────────
     if (this.deps.checkProjectGrant) {
       const hasProject = await this.deps.checkProjectGrant({ projectId, operation, providerId })
+      if (requestWasCancelled()) return 'deny'
       if (hasProject) {
-        return (await this.isProviderCurrent(providerId, ctx.ownerId, providerGeneration))
-          ? 'project'
-          : 'deny'
+        const providerIsCurrent = await this.isProviderCurrent(
+          providerId,
+          ctx.ownerId,
+          providerGeneration
+        )
+        if (requestWasCancelled() || !providerIsCurrent) return 'deny'
+        return 'project'
       }
     }
 
     // ── conversation grant check (session in-memory) ───────────────────────────────
     const convKey = `${sessionId}:${operation}:${providerId}`
     if (this.conversationGrants.has(convKey)) {
-      return (await this.isProviderCurrent(providerId, ctx.ownerId, providerGeneration))
-        ? 'conversation'
-        : 'deny'
+      const providerIsCurrent = await this.isProviderCurrent(
+        providerId,
+        ctx.ownerId,
+        providerGeneration
+      )
+      if (requestWasCancelled() || !providerIsCurrent) return 'deny'
+      return 'conversation'
     }
 
     // ── no grant — show approval card ─────────────────────────────────────────────
@@ -198,24 +246,28 @@ export class ComputeApprovalBroker {
     // entered the in-flight set but before it reached the approval card. Fail closed here so the
     // invalidator cannot miss a newly-created pending request and wait on it indefinitely.
     if (
+      requestWasCancelled() ||
       this.invalidatingProviders.has(providerId) ||
       (this.providerGenerations.get(providerId) ?? 0) !== providerGeneration
     ) {
       return 'deny'
     }
-    const decision = await this.request(info, ctx)
+    const decision = await this.request(info, ctx, signal)
 
     if ((this.providerGenerations.get(providerId) ?? 0) !== providerGeneration) return 'deny'
 
     const allowsDecision = decision !== 'deny'
-    if (
-      allowsDecision &&
-      !(await this.isProviderCurrent(providerId, ctx.ownerId, providerGeneration))
-    ) {
-      return 'deny'
+    if (allowsDecision) {
+      const providerIsCurrent = await this.isProviderCurrent(
+        providerId,
+        ctx.ownerId,
+        providerGeneration
+      )
+      if (requestWasCancelled() || !providerIsCurrent) return 'deny'
     }
 
-    // Record grant if applicable.
+    // Record the scope the user already selected. A later request/Session cancellation still stops
+    // this operation at the final check below, but must not revoke an approved Project/Global grant.
     if (this.deps.permissionGrants) {
       await this.deps.permissionGrants.remember(
         { sessionId, projectId, operation, providerId },
@@ -227,11 +279,13 @@ export class ComputeApprovalBroker {
       await this.deps.saveProjectGrant({ projectId, operation, providerId })
     }
 
-    if (
-      allowsDecision &&
-      !(await this.isProviderCurrent(providerId, ctx.ownerId, providerGeneration))
-    ) {
-      return 'deny'
+    if (allowsDecision) {
+      const providerIsCurrent = await this.isProviderCurrent(
+        providerId,
+        ctx.ownerId,
+        providerGeneration
+      )
+      if (requestWasCancelled() || !providerIsCurrent) return 'deny'
     }
 
     return decision
@@ -262,6 +316,56 @@ export class ComputeApprovalBroker {
     for (const [id, entry] of this.pending) {
       if (entry.context?.sessionId === sessionId) this.schedule(id, entry)
     }
+  }
+
+  cancelSession(sessionId: string): void {
+    this.cancellingSessions.add(sessionId)
+    this.completingSessionCancellations.delete(sessionId)
+    this.pausedSessions.delete(sessionId)
+    for (const key of this.conversationGrants) {
+      if (key.startsWith(`${sessionId}:`)) this.conversationGrants.delete(key)
+    }
+    for (const [id, entry] of this.pending) {
+      if (entry.context?.sessionId === sessionId) this.settle(id, 'deny', 'cancelled')
+    }
+  }
+
+  cancelAll(): void {
+    this.globalCancellationActive = true
+    const sessionIds = new Set(this.inFlightSessionRequests.keys())
+    for (const entry of this.pending.values()) {
+      if (entry.context) sessionIds.add(entry.context.sessionId)
+    }
+    for (const sessionId of sessionIds) this.cancelSession(sessionId)
+    for (const [id, entry] of this.pending) {
+      if (!entry.context) this.settle(id, 'deny', 'cancelled')
+    }
+    this.pausedSessions.clear()
+    this.conversationGrants.clear()
+  }
+
+  completeGlobalCancellation(): void {
+    this.globalCancellationActive = false
+  }
+
+  beginSessionDeletion(sessionId: string): void {
+    this.deletingSessions.add(sessionId)
+    this.cancelSession(sessionId)
+  }
+
+  finishSessionDeletion(sessionId: string, retained: boolean): void {
+    this.deletingSessions.delete(sessionId)
+    if (retained) this.completeSessionCancellation(sessionId)
+  }
+
+  completeSessionCancellation(sessionId: string): void {
+    if (!this.cancellingSessions.has(sessionId)) return
+    if (this.deletingSessions.has(sessionId)) return
+    if (this.inFlightSessionRequests.has(sessionId)) {
+      this.completingSessionCancellations.add(sessionId)
+      return
+    }
+    this.cancellingSessions.delete(sessionId)
   }
 
   private schedule(id: string, entry: PendingComputeApproval): void {
@@ -295,11 +399,23 @@ export class ComputeApprovalBroker {
 
   private releaseInFlightRequest(
     providerId: string,
+    sessionId: string,
     request: Promise<ComputeApprovalDecision>
   ): void {
     const requests = this.inFlightRequests.get(providerId)
     requests?.delete(request)
     if (requests?.size === 0) this.inFlightRequests.delete(providerId)
+
+    const sessionRequests = this.inFlightSessionRequests.get(sessionId)
+    sessionRequests?.delete(request)
+    if (sessionRequests?.size !== 0) return
+    this.inFlightSessionRequests.delete(sessionId)
+    if (
+      this.completingSessionCancellations.delete(sessionId) &&
+      !this.deletingSessions.has(sessionId)
+    ) {
+      this.cancellingSessions.delete(sessionId)
+    }
   }
 
   private async isProviderCurrent(
@@ -325,6 +441,9 @@ export class ComputeApprovalBroker {
     const entry = this.pending.get(id)
     if (!entry) return
     if (entry.timer !== undefined) this.clearTimer(entry.timer)
+    if (entry.signal && entry.abortListener) {
+      entry.signal.removeEventListener('abort', entry.abortListener)
+    }
     this.pending.delete(id)
     entry.resolve(decision)
     try {

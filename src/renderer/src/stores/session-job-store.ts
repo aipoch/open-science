@@ -31,36 +31,68 @@ export const createInitialSessionJobState = (): SessionJobStoreData => ({
   isLoaded: false
 })
 
-export const useSessionJobStore = create<SessionJobStore>((set, get) => ({
-  ...createInitialSessionJobState(),
+export const useSessionJobStore = create<SessionJobStore>((set, get) => {
+  let latestHydrationRequest = 0
+  let latestUpdateRevision = 0
+  const updateRevisionByJobId = new Map<string, number>()
 
-  // Fetches all jobs for `sessionId` from the main process and replaces the current map.
-  // Multiple concurrent calls are safe — the last one wins (state is plain data).
-  hydrate: async (sessionId) => {
-    const jobs = await window.api.compute.jobsList({ sessionId })
-    const jobsById = new Map(jobs.map((j) => [j.job_id, j]))
-    set({ jobsById, hydratedSessionId: sessionId, isLoaded: true })
-  },
+  return {
+    ...createInitialSessionJobState(),
 
-  // Upserts a single job received via broadcast. Works even if the store has not been hydrated yet
-  // (the job simply lands in the map for when selectors query it).
-  applyUpdate: (job) => {
-    set((state) => {
-      const next = new Map(state.jobsById)
-      next.set(job.job_id, job)
-      return { jobsById: next }
-    })
-  },
+    // Fetches all jobs for `sessionId`. A newer hydration intent wins, while broadcasts received
+    // after this request started remain authoritative over its snapshot.
+    hydrate: async (sessionId) => {
+      const requestId = ++latestHydrationRequest
+      const startedAtUpdateRevision = latestUpdateRevision
+      const jobs = await window.api.compute.jobsList({ sessionId })
+      if (requestId !== latestHydrationRequest) return
 
-  // Returns running jobs for the given session — used by RemoteJobBadge and similar UI.
-  runningJobsForSession: (sessionId) =>
-    Array.from(get().jobsById.values()).filter(
-      (j) => j.session_id === sessionId && j.status === 'running'
-    ),
+      set((state) => {
+        const next = new Map<string, JobSummary>()
 
-  // Returns all jobs for the given session, sorted by created_at descending.
-  allJobsForSession: (sessionId) =>
-    Array.from(get().jobsById.values())
-      .filter((j) => j.session_id === sessionId)
-      .sort((a, b) => b.created_at - a.created_at)
-}))
+        for (const [jobId, job] of state.jobsById) {
+          const updateRevision = updateRevisionByJobId.get(jobId)
+          if (
+            (job.session_id !== sessionId && updateRevision !== undefined) ||
+            (job.session_id === sessionId &&
+              updateRevision !== undefined &&
+              updateRevision > startedAtUpdateRevision)
+          ) {
+            next.set(jobId, job)
+          }
+        }
+
+        for (const job of jobs) {
+          const updateRevision = updateRevisionByJobId.get(job.job_id)
+          if (updateRevision !== undefined && updateRevision > startedAtUpdateRevision) continue
+          next.set(job.job_id, job)
+        }
+
+        return { jobsById: next, hydratedSessionId: sessionId, isLoaded: true }
+      })
+    },
+
+    // Upserts a single job received via broadcast. Works even if the store has not been hydrated yet
+    // (the job simply lands in the map for when selectors query it).
+    applyUpdate: (job) => {
+      updateRevisionByJobId.set(job.job_id, ++latestUpdateRevision)
+      set((state) => {
+        const next = new Map(state.jobsById)
+        next.set(job.job_id, job)
+        return { jobsById: next }
+      })
+    },
+
+    // Returns running jobs for the given session — used by RemoteJobBadge and similar UI.
+    runningJobsForSession: (sessionId) =>
+      Array.from(get().jobsById.values()).filter(
+        (j) => j.session_id === sessionId && j.status === 'running'
+      ),
+
+    // Returns all jobs for the given session, sorted by created_at descending.
+    allJobsForSession: (sessionId) =>
+      Array.from(get().jobsById.values())
+        .filter((j) => j.session_id === sessionId)
+        .sort((a, b) => b.created_at - a.created_at)
+  }
+})

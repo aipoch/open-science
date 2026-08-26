@@ -64,7 +64,7 @@ const SettingsPanelLoadingBoundary = ({
             </Button>
             <Button type="button" onClick={onReload}>
               <RefreshCw aria-hidden="true" />
-              {t('Reload')}
+              {t('Reload', { context: 'window', ns: 'common' })}
             </Button>
           </div>
         </div>

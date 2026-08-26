@@ -47,6 +47,30 @@ const executionSnapshot = (schemaVersion: number): Record<string, unknown> => ({
 })
 
 describe('Artifact persistence decoders', () => {
+  it('preserves attribution from a not-yet-known Agent framework', () => {
+    const decoded = decodeArtifactMessageSnapshot(
+      JSON.stringify({
+        ...messageSnapshot(3),
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'Persist me',
+            createdAt: 1,
+            agentAttribution: { frameworkId: 'future-acp' }
+          }
+        ]
+      })
+    )
+
+    expect(decoded).toMatchObject({
+      status: 'valid',
+      value: {
+        messages: [{ agentAttribution: { frameworkId: 'future-acp' } }]
+      }
+    })
+  })
+
   it('classifies Message v3 as valid, v2 as legacy, and future versions as unsupported', () => {
     expect(decodeArtifactMessageSnapshot(JSON.stringify(messageSnapshot(3))).status).toBe('valid')
     expect(decodeArtifactMessageSnapshot(JSON.stringify(messageSnapshot(2))).status).toBe('legacy')

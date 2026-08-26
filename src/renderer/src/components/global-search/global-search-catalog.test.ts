@@ -12,6 +12,7 @@ const sessions = (count: number, projectId = 'project-a'): SearchableSession[] =
     id: `session-${index}`,
     projectId,
     title: `Python sin ${index}`,
+    number: index + 1,
     updatedAt: 1_000 - index,
     artifactCount: index,
     isPending: false
@@ -73,6 +74,63 @@ describe('global search catalog', () => {
     expect(result.primary).toHaveLength(5)
     expect(result.primaryTotalCount).toBe(6)
     expect(result.other).toEqual([])
+  })
+
+  it('matches positive Session-number prefixes and ranks an exact number first', () => {
+    const result = searchSessionTitles({
+      sessions: [
+        { ...sessions(1)[0], id: 'newer-prefix', number: 123, updatedAt: 3_000 },
+        { ...sessions(1)[0], id: 'exact', number: 12, updatedAt: 1_000 },
+        { ...sessions(1)[0], id: 'older-prefix', number: 120, updatedAt: 2_000 },
+        { ...sessions(1)[0], id: 'title-only', title: 'Session 12', number: 7, updatedAt: 4_000 },
+        { ...sessions(1)[0], id: 'missing', number: undefined, updatedAt: 5_000 },
+        { ...sessions(1)[0], id: 'invalid', number: 0, updatedAt: 6_000 }
+      ],
+      projectNames: new Map([['project-a', 'Alpha']]),
+      primaryProjectId: 'project-a',
+      query: '12',
+      visiblePrimaryCount: 8
+    })
+
+    expect(result.primary.map((session) => session.id)).toEqual([
+      'exact',
+      'newer-prefix',
+      'older-prefix'
+    ])
+  })
+
+  it('promotes an exact Session-number match from another Project ahead of local prefixes', () => {
+    const result = searchSessionTitles({
+      sessions: [
+        { ...sessions(1)[0], id: 'local-prefix', number: 123, updatedAt: 3_000 },
+        {
+          ...sessions(1, 'project-b')[0],
+          id: 'cross-project-exact',
+          number: 12,
+          updatedAt: 1_000
+        },
+        {
+          ...sessions(1, 'project-b')[0],
+          id: 'cross-project-prefix',
+          number: 120,
+          updatedAt: 2_000
+        }
+      ],
+      projectNames: new Map([
+        ['project-a', 'Alpha'],
+        ['project-b', 'Beta']
+      ]),
+      primaryProjectId: 'project-a',
+      query: '12',
+      visiblePrimaryCount: 8
+    })
+
+    expect(result.primary.map((session) => session.id)).toEqual([
+      'cross-project-exact',
+      'local-prefix'
+    ])
+    expect(result.primary[0].projectName).toBe('Beta')
+    expect(result.other.map((session) => session.id)).toEqual(['cross-project-prefix'])
   })
 
   it('returns recent non-pending sessions in recency order with a five-row cap', () => {

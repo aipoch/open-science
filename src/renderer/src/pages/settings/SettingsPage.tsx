@@ -83,6 +83,7 @@ import {
   type ProviderFormValue
 } from './provider-form-value'
 import { SettingsPanelLoadingBoundary } from './SettingsPanelLoadingBoundary'
+import { localizeProviderResourceMessage } from './validation-message'
 import { loadSettingsPanel } from './settings-panel-loader'
 
 const AgentPanel = lazy(async () => ({ default: (await import('./AgentPanel')).AgentPanel }))
@@ -387,6 +388,19 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // Shared with ProvidersPanel: the post-save validation and the list's manual test both mark the
   // provider busy so its card shows "Testing…".
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
+  const [postSaveValidationFailed, setPostSaveValidationFailed] = useState(false)
+  const postSaveValidationGeneration = useRef(0)
+  const postSaveValidationProviderId = useRef<string | undefined>(undefined)
+
+  useEffect(() => {
+    const providerId = postSaveValidationProviderId.current
+    if (!providerId || providers.some((provider) => provider.id === providerId)) return
+
+    postSaveValidationGeneration.current += 1
+    postSaveValidationProviderId.current = undefined
+    setBusyProviderId(undefined)
+    setPostSaveValidationFailed(false)
+  }, [providers])
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
   useEffect(() => {
@@ -614,7 +628,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         connectorsView.kind === 'add'
           ? t('Add connector')
           : connectorsView.kind === 'import'
-            ? t('Import configuration')
+            ? t('Import Connector or MCP configuration')
             : connectorsView.kind === 'export'
               ? t('Export {{name}}', {
                   name:
@@ -778,20 +792,35 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setStatusMessage(undefined)
   }
 
-  const openCreate = (): void => navigate({ panel: 'model', view: { kind: 'create' } })
+  const openCreate = (): void => {
+    postSaveValidationGeneration.current += 1
+    postSaveValidationProviderId.current = undefined
+    setBusyProviderId(undefined)
+    setPostSaveValidationFailed(false)
+    navigate({ panel: 'model', view: { kind: 'create' } })
+  }
 
-  const openEdit = (provider: ProviderView): void =>
+  const openEdit = (provider: ProviderView): void => {
+    postSaveValidationGeneration.current += 1
+    postSaveValidationProviderId.current = undefined
+    setBusyProviderId(undefined)
+    setPostSaveValidationFailed(false)
     navigate({
       panel: 'model',
       view: { kind: 'edit', providerId: provider.id }
     })
+  }
 
   const closeForm = (): void => navigate({ panel: 'model', view: { kind: 'list' } })
 
   const handleSave = async (): Promise<void> => {
     if (providerEditTargetMissing) return
+    postSaveValidationGeneration.current += 1
+    postSaveValidationProviderId.current = undefined
+    setBusyProviderId(undefined)
     setIsSaving(true)
     setStatusMessage(undefined)
+    setPostSaveValidationFailed(false)
 
     try {
       // Persist first and return to the provider list immediately — don't hold the form open waiting
@@ -805,12 +834,34 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       navigate({ panel: 'model', view: { kind: 'list' } })
 
       if (providerId) {
+        const validationGeneration = ++postSaveValidationGeneration.current
+        postSaveValidationProviderId.current = providerId
         setBusyProviderId(providerId)
-        void validateProvider({ providerId }).finally(() => setBusyProviderId(undefined))
+        void validateProvider({ providerId })
+          .then(() => {
+            if (postSaveValidationGeneration.current === validationGeneration) {
+              postSaveValidationProviderId.current = undefined
+              setPostSaveValidationFailed(false)
+            }
+          })
+          .catch(() => {
+            if (postSaveValidationGeneration.current === validationGeneration) {
+              setPostSaveValidationFailed(true)
+            }
+          })
+          .finally(() => {
+            if (postSaveValidationGeneration.current === validationGeneration) {
+              setBusyProviderId(undefined)
+            }
+          })
       }
     } catch (error) {
       setStatusOk(false)
-      setStatusMessage(error instanceof Error ? error.message : t('Could not save provider.'))
+      setStatusMessage(
+        error instanceof Error
+          ? localizeProviderResourceMessage(error.message, t)
+          : t('Could not save provider.')
+      )
     } finally {
       setIsSaving(false)
     }
@@ -833,7 +884,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               count: result.models?.length ?? 0
             })
           : t("Couldn't fetch models: {{reason}}. Using the bundled list.", {
-              reason: result.message ?? t('request failed')
+              reason: result.message
+                ? localizeProviderResourceMessage(result.message, t)
+                : t('request failed')
             })
       )
     } finally {
@@ -1439,12 +1492,26 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </div>
                     </div>
                   ) : (
-                    <ProvidersPanel
-                      onCreateProvider={openCreate}
-                      onEditProvider={openEdit}
-                      busyProviderId={busyProviderId}
-                      onBusyProviderChange={setBusyProviderId}
-                    />
+                    <>
+                      {postSaveValidationFailed ? (
+                        <p className="mx-5 mt-5 text-sm text-destructive" role="alert">
+                          {t('Could not test the provider connection.')}
+                        </p>
+                      ) : null}
+                      <ProvidersPanel
+                        onCreateProvider={openCreate}
+                        onEditProvider={openEdit}
+                        busyProviderId={busyProviderId}
+                        onBusyProviderChange={(providerId) => {
+                          setBusyProviderId(providerId)
+                          if (providerId) {
+                            postSaveValidationGeneration.current += 1
+                            postSaveValidationProviderId.current = undefined
+                            setPostSaveValidationFailed(false)
+                          }
+                        }}
+                      />
+                    </>
                   )}
                 </SettingsPanelLoadingBoundary>
               </div>

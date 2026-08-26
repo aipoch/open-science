@@ -34,11 +34,14 @@ describe('Prisma Client fingerprint', () => {
     expect(PRISMA_CLIENT_SCHEMA_RELATIVE_PATH).toBe('node_modules/.prisma/client/schema.prisma')
   })
 
-  it('runs the fingerprint check before npm test', () => {
+  it('runs the fingerprint check before npm test and npm run dev', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
-      scripts: { pretest?: string }
+      scripts: { predev?: string; pretest?: string }
     }
     expect(pkg.scripts.pretest).toBe('node scripts/check-prisma-client.mjs')
+    expect(pkg.scripts.predev).toBe(
+      'node scripts/check-prisma-client.mjs && node scripts/dev-app-branding.cjs'
+    )
   })
 
   it('accepts a generated client that matches the source schema', () => {

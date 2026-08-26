@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
+import { ConnectorService } from '../connectors/service'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 
@@ -160,31 +161,95 @@ gate('repl kernel host.mcp', () => {
     expect(received.params).toMatchObject({ sessionId: 'session-42', projectId: 'project-1' })
   })
 
-  it('surfaces the RPC server error message when host.mcp gets a non-2xx response', async () => {
-    // Stub RPC endpoint mirroring NotebookLocalRpcServer's failure shape: HTTP 500 + {"error": ...}.
-    const { createServer } = await import('node:http')
-    const server = createServer((req, res) => {
-      let body = ''
-      req.on('data', (c) => (body += c))
-      req.on('end', () =>
-        res
-          .writeHead(500, { 'content-type': 'application/json' })
-          .end(JSON.stringify({ error: 'connector not enabled: chemistry' }))
-      )
+  it('tells the agent how to recover when host.mcp names an unavailable connector', async () => {
+    const connectorService = new ConnectorService({
+      getConnectors: () => ({ enabledIds: [], autoAllowIds: [], disabledConnectorIds: [] }),
+      resolveApiKey: () => undefined
     })
-    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
-    const addr = server.address() as { port: number }
+    const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      connectorService
+    })
+    const connection = await rpcServer.issueControlConnection(
+      'session-42',
+      'project-1',
+      'root-frame-session-42'
+    )
     const exec = makeExecutor()
+
     const result = await exec.execute(
       baseRequest({
-        code: "await host.mcp('chemistry','pubchem_get_properties',{ cids: [1] })",
-        mcpRpcEndpoint: `http://127.0.0.1:${addr.port}`,
-        mcpRpcToken: 'tok'
+        code: "await host.mcp('cancer_models','cbioportal_list_studies',{})",
+        mcpRpcEndpoint: connection.endpoint,
+        mcpRpcSocketPath: connection.socketPath,
+        mcpRpcToken: connection.token,
+        sessionId: 'session-42',
+        projectId: 'project-1'
       })
     )
+
     await exec.shutdown()
-    server.close()
+    connection.release()
+    await rpcServer.close()
     expect(result.status).toBe('failed')
-    expect(result.traceback).toContain('connector not enabled: chemistry')
+    expect(result.traceback).toContain('Connector "cancer_models" is unavailable.')
+    expect(result.traceback).toContain('Do not retry with guessed Connector names.')
+    expect(result.traceback).toContain(
+      'Use only Connector names and methods documented by a loaded'
+    )
+    expect(result.traceback).toContain('mcp-* Skill')
+    expect(result.traceback).toContain('Settings > Connectors')
+  })
+
+  it('tells the agent to wait for sign-in when a Connector requires authentication', async () => {
+    const connectorService = new ConnectorService({
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [
+          {
+            id: 'oauth-server-id',
+            name: 'oauth-server',
+            displayName: 'OAuth server',
+            transport: 'streamable_http',
+            url: 'https://mcp.example.test',
+            oauth: {},
+            enabled: true
+          }
+        ]
+      }),
+      resolveApiKey: () => undefined
+    })
+    const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      connectorService
+    })
+    const connection = await rpcServer.issueControlConnection(
+      'session-42',
+      'project-1',
+      'root-frame-session-42'
+    )
+    const exec = makeExecutor()
+
+    try {
+      const result = await exec.execute(
+        baseRequest({
+          code: "await host.mcp('oauth-server','lookup',{})",
+          mcpRpcEndpoint: connection.endpoint,
+          mcpRpcSocketPath: connection.socketPath,
+          mcpRpcToken: connection.token,
+          sessionId: 'session-42',
+          projectId: 'project-1'
+        })
+      )
+
+      expect(result.status).toBe('failed')
+      expect(result.traceback).toContain('connector_unauthenticated')
+      expect(result.traceback).toContain('Do not retry until the user signs in')
+      expect(result.traceback).toContain('Settings > Connectors')
+      expect(result.traceback).toContain('retry the same call')
+    } finally {
+      await exec.shutdown()
+      connection.release()
+      await rpcServer.close()
+    }
   })
 })

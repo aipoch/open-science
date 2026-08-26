@@ -7,6 +7,8 @@ import type {
 import type { NotebookEnvironmentOperations } from './environment-operations'
 import { assertSafeEnvName, DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix } from './runtime-paths'
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
+import type { NotebookSessionRuntimeBinding } from './session-aggregate'
+import { managedRuntimeIdentity } from './runtime-target'
 
 type NotebookEnvironmentManager = {
   createNamedEnvironment: (
@@ -15,11 +17,13 @@ type NotebookEnvironmentManager = {
     packages?: string[]
   ) => Promise<EnvironmentInfo>
   listEnvironments: () => EnvironmentInfo[]
-  removeEnvironment: (name: string) => EnvironmentInfo[]
+  removeEnvironment: (name: string) => void
 }
 
 type EnvironmentManagementSession = {
+  readonly sessionId: string
   kernelStatusEntries(): Array<[string, NotebookKernelMetadata['lastKnownStatus']]>
+  runtimeBindingEntries(): Array<[NotebookLanguage, NotebookSessionRuntimeBinding]>
 }
 
 type NotebookEnvironmentManagementOptions = {
@@ -65,8 +69,24 @@ class NotebookEnvironmentManagementOwner {
         await this.options.ensureRecovered()
         this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
         return this.options.environmentOperations.runMutation(name, async () => {
-          await manager.createNamedEnvironment(name, request.language, request.packages)
-          return { environments: manager.listEnvironments() }
+          const created = await manager.createNamedEnvironment(
+            name,
+            request.language,
+            request.packages
+          )
+          const { runtimeId } = managedRuntimeIdentity(
+            this.options.runtimeRoot,
+            request.language,
+            name
+          )
+          return {
+            created: {
+              name,
+              language: request.language,
+              runtimeId,
+              runnable: created.ready
+            }
+          }
         })
       }
       case 'list':
@@ -85,12 +105,21 @@ class NotebookEnvironmentManagementOwner {
               'wait for the run to finish before removing it.'
           )
         }
+        const blockingBinding = this.blockingBinding(name)
+        if (blockingBinding) {
+          const bindingState = blockingBinding.status === 'active' ? 'an active' : 'a revoking'
+          throw new Error(
+            `Environment "${name}" cannot be removed because Session ` +
+              `"${blockingBinding.sessionId}" has ${bindingState} Runtime Binding ` +
+              'to it. Switch that Session to another Runtime Environment first.'
+          )
+        }
         await this.options.ensureRecovered()
         this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
         return this.options.environmentOperations.runMutation(name, async () => {
-          const environments = manager.removeEnvironment(name)
+          manager.removeEnvironment(name)
           this.options.runtimeRepair.completeRemovedManagedEnvironment(name)
-          return { environments }
+          return { removed: { name } }
         })
       }
     }
@@ -104,6 +133,24 @@ class NotebookEnvironmentManagementOwner {
       }
     }
     return false
+  }
+
+  private blockingBinding(
+    name: string
+  ): { sessionId: string; status: 'active' | 'revoking' } | undefined {
+    for (const session of this.options.sessions()) {
+      for (const [, binding] of session.runtimeBindingEntries()) {
+        const status = binding.status ?? 'active'
+        if (
+          binding.provenance === 'agent-created' &&
+          binding.envName === name &&
+          (status === 'active' || status === 'revoking')
+        ) {
+          return { sessionId: session.sessionId, status }
+        }
+      }
+    }
+    return undefined
   }
 }
 

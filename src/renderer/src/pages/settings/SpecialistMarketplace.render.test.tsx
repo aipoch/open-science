@@ -52,6 +52,7 @@ const snapshot = {
       id: 'example-specialist',
       displayName: 'Example Specialist',
       summary: 'Focused research workflows.',
+      author: 'Example Author',
       publisher: { id: 'example', name: 'Example Publisher' },
       version: '1.0.0'
     }
@@ -64,6 +65,7 @@ const release = {
   specialistId: 'example-specialist',
   displayName: 'Example Specialist',
   summary: 'Focused research workflows.',
+  author: 'Example Author',
   publisher: { id: 'example', name: 'Example Publisher' },
   version: '2.0.0',
   repository: 'https://github.com/example/upstream',
@@ -166,6 +168,8 @@ describe('Specialist Marketplace settings', () => {
     )
     expect(container.querySelector('[role="tablist"]')).toBeNull()
     expect(container.textContent).toContain('Example Specialist')
+    expect(container.textContent).toContain('Publisher: Example Publisher')
+    expect(container.textContent).toContain('Author: Example Author')
     expect(container.textContent).toContain('Community')
     expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
 
@@ -371,6 +375,8 @@ describe('Specialist Marketplace settings', () => {
     })
 
     expect(container.textContent).toContain('0 of 1 included')
+    expect(container.textContent).toContain('Publisher: Example Publisher')
+    expect(container.textContent).toContain('Author: Example Author')
     expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
     const skills = Array.from(container.querySelectorAll('button')).find((button) =>
       button.textContent?.includes('Skills')
@@ -389,6 +395,38 @@ describe('Specialist Marketplace settings', () => {
         button.textContent?.includes('Install Specialist')
       )?.disabled
     ).toBe(false)
+  })
+
+  it('omits Author when a Marketplace listing does not declare one', async () => {
+    window.api.specialist.listMarketplace = vi.fn().mockResolvedValue({
+      ...snapshot,
+      specialists: [{ ...snapshot.specialists[0], author: undefined }]
+    })
+
+    await act(async () => {
+      root.render(<SpecialistMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+    })
+
+    expect(container.textContent).not.toContain('Author:')
+
+    window.api.specialist.getMarketplaceRelease = vi
+      .fn()
+      .mockResolvedValue({ ...release, author: undefined })
+    await act(async () => {
+      root.render(
+        <SpecialistMarketplace
+          view={{
+            kind: 'marketplace-release',
+            sourceId: 'github-example',
+            id: 'example-specialist',
+            version: '2.0.0'
+          }}
+          onNavigate={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).not.toContain('Author:')
   })
 
   it('labels verified cached Marketplace data without hiding its listings', async () => {

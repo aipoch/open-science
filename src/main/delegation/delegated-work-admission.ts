@@ -1,6 +1,9 @@
 import { DurableDelegatedWorkError } from './durable-delegated-work-error'
 import type { DelegatedWorkDurableRecords } from './delegated-work-record-types'
-import { prepareStructuredOutputSchema } from './structured-output'
+import {
+  prepareStructuredOutputSchema,
+  type PreparedStructuredOutputSchema
+} from './structured-output'
 import type {
   DurableDelegateRequest,
   DurableSnapshot,
@@ -122,6 +125,7 @@ class DelegatedWorkAdmissionPolicy {
     Readonly<{
       requests: readonly DurableDelegateRequest[]
       resolvedAgents: readonly DurableResolvedAgent[]
+      contracts: readonly (PreparedStructuredOutputSchema | undefined)[]
     }>
   > {
     const rawRequests: readonly unknown[] = Array.isArray(requestOrRequests)
@@ -159,18 +163,6 @@ class DelegatedWorkAdmissionPolicy {
       ...request,
       name: normalizeExplicitDelegateName(request.name)
     }))
-    const inheritedAgent = requests.some((request) => request.profile === undefined)
-      ? parentSpecialistProfileId === undefined
-        ? ({ kind: 'main' } as const)
-        : await this.resolveAgent(parentSpecialistProfileId)
-      : undefined
-    const resolvedAgents = await Promise.all(
-      requests.map((request) =>
-        request.profile === undefined
-          ? (inheritedAgent as DurableResolvedAgent)
-          : this.resolveRequestedAgent(request.profile)
-      )
-    )
     if (
       requests.some(
         (request) =>
@@ -184,6 +176,23 @@ class DelegatedWorkAdmissionPolicy {
         'delegation inputs must be immutable Version identities'
       )
     }
+    const contracts = requests.map((request) =>
+      request.outputSchema === undefined
+        ? undefined
+        : prepareStructuredOutputSchema(request.outputSchema)
+    )
+    const inheritedAgent = requests.some((request) => request.profile === undefined)
+      ? parentSpecialistProfileId === undefined
+        ? ({ kind: 'main' } as const)
+        : await this.resolveAgent(parentSpecialistProfileId)
+      : undefined
+    const resolvedAgents = await Promise.all(
+      requests.map((request) =>
+        request.profile === undefined
+          ? (inheritedAgent as DurableResolvedAgent)
+          : this.resolveRequestedAgent(request.profile)
+      )
+    )
     const inputs = requests.flatMap((request) => request.inputs ?? [])
     if (inputs.length > 0) {
       if (!this.validateInput) {
@@ -200,12 +209,13 @@ class DelegatedWorkAdmissionPolicy {
         )
       }
     }
-    return { requests, resolvedAgents }
+    return { requests, resolvedAgents, contracts }
   }
 
   buildChildren(
     requests: readonly DurableDelegateRequest[],
     resolvedAgents: readonly DurableResolvedAgent[],
+    contracts: readonly (PreparedStructuredOutputSchema | undefined)[],
     executionModel: NonNullable<
       Parameters<
         DelegatedWorkDurableRecords['admitChildren']
@@ -214,11 +224,6 @@ class DelegatedWorkAdmissionPolicy {
     createId: (prefix: 'frame' | 'message' | 'runtime' | 'attempt') => string,
     now: () => number
   ): Parameters<DelegatedWorkDurableRecords['admitChildren']>[0]['children'] {
-    const contracts = requests.map((request) =>
-      request.outputSchema === undefined
-        ? undefined
-        : prepareStructuredOutputSchema(request.outputSchema)
-    )
     const titles = allocateDelegateNames(requests.map((request) => request.name))
     return requests.map((request, index) => {
       const task = request.task.trim()

@@ -38,11 +38,18 @@ import type {
 import type { EnvironmentInfo } from '../../shared/notebook-env'
 import {
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
+  NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT,
+  type NotebookEnvironmentPackageChange,
   type NotebookEnvironmentManifest,
-  type NotebookEnvironmentStatus
+  type NotebookEnvironmentStatus,
+  type NotebookLanguage
 } from '../../shared/notebook'
-import type { DiscoveredInterpreter, RuntimeEnablement } from '../../shared/notebook-runtime'
+import type {
+  DiscoveredInterpreter,
+  RuntimeEnablement,
+  RuntimeTargetReceipt
+} from '../../shared/notebook-runtime'
 import {
   CompletionGateCoordinator,
   createCompletionGatedControlToolInterceptor
@@ -67,6 +74,7 @@ import { NOTEBOOK_CODE_LIMIT_BYTES } from './content-limits'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { projectNotebookDependencies, type AnalyzedNotebookRun } from './dependency-analysis'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
+import type { NotebookEnvironmentManager } from './environment-management'
 
 let storageRoot: string | undefined
 
@@ -121,6 +129,38 @@ const verifiedPackageMutationTracker = (): Pick<
   markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
   refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
 })
+
+const expectedManagedTarget = (
+  runtimeRoot: string,
+  language: NotebookLanguage,
+  environmentName: string,
+  selection: 'implicit-default' | 'explicit-binding' = 'implicit-default'
+): RuntimeTargetReceipt => {
+  const prefix = envPrefix(runtimeRoot, environmentName)
+  return {
+    language,
+    selection,
+    runtimeSource: 'managed',
+    environmentName,
+    runtimeId: language === 'r' ? rBin(prefix) : pythonBin(prefix),
+    label: environmentName,
+    prefix
+  }
+}
+
+const expectBoundedPackageFailure = (
+  result: InstallResultForTest,
+  target: RuntimeTargetReceipt,
+  error: RegExp
+): void => {
+  expect(result).toMatchObject({
+    ok: false,
+    needsRestart: false,
+    error: expect.stringMatching(error),
+    target
+  })
+  expect(result.error?.length).toBeLessThanOrEqual(2_000)
+}
 
 const lifecycleCallbackHarness = (
   root: string,
@@ -733,6 +773,41 @@ describe('notebook runtime service', () => {
         historySummaryFrameId: 'x'.repeat(NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES + 1)
       })
     ).rejects.toThrow(/history summary Frame ID must not exceed 1024 UTF-8 bytes/u)
+    expect(service.peekHandoffContext('session-1')).toBeUndefined()
+  })
+
+  it('rejects invalid history page limits and cursors before creating a session', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+
+    await expect(
+      service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        historyLimit: NOTEBOOK_STATE_HISTORY_PAGE_LIMIT + 1
+      })
+    ).rejects.toThrow(/history limit must be 1-100/u)
+    await expect(
+      service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        historyBefore: { startedAt: Number.NaN, runId: '' }
+      })
+    ).rejects.toThrow(/history cursor is invalid/u)
+    await expect(
+      service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        historyBefore: { startedAt: 1, runId: 42 } as never
+      })
+    ).rejects.toThrow(/history cursor is invalid/u)
+    await expect(
+      service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        historyBefore: { startedAt: 1, runId: 'x'.repeat(1_025) }
+      })
+    ).rejects.toThrow(/history cursor is invalid/u)
     expect(service.peekHandoffContext('session-1')).toBeUndefined()
   })
 
@@ -5260,7 +5335,7 @@ describe('notebook runtime service', () => {
   })
 
   describe('managePackages', () => {
-    it('returns verified version changes for requested packages without transitive inventory noise', async () => {
+    it('returns verified requested package changes alongside related inventory changes', async () => {
       const root = await createStorageRoot()
       const service = new NotebookRuntimeService({
         configRoot: root,
@@ -5313,11 +5388,28 @@ describe('notebook runtime service', () => {
       expect(result.packageChanges).toEqual([
         expect.objectContaining({
           name: 'numpy',
+          relationship: 'requested',
           change: 'updated',
           beforeVersion: '2.1.0',
           afterVersion: '2.2.0'
+        }),
+        expect.objectContaining({
+          name: 'packaging',
+          relationship: 'unattributed',
+          change: 'updated',
+          beforeVersion: '24.0',
+          afterVersion: '25.0'
         })
       ])
+      expect(result.target).toMatchObject({
+        language: 'python',
+        selection: 'implicit-default',
+        runtimeSource: 'managed',
+        environmentName: DEFAULT_PY_ENV,
+        runtimeId: expect.any(String),
+        label: DEFAULT_PY_ENV
+      })
+      expect(result.environmentName).toBe('default-python')
     })
 
     it('quarantines and stops an R runtime after a protected r-base identity violation', async () => {
@@ -5408,14 +5500,17 @@ describe('notebook runtime service', () => {
 
       try {
         await service.state({ sessionId: 'session-1', workspaceCwd: root })
-        await expect(
-          service.managePackages({
-            sessionId: 'session-1',
-            workspaceCwd: root,
-            language: 'r',
-            packages: ['dplyr']
-          })
-        ).rejects.toThrow(/journal update denied/)
+        const failure = await service.managePackages({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          language: 'r',
+          packages: ['dplyr']
+        })
+        expectBoundedPackageFailure(
+          failure,
+          expectedManagedTarget(getRuntimeRoot(root), 'r', DEFAULT_R_ENV),
+          /journal update denied/
+        )
 
         const run = await service.execute({
           sessionId: 'session-1',
@@ -5471,14 +5566,17 @@ describe('notebook runtime service', () => {
       })
 
       await service.state({ sessionId: 'session-1', workspaceCwd: root })
-      await expect(
-        service.managePackages({
-          sessionId: 'session-1',
-          workspaceCwd: root,
-          language: 'r',
-          packages: ['dplyr']
-        })
-      ).rejects.toThrow(/REPAIR_QUARANTINE_FAILED/)
+      const failure = await service.managePackages({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        language: 'r',
+        packages: ['dplyr']
+      })
+      expectBoundedPackageFailure(
+        failure,
+        expectedManagedTarget(runtimeRoot, 'r', DEFAULT_R_ENV),
+        /REPAIR_QUARANTINE_FAILED/
+      )
 
       expect(terminate).toHaveBeenCalledWith('r', DEFAULT_R_ENV)
       expect(
@@ -5528,8 +5626,8 @@ describe('notebook runtime service', () => {
       const runtimeRoot = getRuntimeRoot(root)
       const envName = 'shared-analysis'
       const prefix = envPrefix(runtimeRoot, envName)
-      const namedPython = join(prefix, 'bin', 'python')
-      const namedR = join(prefix, 'bin', 'R')
+      const namedPython = pythonBin(prefix)
+      const namedR = rBin(prefix)
       const terminate = vi.fn(async () => undefined)
       const execute = vi.fn(async (): Promise<NotebookExecutionResult> => {
         throw new Error('a repair-blocked shared prefix must not execute')
@@ -5581,14 +5679,17 @@ describe('notebook runtime service', () => {
         language: 'r',
         runtimeId: namedR
       })
-      await expect(
-        service.managePackages({
-          sessionId: 'shared',
-          workspaceCwd: root,
-          language: 'r',
-          packages: ['dplyr']
-        })
-      ).rejects.toThrow(/REPAIR_QUARANTINE_FAILED/)
+      const failure = await service.managePackages({
+        sessionId: 'shared',
+        workspaceCwd: root,
+        language: 'r',
+        packages: ['dplyr']
+      })
+      expectBoundedPackageFailure(
+        failure,
+        expectedManagedTarget(runtimeRoot, 'r', envName, 'explicit-binding'),
+        /REPAIR_QUARANTINE_FAILED/
+      )
 
       expect(terminate).toHaveBeenCalledWith('r', envName)
       expect(terminate).toHaveBeenCalledWith('python', envName)
@@ -5632,9 +5733,16 @@ describe('notebook runtime service', () => {
         installPackagesImpl
       })
 
-      await expect(
-        service.managePackages({ language: 'python', packages: ['numpy'], usePip: true })
-      ).rejects.toBe(dirtyFailure)
+      const failure = await service.managePackages({
+        language: 'python',
+        packages: ['numpy'],
+        usePip: true
+      })
+      expectBoundedPackageFailure(
+        failure,
+        expectedManagedTarget(getRuntimeRoot(root), 'python', DEFAULT_PY_ENV),
+        /environment binding is unwritable/
+      )
       expect(installPackagesImpl).not.toHaveBeenCalled()
     })
 
@@ -5812,7 +5920,14 @@ describe('notebook runtime service', () => {
       }
       const result = await service.managePackages(request)
 
-      expect(result).toBe(scriptedResult)
+      expect(result).toMatchObject(scriptedResult)
+      expect(result.target).toMatchObject({
+        language: 'python',
+        selection: 'implicit-default',
+        runtimeSource: 'managed',
+        environmentName: DEFAULT_PY_ENV
+      })
+      expect(result.environmentName).toBe('default-python')
       expect(calls).toHaveLength(1)
       // The service forwards the request with the install target PINNED to the binding-resolved env
       // (default-python here), so it is a copy of the original fields plus `environment`, not the same
@@ -5851,6 +5966,7 @@ describe('notebook runtime service', () => {
 
       expect(probe).toHaveBeenCalled()
       expect(result.error).toContain('RUNTIME_SESSION_UNAVAILABLE')
+      expect(result.target).toEqual({ language: 'python', selection: 'unresolved' })
     })
 
     it('falls back to the region default mirror when nothing is configured', async () => {
@@ -6202,7 +6318,7 @@ describe('notebook runtime service', () => {
       let releaseInstall: (() => void) | undefined
       // v4: a session runs ONE env per language, so "different envs" now means different SESSIONS —
       // an installer session bound to a named env vs a runner session on the app-managed default.
-      const namedPy = join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python')
+      const namedPy = pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis'))
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
@@ -6311,23 +6427,23 @@ describe('notebook runtime service', () => {
         packages: ['numpy']
       })
       expect(created).toEqual([{ name: 'my-analysis', language: 'python', packages: ['numpy'] }])
-      expect(createResult.environments.map((env) => env.name)).toEqual([
-        'default-python',
-        'my-analysis'
-      ])
+      expect(createResult).not.toHaveProperty('environments')
 
       const listResult = await service.manageEnvironments({ action: 'list' })
-      expect(listResult.environments.map((env) => env.name)).toEqual([
-        'default-python',
-        'my-analysis'
-      ])
+      expect(listResult).toEqual({
+        environments: [
+          { name: 'default-python', language: 'python', ready: true, isDefault: true },
+          { name: 'my-analysis', language: 'python', ready: true, isDefault: false }
+        ]
+      })
 
       const removeResult = await service.manageEnvironments({
         action: 'remove',
         name: 'my-analysis'
       })
       expect(removed).toEqual(['my-analysis'])
-      expect(removeResult.environments.map((env) => env.name)).toEqual(['default-python'])
+      expect(removeResult).toEqual({ removed: { name: 'my-analysis' } })
+      expect(removeResult).not.toHaveProperty('environments')
     })
 
     it('named-env create awaits crash recovery before writing a prefix (barrier)', async () => {
@@ -6448,8 +6564,8 @@ describe('notebook runtime service', () => {
                 {
                   language: 'python',
                   provenance: 'agent-created',
-                  envId: join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python'),
-                  interpreterPath: join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python'),
+                  envId: pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis')),
+                  interpreterPath: pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis')),
                   label: 'my-analysis',
                   condaEnv: 'my-analysis',
                   version: '3.12',
@@ -6489,7 +6605,7 @@ describe('notebook runtime service', () => {
         sessionId: 's',
         workspaceCwd: root,
         language: 'python',
-        runtimeId: join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python')
+        runtimeId: pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis'))
       })
       await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'python' })
 
@@ -6717,6 +6833,8 @@ describe('v4 runtime bindings & agent tools', () => {
         request: InstallRequestForTest,
         deps?: Partial<InstallDepsForTest>
       ) => Promise<InstallResultForTest>
+      packageChanges?: NotebookEnvironmentPackageChange[]
+      environmentManager?: NotebookEnvironmentManager
     } = {}
   ): NotebookRuntimeService =>
     new NotebookRuntimeService({
@@ -6739,11 +6857,18 @@ describe('v4 runtime bindings & agent tools', () => {
         })
       },
       platform: options.platform,
+      environmentManager: options.environmentManager,
       installPackagesImpl: options.installPackagesImpl,
       // A fake installer must have a fake inventory refresh too. Mixing the fake installer with a
       // scan of the host's real /usr/bin/python3 makes these tests depend on runner packages.
       environmentStateTracker: options.installPackagesImpl
-        ? verifiedPackageMutationTracker()
+        ? {
+            ...verifiedPackageMutationTracker(),
+            refreshAfterPackageMutation: vi.fn().mockResolvedValue({
+              result: 'success',
+              ...(options.packageChanges ? { packageChanges: options.packageChanges } : {})
+            })
+          }
         : undefined,
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -6785,6 +6910,100 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(listed.runtimes.every((r) => r.runtimeId !== userPyB.envId)).toBe(true)
   })
 
+  it('creates canonical runtime receipts for explicit first-bind and later switch', async () => {
+    const root = await createStorageRoot()
+    const environments: EnvironmentInfo[] = []
+    const discovered: DiscoveredInterpreter[] = []
+    const environmentManager: NotebookEnvironmentManager = {
+      createNamedEnvironment: async (name, language) => {
+        const info = { name, language, ready: true, isDefault: false }
+        environments.push(info)
+        const prefix = envPrefix(getRuntimeRoot(root), name)
+        const runtimeId = language === 'r' ? rBin(prefix) : pythonBin(prefix)
+        discovered.push({
+          language,
+          provenance: 'agent-created',
+          envId: runtimeId,
+          interpreterPath: runtimeId,
+          label: `conda: ${name}`,
+          condaEnv: name,
+          runnable: true
+        })
+        return info
+      },
+      listEnvironments: () => [...environments],
+      removeEnvironment: () => [...environments]
+    }
+    const service = bindingService(root, {
+      environmentManager,
+      discoverRuntimes: async (language) =>
+        discovered.filter((runtime) => runtime.language === language)
+    })
+    const request = { sessionId: 's', workspaceCwd: root } as const
+
+    const createdA = await service.manageEnvironments({
+      action: 'create',
+      language: 'python',
+      name: 'analysis-a'
+    })
+    expect(createdA.created).toMatchObject({
+      name: 'analysis-a',
+      language: 'python',
+      runnable: true
+    })
+    expect((await service.state(request)).runtimeBindings.python).toBeUndefined()
+    await expect(
+      service.bindRuntime({ ...request, language: 'python', runtimeId: 'analysis-a' })
+    ).resolves.toMatchObject({
+      ok: false,
+      bindingChanged: false,
+      error: expect.stringMatching(/not an enabled python runtime/),
+      target: { language: 'python', selection: 'unresolved' }
+    })
+    expect((await service.state(request)).runtimeBindings.python).toBeUndefined()
+
+    await service.bindRuntime({
+      ...request,
+      language: 'python',
+      runtimeId: createdA.created!.runtimeId
+    })
+    expect((await service.state(request)).runtimeBindings.python?.runtimeId).toBe(
+      createdA.created!.runtimeId
+    )
+
+    const createdB = await service.manageEnvironments({
+      action: 'create',
+      language: 'python',
+      name: 'analysis-b'
+    })
+    expect((await service.state(request)).runtimeBindings.python?.runtimeId).toBe(
+      createdA.created!.runtimeId
+    )
+    await expect(
+      service.switchRuntime({ ...request, language: 'python', runtimeId: 'analysis-b' })
+    ).resolves.toMatchObject({
+      ok: false,
+      bindingChanged: false,
+      error: expect.stringMatching(/not an enabled python runtime/),
+      target: {
+        language: 'python',
+        selection: 'explicit-binding',
+        runtimeId: createdA.created!.runtimeId
+      }
+    })
+    expect((await service.state(request)).runtimeBindings.python?.runtimeId).toBe(
+      createdA.created!.runtimeId
+    )
+    await service.switchRuntime({
+      ...request,
+      language: 'python',
+      runtimeId: createdB.created!.runtimeId
+    })
+    expect((await service.state(request)).runtimeBindings.python?.runtimeId).toBe(
+      createdB.created!.runtimeId
+    )
+  })
+
   it('refuses binding a disabled or unknown runtime IN THE MAIN process', async () => {
     const root = await createStorageRoot()
     const service = bindingService(root)
@@ -6797,7 +7016,18 @@ describe('v4 runtime bindings & agent tools', () => {
         language: 'python',
         runtimeId: userPyA.envId
       })
-    ).rejects.toThrow(/not an enabled python runtime/)
+    ).resolves.toMatchObject({
+      ok: false,
+      bindingChanged: false,
+      error: expect.stringMatching(/not an enabled python runtime/),
+      target: {
+        language: 'python',
+        selection: 'implicit-default',
+        runtimeSource: 'managed',
+        runtimeId: managedPy.envId,
+        label: managedPy.label
+      }
+    })
 
     // A completely unknown id is likewise refused (a guessed path cannot bypass the gate).
     await expect(
@@ -6807,7 +7037,12 @@ describe('v4 runtime bindings & agent tools', () => {
         language: 'python',
         runtimeId: '/tmp/hacker/python'
       })
-    ).rejects.toThrow(/not an enabled python runtime/)
+    ).resolves.toMatchObject({
+      ok: false,
+      bindingChanged: false,
+      error: expect.stringMatching(/not an enabled python runtime/),
+      target: { language: 'python', selection: 'implicit-default', runtimeId: managedPy.envId }
+    })
   })
 
   it('refuses a no-binding execute when the app-managed default is disabled (no silent fallback)', async () => {
@@ -6832,7 +7067,7 @@ describe('v4 runtime bindings & agent tools', () => {
     // gate must not fire.
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
-    const namedPyId = join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python')
+    const namedPyId = pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis'))
     const defaultPyId = pythonBin(envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV))
     const namedEnv: DiscoveredInterpreter = {
       language: 'python',
@@ -7367,7 +7602,18 @@ describe('v4 runtime bindings & agent tools', () => {
         language: 'python',
         runtimeId: userPyB.envId
       })
-    ).rejects.toThrow(/not an enabled python runtime/)
+    ).resolves.toMatchObject({
+      ok: false,
+      bindingChanged: false,
+      error: expect.stringMatching(/not an enabled python runtime/),
+      target: {
+        language: 'python',
+        selection: 'explicit-binding',
+        runtimeSource: 'external',
+        runtimeId: userPyA.envId,
+        label: userPyA.label
+      }
+    })
   })
 
   it('binds an enabled external R runtime and runs the user Rscript without provisioning managed R', async () => {
@@ -7488,6 +7734,7 @@ describe('v4 runtime bindings & agent tools', () => {
       language: 'python',
       runtimeId: namedAgent.envId
     })
+    if (!('bound' in bound)) throw new Error(bound.error)
     // A conda env WE own is 'managed' (executor resolves it by NAME), not 'external'.
     expect(bound.bound.source).toBe('managed')
 
@@ -7495,6 +7742,101 @@ describe('v4 runtime bindings & agent tools', () => {
     // The run targets the bound named env by name via the managed path — no raw external interpreter.
     expect(executions[0].environment).toBe('my-analysis')
     expect(executions[0].resolvedInterpreter).toBeUndefined()
+  })
+
+  it('protects a dormant bound environment until the Session switches to another runtime', async () => {
+    const root = await createStorageRoot()
+    const runtimeRoot = getRuntimeRoot(root)
+    const executions: NotebookExecutionRequest[] = []
+    const removed: string[] = []
+    const namedRuntime = (name: string): DiscoveredInterpreter => ({
+      language: 'python',
+      provenance: 'agent-created',
+      envId: pythonBin(envPrefix(runtimeRoot, name)),
+      interpreterPath: pythonBin(envPrefix(runtimeRoot, name)),
+      label: name,
+      condaEnv: name,
+      version: '3.12',
+      runnable: true
+    })
+    const analysis = namedRuntime('analysis')
+    const replacement = namedRuntime('replacement')
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      discoverRuntimes: async (language) => (language === 'python' ? [analysis, replacement] : []),
+      notebookRuntimeSettings: {
+        getSnapshot: async (language) => ({
+          language,
+          runtimeEnablement: { enabled: {}, installAuthorized: {} },
+          manualInterpreters: [],
+          packageMirror: {}
+        })
+      },
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executions.push(request)
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => ({ reaped: true }),
+        terminate: async () => undefined
+      }),
+      environmentManager: {
+        createNamedEnvironment: async (name, language) => ({
+          name,
+          language,
+          ready: true,
+          isDefault: false
+        }),
+        listEnvironments: () => [],
+        removeEnvironment: (name) => {
+          removed.push(name)
+          return []
+        }
+      }
+    })
+
+    await service.bindRuntime({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: analysis.envId
+    })
+
+    await expect(
+      service.manageEnvironments({ action: 'remove', name: 'analysis' })
+    ).rejects.toThrow(
+      'Session "session-1" has an active Runtime Binding to it. Switch that Session to another Runtime Environment first.'
+    )
+    expect(removed).toEqual([])
+
+    await service.switchRuntime({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: replacement.envId
+    })
+    await expect(
+      service.manageEnvironments({ action: 'remove', name: 'analysis' })
+    ).resolves.toEqual({ removed: { name: 'analysis' } })
+    expect(removed).toEqual(['analysis'])
+
+    await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1',
+      language: 'python'
+    })
+    expect(executions.at(-1)?.environment).toBe('replacement')
   })
 
   it('installs into the bound external interpreter when the user authorized package install', async () => {
@@ -7524,8 +7866,71 @@ describe('v4 runtime bindings & agent tools', () => {
       packages: ['numpy']
     })
     expect(result.ok).toBe(true)
+    expect(result.target).toEqual({
+      language: 'python',
+      selection: 'explicit-binding',
+      runtimeSource: 'external',
+      runtimeId: userPyA.envId,
+      label: userPyA.label
+    })
     // pip runs against the user's OWN interpreter (no app-owned overlay).
     expect(captured[0]?.command).toBe(userPyA.interpreterPath)
+  })
+
+  it('returns an unchanged package outcome with the explicit managed target that was mutated', async () => {
+    const root = await createStorageRoot()
+    const namedRuntime: DiscoveredInterpreter = {
+      language: 'python',
+      provenance: 'agent-created',
+      envId: pythonBin(envPrefix(getRuntimeRoot(root), 'analysis')),
+      interpreterPath: pythonBin(envPrefix(getRuntimeRoot(root), 'analysis')),
+      label: 'conda: analysis',
+      condaEnv: 'analysis',
+      version: '3.12',
+      runnable: true
+    }
+    const service = bindingService(root, {
+      discovered: [managedPy, namedRuntime],
+      installPackagesImpl: async () => ({ ok: true, needsRestart: false, log: '' }),
+      packageChanges: [
+        {
+          name: 'numpy',
+          ecosystem: 'python',
+          relationship: 'requested',
+          change: 'unchanged',
+          beforeVersion: '2.2.0',
+          afterVersion: '2.2.0'
+        }
+      ]
+    })
+    const bound = await service.bindRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: namedRuntime.envId
+    })
+    expect(bound).toHaveProperty('bound')
+
+    const result = await service.managePackages({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      packages: ['numpy']
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      packageChanges: [{ name: 'numpy', change: 'unchanged' }],
+      target: {
+        language: 'python',
+        selection: 'explicit-binding',
+        runtimeSource: 'managed',
+        environmentName: 'analysis',
+        runtimeId: namedRuntime.envId,
+        label: namedRuntime.label,
+        prefix: envPrefix(getRuntimeRoot(root), 'analysis')
+      }
+    })
   })
 
   it('refuses installing into a bound external runtime that is not install-authorized', async () => {
@@ -7554,6 +7959,13 @@ describe('v4 runtime bindings & agent tools', () => {
     })
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/not authorized/)
+    expect(result.target).toEqual({
+      language: 'python',
+      selection: 'explicit-binding',
+      runtimeSource: 'external',
+      runtimeId: userPyA.envId,
+      label: userPyA.label
+    })
     expect(installRan).toBe(false)
   })
 
@@ -7565,7 +7977,7 @@ describe('v4 runtime bindings & agent tools', () => {
     // external branch, so it never covered the managed gate).
     const root = await createStorageRoot()
     let installRan = false
-    const namedPyId = join(root, 'runtime', 'envs', 'my-analysis', 'bin', 'python')
+    const namedPyId = pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis'))
     const namedEnv: DiscoveredInterpreter = {
       language: 'python',
       provenance: 'agent-created',
@@ -7591,6 +8003,7 @@ describe('v4 runtime bindings & agent tools', () => {
       language: 'python',
       runtimeId: namedPyId
     })
+    if (!('bound' in bound)) throw new Error(bound.error)
     // Guard the regression: this MUST be the managed branch, not external, or the test is vacuous.
     expect(bound.bound.source).toBe('managed')
     await service.revokeRuntime('python', namedPyId)
@@ -7631,6 +8044,15 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(result.ok).toBe(true)
     // The forwarded request carries the binding-resolved default env, not the caller's stale value.
     expect(captured[0]).toBe(DEFAULT_PY_ENV)
+    expect(result.target).toEqual({
+      language: 'python',
+      selection: 'implicit-default',
+      runtimeSource: 'managed',
+      environmentName: DEFAULT_PY_ENV,
+      runtimeId: pythonBin(envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV)),
+      label: DEFAULT_PY_ENV,
+      prefix: envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV)
+    })
   })
 
   it('honors a PERSISTED binding on the first manage_packages after a restart (fresh service)', async () => {
@@ -7701,6 +8123,7 @@ describe('v4 runtime bindings & agent tools', () => {
     } as InstallRequestForTest)
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/RUNTIME_SESSION_UNAVAILABLE/)
+    expect(result.target).toEqual({ language: 'python', selection: 'unresolved' })
     expect(installRan).toBe(false)
   })
 
@@ -8289,11 +8712,12 @@ describe('v4 runtime bindings & agent tools', () => {
       }
     })
 
-    // The unconfirmed-child error propagates (only a begin() failure becomes a structured result); it is
-    // re-thrown after the in-process block is armed.
-    await expect(
-      service.managePackages({ language: 'python', packages: ['numpy'] })
-    ).rejects.toThrow(CHILD_UNCONFIRMED)
+    const failure = await service.managePackages({ language: 'python', packages: ['numpy'] })
+    expectBoundedPackageFailure(
+      failure,
+      expectedManagedTarget(runtimeRoot, 'python', DEFAULT_PY_ENV),
+      new RegExp(CHILD_UNCONFIRMED)
+    )
     expect(installAttempts).toBe(1)
     // The managed default's prefix is now blocked in-process (not just via the retained journal entry).
     expect(service.isPrefixRecoveryBlocked(pyPrefix)).toBe(true)
@@ -8303,7 +8727,12 @@ describe('v4 runtime bindings & agent tools', () => {
 
     // An in-session retry is refused by the block — the installer is never spawned a second time.
     const retry = await service.managePackages({ language: 'python', packages: ['numpy'] })
-    expect(retry.error).toMatch(/RUNTIME_RECOVERY_BLOCKED/)
+    expect(retry).toMatchObject({
+      ok: false,
+      needsRestart: false,
+      error: expect.stringMatching(/RUNTIME_RECOVERY_BLOCKED/),
+      target: failure.target
+    })
     expect(installAttempts).toBe(1)
   })
 
@@ -8371,6 +8800,7 @@ describe('v4 runtime bindings & agent tools', () => {
       language: 'python',
       runtimeId: managedPy.envId
     })
+    if (!('bound' in bound)) throw new Error(bound.error)
     expect(bound.bound).toMatchObject({ status: 'active', reason: undefined })
 
     const run = await service.execute({
@@ -8392,8 +8822,8 @@ describe('v4 runtime bindings & agent tools', () => {
     const namedPython: DiscoveredInterpreter = {
       language: 'python',
       provenance: 'agent-created',
-      envId: join(prefix, 'bin', 'python'),
-      interpreterPath: join(prefix, 'bin', 'python'),
+      envId: pythonBin(prefix),
+      interpreterPath: pythonBin(prefix),
       label: envName,
       condaEnv: envName,
       version: '3.12',
@@ -8402,8 +8832,8 @@ describe('v4 runtime bindings & agent tools', () => {
     const namedR: DiscoveredInterpreter = {
       language: 'r',
       provenance: 'agent-created',
-      envId: join(prefix, 'bin', 'R'),
-      interpreterPath: join(prefix, 'bin', 'R'),
+      envId: rBin(prefix),
+      interpreterPath: rBin(prefix),
       label: envName,
       condaEnv: envName,
       version: '4.4.3',
@@ -8575,8 +9005,8 @@ describe('v4 runtime bindings & agent tools', () => {
     const namedR: DiscoveredInterpreter = {
       language: 'r',
       provenance: 'agent-created',
-      envId: join(prefix, 'bin', 'R'),
-      interpreterPath: join(prefix, 'bin', 'R'),
+      envId: rBin(prefix),
+      interpreterPath: rBin(prefix),
       label: envName,
       condaEnv: envName,
       version: '4.4.3',
@@ -8651,6 +9081,7 @@ describe('v4 runtime bindings & agent tools', () => {
       language: 'r',
       runtimeId: namedR.envId
     })
+    if (!('bound' in rebound)) throw new Error(rebound.error)
     expect(rebound.bound.status).toBe('active')
     const run = await service.execute({
       sessionId: 'named',
@@ -8846,6 +9277,7 @@ describe('v4 runtime bindings & agent tools', () => {
       language: 'r',
       runtimeId: managedR.envId
     })
+    if (!('bound' in bound)) throw new Error(bound.error)
     expect(bound.bound.reason).toBe('repair-required')
 
     const result = await service.managePackages({ language: 'r', packages: ['dplyr'] })
@@ -8883,6 +9315,7 @@ describe('v4 runtime bindings & agent tools', () => {
         language: 'python',
         runtimeId: userPyA.envId
       })
+      if (!('bound' in bound)) throw new Error(bound.error)
       expect(bound.bound.status).toBe('unavailable')
       expect(bound.bound.reason).toBe('repair-required')
     }
@@ -9654,6 +10087,7 @@ describe('v4 runtime bindings & agent tools', () => {
         language: 'python',
         runtimeId: manualPath
       })
+      if (!('bound' in bound)) throw new Error(bound.error)
       expect(bound.bound.source).toBe('external')
       expect(bound.bound.runtimeId).toBe(manualPath)
 

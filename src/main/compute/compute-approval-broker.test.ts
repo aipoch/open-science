@@ -95,6 +95,26 @@ describe('ComputeApprovalBroker', () => {
     expect(onSettled).toHaveBeenNthCalledWith(3, 'id-3', 'expired')
   })
 
+  it('cancels a pending approval when its request is aborted', async () => {
+    const timer = makeTimer()
+    const onSettled = vi.fn()
+    const controller = new AbortController()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      onSettled
+    })
+
+    const decision = broker.request(makeRequest(), undefined, controller.signal)
+    controller.abort()
+
+    expect(broker.getPending('id-1')).toBeNull()
+    await expect(decision).resolves.toBe('deny')
+    expect(onSettled).toHaveBeenCalledWith('id-1', 'cancelled')
+  })
+
   it('resolves with deny when user denies', async () => {
     const timer = makeTimer()
     let n = 0
@@ -250,6 +270,159 @@ describe('ComputeApprovalBroker', () => {
     expect(replay).not.toHaveBeenCalled()
   })
 
+  it('cancels only pending approvals owned by a deleted Session', async () => {
+    const timer = makeTimer()
+    const onSettled = vi.fn()
+    let sequence = 0
+    const broker = new ComputeApprovalBroker({
+      generateId: () => `id-${++sequence}`,
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      onSettled
+    })
+    const deletedCall = broker.request(makeRequest(), {
+      sessionId: 'session-deleted',
+      projectId: 'project-1',
+      operation: 'call_command'
+    })
+    const deletedDownload = broker.request(makeDownloadRequest(), {
+      sessionId: 'session-deleted',
+      projectId: 'project-1',
+      operation: 'download'
+    })
+    const retainedCall = broker.request(makeRequest(), {
+      sessionId: 'session-retained',
+      projectId: 'project-1',
+      operation: 'call_command'
+    })
+
+    broker.cancelSession('session-deleted')
+
+    await expect(deletedCall).resolves.toBe('deny')
+    await expect(deletedDownload).resolves.toBe('deny')
+    expect(broker.getPending('id-1')).toBeNull()
+    expect(broker.getPending('id-2')).toBeNull()
+    expect(broker.getPending('id-3')).not.toBeNull()
+    expect(onSettled).toHaveBeenCalledWith('id-1', 'cancelled')
+    expect(onSettled).toHaveBeenCalledWith('id-2', 'cancelled')
+
+    broker.respond('id-3', 'deny')
+    await retainedCall
+  })
+
+  it('cancels every pending approval when all Session runtimes stop', async () => {
+    const timer = makeTimer()
+    const onSettled = vi.fn()
+    let sequence = 0
+    const broker = new ComputeApprovalBroker({
+      generateId: () => `id-${++sequence}`,
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      onSettled
+    })
+    const first = broker.request(makeRequest(), {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      operation: 'call_command'
+    })
+    const second = broker.request(makeDownloadRequest(), {
+      sessionId: 'session-2',
+      projectId: 'project-1',
+      operation: 'download'
+    })
+    const contextless = broker.request(makeRequest())
+
+    broker.cancelAll()
+
+    await expect(Promise.all([first, second, contextless])).resolves.toEqual([
+      'deny',
+      'deny',
+      'deny'
+    ])
+    expect(onSettled).toHaveBeenCalledTimes(3)
+    expect(onSettled).toHaveBeenCalledWith('id-1', 'cancelled')
+    expect(onSettled).toHaveBeenCalledWith('id-2', 'cancelled')
+    expect(onSettled).toHaveBeenCalledWith('id-3', 'cancelled')
+  })
+
+  it('fences approvals that enter the broker after all Session runtimes stop', async () => {
+    const broadcast = vi.fn()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast
+    })
+
+    broker.cancelAll()
+    const lateApproval = broker.request(makeRequest(), {
+      sessionId: 'session-late',
+      projectId: 'project-1',
+      operation: 'call_command'
+    })
+
+    try {
+      expect(broadcast).not.toHaveBeenCalled()
+      await expect(lateApproval).resolves.toBe('deny')
+    } finally {
+      broker.respond('id-1', 'deny')
+    }
+
+    broker.completeGlobalCancellation()
+    const resumedApproval = broker.request(makeRequest(), {
+      sessionId: 'session-resumed',
+      projectId: 'project-1',
+      operation: 'call_command'
+    })
+    expect(broadcast).toHaveBeenCalledOnce()
+    broker.respond('id-1', 'once')
+    await expect(resumedApproval).resolves.toBe('once')
+  })
+
+  it('holds cancellation through deletion and allows new approvals only if the Session is retained', async () => {
+    const timer = makeTimer()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear
+    })
+    const context = {
+      sessionId: 'session-retained',
+      projectId: 'project-1',
+      operation: 'call_command'
+    }
+
+    broker.beginSessionDeletion('session-retained')
+    broker.completeSessionCancellation('session-retained')
+    await expect(broker.request(makeRequest(), context)).resolves.toBe('deny')
+
+    broker.finishSessionDeletion('session-retained', true)
+    const retried = broker.request(makeRequest(), context)
+
+    expect(broker.getPending('id-1')).not.toBeNull()
+    broker.respond('id-1', 'once')
+    await expect(retried).resolves.toBe('once')
+  })
+
+  it('keeps approvals cancelled after a Session is successfully deleted', async () => {
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined
+    })
+    const context = {
+      sessionId: 'session-deleted',
+      projectId: 'project-1',
+      operation: 'call_command'
+    }
+
+    broker.beginSessionDeletion('session-deleted')
+    broker.finishSessionDeletion('session-deleted', false)
+
+    await expect(broker.request(makeRequest(), context)).resolves.toBe('deny')
+    expect(broker.getPending('id-1')).toBeNull()
+  })
+
   it('denies a pending approval when its compute provider is invalidated', async () => {
     const timer = makeTimer()
     const remember = vi.fn()
@@ -310,6 +483,72 @@ describe('ComputeApprovalBroker', () => {
     await expect(decision).resolves.toBe('deny')
     expect(broadcast).not.toHaveBeenCalled()
     broker.completeProviderInvalidation('ssh:biowulf')
+  })
+
+  it('does not allow a remembered grant when the request aborts during lookup', async () => {
+    let finishGrantLookup: ((scope: 'project') => void) | undefined
+    const resolveGrant = vi.fn(
+      () =>
+        new Promise<'project'>((resolve) => {
+          finishGrantLookup = resolve
+        })
+    )
+    const broadcast = vi.fn()
+    const controller = new AbortController()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast,
+      permissionGrants: { resolve: resolveGrant, remember: vi.fn() } as never
+    })
+
+    const decision = broker.requestWithContext(
+      makeRequest(),
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        operation: 'call_command',
+        ownerId: 'host-row-1'
+      },
+      controller.signal
+    )
+    await vi.waitFor(() => expect(resolveGrant).toHaveBeenCalledOnce())
+
+    controller.abort()
+    finishGrantLookup?.('project')
+
+    await expect(decision).rejects.toMatchObject({ name: 'AbortError' })
+    expect(broadcast).not.toHaveBeenCalled()
+  })
+
+  it('does not publish an approval after Session cancellation starts during grant lookup', async () => {
+    let finishGrantLookup: (() => void) | undefined
+    const resolveGrant = vi.fn(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finishGrantLookup = () => resolve(undefined)
+        })
+    )
+    const broadcast = vi.fn()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast,
+      permissionGrants: { resolve: resolveGrant, remember: vi.fn() } as never
+    })
+
+    const decision = broker.requestWithContext(makeRequest(), {
+      sessionId: 'session-deleting',
+      projectId: 'project-1',
+      operation: 'call_command',
+      ownerId: 'host-row-1'
+    })
+    await vi.waitFor(() => expect(resolveGrant).toHaveBeenCalledOnce())
+
+    broker.beginSessionDeletion('session-deleting')
+    broker.finishSessionDeletion('session-deleting', false)
+    finishGrantLookup?.()
+
+    await expect(decision).resolves.toBe('deny')
+    expect(broadcast).not.toHaveBeenCalled()
   })
 
   it('does not remember approval when the provider id belongs to a recreated host', async () => {
@@ -381,6 +620,54 @@ describe('ComputeApprovalBroker', () => {
     await invalidation
     await expect(decision).resolves.toBe('deny')
     broker.completeProviderInvalidation('ssh:biowulf')
+  })
+
+  it('aborts the operation but preserves a broad scope the user approved before cancellation', async () => {
+    const timer = makeTimer()
+    let releaseRemember: (() => void) | undefined
+    const remember = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRemember = resolve
+        })
+    )
+    const controller = new AbortController()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      permissionGrants: { resolve: vi.fn(), remember } as never,
+      isProviderCurrent: vi.fn().mockResolvedValue(true)
+    })
+
+    const decision = broker.requestWithContext(
+      makeRequest(),
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        operation: 'call_command',
+        ownerId: 'host-row-1'
+      },
+      controller.signal
+    )
+    await Promise.resolve()
+    broker.respond('id-1', 'project')
+    await vi.waitFor(() => expect(remember).toHaveBeenCalledOnce())
+
+    controller.abort()
+    releaseRemember?.()
+
+    await expect(decision).rejects.toMatchObject({ name: 'AbortError' })
+    expect(remember).toHaveBeenCalledWith(
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        operation: 'call_command',
+        providerId: 'ssh:biowulf'
+      },
+      'project'
+    )
   })
 
   it('denies new requests while provider deletion is draining', async () => {

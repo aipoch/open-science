@@ -42,7 +42,7 @@ jobs:
       # source path exercised by the rest of CI. The focused dry-run proved that --ignore-scripts leaves
       # Electron intentionally uninstalled and causes those suites to fail during collection.
       - name: Install test dependencies
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
 
       # Use the same pinned, digest-verified micromamba downloader as the packaged runtime. These are
       # ephemeral source-certification environments, not the immutable CDN packs certified later at

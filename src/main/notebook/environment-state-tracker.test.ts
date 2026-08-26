@@ -1,9 +1,10 @@
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { NotebookEnvironmentPackage } from '../../shared/notebook'
 import { environmentCaptureProcessEnv, EnvironmentStateTracker } from './environment-state-tracker'
 
 let dataRoot: string | undefined
@@ -82,7 +83,8 @@ describe('EnvironmentStateTracker', () => {
           options.maxBuffer === 8 * 1024 * 1024
             ? 'FILE\tconda-meta/history\t1\t1\n'
             : 'RUNTIME\t4.5.1\twin32\tx86_64\n' +
-              'PACKAGE\tbase\t4.5.1\tbase\t4.5.1\t1\tenvironment\n',
+              'PACKAGE\tggplot2\t4.0.0.9000\t\t4.5.1\t1\tenvironment\tgithub\tapi.github.com\ttidyverse\tggplot2\tmain\ta7b92f1\n' +
+              'PACKAGE\tfakepkg\t1.0.0\t\t4.5.1\t1\tenvironment\tgitlab\tgitlab.com\tgroup\tfakepkg\tmain\tdeadbeef\n',
         stderr: ''
       })
     )
@@ -92,21 +94,42 @@ describe('EnvironmentStateTracker', () => {
       execFile: execute
     })
 
-    await expect(
-      tracker.prepareRun({
-        language: 'r',
-        environmentName: 'default-r',
-        runtimeSource: 'managed',
-        command: `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
-        args: [],
-        condaPrefix: prefix
-      })
-    ).resolves.toMatchObject({ inventoryRefreshed: true })
+    const rTarget = {
+      language: 'r' as const,
+      environmentName: 'default-r',
+      runtimeSource: 'managed' as const,
+      command: `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
+      args: [],
+      condaPrefix: prefix
+    }
+    await expect(tracker.prepareRun(rTarget)).resolves.toMatchObject({ inventoryRefreshed: true })
+    await expect(tracker.inspectPackages(rTarget, ['ggplot2'])).resolves.toMatchObject({
+      packages: [
+        {
+          name: 'ggplot2',
+          version: '4.0.0.9000',
+          source: {
+            type: 'github',
+            repository: 'tidyverse/ggplot2',
+            ref: 'main',
+            commit: 'a7b92f1'
+          }
+        }
+      ]
+    })
+    await expect(tracker.inspectPackages(rTarget, ['fakepkg'])).resolves.toMatchObject({
+      packages: [{ name: 'fakepkg', version: '1.0.0', status: 'installed' }]
+    })
+    const fakePackage = (await tracker.inspectPackages(rTarget, ['fakepkg'])).packages[0]
+    expect(fakePackage).not.toHaveProperty('source')
 
-    expect(execute).toHaveBeenCalledTimes(3)
+    expect(execute).toHaveBeenCalledTimes(6)
     expect(execute.mock.calls.map(([, , options]) => options.maxBuffer)).toEqual([
       8 * 1024 * 1024,
       16 * 1024 * 1024,
+      8 * 1024 * 1024,
+      8 * 1024 * 1024,
+      8 * 1024 * 1024,
       8 * 1024 * 1024
     ])
     for (const [command, , options] of execute.mock.calls) {
@@ -193,6 +216,45 @@ describe('EnvironmentStateTracker', () => {
     expect(inspectInstalled).toHaveBeenCalledOnce()
   })
 
+  it('inspects an R GitHub spec by repository and ref', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-inspect-github-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockResolvedValue({
+        runtimeVersion: '4.5.1',
+        packages: [
+          {
+            name: 'ggplot2',
+            version: '4.0.0.9000',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            evidenceSources: ['r-installed-packages'],
+            source: {
+              type: 'github',
+              repository: 'tidyverse/ggplot2',
+              ref: 'main',
+              commit: 'abc123'
+            }
+          }
+        ]
+      }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = { ...target, language: 'r' as const, command: '/opt/r/bin/Rscript' }
+
+    const result = await tracker.inspectPackages(rTarget, ['tidyverse/ggplot2@main'])
+
+    expect(result.packages).toEqual([
+      expect.objectContaining({
+        requested: 'tidyverse/ggplot2@main',
+        name: 'ggplot2',
+        status: 'installed',
+        version: '4.0.0.9000',
+        source: expect.objectContaining({ repository: 'tidyverse/ggplot2', ref: 'main' })
+      })
+    ])
+  })
+
   it('reports unknown instead of missing when installed inventory cannot be read', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-inspect-unavailable-'))
     const tracker = new EnvironmentStateTracker({
@@ -252,6 +314,292 @@ describe('EnvironmentStateTracker', () => {
         relationship: 'requested',
         change: 'installed',
         afterVersion: '2.2.0'
+      })
+    ])
+  })
+
+  it('rejects an installed Python package whose inventory version differs from the exact request', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-version-mismatch-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '3.13.2', packages: [] })
+      .mockResolvedValueOnce({
+        runtimeVersion: '3.13.2',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.1.0',
+            versionStatus: 'known',
+            ecosystem: 'python',
+            evidenceSources: ['python-importlib-metadata']
+          }
+        ]
+      })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+
+    await tracker.markPackageMutationDirty(target, {
+      operationId: 'operation-version-mismatch',
+      operation: 'install',
+      packages: ['numpy==2.0.0']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(target, {
+      operationId: 'operation-version-mismatch',
+      operation: 'install',
+      packages: ['numpy==2.0.0'],
+      result: 'success'
+    })
+
+    expect(verification).toMatchObject({
+      result: 'failure',
+      unsatisfiedPackages: ['numpy==2.0.0']
+    })
+  })
+
+  it('accepts equivalent normalized Python versions for an exact request', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-version-normalized-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '3.13.2', packages: [] })
+      .mockResolvedValueOnce({
+        runtimeVersion: '3.13.2',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.0',
+            versionStatus: 'known',
+            ecosystem: 'python',
+            evidenceSources: ['python-importlib-metadata']
+          }
+        ]
+      })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+
+    await tracker.markPackageMutationDirty(target, {
+      operationId: 'operation-version-normalized',
+      operation: 'install',
+      packages: ['numpy==2.0.0']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(target, {
+      operationId: 'operation-version-normalized',
+      operation: 'install',
+      packages: ['numpy==2.0.0'],
+      result: 'success'
+    })
+
+    expect(verification.result).toBe('success')
+  })
+
+  it('matches a GitHub request to the installed R package source and retains related changes', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-github-mutation-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [] })
+      .mockResolvedValueOnce({
+        runtimeVersion: '4.5.1',
+        packages: [
+          {
+            name: 'ggplot2',
+            version: '4.0.0.9000',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            evidenceSources: ['r-installed-packages'],
+            source: {
+              type: 'github',
+              repository: 'tidyverse/ggplot2',
+              ref: 'main',
+              commit: 'a7b92f1'
+            }
+          },
+          {
+            name: 'S7',
+            version: '0.2.0',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            evidenceSources: ['r-installed-packages']
+          }
+        ]
+      })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = {
+      ...target,
+      language: 'r' as const,
+      command: '/opt/r/bin/Rscript'
+    }
+
+    await tracker.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-github-install',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@main']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+      operationId: 'operation-github-install',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@main'],
+      result: 'success'
+    })
+
+    expect(verification).toMatchObject({
+      result: 'success',
+      packageChanges: [
+        {
+          name: 'ggplot2',
+          relationship: 'requested',
+          change: 'installed',
+          afterVersion: '4.0.0.9000',
+          source: {
+            type: 'github',
+            repository: 'tidyverse/ggplot2',
+            ref: 'main',
+            commit: 'a7b92f1'
+          }
+        },
+        {
+          name: 'S7',
+          relationship: 'unattributed',
+          change: 'installed',
+          afterVersion: '0.2.0'
+        }
+      ]
+    })
+  })
+
+  it('rejects a GitHub package when the installed source has a different requested ref', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-github-ref-mismatch-'))
+    const installedPackage = {
+      name: 'ggplot2',
+      version: '4.0.0.9000',
+      versionStatus: 'known' as const,
+      ecosystem: 'r' as const,
+      evidenceSources: ['r-installed-packages' as const],
+      source: {
+        type: 'github' as const,
+        repository: 'tidyverse/ggplot2',
+        ref: 'release'
+      }
+    }
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi
+        .fn()
+        .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [] })
+        .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [installedPackage] }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = { ...target, language: 'r' as const, command: '/opt/r/bin/Rscript' }
+
+    await tracker.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-github-ref-mismatch',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@main']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+      operationId: 'operation-github-ref-mismatch',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@main'],
+      result: 'success'
+    })
+
+    expect(verification).toMatchObject({
+      result: 'failure',
+      unsatisfiedPackages: ['tidyverse/ggplot2@main']
+    })
+  })
+
+  it('does not classify a Python path package as a GitHub source request', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-python-path-mutation-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi
+        .fn()
+        .mockResolvedValueOnce({ runtimeVersion: '3.13.2', packages: [] })
+        .mockResolvedValueOnce({
+          runtimeVersion: '3.13.2',
+          packages: [
+            {
+              name: 'localpkg',
+              version: '1.0.0',
+              versionStatus: 'known',
+              ecosystem: 'python',
+              evidenceSources: ['python-importlib-metadata']
+            }
+          ]
+        }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-python')
+    })
+
+    await tracker.markPackageMutationDirty(target, {
+      operationId: 'operation-python-path-install',
+      operation: 'install',
+      packages: ['./localpkg']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(target, {
+      operationId: 'operation-python-path-install',
+      operation: 'install',
+      packages: ['./localpkg'],
+      result: 'success'
+    })
+
+    expect(verification.result).toBe('success')
+  })
+
+  it('reports a GitHub ref or commit mutation when the package version is unchanged', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-github-source-change-'))
+    const githubPackage = (ref: string, commit: string): NotebookEnvironmentPackage => ({
+      name: 'ggplot2',
+      version: '4.0.0.9000',
+      versionStatus: 'known' as const,
+      ecosystem: 'r' as const,
+      evidenceSources: ['r-installed-packages' as const],
+      source: { type: 'github' as const, repository: 'tidyverse/ggplot2', ref, commit }
+    })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi
+        .fn()
+        .mockResolvedValueOnce({
+          runtimeVersion: '4.5.1',
+          packages: [githubPackage('main', 'abc123')]
+        })
+        .mockResolvedValueOnce({
+          runtimeVersion: '4.5.1',
+          packages: [githubPackage('release', 'def456')]
+        }),
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = { ...target, language: 'r' as const, command: '/opt/r/bin/Rscript' }
+
+    await tracker.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-github-source-change',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@release']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+      operationId: 'operation-github-source-change',
+      operation: 'install',
+      packages: ['tidyverse/ggplot2@release'],
+      result: 'success'
+    })
+
+    expect(verification.packageChanges).toEqual([
+      expect.objectContaining({
+        name: 'ggplot2',
+        relationship: 'requested',
+        change: 'updated',
+        beforeVersion: '4.0.0.9000',
+        afterVersion: '4.0.0.9000',
+        source: expect.objectContaining({ ref: 'release', commit: 'def456' })
       })
     ])
   })
@@ -505,6 +853,7 @@ describe('EnvironmentStateTracker', () => {
       operation: 'install',
       packages: ['ggplot2'],
       result: 'success',
+      source: { type: 'bioconductor', version: '3.21' },
       fallbackUsed: true,
       attempts: [
         {
@@ -533,7 +882,8 @@ describe('EnvironmentStateTracker', () => {
           name: 'ggplot2',
           relationship: 'requested',
           change: 'installed',
-          afterVersion: '3.5.2'
+          afterVersion: '3.5.2',
+          source: { type: 'bioconductor', version: '3.21' }
         }),
         expect.objectContaining({
           name: 'rlang',
@@ -559,7 +909,8 @@ describe('EnvironmentStateTracker', () => {
             name: 'ggplot2',
             relationship: 'requested',
             change: 'installed',
-            afterVersion: '3.5.2'
+            afterVersion: '3.5.2',
+            source: { type: 'bioconductor', version: '3.21' }
           }),
           expect.objectContaining({
             name: 'rlang',
@@ -803,6 +1154,90 @@ describe('EnvironmentStateTracker', () => {
         result: 'success'
       })
     ).resolves.toEqual({ result: 'failure', reason: 'inventory-refresh-failed' })
+  })
+
+  it('retains installer source when a failed refresh is completed during recovery', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-source-recovery-'))
+    const rTarget = {
+      language: 'r' as const,
+      environmentName: 'default-r',
+      runtimeSource: 'managed' as const,
+      command: '/runtime/default-r/bin/Rscript',
+      args: []
+    }
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '4.5.1', packages: [] })
+      .mockImplementationOnce(async () => {
+        const operations = await readdir(join(dirname(await bindingPath(dataRoot!)), 'operations'))
+        const persisted = JSON.parse(
+          await readFile(
+            join(dirname(await bindingPath(dataRoot!)), 'operations', operations[0]),
+            'utf8'
+          )
+        )
+        expect(persisted).toMatchObject({
+          lifecycle: 'terminal-refresh-pending',
+          terminalResult: 'success',
+          source: { type: 'bioconductor', version: '3.21' }
+        })
+        throw new Error('inventory unavailable')
+      })
+    const initial = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('before-install')
+    })
+    await initial.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-bioc-recovery',
+      operation: 'install',
+      packages: ['DESeq2']
+    })
+    await expect(
+      initial.refreshAfterPackageMutation(rTarget, {
+        operationId: 'operation-bioc-recovery',
+        operation: 'install',
+        packages: ['DESeq2'],
+        result: 'success',
+        source: { type: 'bioconductor', version: '3.21' }
+      })
+    ).resolves.toEqual({ result: 'failure', reason: 'inventory-refresh-failed' })
+
+    const recovered = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: vi.fn().mockResolvedValue({
+        runtimeVersion: '4.5.1',
+        packages: [
+          {
+            name: 'DESeq2',
+            version: '1.48.1',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            evidenceSources: ['r-installed-packages']
+          }
+        ]
+      }),
+      captureFingerprint: vi.fn().mockResolvedValue('after-install')
+    })
+    const start = await recovered.prepareRun(rTarget)
+    const capture = await recovered.captureCompletedRun(
+      rTarget,
+      { runtimeVersion: '4.5.1', packages: [] },
+      start
+    )
+
+    expect(capture.manifest.operationLog).toEqual([
+      expect.objectContaining({
+        operationId: 'operation-bioc-recovery',
+        packageChanges: [
+          expect.objectContaining({
+            name: 'DESeq2',
+            relationship: 'requested',
+            source: { type: 'bioconductor', version: '3.21' }
+          })
+        ]
+      })
+    ])
   })
 
   it('forces a terminal rescan and marks evidence partial when package state changes during a run', async () => {

@@ -20,10 +20,6 @@ type AgentLoadingIndicatorProps = Omit<WorkspaceAgentLoadingRowProps, 'sessionId
 const assistantMessageSurfaceClassName =
   'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'
 
-// Past this, the current visible wait is likely stalled on something slow, so we add a gentle hint
-// rather than leaving the user staring at a bare spinner.
-const SLOW_HINT_AFTER_MS = 20_000
-
 // Formats an elapsed millisecond span as M:SS.
 const formatElapsed = (ms: number): string => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000))
@@ -55,7 +51,6 @@ const ThinkingLoadingContent = ({
   }, [])
 
   const elapsedMs = now - (getAgentThinkingStartedAt(session) ?? mountedAt)
-  const slow = elapsedMs >= SLOW_HINT_AFTER_MS
 
   return (
     <>
@@ -65,7 +60,6 @@ const ThinkingLoadingContent = ({
         <span className="tabular-nums" aria-hidden="true">
           {formatElapsed(elapsedMs)}
         </span>
-        {slow ? <span aria-hidden="true">{t('· taking longer than usual')}</span> : null}
       </div>
       {(agentStatus ?? session?.agentStatus) ? (
         <span

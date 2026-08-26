@@ -64,7 +64,11 @@ export class ArtifactCodeReconstructionRunner {
       appVersion: options.appVersion,
       configRoot: options.configRoot,
       profileNamespace: 'artifact-code-reconstruction',
-      resolveTarget: options.resolveTarget,
+      resolveTarget: (target, context) =>
+        options.resolveTarget(target, {
+          ...context,
+          forceCodexNativeResponsesCompatibility: true
+        }),
       now: options.now
     })
   }

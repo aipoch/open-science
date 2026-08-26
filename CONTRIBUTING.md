@@ -97,6 +97,27 @@ Three runtime process layers and a shared module live under `src/`:
    ownership, consumers, or risks cannot be established.
 5. Open a pull request with a clear description of the change and its motivation.
 
+### Durable external components
+
+Before adding a resource that survives its creating process outside app-managed storage or in a
+third-party control plane, follow the
+[durable external component ownership contract](docs/PRD.md#durable-external-component-ownership).
+The same contract applies when adding a new create, adopt, or remove path to an existing component.
+The pull request must identify:
+
+- the module that owns the component and the exact identity or receipt recorded at creation;
+- create/start, stop, removal, crash-recovery, and application-uninstall behavior;
+- how cleanup fails closed without scanning system directories or touching shared, user-managed, or
+  otherwise unproven resources;
+- the platform-specific tests for stop-before-remove ordering, retry, idempotency, and preservation
+  of unowned resources; and
+- any persisted-format, historical-compatibility, or new-state impact.
+
+A future cleanup hook is not sufficient: do not ship creation until the owner can stop and remove
+the component safely. If the PR changes a known legacy exception listed in the contract, it must
+either migrate that path to proven ownership or document the bounded exception and its historical
+compatibility plan; do not use an exception as precedent for new behavior.
+
 ### Database schema changes
 
 `prisma/schema.prisma` owns tables, columns, defaults, indexes, and foreign keys. SQLite CHECK
@@ -148,7 +169,7 @@ Use one of these standard type prefixes:
 - Formatting is handled by Prettier. `npm run format` is optional; review its
   changes before committing because it rewrites files across the repository.
 - Linting is enforced by ESLint; run `npm run lint`.
-- Wrap user-facing strings with the `t()` translation function from `react-i18next`. Add corresponding translations to `src/renderer/src/locales/fr.json` (French), `src/renderer/src/locales/ja.json` (Japanese), `src/renderer/src/locales/ko.json` (Korean), `src/renderer/src/locales/ru.json` (Russian), `src/renderer/src/locales/zh-Hans.json` (Simplified Chinese), and `src/renderer/src/locales/zh-Hant.json` (Traditional Chinese). Use the English text as the translation key. Keep code comments and documentation in English.
+- Wrap user-facing strings with the `t()` translation function from `react-i18next`. Add corresponding translations to the `renderer` namespace in `src/shared/i18n/locales/fr.json` (French), `src/shared/i18n/locales/ja.json` (Japanese), `src/shared/i18n/locales/ko.json` (Korean), `src/shared/i18n/locales/ru.json` (Russian), `src/shared/i18n/locales/zh-Hans.json` (Simplified Chinese), and `src/shared/i18n/locales/zh-Hant.json` (Traditional Chinese). Use the English text as the translation key. Keep code comments and documentation in English.
 
 ## Verification Policy
 

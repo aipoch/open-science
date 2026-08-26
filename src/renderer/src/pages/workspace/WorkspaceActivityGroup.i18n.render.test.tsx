@@ -27,12 +27,555 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  vi.useRealTimers()
   act(() => root.unmount())
   container.remove()
   await i18next.changeLanguage('en')
 })
 
 describe('WorkspaceActivityGroup i18n', () => {
+  it('renders active manage_packages progress inside its tool group', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-24T00:02:05Z'))
+    const createdAt = Date.now() - 65_000
+
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-1',
+            type: 'activity-group',
+            createdAt,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-1',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'in_progress',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt,
+                updatedAt: createdAt,
+                rawInput: {
+                  arguments: {
+                    language: 'python',
+                    packages: ['numpy', 'pandas'],
+                    operation: 'uninstall'
+                  }
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{}}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const progress = container.querySelector('[data-testid="manage-packages-progress"]')
+    expect(container.querySelector('[data-testid="tool-group"]')?.contains(progress)).toBe(true)
+    expect(progress?.textContent).toContain('Removing 2 packages')
+    expect(progress?.textContent).toContain('Removing…')
+    expect(progress?.textContent).not.toContain('Installing…')
+    expect(progress?.textContent).toContain('Python · conda')
+    expect(progress?.textContent).toContain('This can take several minutes')
+    expect(progress?.textContent).toContain('1:05')
+    expect(progress?.querySelectorAll('[data-testid="manage-packages-package-row"]')).toHaveLength(
+      2
+    )
+    expect(progress?.textContent).toContain('numpy')
+    expect(progress?.textContent).toContain('pandas')
+    expect(progress?.textContent).toContain('PackageStatusVersion')
+    expect(progress?.textContent).not.toContain('Notebook · manage_packages')
+    expect(progress?.textContent).not.toContain('Running')
+    expect(progress?.querySelector('.bg-status-info-foreground')).not.toBeNull()
+    expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
+  })
+
+  it('keeps a terminal package row collapsed until the user expands it', () => {
+    const onToggleRow = vi.fn()
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-collapsed',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-collapsed',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['numpy'] },
+                rawOutput: {
+                  ok: true,
+                  packageChanges: [
+                    { name: 'numpy', relationship: 'requested', change: 'installed' }
+                  ]
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{}}
+          onToggleRow={onToggleRow}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="manage-packages-package-row"]')).toBeNull()
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="manage-packages-progress"] > button')
+        ?.click()
+    )
+    expect(onToggleRow).toHaveBeenCalledWith('activity-packages-collapsed', true)
+  })
+
+  it('keeps the manage_packages presentation after the tool completes', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-completed',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-completed',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 46_000,
+                rawInput: { language: 'r', packages: ['ggplot2'] },
+                rawOutput: {
+                  structuredContent: {
+                    ok: true,
+                    needsRestart: true,
+                    method: 'conda',
+                    environmentName: 'analysis-r',
+                    packageChanges: [
+                      {
+                        name: 'ggplot2',
+                        change: 'unchanged',
+                        afterVersion: '4.0.3'
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{ 'activity-packages-completed': true }}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="manage-packages-progress"]')).not.toBeNull()
+    expect(container.textContent).toContain('Installed 1 package')
+    expect(container.textContent).toContain('R · analysis-r · conda')
+    expect(
+      container.querySelector('[data-testid="manage-packages-package-status"]')?.textContent
+    ).toBe('Unchanged')
+    expect(
+      container.querySelector('[data-testid="manage-packages-package-version"]')?.textContent
+    ).toBe('4.0.3')
+    expect(container.textContent).toContain('Installed R packages need a kernel restart to load.')
+    expect(container.textContent).not.toContain('Completed')
+    expect(container.querySelector('.text-status-warning-foreground')).not.toBeNull()
+    expect(container.querySelector('.bg-status-warning-foreground')).toBeNull()
+    expect(container.textContent).not.toContain('manage_packages()')
+  })
+
+  it('shows the version transition for an updated package', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-updated',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-updated',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['pandas'], usePip: true },
+                rawOutput: {
+                  ok: true,
+                  needsRestart: false,
+                  method: 'pip',
+                  environmentName: 'analysis',
+                  packageChanges: [
+                    {
+                      name: 'pandas',
+                      change: 'updated',
+                      beforeVersion: '2.2.2',
+                      afterVersion: '2.3.1'
+                    }
+                  ]
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{ 'activity-packages-updated': true }}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Python · analysis · pip')
+    expect(
+      container.querySelector('[data-testid="manage-packages-package-status"]')?.textContent
+    ).toBe('Updated')
+    expect(
+      container.querySelector('[data-testid="manage-packages-package-version"]')?.textContent
+    ).toBe('2.2.2 → 2.3.1')
+    expect(container.querySelector('.install-progress-indeterminate')).toBeNull()
+  })
+
+  it('uses removal-specific restart guidance after an R uninstall', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-removed',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-removed',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'r', packages: ['ggplot2'], operation: 'uninstall' },
+                rawOutput: {
+                  structuredContent: {
+                    ok: true,
+                    needsRestart: true,
+                    method: 'conda',
+                    environmentName: 'analysis-r',
+                    packageChanges: [
+                      {
+                        name: 'ggplot2',
+                        change: 'removed',
+                        beforeVersion: '4.0.3'
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{ 'activity-packages-removed': true }}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Removed 1 package')
+    expect(container.textContent).toContain('Removed R packages need a kernel restart to unload.')
+    expect(container.textContent).not.toContain(
+      'Installed R packages need a kernel restart to load.'
+    )
+  })
+
+  it('shows a verified GitHub package and keeps related changes collapsed', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-github',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-github',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: {
+                  language: 'r',
+                  packages: ['tidyverse/ggplot2@main'],
+                  installer: 'github'
+                },
+                rawOutput: {
+                  structuredContent: {
+                    ok: true,
+                    needsRestart: true,
+                    method: 'github',
+                    environmentName: 'analysis-r',
+                    packageChanges: [
+                      {
+                        name: 'ggplot2',
+                        relationship: 'requested',
+                        change: 'installed',
+                        afterVersion: '4.0.0.9000',
+                        source: {
+                          type: 'github',
+                          repository: 'tidyverse/ggplot2',
+                          ref: 'main',
+                          commit: 'a7b92f1'
+                        }
+                      },
+                      {
+                        name: 'S7',
+                        relationship: 'unattributed',
+                        change: 'updated',
+                        beforeVersion: '0.1.0',
+                        afterVersion: '0.2.0'
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{ 'activity-packages-github': true }}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const progress = container.querySelector('[data-testid="manage-packages-progress"]')
+    expect(progress?.textContent).toContain('R · analysis-r · GitHub')
+    expect(progress?.textContent).toContain('ggplot2')
+    expect(progress?.textContent).toContain('4.0.0.9000')
+    expect(progress?.textContent).toContain('tidyverse/ggplot2@main')
+    expect(progress?.querySelectorAll('[data-testid="manage-packages-package-row"]')).toHaveLength(
+      1
+    )
+    expect(progress?.textContent).toContain('Related changes')
+    expect(progress?.querySelector('details')?.hasAttribute('open')).toBe(false)
+    expect(
+      progress?.querySelector('[data-testid="manage-packages-related-row"]')?.textContent
+    ).toContain('S7')
+  })
+
+  it('matches an exact Python request to its verified package change', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-exact-version',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-exact-version',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['numpy==2.0.0'] },
+                rawOutput: {
+                  ok: true,
+                  packageChanges: [
+                    {
+                      name: 'numpy',
+                      relationship: 'requested',
+                      change: 'installed',
+                      afterVersion: '2.0.0'
+                    }
+                  ]
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{ 'activity-packages-exact-version': true }}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const rows = container.querySelectorAll('[data-testid="manage-packages-package-row"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.textContent).toContain('numpy')
+    expect(rows[0]?.textContent).toContain('2.0.0')
+  })
+
+  it('renders a completed tool with ok false as a package failure', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-failed-result',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-failed-result',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['numpy'] },
+                rawOutput: {
+                  structuredContent: {
+                    ok: false,
+                    needsRestart: false,
+                    method: 'conda',
+                    environmentName: 'analysis',
+                    error: 'The analysis environment is read-only.'
+                  }
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{ 'activity-packages-failed-result': true }}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const progress = container.querySelector('[data-testid="manage-packages-progress"]')
+    expect(progress?.textContent).toContain('Installing 1 package')
+    expect(progress?.textContent).toContain('The analysis environment is read-only.')
+    expect(progress?.querySelector('.text-status-failure-foreground')).not.toBeNull()
+    expect(progress?.querySelector('.text-status-success-foreground')).toBeNull()
+    expect(progress?.querySelector('.install-progress-indeterminate')).toBeNull()
+  })
+
+  it('keeps every requested package visible when only some have change records', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-partial-failure',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-partial-failure',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'failed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['numpy', 'missingpkg'] },
+                rawOutput: {
+                  ok: false,
+                  method: 'conda',
+                  packageChanges: [
+                    {
+                      name: 'numpy',
+                      relationship: 'requested',
+                      change: 'installed',
+                      afterVersion: '2.1.0'
+                    }
+                  ]
+                }
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{ 'activity-packages-partial-failure': true }}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const rows = container.querySelectorAll('[data-testid="manage-packages-package-row"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.textContent).toContain('numpy')
+    expect(rows[0]?.textContent).toContain('Installed')
+    expect(rows[1]?.textContent).toContain('missingpkg')
+    expect(rows[1]?.textContent).toContain('Failed')
+  })
+
+  it('preserves a plain-text package failure detail', () => {
+    act(() => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-packages-plain-failure',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            activities: [
+              {
+                id: 'activity-packages-plain-failure',
+                kind: 'tool',
+                title: 'open-science-notebook.manage_packages',
+                status: 'failed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 8_000,
+                rawInput: { language: 'python', packages: ['numpy'] },
+                rawOutput: 'PackagesNotFoundError: numpy is unavailable for this environment.'
+              }
+            ]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{ 'activity-packages-plain-failure': true }}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    const progress = container.querySelector('[data-testid="manage-packages-progress"]')
+    expect(progress?.textContent).toContain(
+      'PackagesNotFoundError: numpy is unavailable for this environment.'
+    )
+  })
+
   it('anchors the group in view before toggling its height', () => {
     const onToggleGroup = vi.fn()
     act(() => {

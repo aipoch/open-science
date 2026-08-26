@@ -1154,7 +1154,12 @@ class TaskRunner {
       eventIds: assistantEvents.map((event) => event.id),
       images: images.length ? images : undefined,
       ...(terminalStopEvent?.turnUsage
-        ? { turnUsage: terminalStopEvent.turnUsage }
+        ? {
+            turnUsage: terminalStopEvent.turnUsage,
+            ...(terminalStopEvent.modelCallUsage
+              ? { modelCallUsage: terminalStopEvent.modelCallUsage }
+              : {})
+          }
         : terminalStopEvent
           ? { turnUsageUnavailable: true as const }
           : {}),

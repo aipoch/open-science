@@ -5,6 +5,7 @@ import type {
   ProjectFilesFilterPreference,
   ReasoningEffort,
   ReviewerModelConfiguration,
+  SessionDetailsModelConfiguration,
   SettingsSnapshot,
   SubagentModelConfiguration,
   VisionModelConfiguration
@@ -24,6 +25,8 @@ type SettingsPreferencesState = {
   reasoningEffort: ReasoningEffort
   reviewerModel?: ReviewerModelConfiguration
   reviewerModelPending?: boolean
+  sessionDetailsModel?: SessionDetailsModelConfiguration
+  sessionDetailsModelPending?: boolean
   subagentModel?: SubagentModelConfiguration
   subagentModelPending?: boolean
   visionModel?: VisionModelConfiguration
@@ -38,6 +41,7 @@ type SettingsPreferencesState = {
 
 type OptimisticPreferenceField =
   | 'reasoningEffort'
+  | 'sessionDetailsModel'
   | 'notificationsEnabled'
   | 'conversationSkillImportEnabled'
   | 'closePreference'
@@ -48,6 +52,7 @@ type OptimisticPreferenceField =
 export type SettingsPreferencesActions = {
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
   setReviewerModel: (configuration: ReviewerModelConfiguration) => Promise<void>
+  setSessionDetailsModel: (configuration: SessionDetailsModelConfiguration) => Promise<void>
   setSubagentModel: (configuration: SubagentModelConfiguration) => Promise<void>
   setVisionModel: (configuration: VisionModelConfiguration | undefined) => Promise<void>
   setNotificationsEnabled: (enabled: boolean) => Promise<void>
@@ -77,7 +82,12 @@ type SettingsPreferencesCommands = Pick<
   Partial<
     Pick<
       Window['api']['settings'],
-      'getSettings' | 'setReviewerModel' | 'setSubagentModel' | 'setVisionModel' | 'setNetworkProxy'
+      | 'getSettings'
+      | 'setReviewerModel'
+      | 'setSessionDetailsModel'
+      | 'setSubagentModel'
+      | 'setVisionModel'
+      | 'setNetworkProxy'
     >
   >
 
@@ -91,6 +101,7 @@ type SettingsPreferencesSliceOptions = {
 
 const OPTIMISTIC_PREFERENCE_WRITES = [
   ['reasoningEffort', 'reasoningEffort'],
+  ['sessionDetailsModel', 'sessionDetailsModel'],
   ['notificationsEnabled', 'notifications'],
   ['conversationSkillImportEnabled', 'conversationSkillImport'],
   ['closePreference', 'closePreference'],
@@ -112,6 +123,8 @@ export const omitInFlightOptimisticPreferences = <Patch extends Partial<Settings
 
 const SETTINGS_WRITE_ERRORS: Record<OptimisticSettingsWriteKey, string> = {
   reasoningEffort: 'Could not save reasoning effort. Try again.',
+  sessionDetailsModel:
+    'Could not save Session details model. Refresh the model catalog and try again.',
   notifications: 'Could not save notification preference. Try again.',
   conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
   closePreference: 'Could not save window close preference. Try again.',
@@ -156,6 +169,23 @@ export const createSettingsPreferencesSlice = ({
   }
 
   return {
+    setSessionDetailsModel: async (configuration) => {
+      setState({ sessionDetailsModelPending: true })
+      try {
+        await runOptimisticWrite(
+          'sessionDetailsModel',
+          'sessionDetailsModel',
+          configuration,
+          () => getCommands().setSessionDetailsModel!({ configuration }),
+          'Failed to set Session details model'
+        )
+      } finally {
+        if (!writeCoordinator.hasPending('sessionDetailsModel')) {
+          setState({ sessionDetailsModelPending: false })
+        }
+      }
+    },
+
     setReviewerModel: async (configuration) => {
       const write = writeCoordinator.begin('reviewerModel')
       setState({ reviewerModelPending: true })

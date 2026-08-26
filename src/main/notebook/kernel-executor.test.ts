@@ -486,6 +486,37 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   })
 
+  it('records files created by a data-kernel cell in the shared handoff directory', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-handoff-working-file-')
+    const sessionRoot = join(cwdDir, 'nb')
+    const dataRoot = join(sessionRoot, 'data')
+    const handoffRoot = join(sessionRoot, 'handoff')
+    await Promise.all([
+      mkdir(dataRoot, { recursive: true }),
+      mkdir(handoffRoot, { recursive: true })
+    ])
+    const executor = makeExecutor()
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        cwd: dataRoot,
+        code: '__WRITE_HANDOFF_FILE__'
+      })
+
+      expect(result.status).toBe('completed')
+      expect(result.workingFiles).toEqual([
+        expect.objectContaining({
+          path: resolve(handoffRoot, 'generated.csv'),
+          relativePath: 'handoff/generated.csv',
+          kind: 'other',
+          size: 8
+        })
+      ])
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
   it('records overwritten outputs without claiming unchanged data files', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-overwritten-file-')
     const dataRoot = join(cwdDir, 'nb', 'data')

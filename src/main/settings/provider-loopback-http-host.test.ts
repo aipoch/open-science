@@ -2,14 +2,18 @@ import { connect } from 'node:net'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { Logger } from '../logger'
 import { ProviderLoopbackHttpHost, writeProviderLoopbackJson } from './provider-loopback-http-host'
 
 type Connection = Readonly<{ baseUrl: string; token: string }>
 
 const jsonHost = (
-  credentialMode: 'bearer' | 'bearer-or-api-key' = 'bearer'
+  credentialMode: 'bearer' | 'bearer-or-api-key' = 'bearer',
+  diagnostics: Pick<Logger, 'info' | 'error'> = { info: vi.fn(), error: vi.fn() }
 ): ProviderLoopbackHttpHost<Connection> =>
   new ProviderLoopbackHttpHost<Connection>({
+    diagnosticName: 'test-provider',
+    diagnostics,
     credentialMode,
     createConnection: (origin, token) => Object.freeze({ baseUrl: origin, token }),
     onUnauthorized: (response) =>
@@ -68,6 +72,31 @@ describe('ProviderLoopbackHttpHost', () => {
 
     const secondConnection = await host.start()
     expect(secondConnection.token).not.toBe(firstConnection.token)
+  })
+
+  it('records the loopback listener lifecycle without exposing its credential', async () => {
+    const diagnostics = { info: vi.fn(), error: vi.fn() }
+    const host = jsonHost('bearer', diagnostics)
+    hosts.push(host)
+
+    const connection = await host.start()
+    const port = Number(new URL(connection.baseUrl).port)
+    expect(diagnostics.info).toHaveBeenCalledWith('provider loopback listening', {
+      bridge: 'test-provider',
+      bridgeId: expect.any(String),
+      port
+    })
+    const listeningData = diagnostics.info.mock.calls[0][1]
+
+    await host.close()
+    expect(diagnostics.info).toHaveBeenCalledWith('provider loopback closed', {
+      bridge: 'test-provider',
+      bridgeId: (listeningData as { bridgeId: string }).bridgeId,
+      port,
+      expected: true,
+      lifetimeMs: expect.any(Number)
+    })
+    expect(JSON.stringify(diagnostics.info.mock.calls)).not.toContain(connection.token)
   })
 
   it('authenticates before routing and preserves each adapter credential mode', async () => {
@@ -143,6 +172,8 @@ describe('ProviderLoopbackHttpHost', () => {
       markAborted = resolve
     })
     const host = new ProviderLoopbackHttpHost<Connection>({
+      diagnosticName: 'test-provider',
+      diagnostics: { info: vi.fn(), error: vi.fn() },
       credentialMode: 'bearer',
       createConnection: (origin, token) => Object.freeze({ baseUrl: origin, token }),
       onUnauthorized: (response) => writeProviderLoopbackJson(response, 401, {}),

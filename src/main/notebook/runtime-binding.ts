@@ -3,9 +3,11 @@ import {
   isEnvEnabled,
   type DiscoveredInterpreter,
   type NotebookRuntimeBinding,
+  type RuntimeBindingOperationResult,
   type NotebookRuntimeBindings,
   type NotebookRuntimeListing,
-  type RuntimeBindingUnavailableReason
+  type RuntimeBindingUnavailableReason,
+  type RuntimeTargetReceipt
 } from '../../shared/notebook-runtime'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
 import {
@@ -16,6 +18,7 @@ import {
 } from './environment-discovery'
 import { getRuntimeRoot, type NotebookRunRepository } from './repository'
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from './runtime-paths'
+import { runtimeTargetReceipt } from './runtime-target'
 import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import type {
   NotebookSessionAggregate,
@@ -208,19 +211,26 @@ export class NotebookRuntimeBindingOwner {
     language: NotebookLanguage,
     runtimeId: string,
     beforeBind?: (binding: NotebookSessionRuntimeBinding) => Promise<void>
-  ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
-    const binding = await this.resolveEnabledRuntime(language, runtimeId)
-    const existing = session.runtimeBinding(language)
-    if (existing && existing.runtimeId !== binding.runtimeId) {
-      throw new Error(
-        `A ${language} runtime is already bound for this session. Use ` +
-          'notebook_switch_runtime to change it (it tears down the current kernel first).'
-      )
+  ): Promise<RuntimeBindingOperationResult> {
+    try {
+      const binding = await this.resolveEnabledRuntime(language, runtimeId)
+      const existing = session.runtimeBinding(language)
+      if (existing && existing.runtimeId !== binding.runtimeId) {
+        throw new Error(
+          `A ${language} runtime is already bound for this session. Use ` +
+            'notebook_switch_runtime to change it (it tears down the current kernel first).'
+        )
+      }
+      if (!existing) await beforeBind?.(binding)
+      session.setRuntimeBinding(language, binding)
+      await this.persist(session)
+      return {
+        bound: this.toWireBinding(binding),
+        bindings: this.snapshot(session)
+      }
+    } catch (error) {
+      return this.failureResult(session, language, error)
     }
-    if (!existing) await beforeBind?.(binding)
-    session.setRuntimeBinding(language, binding)
-    await this.persist(session)
-    return { bound: this.toWireBinding(binding), bindings: this.snapshot(session) }
   }
 
   async switch(
@@ -228,12 +238,62 @@ export class NotebookRuntimeBindingOwner {
     language: NotebookLanguage,
     runtimeId: string,
     beforeReplace: () => Promise<void>
-  ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
-    const binding = await this.resolveEnabledRuntime(language, runtimeId)
-    await beforeReplace()
-    session.setRuntimeBinding(language, binding)
-    await this.persist(session)
-    return { bound: this.toWireBinding(binding), bindings: this.snapshot(session) }
+  ): Promise<RuntimeBindingOperationResult> {
+    try {
+      const binding = await this.resolveEnabledRuntime(language, runtimeId)
+      await beforeReplace()
+      session.setRuntimeBinding(language, binding)
+      await this.persist(session)
+      return {
+        bound: this.toWireBinding(binding),
+        bindings: this.snapshot(session)
+      }
+    } catch (error) {
+      return this.failureResult(session, language, error)
+    }
+  }
+
+  private async failureResult(
+    session: RuntimeBindingSession,
+    language: NotebookLanguage,
+    error: unknown
+  ): Promise<RuntimeBindingOperationResult> {
+    return {
+      ok: false,
+      bindingChanged: false,
+      error: error instanceof Error ? error.message : String(error),
+      bindings: this.snapshot(session),
+      target: await this.effectiveTarget(session, language)
+    }
+  }
+
+  private async effectiveTarget(
+    session: RuntimeBindingSession,
+    language: NotebookLanguage
+  ): Promise<RuntimeTargetReceipt> {
+    const current = session.runtimeBinding(language)
+    if (current) {
+      return runtimeTargetReceipt({
+        runtimeRoot: getRuntimeRoot(this.options.dataRoot),
+        language,
+        selection: 'explicit-binding',
+        binding: current
+      })
+    }
+
+    const environmentName = defaultEnvironment(language)
+    const enabled = await this.listEnabledInterpreters(language)
+    const implicit = enabled
+      .map((environment) => this.toInternalBinding(environment))
+      .find((binding) => binding.source === 'managed' && binding.envName === environmentName)
+    return implicit
+      ? runtimeTargetReceipt({
+          runtimeRoot: getRuntimeRoot(this.options.dataRoot),
+          language,
+          selection: 'implicit-default',
+          binding: implicit
+        })
+      : { language, selection: 'unresolved' }
   }
 
   async revoke<Context>(

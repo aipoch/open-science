@@ -5,6 +5,10 @@ import {
   sessionComputeHostAccess,
   type SessionComputeHostAccessMutation
 } from './session-compute-host-access'
+import {
+  canReconcileSessionAbsences,
+  type SessionCatalog
+} from '../session-persistence/catalog-authority'
 
 type SessionEnabledComputeHostsAuthority = Readonly<{
   sessionProjectId(sessionId: string): Promise<string | undefined>
@@ -192,48 +196,58 @@ class SessionEnabledComputeHostsOwner {
     })
   }
 
-  reconcile(
+  hydrateFromSessionCatalog<Result extends SessionCatalog>(
+    loadCatalog: () => Promise<Result>
+  ): Promise<Result> {
+    return this.enqueueWrite(async () => {
+      const catalog = await loadCatalog()
+      return {
+        ...catalog,
+        sessions: await this.reconcileNow(catalog.sessions, canReconcileSessionAbsences(catalog))
+      }
+    })
+  }
+
+  private async reconcileNow(
     sessions: readonly PersistedChatSession[],
     isComplete: boolean
   ): Promise<PersistedChatSession[]> {
-    return this.enqueueWrite(async () => {
-      let validProviderIds: readonly string[]
-      try {
-        validProviderIds = await this.options.listHostIds()
-      } catch {
-        return [...sessions]
-      }
-      const validProviderIdSet = new Set(validProviderIds)
-      const hasMissingHost = sessions.some((session) => {
-        const access = sessionComputeHostAccess(session)
-        return [...access.enabledProviderIds, ...access.selectedProviderIds].some(
-          (providerId) => !validProviderIdSet.has(providerId)
-        )
-      })
-      const authoritativeSessions =
-        isComplete && hasMissingHost
-          ? (await this.options.sessionAuthority.pruneSessionEnabledComputeHosts(validProviderIds))
-              .sessions
-          : sessions
-      this.options.registry.reconcileAccess(
-        authoritativeSessions.map((session) => {
-          const access = sessionComputeHostAccess(session)
-          return [
-            session.id,
-            {
-              enabledProviderIds: access.enabledProviderIds.filter((providerId) =>
-                validProviderIdSet.has(providerId)
-              ),
-              selectedProviderIds: access.selectedProviderIds.filter((providerId) =>
-                validProviderIdSet.has(providerId)
-              )
-            }
-          ] as const
-        }),
-        isComplete
+    let validProviderIds: readonly string[]
+    try {
+      validProviderIds = await this.options.listHostIds()
+    } catch {
+      return [...sessions]
+    }
+    const validProviderIdSet = new Set(validProviderIds)
+    const hasMissingHost = sessions.some((session) => {
+      const access = sessionComputeHostAccess(session)
+      return [...access.enabledProviderIds, ...access.selectedProviderIds].some(
+        (providerId) => !validProviderIdSet.has(providerId)
       )
-      return [...authoritativeSessions]
     })
+    const authoritativeSessions =
+      isComplete && hasMissingHost
+        ? (await this.options.sessionAuthority.pruneSessionEnabledComputeHosts(validProviderIds))
+            .sessions
+        : sessions
+    this.options.registry.reconcileAccess(
+      authoritativeSessions.map((session) => {
+        const access = sessionComputeHostAccess(session)
+        return [
+          session.id,
+          {
+            enabledProviderIds: access.enabledProviderIds.filter((providerId) =>
+              validProviderIdSet.has(providerId)
+            ),
+            selectedProviderIds: access.selectedProviderIds.filter((providerId) =>
+              validProviderIdSet.has(providerId)
+            )
+          }
+        ] as const
+      }),
+      isComplete
+    )
+    return [...authoritativeSessions]
   }
 
   reconcileSession(session: PersistedChatSession): Promise<PersistedChatSession> {

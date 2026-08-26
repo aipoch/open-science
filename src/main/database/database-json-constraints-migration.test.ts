@@ -146,10 +146,12 @@ describe('database JSON constraints migration', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_session_projection'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_session_model_call_usage'
       ],
       from: '0007_notification_attention_metadata',
-      to: '0013_session_projection'
+      to: '0015_session_model_call_usage'
     })
     await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).rejects.toMatchObject({
       code: 'ENOENT'
@@ -157,9 +159,17 @@ describe('database JSON constraints migration', () => {
     await expect(
       access(`${databasePath}.before-0011_cross_resource_tags.backup`)
     ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).resolves.toBeUndefined()
+    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
     await expect(
       access(`${databasePath}.before-0013_session_projection.backup`)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(`${databasePath}.before-0014_review_query_indexes.backup`)
+    ).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0015_session_model_call_usage.backup`)
     ).resolves.toBeUndefined()
 
     await expect(

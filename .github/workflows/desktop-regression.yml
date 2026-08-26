@@ -87,7 +87,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
 
       - name: Download macOS ARM64 package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -149,7 +149,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: node scripts/ci/npm-ci.mjs
 
       - name: Build Electron application
         run: npm run build:e2e

@@ -43,6 +43,7 @@ export type MarketplaceSpecialistListing = {
   id: string
   displayName: string
   summary: string
+  author?: string
   publisher: MarketplacePublisher
   version: string
   installedVersion?: string
@@ -102,6 +103,7 @@ export type MarketplaceSpecialistRelease = {
   specialistId: string
   displayName: string
   summary: string
+  author?: string
   publisher: MarketplacePublisher
   version: string
   repository: string

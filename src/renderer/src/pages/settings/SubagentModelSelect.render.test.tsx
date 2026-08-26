@@ -4,7 +4,12 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
-import { ReviewerModelSelect, SubagentModelSelect, VisionModelSelect } from './SubagentModelSelect'
+import {
+  ReviewerModelSelect,
+  SessionDetailsModelSelect,
+  SubagentModelSelect,
+  VisionModelSelect
+} from './SubagentModelSelect'
 
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
@@ -243,7 +248,7 @@ describe('ReviewerModelSelect', () => {
     document.body.innerHTML = ''
   })
 
-  it('presents Follow Active as the default Reviewer policy', () => {
+  it('presents Follow main model as the default Reviewer policy', () => {
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
@@ -251,10 +256,110 @@ describe('ReviewerModelSelect', () => {
 
     expect(
       document.body.querySelector('[aria-label="Reviewer model Model"]')?.textContent
-    ).toContain('Follow Active model')
+    ).toContain('Follow main model')
     expect(
       document.body.querySelector<HTMLButtonElement>(
         '[aria-label="Reviewer model Reasoning effort"]'
+      )?.disabled
+    ).toBe(true)
+    act(() => root.unmount())
+  })
+})
+
+describe('SessionDetailsModelSelect', () => {
+  beforeEach(() => {
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportsSkills: true,
+          supportedApiTypes: ['openai']
+        }
+      ],
+      activeProviderId: 'provider-a',
+      activeModel: 'model-a',
+      providers: [
+        {
+          id: 'provider-a',
+          type: 'custom',
+          name: 'Provider A',
+          apiEndpoints: ['openai'],
+          model: 'model-a',
+          models: ['model-a'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ],
+      setSessionDetailsModel: vi.fn(async () => undefined)
+    })
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('defaults to inherited model with an independently enabled Low effort', () => {
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    act(() => root.render(<SessionDetailsModelSelect />))
+
+    expect(
+      document.body.querySelector('[aria-label="Session details model Model"]')?.textContent
+    ).toContain('Same as main model')
+    const effort = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Session details model Reasoning effort"]'
+    )
+    expect(effort?.textContent).toContain('Low')
+    expect(effort?.disabled).toBe(false)
+    act(() => root.unmount())
+  })
+
+  it('shows Not supported and disables effort without disabling the inherited model', () => {
+    useSettingsStore.setState({
+      providers: [
+        {
+          id: 'provider-a',
+          type: 'custom',
+          name: 'Provider A',
+          apiEndpoints: ['openai'],
+          model: 'model-a',
+          models: ['model-a'],
+          reasoningEffortPreset: 'unsupported',
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    act(() => root.render(<SessionDetailsModelSelect />))
+
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Session details model Model"]')
+        ?.disabled
+    ).toBe(false)
+    const effort = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Session details model Reasoning effort"]'
+    )
+    expect(effort?.textContent).toContain('Not supported')
+    expect(effort?.disabled).toBe(true)
+    act(() => root.unmount())
+  })
+
+  it('disables effort when automatic generation is Not configured', () => {
+    useSettingsStore.setState({ sessionDetailsModel: { mode: 'disabled' } })
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    act(() => root.render(<SessionDetailsModelSelect />))
+
+    expect(
+      document.body.querySelector('[aria-label="Session details model Model"]')?.textContent
+    ).toContain('Not configured')
+    expect(
+      document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Session details model Reasoning effort"]'
       )?.disabled
     ).toBe(true)
     act(() => root.unmount())
@@ -336,6 +441,51 @@ describe('VisionModelSelect', () => {
       model: 'vision-model',
       reasoningEffort: 'default'
     })
+    act(() => root.unmount())
+  })
+
+  it('offers an image-capable Codex subscription model', () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportsSkills: true,
+          supportedApiTypes: ['responses']
+        }
+      ],
+      providers: [
+        {
+          id: 'builtin-codex-isolated',
+          type: 'codex-isolated',
+          name: 'Codex subscription',
+          apiEndpoints: ['responses'],
+          models: ['gpt-5.6-sol'],
+          supportsImageInput: true,
+          hasKey: false,
+          needsKey: false
+        }
+      ]
+    })
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => root.render(<VisionModelSelect />))
+
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Vision model Model"]'
+    )
+    act(() => {
+      trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).some((candidate) =>
+        candidate.textContent?.includes('gpt-5.6-sol')
+      )
+    ).toBe(true)
     act(() => root.unmount())
   })
 })

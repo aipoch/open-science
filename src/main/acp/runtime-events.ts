@@ -10,6 +10,7 @@ import {
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
 // cannot flood it. Tuned to fit a typical error message (e.g. WebFetch's domain-safety preflight).
 const TOOL_FAILURE_TEXT_LIMIT = 300
+const MCP_INPUT_VALIDATION_ERROR_PREFIX = 'MCP error -32602: Input validation error:'
 const MAX_RUNTIME_RAW_PAYLOAD_CHARS = 8_000
 const MAX_SKILL_NAME_CHARS = 200
 const SKILL_TOOL_TITLE_PATTERN = /^(?:run|loaded)\s+skill(?:\?|:|\s|$)/iu
@@ -201,21 +202,41 @@ const imageNotificationMetadata = (
   }
 })
 
-// Extracts a bounded, text-only reason from a failed tool call's content for logging. Only text blocks
-// are read (never raw arguments, diffs, or terminal output) and the result is truncated, so a failure is
-// diagnosable without spilling large or sensitive tool output into the log.
-const extractToolFailureText = (content: ToolCallContent[] | undefined): string | undefined => {
-  if (!content) return undefined
+const boundedToolFailureText = (text: string): string | undefined => {
+  const trimmed = text.trim()
+  if (!trimmed) return undefined
+  return trimmed.length > TOOL_FAILURE_TEXT_LIMIT
+    ? `${trimmed.slice(0, TOOL_FAILURE_TEXT_LIMIT)}…`
+    : trimmed
+}
 
-  const text = content
+// Extracts a bounded, text-only reason from a failed tool call for logging. Codex MCP updates carry
+// input-validation failures under rawOutput.result.content instead of ACP content. Recognize only
+// that protocol error and emit fixed copy so arbitrary MCP result text never reaches the log.
+const extractToolFailureText = (
+  content: ToolCallContent[] | undefined,
+  rawOutput?: unknown
+): string | undefined => {
+  const contentText = (content ?? [])
     .map((item) => (item.type === 'content' ? contentToText(item.content) : ''))
     .filter(Boolean)
     .join(' ')
-    .trim()
+  const contentReason = boundedToolFailureText(contentText)
+  if (contentReason) return contentReason
 
-  if (!text) return undefined
+  if (!isRecord(rawOutput) || !isRecord(rawOutput.result)) return undefined
+  const rawContent = rawOutput.result.content
+  if (!Array.isArray(rawContent)) return undefined
 
-  return text.length > TOOL_FAILURE_TEXT_LIMIT ? `${text.slice(0, TOOL_FAILURE_TEXT_LIMIT)}…` : text
+  const hasInputValidationError = rawContent.some(
+    (item) =>
+      isRecord(item) &&
+      item.type === 'text' &&
+      typeof item.text === 'string' &&
+      item.text.startsWith(MCP_INPUT_VALIDATION_ERROR_PREFIX)
+  )
+
+  return hasInputValidationError ? 'MCP input validation failed.' : undefined
 }
 
 type ToolCallUpdate = Extract<

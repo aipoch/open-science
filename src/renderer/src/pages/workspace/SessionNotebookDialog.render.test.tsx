@@ -122,9 +122,7 @@ describe('SessionNotebookContent', () => {
       status: 'ready'
     })
 
-    expect(html).toContain(
-      'This session has 125 runs. This view loads the latest 100; downloads include the complete history.'
-    )
+    expect(html).toContain('Loaded 100 of 125 runs. Scroll up to load earlier history.')
   })
 
   it('renders timeout as a neutral limit instead of an error', () => {

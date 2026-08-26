@@ -1,4 +1,6 @@
 import { ANTHROPIC_VERSION } from './validate'
+import { readBoundedResponseText } from './bounded-response'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 // Fetches a provider's live model list from its dedicated model-list URL (from the registry). Both the
 // Anthropic and OpenAI model-list shapes are `{ data: [{ id }] }`, so one parser covers the compatible
@@ -77,7 +79,32 @@ export const listProviderModels = async (
       }
     }
 
-    const models = parseModelIds((await response.json()) as unknown)
+    const body = JSON.parse(
+      await readBoundedResponseText(
+        response,
+        PROVIDER_RESOURCE_LIMITS.modelListResponseBytes,
+        'Model list response'
+      )
+    ) as unknown
+    const models = parseModelIds(body)
+
+    if (models.length > PROVIDER_RESOURCE_LIMITS.fetchedModels) {
+      return {
+        ok: false,
+        status: response.status,
+        message: `The vendor returned more than ${PROVIDER_RESOURCE_LIMITS.fetchedModels} models.`
+      }
+    }
+
+    if (
+      models.some((model) => Array.from(model).length > PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
+    ) {
+      return {
+        ok: false,
+        status: response.status,
+        message: `The vendor returned a model ID longer than ${PROVIDER_RESOURCE_LIMITS.modelIdCharacters} characters.`
+      }
+    }
 
     if (models.length === 0) {
       return { ok: false, status: response.status, message: 'The vendor returned no models.' }

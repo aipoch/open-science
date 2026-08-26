@@ -8,6 +8,7 @@ import { LocationStep } from './LocationStep'
 import {
   clickButton,
   DEFAULT_DATA_ROOT,
+  findButton,
   resetOnboardingStores,
   storageInfo,
   stubWindowApi
@@ -150,6 +151,23 @@ describe('LocationStep', () => {
     expect(container.textContent).not.toContain('restart to set this up')
   })
 
+  it('starts only one directory picker while the first request is pending', async () => {
+    window.api.storage.pickDirectory = vi.fn().mockReturnValue(new Promise(() => undefined))
+    await renderStep()
+
+    const browseButton = findButton(/browse/i)
+    await act(async () => {
+      browseButton?.click()
+      browseButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(window.api.storage.pickDirectory).toHaveBeenCalledTimes(1)
+    expect(browseButton?.disabled).toBe(true)
+    expect(findButton(/back/i)?.disabled).toBe(true)
+    expect(findButton(/finish/i)?.disabled).toBe(true)
+  })
+
   it('shows an inline error when browsing for a location rejects', async () => {
     window.api.storage.pickDirectory = vi
       .fn()
@@ -207,6 +225,22 @@ describe('LocationStep', () => {
     expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledTimes(1)
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+  })
+
+  it('starts only one default completion while the first request is pending', async () => {
+    const completeOnboarding = vi.fn().mockReturnValue(new Promise(() => undefined))
+    useSettingsStore.setState({ completeOnboarding })
+    await renderStep()
+
+    const finishButton = findButton(/finish/i)
+    await act(async () => {
+      finishButton?.click()
+      finishButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(completeOnboarding).toHaveBeenCalledTimes(1)
+    expect(finishButton?.disabled).toBe(true)
   })
 
   it('a rejected default completion stays recoverable and shows the failure', async () => {
@@ -277,6 +311,28 @@ describe('LocationStep', () => {
     // The renderer-side gate must not flip before the main-process relaunch step: only main marks
     // onboarding complete now, inside set-data-root-and-relaunch, so this must never be called.
     expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+  })
+
+  it('starts only one confirmed relaunch while the first request is pending', async () => {
+    window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
+    window.api.storage.inspectDataRoot = vi
+      .fn()
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+    window.api.storage.setDataRootAndRelaunch = vi
+      .fn()
+      .mockReturnValue(new Promise(() => undefined))
+    await renderStep()
+    await clickButton(/browse/i)
+    await clickButton(/finish/i)
+
+    const restartButton = findButton(/^restart$/i)
+    await act(async () => {
+      restartButton?.click()
+      restartButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledTimes(1)
   })
 
   it('a setDataRootAndRelaunch failure shows the inline error and resets the relaunch flag', async () => {

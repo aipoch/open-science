@@ -302,7 +302,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ],
   ]),
   group('sessions', 'sessions', [
-    ['exportConversation', 'sessions:export-conversation', MAPPED_ELECTRON], ['onCreated', 'session:created', EVENT], ['onDeleted', 'session:deleted', EVENT],
+    ['editDetails', 'sessions:edit-details'], ['exportConversation', 'sessions:export-conversation', MAPPED_ELECTRON], ['onCreated', 'session:created', EVENT], ['onDeleted', 'session:deleted', EVENT],
     ['onFlushAborted', 'sessions:flush-aborted', ELECTRON_EVENT], ['onFlushRequest', 'sessions:flush-request', ELECTRON_EVENT], ['onUpdated', 'session:updated', EVENT], ['deleteSession', 'sessions:delete-session', WEB, undefined, undefined, RUNTIME_VALIDATED],
     ['list', 'sessions:list'], ['loadAll', 'sessions:load-all'], ['loadOne', 'sessions:load-one'], ['loadUsage', 'sessions:load-usage'], ['saveManifest', 'sessions:save-manifest'],
     ['saveSession', 'sessions:save-session', WEB, SESSION_SAVE, SESSION_SAVE_JSON], ['updateArchive', 'sessions:update-archive'], ['sendFlushResponse', 'sessions:flush-response', SEND],
@@ -342,7 +342,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['setNcbiCredentials', 'settings:set-ncbi-credentials'], ['setNotificationsEnabled', 'settings:set-notifications-enabled', LOCAL],
     ['setPackageMirror', 'settings:set-package-mirror', LOCAL], ['setProjectFilesFilter', 'settings:set-project-files-filter', LOCAL],
     ['setNetworkProxy', 'settings:set-network-proxy', LOCAL],
-    ['setReasoningEffort', 'settings:set-reasoning-effort'], ['setReviewerModel', 'settings:set-reviewer-model'], ['setSubagentModel', 'settings:set-subagent-model'], ['setVisionModel', 'settings:set-vision-model'],
+    ['setReasoningEffort', 'settings:set-reasoning-effort'], ['setReviewerModel', 'settings:set-reviewer-model'], ['setSessionDetailsModel', 'settings:set-session-details-model'], ['setSubagentModel', 'settings:set-subagent-model'], ['setVisionModel', 'settings:set-vision-model'],
     ['setSkillEnabled', 'settings:set-skill-enabled'], ['setSkillsEnabled', 'settings:set-skills-enabled'], ['setToolPermission', 'settings:set-tool-permission'],
     ['uninstallClaude', 'settings:uninstall-claude', LOCAL], ['uninstallCodex', 'settings:uninstall-codex', LOCAL],
     ['uninstallOpencode', 'settings:uninstall-opencode', LOCAL], ['updateCustomServer', 'settings:update-custom-server'],

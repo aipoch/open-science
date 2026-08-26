@@ -1,7 +1,8 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { ResolvedAgentBackend } from '../agent-framework'
+import { projectSafeCodexProviderRoute } from '../settings/codex-auth'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 
 type RestrictedRuntimeProfile = Readonly<{
@@ -17,6 +18,60 @@ const record = (value: unknown): Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+
+// Keep this denylist aligned with the built-in tool features of every supported native Codex
+// version. The runtime's permission and tool-event guards remain the second fail-closed boundary.
+const RESTRICTED_CODEX_FEATURES = Object.freeze({
+  multi_agent: false,
+  multi_agent_v2: false,
+  shell_tool: false,
+  code_mode: false,
+  code_mode_host: false,
+  code_mode_only: false,
+  apply_patch_freeform: false,
+  apps: false,
+  enable_mcp_apps: false,
+  browser_use: false,
+  browser_use_external: false,
+  browser_use_full_cdp_access: false,
+  computer_use: false,
+  image_generation: false,
+  workspace_dependencies: false,
+  goals: false,
+  tool_suggest: false,
+  request_permissions_tool: false,
+  enable_fanout: false,
+  default_mode_request_user_input: false,
+  plugin_sharing: false
+})
+
+const copyCodexAuthentication = async (
+  sourceHome: string | undefined,
+  targetHome: string
+): Promise<boolean> => {
+  if (!sourceHome || sourceHome === targetHome) return false
+  try {
+    const target = join(targetHome, 'auth.json')
+    await copyFile(join(sourceHome, 'auth.json'), target)
+    await chmod(target, 0o600)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+
+const readCodexProviderRoute = async (
+  sourceHome: string | undefined
+): Promise<string | undefined> => {
+  if (!sourceHome) return undefined
+  try {
+    return projectSafeCodexProviderRoute(await readFile(join(sourceHome, 'config.toml'), 'utf8'))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
 
 const removeClaudeSkillRuntimeCapability = (
   source: Readonly<Record<string, unknown>> | undefined
@@ -102,15 +157,32 @@ const prepareCodexBackend = async (
 ): Promise<ResolvedAgentBackend> => {
   const codexHome = join(profileRoot, 'codex')
   await mkdir(codexHome, { recursive: true })
-  await writeFile(join(codexHome, 'config.toml'), 'cli_auth_credentials_store = "ephemeral"\n', {
-    encoding: 'utf8',
-    mode: 0o600
-  })
+  const [hasFileAuthentication, providerRoute] = await Promise.all([
+    copyCodexAuthentication(backend.env.CODEX_HOME, codexHome),
+    readCodexProviderRoute(backend.env.CODEX_HOME)
+  ])
+  await writeFile(
+    join(codexHome, 'config.toml'),
+    `cli_auth_credentials_store = "${hasFileAuthentication ? 'file' : 'ephemeral'}"\n${providerRoute ? `\n${providerRoute}` : ''}`,
+    { encoding: 'utf8', mode: 0o600 }
+  )
   const codexConfig = record(JSON.parse(backend.env.CODEX_CONFIG ?? '{}'))
   delete codexConfig.developer_instructions
+  codexConfig.experimental_use_unified_exec_tool = false
+  codexConfig.features = {
+    ...record(codexConfig.features),
+    ...RESTRICTED_CODEX_FEATURES
+  }
+  codexConfig.tools = { ...record(codexConfig.tools), web_search: false }
   return {
     ...backend,
-    env: { ...backend.env, CODEX_HOME: codexHome, CODEX_CONFIG: JSON.stringify(codexConfig) },
+    env: {
+      ...backend.env,
+      CODEX_HOME: codexHome,
+      HOME: codexHome,
+      ...(backend.env.USERPROFILE === undefined ? {} : { USERPROFILE: codexHome }),
+      CODEX_CONFIG: JSON.stringify(codexConfig)
+    },
     systemPromptAppends: [profile.systemPrompt],
     persistentSystemPrompt: undefined
   }

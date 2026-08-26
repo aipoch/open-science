@@ -30,6 +30,20 @@ export type RemoteHandle = {
   workdir: string
 }
 
+export const REMOTE_PROCESS_OWNERSHIP_FUNCTION = [
+  'process_owned_by_workdir() {',
+  '  pid=$1',
+  '  expected_workdir=$2',
+  "  case $pid in ''|*[!0-9]*) return 1 ;; esac",
+  '  [ -n "$expected_workdir" ] || return 1',
+  '  process_workdir=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)',
+  '  if [ -z "$process_workdir" ] && command -v lsof >/dev/null 2>&1; then',
+  `    process_workdir=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)`,
+  '  fi',
+  '  [ "$process_workdir" = "$expected_workdir" ]',
+  '}'
+].join('\n')
+
 // Builds the launcher.sh script content for a given job.
 // Uses timeout(1) with SIGTERM then SIGKILL after 30s grace. The login shell loads profile
 // configuration, then attempts to source a readable .bashrc (non-interactive bash does not do so

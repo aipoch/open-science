@@ -230,7 +230,7 @@ describe('Session delegated-work adapter', () => {
     const ids = {
       frame: ['question-child-frame'],
       attempt: ['question-source-attempt', 'question-answer-attempt'],
-      message: ['question-child-prompt', 'question-answer-prompt'],
+      message: ['question-child-prompt', 'question-source-answer', 'question-answer-prompt'],
       runtime: ['question-source-runtime', 'question-answer-runtime'],
       question: ['question-request']
     }
@@ -837,6 +837,50 @@ describe('Session delegated-work adapter', () => {
     ])
   })
 
+  it('stages terminal Activity Group members without persisting a dangling Group reference', async () => {
+    const { readSession, records } = await createLateReplayScenario()
+
+    await expect(
+      records.stageTerminalActivities!(
+        'child-frame',
+        'attempt-1',
+        'runtime-1',
+        [
+          {
+            id: 'grouped-activity',
+            kind: 'tool',
+            title: 'Inspect grouped evidence',
+            activityGroupId: 'group-1',
+            promptMessageId: 'prompt-1',
+            status: 'completed',
+            sortIndex: 1,
+            eventIds: ['grouped-event'],
+            createdAt: 40,
+            updatedAt: 41
+          }
+        ],
+        [
+          {
+            id: 'group-1',
+            title: 'Grouped inspection',
+            sortIndex: 1,
+            activityIds: ['grouped-activity'],
+            promptMessageId: 'prompt-1',
+            createdAt: 40,
+            updatedAt: 41,
+            completedAt: 41
+          }
+        ]
+      )
+    ).resolves.toBeUndefined()
+    expect((await readSession()).conversationGraph).toMatchObject({
+      activities: [expect.objectContaining({ id: 'grouped-activity', activityGroupId: 'group-1' })],
+      activityGroups: [
+        expect.objectContaining({ id: 'group-1', activityIds: ['grouped-activity'] })
+      ]
+    })
+  })
+
   it('preserves a provider error when the active child turn follows a late tool replay', async () => {
     const { control, readSession, records } = await createLateReplayScenario()
 
@@ -1262,12 +1306,26 @@ describe('Session delegated-work adapter', () => {
         }
       }
     })
-    control.complete('Evidence confirmed.', {
-      inputTokens: 100,
-      cacheTokens: 20,
-      outputTokens: 30,
-      turnCount: 1
-    })
+    control.complete(
+      'Evidence confirmed.',
+      {
+        inputTokens: 100,
+        cacheTokens: 20,
+        outputTokens: 30,
+        turnCount: 1
+      },
+      [
+        {
+          id: 'agent-message:model-call:0',
+          index: 0,
+          inputTokens: 100,
+          cacheTokens: 20,
+          outputTokens: 30,
+          contextUsedTokens: 120,
+          contextWindowSize: 200_000
+        }
+      ]
+    )
     await pending
 
     const durable = await readSession()
@@ -1284,6 +1342,17 @@ describe('Session delegated-work adapter', () => {
         outputTokens: 30,
         turnCount: 1
       },
+      modelCallUsage: [
+        {
+          id: 'agent-message:model-call:0',
+          index: 0,
+          inputTokens: 100,
+          cacheTokens: 20,
+          outputTokens: 30,
+          contextUsedTokens: 120,
+          contextWindowSize: 200_000
+        }
+      ],
       completedAt: 14,
       updatedAt: 14
     })

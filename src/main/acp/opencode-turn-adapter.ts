@@ -41,6 +41,7 @@ const normalizeTurnUsage = (
   return Object.freeze({
     turnUsage: Object.freeze(turnUsage),
     modelTurnCount,
+    modelCalls: Object.freeze(diff.modelCalls.map((call) => Object.freeze({ ...call }))),
     ...(Number.isSafeInteger(contextUsedTokens) ? { contextUsedTokens } : {}),
     lastModelStepUsage: Object.freeze(diff.lastModelStepUsage)
   })

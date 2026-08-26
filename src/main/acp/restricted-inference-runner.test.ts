@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -67,7 +67,7 @@ type RuntimeHarnessOptions = Readonly<{
   events?: AcpRuntimeEvent[]
   permissionRequest?: true
   onRuntime?: () => void
-  onCreateSession?: () => Promise<void>
+  onCreateSession?: (backend: ResolvedAgentBackend) => Promise<void>
   onPrompt?: () => Promise<void>
 }>
 
@@ -79,7 +79,7 @@ const runtimeHarness = (
   return {
     createSession: vi.fn(async () => {
       resolvedBackend = await (options.resolveBackend as () => Promise<ResolvedAgentBackend>)()
-      await input.onCreateSession?.()
+      await input.onCreateSession?.(resolvedBackend)
       return { sessionId: 'provider-session-1' } as never
     }),
     sendPrompt: vi.fn(async () => {
@@ -129,6 +129,7 @@ const makeRunner = async (
     configRoot: temporaryRoot,
     profileNamespace: 'test-inference',
     resolveTarget,
+    allowNativeCodexSubscription: true,
     createRuntime: (options) => {
       runtime.onRuntime?.()
       const created = runtimeHarness(options, runtime)
@@ -151,6 +152,78 @@ const runInput = (
 })
 
 describe('RestrictedInferenceRunner', () => {
+  it('builds a disposable tool-less profile from app-owned Codex subscription auth', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-codex-subscription-'))
+    const sourceHome = join(temporaryRoot, 'subscription-home')
+    await mkdir(sourceHome)
+    await writeFile(join(sourceHome, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+    await writeFile(
+      join(sourceHome, 'config.toml'),
+      [
+        'cli_auth_credentials_store = "file"',
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers."subscription-route"]',
+        'name = "Subscription route"',
+        'base_url = "http://127.0.0.1:43123/v1"',
+        'wire_api = "responses"',
+        'requires_openai_auth = true',
+        '',
+        '[mcp_servers.persisted-tool]',
+        'command = "unsafe-tool"',
+        ''
+      ].join('\n')
+    )
+
+    const prepared = await prepareRestrictedBackend(
+      backend(codexFramework, {
+        backendId: `codex:${CODEX_SHARED_PROVIDER_ID}`,
+        env: {
+          CODEX_HOME: sourceHome,
+          HOME: sourceHome,
+          USERPROFILE: sourceHome,
+          CODEX_CONFIG: JSON.stringify({
+            developer_instructions: 'load every tool',
+            features: { multi_agent: false }
+          })
+        }
+      }),
+      temporaryRoot,
+      {
+        agentName: 'restricted-fixture',
+        description: 'Synthetic restricted inference fixture.',
+        systemPrompt: 'Do not use tools.',
+        openCodePermissions: { '*': 'deny' }
+      }
+    )
+
+    expect(await readFile(join(prepared.env.CODEX_HOME!, 'auth.json'), 'utf8')).toContain('secret')
+    const configToml = await readFile(join(prepared.env.CODEX_HOME!, 'config.toml'), 'utf8')
+    expect(configToml).toContain('cli_auth_credentials_store = "file"')
+    expect(configToml).toContain('model_provider = "subscription-route"')
+    expect(configToml).toContain('base_url = "http://127.0.0.1:43123/v1"')
+    expect(configToml).not.toContain('mcp_servers')
+    expect(configToml).not.toContain('unsafe-tool')
+    expect(prepared.env.HOME).toBe(prepared.env.CODEX_HOME)
+    expect(prepared.env.USERPROFILE).toBe(prepared.env.CODEX_HOME)
+    expect(JSON.parse(prepared.env.CODEX_CONFIG!)).toMatchObject({
+      experimental_use_unified_exec_tool: false,
+      features: {
+        multi_agent: false,
+        shell_tool: false,
+        code_mode: false,
+        code_mode_host: false,
+        apply_patch_freeform: false,
+        apps: false,
+        browser_use: false,
+        computer_use: false,
+        image_generation: false,
+        workspace_dependencies: false
+      },
+      tools: { web_search: false }
+    })
+  })
+
   it('removes the Claude Skill projection and loader from restricted Session setup', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-inference-'))
     const projectionRoot = '/runtime-support/agent-skills/claude/revision'
@@ -208,19 +281,106 @@ describe('RestrictedInferenceRunner', () => {
     expect(JSON.stringify(claudeOptions)).not.toContain(LOAD_SKILL_TOOL_CALLABLE_NAME)
   })
 
-  it('fails closed only for native Codex subscription targets', async () => {
-    const { runner } = await makeRunner(backend(claudeCodeFramework))
+  it('runs a native Codex subscription target through its restricted profile', async () => {
+    const { runner, resolveTarget } = await makeRunner(backend(codexFramework), {
+      events: [event({ role: 'assistant', text: 'PONG' })]
+    })
 
     expect(runner.supportsTarget(target('claude-code'))).toBe(true)
     expect(runner.supportsTarget(target('opencode'))).toBe(true)
     expect(runner.supportsTarget(target('codex'))).toBe(true)
-    expect(runner.supportsTarget(target('codex', CODEX_SHARED_PROVIDER_ID))).toBe(false)
     await expect(
       runner.run(runInput({ target: target('codex', CODEX_SHARED_PROVIDER_ID) }))
-    ).rejects.toMatchObject({
-      code: 'transport-unavailable'
+    ).resolves.toMatchObject({
+      text: 'PONG',
+      frameworkId: 'codex'
+    })
+    expect(resolveTarget).toHaveBeenCalledWith(target('codex', CODEX_SHARED_PROVIDER_ID), {
+      systemPromptAppends: [],
+      includeSkillAndConnectorContext: false
     })
   })
+
+  it('keeps restricted instructions out of the shared OpenCode config used by the first conversation', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-inference-'))
+    const sharedInstructionsDir = join(temporaryRoot, 'shared-opencode', 'instructions')
+    const sharedInstructionsPath = join(sharedInstructionsDir, 'open-science.md')
+    const mainInstructions = 'Answer the user request normally.'
+    await mkdir(sharedInstructionsDir, { recursive: true })
+    await writeFile(sharedInstructionsPath, mainInstructions)
+
+    const runner = new RestrictedInferenceRunner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      profileNamespace: 'test-inference',
+      resolveTarget: async (_target, context) => {
+        if (context.systemPromptAppends.length > 0) {
+          await writeFile(sharedInstructionsPath, context.systemPromptAppends.join('\n\n'))
+        }
+        return backend(opencodeFramework, { modelRoute: 'opencode-openai' })
+      },
+      createRuntime: (options) =>
+        runtimeHarness(options, {
+          events: [
+            event({
+              role: 'assistant',
+              text: '{"title":"Plot sine wave","description":"Plot a sine function."}'
+            })
+          ]
+        })
+    })
+
+    await expect(
+      runner.run(
+        runInput({
+          target: target('opencode'),
+          systemPrompt: 'Return Session metadata only.'
+        })
+      )
+    ).resolves.toMatchObject({ frameworkId: 'opencode' })
+    await expect(readFile(sharedInstructionsPath, 'utf8')).resolves.toBe(mainInstructions)
+  })
+
+  it.each([
+    ['Claude Code', backend(claudeCodeFramework), target('claude-code')],
+    ['OpenCode', backend(opencodeFramework), target('opencode')],
+    [
+      'Codex Responses',
+      backend(codexFramework, {
+        modelRoute: 'codex-responses',
+        responsesBridgeLease: codexToolLessBridgeLease()
+      }),
+      target('codex')
+    ],
+    [
+      'Codex Bridge',
+      backend(codexFramework, {
+        modelRoute: 'codex-bridge',
+        responsesBridgeLease: codexToolLessBridgeLease()
+      }),
+      target('codex')
+    ]
+  ] as const)(
+    'installs restricted instructions after resolving the %s backend',
+    async (_name, resolved, runTarget) => {
+      const onCreateSession = vi.fn(async (prepared: ResolvedAgentBackend) => {
+        expect(prepared.systemPromptAppends).toEqual(['Do not use tools.'])
+      })
+      const { runner, resolveTarget } = await makeRunner(resolved, {
+        events: [event({ role: 'assistant', text: 'PONG' })],
+        onCreateSession
+      })
+
+      await expect(runner.run(runInput({ target: runTarget }))).resolves.toMatchObject({
+        text: 'PONG'
+      })
+      expect(resolveTarget).toHaveBeenCalledWith(
+        runTarget,
+        expect.objectContaining({ systemPromptAppends: [] })
+      )
+      expect(onCreateSession).toHaveBeenCalledOnce()
+    }
+  )
 
   it('collects text and provider-neutral usage while verifying the Codex tool-less scope', async () => {
     const usage: AcpTurnTokenUsage = {
@@ -262,7 +422,7 @@ describe('RestrictedInferenceRunner', () => {
       usage
     })
     expect(resolveTarget).toHaveBeenCalledWith(target('codex'), {
-      systemPromptAppends: ['Do not use tools.'],
+      systemPromptAppends: [],
       includeSkillAndConnectorContext: false,
       forceCodexNativeResponsesCompatibility: true
     })
@@ -358,6 +518,22 @@ describe('RestrictedInferenceRunner', () => {
       await rm(temporaryRoot!, { recursive: true, force: true })
       temporaryRoot = undefined
     }
+  })
+
+  it('preserves provider usage reported before a restricted-inference failure', async () => {
+    const usage: AcpTurnTokenUsage = {
+      inputTokens: 12,
+      cacheTokens: 3,
+      outputTokens: 4
+    }
+    const { runner } = await makeRunner(backend(claudeCodeFramework), {
+      events: [event({ kind: 'tool' }), event({ kind: 'stop', text: 'end_turn', turnUsage: usage })]
+    })
+
+    await expect(runner.run(runInput())).rejects.toMatchObject({
+      code: 'tool-violation',
+      usage
+    })
   })
 
   it.each([

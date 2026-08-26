@@ -97,17 +97,46 @@ model PendingSessionReconciliation {
 
 // One completed Agent turn usage report. Inactive branches and delegated frames are retained.
 model SessionTurnUsage {
-  sessionId     String
-  messageId     String
-  completedAtMs BigInt
-  inputTokens   BigInt
-  cacheTokens   BigInt
-  outputTokens  BigInt
-  isRootFrame   Boolean
-  session       Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId         String
+  messageId         String
+  completedAtMs     BigInt
+  inputTokens       BigInt
+  cacheTokens       BigInt
+  cachedReadTokens  BigInt?
+  cachedWriteTokens BigInt?
+  outputTokens      BigInt
+  modelCallCount    Int?
+  isRootFrame       Boolean
+  session           Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  modelCalls        SessionModelCallUsage[]
 
   @@id([sessionId, messageId])
   @@index([completedAtMs])
+}
+
+// Exact per-inference usage retained only when the framework reports complete call coverage.
+// Framework/model attribution comes from the owning conversation runtime segment and may be absent
+// for imported or legacy Sessions. Session JSON remains authoritative; this is a query projection.
+model SessionModelCallUsage {
+  sessionId          String
+  messageId          String
+  callId             String
+  callIndex          Int
+  sourceInvocationId String?
+  frameworkId        String?
+  backendId          String?
+  model              String?
+  inputTokens        BigInt
+  cacheTokens        BigInt
+  cachedReadTokens   BigInt?
+  cachedWriteTokens  BigInt?
+  outputTokens       BigInt
+  contextUsedTokens  BigInt?
+  contextWindowSize  BigInt?
+  turnUsage          SessionTurnUsage @relation(fields: [sessionId, messageId], references: [sessionId, messageId], onDelete: Cascade)
+
+  @@id([sessionId, callId])
+  @@unique([sessionId, messageId, callIndex])
 }
 
 // One user-authored root-frame run, excluding hidden control and delegated caller messages.
@@ -226,6 +255,9 @@ model Review {
   findings      Finding[]
   causedDispositions ReviewFindingDisposition[]
   scopeSnapshot       ReviewScopeSnapshot?
+
+  @@index([projectId, sessionId, createdAt])
+  @@index([sessionId])
 }
 
 // A unified check row — replaces both the old warn/fail-only Finding and the pass-only ReviewCheck
@@ -246,6 +278,8 @@ model Finding {
   reflagCount       Int     @default(0)
   review            Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   dispositions      ReviewFindingDisposition[]
+
+  @@index([reviewId])
 }
 
 model ProjectDeletionIntent {

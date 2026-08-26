@@ -21,7 +21,11 @@ import type {
   TurnScope,
   UpdateReviewPatch
 } from '../../shared/reviewer'
-import { loadReviewSubmissionProjection, toReviewCheck } from './review-submission-read-model'
+import {
+  loadReviewSubmissionProjection,
+  loadReviewSubmissionProjections,
+  toReviewCheck
+} from './review-submission-read-model'
 import { assertReviewSubmissionWithinLimits } from './submission-limits'
 
 const REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE =
@@ -401,7 +405,7 @@ class ReviewRepository {
       : 'pass'
 
     const client = await this.getClient()
-    const ownership = await client.$transaction(async (tx) => {
+    const committed = await client.$transaction(async (tx) => {
       const assessmentReview = await tx.review.findUnique({ where: { id: input.reviewId } })
       if (!assessmentReview) throw new Error(`Review not found: ${input.reviewId}`)
       if (assessmentReview.lifecycle !== 'running') {
@@ -517,7 +521,7 @@ class ReviewRepository {
       for (const sourceReviewId of touchedSourceReviewIds) {
         await touchReview(tx, sourceReviewId)
       }
-      await tx.review.update({
+      const completedReview = await tx.review.update({
         where: { id: assessmentReview.id },
         data: {
           lifecycle: 'complete',
@@ -526,13 +530,19 @@ class ReviewRepository {
           reviewerLog: JSON.stringify(input.reviewerLog ?? [])
         }
       })
-      return { projectId: assessmentReview.projectId, sessionId: assessmentReview.sessionId }
+      const { checks, submittedChecks } = await loadReviewSubmissionProjection(
+        tx,
+        assessmentReview.id
+      )
+      return {
+        ...toReview(completedReview),
+        checks,
+        submittedChecks,
+        get findings() {
+          return checks
+        }
+      } as ReviewWithChecks
     })
-
-    const committed = (
-      await this.getReviews({ projectId: ownership.projectId, sessionId: ownership.sessionId })
-    ).find((review) => review.id === input.reviewId)
-    if (!committed) throw new Error(`Committed Review not found: ${input.reviewId}`)
     return committed
   }
 
@@ -565,20 +575,22 @@ class ReviewRepository {
       orderBy: { createdAt: 'desc' }
     })
 
-    return Promise.all(
-      rows.map(async (row) => {
-        const { checks, submittedChecks } = await loadReviewSubmissionProjection(client, row.id)
-        return {
-          ...toReview(row),
-          checks,
-          submittedChecks,
-          // Legacy: expose findings as alias for checks (same data).
-          get findings() {
-            return checks
-          }
-        } as ReviewWithChecks
-      })
+    const projections = await loadReviewSubmissionProjections(
+      client,
+      rows.map((row) => row.id)
     )
+    return rows.map((row) => {
+      const { checks, submittedChecks } = projections.get(row.id)!
+      return {
+        ...toReview(row),
+        checks,
+        submittedChecks,
+        // Legacy: expose findings as alias for checks (same data).
+        get findings() {
+          return checks
+        }
+      } as ReviewWithChecks
+    })
   }
 
   // Removes a session's reviews and their checks. Checks are deleted explicitly (not relying on the

@@ -114,7 +114,9 @@ describe('application database (integration)', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_session_projection'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_session_model_call_usage'
       ]
     })
 
@@ -724,7 +726,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0012_tag_ordering.backup`
+    const backupPath = `${databasePath}.before-0015_session_model_call_usage.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -764,7 +766,7 @@ describe('application database (integration)', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0011_cross_resource_tags' }])
+      ).resolves.toEqual([{ id: '0014_review_query_indexes' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -935,10 +937,109 @@ describe('application database (integration)', () => {
     expect(pinned.pinned).toBe(true)
     expect(pinned.updatedAt).toBe(renamed.updatedAt)
 
+    const archivedAt = renamed.updatedAt + 1000
+    const archived = await repository.updateArchive(
+      { id: created.id, archived: true, expectedArchivedAt: null },
+      archivedAt
+    )
+    expect(archived.archivedAt).toBe(archivedAt)
+    expect(archived.updatedAt).toBe(renamed.updatedAt)
+
+    const restored = await repository.updateArchive(
+      { id: created.id, archived: false, expectedArchivedAt: archivedAt },
+      archivedAt + 1
+    )
+    expect(restored.archivedAt).toBeUndefined()
+    expect(restored.updatedAt).toBe(renamed.updatedAt)
+
     // Any project is deletable — there is no protected default.
     await repository.delete(created.id)
     expect(await repository.get(created.id)).toBeNull()
     expect(await repository.list()).toEqual([])
+  })
+
+  it('rejects a stale Project update when the system clock moves backward', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-revision-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+    const created = await repository.create({ name: 'Original' })
+
+    // Put the durable timestamp ahead of the database engine's wall clock. This models a Project
+    // created before the system clock moved backward without changing the machine running the test.
+    const futureUpdatedAt = new Date('2100-01-01T00:00:00.000Z')
+    await client.project.update({
+      where: { id: created.id },
+      data: { updatedAt: futureUpdatedAt }
+    })
+
+    // SQLite applies this only inside the temporary test database. It deterministically reproduces
+    // Prisma's wall-clock @updatedAt moving backward by retaining the previously durable value.
+    await client.$executeRawUnsafe(`CREATE TRIGGER freeze_project_updated_at
+      AFTER UPDATE OF name ON "Project"
+      WHEN NEW."updatedAt" <= OLD."updatedAt"
+      BEGIN
+        UPDATE "Project" SET "updatedAt" = OLD."updatedAt" WHERE "id" = NEW."id";
+      END`)
+
+    const staleSnapshot = await repository.get(created.id)
+    expect(staleSnapshot).not.toBeNull()
+
+    const firstUpdate = await repository.update({
+      id: created.id,
+      name: 'First writer',
+      expectedUpdatedAt: staleSnapshot!.updatedAt
+    })
+    expect(firstUpdate.name).toBe('First writer')
+
+    await expect(
+      repository.update({
+        id: created.id,
+        name: 'Stale writer',
+        expectedUpdatedAt: staleSnapshot!.updatedAt
+      })
+    ).rejects.toThrow('Project changed elsewhere.')
+  })
+
+  it('does not roll back activity time when a concurrent edit races with archiving', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-archive-race-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+    const created = await repository.create({ name: 'Before edit' })
+    const concurrentUpdatedAt = new Date('2099-01-01T00:00:00.000Z')
+    const archivedAt = created.updatedAt + 1000
+
+    await client.$executeRawUnsafe(`
+      CREATE TRIGGER "simulate_concurrent_project_edit"
+      BEFORE UPDATE OF "archivedAt" ON "Project"
+      FOR EACH ROW
+      BEGIN
+        UPDATE "Project"
+        SET "name" = 'Edited concurrently',
+            "updatedAt" = '${concurrentUpdatedAt.toISOString()}'
+        WHERE "id" = OLD."id";
+      END
+    `)
+
+    await expect(
+      repository.updateArchive(
+        { id: created.id, archived: true, expectedArchivedAt: null },
+        archivedAt
+      )
+    ).resolves.toMatchObject({
+      name: 'Edited concurrently',
+      archivedAt,
+      updatedAt: concurrentUpdatedAt.getTime()
+    })
   })
 
   // Verifies the runtime FINDING_TABLE_DDL + migration guard are byte-compatible with the Prisma
@@ -1037,7 +1138,9 @@ describe('application database (integration)', () => {
         '0010_compute_password_auth',
         '0011_cross_resource_tags',
         '0012_tag_ordering',
-        '0013_session_projection'
+        '0013_session_projection',
+        '0014_review_query_indexes',
+        '0015_session_model_call_usage'
       ]
     })
 

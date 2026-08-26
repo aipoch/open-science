@@ -40,13 +40,14 @@ export const createComputeJobRuntime = (
     onJobUpdated: deps.computeService.handleJobUpdated,
     broadcast,
     storageRoot: deps.storageRoot,
-    harvestFn: (job) =>
+    harvestFn: (job, signal) =>
       harvest(job, {
         connectionBroker: deps.connectionBroker,
         hostRepository: deps.hostRepository,
         jobRepository: deps.jobRepository,
         storageRoot: deps.storageRoot,
-        broadcast
+        broadcast,
+        signal
       })
   }
 
@@ -54,9 +55,9 @@ export const createComputeJobRuntime = (
   const unbindDeletionRuntime = deps.jobDeletionOwner?.bindRuntime(poller)
   return {
     start: () => poller.start(),
-    stop: () => {
+    stop: async () => {
       unbindDeletionRuntime?.()
-      poller.stop()
+      await poller.stop()
     }
   }
 }

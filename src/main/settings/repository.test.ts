@@ -1358,13 +1358,15 @@ describe('settings repository: v2 official providers & activeModel migration', (
       enabled: { '/usr/bin/python3': true },
       installAuthorized: { '/usr/bin/python3': false }
     }
-    await repository.setRuntimeEnablement('python', enablement)
+    await repository.setRuntimeEnablement('python', () => enablement)
     expect((await repository.getSettings()).notebookRuntimeEnablement).toEqual({
       python: enablement
     })
 
-    // An entry that sanitizes to empty deletes the language and drops the map when it becomes empty.
-    await repository.setRuntimeEnablement('python', { enabled: {}, installAuthorized: {} })
+    await repository.setRuntimeEnablement('python', () => ({
+      enabled: {},
+      installAuthorized: {}
+    }))
     expect((await repository.getSettings()).notebookRuntimeEnablement).toBeUndefined()
   })
 
@@ -1372,7 +1374,7 @@ describe('settings repository: v2 official providers & activeModel migration', (
     const repository = new SettingsRepository(await createStorageRoot())
 
     // Trim + dedupe on write.
-    await repository.setManualInterpreters('python', [
+    await repository.setManualInterpreters('python', () => [
       '/opt/py/bin/python3',
       '  /opt/py/bin/python3  ',
       '/other/python'
@@ -1381,8 +1383,7 @@ describe('settings repository: v2 official providers & activeModel migration', (
       python: ['/opt/py/bin/python3', '/other/python']
     })
 
-    // An empty list deletes the language and drops the map once empty.
-    await repository.setManualInterpreters('python', [])
+    await repository.setManualInterpreters('python', () => [])
     expect((await repository.getSettings()).notebookManualInterpreters).toBeUndefined()
   })
 })

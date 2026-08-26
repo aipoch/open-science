@@ -78,6 +78,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     act(() => root.unmount())
     container.remove()
   })
@@ -227,5 +228,75 @@ describe('useJobAnalysisEffect persistence readiness', () => {
 
     expect(jobsPendingNotification).toHaveBeenCalledWith('session-1')
     expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('adds pending-scan jobs to the local store before dispatching analysis', async () => {
+    await act(async () => {
+      root.render(<Probe enabled />)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(useSessionJobStore.getState().jobsById.get('job-1')).toEqual(makeCompletedJob())
+    expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('retries a pending-analysis scan after a transient transport failure', async () => {
+    vi.useFakeTimers()
+    jobsPendingNotification
+      .mockRejectedValueOnce(new Error('main process unavailable'))
+      .mockResolvedValueOnce([makeCompletedJob()])
+
+    await act(async () => root.render(<Probe enabled />))
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync()
+    })
+
+    expect(jobsPendingNotification).toHaveBeenCalledTimes(2)
+    expect(sendMessage).toHaveBeenCalledOnce()
+    vi.useRealTimers()
+  })
+
+  it('projects successful consumption locally without waiting for a follow-up hydration', async () => {
+    jobsPendingNotification.mockResolvedValueOnce([])
+    jobsList.mockImplementationOnce(() => new Promise(() => undefined))
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-a',
+          title: 'Ready',
+          cwd: '/workspace/project-a',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    await act(async () => root.render(<Probe enabled />))
+    act(() => useSessionJobStore.getState().applyUpdate(makeCompletedJob()))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+
+    expect(sendMessage).toHaveBeenCalledOnce()
+    act(() => {
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.id === 'session-1' ? { ...session, status: 'running' } : session
+        )
+      }))
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.id === 'session-1' ? { ...session, status: 'idle' } : session
+        )
+      }))
+    })
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+
+    expect(jobsMarkConsumed).toHaveBeenCalledWith('session-1', ['job-1'])
+    expect(useSessionJobStore.getState().jobsById.get('job-1')?.notification_consumed_at).toEqual(
+      expect.any(Number)
+    )
   })
 })

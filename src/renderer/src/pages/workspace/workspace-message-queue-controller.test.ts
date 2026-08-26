@@ -202,6 +202,22 @@ describe('workspace message queue controller', () => {
     expect(input.composer.discardSnapshot).not.toHaveBeenCalled()
   })
 
+  it('drops queued messages when the application queue provider is recreated', () => {
+    const input = options(session())
+    const application = renderController(input)
+
+    act(() => application.result.current.lifecycle.enqueue(admission('lost on restart')))
+    application.unmount()
+
+    const restartedApplication = renderController(input)
+    mounted.push(restartedApplication)
+
+    expect(restartedApplication.result.current.items).toEqual([])
+    expect(input.composer.discardSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ doc: textDoc('lost on restart') })
+    )
+  })
+
   it('continues draining queued messages while Project navigation is open', async () => {
     let currentSession = session()
     let notifySessionChanged: (() => void) | undefined

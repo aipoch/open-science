@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME } from '../../../../shared/file-save'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 
 describe('ManagedFileDownloadButton', () => {
@@ -243,6 +244,29 @@ describe('ManagedFileDownloadButton', () => {
       'Failed to download managed file: report.csv',
       expect.any(Error)
     )
+  })
+
+  it('explains the Web Blob fallback limit when the browser cannot stream the file', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const error = Object.assign(new Error('Managed file exceeds the Web Blob download limit.'), {
+      name: WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME
+    })
+    window.api = {
+      saveManagedFile: vi.fn().mockRejectedValue(error)
+    } as unknown as Window['api']
+    const button = await renderButton()
+
+    await act(async () => {
+      button.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const message =
+      "report.csv exceeds this browser's 512 MB download limit. Use a browser that supports streaming file saves."
+    expect(button.getAttribute('aria-label')).toBe(message)
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(message)
+    expect(consoleError).toHaveBeenCalledWith('Failed to download managed file: report.csv', error)
   })
 
   it('shows each save state inside the stable primary action', async () => {

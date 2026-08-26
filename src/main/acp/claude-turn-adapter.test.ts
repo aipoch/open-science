@@ -109,6 +109,79 @@ describe('Claude Code turn adapter', () => {
     })
   })
 
+  it('publishes exact top-level calls only when Claude count and aggregate usage prove coverage', async () => {
+    const probe = await claudeCodeTurnAdapter.begin({
+      providerSessionId: 'provider-session-1',
+      cwd: '/workspace'
+    })
+    const observeAssistant = (
+      id: string,
+      inputTokens: number,
+      cachedReadTokens: number,
+      cachedWriteTokens: number,
+      outputTokens: number
+    ): void =>
+      probe.observe?.({
+        sessionId: 'provider-session-1',
+        message: {
+          type: 'assistant',
+          parent_tool_use_id: null,
+          message: {
+            id,
+            usage: {
+              input_tokens: inputTokens,
+              cache_read_input_tokens: cachedReadTokens,
+              cache_creation_input_tokens: cachedWriteTokens,
+              output_tokens: outputTokens
+            }
+          }
+        }
+      })
+
+    observeAssistant('claude-call-1', 10, 2, 1, 3)
+    observeAssistant('claude-call-2', 20, 4, 2, 5)
+    probe.observe?.({
+      sessionId: 'provider-session-1',
+      message: { type: 'result', num_turns: 2, origin: { kind: 'human' } }
+    })
+
+    await expect(
+      Promise.resolve(
+        probe.finalize({
+          response: {
+            stopReason: 'end_turn',
+            usage: {
+              inputTokens: 30,
+              cachedReadTokens: 6,
+              cachedWriteTokens: 3,
+              outputTokens: 8
+            }
+          } as PromptResponse
+        })
+      )
+    ).resolves.toMatchObject({
+      modelTurnCount: 2,
+      modelCalls: [
+        {
+          sourceInvocationId: 'claude-call-1',
+          inputTokens: 10,
+          cacheTokens: 3,
+          cachedReadTokens: 2,
+          cachedWriteTokens: 1,
+          outputTokens: 3
+        },
+        {
+          sourceInvocationId: 'claude-call-2',
+          inputTokens: 20,
+          cacheTokens: 6,
+          cachedReadTokens: 4,
+          cachedWriteTokens: 2,
+          outputTokens: 5
+        }
+      ]
+    })
+  })
+
   it('sums user-driven results while excluding every autonomous Claude origin', async () => {
     const probe = await claudeCodeTurnAdapter.begin({
       providerSessionId: 'provider-session-1',

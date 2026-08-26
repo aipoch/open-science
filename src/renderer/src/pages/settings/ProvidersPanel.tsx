@@ -15,10 +15,11 @@ import { errorDetail } from '@/lib/error-detail'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
-import { ReviewerModelSelect, SubagentModelSelect, VisionModelSelect } from './SubagentModelSelect'
-import { SettingsSection } from './SettingsLayout'
+import { ScenarioModelList } from './ScenarioModelList'
+import { SettingsField, SettingsRow, SettingsSection } from './SettingsLayout'
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
 import { XaiOAuthSignInDialog } from './XaiOAuthSignInDialog'
+import { localizeProviderResourceMessage } from './validation-message'
 
 type ProvidersPanelProps = {
   // Navigation callbacks into the page-level history: the add/edit provider form is a breadcrumb
@@ -49,7 +50,7 @@ type ProviderActionError = {
 type ProviderPanelError = string | ProviderActionError
 
 const providerErrorCopy = (error: ProviderPanelError, t: TFunction): string => {
-  if (typeof error === 'string') return error
+  if (typeof error === 'string') return localizeProviderResourceMessage(error, t)
 
   switch (error.action) {
     case 'test':
@@ -396,73 +397,40 @@ const ProvidersPanel = ({
 
   return (
     <div className="space-y-5 p-5">
-      {/* Active model is its own section so the current selection reads separately from provider
-          management. */}
-      {visibleProviders.length > 0 ? (
-        <SettingsSection
-          title={t('Active model')}
-          aria-label={t('Active model')}
-          description={t('The model that drives new agent sessions.')}
-        >
-          <div className="max-w-md">
-            <ActiveModelSelect />
+      {/* Main model selection and reasoning effort share one section and one row, mirroring the
+          scenario model selectors below. The Model field needs at least one provider; the effort
+          control is always visible. */}
+      <SettingsSection
+        title={t('Main model')}
+        aria-label={t('Main model')}
+        description={
+          <>
+            {t('The model that drives new agent sessions.')}{' '}
+            {t(
+              'Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests.'
+            )}
+          </>
+        }
+      >
+        <SettingsRow layout="model-effort" className="py-0 lg:grid-cols-[minmax(0,1fr)_auto]">
+          {visibleProviders.length > 0 ? (
+            <SettingsField label={t('Model')}>
+              <ActiveModelSelect />
+            </SettingsField>
+          ) : null}
+          {/* Not a SettingsField: a <label> would forward clicks to the segmented control's first
+              radio option. The styling matches SettingsField's. */}
+          <div className="grid min-w-0 gap-1.5 text-sm font-medium">
+            <span>{t('Reasoning effort')}</span>
+            <ReasoningEffortSelect />
           </div>
-        </SettingsSection>
-      ) : null}
-
-      {/* Model-level generation tuning; always visible, unlike the Active model section above
-          which needs at least one provider. */}
-      <SettingsSection
-        title={t('Reasoning effort')}
-        aria-label={t('Reasoning effort')}
-        description={t(
-          'Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests.'
-        )}
-        separated={visibleProviders.length > 0}
-      >
-        <div className="max-w-md">
-          <ReasoningEffortSelect />
-        </div>
+        </SettingsRow>
       </SettingsSection>
 
-      <SettingsSection
-        title={t('Subagent model')}
-        aria-label={t('Subagent model')}
-        description={t('Model used by subagents when Delegation is on.')}
-        separated
-      >
-        <div className="max-w-2xl">
-          <SubagentModelSelect />
-        </div>
-      </SettingsSection>
+      {/* Subagent / Reviewer / Vision routing collapsed into a single accordion card. */}
+      <ScenarioModelList />
 
-      <SettingsSection
-        title={t('Reviewer model')}
-        aria-label={t('Reviewer model')}
-        description={t(
-          'Model used for manual, automatic, and re-run Reviews. Follow Active model keeps the current behavior; a fixed selection runs in an isolated Reviewer runtime.'
-        )}
-        separated
-      >
-        <div className="max-w-2xl">
-          <ReviewerModelSelect />
-        </div>
-      </SettingsSection>
-
-      <SettingsSection
-        title={t('Vision model')}
-        aria-label={t('Vision model')}
-        description={t(
-          'Reads attached images when the active model cannot. The selected provider receives only the image; the active model receives text evidence.'
-        )}
-        separated
-      >
-        <div className="max-w-2xl">
-          <VisionModelSelect />
-        </div>
-      </SettingsSection>
-
-      <SettingsSection title={t('Providers')} aria-label={t('Providers')} separated>
+      <SettingsSection title={t('Providers')} aria-label={t('Providers')}>
         <ProviderList
           providers={visibleProviders}
           activeProviderId={activeProviderId}
@@ -502,7 +470,11 @@ const ProvidersPanel = ({
               {providerErrorCopy(providerTestError, t)}
             </p>
             <DiagnosticDetails
-              detail={typeof providerTestError === 'string' ? undefined : providerTestError.detail}
+              detail={
+                typeof providerTestError === 'string' || !providerTestError.detail
+                  ? undefined
+                  : localizeProviderResourceMessage(providerTestError.detail, t)
+              }
             />
           </div>
         ) : null}

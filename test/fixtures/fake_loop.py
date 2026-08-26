@@ -11,6 +11,7 @@
 #   __FIGURE__         write a real 1x1 PNG into the figures dir and reference it in the response
 #   __OVERSIZED_LINE__:<bytes>  write an unframed stdout line of the requested size
 #   __WRITE_FILE__      write an output file into the kernel working directory
+#   __WRITE_HANDOFF_FILE__ write an output file into the shared handoff directory
 #   __OVERWRITE_FILE__  replace a pre-existing output in the kernel working directory
 #   __WRITE_DELAYED_A__ / __WRITE_DELAYED_B__ overlap two kernels writing the same data root
 import base64
@@ -36,6 +37,10 @@ def _respond(req_id, code, error=None, interrupt_ack=False):
         figures = [{"mime": "image/png", "path": path}]
     if code == "__WRITE_FILE__":
         with open("generated.csv", "w", encoding="utf-8") as handle:
+            handle.write("x,y\n1,2\n")
+    if code == "__WRITE_HANDOFF_FILE__":
+        handoff_dir = os.environ["OPEN_SCIENCE_HANDOFF_DIR"]
+        with open(os.path.join(handoff_dir, "generated.csv"), "w", encoding="utf-8") as handle:
             handle.write("x,y\n1,2\n")
     if code == "__OVERWRITE_FILE__":
         previous = os.stat("generated.csv")

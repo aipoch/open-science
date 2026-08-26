@@ -83,8 +83,13 @@ class ProjectRepository {
   // Updates editable fields, ignoring undefined values so callers can patch only what changed.
   // Pin-only changes preserve updatedAt because pinning controls placement, not research activity.
   async update(request: UpdateProjectRequest): Promise<Project> {
-    const data: { name?: string; description?: string; agentContext?: string; pinned?: boolean } =
-      {}
+    const data: {
+      name?: string
+      description?: string
+      agentContext?: string
+      pinned?: boolean
+      updatedAt?: Date
+    } = {}
 
     if (request.name !== undefined) {
       const name = request.name.trim()
@@ -134,6 +139,11 @@ class ProjectRepository {
 
     if (request.pinned !== undefined) data.pinned = request.pinned
 
+    // Prisma's wall-clock @updatedAt can repeat within one millisecond or move backward after a
+    // clock correction. Advance from the caller's compared value so every accepted content edit
+    // receives a distinct token while updatedAt remains the Project activity timestamp.
+    data.updatedAt = new Date(Math.max(Date.now(), request.expectedUpdatedAt + 1))
+
     const result = await client.project.updateMany({
       where: {
         id: request.id,
@@ -163,24 +173,19 @@ class ProjectRepository {
     }
 
     const client = await this.getClient()
-    const current = await client.project.findUnique({ where: { id: request.id } })
-    if (!current || current.deletedAt !== null) throw new Error('Project not found.')
-
     const expectedArchivedAt = request.expectedArchivedAt
-    const result = await client.project.updateMany({
-      where: {
-        id: request.id,
-        deletedAt: null,
-        archivedAt: expectedArchivedAt === null ? null : new Date(expectedArchivedAt)
-      },
-      data: {
-        archivedAt: request.archived ? new Date(archivedAt) : null,
-        // Prisma otherwise updates this @updatedAt field. Administrative visibility changes must
-        // not make a Project look newer than its underlying work.
-        updatedAt: current.updatedAt
-      }
-    })
-    if (result.count !== 1) {
+    // Prisma's @updatedAt automation also runs for administrative changes. Updating only the archive
+    // column in SQL preserves the activity timestamp without reading and later restoring a stale value.
+    const updated = await client.$executeRaw`
+      UPDATE "Project"
+      SET "archivedAt" = ${request.archived ? new Date(archivedAt) : null}
+      WHERE "id" = ${request.id}
+        AND "deletedAt" IS NULL
+        AND "archivedAt" IS ${expectedArchivedAt === null ? null : new Date(expectedArchivedAt)}
+    `
+    if (updated !== 1) {
+      const current = await client.project.findUnique({ where: { id: request.id } })
+      if (!current || current.deletedAt !== null) throw new Error('Project not found.')
       throw new Error('Project archive state changed elsewhere.')
     }
 

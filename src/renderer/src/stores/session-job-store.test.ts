@@ -64,6 +64,50 @@ describe('session job store — hydrate', () => {
     expect(state.jobsById.has('new')).toBe(true)
     expect(state.hydratedSessionId).toBe('sess-2')
   })
+
+  it('does not let an older response replace a newer session hydration', async () => {
+    let resolveFirst: ((jobs: JobSummary[]) => void) | undefined
+    let resolveSecond: ((jobs: JobSummary[]) => void) | undefined
+    setJobsApi({
+      jobsList: vi
+        .fn()
+        .mockImplementationOnce(
+          () => new Promise<JobSummary[]>((resolve) => (resolveFirst = resolve))
+        )
+        .mockImplementationOnce(
+          () => new Promise<JobSummary[]>((resolve) => (resolveSecond = resolve))
+        )
+    })
+
+    const firstHydration = useSessionJobStore.getState().hydrate('sess-1')
+    const secondHydration = useSessionJobStore.getState().hydrate('sess-2')
+
+    resolveSecond?.([makeJob({ job_id: 'new-session-job', session_id: 'sess-2' })])
+    await secondHydration
+    resolveFirst?.([makeJob({ job_id: 'old-session-job', session_id: 'sess-1' })])
+    await firstHydration
+
+    const state = useSessionJobStore.getState()
+    expect(state.hydratedSessionId).toBe('sess-2')
+    expect(state.jobsById.has('new-session-job')).toBe(true)
+    expect(state.jobsById.has('old-session-job')).toBe(false)
+  })
+
+  it('preserves a pushed update that arrives while hydration is pending', async () => {
+    let resolveHydration: ((jobs: JobSummary[]) => void) | undefined
+    setJobsApi({
+      jobsList: vi.fn(() => new Promise<JobSummary[]>((resolve) => (resolveHydration = resolve)))
+    })
+
+    const hydration = useSessionJobStore.getState().hydrate('sess-1')
+    useSessionJobStore
+      .getState()
+      .applyUpdate(makeJob({ job_id: 'job-race', session_id: 'sess-1', status: 'success' }))
+    resolveHydration?.([makeJob({ job_id: 'job-race', session_id: 'sess-1', status: 'running' })])
+    await hydration
+
+    expect(useSessionJobStore.getState().jobsById.get('job-race')?.status).toBe('success')
+  })
 })
 
 describe('session job store — applyUpdate', () => {

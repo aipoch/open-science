@@ -161,7 +161,7 @@ describe('PR Gate workflow', () => {
     expect(classify?.run).toContain('"lanes":["policy","i18n"]')
     expect(classify?.run).toContain('"bundles":["policy","static"]')
     expect(classify?.run).toContain(
-      'node "$TRUSTED_CLASSIFIER_DIR/classify-pr-changes.mjs" --base "$BASE_SHA" --head "$HEAD_SHA"'
+      'node "$TRUSTED_CLASSIFIER_DIR/module-impact-authority.mjs" --base "$BASE_SHA" --head "$HEAD_SHA"'
     )
     expect(classify?.run).toContain("mode: 'full'")
     expect(classify?.run).not.toContain(
@@ -169,11 +169,14 @@ describe('PR Gate workflow', () => {
     )
   })
 
-  it('publishes base-trusted module evidence without changing authoritative outputs', () => {
+  it('makes base-trusted module evidence authoritative without shadow steps', () => {
     const prepare = workflow.jobs.preflight.steps?.find(
+      ({ name }) => name === 'Prepare trusted classifier'
+    )
+    const shadowPrepare = workflow.jobs.preflight.steps?.find(
       ({ name }) => name === 'Prepare trusted module shadow'
     )
-    const publish = workflow.jobs.preflight.steps?.find(
+    const shadowPublish = workflow.jobs.preflight.steps?.find(
       ({ name }) => name === 'Publish module impact shadow'
     )
 
@@ -183,23 +186,15 @@ describe('PR Gate workflow', () => {
       lanes: '${{ steps.classify.outputs.lanes }}',
       plan: '${{ steps.classify.outputs.plan }}'
     })
-    expect(prepare).toMatchObject({ 'continue-on-error': true })
+    expect(prepare?.['continue-on-error']).toBeUndefined()
+    expect(prepare?.run).toContain('scripts/ci/module-impact-authority.mjs')
     expect(prepare?.run).toContain('scripts/ci/module-impact-shadow.mjs')
+    expect(prepare?.run).toContain('scripts/ci/module-test-impact.mjs')
+    expect(prepare?.run).toContain('scripts/ci/module-impact.json')
     expect(prepare?.run).toContain('git show "${BASE_SHA}:${file}"')
     expect(prepare?.run).toContain('source=bootstrap')
-    expect(publish).toMatchObject({
-      'continue-on-error': true,
-      env: {
-        AUTHORITATIVE_PLAN: '${{ steps.classify.outputs.plan }}',
-        BASE_SHA: '${{ steps.revisions.outputs.base }}',
-        HEAD_SHA: '${{ steps.revisions.outputs.head }}',
-        TRUSTED_MODULE_SHADOW_DIR: '${{ steps.trusted_module_shadow.outputs.dir }}',
-        TRUSTED_MODULE_SHADOW_SOURCE: '${{ steps.trusted_module_shadow.outputs.source }}'
-      }
-    })
-    expect(publish?.run).toContain('node "$TRUSTED_MODULE_SHADOW_DIR/module-impact-shadow.mjs"')
-    expect(publish?.run).toContain('Status: **bootstrap pending**')
-    expect(publish?.run).not.toContain('GITHUB_OUTPUT')
+    expect(shadowPrepare).toBeUndefined()
+    expect(shadowPublish).toBeUndefined()
   })
 
   it('aggregates all deterministic bundles into the stable PR Gate job', () => {
@@ -343,7 +338,9 @@ describe('PR Gate workflow', () => {
     expect(legacyCoverage.steps?.filter(({ run }) => run === 'npm run test:coverage')).toHaveLength(
       1
     )
-    expect(legacyCoverage.steps?.filter(({ run }) => run === 'npm ci')).toHaveLength(1)
+    expect(
+      legacyCoverage.steps?.filter(({ run }) => run === 'node scripts/ci/npm-ci.mjs')
+    ).toHaveLength(1)
     expect(unit).toMatchObject({
       name: 'Module tests and coverage',
       needs: ['preflight', 'unit_shard'],
@@ -382,9 +379,13 @@ describe('PR Gate workflow', () => {
     expect(related).toMatchObject({
       id: 'unit_macos_related',
       'continue-on-error': true,
-      env: { BASE_SHA: '${{ needs.preflight.outputs.base }}' },
-      run: 'npx vitest run --coverage --changed "$BASE_SHA"'
+      env: {
+        BASE_SHA: '${{ needs.preflight.outputs.base }}',
+        HEAD_SHA: '${{ needs.preflight.outputs.head }}'
+      },
+      run: 'npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA"'
     })
+    expect(related?.run).not.toMatch(/(?:^|\s)--changed(?:\s|$)/)
     expect(related?.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'selective'")
     expect(download).toMatchObject({
       if: "${{ needs.unit_shard.result != 'skipped' }}",
@@ -417,13 +418,17 @@ describe('PR Gate workflow', () => {
   it('shares dependency installation and Electron builds inside platform bundles', () => {
     for (const bundle of ['static', 'unit', 'unit_shard', 'windows_core', 'macos_e2e']) {
       expect(
-        workflow.jobs[bundle].steps?.filter(({ run }) => run === 'npm ci'),
+        workflow.jobs[bundle].steps?.filter(({ run }) => run === 'node scripts/ci/npm-ci.mjs'),
         `${bundle} must install dependencies exactly once`
       ).toHaveLength(1)
     }
     expect(
       workflow.jobs.windows_e2e.steps?.filter(({ name }) => name === 'Install dependencies')
-    ).toEqual([expect.objectContaining({ run: 'npm ci --prefer-offline --no-audit --fund=false' })])
+    ).toEqual([
+      expect.objectContaining({
+        run: 'node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false'
+      })
+    ])
 
     const macosRuns = workflow.jobs.macos_e2e.steps?.map(({ run }) => run).filter(Boolean)
     expect(macosRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
@@ -445,6 +450,10 @@ describe('PR Gate workflow', () => {
         'npm run test:e2e:accessibility'
       ])
     )
+  })
+
+  it('budgets the complete Windows E2E path beyond dependency and build setup', () => {
+    expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(25)
   })
 
   it('runs Windows accessibility only for a legacy selected lane', () => {

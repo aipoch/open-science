@@ -13,6 +13,8 @@ import type { ResolvedProvider } from './provider-env'
 import { ResponsesBridge, responsesToChatRequest } from './responses-bridge'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import { normalizeResponsesBaseUrl } from '../agent-framework/codex'
+import { ResponseBodyLimitError, readBoundedResponseText } from './bounded-response'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 // Runs a real connectivity/auth probe for a provider and classifies the outcome into an actionable
 // category. Request construction and classification are pure so the branch matrix is unit-testable;
@@ -324,8 +326,15 @@ const extractProviderErrorMessage = (bodyText: string): string | undefined => {
 // Reads and extracts a failed response's error message, tolerating a body that can't be read.
 const readProviderErrorMessage = async (response: Response): Promise<string | undefined> => {
   try {
-    return extractProviderErrorMessage(await response.text())
-  } catch {
+    return extractProviderErrorMessage(
+      await readBoundedResponseText(
+        response,
+        PROVIDER_RESOURCE_LIMITS.validationResponseBytes,
+        'Provider validation response'
+      )
+    )
+  } catch (error) {
+    if (error instanceof ResponseBodyLimitError) throw error
     return undefined
   }
 }
@@ -471,6 +480,39 @@ type LocalResponsesValidationAdapter = {
   missingToolCallMessage: string
 }
 
+const createBoundedValidationFetch =
+  (fetchImpl: typeof fetch): typeof fetch =>
+  async (input, init) => {
+    const response = await fetchImpl(input, init)
+
+    try {
+      const bodyText = await readBoundedResponseText(
+        response,
+        PROVIDER_RESOURCE_LIMITS.validationResponseBytes,
+        'Provider validation response'
+      )
+      const headers = new Headers(response.headers)
+      headers.delete('content-encoding')
+      headers.set('content-length', String(Buffer.byteLength(bodyText, 'utf8')))
+      return new Response(bodyText, {
+        status: response.status,
+        statusText: response.statusText,
+        headers
+      })
+    } catch (error) {
+      if (!(error instanceof ResponseBodyLimitError)) throw error
+      const bodyText = JSON.stringify({ error: { message: error.message } })
+      return new Response(bodyText, {
+        status: response.ok ? 413 : response.status,
+        ...(response.ok ? {} : { statusText: response.statusText }),
+        headers: {
+          'content-type': 'application/json',
+          'content-length': String(Buffer.byteLength(bodyText, 'utf8'))
+        }
+      })
+    }
+  }
+
 const validateProviderThroughLocalResponsesAdapter = async (
   adapter: LocalResponsesValidationAdapter,
   timeoutMs: number
@@ -489,16 +531,36 @@ const validateProviderThroughLocalResponsesAdapter = async (
       body: JSON.stringify(adapter.body),
       signal: controller.signal
     })
-    let category = classifyStatus(response.status)
-    const bodyText = await response.text()
+    const upstreamStatus = Number(response.headers.get('x-open-science-upstream-status'))
+    const status =
+      Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599
+        ? upstreamStatus
+        : response.status
+    let category = classifyStatus(status)
+    let bodyText: string
+    try {
+      bodyText = await readBoundedResponseText(
+        response,
+        PROVIDER_RESOURCE_LIMITS.validationResponseBytes,
+        'Provider validation response'
+      )
+    } catch (error) {
+      if (error instanceof ResponseBodyLimitError) {
+        return toResult('unknown', {
+          status,
+          message: error.message
+        })
+      }
+      throw error
+    }
     const providerMessage = extractProviderErrorMessage(bodyText)
 
-    if ((response.status === 400 || response.status === 404) && providerMessage) {
+    if ((status === 400 || status === 404) && providerMessage) {
       category = isModelNotFoundMessage(providerMessage) ? 'model-not-found' : 'unknown'
     }
     if (category !== 'ok') {
       return toResult(category, {
-        status: response.status,
+        status,
         ...(category === 'unknown' || category === 'server-error'
           ? { message: providerMessage }
           : {})
@@ -506,12 +568,12 @@ const validateProviderThroughLocalResponsesAdapter = async (
     }
     if (!adapter.hasRequiredToolCall(bodyText)) {
       return toResult('unknown', {
-        status: response.status,
+        status,
         message: adapter.missingToolCallMessage
       })
     }
 
-    return toResult('ok', { status: response.status })
+    return toResult('ok', { status })
   } catch (error) {
     return toResult(classifyFetchError(error), {
       message: error instanceof Error ? error.message : String(error)
@@ -561,7 +623,7 @@ const validateProviderThroughNativeResponsesCompatibility = async (
 
   const proxy = new NativeResponsesCompatibilityProxy(
     { baseUrl: targetBaseUrl, key: provider.key, model: provider.model },
-    fetchImpl
+    createBoundedValidationFetch(fetchImpl)
   )
   return validateProviderThroughLocalResponsesAdapter(
     {
@@ -627,7 +689,14 @@ const validateCustomProvider = async (
     let providerMessage: string | undefined
 
     if (response.status < 200 || response.status >= 300) {
-      providerMessage = await readProviderErrorMessage(response)
+      try {
+        providerMessage = await readProviderErrorMessage(response)
+      } catch (error) {
+        if (error instanceof ResponseBodyLimitError) {
+          return toResult(category, { status: response.status, message: error.message })
+        }
+        throw error
+      }
       if ((response.status === 400 || response.status === 404) && providerMessage) {
         category = isModelNotFoundMessage(providerMessage) ? 'model-not-found' : 'unknown'
       }
@@ -647,8 +716,18 @@ const validateCustomProvider = async (
     if (category === 'ok' && request.endpoint === 'anthropic') {
       let bodyText = ''
       try {
-        bodyText = await response.text()
-      } catch {
+        bodyText = await readBoundedResponseText(
+          response,
+          PROVIDER_RESOURCE_LIMITS.validationResponseBytes,
+          'Provider validation response'
+        )
+      } catch (error) {
+        if (error instanceof ResponseBodyLimitError) {
+          return toResult('unknown', {
+            status: response.status,
+            message: error.message
+          })
+        }
         // An unreadable success body cannot prove the Messages contract.
       }
       if (!hasValidAnthropicMessage(bodyText)) {
@@ -662,8 +741,18 @@ const validateCustomProvider = async (
     if (category === 'ok' && request.requiresBridgeToolCall) {
       let bodyText = ''
       try {
-        bodyText = await response.text()
-      } catch {
+        bodyText = await readBoundedResponseText(
+          response,
+          PROVIDER_RESOURCE_LIMITS.validationResponseBytes,
+          'Provider validation response'
+        )
+      } catch (error) {
+        if (error instanceof ResponseBodyLimitError) {
+          return toResult('unknown', {
+            status: response.status,
+            message: error.message
+          })
+        }
         // An unreadable success body cannot prove the bridge contract.
       }
       if (!hasBridgeProbeToolCall(bodyText)) {

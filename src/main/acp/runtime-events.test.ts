@@ -624,4 +624,12 @@ describe('extractToolFailureText', () => {
       extractToolFailureText([{ type: 'terminal', terminalId: 't' } as unknown as ToolCallContent])
     ).toBeUndefined()
   })
+
+  it('does not treat arbitrary raw MCP result text as a failure reason', () => {
+    expect(
+      extractToolFailureText(undefined, {
+        result: { content: [{ type: 'text', text: 'artifact contents: api_key=do-not-log' }] }
+      })
+    ).toBeUndefined()
+  })
 })

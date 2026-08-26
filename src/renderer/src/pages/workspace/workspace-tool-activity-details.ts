@@ -3,7 +3,11 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 import { formatByteSize } from '@/lib/utils'
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunStatus } from '../../../../shared/notebook'
-import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
+import {
+  isNotebookManagePackagesToolName,
+  resolveNotebookLanguage,
+  resolveNotebookRunToolName
+} from './notebook-tool-names'
 import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
 
 type ToolCodeSection = {
@@ -789,24 +793,62 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
 
 // Detects the manage_packages MCP tool so an install renders a friendly summary, not raw JSON.
 const isManagePackagesActivity = (activity: ToolActivity): boolean => {
-  const providerName = trimDetail(activity.providerToolName)?.toLowerCase() ?? ''
+  return (
+    isNotebookManagePackagesToolName(activity.providerToolName) ||
+    isNotebookManagePackagesToolName(activity.title)
+  )
+}
 
-  return providerName.endsWith('manage_packages')
+const isManagePackagesResult = (value: unknown): value is Record<string, unknown> =>
+  isRecord(value) &&
+  ['ok', 'needsRestart', 'method', 'environmentName', 'packageChanges', 'error'].some(
+    (key) => key in value
+  )
+
+// ACP providers retain MCP results in different envelopes. Unwrap only the known result/content
+// fields so the renderer can use the compact verified package versions without reading installer logs.
+const parseManagePackagesResultValue = (
+  value: unknown,
+  depth = 0
+): Record<string, unknown> | undefined => {
+  if (depth > 3) return undefined
+
+  if (typeof value === 'string') {
+    try {
+      return parseManagePackagesResultValue(JSON.parse(value), depth + 1)
+    } catch {
+      return undefined
+    }
+  }
+
+  if (!isRecord(value)) return undefined
+  for (const key of ['structuredContent', 'result'] as const) {
+    const nested = parseManagePackagesResultValue(value[key], depth + 1)
+    if (nested) return nested
+  }
+
+  if (Array.isArray(value.content)) {
+    for (const block of value.content) {
+      if (!isRecord(block) || block.type !== 'text') continue
+      const nested = parseManagePackagesResultValue(block.text, depth + 1)
+      if (nested) return nested
+    }
+  } else {
+    const nested = parseManagePackagesResultValue(value.content, depth + 1)
+    if (nested) return nested
+  }
+
+  return isManagePackagesResult(value) ? value : undefined
 }
 
 // Reads the install result the manage_packages tool returns as JSON content (or raw output).
 const parseManagePackagesResult = (activity: ToolActivity): Record<string, unknown> | undefined => {
   for (const text of collectToolTexts(activity)) {
-    try {
-      const parsed: unknown = JSON.parse(text)
-
-      if (isRecord(parsed)) return parsed
-    } catch {
-      // Not a JSON payload; keep scanning the remaining content blocks.
-    }
+    const result = parseManagePackagesResultValue(text)
+    if (result) return result
   }
 
-  return isRecord(activity.rawOutput) ? activity.rawOutput : undefined
+  return parseManagePackagesResultValue(activity.rawOutput)
 }
 
 // Trims the install log for display: drops libmamba trace/debug verbosity and backtrace decoration
@@ -823,6 +865,17 @@ const cleanInstallLog = (log: string): string =>
     .join('\n')
     .replace(/\n{3,}/gu, '\n\n')
     .trim()
+
+// Keeps a compact actionable failure when an ACP provider returns installer output as plain text
+// instead of the structured manage_packages result envelope.
+const getManagePackagesFallbackText = (activity: ToolActivity): string | undefined => {
+  const contentText = collectToolTexts(activity).join('\n\n').trim()
+  if (contentText) return cleanInstallLog(contentText)
+
+  return typeof activity.rawOutput === 'string'
+    ? trimDetail(cleanInstallLog(activity.rawOutput))
+    : undefined
+}
 
 // Reads the requested package list from tool input for the row subtitle.
 const getManagedPackageList = (activity: ToolActivity): string | undefined => {
@@ -1073,6 +1126,8 @@ export {
   getLoadedSkillName,
   getToolDisplayName,
   isEditActivity,
+  getManagePackagesFallbackText,
+  parseManagePackagesResult,
   isSkillActivity
 }
 export type {

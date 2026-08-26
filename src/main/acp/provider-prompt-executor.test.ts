@@ -178,6 +178,17 @@ describe('AcpProviderPromptExecutor', () => {
           outputTokens: 2
         },
         modelTurnCount: 1,
+        modelCalls: [
+          {
+            sourceInvocationId: 'assistant-1',
+            inputTokens: 4,
+            cacheTokens: 1,
+            cachedReadTokens: 1,
+            cachedWriteTokens: 0,
+            outputTokens: 2,
+            contextUsedTokens: 5
+          }
+        ],
         contextUsedTokens: 5,
         lastModelStepUsage: {
           inputTokens: 4,

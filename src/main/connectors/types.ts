@@ -28,6 +28,10 @@ export type ToolDescriptor = {
   example?: string
   required?: string[]
   format?: 'json' | 'text'
+  // Per-attempt wall-clock deadline, including response-body streaming. Overrides the engine default.
+  totalTimeoutMs?: number
+  // Raw response-body budget. Overrides the engine default for tools with unusually small or large payloads.
+  maxResponseBytes?: number
   url?: (args: Record<string, unknown>) => string
   parse?: (raw: unknown, args: Record<string, unknown>) => unknown
   run?: (ctx: ToolContext, args: Record<string, unknown>) => Promise<unknown>

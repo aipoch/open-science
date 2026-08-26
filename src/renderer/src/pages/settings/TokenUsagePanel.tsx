@@ -38,6 +38,26 @@ type UsageProjectionLoadResult = Readonly<{
   lastRefreshedAt?: number
 }>
 
+type LoadUsage = () => Promise<SessionUsageProjection>
+
+const USAGE_PROJECTION_CACHE_TTL_MS = 10 * 60_000
+const usageProjectionCache = new WeakMap<LoadUsage, UsageProjectionLoadResult>()
+
+const readCachedUsageProjection = (
+  loadUsage: LoadUsage | undefined
+): UsageProjectionLoadResult | undefined => {
+  if (!loadUsage) return undefined
+  const cached = usageProjectionCache.get(loadUsage)
+  if (
+    cached?.lastRefreshedAt !== undefined &&
+    Date.now() - cached.lastRefreshedAt < USAGE_PROJECTION_CACHE_TTL_MS
+  ) {
+    return cached
+  }
+  usageProjectionCache.delete(loadUsage)
+  return undefined
+}
+
 const PERIODS: ReadonlyArray<{ value: TokenUsagePeriod; label: string; shortLabel: string }> = [
   { value: 'today', label: 'Today', shortLabel: 'Today' },
   { value: 'week', label: 'This week', shortLabel: 'Week' },
@@ -94,26 +114,32 @@ function TokenUsagePanel({
   const now = providedNow ?? currentTime
   const [period, setPeriod] = useState<TokenUsagePeriod>('30-days')
   const [heatmapMetric, setHeatmapMetric] = useState<TokenUsageHeatmapMetric>('totalTokens')
-  const [usageProjectionLoadResult, setUsageProjectionLoadResult] =
-    useState<UsageProjectionLoadResult>()
+  const loadUsage = window.api?.sessions?.loadUsage
+  const [initialCachedUsageProjection] = useState(() => readCachedUsageProjection(loadUsage))
+  const [usageProjectionLoadResult, setUsageProjectionLoadResult] = useState<
+    UsageProjectionLoadResult | undefined
+  >(initialCachedUsageProjection)
   const [usageProjectionLoadAttempt, setUsageProjectionLoadAttempt] = useState(0)
-  const canLoadUsageProjection = typeof window.api?.sessions?.loadUsage === 'function'
-  const [isUsageProjectionRefreshing, setIsUsageProjectionRefreshing] =
-    useState(canLoadUsageProjection)
+  const canLoadUsageProjection = typeof loadUsage === 'function'
+  const [isUsageProjectionRefreshing, setIsUsageProjectionRefreshing] = useState(
+    canLoadUsageProjection && initialCachedUsageProjection === undefined
+  )
   const usageProjection = usageProjectionLoadResult?.projection
   const usageProjectionLoadSettled = usageProjectionLoadResult !== undefined
   const usageProjectionLoadFailed = usageProjectionLoadResult?.failed === true
   const lastRefreshedAt = usageProjectionLoadResult?.lastRefreshedAt
 
   useEffect(() => {
-    const loadUsage = window.api?.sessions?.loadUsage
     if (typeof loadUsage !== 'function') return
+    if (usageProjectionLoadAttempt === 0 && initialCachedUsageProjection !== undefined) return
     let active = true
     void loadUsage()
       .then((projection) => {
         if (!active) return
         const refreshedAt = Date.now()
-        setUsageProjectionLoadResult({ projection, lastRefreshedAt: refreshedAt })
+        const result = { projection, lastRefreshedAt: refreshedAt }
+        usageProjectionCache.set(loadUsage, result)
+        setUsageProjectionLoadResult(result)
         setCurrentTime(refreshedAt)
         setRelativeTimeNow(refreshedAt)
       })
@@ -126,7 +152,7 @@ function TokenUsagePanel({
     return () => {
       active = false
     }
-  }, [usageProjectionLoadAttempt])
+  }, [initialCachedUsageProjection, loadUsage, usageProjectionLoadAttempt])
 
   useEffect(() => {
     if (lastRefreshedAt === undefined) return
@@ -306,13 +332,63 @@ function TokenUsagePanel({
   if (canLoadUsageProjection && usageProjection === undefined && !usageProjectionLoadSettled) {
     return (
       <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
-        <p
+        <section
           role="status"
+          aria-busy="true"
           data-slot="token-usage-loading"
-          className="px-4 py-6 text-sm text-muted-foreground sm:px-5"
+          className="animate-pulse px-4 pb-6 pt-6 motion-reduce:animate-none sm:px-5"
         >
-          {t('Loading…')}
-        </p>
+          <span className="sr-only">{t('Loading…')}</span>
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+            <div className="space-y-3">
+              <div className="h-7 w-40 rounded-md bg-muted" />
+              <div className="h-4 w-full max-w-md rounded bg-muted" />
+            </div>
+            <div className="h-11 w-full rounded-lg bg-muted lg:w-96" />
+          </div>
+
+          <div className="mt-5 flex min-h-7 items-center justify-between">
+            <div className="h-3 w-24 rounded bg-muted" />
+            <div className="size-7 rounded-md bg-muted" />
+          </div>
+
+          <div className="mt-3 border-y border-border py-5">
+            <div className="grid grid-cols-2 gap-x-5 gap-y-5 lg:grid-cols-4">
+              {Array.from({ length: 4 }, (_, index) => (
+                <div key={index} data-slot="token-usage-skeleton-stat" className="space-y-2">
+                  <div className="h-3 w-20 rounded bg-muted" />
+                  <div className="h-7 w-28 rounded-md bg-muted" />
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 grid grid-cols-2 gap-x-5 gap-y-5 lg:grid-cols-4">
+              {Array.from({ length: 4 }, (_, index) => (
+                <div key={index} data-slot="token-usage-skeleton-stat" className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="h-3 w-20 rounded bg-muted" />
+                    <div className="h-6 w-16 rounded-md bg-muted" />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="h-3 w-24 rounded bg-muted" />
+                    <div className="h-6 w-20 rounded-md bg-muted" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-8 pt-7">
+            <div data-slot="token-usage-skeleton-chart" className="space-y-4">
+              <div className="h-5 w-36 rounded bg-muted" />
+              <div className="h-36 rounded-xl bg-muted/70" />
+            </div>
+            <div data-slot="token-usage-skeleton-chart" className="space-y-4">
+              <div className="h-5 w-44 rounded bg-muted" />
+              <div className="h-40 rounded-xl bg-muted/70" />
+            </div>
+          </div>
+        </section>
       </div>
     )
   }

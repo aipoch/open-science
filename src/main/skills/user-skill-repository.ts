@@ -10,7 +10,7 @@ import {
   type AgentHomeMatchResult,
   type AgentHomeSkillSummary
 } from './agent-home-skill-owner'
-import type { FetchLike, ScannedSkill } from './github-import'
+import type { FetchLike, GitHubFetchOptions, ScannedSkill } from './github-import'
 import type { BundledSkill } from './registry'
 import { SkillBundleImportOwner } from './skill-bundle-import-owner'
 import {
@@ -112,13 +112,18 @@ class UserSkillRepository {
   async importFromGitHub(
     url: string,
     fetchImpl?: FetchLike,
-    reservedNames: readonly string[] = []
+    reservedNames: readonly string[] = [],
+    options: GitHubFetchOptions = {}
   ): Promise<ImportOutcome> {
-    return this.bundleImports.importFromGitHub(url, fetchImpl, reservedNames)
+    return this.bundleImports.importFromGitHub(url, fetchImpl, reservedNames, options)
   }
 
-  async previewGitHubSkill(url: string, fetchImpl?: FetchLike): Promise<ParsedSkillPreview> {
-    return this.bundleImports.previewGitHubSkill(url, fetchImpl)
+  async previewGitHubSkill(
+    url: string,
+    fetchImpl?: FetchLike,
+    options: GitHubFetchOptions = {}
+  ): Promise<ParsedSkillPreview> {
+    return this.bundleImports.previewGitHubSkill(url, fetchImpl, options)
   }
 
   async previewZip(zip: Buffer): Promise<SkillBundlePreviewResult> {
@@ -142,9 +147,10 @@ class UserSkillRepository {
 
   async scanRepo(
     repoInput: string,
-    fetchImpl?: FetchLike
+    fetchImpl?: FetchLike,
+    options: GitHubFetchOptions = {}
   ): Promise<(ScannedSkill & { alreadyImported: boolean })[]> {
-    return this.bundleImports.scanRepo(repoInput, fetchImpl)
+    return this.bundleImports.scanRepo(repoInput, fetchImpl, options)
   }
 
   async matchImportedAgentHomeSkills(

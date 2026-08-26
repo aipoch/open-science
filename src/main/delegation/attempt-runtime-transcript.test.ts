@@ -88,6 +88,17 @@ describe('Attempt runtime transcript projection', () => {
         outputTokens: 30,
         turnCount: 1
       },
+      modelCallUsage: [
+        {
+          id: 'message-2:model-call:0',
+          index: 0,
+          inputTokens: 100,
+          cacheTokens: 20,
+          outputTokens: 30,
+          contextUsedTokens: 120,
+          contextWindowSize: 200_000
+        }
+      ],
       createMessageId: () => `message-${++messageId}`
     })
 
@@ -110,7 +121,18 @@ describe('Attempt runtime transcript projection', () => {
           cacheTokens: 20,
           outputTokens: 30,
           turnCount: 1
-        }
+        },
+        modelCallUsage: [
+          {
+            id: 'message-2:model-call:0',
+            index: 0,
+            inputTokens: 100,
+            cacheTokens: 20,
+            outputTokens: 30,
+            contextUsedTokens: 120,
+            contextWindowSize: 200_000
+          }
+        ]
       })
     ])
     expect(transcript.activities).toEqual([

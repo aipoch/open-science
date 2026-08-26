@@ -58,6 +58,7 @@ type PreloadApi = {
     loadAll: () => unknown
     loadOne: (request: unknown) => unknown
     saveSession: (session: unknown, options?: unknown) => unknown
+    editDetails: (request: unknown) => unknown
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
     exportConversation: (request: unknown) => unknown
@@ -437,6 +438,7 @@ describe('preload bridge — public surface inventory', () => {
       'saveProjectArtifacts',
       'saveSessionArtifacts',
       'sessions.deleteSession',
+      'sessions.editDetails',
       'sessions.exportConversation',
       'sessions.list',
       'sessions.loadAll',
@@ -536,6 +538,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setProjectFilesFilter',
       'settings.setReasoningEffort',
       'settings.setReviewerModel',
+      'settings.setSessionDetailsModel',
       'settings.setSkillEnabled',
       'settings.setSkillsEnabled',
       'settings.setSubagentModel',
@@ -1014,6 +1017,12 @@ type ForwardingCase = {
 
 const sampleSession = { id: 's-1', projectId: 'p-1', title: 't' }
 const sampleDeleteSession = { projectId: 'p-1', sessionId: 's-1' }
+const sampleEditSessionDetails = {
+  projectId: 'p-1',
+  sessionId: 's-1',
+  title: 'Edited',
+  description: 'Description'
+}
 const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
 const sampleConversationExport = {
   projectId: 'p-1',
@@ -1139,6 +1148,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.sessions.saveSession(sampleSession),
     channel: 'sessions:save-session',
     args: [sampleSession]
+  },
+  {
+    name: 'sessions.editDetails → sessions:edit-details',
+    invoke: (a) => a.sessions.editDetails(sampleEditSessionDetails),
+    channel: 'sessions:edit-details',
+    args: [sampleEditSessionDetails]
   },
   {
     name: 'sessions.deleteSession → sessions:delete-session',

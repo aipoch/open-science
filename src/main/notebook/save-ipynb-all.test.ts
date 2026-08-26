@@ -5,6 +5,10 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  translateNativeMessage,
+  type NativeTranslateOptions
+} from '../locale/main-process-messages'
+import {
   findExistingTargets,
   resolveTargets,
   saveIpynbAll,
@@ -222,14 +226,35 @@ describe('saveIpynbAll', () => {
     await writeFile(firstPath, '"old python"', 'utf8')
     const electron = fakeElectron({ filePaths: [directory], overwriteResponse: 1 })
     const translate = vi.fn(
-      (key: string, values?: Record<string, string | number>) => `${key}:${values?.count ?? ''}`
+      (key: string, values?: NativeTranslateOptions) => `${key}:${values?.count ?? ''}`
     )
 
     await saveIpynbAll([FILES[0]!], { electron, fsCheck: realFsCheck, fsOps: realFsOps }, translate)
 
     expect(translate).toHaveBeenCalledWith(
       '{{count}} notebooks already exist in the chosen directory.',
-      { count: 1 }
+      {
+        count: 1,
+        defaultValue_one: '{{count}} notebook already exists in the chosen directory.'
+      }
+    )
+  })
+
+  it('passes the final singular English conflict message to the native dialog', async () => {
+    const firstPath = join(directory, FILES[0]!.name)
+    await writeFile(firstPath, '"old python"', 'utf8')
+    const electron = fakeElectron({ filePaths: [directory], overwriteResponse: 1 })
+
+    await saveIpynbAll(
+      [FILES[0]!],
+      { electron, fsCheck: realFsCheck, fsOps: realFsOps },
+      (key, values) => translateNativeMessage('en', key, values)
+    )
+
+    expect(electron.dialog.showMessageBox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '1 notebook already exists in the chosen directory.'
+      })
     )
   })
 

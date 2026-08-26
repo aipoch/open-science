@@ -14,6 +14,7 @@ const manifest: UpdateManifest = {
   version: '0.3.0',
   releaseDate: '',
   notes: 'release notes',
+  localizedNotes: { 'zh-Hans': '发行说明' },
   downloads: { 'mac-arm64': { url: 'https://cdn/x-mac-arm64.dmg', size: 5, sha256: 'h' } }
 }
 
@@ -75,6 +76,7 @@ describe('UpdateService.check', () => {
     expect(status.state).toBe('available')
     expect(status.latest).toBe('0.3.0')
     expect(status.notes).toBe('release notes')
+    expect(status.localizedNotes).toEqual({ 'zh-Hans': '发行说明' })
     expect(status.download?.url).toContain('mac-arm64')
     expect(broadcast).toHaveBeenCalledWith(
       'update:status',
@@ -314,6 +316,7 @@ describe('UpdateService.download', () => {
     expect(promptSavePath).not.toHaveBeenCalled()
     expect(removeFile).toHaveBeenNthCalledWith(1, target)
     expect(removeFile).toHaveBeenNthCalledWith(2, `${target}.part`)
+    expect(removeFile).toHaveBeenNthCalledWith(3, `${target}.part.meta`)
     expect(broadcast).toHaveBeenCalledWith(
       'update:status',
       expect.objectContaining({
@@ -480,7 +483,9 @@ describe('UpdateService.download', () => {
     const target = join(dir, 'installer.dmg')
     // A leftover fragment from a previous app session at the same Save location.
     const partPath = `${target}.part`
+    const metadataPath = `${partPath}.meta`
     await writeFile(partPath, Buffer.from('stale-fragment-from-last-session'))
+    await writeFile(metadataPath, Buffer.from('stale-validator-sidecar'))
     const body = Buffer.from('fresh-installer-bytes')
     const manifestForCheck = downloadManifest(
       body.byteLength,
@@ -508,12 +513,14 @@ describe('UpdateService.download', () => {
     // The stale .part was removed before the download, and the result is the fresh body (a full
     // fetch, not a Range-resumed stale fragment that would fail the manifest checksum).
     expect(removeFile).toHaveBeenCalledWith(partPath)
+    expect(removeFile).toHaveBeenCalledWith(metadataPath)
     expect(status.state).toBe('ready')
     expect(await readFile(target)).toEqual(body)
     expect(existsSync(partPath)).toBe(false)
+    expect(existsSync(metadataPath)).toBe(false)
   })
 
-  it('removes the .part only on the first download to a path this session (in-session resume kept)', async () => {
+  it('removes resumable artifacts only on the first download to a path this session', async () => {
     dir = await mkdtemp(join(tmpdir(), 'svc-'))
     const target = join(dir, 'installer.dmg')
     const body = Buffer.from('installer-bytes')
@@ -541,8 +548,8 @@ describe('UpdateService.download', () => {
     await service.download()
     await service.download() // same path, same session
 
-    // Only the first download reset the .part; the second leaves it so an in-session retry resumes.
-    expect(removeFile).toHaveBeenCalledTimes(1)
+    // Only the first download resets the .part and sidecar; the second leaves both to the core.
+    expect(removeFile).toHaveBeenCalledTimes(2)
   })
 
   it('does not start the fetch and errors when the first .part cleanup fails', async () => {
@@ -610,8 +617,8 @@ describe('UpdateService.download', () => {
     expect(first.state).toBe('error')
     const retry = await service.download()
 
-    // The path was NOT marked fresh after the failure, so the retry cleans again and then succeeds.
-    expect(removeFile).toHaveBeenCalledTimes(2)
+    // The path was NOT marked fresh after the failure, so the retry cleans both artifacts and succeeds.
+    expect(removeFile).toHaveBeenCalledTimes(3)
     expect(retry.state).toBe('ready')
   })
 
@@ -641,13 +648,18 @@ describe('UpdateService.download', () => {
             )
           }
         })
-        return Promise.resolve(new Response(stream, { status: 200 }))
+        return Promise.resolve(
+          new Response(stream, { status: 200, headers: { etag: '"installer-v1"' } })
+        )
       }
       // Retry: serve the remaining bytes as a 206 partial-content response.
       return Promise.resolve(
         new Response(body.subarray(2), {
           status: 206,
-          headers: { 'content-range': `bytes 2-${body.byteLength - 1}/${body.byteLength}` }
+          headers: {
+            etag: '"installer-v1"',
+            'content-range': `bytes 2-${body.byteLength - 1}/${body.byteLength}`
+          }
         })
       )
     }) as unknown as typeof fetch

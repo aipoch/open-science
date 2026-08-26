@@ -27,6 +27,8 @@ import { computePasswordAuthMigration } from './migrations/0010-compute-password
 import { crossResourceTagsMigration } from './migrations/0011-cross-resource-tags'
 import { tagOrderingMigration } from './migrations/0012-tag-ordering'
 import { sessionProjectionMigration } from './migrations/0013-session-projection'
+import { reviewQueryIndexesMigration } from './migrations/0014-review-query-indexes'
+import { sessionModelCallUsageMigration } from './migrations/0015-session-model-call-usage'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -223,6 +225,18 @@ const SESSION_PROJECTION_CHECKSUM = checksumMigrationPayload(
   sessionProjectionMigration.verifiers,
   sessionProjectionMigration.operations
 )
+const REVIEW_QUERY_INDEXES_CHECKSUM = checksumMigrationPayload(
+  reviewQueryIndexesMigration.id,
+  reviewQueryIndexesMigration.statements,
+  reviewQueryIndexesMigration.verifiers,
+  reviewQueryIndexesMigration.operations
+)
+const SESSION_MODEL_CALL_USAGE_CHECKSUM = checksumMigrationPayload(
+  sessionModelCallUsageMigration.id,
+  sessionModelCallUsageMigration.statements,
+  sessionModelCallUsageMigration.verifiers,
+  sessionModelCallUsageMigration.operations
+)
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
     table,
@@ -363,6 +377,18 @@ const MIGRATION_MANIFEST = [
   {
     ...sessionProjectionMigration,
     checksum: SESSION_PROJECTION_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...reviewQueryIndexesMigration,
+    checksum: REVIEW_QUERY_INDEXES_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionModelCallUsageMigration,
+    checksum: SESSION_MODEL_CALL_USAGE_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -1269,6 +1295,7 @@ export {
   VISION_EVIDENCE_CHECKSUM,
   COMPUTE_PASSWORD_AUTH_CHECKSUM,
   TAG_ORDERING_CHECKSUM,
+  REVIEW_QUERY_INDEXES_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

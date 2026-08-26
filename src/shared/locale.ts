@@ -8,6 +8,18 @@
 export const LOCALES = ['en', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'ru'] as const
 export type Locale = (typeof LOCALES)[number]
 
+// Language names stay in their own language so a reader stranded in the wrong locale can recover.
+// They are interface metadata, not translations, and therefore never belong in a locale catalog.
+export const LOCALE_SELF_NAMES = {
+  en: 'English',
+  'zh-Hans': '简体中文',
+  'zh-Hant': '繁體中文',
+  ja: '日本語',
+  ko: '한국어',
+  fr: 'Français',
+  ru: 'Русский'
+} as const satisfies Record<Locale, string>
+
 // The fallback when nothing matches, and the source language every catalog is authored against.
 export const DEFAULT_LOCALE: Locale = 'en'
 

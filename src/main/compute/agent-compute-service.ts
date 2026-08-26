@@ -115,20 +115,30 @@ export class AgentComputeService {
     cmd: string,
     intent: string,
     loginShell = true,
-    timeoutSeconds?: number
+    timeoutSeconds?: number,
+    signal?: AbortSignal
   ): Promise<ExecResult> {
     await this.requireEnabled(context.sessionId, providerId)
-    return this.compute.callCommand(providerId, cmd, intent, loginShell, timeoutSeconds, context)
+    return this.compute.callCommand(
+      providerId,
+      cmd,
+      intent,
+      loginShell,
+      timeoutSeconds,
+      context,
+      signal
+    )
   }
 
   async download(
     context: AgentComputeContext,
     providerId: string,
     remotePath: string,
-    dest: DownloadDest
+    dest: DownloadDest,
+    signal?: AbortSignal
   ): Promise<LocalFile> {
     await this.requireEnabled(context.sessionId, providerId)
-    return this.compute.download(providerId, remotePath, dest, context)
+    return this.compute.download(providerId, remotePath, dest, context, signal)
   }
 
   async submitJob(
@@ -136,10 +146,11 @@ export class AgentComputeService {
     providerId: string,
     intent: string,
     command: string,
-    options: Parameters<RawComputeService['submitJob']>[3]
+    options: Parameters<RawComputeService['submitJob']>[3],
+    signal?: AbortSignal
   ): Promise<SubmitJobResult> {
     await this.requireEnabled(context.sessionId, providerId)
-    return this.compute.submitJob(providerId, intent, command, options, context)
+    return this.compute.submitJob(providerId, intent, command, options, context, signal)
   }
 
   async getJobStatus(

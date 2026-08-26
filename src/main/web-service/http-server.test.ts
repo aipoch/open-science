@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,6 +22,7 @@ import {
 } from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
+import { createLogger, flushLogs, initLogger } from '../logger'
 import {
   REMOTE_LOCAL_ONLY_RPC_CHANNELS,
   startWebHttpServer,
@@ -33,6 +34,7 @@ import { TaskApiError } from './task-api'
 
 const roots: string[] = []
 const servers: RunningWebServer[] = []
+let diagnosticLogDir: string | undefined
 const applicationEvents = new ApplicationEventHub()
 type TestWebServerOptions = Omit<
   Parameters<typeof startWebHttpServer>[0],
@@ -84,9 +86,21 @@ const accessOnlyExternalAccess = (): ExternalWebAccessAuthorization => ({
 const runWithCallerContext = <Result>(_context: CallerContext, operation: () => Result): Result =>
   operation()
 
+const readLogRecords = async (logDir: string): Promise<Record<string, unknown>[]> => {
+  await flushLogs()
+  return (await readFile(join(logDir, 'main.log'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()))
+  await flushLogs()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  if (diagnosticLogDir) {
+    await rm(diagnosticLogDir, { recursive: true, force: true })
+  }
 })
 
 describe('startWebHttpServer', () => {
@@ -271,6 +285,133 @@ describe('startWebHttpServer', () => {
     secondSocket.close()
     await new Promise<void>((resolve) => secondSocket.once('close', () => resolve()))
     await vi.waitFor(() => expect(directSignal.aborted).toBe(true))
+  })
+
+  it('correlates a rejected Web RPC with logs emitted by its command', async () => {
+    const logDir = await mkdtemp(join(tmpdir(), 'open-science-web-rpc-log-'))
+    diagnosticLogDir = logDir
+    initLogger({ logDir, mirrorToConsole: false })
+    const invoke = vi.fn(async () => {
+      createLogger('test-command').warn('command execution failed', {
+        sessionId: 'session-1',
+        runId: 'run-1'
+      })
+      throw new Error('private command failure')
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => ['projects:list'], invoke },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+    })
+
+    expect(response.status).toBe(500)
+    const records = (await readLogRecords(logDir)).filter(
+      (record) =>
+        record.scope === 'test-command' ||
+        (record.scope === 'web-service' && record.msg === 'web rpc rejected')
+    )
+    expect(records).toHaveLength(2)
+    expect(new Set(records.map((record) => record.correlationId))).toEqual(
+      new Set([expect.any(String)])
+    )
+    expect(records[0]?.data).toMatchObject({ sessionId: 'session-1', runId: 'run-1' })
+    expect(records[1]?.data).toEqual({
+      channel: 'projects:list',
+      surface: 'web',
+      location: 'local',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(records)).not.toContain('private command failure')
+  })
+
+  it('correlates a rejected Task HTTP request with logs emitted by its Run', async () => {
+    const logDir = await mkdtemp(join(tmpdir(), 'open-science-task-http-log-'))
+    diagnosticLogDir = logDir
+    initLogger({ logDir, mirrorToConsole: false })
+    const startRun = vi.fn(async () => {
+      createLogger('test-task-run').warn('task run execution failed', {
+        sessionId: 'session-1',
+        runId: 'run-1'
+      })
+      throw new Error('private task run failure')
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      tasks: {
+        runWithCallerContext,
+        subscribeProgress: vi.fn(() => vi.fn()),
+        listProjects: vi.fn(),
+        createProject: vi.fn(),
+        updateProject: vi.fn(),
+        listSessions: vi.fn(),
+        getSession: vi.fn(),
+        startRun,
+        getRun: vi.fn(),
+        cancelRun: vi.fn(),
+        listArtifacts: vi.fn(),
+        acquireArtifact: vi.fn(),
+        releaseArtifact: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/v1/runs`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ project: 'project-1', sessionId: 'session-1', prompt: 'Run task.' })
+    })
+
+    expect(response.status).toBe(500)
+    const records = (await readLogRecords(logDir)).filter(
+      (record) =>
+        record.scope === 'test-task-run' ||
+        (record.scope === 'web-service' && record.msg === 'task http request rejected')
+    )
+    expect(records).toHaveLength(2)
+    expect(new Set(records.map((record) => record.correlationId))).toEqual(
+      new Set([expect.any(String)])
+    )
+    expect(records[0]?.data).toMatchObject({ sessionId: 'session-1', runId: 'run-1' })
+    expect(records[1]?.data).toEqual({
+      method: 'POST',
+      surface: 'task',
+      location: 'local',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(records)).not.toContain('private task run failure')
   })
 
   it('releases its application-event subscription when listening fails', async () => {

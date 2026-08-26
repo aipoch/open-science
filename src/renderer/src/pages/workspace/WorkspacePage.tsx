@@ -34,6 +34,7 @@ import {
 } from '@/lib/acp/workspace-events'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import { revealNotebookWhenProjectActive } from './notebook-preview-availability'
+import { invalidateSessionNotebookCache } from './session-notebook-data'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import {
@@ -52,7 +53,7 @@ import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { DownloadProjectArtifactsDialog } from './DownloadProjectArtifactsDialog'
 import { DownloadSessionArtifactsDialog } from './DownloadSessionArtifactsDialog'
 import { FilePreviewDialog } from './FilePreviewDialog'
-import { RenameSessionDialog } from './RenameSessionDialog'
+import { EditSessionDialog } from './EditSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
@@ -687,6 +688,10 @@ const WorkspacePage = ({
     }
   }, [activeSessionId, scopedProjectId])
 
+  useEffect(() => {
+    return window.api.notebook.onChanged?.(invalidateSessionNotebookCache) ?? (() => undefined)
+  }, [])
+
   // Subscribe to reviewer lifecycle updates so the card and Reviewing indicator stay live.
   useEffect(() => {
     const removeUpdatedListener = window.api.reviewer.onUpdated(handleReviewUpdate)
@@ -957,7 +962,7 @@ const WorkspacePage = ({
             isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
             onOpenFiles={openFilesPreview}
             onOpenSession={openSessionWithoutExportError}
-            onRenameSession={sessionController.actions.openRename}
+            onRenameSession={sessionController.actions.openEdit}
             canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
             onDownloadArtifacts={sessionController.actions.openDownloadArtifacts}
             onViewNotebook={sessionController.actions.openNotebook}
@@ -1015,7 +1020,7 @@ const WorkspacePage = ({
             }}
             onRenameSession={(session) => {
               close()
-              sessionController.actions.openRename(session)
+              sessionController.actions.openEdit(session)
             }}
             canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
             onDownloadArtifacts={(session) => {
@@ -1161,12 +1166,15 @@ const WorkspacePage = ({
         )}
       />
 
-      <RenameSessionDialog
-        session={sessionController.view.dialogs.rename?.session}
-        renameDraft={sessionController.view.dialogs.rename?.draft ?? ''}
-        onRenameDraftChange={sessionController.actions.changeRenameDraft}
-        onCancel={sessionController.actions.closeRename}
-        onConfirmRename={sessionController.actions.confirmRename}
+      <EditSessionDialog
+        session={sessionController.view.dialogs.edit?.session}
+        titleDraft={sessionController.view.dialogs.edit?.titleDraft ?? ''}
+        descriptionDraft={sessionController.view.dialogs.edit?.descriptionDraft ?? ''}
+        isSaving={sessionController.view.dialogs.edit?.isSaving}
+        onTitleDraftChange={sessionController.actions.changeEditTitleDraft}
+        onDescriptionDraftChange={sessionController.actions.changeEditDescriptionDraft}
+        onCancel={sessionController.actions.closeEdit}
+        onConfirmEdit={sessionController.actions.confirmEdit}
       />
       <DeleteSessionDialog
         session={sessionController.view.dialogs.delete?.session}

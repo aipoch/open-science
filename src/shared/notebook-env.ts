@@ -55,5 +55,34 @@ export type ManageEnvironmentsRequest =
   | { action: 'list' }
   | { action: 'remove'; name: string }
 
-// create/list/remove all return the full current env set so the caller/UI can refresh in one shot.
-export type ManageEnvironmentsResult = { environments: EnvironmentInfo[] }
+export type CreatedEnvironmentReceipt = {
+  name: string
+  language: NotebookLanguage
+  // Canonical executable identity accepted by notebook_bind_runtime/notebook_switch_runtime.
+  runtimeId: string
+  runnable: boolean
+  detail?: string
+}
+
+export type RemovedEnvironmentReceipt = {
+  name: string
+}
+
+// Mutation receipts describe only the completed operation. action:"list" is the sole full-snapshot
+// contract; callers that need a refreshed inventory request it explicitly after the mutation.
+export type ManageEnvironmentsResult =
+  | {
+      created: CreatedEnvironmentReceipt
+      environments?: never
+      removed?: never
+    }
+  | {
+      environments: EnvironmentInfo[]
+      created?: never
+      removed?: never
+    }
+  | {
+      removed: RemovedEnvironmentReceipt
+      environments?: never
+      created?: never
+    }

@@ -1,4 +1,11 @@
-import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject
+} from 'react'
 
 import type { WorkspaceConversationTimelineItem } from './workspace-conversation-timeline'
 import { findMessageTarget } from './workspace-run-marks'
@@ -101,24 +108,33 @@ const useTranscriptWindow = (
   const expandAtScrollEdge = (previousScrollTop: number): void => {
     const viewport = viewportRef.current
     if (!viewport || presentationBarrierIndex >= 0) return
+    const prefetchDistance = Math.max(64, viewport.clientHeight)
 
-    if (viewport.scrollTop < previousScrollTop && viewport.scrollTop <= 64 && start > 0) {
-      setState({
-        scopeId,
-        itemCount: items.length,
-        start: Math.max(0, start - TRANSCRIPT_WINDOW_SIZE),
-        end
+    if (
+      viewport.scrollTop < previousScrollTop &&
+      viewport.scrollTop <= prefetchDistance &&
+      start > 0
+    ) {
+      startTransition(() => {
+        setState({
+          scopeId,
+          itemCount: items.length,
+          start: Math.max(0, start - TRANSCRIPT_WINDOW_SIZE),
+          end
+        })
       })
     } else if (
       viewport.scrollTop > previousScrollTop &&
-      viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 64 &&
+      viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - prefetchDistance &&
       end < items.length
     ) {
-      setState({
-        scopeId,
-        itemCount: items.length,
-        start,
-        end: Math.min(items.length, end + TRANSCRIPT_WINDOW_SIZE)
+      startTransition(() => {
+        setState({
+          scopeId,
+          itemCount: items.length,
+          start,
+          end: Math.min(items.length, end + TRANSCRIPT_WINDOW_SIZE)
+        })
       })
     }
   }

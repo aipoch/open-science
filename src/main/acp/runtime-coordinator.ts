@@ -63,7 +63,11 @@ type AcpRuntimeCoordinatorTeardownCallbacks = {
   ) => void
   onSessionCancellationRequested?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
+  onSessionDeleteStarted?: (sessionId: string) => void
   beforeSessionDelete?: (sessionId: string) => Promise<void>
+  // Runs after the runtime deletion attempt. `retained` is true after failure or when a concurrent
+  // runtime adoption kept the logical Session alive.
+  afterSessionDelete?: (sessionId: string, retained: boolean) => void
 }
 
 type PermissionGrantSnapshotProvider = () => AcpStateSnapshot['permissionGrants']
@@ -361,6 +365,14 @@ class AcpRuntimeCoordinator {
 
   liveSessionProjectId(sessionId: string): string | undefined {
     return this.sessionRuntimes.get(sessionId)?.liveSessionProjectId(sessionId)
+  }
+
+  isSessionReferenceAllowed(sessionId: string, referencedSessionId: string): boolean {
+    return (
+      this.sessionRuntimes
+        .get(sessionId)
+        ?.isSessionReferenceAllowed(sessionId, referencedSessionId) ?? false
+    )
   }
 
   getSessionFramework(sessionId: string): AgentFrameworkId | undefined {
@@ -1178,14 +1190,21 @@ class AcpRuntimeCoordinator {
 
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
     this.invalidateSessionTurn(request.sessionId)
+    this.teardownCallbacks.onSessionDeleteStarted?.(request.sessionId)
     this.activePromptRequests.delete(request.sessionId)
     this.pendingResumeReconciliations.delete(request.sessionId)
     const runtime = this.runtimeForSession(request.sessionId)
     const ownedBeforeDelete = this.sessionRuntimes.get(request.sessionId) === runtime
-    await this.delegatedWork?.deleteSession(request.sessionId)
-    await this.teardownCallbacks.beforeSessionDelete?.(request.sessionId)
-    await runtime.deleteSession(request)
+    try {
+      await this.delegatedWork?.deleteSession(request.sessionId)
+      await this.teardownCallbacks.beforeSessionDelete?.(request.sessionId)
+      await runtime.deleteSession(request)
+    } catch (error) {
+      this.teardownCallbacks.afterSessionDelete?.(request.sessionId, true)
+      throw error
+    }
     const ownerAfterDelete = this.sessionRuntimes.get(request.sessionId)
+    const retained = ownerAfterDelete !== undefined && ownerAfterDelete !== runtime
     // Attached deletes emit a runtime state change, whose reconciliation already notifies exactly once.
     // Detached cleanup deliberately emits no state, so complete its session-scoped teardown here. A
     // concurrent resume may have transferred the same app session to a new generation while the old
@@ -1197,6 +1216,7 @@ class AcpRuntimeCoordinator {
       this.clearApplicationSessionEvents(request.sessionId)
       this.onSessionUnavailable?.(request.sessionId)
     }
+    this.teardownCallbacks.afterSessionDelete?.(request.sessionId, retained)
     await this.retireUnusedTargetedRuntime(runtime)
     return this.getSnapshot()
   }

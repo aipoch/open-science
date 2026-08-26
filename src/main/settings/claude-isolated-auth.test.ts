@@ -288,6 +288,23 @@ describe('ClaudeIsolatedAuthController', () => {
       expect(spawnCalls[0]?.env?.CLAUDE_CONFIG_DIR).toBe('/tmp/app-claude')
     })
 
+    it('rejects a browser-captured token larger than 16 KiB without persisting it', async () => {
+      const store = createStore()
+      const controller = new ClaudeIsolatedAuthController({
+        store,
+        claudePath: '/usr/bin/claude',
+        configDir: '/tmp/app-claude'
+      })
+      nextSpawn = scriptChild(`sk-ant-${'a'.repeat(16 * 1024)}\n`, '', 0)
+
+      await expect(controller.loginIsolatedBrowser()).resolves.toEqual({
+        supported: true,
+        authenticated: false,
+        message: 'Claude sign-in token must not exceed 16384 bytes.'
+      })
+      expect(store.saveCalls).toHaveLength(0)
+    })
+
     it('runs a resolved JavaScript CLI through Electron in Node mode', async () => {
       const controller = new ClaudeIsolatedAuthController({
         store: createStore(),

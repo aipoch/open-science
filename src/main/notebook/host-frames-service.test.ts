@@ -649,6 +649,38 @@ describe('HostFramesService', () => {
     )
   })
 
+  it('reads only an explicitly authorized cross-Project Session id', async () => {
+    const referenced = session({ id: 'session-b', projectId: 'project-b', title: 'Other result' })
+    const readSession = vi.fn(async (projectId: string, sessionId: string) =>
+      projectId === 'project-b' && sessionId === referenced.id
+        ? { status: 'found' as const, session: referenced }
+        : { status: 'missing' as const }
+    )
+    const resolveReference = vi.fn(async (_context, sessionId: string) =>
+      sessionId === referenced.id ? { projectId: 'project-b' } : undefined
+    )
+    const service = new HostFramesService({ readProject: vi.fn(), readSession }, resolveReference)
+
+    await expect(
+      service.list({ session_id: referenced.id, roots_only: true }, context)
+    ).resolves.toMatchObject({
+      project_id: 'project-b',
+      total_count: 1,
+      frames: [expect.objectContaining({ session_id: referenced.id })]
+    })
+    await expect(
+      service.get(referenced.conversationGraph!.rootFrameId, { session_id: referenced.id }, context)
+    ).resolves.toMatchObject({
+      project_id: 'project-b',
+      session: { session_id: referenced.id, session_title: 'Other result' }
+    })
+    await expect(service.list({ session_id: 'not-authorized' }, context)).resolves.toMatchObject({
+      project_id: 'project-a',
+      total_count: 0
+    })
+    expect(readSession).not.toHaveBeenCalledWith('project-b', 'not-authorized')
+  })
+
   it('rejects malformed and authority-bearing options at the Module interface', async () => {
     const target = session()
     const service = new HostFramesService({

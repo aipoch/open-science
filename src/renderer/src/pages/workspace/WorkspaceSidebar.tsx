@@ -549,7 +549,7 @@ const WorkspaceSidebarView = ({
                               <span className={sessionMenuIconClassName}>
                                 <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
                               </span>
-                              {t('Rename…')}
+                              {t('Edit…')}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {canDownloadArtifacts ? (

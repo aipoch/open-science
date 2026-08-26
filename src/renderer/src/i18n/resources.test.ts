@@ -17,41 +17,110 @@ import { I18nextProvider, Trans } from 'react-i18next'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-import fr from '../locales/fr.json'
-import ja from '../locales/ja.json'
-import ko from '../locales/ko.json'
-import ru from '../locales/ru.json'
-import zhHans from '../locales/zh-Hans.json'
-import zhHant from '../locales/zh-Hant.json'
+import fr from '../../../shared/i18n/locales/fr.json'
+import ja from '../../../shared/i18n/locales/ja.json'
+import ko from '../../../shared/i18n/locales/ko.json'
+import ru from '../../../shared/i18n/locales/ru.json'
+import zhHans from '../../../shared/i18n/locales/zh-Hans.json'
+import zhHant from '../../../shared/i18n/locales/zh-Hant.json'
+import { LOCALES, LOCALE_SELF_NAMES } from '../../../shared/locale'
+import { createNativeI18n } from '../../../main/locale/main-process-messages'
+import { nativeCatalogs, nativeResources } from '../../../main/locale/resources'
 import {
   englishSourceFallbackPostProcessor,
   hasValidTagStructure,
   resources,
   sanitizeCatalog
 } from './resources'
+import { initI18n } from './index'
 
 type Catalog = Record<string, string>
+type TranslatedLocale = Exclude<(typeof LOCALES)[number], 'en'>
 
-const sourceCatalogs = {
-  fr,
-  ja,
-  ko,
-  ru,
-  'zh-Hans': zhHans,
-  'zh-Hant': zhHant
+const commonCatalogs = {
+  fr: fr.common,
+  ja: ja.common,
+  ko: ko.common,
+  ru: ru.common,
+  'zh-Hans': zhHans.common,
+  'zh-Hant': zhHant.common
 } as const
 
-type TranslatedLocale = keyof typeof sourceCatalogs
+const sourceCatalogs = {
+  fr: { ...fr.common, ...fr.renderer },
+  ja: { ...ja.common, ...ja.renderer },
+  ko: { ...ko.common, ...ko.renderer },
+  ru: { ...ru.common, ...ru.renderer },
+  'zh-Hans': { ...zhHans.common, ...zhHans.renderer },
+  'zh-Hant': { ...zhHant.common, ...zhHant.renderer }
+} as const satisfies Record<TranslatedLocale, Catalog>
 
-const TRANSLATED = Object.keys(sourceCatalogs) as TranslatedLocale[]
+const rendererCatalogs = {
+  fr: fr.renderer,
+  ja: ja.renderer,
+  ko: ko.renderer,
+  ru: ru.renderer,
+  'zh-Hans': zhHans.renderer,
+  'zh-Hant': zhHant.renderer
+} as const
+
+const TRANSLATED = LOCALES.filter((locale): locale is TranslatedLocale => locale !== 'en')
+const MANDATORY_GENERIC_PRODUCT_NOUNS: ReadonlySet<string> = new Set([
+  'Subagent',
+  'Skill',
+  'Specialist',
+  'Connector'
+])
 
 const catalog = (locale: TranslatedLocale): Catalog => sourceCatalogs[locale] as Catalog
 
-const rawCatalog = (locale: TranslatedLocale): string =>
-  readFileSync(join(__dirname, '..', 'locales', `${locale}.json`), 'utf8')
+const nativeCatalog = (locale: TranslatedLocale): Catalog => nativeCatalogs[locale] as Catalog
 
-const rawCatalogKeys = (source: string): string[] =>
-  [...source.matchAll(/^\s*"((?:[^"\\]|\\.)+)"\s*:/gm)].map((match) => JSON.parse(`"${match[1]}"`))
+const allCatalogEntries = (locale: TranslatedLocale): Array<[string, string]> => [
+  ...Object.entries(catalog(locale)),
+  ...Object.entries(nativeCatalog(locale))
+]
+
+const rawCatalog = (locale: TranslatedLocale): string =>
+  readFileSync(
+    join(__dirname, '..', '..', '..', 'shared', 'i18n', 'locales', `${locale}.json`),
+    'utf8'
+  )
+
+type CatalogNamespace = 'common' | 'native' | 'renderer'
+
+const rawCatalogObject = (source: string): ts.ObjectLiteralExpression | undefined => {
+  const sourceFile = ts.parseJsonText('locale.json', source)
+  const statement = sourceFile.statements[0]
+  if (!statement || !ts.isExpressionStatement(statement)) return undefined
+  return ts.isObjectLiteralExpression(statement.expression) ? statement.expression : undefined
+}
+
+const rawObjectKeys = (object: ts.ObjectLiteralExpression): string[] =>
+  object.properties.flatMap((property) =>
+    ts.isPropertyAssignment(property) && ts.isStringLiteralLike(property.name)
+      ? [property.name.text]
+      : []
+  )
+
+const rawTopLevelKeys = (source: string): string[] => {
+  const object = rawCatalogObject(source)
+  return object ? rawObjectKeys(object) : []
+}
+
+const rawCatalogKeys = (source: string, namespace: CatalogNamespace): string[] => {
+  const object = rawCatalogObject(source)
+  if (!object) return []
+
+  return object.properties.flatMap((property) =>
+    ts.isPropertyAssignment(property) &&
+    ts.isStringLiteralLike(property.name) &&
+    property.name.text === namespace &&
+    ts.isObjectLiteralExpression(property.initializer)
+      ? rawObjectKeys(property.initializer)
+      : []
+  )
+}
 
 // {{name}} interpolation placeholders and <tag> markers consumed by the Trans component. Both must
 // survive translation: a dropped placeholder renders a blank where a value belongs, and a dropped tag
@@ -65,6 +134,18 @@ const markers = (text: string): string[] =>
 const englishOf = (key: string): string => key.split('_')[0]
 
 const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other'])
+const CONTEXT_SUFFIXES = new Set([
+  'ago',
+  'duration',
+  'files',
+  'inUse',
+  'language',
+  'runtime',
+  'step',
+  'theme',
+  'verb',
+  'window'
+])
 const REQUIRED_PLURAL_CATEGORIES = {
   fr: ['one', 'many', 'other'],
   ja: ['other'],
@@ -89,15 +170,95 @@ const withoutPluralCategory = (key: string): string => {
 const COUNTED_KEYS_WITHOUT_MARKER = ['probed just now'] as const
 
 describe('supported catalog registration', () => {
-  it('ships every translated catalog in the synchronous first-paint resources', () => {
+  it('preserves duplicate top-level namespace keys for the structure guard to reject', () => {
+    expect(rawTopLevelKeys('{"common": {}, "native": {}, "native": {}, "renderer": {}}')).toEqual([
+      'common',
+      'native',
+      'native',
+      'renderer'
+    ])
+  })
+
+  it('keeps one authoritative shared JSON file per translated locale', () => {
+    const sharedLocalesRoot = join(__dirname, '..', '..', '..', 'shared', 'i18n', 'locales')
+    const entries = readdirSync(sharedLocalesRoot, { withFileTypes: true })
+
+    expect(entries.map((entry) => entry.name).sort()).toEqual(
+      TRANSLATED.map((locale) => `${locale}.json`).sort()
+    )
+    expect(entries.every((entry) => entry.isFile())).toBe(true)
+    expect(existsSync(join(__dirname, '..', 'locales'))).toBe(false)
+
+    for (const locale of TRANSLATED) {
+      expect(rawTopLevelKeys(rawCatalog(locale))).toEqual(['common', 'native', 'renderer'])
+    }
+  })
+
+  it('ships only common and renderer namespaces for every translated locale', () => {
     expect(Object.keys(resources).sort()).toEqual([...TRANSLATED].sort())
+    expect(
+      Object.fromEntries(
+        TRANSLATED.map((locale) => [locale, Object.keys(resources[locale]).sort()])
+      )
+    ).toEqual(Object.fromEntries(TRANSLATED.map((locale) => [locale, ['common', 'renderer']])))
+  })
+
+  it('keeps renderer and main instances isolated with process-specific resources', () => {
+    const renderer = initI18n('ru')
+    const main = createNativeI18n('ru')
+
+    expect(renderer).not.toBe(main)
+    expect(renderer.t('Cancel')).toBe('Отмена')
+    expect(renderer.t('Settings')).toBe('Настройки')
+    expect(renderer.t('Open Web UI')).toBe('Open Web UI')
+    expect(main.t('Cancel')).toBe('Отмена')
+    expect(main.t('Open Web UI')).toBe('Открыть веб-интерфейс')
+    expect(main.t('Settings')).toBe('Settings')
   })
 })
 
 describe('runtime catalog fallback', () => {
+  it.each([
+    [
+      'ja',
+      'セッション呼び出しの概要',
+      'このセッションは呼び出し追跡より前に作成されたか、フレームワークがターンの集計使用量のみを報告した可能性があります。'
+    ],
+    [
+      'ru',
+      'Сводка вызовов сессии',
+      'Эта сессия могла быть создана до появления отслеживания вызовов, либо её фреймворк сообщил только суммарное использование хода.'
+    ],
+    ['zh-Hans', '会话调用摘要', '此会话可能早于调用追踪功能，或其框架仅报告了轮次聚合用量。'],
+    ['zh-Hant', '會話呼叫摘要', '此工作階段可能早於呼叫追蹤功能，或其框架僅回報了輪次彙總用量。']
+  ] as const)('%s localizes Session in Context Window copy', (locale, summary, emptyState) => {
+    expect(rendererCatalogs[locale]['Session call summary']).toBe(summary)
+    expect(
+      rendererCatalogs[locale][
+        'This Session may predate call tracking, or its framework reported only aggregate turn usage.'
+      ]
+    ).toBe(emptyState)
+  })
+
   it('ships and registers the Russian catalog', () => {
-    expect(existsSync(join(__dirname, '..', 'locales', 'ru.json'))).toBe(true)
+    expect(
+      existsSync(join(__dirname, '..', '..', '..', 'shared', 'i18n', 'locales', 'ru.json'))
+    ).toBe(true)
     expect('ru' in resources).toBe(true)
+  })
+
+  it.each([
+    ['fr', 'Tours', 'Appels'],
+    ['ja', 'ターン', '呼び出し'],
+    ['ko', '턴', '호출'],
+    ['ru', 'Ходы', 'Вызовы'],
+    ['zh-Hans', '轮次', '调用'],
+    ['zh-Hant', '輪次', '呼叫']
+  ] as const)('translates Context Window detail levels for %s', (locale, turns, calls) => {
+    const renderer = initI18n(locale)
+
+    expect(renderer.t('Turns')).toBe(turns)
+    expect(renderer.t('Calls')).toBe(calls)
   })
 
   it('keeps valid translations without copying the catalog', () => {
@@ -157,6 +318,7 @@ describe('runtime catalog fallback', () => {
       nsSeparator: false,
       interpolation: { escapeValue: false },
       postProcess: [englishSourceFallbackPostProcessor.name],
+      postProcessPassResolved: true,
       resources: {
         'zh-Hans': {
           translation: sanitizeCatalog({
@@ -197,12 +359,12 @@ describe('runtime catalog fallback', () => {
 })
 
 describe.each(TRANSLATED)('%s catalog', (locale) => {
-  it('has no duplicate raw JSON keys', () => {
-    const seen = new Set<string>()
-    const duplicates = rawCatalogKeys(rawCatalog(locale)).filter((key) => {
-      if (seen.has(key)) return true
-      seen.add(key)
-      return false
+  it('has no duplicate raw JSON keys within a namespace', () => {
+    const duplicates = (['common', 'native', 'renderer'] as const).flatMap((namespace) => {
+      const seen = new Set<string>()
+      return rawCatalogKeys(rawCatalog(locale), namespace)
+        .filter((key) => (seen.has(key) ? true : !seen.add(key)))
+        .map((key) => `${namespace}: ${key}`)
     })
 
     expect(duplicates).toEqual([])
@@ -293,6 +455,229 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
     ])
 
     expect(invalid).toEqual([])
+  })
+})
+
+describe.each(TRANSLATED)('%s native catalog', (locale) => {
+  const entries = nativeCatalog(locale)
+
+  it('has no empty or malformed translations', () => {
+    const invalid = Object.entries(entries)
+      .filter(
+        ([key, value]) =>
+          typeof value !== 'string' ||
+          value.trim().length === 0 ||
+          markers(englishOf(key)).join('|') !== markers(value).join('|') ||
+          !hasValidTagStructure(englishOf(key)) ||
+          !hasValidTagStructure(value)
+      )
+      .map(([key]) => key)
+
+    expect(invalid).toEqual([])
+  })
+
+  it('uses every and only locale-selected plural category', () => {
+    const expectedCategories = REQUIRED_PLURAL_CATEGORIES[locale]
+    const pluralStems = new Set(
+      Object.keys(entries)
+        .filter((key) => pluralCategoryOf(key))
+        .map(withoutPluralCategory)
+    )
+    const invalid = Object.keys(entries)
+      .filter((key) => {
+        const category = pluralCategoryOf(key)
+        return category !== undefined && !expectedCategories.includes(category as never)
+      })
+      .map((key) => `unexpected ${key}`)
+    const missing = [...pluralStems].flatMap((stem) =>
+      expectedCategories.flatMap((category) =>
+        entries[`${stem}_${category}`] === undefined ? [`missing ${stem}_${category}`] : []
+      )
+    )
+
+    expect([...invalid, ...missing]).toEqual([])
+  })
+
+  it('localizes mandatory generic product nouns', () => {
+    const expected = {
+      fr: {
+        subagent: 'sous-agent',
+        skill: 'compétence',
+        specialist: 'spécialiste',
+        connector: 'connecteur'
+      },
+      ja: {
+        subagent: 'サブエージェント',
+        skill: 'スキル',
+        specialist: 'スペシャリスト',
+        connector: 'コネクタ'
+      },
+      ko: {
+        subagent: '서브에이전트',
+        skill: '스킬',
+        specialist: '스페셜리스트',
+        connector: '커넥터'
+      },
+      ru: {
+        subagent: 'субагент',
+        skill: 'навык',
+        specialist: 'специалист',
+        connector: 'коннектор'
+      },
+      'zh-Hans': { subagent: '子智能体', skill: '技能', specialist: '专家', connector: '连接器' },
+      'zh-Hant': { subagent: '子智能體', skill: '技能', specialist: '專家', connector: '連接器' }
+    }[locale]
+    const glossary = [
+      { source: /\bSubagents?\b/i, translation: expected.subagent },
+      { source: /\bSkills?\b/i, translation: expected.skill },
+      { source: /\bSpecialists?\b/i, translation: expected.specialist },
+      { source: /\bConnectors?\b/i, translation: expected.connector }
+    ]
+    const offenders = Object.entries(entries).flatMap(([key, value]) =>
+      glossary
+        .filter(
+          ({ source, translation }) =>
+            source.test(englishOf(key)) &&
+            !value.toLocaleLowerCase(locale).includes(translation.toLocaleLowerCase(locale))
+        )
+        .map(({ translation }) => `${key}: ${translation}`)
+    )
+
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('process catalog boundaries', () => {
+  it.each([
+    {
+      locale: 'fr' as const,
+      expected: {
+        Subagent: 'Sous-agent',
+        Skill: 'Compétence',
+        Specialist: 'Spécialiste',
+        Connector: 'Connecteur'
+      }
+    },
+    {
+      locale: 'ja' as const,
+      expected: {
+        Subagent: 'サブエージェント',
+        Skill: 'スキル',
+        Specialist: 'スペシャリスト',
+        Connector: 'コネクタ'
+      }
+    },
+    {
+      locale: 'ko' as const,
+      expected: {
+        Subagent: '서브에이전트',
+        Skill: '스킬',
+        Specialist: '스페셜리스트',
+        Connector: '커넥터'
+      }
+    },
+    {
+      locale: 'ru' as const,
+      expected: {
+        Subagent: 'Субагент',
+        Skill: 'Навык',
+        Specialist: 'Специалист',
+        Connector: 'Коннектор'
+      }
+    },
+    {
+      locale: 'zh-Hans' as const,
+      expected: { Subagent: '子智能体', Skill: '技能', Specialist: '专家', Connector: '连接器' }
+    },
+    {
+      locale: 'zh-Hant' as const,
+      expected: { Subagent: '子智能體', Skill: '技能', Specialist: '專家', Connector: '連接器' }
+    }
+  ])('shares mandatory generic product nouns with main for $locale', ({ locale, expected }) => {
+    const main = createNativeI18n(locale)
+
+    expect(
+      Object.fromEntries([...MANDATORY_GENERIC_PRODUCT_NOUNS].map((key) => [key, main.t(key)]))
+    ).toEqual(expected)
+  })
+
+  it('loads only common and native namespaces in main', () => {
+    expect(
+      Object.fromEntries(
+        TRANSLATED.map((locale) => [locale, Object.keys(nativeResources[locale]).sort()])
+      )
+    ).toEqual(Object.fromEntries(TRANSLATED.map((locale) => [locale, ['common', 'native']])))
+  })
+
+  it.each(TRANSLATED)('%s gives every translated key exactly one catalog owner', (locale) => {
+    const commonKeys = new Set(Object.keys(commonCatalogs[locale]))
+    const rendererKeys = new Set(Object.keys(rendererCatalogs[locale]))
+    const nativeKeys = new Set(Object.keys(nativeCatalogs[locale]))
+
+    expect([...rendererKeys].filter((key) => commonKeys.has(key))).toEqual([])
+    expect([...nativeKeys].filter((key) => commonKeys.has(key))).toEqual([])
+    expect([...nativeKeys].filter((key) => rendererKeys.has(key))).toEqual([])
+  })
+
+  it.each(TRANSLATED)('%s keeps the legacy Connector picker title native-only', (locale) => {
+    const key = 'Import Connector configuration'
+
+    expect(nativeCatalogs[locale]).toHaveProperty(key)
+    expect(commonCatalogs[locale]).not.toHaveProperty(key)
+    expect(rendererCatalogs[locale]).not.toHaveProperty(key)
+  })
+
+  it.each(TRANSLATED)('%s keeps locale self-names out of translation catalogs', (locale) => {
+    const catalogKeys = new Set([
+      ...Object.keys(commonCatalogs[locale]),
+      ...Object.keys(nativeCatalogs[locale]),
+      ...Object.keys(rendererCatalogs[locale])
+    ])
+
+    expect(Object.values(LOCALE_SELF_NAMES).filter((name) => catalogKeys.has(name))).toEqual([])
+  })
+
+  it('shares close-confirm copy while keeping the renderer Quit noun explicit', () => {
+    const sharedCloseConfirmKeys = [
+      "Don't ask again",
+      'Minimize to tray',
+      'Return to tasks',
+      'Subagents are still running',
+      'Work is still running and will be interrupted if you quit.'
+    ]
+
+    for (const locale of TRANSLATED) {
+      for (const key of sharedCloseConfirmKeys) {
+        expect((commonCatalogs[locale] as Catalog)[key]).toEqual(expect.any(String))
+        expect(rendererCatalogs[locale]).not.toHaveProperty(key)
+        expect(nativeCatalogs[locale]).not.toHaveProperty(key)
+      }
+      expect(commonCatalogs[locale]).toHaveProperty('Quit_verb')
+      expect(nativeCatalogs[locale]).not.toHaveProperty('Quit')
+    }
+
+    expect(rendererCatalogs.ru.Quit).toBe('Выход')
+
+    const renderer = initI18n('ru')
+    const main = createNativeI18n('ru')
+    expect(renderer.t('Quit', { context: 'verb', ns: 'common' })).toBe('Выйти')
+    expect(main.t('Quit', { context: 'verb' })).toBe('Выйти')
+  })
+
+  it('does not expose renderer-only copy through main resources', () => {
+    for (const locale of TRANSLATED) {
+      expect(nativeResources[locale].common.Settings).toBeUndefined()
+      expect(nativeResources[locale].native.Settings).toBeUndefined()
+    }
+  })
+
+  it('ships i18next as a packaged runtime dependency', () => {
+    const packageJson = JSON.parse(
+      readFileSync(join(__dirname, '..', '..', '..', '..', 'package.json'), 'utf8')
+    ) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
+
+    expect(packageJson.dependencies?.i18next).toBe('^25.10.10')
+    expect(packageJson.devDependencies?.i18next).toBeUndefined()
   })
 })
 
@@ -400,11 +785,55 @@ describe('dynamic counted lookup translations', () => {
   })
 })
 
+const PRODUCT_TECHNICAL_TERM_LOCALES = TRANSLATED
+const RETAINED_PRODUCT_GLOSSARY = [
+  { term: 'Open Science', source: /\bOpen Science\b/ },
+  { term: 'Anthropic', source: /\bAnthropic\b/ },
+  { term: 'Claude', source: /\bClaude\b/ },
+  { term: 'Codex', source: /\bCodex\b/ },
+  { term: 'opencode', source: /\bOpenCode\b/, retained: /\b(?:OpenCode|opencode)\b/ },
+  { term: 'MCP', source: /\bMCP\b/ },
+  { term: 'ACP', source: /\bACP\b/ },
+  { term: 'API', source: /\bAPI\b/ },
+  { term: 'CLI', source: /\bCLI\b/ },
+  { term: 'SSH', source: /\bSSH\b/ },
+  { term: 'ZIP', source: /\bZIP\b/ },
+  { term: 'GitHub', source: /\bGitHub\b/ },
+  { term: 'Discord', source: /\bDiscord\b/ },
+  { term: 'Python', source: /\bPython\b/ },
+  { term: 'Jupyter', source: /\bJupyter\b/ },
+  { term: 'Office', source: /\bOffice\b/ },
+  { term: 'Chromium', source: /\bChromium\b/ }
+]
+
+const RETAINED_PRODUCT_GLOSSARY_EXCEPTIONS = new Set([
+  'ru: Open Science could not load Specialists. Retry to continue.: Open Science',
+  'ru: Open Science could not load projects. Retry to continue.: Open Science',
+  'ru: Open Science could not load Connectors.: Open Science',
+  'ru: Open Science could not load Skills.: Open Science',
+  'ru: Open Science could not load this Connector.: Open Science',
+  'ru: Open Science could not load this Skill.: Open Science'
+])
+
+const retainedProductGlossaryOffenders = (
+  locale: TranslatedLocale,
+  entries = allCatalogEntries(locale)
+): string[] =>
+  entries
+    .flatMap(([key, value]) => {
+      const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
+      return RETAINED_PRODUCT_GLOSSARY.filter(
+        ({ term, source: pattern, retained }) =>
+          pattern.test(source) && !(retained ? retained.test(value) : value.includes(term))
+      ).map(({ term }) => `${key}: ${term}`)
+    })
+    .filter((offender) => !RETAINED_PRODUCT_GLOSSARY_EXCEPTIONS.has(`${locale}: ${offender}`))
+
 describe('mandatory product glossary', () => {
   const retainedGlossary = [{ term: 'Notebook', source: /\bnotebooks?\b/i }]
 
   it.each(TRANSLATED)('%s keeps Notebook in English', (locale) => {
-    const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
+    const offenders = allCatalogEntries(locale).flatMap(([key, value]) => {
       const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
       return retainedGlossary
         .filter(({ term, source: pattern }) => pattern.test(source) && !value.includes(term))
@@ -414,38 +843,31 @@ describe('mandatory product glossary', () => {
     expect(offenders).toEqual([])
   })
 
-  it.each(['fr', 'ja', 'ko'] as const)(
+  it.each(PRODUCT_TECHNICAL_TERM_LOCALES)(
     '%s keeps product and technical terms in English',
     (locale) => {
-      const retainedProductGlossary = [
-        { term: 'Open Science', source: /\bOpen Science\b/ },
-        { term: 'Anthropic', source: /\bAnthropic\b/ },
-        { term: 'Claude', source: /\bClaude\b/ },
-        { term: 'Codex', source: /\bCodex\b/ },
-        { term: 'opencode', source: /\bOpenCode\b/ },
-        { term: 'MCP', source: /\bMCP\b/ },
-        { term: 'ACP', source: /\bACP\b/ },
-        { term: 'API', source: /\bAPI\b/ },
-        { term: 'CLI', source: /\bCLI\b/ },
-        { term: 'SSH', source: /\bSSH\b/ },
-        { term: 'ZIP', source: /\bZIP\b/ },
-        { term: 'GitHub', source: /\bGitHub\b/ },
-        { term: 'Discord', source: /\bDiscord\b/ },
-        { term: 'Python', source: /\bPython\b/ },
-        { term: 'Jupyter', source: /\bJupyter\b/ },
-        { term: 'Office', source: /\bOffice\b/ },
-        { term: 'Chromium', source: /\bChromium\b/ }
-      ]
-      const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
-        const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
-        return retainedProductGlossary
-          .filter(({ term, source: pattern }) => pattern.test(source) && !value.includes(term))
-          .map(({ term }) => `${key}: ${term}`)
-      })
+      const offenders = retainedProductGlossaryOffenders(locale)
 
       expect(offenders).toEqual([])
     }
   )
+
+  it('checks product terms in Chinese and Russian catalogs', () => {
+    const key = 'MCP server'
+    const mutations = new Map<TranslatedLocale, Array<[string, string]>>([
+      ['zh-Hans', [[key, '服务器']]],
+      ['ru', [[key, 'Сервер']]]
+    ])
+    const offenders = PRODUCT_TECHNICAL_TERM_LOCALES.flatMap((locale) =>
+      retainedProductGlossaryOffenders(locale, mutations.get(locale) ?? []).map(
+        (offender) => `${locale}: ${offender}`
+      )
+    )
+
+    expect(offenders).toEqual(
+      expect.arrayContaining(['zh-Hans: MCP server: MCP', 'ru: MCP server: MCP'])
+    )
+  })
 
   it('keeps reviewed French product and technical names in English', () => {
     const retainedTerms = [
@@ -572,6 +994,67 @@ describe('mandatory product glossary', () => {
     }
   } satisfies Record<TranslatedLocale, Record<string, string>>
 
+  const compoundGlossaryPatterns = {
+    mainModel: {
+      fr: /modèle principal/iu,
+      'zh-Hans': /主模型/u,
+      'zh-Hant': /主模型/u,
+      ja: /メインモデル/u,
+      ko: /메인 모델/u,
+      ru: /основн\p{L}*\s+модел/iu
+    },
+    mainAgent: {
+      fr: /agent principal/iu,
+      'zh-Hans': /主智能体/u,
+      'zh-Hant': /主智能體/u,
+      ja: /メインエージェント/u,
+      ko: /메인 에이전트/u,
+      ru: /главн\p{L}*\s+агент/iu
+    },
+    subagent: {
+      fr: /sous-agents?/iu,
+      'zh-Hans': /子智能体/u,
+      'zh-Hant': /子智能體/u,
+      ja: /サブエージェント/u,
+      ko: /서브에이전트/u,
+      ru: /субагент/iu
+    }
+  } satisfies Record<string, Record<TranslatedLocale, RegExp>>
+
+  const compoundGlossaryOffenders = (
+    entries: ReadonlyArray<readonly [string, string]>,
+    sourcePattern: RegExp,
+    translationPattern: RegExp
+  ): string[] =>
+    entries
+      .filter(([key]) => sourcePattern.test(englishOf(key)))
+      .filter(([, value]) => !translationPattern.test(value))
+      .map(([key]) => key)
+
+  const mainModelGlossaryOffenders = (
+    locale: TranslatedLocale,
+    entries: ReadonlyArray<readonly [string, string]>
+  ): string[] =>
+    compoundGlossaryOffenders(
+      entries,
+      /\bmain model\b/i,
+      compoundGlossaryPatterns.mainModel[locale]
+    )
+  const mainAgentGlossaryOffenders = (
+    locale: TranslatedLocale,
+    entries: ReadonlyArray<readonly [string, string]>
+  ): string[] =>
+    compoundGlossaryOffenders(
+      entries,
+      /\bmain agent\b/i,
+      compoundGlossaryPatterns.mainAgent[locale]
+    )
+  const subagentGlossaryOffenders = (
+    locale: TranslatedLocale,
+    entries: ReadonlyArray<readonly [string, string]>
+  ): string[] =>
+    compoundGlossaryOffenders(entries, /\bsubagents?\b/i, compoundGlossaryPatterns.subagent[locale])
+
   it.each(TRANSLATED)('%s uses the chosen generic terminology', (locale) => {
     const expected = chosenGenericTerms[locale]
     const actual = Object.fromEntries(
@@ -579,6 +1062,40 @@ describe('mandatory product glossary', () => {
     )
 
     expect(actual).toEqual(expected)
+  })
+
+  it('rejects a Main model label translated as the Main Agent role', () => {
+    expect(mainModelGlossaryOffenders('zh-Hans', [['Main model', '主智能体']])).toEqual([
+      'Main model'
+    ])
+  })
+
+  it('rejects a lowercase main agent compound translated as generic Agent', () => {
+    const key = 'Runs delegated tasks spawned by the main agent.'
+
+    expect(mainAgentGlossaryOffenders('zh-Hans', [[key, '运行由智能体发起的委派任务。']])).toEqual([
+      key
+    ])
+  })
+
+  it('rejects a Subagent label translated as generic Agent', () => {
+    expect(subagentGlossaryOffenders('zh-Hans', [['Subagent', '智能体']])).toEqual(['Subagent'])
+  })
+
+  it('rejects a native Subagent compound translated as generic Agent', () => {
+    const key = 'Return to the running tasks and stop their subagents before quitting Open Science.'
+
+    expect(
+      subagentGlossaryOffenders('zh-Hans', [[key, '请返回正在运行的任务并停止其智能体。']])
+    ).toEqual([key])
+  })
+
+  it.each(TRANSLATED)('%s uses the chosen Main model term in every matching key', (locale) => {
+    expect(mainModelGlossaryOffenders(locale, allCatalogEntries(locale))).toEqual([])
+  })
+
+  it.each(TRANSLATED)('%s uses the chosen Subagent term in every matching key', (locale) => {
+    expect(subagentGlossaryOffenders(locale, allCatalogEntries(locale))).toEqual([])
   })
 
   it('uses native copy for the provider-controlled default hint', () => {
@@ -826,27 +1343,13 @@ describe('mandatory product glossary', () => {
   it.each(TRANSLATED)(
     '%s uses the chosen Main Agent spelling in every Main role label',
     (locale) => {
-      const expected = {
-        fr: 'Agent principal',
-        'zh-Hans': '主智能体',
-        'zh-Hant': '主智能體',
-        ja: 'メインエージェント',
-        ko: '메인 에이전트',
-        ru: 'главн'
-      }[locale]
-      const offenders = Object.entries(catalog(locale))
-        .filter(([key]) => /\bMain(?: Agent)?\b/.test(englishOf(key)))
-        .filter(([, value]) =>
-          locale === 'ru'
-            ? !value.toLocaleLowerCase('ru').includes(expected) || !/агент/iu.test(value)
-            : !value.toLocaleLowerCase().includes(expected.toLocaleLowerCase())
-        )
-        .map(([key]) => key)
+      const offenders = mainAgentGlossaryOffenders(locale, allCatalogEntries(locale))
 
       expect(offenders).toEqual([])
     }
   )
 
+  const oauthIdentifierPattern = /\bOAuth\b/g
   const exactTechnicalIdentifierPatterns = [
     /SKILL\.md/g,
     /\b[\w.-]+\.(?:md|txt|json|zip)\b/g,
@@ -860,6 +1363,7 @@ describe('mandatory product glossary', () => {
     /setup-token/g,
     /\bopen-science\b/g,
     /\bRemote\.It\b/g,
+    oauthIdentifierPattern,
     /\bZIP\b/g,
     /(?<![:/\w])\/(?:[\w.-]+\/)+[\w.-]*[\w-]/g,
     /\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g,
@@ -879,13 +1383,19 @@ describe('mandatory product glossary', () => {
       .flatMap((identifier) => text.match(identifier) ?? [])
       .sort((left, right) => left.localeCompare(right))
   const withoutTechnicalIdentifiers = (text: string): string =>
-    [/\{\{\w+\}\}/g, ...exactTechnicalIdentifierPatterns].reduce(
-      (prose, identifier) => prose.replace(identifier, ''),
-      text
-    )
+    [
+      /\{\{\w+\}\}/g,
+      ...exactTechnicalIdentifierPatterns.filter(
+        (identifier) => identifier !== oauthIdentifierPattern
+      )
+    ].reduce((prose, identifier) => prose.replace(identifier, ''), text)
+
+  it('treats OAuth as an exact technical identifier', () => {
+    expect(exactTechnicalIdentifiers('OAuth registration')).toEqual(['OAuth'])
+  })
 
   it.each(TRANSLATED)('%s preserves exact technical identifiers', (locale) => {
-    const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
+    const offenders = allCatalogEntries(locale).flatMap(([key, value]) => {
       const source = englishOf(key)
       const expected = [
         ...exactTechnicalIdentifiers(source),
@@ -1288,7 +1798,7 @@ describe('Russian catalog quality', () => {
       'Open Science exited before this copy finished. Your current data is untouched. Discard the incomplete copy to use this location again.',
       'Open Science завершил работу до окончания копирования. Текущие данные не изменены. Удалите неполную копию, чтобы снова использовать это расположение.'
     ],
-    ['By {{publisher}}', 'Автор: {{publisher}}'],
+    ['Publisher: {{publisher}}', 'Издатель: {{publisher}}'],
     ['{{agent}} cannot be accessed.', '{{agent}} недоступен.'],
     [
       '{{fileName}}: unsupported file — upload a .md file or a .zip / .skill bundle.',
@@ -1795,15 +2305,6 @@ describe('Korean safety copy', () => {
   })
 })
 
-describe('Korean language endonyms', () => {
-  it('keeps Chinese language names in their own script', () => {
-    expect(catalog('ko')).toMatchObject({
-      简体中文: '简体中文',
-      繁體中文: '繁體中文'
-    })
-  })
-})
-
 const KOREAN_HIDDEN_FORMATTING = /[\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/u
 
 describe('Korean native UI style', () => {
@@ -2187,8 +2688,8 @@ describe('Korean binding terminology', () => {
     ],
     ['Star', '별표'],
     [
-      'Choose one .json file up to {{size}}. Credentials are never imported from the file.',
-      '최대 {{size}}인 .json 파일 하나를 선택하세요. 파일에서 자격 증명은 가져오지 않습니다.'
+      'Choose one .json file up to {{size}}. Credential values are never imported from the file.',
+      '최대 {{size}}인 .json 파일 하나를 선택하세요. 파일에서 자격 증명 값은 가져오지 않습니다.'
     ],
     ['Star on GitHub', 'GitHub에서 Star'],
     ['Star {{app}} on GitHub', 'GitHub에서 {{app}}에 Star'],
@@ -2317,19 +2818,9 @@ describe('key shape', () => {
   it.each(TRANSLATED)('%s keys carry no underscore inside the English text', (locale) => {
     // i18next's plural and context suffixes used by literal call sites. Each new context has to be
     // listed deliberately so an underscore in source copy cannot be mistaken for resolver syntax.
-    const suffixes = new Set([
-      ...PLURAL_CATEGORIES,
-      'verb',
-      'step',
-      'files',
-      'ago',
-      'duration',
-      'inUse',
-      'theme',
-      'language',
-      'runtime'
-    ])
-    const offenders = Object.keys(catalog(locale))
+    const suffixes = new Set([...PLURAL_CATEGORIES, ...CONTEXT_SUFFIXES])
+    const offenders = allCatalogEntries(locale)
+      .map(([key]) => key)
       .filter((key) => key.includes('_'))
       .filter((key) =>
         key
@@ -2355,7 +2846,7 @@ const offendingChars = (text: string, forbidden: string): string[] => [
 
 describe('script purity', () => {
   it('zh-Hant contains no simplified-only characters', () => {
-    const offenders = Object.entries(catalog('zh-Hant')).flatMap(([key, value]) =>
+    const offenders = allCatalogEntries('zh-Hant').flatMap(([key, value]) =>
       offendingChars(value, SIMPLIFIED_ONLY).map((char) => `${key}: ${char}`)
     )
 
@@ -2363,7 +2854,7 @@ describe('script purity', () => {
   })
 
   it('zh-Hans contains no traditional-only characters', () => {
-    const offenders = Object.entries(catalog('zh-Hans')).flatMap(([key, value]) =>
+    const offenders = allCatalogEntries('zh-Hans').flatMap(([key, value]) =>
       offendingChars(value, TRADITIONAL_ONLY).map((char) => `${key}: ${char}`)
     )
 
@@ -2438,9 +2929,9 @@ const unescape = (raw: string): string =>
   )
 
 // Every string literal in the renderer, not only the ones inside a t() call. Keys reach t() through
-// module-level lookup tables (COMPACT_ELAPSED, PANEL_NAME_LOWER, …) as often as they appear inline, and
-// matching those by pattern would miss them. Over-collecting costs nothing here: a stray non-key
-// literal can only mask an orphan, never invent one, and a silent miss beats a flaky guard.
+// imported error values and runtime lookup tables as often as they appear inline, so a complete exact
+// call graph is not available here. Exact guards below cover context-sensitive renderer keys and all
+// main keys; this conservative source scan covers the remaining dynamically supplied renderer keys.
 const literalsIn = (source: string): string[] => [
   ...[...source.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)].map((match) => unescape(match[1])),
   ...[...source.matchAll(/'((?:[^'\\\n]|\\.)*)'/g)].map((match) => unescape(match[1])),
@@ -2473,17 +2964,18 @@ const codeOnly = (source: string): string =>
 describe('semantic key leaks', () => {
   const SEMANTIC_PATH = /^[a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9-]+){2,}$/
 
+  // This guard scans the full source tree and runs under coverage in the selective CI lane.
   it('no t() call passes a dotted semantic path', () => {
     const offenders = SCAN_ROOTS.flatMap(sourceFiles).flatMap((path) => {
       const source = codeOnly(readFileSync(path, 'utf8'))
-      return [...source.matchAll(/\bt\(\s*['"]([^'"]+)['"]/g)]
-        .map((match) => match[1])
+      return tCallSites(source)
+        .map((site) => site.key)
         .filter((key) => SEMANTIC_PATH.test(key))
         .map((key) => `${path.slice(SRC_ROOT.length + 1)}: ${key}`)
     })
 
     expect(offenders).toEqual([])
-  })
+  }, 30_000)
 })
 
 // ---------------------------------------------------------------------------
@@ -2494,8 +2986,8 @@ describe('semantic key leaks', () => {
 // direction failed in a way nothing here caught: a call site whose English does not byte-match a
 // catalog key resolves to the key, which *is* correct English, so zh readers silently get English
 // while every parity check above stays green. Inline literals reaching t() and Trans are both
-// checked, as are the branches of a ternary argument; keys that arrive through a lookup table are
-// invisible here, and the orphan guard covers those instead.
+// checked, as are the branches of a ternary argument, same-file lookup tables, and aliases returned
+// by useTranslation. Imported and otherwise runtime-derived keys are covered by the orphan guard.
 
 // Consume one quoted string starting at the opening quote, honouring backslash escapes so an
 // apostrophe inside a double-quoted string cannot truncate the literal.
@@ -2521,7 +3013,12 @@ const readStringLiteral = (
   return null
 }
 
-type CallSite = { key: string; plural: boolean; context: string | null }
+type CallSite = {
+  key: string
+  plural: boolean
+  context: string | null
+  namespace?: string
+}
 
 // Walks to the end of a call's first argument: the top-level comma, or the closing paren when there
 // is only one argument. Nesting and string bodies are skipped so a comma inside an options object or
@@ -2579,13 +3076,12 @@ const skipSpace = (source: string, start: number): number => {
   return i
 }
 
-// Every `t('…')` / `t("…")`, skipping identifiers that merely end in t (startsWith, format, at).
-const tCallSites = (source: string): CallSite[] => {
+const namedCallSites = (source: string, callee: string): CallSite[] => {
   const sites: CallSite[] = []
-  for (let i = 0; i < source.length - 2; i += 1) {
-    if (source[i] !== 't' || source[i + 1] !== '(') continue
+  for (let i = 0; i < source.length - callee.length; i += 1) {
+    if (source.slice(i, i + callee.length + 1) !== `${callee}(`) continue
     if (/[A-Za-z0-9_$.]/.test(source[i - 1] ?? '')) continue
-    const argumentStart = skipSpace(source, i + 2)
+    const argumentStart = skipSpace(source, i + callee.length + 1)
     const literal = readStringLiteral(source, argumentStart)
     // A literal first argument ends at its closing quote; a ternary ends at the argument boundary.
     const argumentEnd = literal ? literal.end : firstArgumentEnd(source, argumentStart) - 1
@@ -2599,8 +3095,213 @@ const tCallSites = (source: string): CallSite[] => {
     const options = close === -1 ? tail : tail.slice(0, close + 1)
     const plural = /\bcount\b/.test(options)
     const context = /\bcontext\s*:\s*['"]([^'"]+)['"]/.exec(options)?.[1] ?? null
-    for (const key of keys) sites.push({ key, plural, context })
+    const namespace = /\bns\s*:\s*['"]([^'"]+)['"]/.exec(options)?.[1]
+    for (const key of keys) {
+      sites.push({ key, plural, context, ...(namespace ? { namespace } : {}) })
+    }
   }
+  return sites
+}
+
+const unwrapExpression = (expression: ts.Expression): ts.Expression => {
+  let current = expression
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression
+  }
+  return current
+}
+
+const translationCalleesIn = (source: string): Map<string, string | undefined> => {
+  const sourceFile = ts.createSourceFile(
+    'renderer-callees.tsx',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
+  const callees = new Map<string, string | undefined>()
+
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer
+    ) {
+      const initializer = unwrapExpression(node.initializer)
+      if (
+        ts.isCallExpression(initializer) &&
+        ts.isIdentifier(initializer.expression) &&
+        initializer.expression.text === 'useTranslation'
+      ) {
+        const translationBinding = node.name.elements.find((element) => {
+          const property = element.propertyName ?? element.name
+          return ts.isIdentifier(property) && property.text === 't'
+        })
+        if (translationBinding && ts.isIdentifier(translationBinding.name)) {
+          const namespaceArgument = initializer.arguments[0]
+          const namespace =
+            namespaceArgument && ts.isStringLiteralLike(namespaceArgument)
+              ? namespaceArgument.text
+              : undefined
+          const name = translationBinding.name.text
+          if (!callees.has(name) || callees.get(name) === namespace) callees.set(name, namespace)
+          else callees.set(name, undefined)
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  if (!callees.has('t')) callees.set('t', undefined)
+  return callees
+}
+
+// Lookup tables keep dynamic UI code readable, but their finite English values are still catalog
+// call sites. Resolve same-file object literals structurally so contextual keys such as compact ages
+// cannot hide behind an unrelated bare call with the same English base.
+const lookupTableCallSites = (
+  source: string,
+  translationCallees: ReadonlyMap<string, string | undefined>
+): CallSite[] => {
+  const sourceFile = ts.createSourceFile(
+    'renderer-calls.tsx',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
+  const tables = new Map<string, string[]>()
+
+  const collectTable = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const initializer = unwrapExpression(node.initializer)
+      if (ts.isObjectLiteralExpression(initializer)) {
+        const values = initializer.properties.flatMap((property) =>
+          ts.isPropertyAssignment(property) &&
+          ts.isStringLiteralLike(property.initializer) &&
+          !property.initializer.text.includes('_')
+            ? [property.initializer.text]
+            : []
+        )
+        if (values.length > 0) tables.set(node.name.text, values)
+      }
+    }
+    ts.forEachChild(node, collectTable)
+  }
+  collectTable(sourceFile)
+
+  const sites: CallSite[] = []
+  const collectCall = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      translationCallees.has(node.expression.text) &&
+      node.arguments[0] &&
+      ts.isElementAccessExpression(node.arguments[0]) &&
+      ts.isIdentifier(node.arguments[0].expression)
+    ) {
+      const keys = tables.get(node.arguments[0].expression.text) ?? []
+      const options = node.arguments[1]
+      const context = stringOption(options, 'context') ?? null
+      const namespace = stringOption(options, 'ns') ?? translationCallees.get(node.expression.text)
+      const plural = objectOption(options, 'count') !== undefined
+      for (const key of keys) {
+        sites.push({ key, plural, context, ...(namespace ? { namespace } : {}) })
+      }
+    }
+    ts.forEachChild(node, collectCall)
+  }
+  collectCall(sourceFile)
+  return sites
+}
+
+// Every literal call through t or a useTranslation alias, skipping identifiers that merely end in t
+// (startsWith, format, at).
+const tCallSites = (source: string): CallSite[] => {
+  const callees = translationCalleesIn(source)
+  return [
+    ...[...callees].flatMap(([callee, namespace]) =>
+      namedCallSites(source, callee).map((site) =>
+        site.namespace || !namespace ? site : { ...site, namespace }
+      )
+    ),
+    ...lookupTableCallSites(source, callees)
+  ]
+}
+
+const nativeCallKeys = (expression: ts.Expression): string[] => {
+  if (ts.isStringLiteralLike(expression)) return [expression.text]
+  if (ts.isParenthesizedExpression(expression)) return nativeCallKeys(expression.expression)
+  if (ts.isConditionalExpression(expression)) {
+    return [...nativeCallKeys(expression.whenTrue), ...nativeCallKeys(expression.whenFalse)]
+  }
+  return []
+}
+
+const isTranslateReference = (expression: ts.Expression): boolean => {
+  if (ts.isIdentifier(expression)) return expression.text === 'translate'
+  if (ts.isPropertyAccessExpression(expression)) return expression.name.text === 'translate'
+  return false
+}
+
+const isNativeTranslateCallee = (expression: ts.Expression): boolean => {
+  if (ts.isParenthesizedExpression(expression))
+    return isNativeTranslateCallee(expression.expression)
+  if (isTranslateReference(expression)) return true
+  return (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken &&
+    isTranslateReference(expression.left) &&
+    ts.isIdentifier(expression.right) &&
+    expression.right.text === 'englishNativeTranslator'
+  )
+}
+
+const objectOption = (
+  options: ts.Expression | undefined,
+  name: string
+): ts.ObjectLiteralElementLike | undefined => {
+  if (!options || !ts.isObjectLiteralExpression(options)) return undefined
+  return options.properties.find(
+    (property) => property.name?.getText().replace(/['"]/g, '') === name
+  )
+}
+
+const stringOption = (options: ts.Expression | undefined, name: string): string | undefined => {
+  const property = objectOption(options, name)
+  return property &&
+    ts.isPropertyAssignment(property) &&
+    ts.isStringLiteralLike(property.initializer)
+    ? property.initializer.text
+    : undefined
+}
+
+// Main uses local variables, object properties, class fields, and nullish-coalescing fallbacks for
+// NativeTranslator. Parse call expressions structurally so all of those invocation forms remain
+// guarded when a caller is refactored.
+const nativeTranslateCallSites = (source: string): CallSite[] => {
+  const sourceFile = ts.createSourceFile('native-calls.ts', source, ts.ScriptTarget.Latest, true)
+  const sites: CallSite[] = []
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && isNativeTranslateCallee(node.expression)) {
+      const keys = node.arguments[0] ? nativeCallKeys(node.arguments[0]) : []
+      const options = node.arguments[1]
+      const context = stringOption(options, 'context') ?? null
+      const namespace = stringOption(options, 'ns')
+      const plural = objectOption(options, 'count') !== undefined
+      for (const key of keys) {
+        sites.push({ key, plural, context, ...(namespace ? { namespace } : {}) })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
   return sites
 }
 
@@ -2616,11 +3317,13 @@ const transCallSites = (source: string): CallSite[] =>
     // real gap, so an approximate window is the safe direction to err in.
     const tail = source.slice(literal.end + 1, literal.end + 400)
     const element = tail.slice(0, tail.indexOf('>') + 1 || undefined)
+    const namespace = /\bns\s*=\s*['"{]\s*['"]?([^'"}\s]+)/.exec(element)?.[1]
     return [
       {
         key: literal.value,
         plural: /\bcount\b/.test(element),
-        context: /\bcontext\s*=\s*['"{]\s*['"]?([^'"}\s]+)/.exec(element)?.[1] ?? null
+        context: /\bcontext\s*=\s*['"{]\s*['"]?([^'"}\s]+)/.exec(element)?.[1] ?? null,
+        ...(namespace ? { namespace } : {})
       }
     ]
   })
@@ -2644,6 +3347,23 @@ const resolvesIn = (
   return entries[key] !== undefined
 }
 
+const orphanedCatalogKeys = (
+  catalogKeys: readonly string[],
+  sites: readonly CallSite[],
+  pluralCategories: readonly string[] = ['other'],
+  namespace?: CatalogNamespace
+): string[] => {
+  const calledKeys = new Set(
+    sites
+      .filter((site) => !namespace || !site.namespace || site.namespace === namespace)
+      .flatMap((site) => {
+        const stem = site.context ? `${site.key}_${site.context}` : site.key
+        return site.plural ? pluralCategories.map((category) => `${stem}_${category}`) : [stem]
+      })
+  )
+  return catalogKeys.filter((key) => !calledKeys.has(key))
+}
+
 describe('missing translations', () => {
   const sites = SCAN_ROOTS.flatMap(sourceFiles)
     .flatMap((path) => {
@@ -2663,12 +3383,104 @@ describe('missing translations', () => {
   })
 
   it.each(TRANSLATED)('every English t() literal has a %s translation', (locale) => {
-    const entries = catalog(locale)
     const untranslated = sites
-      .filter((site) => !resolvesIn(entries, site, REQUIRED_PLURAL_CATEGORIES[locale]))
+      .filter((site) => {
+        const entries =
+          site.namespace === 'common'
+            ? (commonCatalogs[locale] as Catalog)
+            : site.namespace === 'renderer'
+              ? (rendererCatalogs[locale] as Catalog)
+              : site.namespace
+                ? {}
+                : catalog(locale)
+        return !resolvesIn(entries, site, REQUIRED_PLURAL_CATEGORIES[locale])
+      })
       .map((site) => `${site.file}: ${JSON.stringify(site.key)}`)
 
     expect(untranslated).toEqual([])
+  })
+
+  it('routes renderer contextual keys owned by common directly to that namespace', () => {
+    const commonContextualKeys = new Set(
+      Object.keys(commonCatalogs.fr).filter((key) => {
+        const suffix = withoutPluralCategory(key).split('_').at(-1)
+        return suffix !== undefined && CONTEXT_SUFFIXES.has(suffix)
+      })
+    )
+    const misrouted = sites
+      .filter((site) => site.file.startsWith('renderer/'))
+      .filter((site) =>
+        commonContextualKeys.has(site.context ? `${site.key}_${site.context}` : site.key)
+      )
+      .filter((site) => site.namespace !== 'common')
+      .map((site) => `${site.file}: ${JSON.stringify(site.key)}`)
+
+    expect(misrouted).toEqual([])
+  })
+
+  it.each(TRANSLATED)('every %s contextual key has an exact renderer call site', (locale) => {
+    const contextualKeys = Object.keys(catalog(locale)).filter((key) => {
+      const suffix = withoutPluralCategory(key).split('_').at(-1)
+      return suffix !== undefined && CONTEXT_SUFFIXES.has(suffix)
+    })
+
+    expect(orphanedCatalogKeys(contextualKeys, sites, REQUIRED_PLURAL_CATEGORIES[locale])).toEqual(
+      []
+    )
+  })
+})
+
+describe('main NativeTranslator catalog guard', () => {
+  const mainRoot = join(SRC_ROOT, 'main')
+  const mainFiles = sourceFiles(mainRoot)
+  const sites = mainFiles.flatMap((path) =>
+    nativeTranslateCallSites(codeOnly(readFileSync(path, 'utf8'))).map((site) => ({
+      ...site,
+      file: path.slice(SRC_ROOT.length + 1)
+    }))
+  )
+  it('finds native call sites to check', () => {
+    expect(sites.length).toBeGreaterThan(20)
+  })
+
+  it.each(TRANSLATED)('every main translate() literal has a %s translation', (locale) => {
+    const untranslated = sites
+      .filter((site) => {
+        const entries =
+          site.namespace === 'common'
+            ? (commonCatalogs[locale] as Catalog)
+            : site.namespace === 'native'
+              ? (nativeCatalogs[locale] as Catalog)
+              : site.namespace
+                ? {}
+                : ({ ...commonCatalogs[locale], ...nativeCatalogs[locale] } as Catalog)
+        return !resolvesIn(entries, site, REQUIRED_PLURAL_CATEGORIES[locale])
+      })
+      .map((site) => `${site.file}: ${JSON.stringify(site.key)}`)
+
+    expect(untranslated).toEqual([])
+  })
+
+  it.each(TRANSLATED)('every %s native key still matches a main source literal', (locale) => {
+    const orphans = orphanedCatalogKeys(
+      Object.keys(nativeCatalogs[locale]),
+      sites,
+      REQUIRED_PLURAL_CATEGORIES[locale],
+      'native'
+    )
+
+    expect(orphans).toEqual([])
+  })
+
+  it.each(TRANSLATED)('every %s common key has a main source or runtime contract', (locale) => {
+    const orphans = orphanedCatalogKeys(
+      Object.keys(commonCatalogs[locale]),
+      sites,
+      REQUIRED_PLURAL_CATEGORIES[locale],
+      'common'
+    ).filter((key) => !MANDATORY_GENERIC_PRODUCT_NOUNS.has(key))
+
+    expect(orphans).toEqual([])
   })
 })
 
@@ -2685,6 +3497,27 @@ describe('t() call-site extraction', () => {
     ])
   })
 
+  it('reads useTranslation aliases and preserves their namespace', () => {
+    expect(
+      tCallSites(`
+        const { t: tCommon } = useTranslation('common')
+        tCommon('Cancel')
+      `)
+    ).toEqual([{ key: 'Cancel', plural: false, context: null, namespace: 'common' }])
+    expect(
+      tCallSites(`
+        const { t: tSettings } = useTranslation()
+        tSettings('Settings')
+      `)
+    ).toEqual([{ key: 'Settings', plural: false, context: null }])
+    expect(
+      tCallSites(`
+        const { t } = useTranslation('common')
+        t('Cancel')
+      `)
+    ).toEqual([{ key: 'Cancel', plural: false, context: null, namespace: 'common' }])
+  })
+
   it('ignores identifiers that merely end in t', () => {
     expect(tCallSites(`name.startsWith('py')`)).toEqual([])
     expect(tCallSites(`format('x')`)).toEqual([])
@@ -2697,6 +3530,44 @@ describe('t() call-site extraction', () => {
     expect(tCallSites(`t('Updated', { context: 'ago' })`)).toEqual([
       { key: 'Updated', plural: false, context: 'ago' }
     ])
+  })
+
+  it('recognizes explicit namespaces in renderer and native calls', () => {
+    expect(tCallSites(`t('Cancel', { ns: 'common' })`)).toEqual([
+      { key: 'Cancel', plural: false, context: null, namespace: 'common' }
+    ])
+    expect(
+      nativeTranslateCallSites(
+        `translate('{{count}} notebooks', { count, ns: 'native', defaultValue_one: '{{count}} notebook' })`
+      )
+    ).toEqual([
+      {
+        key: '{{count}} notebooks',
+        plural: true,
+        context: null,
+        namespace: 'native'
+      }
+    ])
+  })
+
+  it('recognizes property and fallback NativeTranslator calls', () => {
+    expect(
+      nativeTranslateCallSites(`
+        deps.translate('Export conversation')
+        this.translate('Save the update installer')
+        ;(options.translate ?? englishNativeTranslator)('Save file')
+      `)
+    ).toEqual([
+      { key: 'Export conversation', plural: false, context: null },
+      { key: 'Save the update installer', plural: false, context: null },
+      { key: 'Save file', plural: false, context: null }
+    ])
+  })
+
+  it('does not let a bare call keep an unused context key alive', () => {
+    const sites = nativeTranslateCallSites(`translate('Quit')`)
+
+    expect(orphanedCatalogKeys(['Quit', 'Quit_verb'], sites)).toEqual(['Quit_verb'])
   })
 
   // 'Pin project' shipped rendering English to zh readers because a ternary argument does not start
@@ -2722,9 +3593,21 @@ describe('t() call-site extraction', () => {
     ])
   })
 
-  // A lookup table reaching t() by identifier is the orphan guard's job. Claiming it here would
-  // report the surrounding literals as keys and bury the real gaps in false positives.
-  it('ignores a first argument that is not a ternary of literals', () => {
+  it('reads finite same-file lookup tables with their call options', () => {
+    expect(
+      tCallSites(`
+        const COMPACT = { day: '{{count}}d', week: '{{count}}w' } as const
+        t(COMPACT[unit], { count, context: 'ago' })
+      `)
+    ).toEqual([
+      { key: '{{count}}d', plural: true, context: 'ago' },
+      { key: '{{count}}w', plural: true, context: 'ago' }
+    ])
+  })
+
+  // An imported or runtime-built lookup cannot be resolved from one source file. Do not claim its
+  // surrounding literals as keys: that would bury real gaps in false positives.
+  it('ignores an unresolved first argument that is not a ternary of literals', () => {
     expect(tCallSites(`t(STATUS_COPY[check.status])`)).toEqual([])
     expect(tCallSites(`t(labelKey, { count })`)).toEqual([])
     expect(tCallSites(`t(value.key, value.params)`)).toEqual([])

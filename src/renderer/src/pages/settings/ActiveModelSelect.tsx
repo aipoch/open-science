@@ -62,7 +62,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
           void setActiveProvider(identity.providerId, identity.model).catch(() => undefined)
       }}
     >
-      <SelectTrigger aria-label={t('Active model')}>
+      <SelectTrigger aria-label={t('Main model')}>
         <span className="flex items-center gap-2 truncate">
           {current ? (
             <>

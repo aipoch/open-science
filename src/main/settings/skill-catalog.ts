@@ -105,6 +105,7 @@ class SkillCatalogModule {
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
   private readonly githubFetch: FetchLike
+  private userSkillCatalogRead: Promise<BundledSkill[]> | undefined
 
   constructor(private readonly options: SkillCatalogModuleOptions) {
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
@@ -128,10 +129,13 @@ class SkillCatalogModule {
 
   async saveGitHubToken(token: string): Promise<GitHubTokenStatus> {
     const trimmed = token.trim()
-    const response = await createAuthenticatedGitHubFetch(this.githubFetch, trimmed)(
-      'https://api.github.com/rate_limit',
-      { headers: { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' } }
-    )
+    const response = await createAuthenticatedGitHubFetch(
+      this.githubFetch,
+      trimmed,
+      {}
+    )('https://api.github.com/rate_limit', {
+      headers: { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' }
+    })
 
     if (!response.ok) {
       if (response.status === 401) {
@@ -158,7 +162,7 @@ class SkillCatalogModule {
   }
 
   private async catalog(): Promise<BundledSkill[]> {
-    const [featured, user] = await Promise.all([this.skillRegistry.list(), this.userSkills.list()])
+    const [featured, user] = await Promise.all([this.skillRegistry.list(), this.listUserSkills()])
     const bundledNames = new Set(featured.map((skill) => skill.name))
     const bundledIds = new Set(featured.map((skill) => skill.id))
     const userIdCounts = new Map<string, number>()
@@ -215,7 +219,12 @@ class SkillCatalogModule {
   // second production transaction facade while excluding immutable bundled packages from each
   // writable-directory reconciliation.
   async listUserSkills(): Promise<BundledSkill[]> {
-    return this.userSkills.list()
+    if (this.userSkillCatalogRead) return this.userSkillCatalogRead
+    const read = this.userSkills.list().finally(() => {
+      if (this.userSkillCatalogRead === read) this.userSkillCatalogRead = undefined
+    })
+    this.userSkillCatalogRead = read
+    return read
   }
 
   async withHostSkillRead<T>(
@@ -247,7 +256,7 @@ class SkillCatalogModule {
     return skills.map((skill) => this.toSkillView(skill, disabled))
   }
 
-  async listSpecialistSkillCatalog(): Promise<
+  async listSpecialistSkillCatalog(options: { bundledOnly?: boolean } = {}): Promise<
     Array<{
       id: string
       frameworkName: string
@@ -259,7 +268,11 @@ class SkillCatalogModule {
     }>
   > {
     const [skills, settings] = await Promise.all([
-      this.managedCatalog(),
+      options.bundledOnly
+        ? this.skillRegistry
+            .list()
+            .then((entries) => entries.filter((skill) => skill.exposure !== 'internal'))
+        : this.managedCatalog(),
       this.options.repository.getSettings()
     ])
     const disabled = new Set(settings.disabledSkillIds ?? [])
@@ -459,11 +472,12 @@ class SkillCatalogModule {
     return this.listSkills()
   }
 
-  async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
+  async importSkill(request: ImportSkillRequest, signal?: AbortSignal): Promise<ImportSkillResult> {
     const outcome = await this.userSkills.importFromGitHub(
       request.url,
       await this.authenticatedGitHubFetch(),
-      await this.bundledSkillNames()
+      await this.bundledSkillNames(),
+      { signal }
     )
     return { ...outcome, skills: await this.listSkills() }
   }
@@ -510,12 +524,16 @@ class SkillCatalogModule {
     return this.userSkills.importFromZipBatch(zip, items, await this.bundledSkillNames())
   }
 
-  async previewGitHubSkill(request: PreviewGitHubSkillRequest): Promise<SkillImportPreviewContent> {
+  async previewGitHubSkill(
+    request: PreviewGitHubSkillRequest,
+    signal?: AbortSignal
+  ): Promise<SkillImportPreviewContent> {
     const location = parseGitHubSkillUrl(request.url)
     if (!location) throw new Error('Not a recognizable GitHub URL.')
     const preview = await this.userSkills.previewGitHubSkill(
       request.url,
-      await this.authenticatedGitHubFetch()
+      await this.authenticatedGitHubFetch(),
+      { signal }
     )
     const suffix = location.path ? `/${location.path}` : ''
     const revision = location.ref ? `@${location.ref}` : ''
@@ -525,17 +543,22 @@ class SkillCatalogModule {
     }
   }
 
-  async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
+  async scanRepoSkills(request: ScanRepoRequest, signal?: AbortSignal): Promise<ScanRepoResult> {
     if (parseGitHubRepo(request.repo)) {
       return {
-        skills: await this.userSkills.scanRepo(request.repo, await this.authenticatedGitHubFetch())
+        skills: await this.userSkills.scanRepo(
+          request.repo,
+          await this.authenticatedGitHubFetch(),
+          { signal }
+        )
       }
     }
     return {
       skills: [],
       repositories: await searchGitHubSkillRepositories(
         request.repo,
-        await this.authenticatedGitHubFetch()
+        await this.authenticatedGitHubFetch(),
+        { signal }
       )
     }
   }

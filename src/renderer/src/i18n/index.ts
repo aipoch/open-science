@@ -10,26 +10,20 @@
 //   - A reviewer reads the real English copy in the diff, which is the reason for this scheme.
 //   - A missing or deleted translation degrades to correct English, never to a visible key path.
 
-import i18next, { type i18n } from 'i18next'
+import type { i18n } from 'i18next'
 import { initReactI18next } from 'react-i18next'
 
-import { DEFAULT_LOCALE, LOCALES, type Locale } from '../../../shared/locale'
-import { DEFAULT_NAMESPACE, englishSourceFallbackPostProcessor, resources } from './resources'
-
-// Every translated locale falls back directly to English. Cross-locale fallback would mix languages
-// on one screen whenever a key is missing, which reads worse than a clean English string and hides the
-// gap from reviewers.
-const fallbackLng: Record<string, string[]> = {
-  fr: [DEFAULT_LOCALE],
-  ja: [DEFAULT_LOCALE],
-  ko: [DEFAULT_LOCALE],
-  ru: [DEFAULT_LOCALE],
-  'zh-Hant': [DEFAULT_LOCALE],
-  'zh-Hans': [DEFAULT_LOCALE],
-  default: [DEFAULT_LOCALE]
-}
+import {
+  COMMON_NAMESPACE,
+  createI18nInstance,
+  initializeI18nInstance,
+  RENDERER_NAMESPACE
+} from '../../../shared/i18n/core'
+import type { Locale } from '../../../shared/locale'
+import { DEFAULT_NAMESPACE, resources } from './resources'
 
 let initialized = false
+const i18next = createI18nInstance()
 
 export const initI18n = (locale: Locale): i18n => {
   if (initialized) {
@@ -37,27 +31,14 @@ export const initI18n = (locale: Locale): i18n => {
     return i18next
   }
 
-  void i18next
-    .use(englishSourceFallbackPostProcessor)
-    .use(initReactI18next)
-    .init({
-      lng: locale,
-      fallbackLng,
-      supportedLngs: [...LOCALES],
-      resources,
-      defaultNS: DEFAULT_NAMESPACE,
-      ns: [DEFAULT_NAMESPACE],
-      // Both separators are off because keys are English sentences. Left at their defaults, a period in
-      // 'Data folder not found.' would be read as key nesting and a colon in 'Note: saved' as a
-      // namespace prefix, so either would silently fail to resolve.
-      keySeparator: false,
-      nsSeparator: false,
-      // Our copy goes through JSX, which escapes on its own; i18next escaping on top would double-encode
-      // apostrophes and quotes that appear throughout the English source.
-      interpolation: { escapeValue: false },
-      postProcess: [englishSourceFallbackPostProcessor.name],
-      returnNull: false
-    })
+  i18next.use(initReactI18next)
+  initializeI18nInstance(i18next, {
+    locale,
+    resources,
+    namespaces: [RENDERER_NAMESPACE, COMMON_NAMESPACE],
+    defaultNamespace: DEFAULT_NAMESPACE,
+    fallbackNamespaces: [COMMON_NAMESPACE]
+  })
 
   initialized = true
   return i18next

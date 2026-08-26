@@ -4,12 +4,13 @@ import { basename } from 'node:path'
 import type {
   ConnectorTemplateDefinition,
   ConnectorTemplateDiagnostic,
+  ConnectorTemplateExportFormat,
   ConnectorTemplateExportPreview,
   ConnectorTemplatePreview,
   CustomServerTransport
 } from '../../shared/settings'
 import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings'
-import { isCustomConnectorName } from '../../shared/custom-connector'
+import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
 import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
 
 export type ConnectorTemplateSource = {
@@ -25,6 +26,12 @@ export type ConnectorTemplateSource = {
   headerNames?: string[]
   oauth?: ConnectorTemplateDefinition['oauth']
   hasOAuthClientSecret?: boolean
+}
+
+type ConnectorTemplateExport = {
+  preview: ConnectorTemplateExportPreview
+  contents?: string
+  mcpClientContents?: string
 }
 
 type ParseOptions = {
@@ -443,6 +450,191 @@ export const parseConnectorTemplate = (
     return { diagnostics, ready: false }
   }
 
+  if (isRecord(parsed.mcpServers)) {
+    const definitions: ConnectorTemplateDefinition[] = []
+    const usedNames = new Set<string>()
+    for (const [serverName, rawServer] of Object.entries(parsed.mcpServers)) {
+      const path = `mcpServers.${serverName}`
+      if (!isRecord(rawServer)) {
+        diagnostic(
+          diagnostics,
+          'error',
+          'connector-template.type',
+          'MCP server configuration must be an object.',
+          path
+        )
+        continue
+      }
+      const explicitType = asString(rawServer.type)?.toLowerCase()
+      const hasCommand = typeof rawServer.command === 'string'
+      const hasUrl = typeof rawServer.url === 'string'
+      const transport =
+        explicitType === 'stdio'
+          ? 'stdio'
+          : explicitType === 'sse'
+            ? 'sse'
+            : explicitType === 'http' ||
+                explicitType === 'streamable-http' ||
+                explicitType === 'streamable_http'
+              ? 'streamable_http'
+              : hasCommand
+                ? 'stdio'
+                : hasUrl
+                  ? 'streamable_http'
+                  : undefined
+      const supportedType =
+        explicitType === undefined ||
+        ['stdio', 'http', 'streamable-http', 'streamable_http', 'sse'].includes(explicitType)
+      if (!supportedType) {
+        diagnostic(
+          diagnostics,
+          'error',
+          'connector-template.transport',
+          'Unsupported MCP transport.',
+          `${path}.type`
+        )
+        continue
+      }
+      if (!transport) {
+        diagnostic(
+          diagnostics,
+          'error',
+          'connector-template.transport',
+          'MCP server must define either command or url.',
+          path
+        )
+        continue
+      }
+      if (
+        hasCommand === hasUrl ||
+        (transport === 'stdio' && !hasCommand) ||
+        (transport !== 'stdio' && !hasUrl)
+      ) {
+        diagnostic(
+          diagnostics,
+          'error',
+          'connector-template.transport-fields',
+          'MCP server transport does not match its connection fields.',
+          path
+        )
+        continue
+      }
+      const name = isCustomConnectorName(serverName)
+        ? serverName
+        : toCustomConnectorName(serverName)
+      if (usedNames.has(name)) {
+        diagnostic(
+          diagnostics,
+          'error',
+          'connector-template.duplicate-name',
+          'MCP server names must remain unique after normalization.',
+          path
+        )
+        continue
+      }
+      usedNames.add(name)
+      if (name !== serverName) {
+        diagnostic(
+          diagnostics,
+          'warning',
+          'connector-template.normalized-name',
+          'MCP server name was normalized for Open Science.',
+          path
+        )
+      }
+      if (rawServer.env !== undefined && !isRecord(rawServer.env)) {
+        diagnostic(
+          diagnostics,
+          'error',
+          'connector-template.type',
+          'MCP server environment variables must be an object.',
+          `${path}.env`
+        )
+        continue
+      }
+      if (rawServer.headers !== undefined && !isRecord(rawServer.headers)) {
+        diagnostic(
+          diagnostics,
+          'error',
+          'connector-template.type',
+          'MCP server headers must be an object.',
+          `${path}.headers`
+        )
+        continue
+      }
+      const environment = isRecord(rawServer.env) ? Object.keys(rawServer.env) : []
+      const headers = isRecord(rawServer.headers) ? Object.keys(rawServer.headers) : []
+      if (environment.length || headers.length) {
+        diagnostic(
+          diagnostics,
+          'warning',
+          'connector-template.secret-values-excluded',
+          'Credential values were excluded and must be entered locally.',
+          path
+        )
+      }
+      const candidate = parseConnectorTemplate(
+        JSON.stringify({
+          schema_version: 1,
+          kind: 'open-science.connector',
+          name,
+          display_name: serverName,
+          transport,
+          ...(transport === 'stdio'
+            ? { command: rawServer.command, args: rawServer.args }
+            : { url: rawServer.url }),
+          ...(environment.length || headers.length
+            ? {
+                required_secrets: {
+                  ...(environment.length ? { environment } : {}),
+                  ...(headers.length ? { headers } : {})
+                }
+              }
+            : {})
+        }),
+        options
+      )
+      diagnostics.push(
+        ...candidate.diagnostics.map((item) => ({
+          ...item,
+          path: item.path ? `${path}.${item.path}` : path
+        }))
+      )
+      if (candidate.ready && candidate.definition) definitions.push(candidate.definition)
+    }
+    if (definitions.length === 0 && diagnostics.length === 0) {
+      diagnostic(
+        diagnostics,
+        'error',
+        'connector-template.empty-mcp-servers',
+        'The MCP client configuration must contain at least one server.',
+        'mcpServers'
+      )
+    }
+    return {
+      ...(definitions[0] ? { definition: definitions[0] } : {}),
+      ...(definitions.length > 1 ? { definitions } : {}),
+      sourceFormat: 'mcp-client',
+      diagnostics,
+      ready: definitions.length > 0
+    }
+  }
+
+  if (
+    Array.isArray(parsed.packages) ||
+    Array.isArray(parsed.remotes) ||
+    (typeof parsed.$schema === 'string' && parsed.$schema.includes('/server.schema.json'))
+  ) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.registry-manifest',
+      'MCP Registry server.json manifests cannot be imported as installed MCP client configurations.',
+      '$schema'
+    )
+    return { sourceFormat: 'mcp-registry', diagnostics, ready: false }
+  }
+
   rejectUnknownFields(parsed, ROOT_FIELDS, diagnostics)
   const schemaVersion = parsed.schema_version === 1 ? parsed.schema_version : undefined
   if (!schemaVersion) {
@@ -635,6 +827,9 @@ export const parseConnectorTemplate = (
   return { definition, diagnostics, ready: true }
 }
 
+const asString = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() ? value.trim() : undefined
+
 const templateJson = (definition: ConnectorTemplateDefinition): string =>
   `${JSON.stringify(
     {
@@ -682,9 +877,54 @@ const templateJson = (definition: ConnectorTemplateDefinition): string =>
     2
   )}\n`
 
+const secretPlaceholders = (names: readonly string[]): Record<string, string> =>
+  Object.fromEntries(names.map((name) => [name, `\${${name}}`]))
+
+const mcpClientJson = (definition: ConnectorTemplateDefinition): string =>
+  `${JSON.stringify(
+    {
+      mcpServers: {
+        [definition.name]:
+          definition.transport === 'stdio'
+            ? {
+                command: definition.command,
+                ...(definition.args?.length ? { args: definition.args } : {}),
+                ...(definition.requiredSecrets?.environment?.length
+                  ? { env: secretPlaceholders(definition.requiredSecrets.environment) }
+                  : {})
+              }
+            : {
+                type: definition.transport === 'sse' ? 'sse' : 'http',
+                url: definition.url,
+                ...(definition.requiredSecrets?.headers?.length
+                  ? { headers: secretPlaceholders(definition.requiredSecrets.headers) }
+                  : {})
+              }
+      }
+    },
+    null,
+    2
+  )}\n`
+
+export const connectorTemplateExportSelection = (
+  result: ConnectorTemplateExport,
+  format: ConnectorTemplateExportFormat
+): { digest?: string; suggestedFileName?: string; contents?: string } =>
+  format === 'mcp-client'
+    ? {
+        digest: result.preview.mcpClientDigest,
+        suggestedFileName: result.preview.mcpClientSuggestedFileName,
+        contents: result.mcpClientContents
+      }
+    : {
+        digest: result.preview.digest,
+        suggestedFileName: result.preview.suggestedFileName,
+        contents: result.contents
+      }
+
 export const buildConnectorTemplateExport = (
   source: ConnectorTemplateSource
-): { preview: ConnectorTemplateExportPreview; contents?: string } => {
+): ConnectorTemplateExport => {
   const definition: ConnectorTemplateDefinition = {
     schemaVersion: 1,
     kind: 'open-science.connector',
@@ -711,13 +951,30 @@ export const buildConnectorTemplateExport = (
   const contents = templateJson(definition)
   const parsed = parseConnectorTemplate(contents)
   const digest = parsed.ready ? connectorTemplateDigest(contents) : undefined
+  const mcpClientContents = mcpClientJson(definition)
+  const mcpClientDigest = connectorTemplateDigest(mcpClientContents)
+  const mcpClientDiagnostics: ConnectorTemplateDiagnostic[] = source.oauth
+    ? [
+        {
+          severity: 'warning',
+          code: 'connector-template.mcp-oauth-excluded',
+          message:
+            'OAuth registration and OAuth tokens were excluded from the MCP client configuration.'
+        }
+      ]
+    : []
   return {
     preview: {
       ...parsed,
       connectorId: source.id,
-      ...(digest ? { digest, suggestedFileName: `open-science-connector-${source.name}.json` } : {})
+      ...(digest
+        ? { digest, suggestedFileName: `open-science-connector-${source.name}.json` }
+        : {}),
+      mcpClientDigest,
+      mcpClientSuggestedFileName: `mcp-${source.name}.json`,
+      ...(mcpClientDiagnostics.length ? { mcpClientDiagnostics } : {})
     },
-    ...(parsed.ready ? { contents } : {})
+    ...(parsed.ready ? { contents, mcpClientContents } : {})
   }
 }
 

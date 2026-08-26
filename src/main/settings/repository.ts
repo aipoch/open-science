@@ -1,5 +1,4 @@
 import { isDeepStrictEqual } from 'node:util'
-
 import type {
   AgentFrameworkId,
   AppIconVariant,
@@ -44,6 +43,7 @@ import {
 } from './custom-server-identity'
 import {
   buildReviewerModelMutation,
+  buildSessionDetailsModelMutation,
   buildSubagentModelMutation,
   buildVisionModelMutation
 } from './subagent-model-settings'
@@ -291,25 +291,26 @@ class SettingsRepository {
   async setReasoningEffort(effort: ReasoningEffort): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, reasoningEffort: effort }))
   }
-
   async setSubagentModel(
     ...args: Parameters<typeof buildSubagentModelMutation>
   ): Promise<StoredSettings> {
     return this.mutate(buildSubagentModelMutation(...args))
   }
-
   async setReviewerModel(
     ...args: Parameters<typeof buildReviewerModelMutation>
   ): Promise<StoredSettings> {
     return this.mutate(buildReviewerModelMutation(...args))
   }
-
+  async setSessionDetailsModel(
+    ...args: Parameters<typeof buildSessionDetailsModelMutation>
+  ): Promise<StoredSettings> {
+    return this.mutate(buildSessionDetailsModelMutation(...args))
+  }
   async setVisionModel(
     ...args: Parameters<typeof buildVisionModelMutation>
   ): Promise<StoredSettings> {
     return this.mutate(buildVisionModelMutation(...args))
   }
-
   async setNotificationsEnabled(enabled: boolean): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, notificationsEnabled: enabled }))
   }
@@ -317,7 +318,6 @@ class SettingsRepository {
   async setConversationSkillImportEnabled(enabled: boolean): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, conversationSkillImportEnabled: enabled }))
   }
-
   async setLocalePreference(preference: LanguagePreference): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, localePreference: preference }))
   }
@@ -454,55 +454,48 @@ class SettingsRepository {
     })
   }
 
-  // Replaces one language's v4 RuntimeEnablement (the explicit enabled-override + install-auth maps).
-  // The value is run through the SAME sanitizer used on read, so a corrupt entry can never be
-  // persisted. An entry that sanitizes to empty (both maps empty) deletes the language's entry, and
-  // the whole `notebookRuntimeEnablement` map is dropped once it becomes empty, so an absent map keeps
-  // meaning "use the provenance default".
+  // Applies one RuntimeEnablement change to the latest persisted value inside the write queue.
   async setRuntimeEnablement(
     language: NotebookLanguage,
-    enablement: RuntimeEnablement
+    update: (current: RuntimeEnablement) => RuntimeEnablement
   ): Promise<StoredSettings> {
-    const sanitized = sanitizeSettings({ notebookRuntimeEnablement: { [language]: enablement } })
-      .notebookRuntimeEnablement?.[language] ?? { enabled: {}, installAuthorized: {} }
-    const isEmpty =
-      Object.keys(sanitized.enabled).length === 0 &&
-      Object.keys(sanitized.installAuthorized).length === 0
-
     return this.mutate((settings) => {
-      const current: Partial<Record<NotebookLanguage, RuntimeEnablement>> = {
-        ...settings.notebookRuntimeEnablement
+      const current = settings.notebookRuntimeEnablement?.[language]
+      const enablement = update({
+        enabled: { ...current?.enabled },
+        installAuthorized: { ...current?.installAuthorized }
+      })
+      const sanitized = sanitizeSettings({ notebookRuntimeEnablement: { [language]: enablement } })
+        .notebookRuntimeEnablement?.[language]
+      const notebookRuntimeEnablement = { ...settings.notebookRuntimeEnablement }
+      if (sanitized) notebookRuntimeEnablement[language] = sanitized
+      else delete notebookRuntimeEnablement[language]
+      return {
+        ...settings,
+        notebookRuntimeEnablement:
+          Object.keys(notebookRuntimeEnablement).length > 0 ? notebookRuntimeEnablement : undefined
       }
-
-      if (isEmpty) delete current[language]
-      else current[language] = sanitized
-
-      const notebookRuntimeEnablement = Object.keys(current).length > 0 ? current : undefined
-
-      return { ...settings, notebookRuntimeEnablement }
     })
   }
 
-  // Replaces one language's manual-interpreter catalog (the paths the user added via "Add interpreter…").
-  // Sanitized like on read (trim + dedupe + drop empties); an empty list deletes the language's entry,
-  // and the whole map is dropped once empty, so an absent map keeps meaning "no manual interpreters".
+  // Applies one catalog change to the latest persisted paths inside the write queue.
   async setManualInterpreters(
     language: NotebookLanguage,
-    paths: string[]
+    update: (current: string[]) => string[]
   ): Promise<StoredSettings> {
-    const cleaned = [...new Set(paths.map((p) => p.trim()).filter((p) => p.length > 0))]
-
     return this.mutate((settings) => {
-      const current: Partial<Record<NotebookLanguage, string[]>> = {
-        ...settings.notebookManualInterpreters
+      const paths = update([...(settings.notebookManualInterpreters?.[language] ?? [])])
+      const cleaned = [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
+      const notebookManualInterpreters = { ...settings.notebookManualInterpreters }
+      if (cleaned.length > 0) notebookManualInterpreters[language] = cleaned
+      else delete notebookManualInterpreters[language]
+      return {
+        ...settings,
+        notebookManualInterpreters:
+          Object.keys(notebookManualInterpreters).length > 0
+            ? notebookManualInterpreters
+            : undefined
       }
-
-      if (cleaned.length === 0) delete current[language]
-      else current[language] = cleaned
-
-      const notebookManualInterpreters = Object.keys(current).length > 0 ? current : undefined
-
-      return { ...settings, notebookManualInterpreters }
     })
   }
 

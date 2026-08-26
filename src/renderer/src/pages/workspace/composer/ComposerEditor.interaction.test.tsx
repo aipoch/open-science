@@ -4,12 +4,20 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ComposerEditor } from './ComposerEditor'
-import { emptyDoc, type ComposerDoc } from './composer-doc'
+import {
+  domToDoc,
+  emptyDoc,
+  LONG_PASTE_CHARACTER_THRESHOLD,
+  type ComposerDoc,
+  type ComposerPastedTextNode,
+  type ComposerPastedTextStage
+} from './composer-doc'
 import {
   createInitialGrantedFoldersState,
   useGrantedFoldersStore
 } from '@/stores/granted-folders-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useProjectStore } from '@/stores/project-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import {
@@ -150,6 +158,19 @@ const pickerProjectFiles = [
 
 beforeEach(() => {
   useSettingsStore.setState({ ...createInitialSettingsState(), skills: seedSkills })
+  useProjectStore.setState({
+    projects: [
+      {
+        id: 'default',
+        name: 'Current Project',
+        description: '',
+        agentContext: '',
+        isExample: false,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+  })
   seedProjectFiles()
   // The artifact popup icon may read image previews; stub the api so it never throws.
   ;(window as unknown as { api: unknown }).api = {
@@ -187,6 +208,10 @@ type Overrides = Partial<{
   onDocChange: (doc: ComposerDoc) => void
   onSubmit: () => void
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
+  onLongTextPaste: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
+  onLocatePastedText: (pastedTextId: string) => void
+  onUndo: (caret?: { nodeIndex: number; offset: number }) => boolean
+  onRedo: (caret?: { nodeIndex: number; offset: number }) => boolean
   disabled: boolean
   isHistoryBrowsing: boolean
   historyStatus: string
@@ -194,6 +219,7 @@ type Overrides = Partial<{
   mentionPreviewContext: { sessionId: string; projectId?: string }
   focusRequest: string | number
   restoreFocusRequest: number
+  caretRequest: { key: number; position: { nodeIndex: number; offset: number } }
 }>
 
 const renderEditor = (overrides: Overrides = {}): void => {
@@ -204,6 +230,10 @@ const renderEditor = (overrides: Overrides = {}): void => {
         onDocChange={overrides.onDocChange ?? noop}
         onSubmit={overrides.onSubmit ?? noop}
         onPaste={overrides.onPaste ?? noop}
+        onLongTextPaste={overrides.onLongTextPaste}
+        onLocatePastedText={overrides.onLocatePastedText}
+        onUndo={overrides.onUndo}
+        onRedo={overrides.onRedo}
         disabled={overrides.disabled}
         placeholder="Ask anything"
         ariaLabel="Ask anything"
@@ -213,6 +243,7 @@ const renderEditor = (overrides: Overrides = {}): void => {
         mentionPreviewContext={overrides.mentionPreviewContext}
         focusRequest={overrides.focusRequest}
         restoreFocusRequest={overrides.restoreFocusRequest}
+        caretRequest={overrides.caretRequest}
       />
     )
   })
@@ -250,7 +281,11 @@ describe('ComposerEditor', () => {
   it('shows the placeholder when the doc is empty and hides it once there is content', () => {
     renderEditor({ doc: emptyDoc })
     // The only aria-hidden node in the editor is the placeholder overlay.
-    expect(document.body.querySelector('[aria-hidden="true"]')?.textContent).toBe('Ask anything')
+    expect(
+      Array.from(document.body.querySelectorAll('[aria-hidden="true"]')).some(
+        (node) => node.textContent === 'Ask anything'
+      )
+    ).toBe(true)
 
     act(() => {
       root.render(
@@ -265,6 +300,109 @@ describe('ComposerEditor', () => {
       )
     })
     expect(document.body.querySelector('[aria-hidden="true"]')).toBeNull()
+  })
+
+  it('hides the placeholder while an IME composition is active', () => {
+    renderEditor({ doc: emptyDoc })
+    const hasPlaceholder = (): boolean =>
+      Array.from(document.body.querySelectorAll('[aria-hidden="true"]')).some(
+        (node) => node.textContent === 'Ask anything'
+      )
+
+    expect(hasPlaceholder()).toBe(true)
+
+    act(() => {
+      editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+    })
+    expect(hasPlaceholder()).toBe(false)
+
+    act(() => {
+      editor().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+    })
+    expect(hasPlaceholder()).toBe(true)
+  })
+
+  it('keeps an inline placeholder and a visible caret host after a pasted-text marker', () => {
+    renderEditor({ focusRequest: 'session-a' })
+    const root = editor()
+
+    renderEditor({
+      doc: {
+        nodes: [{ type: 'pasted-text', id: 'paste-1', text: 'payload', attachmentId: 'upload-1' }]
+      },
+      focusRequest: 'session-a'
+    })
+
+    expect(root.getAttribute('data-inline-placeholder')).toBe('true')
+    expect(root.className).toContain('after:content-[attr(data-placeholder)]')
+    expect(root.querySelector('[data-pasted-text-id="paste-1"]')?.textContent).toBe('…')
+    expect(
+      Array.from(document.body.querySelectorAll('[aria-hidden="true"]')).some(
+        (node) => node.textContent === 'Ask anything'
+      )
+    ).toBe(false)
+    expect(document.activeElement).toBe(root)
+    expect(window.getSelection()?.anchorNode?.nodeType).toBe(Node.TEXT_NODE)
+    expect(window.getSelection()?.anchorNode?.textContent).toBe('\u2060')
+    expect(window.getSelection()?.anchorOffset).toBe(0)
+
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'pasted-text', id: 'paste-1', text: 'payload', attachmentId: 'upload-1' },
+          { type: 'text', text: ' ' }
+        ]
+      },
+      focusRequest: 'session-a'
+    })
+    expect(root.getAttribute('data-inline-placeholder')).toBeNull()
+    expect(root.className).not.toContain('after:content-[attr(data-placeholder)]')
+  })
+
+  it('preserves the caret after a pasted-text anchor when upload metadata changes', () => {
+    const pastedText = { type: 'pasted-text' as const, id: 'paste-1', text: 'payload' }
+    renderEditor({
+      doc: {
+        nodes: [{ type: 'text', text: 'before ' }, pastedText, { type: 'text', text: ' after' }]
+      },
+      focusRequest: 'session-a'
+    })
+    const root = editor()
+    const textAfterAnchor = root.childNodes[2]
+    root.focus()
+    setCaret(textAfterAnchor, 0)
+
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'text', text: 'before ' },
+          { ...pastedText, attachmentId: 'upload-1' },
+          { type: 'text', text: ' after' }
+        ]
+      },
+      focusRequest: 'session-a'
+    })
+
+    expect(window.getSelection()?.anchorNode).toBe(root.childNodes[2])
+    expect(window.getSelection()?.anchorOffset).toBe(0)
+    expect(domToDoc(root).nodes[1]).toEqual({ ...pastedText, attachmentId: 'upload-1' })
+  })
+
+  it('locates the matching pasted-text attachment by pointer and keyboard', () => {
+    const onLocatePastedText = vi.fn()
+    renderEditor({
+      doc: { nodes: [{ type: 'pasted-text', id: 'paste-1', text: 'payload' }] },
+      onLocatePastedText
+    })
+    const marker = editor().querySelector<HTMLElement>('[data-pasted-text-id="paste-1"]')!
+
+    act(() => marker.click())
+    dispatchKey(marker, 'Enter')
+    dispatchKey(marker, ' ')
+
+    expect(onLocatePastedText).toHaveBeenNthCalledWith(1, 'paste-1')
+    expect(onLocatePastedText).toHaveBeenNthCalledWith(2, 'paste-1')
+    expect(onLocatePastedText).toHaveBeenNthCalledWith(3, 'paste-1')
   })
 
   it('refreshes an artifact chip when only its MIME type changes', () => {
@@ -305,6 +443,28 @@ describe('ComposerEditor', () => {
     expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'hello' }] })
   })
 
+  it('captures the selection start before replacing selected Composer text', () => {
+    const onDocChange = vi.fn()
+    renderEditor({ doc: { nodes: [{ type: 'text', text: 'hello' }] }, onDocChange })
+    const text = editor().firstChild as Text
+    const range = document.createRange()
+    range.setStart(text, 1)
+    range.setEnd(text, 4)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+
+    dispatchKey(editor(), 'x')
+    act(() => {
+      editor().textContent = 'hXo'
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: 'hXo' }] },
+      { nodeIndex: 0, offset: 1 }
+    )
+  })
+
   it('submits on Enter without shift and not on Shift+Enter', () => {
     const onSubmit = vi.fn()
     renderEditor({ onSubmit })
@@ -332,6 +492,30 @@ describe('ComposerEditor', () => {
     })
     dispatchKey(editor(), 'Enter')
     expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  it('emits one undoable document edit for an IME composition', () => {
+    const onDocChange = vi.fn()
+    renderEditor({ onDocChange })
+    setCaret(editor(), 0)
+
+    act(() => {
+      editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+      editor().textContent = 'n'
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+      editor().textContent = '你'
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(onDocChange).not.toHaveBeenCalled()
+
+    act(() => {
+      editor().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+    })
+    expect(onDocChange).toHaveBeenCalledOnce()
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: '你' }] },
+      { nodeIndex: 0, offset: 0 }
+    )
   })
 
   it('enters history with ArrowUp only from a collapsed caret at the logical start', () => {
@@ -467,7 +651,260 @@ describe('ComposerEditor', () => {
 
     expect(onPaste).toHaveBeenCalledTimes(1)
     expect(editor().textContent).toContain('pasted')
-    expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'pasted' }] })
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: 'pasted' }] },
+      { nodeIndex: 0, offset: 0 }
+    )
+  })
+
+  it('replaces the active selection with a long-paste anchor at the exact document position', () => {
+    const onDocChange = vi.fn()
+    const onLongTextPaste = vi.fn()
+    renderEditor({
+      doc: { nodes: [{ type: 'text', text: 'before SELECT after' }] },
+      onDocChange,
+      onLongTextPaste
+    })
+    const textNode = editor().firstChild as Text
+    const range = document.createRange()
+    range.setStart(textNode, 'before '.length)
+    range.setEnd(textNode, 'before SELECT'.length)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    const payload = 'x'.repeat(LONG_PASTE_CHARACTER_THRESHOLD + 1)
+
+    act(() => {
+      const event = new Event('paste', { bubbles: true, cancelable: true }) as Event & {
+        clipboardData: unknown
+      }
+      event.clipboardData = {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? payload : '')
+      }
+      editor().dispatchEvent(event)
+    })
+
+    expect(onDocChange).not.toHaveBeenCalled()
+    const [nextDoc, node, caret] = onLongTextPaste.mock.calls[0] as [
+      ComposerDoc,
+      ComposerPastedTextNode,
+      { nodeIndex: number; offset: number }
+    ]
+    expect(node).toMatchObject({ type: 'pasted-text', text: payload })
+    expect(nextDoc).toEqual({
+      nodes: [{ type: 'text', text: 'before ' }, node, { type: 'text', text: ' after' }]
+    })
+    expect(caret).toEqual({ nodeIndex: 0, offset: 'before '.length })
+    expect(editor().textContent).not.toContain(payload)
+  })
+
+  it('does not stage a long paste when the selection is outside the editor', () => {
+    const onLongTextPaste = vi.fn()
+    renderEditor({ onLongTextPaste })
+    const outside = document.createTextNode('outside')
+    document.body.appendChild(outside)
+    setCaret(outside, outside.textContent?.length ?? 0)
+    const payload = 'x'.repeat(LONG_PASTE_CHARACTER_THRESHOLD + 1)
+
+    act(() => {
+      const event = new Event('paste', { bubbles: true, cancelable: true }) as Event & {
+        clipboardData: unknown
+      }
+      event.clipboardData = {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? payload : '')
+      }
+      editor().dispatchEvent(event)
+    })
+
+    expect(onLongTextPaste).not.toHaveBeenCalled()
+    expect(outside.textContent).toBe('outside')
+    expect(editor().querySelector('[data-composer-node-type="pasted-text"]')).toBeNull()
+  })
+
+  it('does not serialize a split trailing caret marker after another long paste', () => {
+    const onLongTextPaste = vi.fn()
+    const firstPaste = { type: 'pasted-text' as const, id: 'paste-1', text: 'first payload' }
+    renderEditor({
+      doc: { nodes: [firstPaste] },
+      onLongTextPaste,
+      focusRequest: 'session-a'
+    })
+    const payload = 'x'.repeat(LONG_PASTE_CHARACTER_THRESHOLD + 1)
+
+    act(() => {
+      const event = new Event('paste', { bubbles: true, cancelable: true }) as Event & {
+        clipboardData: unknown
+      }
+      event.clipboardData = {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? payload : '')
+      }
+      editor().dispatchEvent(event)
+    })
+
+    const [nextDoc, secondPaste] = onLongTextPaste.mock.calls[0] as [
+      ComposerDoc,
+      ComposerPastedTextNode
+    ]
+    expect(nextDoc.nodes).toEqual([firstPaste, secondPaste])
+    expect(nextDoc.nodes).not.toContainEqual({ type: 'text', text: '\u2060' })
+  })
+
+  it('copies pasted-text markers as fresh independent anchors when pasted in the composer', () => {
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'text', text: 'before ' },
+          { type: 'pasted-text', id: 'paste-a', text: 'alpha' },
+          { type: 'text', text: ' middle ' },
+          { type: 'pasted-text', id: 'paste-b', text: 'bravo' },
+          { type: 'text', text: ' after' }
+        ]
+      }
+    })
+    const range = document.createRange()
+    range.selectNodeContents(editor())
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    const clipboard = new Map<string, string>()
+    const copy = new Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(copy, 'clipboardData', {
+      value: { setData: (type: string, value: string) => clipboard.set(type, value) }
+    })
+
+    act(() => editor().dispatchEvent(copy))
+
+    expect(copy.defaultPrevented).toBe(true)
+    expect(clipboard.get('text/plain')).toBe('before alpha middle bravo after')
+    expect(clipboard.get('application/x-open-science-composer-fragment')).not.toContain('paste-a')
+
+    const onLongTextPaste = vi.fn()
+    renderEditor({ onLongTextPaste })
+    setCaret(editor(), 0)
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) => clipboard.get(type) ?? ''
+      }
+    })
+    act(() => editor().dispatchEvent(paste))
+
+    const [nextDoc, staged] = onLongTextPaste.mock.calls[0] as [
+      ComposerDoc,
+      ComposerPastedTextNode[]
+    ]
+    expect(staged).toHaveLength(2)
+    expect(staged.map((node) => node.id)).not.toContain('paste-a')
+    expect(staged.map((node) => node.id)).not.toContain('paste-b')
+    expect(staged.map((node) => node.text)).toEqual(['alpha', 'bravo'])
+    expect(nextDoc.nodes).toEqual([
+      { type: 'text', text: 'before ' },
+      staged[0],
+      { type: 'text', text: ' middle ' },
+      staged[1],
+      { type: 'text', text: ' after' }
+    ])
+    expect(editor().textContent).not.toContain('alpha')
+    expect(editor().textContent).not.toContain('bravo')
+  })
+
+  it('cuts a focused pasted-text marker with its full payload', () => {
+    const onDocChange = vi.fn()
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'text', text: 'before ' },
+          { type: 'pasted-text', id: 'paste-a', text: 'full payload' },
+          { type: 'text', text: ' after' }
+        ]
+      },
+      onDocChange
+    })
+    const marker = editor().querySelector<HTMLElement>('[data-pasted-text-id="paste-a"]')!
+    setCaret(editor(), 1)
+    const clipboard = new Map<string, string>()
+    const cut = new Event('cut', { bubbles: true, cancelable: true })
+    Object.defineProperty(cut, 'clipboardData', {
+      value: { setData: (type: string, value: string) => clipboard.set(type, value) }
+    })
+
+    act(() => marker.dispatchEvent(cut))
+
+    expect(cut.defaultPrevented).toBe(true)
+    expect(clipboard.get('text/plain')).toBe('full payload')
+    expect(clipboard.get('application/x-open-science-composer-fragment')).toContain('full payload')
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: 'before  after' }] },
+      { nodeIndex: 1, offset: 0 }
+    )
+  })
+
+  it('routes Cmd+Z only through Composer undo, including after its history is empty', () => {
+    const onUndo = vi.fn(() => true)
+    renderEditor({ onUndo })
+    const handled = new KeyboardEvent('keydown', {
+      key: 'z',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    act(() => editor().dispatchEvent(handled))
+    expect(handled.defaultPrevented).toBe(true)
+    expect(onUndo).toHaveBeenCalledOnce()
+
+    onUndo.mockReturnValue(false)
+    const native = new KeyboardEvent('keydown', {
+      key: 'z',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    act(() => editor().dispatchEvent(native))
+    expect(native.defaultPrevented).toBe(true)
+    expect(onUndo).toHaveBeenCalledTimes(2)
+  })
+
+  it('routes Cmd+Shift+Z and Ctrl+Shift+Z only through Composer redo', () => {
+    const onRedo = vi.fn(() => true)
+    renderEditor({ onRedo })
+
+    for (const [index, modifier] of [{ metaKey: true }, { ctrlKey: true }].entries()) {
+      if (index === 1) onRedo.mockReturnValue(false)
+      const handled = new KeyboardEvent('keydown', {
+        key: 'z',
+        shiftKey: true,
+        ...modifier,
+        bubbles: true,
+        cancelable: true
+      })
+      act(() => editor().dispatchEvent(handled))
+      expect(handled.defaultPrevented).toBe(true)
+    }
+
+    expect(onRedo).toHaveBeenCalledTimes(2)
+  })
+
+  it('places the caret immediately after restored pasted text', () => {
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'text', text: 'before ' },
+          { type: 'pasted-text', id: 'paste-1', text: 'payload' },
+          { type: 'text', text: ' after' }
+        ]
+      }
+    })
+
+    renderEditor({
+      doc: { nodes: [{ type: 'text', text: 'before payload after' }] },
+      caretRequest: { key: 1, position: { nodeIndex: 0, offset: 'before payload'.length } }
+    })
+
+    expect(document.activeElement).toBe(editor())
+    expect(window.getSelection()?.anchorNode).toBe(editor().firstChild)
+    expect(window.getSelection()?.anchorOffset).toBe('before payload'.length)
   })
 
   it('keeps pasted "/name" text as plain text, never a functional skill chip', () => {
@@ -489,7 +926,10 @@ describe('ComposerEditor', () => {
 
     // No chip is created; the doc holds only a text node, so it carries no skill id.
     expect(editor().querySelector('[data-skill-id]')).toBeNull()
-    expect(onDocChange).toHaveBeenLastCalledWith({ nodes: [{ type: 'text', text: '/Literature' }] })
+    expect(onDocChange).toHaveBeenLastCalledWith(
+      { nodes: [{ type: 'text', text: '/Literature' }] },
+      { nodeIndex: 0, offset: 0 }
+    )
   })
 
   it('inserts a skill chip when a suggestion is chosen from the popup', () => {
@@ -518,6 +958,7 @@ describe('ComposerEditor', () => {
 
     const lastCall = onDocChange.mock.calls.at(-1)?.[0] as ComposerDoc
     expect(lastCall.nodes.some((node) => node.type === 'skill' && node.id === 'lit')).toBe(true)
+    expect(onDocChange.mock.calls.at(-1)?.[1]).toEqual({ nodeIndex: 0, offset: 4 })
   })
 
   it('exposes the active skill suggestion from the focused editor', () => {
@@ -558,7 +999,7 @@ describe('ComposerEditor', () => {
     dispatchKey(editor(), 'Backspace')
 
     expect(editor().querySelector('[data-skill-id]')).toBeNull()
-    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc)
+    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc, { nodeIndex: 1, offset: 0 })
   })
 
   it('suppresses the popup once a skill chip exists (one skill per message)', () => {
@@ -616,6 +1057,40 @@ describe('ComposerEditor', () => {
     expect(
       lastCall.nodes.some((node) => node.type === 'artifact' && node.id === 'upload:up-1')
     ).toBe(true)
+  })
+
+  it('inserts a Session chip from `#` and navigates by Session id when clicked', () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      selectedSessionId: 'session-1',
+      sessions: [
+        createSession({ id: 'session-1', title: 'Current conversation' }),
+        createSession({ id: 'session-2', title: 'Prior analysis', updatedAt: 1710000001000 })
+      ]
+    })
+    const onDocChange = vi.fn()
+    renderEditor({ onDocChange })
+
+    const textNode = document.createTextNode('#prior')
+    editor().appendChild(textNode)
+    setCaret(textNode, 6)
+    act(() => editor().dispatchEvent(new Event('input', { bubbles: true })))
+    dispatchKey(document, 'Enter')
+
+    const chip = editor().querySelector<HTMLElement>('[data-mention-type="session"]')
+    expect(chip?.textContent).toBe('#Prior analysis')
+    expect(chip?.getAttribute('data-session-id')).toBe('session-2')
+    expect(chip?.getAttribute('data-project-id')).toBeNull()
+    expect(chip?.getAttribute('data-frame-id')).toBeNull()
+    const lastDoc = onDocChange.mock.calls.at(-1)?.[0] as ComposerDoc
+    expect(lastDoc.nodes).toContainEqual({
+      type: 'session',
+      sessionId: 'session-2',
+      title: 'Prior analysis'
+    })
+
+    act(() => chip?.click())
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-2')
   })
 
   it('exposes the active artifact suggestion from the focused editor', async () => {
@@ -716,7 +1191,7 @@ describe('ComposerEditor', () => {
     dispatchKey(editor(), 'Backspace')
 
     expect(editor().querySelector('[data-mention-type="artifact"]')).toBeNull()
-    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc)
+    expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc, { nodeIndex: 1, offset: 0 })
   })
 
   it('opens a linked-folder chip in the preview workbench on click', () => {

@@ -30,6 +30,22 @@ const withPlanMcpClient = async <Result>(
   }
 }
 
+const VALID_STEP = { title: 'Analyze', description: 'Produce the result.' }
+const VALID_DELEGATION = { name: 'Primary agent', steps: [VALID_STEP] }
+const VALID_PHASE = { name: 'Analysis', delegations: [VALID_DELEGATION] }
+
+function planGenerationArguments(
+  phases: unknown,
+  feasibility: unknown = { confidence: 'high', rationale: 'Inputs are available.' }
+): Record<string, unknown> {
+  return {
+    task_summary: 'Analyze one dataset',
+    phases,
+    desired_outputs: [],
+    feasibility
+  }
+}
+
 describe('Session Plan MCP server', () => {
   it('advertises the complete nested Plan content schema', async () => {
     const server = createPlanMcpServer({
@@ -56,9 +72,10 @@ describe('Session Plan MCP server', () => {
       })
       expect(inputSchema.properties?.phases).toMatchObject({
         type: 'array',
-        description: expect.stringContaining('one or more delegations'),
+        description: expect.stringContaining('ordered phases'),
         items: {
           type: 'object',
+          required: ['name', 'delegations'],
           properties: {
             name: { type: 'string', description: expect.any(String) },
             delegations: {
@@ -66,6 +83,7 @@ describe('Session Plan MCP server', () => {
               description: expect.stringContaining('at least one delegation'),
               items: {
                 type: 'object',
+                required: ['name', 'steps'],
                 properties: {
                   name: { type: 'string', description: expect.any(String) },
                   steps: {
@@ -73,6 +91,7 @@ describe('Session Plan MCP server', () => {
                     description: expect.stringContaining('at least one step'),
                     items: {
                       type: 'object',
+                      required: ['title', 'description'],
                       properties: {
                         title: { type: 'string', description: expect.any(String) },
                         description: { type: 'string', description: expect.any(String) }
@@ -102,7 +121,15 @@ describe('Session Plan MCP server', () => {
           rationale: { type: 'string', description: expect.any(String) }
         }
       })
+      expect(inputSchema.properties).not.toHaveProperty('session_id')
+      expect(inputSchema.properties).not.toHaveProperty('plan_id')
+      expect(inputSchema.properties).not.toHaveProperty('artifact_id')
+      expect(inputSchema.properties).not.toHaveProperty('artifact_version_id')
       expect(inputSchema).not.toHaveProperty('required')
+      expect(JSON.stringify(inputSchema)).not.toContain(
+        'delegations: [{ name, steps: [{ title, description }] }]'
+      )
+      expect(JSON.stringify(inputSchema)).not.toContain('`{ title, description }` objects')
     } finally {
       await client.close()
       await server.close()
@@ -531,6 +558,103 @@ describe('Session Plan MCP server', () => {
     })
   })
 
+  it.each([
+    {
+      name: 'omitted delegation steps',
+      input: planGenerationArguments([
+        { name: 'Analysis', delegations: [{ name: 'Primary agent' }] }
+      ]),
+      expected: 'Expected array; received missing value at phases[0].delegations[0].steps'
+    },
+    {
+      name: 'omitted phase delegations',
+      input: planGenerationArguments([{ name: 'Analysis' }]),
+      expected: 'Expected array; received missing value at phases[0].delegations'
+    },
+    {
+      name: 'omitted step title',
+      input: planGenerationArguments([
+        {
+          ...VALID_PHASE,
+          delegations: [{ ...VALID_DELEGATION, steps: [{ description: 'Produce the result.' }] }]
+        }
+      ]),
+      expected: 'Expected string; received missing value at phases[0].delegations[0].steps[0].title'
+    },
+    {
+      name: 'invalid feasibility confidence',
+      input: planGenerationArguments([VALID_PHASE], {
+        confidence: 'certain',
+        rationale: 'Inputs are available.'
+      }),
+      expected:
+        'Expected one of "high", "medium", "low"; received "certain" at feasibility.confidence'
+    },
+    {
+      name: 'invalid phase object',
+      input: planGenerationArguments(['Analysis']),
+      expected: 'Expected object; received string at phases[0]'
+    },
+    {
+      name: 'invalid decision',
+      input: { decision: 'maybe' },
+      expected: 'Expected one of "approved", "rejected"; received "maybe" at decision'
+    }
+  ])('formats $name with the shared schema error convention', async ({ name, input, expected }) => {
+    const generate = vi.fn()
+
+    await withPlanMcpClient(
+      `plan-schema-error-${name}`,
+      {
+        generate,
+        approve: vi.fn(),
+        reject: vi.fn(),
+        updateStepStatus: vi.fn()
+      },
+      async (client) => {
+        const result = await client.callTool({ name: 'generate_plan', arguments: input })
+        const text = (result as { content: Array<{ text: string }> }).content[0].text
+
+        expect(result).toMatchObject({ isError: true })
+        expect(text).toContain(expected)
+        expect(generate).not.toHaveBeenCalled()
+      }
+    )
+  })
+
+  it('rejects unadvertised identity fields before invoking a Plan handler', async () => {
+    const approve = vi.fn()
+
+    await withPlanMcpClient(
+      'plan-forged-identities-test',
+      {
+        generate: vi.fn(),
+        approve,
+        reject: vi.fn(),
+        updateStepStatus: vi.fn()
+      },
+      async (client) => {
+        const result = await client.callTool({
+          name: 'generate_plan',
+          arguments: {
+            decision: 'approved',
+            session_id: 'forged-session',
+            plan_id: 'forged-plan',
+            artifact_id: 'forged-artifact',
+            artifact_version_id: 'forged-version'
+          }
+        })
+        const text = (result as { content: Array<{ text: string }> }).content[0].text
+
+        expect(result).toMatchObject({ isError: true })
+        expect(text).toContain(
+          'Unexpected fields: "session_id", "plan_id", "artifact_id", "artifact_version_id"'
+        )
+        expect(approve).not.toHaveBeenCalled()
+      }
+    )
+  })
+
   it('preserves approval-already-pending as a structured MCP error', async () => {
     const rpcServer = createServer((_request, response) => {
       response.writeHead(409, { 'content-type': 'application/json' })
@@ -675,8 +799,20 @@ describe('Session Plan MCP server', () => {
     ])
     const generateTool = listedTools.tools.find((tool) => tool.name === 'generate_plan')
     expect(generateTool).toBeDefined()
+    expect(generateTool?.description).toMatch(/^Generation and decision use separate call shapes\./)
+    expect(generateTool?.description).toContain(
+      'all four top-level fields: task_summary, phases, desired_outputs, and feasibility'
+    )
+    expect(generateTool?.description).toContain(
+      'For a decision, submit only decision:"approved" or decision:"rejected"'
+    )
     expect(generateTool?.description).toContain('kind:feedback')
     expect(generateTool?.description).toContain('decision:"approved"')
+    expect(generateTool?.description).not.toContain(
+      'every delegation must include its own non-empty `steps` array'
+    )
+    expect(generateTool?.description).toContain('repair each reported path')
+    expect(generateTool?.description).toContain('never resend the same invalid arguments unchanged')
     await client.callTool({
       name: 'generate_plan',
       arguments: {

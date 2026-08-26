@@ -427,7 +427,13 @@ describe('HostLineageService', () => {
           library_rank: 0,
           library_scope: 'environment' as const,
           built_for_runtime: '3.13',
-          priority: 'other' as const
+          priority: 'other' as const,
+          source: {
+            type: 'github' as const,
+            repository: 'numpy/numpy',
+            ref: 'v2.0.0',
+            commit: 'abc123'
+          }
         }
       ],
       python_version: '3.13.5',
@@ -472,7 +478,13 @@ describe('HostLineageService', () => {
               change: 'installed' as const,
               after_version: '2.0.0',
               library_rank: 0,
-              library_scope: 'environment' as const
+              library_scope: 'environment' as const,
+              source: {
+                type: 'github' as const,
+                repository: 'numpy/numpy',
+                ref: 'v2.0.0',
+                commit: 'abc123'
+              }
             }
           ]
         }

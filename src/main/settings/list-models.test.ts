@@ -19,11 +19,11 @@ describe('parseModelIds', () => {
 
 describe('listProviderModels', () => {
   it('requests the given models URL with auth and returns the parsed ids', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      status: 200,
-      json: () =>
-        Promise.resolve({ data: [{ id: 'deepseek-v4-pro' }, { id: 'deepseek-v4-flash' }] })
-    })
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({ data: [{ id: 'deepseek-v4-pro' }, { id: 'deepseek-v4-flash' }] })
+      )
 
     const result = await listProviderModels(
       { url: 'https://api.deepseek.com/v1/models', key: 'sk-1' },
@@ -38,7 +38,7 @@ describe('listProviderModels', () => {
   })
 
   it('reports a non-2xx status without throwing', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({ status: 401, json: () => Promise.resolve({}) })
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({}, { status: 401 }))
 
     const result = await listProviderModels(
       { url: 'https://api.deepseek.com/v1/models', key: 'k' },
@@ -51,5 +51,57 @@ describe('listProviderModels', () => {
 
   it('fails on an invalid model-list URL', async () => {
     expect((await listProviderModels({ url: 'not a url' })).ok).toBe(false)
+  })
+
+  it('rejects a model-list response that exceeds the byte budget', async () => {
+    const body = JSON.stringify({
+      data: [{ id: 'model-a' }],
+      padding: 'x'.repeat(2 * 1024 * 1024)
+    })
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(body, { status: 200 }))
+
+    await expect(
+      listProviderModels(
+        { url: 'https://api.deepseek.com/v1/models', key: 'k' },
+        { fetchImpl: fetchImpl as unknown as typeof fetch }
+      )
+    ).resolves.toEqual({
+      ok: false,
+      message: 'Model list response exceeded 2097152 bytes.'
+    })
+  })
+
+  it('rejects a model catalog with more than 2000 model ids', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      Response.json({
+        data: Array.from({ length: 2_001 }, (_, index) => ({ id: `model-${index}` }))
+      })
+    )
+
+    await expect(
+      listProviderModels(
+        { url: 'https://api.deepseek.com/v1/models', key: 'k' },
+        { fetchImpl: fetchImpl as unknown as typeof fetch }
+      )
+    ).resolves.toEqual({
+      ok: false,
+      status: 200,
+      message: 'The vendor returned more than 2000 models.'
+    })
+  })
+
+  it('rejects a model catalog containing an oversized model id', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'm'.repeat(513) }] }))
+
+    await expect(
+      listProviderModels(
+        { url: 'https://api.deepseek.com/v1/models', key: 'k' },
+        { fetchImpl: fetchImpl as unknown as typeof fetch }
+      )
+    ).resolves.toEqual({
+      ok: false,
+      status: 200,
+      message: 'The vendor returned a model ID longer than 512 characters.'
+    })
   })
 })

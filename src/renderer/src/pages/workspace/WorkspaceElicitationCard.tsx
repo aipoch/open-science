@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import {
   MAX_ELICITATION_MESSAGE_CHARS,
+  isValidElicitationValue,
   resolveAgentUserChoiceQuestions,
   type AgentUserChoiceQuestion,
   type ElicitationAnswer,
@@ -55,25 +56,57 @@ const initialValues = (
   return values
 }
 
+const normalizeLocalDateTime = (value: string): string | undefined => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(value)
+  if (!match) return undefined
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const hour = Number(match[4])
+  const minute = Number(match[5])
+  const second = Number(match[6] ?? 0)
+  const millisecond = Number((match[7] ?? '').padEnd(3, '0'))
+  const date = new Date(year, month - 1, day, hour, minute, second, millisecond)
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day ||
+    date.getHours() !== hour ||
+    date.getMinutes() !== minute ||
+    date.getSeconds() !== second
+  ) {
+    return undefined
+  }
+  return date.toISOString()
+}
+
+const valueForSubmission = (field: ElicitationField, value: ElicitationValue): ElicitationValue =>
+  field.format === 'date-time' && typeof value === 'string'
+    ? (normalizeLocalDateTime(value) ?? value)
+    : value
+
+const valueForTextInput = (
+  field: ElicitationField,
+  value: ElicitationValue | undefined
+): string => {
+  if (typeof value !== 'string' || field.format !== 'date-time') {
+    return typeof value === 'string' ? value : ''
+  }
+  if (normalizeLocalDateTime(value) || !isValidElicitationValue(field, value)) return value
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (part: number, width = 2): string => String(part).padStart(width, '0')
+  const milliseconds = date.getMilliseconds()
+  const fraction = milliseconds === 0 ? '' : `.${pad(milliseconds, 3)}`
+  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${fraction}`
+}
+
 const hasValidValue = (field: ElicitationField, value: ElicitationValue | undefined): boolean => {
   if (value === undefined) return !field.required
-  if (typeof value === 'string') {
-    if (field.required && value.trim().length === 0) return false
-    if (value.length > MAX_ELICITATION_MESSAGE_CHARS) return false
-    if (field.minLength !== undefined && value.length < field.minLength) return false
-    if (field.maxLength !== undefined && value.length > field.maxLength) return false
-  }
-  if (typeof value === 'number') {
-    if (field.kind === 'integer' && !Number.isInteger(value)) return false
-    if (field.minimum !== undefined && value < field.minimum) return false
-    if (field.maximum !== undefined && value > field.maximum) return false
-  }
-  if (Array.isArray(value)) {
-    if (field.required && value.length === 0) return false
-    if (field.minItems !== undefined && value.length < field.minItems) return false
-    if (field.maxItems !== undefined && value.length > field.maxItems) return false
-  }
-  return true
+  if (field.required && typeof value === 'string' && value.trim().length === 0) return false
+  if (field.required && Array.isArray(value) && value.length === 0) return false
+  return isValidElicitationValue(field, valueForSubmission(field, value))
 }
 
 const submittedAnswers = (
@@ -84,13 +117,7 @@ const submittedAnswers = (
     const value = values[field.id]
     if (value === undefined || value === '' || (Array.isArray(value) && value.length === 0))
       return []
-    const submittedValue =
-      field.format === 'date-time' &&
-      typeof value === 'string' &&
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/.test(value)
-        ? new Date(value).toISOString()
-        : value
-    return [{ fieldId: field.id, value: submittedValue }]
+    return [{ fieldId: field.id, value: valueForSubmission(field, value) }]
   })
 
 type WorkspaceElicitationCardProps = {
@@ -834,7 +861,7 @@ const WorkspaceElicitationCard = ({
                         ? 'datetime-local'
                         : undefined
               const textProps = {
-                value: typeof value === 'string' ? value : '',
+                value: valueForTextInput(field, value),
                 disabled: isSubmitting,
                 required: field.required,
                 minLength: field.minLength,

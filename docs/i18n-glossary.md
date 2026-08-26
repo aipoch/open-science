@@ -1,7 +1,8 @@
 # Localization Glossary
 
-The binding reference for `src/renderer/src/locales/fr.json`, `ja.json`, `ko.json`, `ru.json`,
-`zh-Hans.json`, and `zh-Hant.json`. There is no English catalog: **the key is the English source text**.
+The binding reference for the `common`, `native`, and `renderer` namespaces in
+`src/shared/i18n/locales/fr.json`, `ja.json`, `ko.json`, `ru.json`, `zh-Hans.json`, and
+`zh-Hant.json`. There is no English catalog: **the key is the English source text**.
 `t('Data folder not found')` renders that sentence verbatim in English and looks it up in the
 localized catalogs, so a missing translation falls back to correct English rather than a raw key
 path. This keeps the English legible in a code diff, which is where copy actually gets reviewed.
@@ -14,8 +15,8 @@ independently from the English key; do not derive them from another catalog.
 
 ## Key conventions
 
-All catalogs are flat: one level, no nesting. `keySeparator` and `nsSeparator` are off, so the
-periods and colons inside an English sentence stay part of the key.
+Catalog keys are flat inside each of the three namespace objects. `keySeparator` and `nsSeparator`
+are off, so the periods and colons inside an English sentence stay part of the key.
 
 - **Editing English copy changes the key.** Rename the matching catalog entries in the same commit,
   or the translation is stranded and the UI silently falls back to English. `resources.test.ts`

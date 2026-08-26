@@ -26,6 +26,7 @@ import {
 import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { ApplicationEventSource } from '../application-events'
+import { createLogger, diagnosticErrorFields, runWithDiagnosticCorrelation } from '../logger'
 import {
   WEB_RPC_CAPABILITIES,
   WEB_EVENT_STREAM_PROTOCOL_VERSION,
@@ -60,6 +61,7 @@ const MIN_TASK_IDEMPOTENCY_ENTRY_BYTES = 16 * 1024
 const MAX_IDEMPOTENCY_KEY_LENGTH = 255
 const MAX_CACHED_TASK_ERROR_MESSAGE_LENGTH = 4_096
 const gzipAsync = promisify(gzip)
+const log = createLogger('web-service')
 const STATIC_RESPONSE_SECURITY_HEADERS = {
   'content-security-policy':
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; media-src 'self' https: blob:; frame-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'",
@@ -658,6 +660,12 @@ const handleTaskApiRequest = async (
         return true
       }
     } catch (error) {
+      log.warn('task http request rejected', {
+        method: request.method,
+        surface: callerContext.surface,
+        location: callerContext.location,
+        ...diagnosticErrorFields(error)
+      })
       taskError(response, error)
       return true
     }
@@ -727,7 +735,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   })
   const wsServer = new WebSocketServer({ noServer: true })
 
-  const server = createServer(async (request, response) => {
+  const handleRequest = async (
+    request: IncomingMessage,
+    response: ServerResponse
+  ): Promise<void> => {
     try {
       const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
       const auth = authenticateRequest(request, url, options.token)
@@ -905,6 +916,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             result: result ?? null
           })
         } catch (error) {
+          log.warn('web rpc rejected', {
+            channel,
+            surface: callerContext.surface,
+            location: callerContext.location,
+            ...diagnosticErrorFields(error)
+          })
           if (error instanceof ExternalAuthorizationExpiredError) {
             webRpcError(response, 401, 'invalid_request', error.message)
             return
@@ -934,7 +951,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         error: INTERNAL_SERVER_ERROR_MESSAGE
       })
     }
-  })
+  }
+  const server = createServer((request, response) =>
+    runWithDiagnosticCorrelation(() => handleRequest(request, response))
+  )
 
   server.on('upgrade', (request, socket, head) => {
     void (async () => {

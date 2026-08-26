@@ -37,6 +37,15 @@ const admittedTarget = (
   repairRuntimeId: 'analysis',
   repairMarkerKey: 'analysis::python',
   journalTarget: join(runtimeRoot, 'envs', 'analysis'),
+  receipt: {
+    language: 'python',
+    selection: 'explicit-binding',
+    runtimeSource: 'managed',
+    environmentName: 'analysis',
+    runtimeId: '/runtime/envs/analysis/bin/python',
+    label: 'analysis',
+    prefix: join(runtimeRoot, 'envs', 'analysis')
+  },
   ...overrides
 })
 
@@ -149,7 +158,12 @@ describe('NotebookPackageMutationOwner', () => {
           })
           order.push('dirty')
         }),
-        refreshAfterPackageMutation: vi.fn(async () => {
+        refreshAfterPackageMutation: vi.fn(async (_target, outcome) => {
+          expect(outcome.source).toEqual({
+            type: 'github',
+            repository: 'numpy/numpy',
+            ref: 'v2.0.0'
+          })
           order.push('verify')
           return {
             result: 'success' as const,
@@ -192,7 +206,13 @@ describe('NotebookPackageMutationOwner', () => {
         order.push('spawn-2')
         deps?.onBeforeSpawn?.()
         expect(readOperationChild(runtimeRoot, operationId)).toMatchObject({ spawning: true })
-        return { ok: true, needsRestart: false, log: 'installed', method: 'conda' as const }
+        return {
+          ok: true,
+          needsRestart: false,
+          log: 'installed',
+          method: 'github' as const,
+          source: { type: 'github' as const, repository: 'numpy/numpy', ref: 'v2.0.0' }
+        }
       }),
       runtimeRepair: {
         quarantineProtectedIdentity: vi.fn().mockResolvedValue(undefined),
@@ -216,7 +236,10 @@ describe('NotebookPackageMutationOwner', () => {
 
     expect(result).toMatchObject({
       ok: true,
-      packageChanges: [{ name: 'numpy', relationship: 'requested' }]
+      packageChanges: [
+        { name: 'numpy', relationship: 'requested' },
+        { name: 'python-dateutil', relationship: 'dependency' }
+      ]
     })
     expect(order).toEqual([
       'lock',

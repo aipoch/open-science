@@ -62,11 +62,10 @@ class NotebookRuntimeSettingsModule implements NotebookRuntimeSettings {
     envId: string,
     enabled: boolean
   ): Promise<RuntimeEnablement> {
-    const current = (await this.getSnapshot(language)).runtimeEnablement
-    const settings = await this.repository.setRuntimeEnablement(language, {
+    const settings = await this.repository.setRuntimeEnablement(language, (current) => ({
       enabled: { ...current.enabled, [envId]: enabled },
       installAuthorized: { ...current.installAuthorized }
-    })
+    }))
 
     return cloneRuntimeEnablement(settings.notebookRuntimeEnablement?.[language])
   }
@@ -76,26 +75,25 @@ class NotebookRuntimeSettingsModule implements NotebookRuntimeSettings {
     envId: string,
     authorized: boolean
   ): Promise<RuntimeEnablement> {
-    const current = (await this.getSnapshot(language)).runtimeEnablement
-    const settings = await this.repository.setRuntimeEnablement(language, {
+    const settings = await this.repository.setRuntimeEnablement(language, (current) => ({
       enabled: { ...current.enabled },
       installAuthorized: { ...current.installAuthorized, [envId]: authorized }
-    })
+    }))
 
     return cloneRuntimeEnablement(settings.notebookRuntimeEnablement?.[language])
   }
 
   async addManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]> {
-    const current = (await this.getSnapshot(language)).manualInterpreters
-    const settings = await this.repository.setManualInterpreters(language, [...current, path])
+    const settings = await this.repository.setManualInterpreters(language, (current) => [
+      ...current,
+      path
+    ])
 
     return [...(settings.notebookManualInterpreters?.[language] ?? [])]
   }
 
   async removeManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]> {
-    const current = (await this.getSnapshot(language)).manualInterpreters
-    const settings = await this.repository.setManualInterpreters(
-      language,
+    const settings = await this.repository.setManualInterpreters(language, (current) =>
       current.filter((candidate) => candidate !== path)
     )
 

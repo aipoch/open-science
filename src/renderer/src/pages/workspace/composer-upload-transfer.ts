@@ -35,6 +35,7 @@ type StageComposerFileOptions = {
 
 export type ComposerUploadTransfer = UploadTransferProgress & {
   mimeType?: string
+  pastedTextId?: string
   status: 'queued' | 'uploading' | 'cancelling' | 'error'
   error?: string
 }

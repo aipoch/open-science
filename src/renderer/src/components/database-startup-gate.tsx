@@ -201,7 +201,10 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
           ),
           onClick: openIssueDraft
         }}
-        secondaryButton={{ label: t('Quit'), onClick: () => void databaseStartup?.quit() }}
+        secondaryButton={{
+          label: t('Quit', { context: 'verb', ns: 'common' }),
+          onClick: () => void databaseStartup?.quit()
+        }}
         primaryButton={
           error.retryable
             ? {

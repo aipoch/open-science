@@ -88,7 +88,11 @@ const buildNamedSkillZip = (name: string): Buffer =>
     }
   ])
 
-const createActiveCancellationGuard = (): { isCancelled: () => boolean } => ({
+const createActiveCancellationGuard = (): {
+  signal: AbortSignal
+  isCancelled: () => boolean
+} => ({
+  signal: new AbortController().signal,
   isCancelled: () => false
 })
 
@@ -150,9 +154,9 @@ describe('ConversationSkillImporter', () => {
       status: 'imported',
       skills: [{ id: 'imported-chart-master', name: 'Chart Master', status: 'imported' }]
     })
-    expect(scanGitHub).toHaveBeenCalledWith(githubUrl)
+    expect(scanGitHub).toHaveBeenCalledWith(githubUrl, expect.any(AbortSignal))
     expect(importGitHub).toHaveBeenCalledOnce()
-    expect(importGitHub).toHaveBeenCalledWith(chartMasterUrl)
+    expect(importGitHub).toHaveBeenCalledWith(chartMasterUrl, expect.any(AbortSignal))
     expect(onSkillsChanged).toHaveBeenCalledOnce()
   })
 
@@ -246,8 +250,48 @@ describe('ConversationSkillImporter', () => {
       skills: [{ id: 'imported-first', name: 'First', status: 'imported' }]
     })
     expect(importGitHub).toHaveBeenCalledOnce()
-    expect(importGitHub).toHaveBeenCalledWith(firstUrl)
-    expect(importGitHub).not.toHaveBeenCalledWith(secondUrl)
+    expect(importGitHub).toHaveBeenCalledWith(firstUrl, expect.any(AbortSignal))
+    expect(importGitHub).not.toHaveBeenCalledWith(secondUrl, expect.any(AbortSignal))
+  })
+
+  it('aborts an in-flight GitHub scan when its conversation is cancelled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'approval-github-in-flight-cancelled',
+      broadcast: vi.fn()
+    })
+    let scanSignal: AbortSignal | undefined
+    const scanGitHub = vi.fn((...args: unknown[]) => {
+      scanSignal = args[1] as AbortSignal | undefined
+      return new Promise<never>((_resolve, reject) => {
+        scanSignal?.addEventListener('abort', () => reject(scanSignal?.reason), { once: true })
+      })
+    })
+    const importer = new ConversationSkillImporter({
+      uploads: new UploadRepository(root),
+      createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+        broker.createCancellationGuard(sessionId, turnToken, attachmentUri),
+      createSessionCancellationGuard: (sessionId) =>
+        broker.createSessionCancellationGuard(sessionId),
+      previewBundle: async () => ({ previews: [], skipped: [] }),
+      importBundle: async () => [],
+      scanGitHub,
+      importGitHub: vi.fn(),
+      requestApproval: (request, cancellation) => broker.request(request, cancellation)
+    })
+    broker.beginSessionTurn('session-1', 'turn-1')
+
+    const result = importer.request({
+      sessionId: 'session-1',
+      githubUrl: 'https://github.com/acme/skills'
+    })
+    await vi.waitFor(() => expect(scanGitHub).toHaveBeenCalledOnce())
+    expect(scanSignal).toBeInstanceOf(AbortSignal)
+
+    broker.cancelSession('session-1')
+
+    await expect(result).resolves.toEqual({ status: 'cancelled', skills: [] })
   })
 
   it('imports a session-owned Skill attachment after the user confirms its preview', async () => {
@@ -839,14 +883,17 @@ describe('SkillImportApprovalBroker lifecycle', () => {
     const unlisted = broker.createCancellationGuard('session-1', 'turn-1', 'file:///older.skill')
     const second = broker.createCancellationGuard('session-2', 'turn-a', 'file:///second.skill')
     expect(first.isCancelled()).toBe(false)
+    expect(first.signal.aborted).toBe(false)
     expect(unlisted.isCancelled()).toBe(true)
 
     broker.cancelSession('session-1')
     expect(first.isCancelled()).toBe(true)
+    expect(first.signal.aborted).toBe(true)
     expect(second.isCancelled()).toBe(false)
 
     broker.cancelAll()
     expect(second.isCancelled()).toBe(true)
+    expect(second.signal.aborted).toBe(true)
 
     broker.beginSessionTurn('session-1', 'turn-2')
     broker.allowSessionTurnAttachment('session-1', 'turn-2', 'file:///next.skill')
@@ -855,6 +902,7 @@ describe('SkillImportApprovalBroker lifecycle', () => {
     expect(next.isCancelled()).toBe(false)
     broker.endSessionTurn('session-1', 'turn-2')
     expect(next.isCancelled()).toBe(true)
+    expect(next.signal.aborted).toBe(true)
   })
 
   it('cancels every pending approval when all agent runtimes disconnect', async () => {

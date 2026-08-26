@@ -123,9 +123,10 @@ vi.mock('@/components/ui/resizable', () => ({
 
     return <div data-testid={id ?? 'resizable-panel'}>{children}</div>
   },
-  ResizablePanelGroup: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
-    <div>{children}</div>
-  ),
+  ResizablePanelGroup: ({
+    children,
+    ...props
+  }: React.HTMLAttributes<HTMLDivElement>): React.JSX.Element => <div {...props}>{children}</div>,
   ResizableHandle: ({
     elementRef,
     className,
@@ -162,7 +163,8 @@ vi.mock('./WorkspaceSidebar', () => ({
   WorkspaceSidebar: ({
     isMobileOpen,
     sidebarToggle,
-    sidebarToggleButtonRef
+    sidebarToggleButtonRef,
+    onMobileClose
   }: {
     isMobileOpen?: boolean
     sidebarToggle?: {
@@ -170,8 +172,18 @@ vi.mock('./WorkspaceSidebar', () => ({
       onToggle: () => void
     }
     sidebarToggleButtonRef?: React.Ref<HTMLButtonElement>
+    onMobileClose?: () => void
   }): React.JSX.Element => (
-    <aside data-mobile-open={isMobileOpen ? 'true' : 'false'}>
+    <aside
+      aria-hidden={isMobileOpen === false ? true : undefined}
+      inert={isMobileOpen === false ? true : undefined}
+      data-mobile-open={isMobileOpen ? 'true' : 'false'}
+    >
+      {isMobileOpen !== undefined ? (
+        <button type="button" data-testid="mobile-sidebar-action" onClick={onMobileClose}>
+          Close navigation
+        </button>
+      ) : null}
       {sidebarToggle && sidebarToggle.state !== 'collapsed' ? (
         // Structural stand-in only: style-class coverage lives in WorkspaceSidebar.render.test
         // against the real component, so this mock deliberately does not replicate the styles.
@@ -255,8 +267,8 @@ vi.mock('./PreviewPanel', () => ({
   }
 }))
 
-vi.mock('./RenameSessionDialog', () => ({
-  RenameSessionDialog: (): React.JSX.Element => <div />
+vi.mock('./EditSessionDialog', () => ({
+  EditSessionDialog: (): React.JSX.Element => <div />
 }))
 
 vi.mock('./DeleteSessionDialog', () => ({
@@ -877,6 +889,31 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(
       container.querySelector('[data-testid="mobile-preview-sheet"]')?.getAttribute('data-open')
     ).toBe('true')
+  })
+
+  it('keeps mobile navigation focus modal and restores its trigger on close', async () => {
+    workspacePageHarness.isMobile = true
+    await renderPage()
+
+    const trigger = container.querySelector<HTMLButtonElement>('[data-testid="navigation-toggle"]')
+    const conversation = container.querySelector<HTMLElement>('[data-testid="conversation-panel"]')
+    trigger?.focus()
+
+    await act(async () => trigger?.click())
+
+    const sidebar = container.querySelector<HTMLElement>('aside')
+    const dialog = sidebar?.closest<HTMLElement>('[role="dialog"]')
+    expect(sidebar?.contains(document.activeElement)).toBe(true)
+    expect(dialog?.getAttribute('aria-modal')).toBe('true')
+    expect(conversation?.closest('[inert]')).not.toBeNull()
+
+    await act(async () => trigger?.focus())
+    expect(sidebar?.contains(document.activeElement)).toBe(true)
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('toggles the mobile navigation drawer with Ctrl+B', async () => {

@@ -2,11 +2,16 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { PackageMirror } from '../../../shared/mirror'
+import type { NetworkProxySettings } from '../../../shared/network-proxy'
 import type {
   AppIconVariant,
   ProjectFilesFilterPreference,
   ReasoningEffort,
-  SettingsSnapshot
+  ReviewerModelConfiguration,
+  SessionDetailsModelConfiguration,
+  SettingsSnapshot,
+  SubagentModelConfiguration,
+  VisionModelConfiguration
 } from '../../../shared/settings'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
@@ -19,6 +24,11 @@ import { createSettingsWriteCoordinator } from './settings-write-coordinator'
 type PreferencesCommands = Pick<
   Window['api']['settings'],
   | 'setReasoningEffort'
+  | 'getSettings'
+  | 'setReviewerModel'
+  | 'setSessionDetailsModel'
+  | 'setSubagentModel'
+  | 'setVisionModel'
   | 'setNotificationsEnabled'
   | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
@@ -27,14 +37,24 @@ type PreferencesCommands = Pick<
   | 'setDefaultPermissionProfile'
   | 'markOnboardingComplete'
   | 'setPackageMirror'
+  | 'setNetworkProxy'
 >
 
-type CommandMocks = { [Command in keyof PreferencesCommands]: Mock }
+type CommandMocks = Required<{ [Command in keyof PreferencesCommands]: Mock }>
 
 type TestStore = SettingsPreferencesActions & {
   onboardingCompletedAt?: number
+  networkProxy?: NetworkProxySettings
   packageMirror?: PackageMirror
   reasoningEffort: ReasoningEffort
+  reviewerModel?: ReviewerModelConfiguration
+  reviewerModelPending?: boolean
+  sessionDetailsModel?: SessionDetailsModelConfiguration
+  sessionDetailsModelPending?: boolean
+  subagentModel?: SubagentModelConfiguration
+  subagentModelPending?: boolean
+  visionModel?: VisionModelConfiguration
+  visionModelPending?: boolean
   notificationsEnabled: boolean
   conversationSkillImportEnabled: boolean
   closePreference: CloseActionPreference | undefined
@@ -88,7 +108,14 @@ const createCommands = (persisted: Partial<SettingsSnapshot>): CommandMocks => {
     Promise.resolve(snapshot({ ...persisted, [key]: (persisted[key] = value) }))
 
   return {
+    getSettings: vi.fn(() => Promise.resolve(snapshot(persisted))),
     setReasoningEffort: vi.fn(({ effort }) => save('reasoningEffort', effort)),
+    setReviewerModel: vi.fn(({ configuration }) => save('reviewerModel', configuration)),
+    setSessionDetailsModel: vi.fn(({ configuration }) =>
+      save('sessionDetailsModel', configuration)
+    ),
+    setSubagentModel: vi.fn(({ configuration }) => save('subagentModel', configuration)),
+    setVisionModel: vi.fn(({ configuration }) => save('visionModel', configuration)),
     setNotificationsEnabled: vi.fn(({ enabled }) => save('notificationsEnabled', enabled)),
     setConversationSkillImportEnabled: vi.fn(({ enabled }) =>
       save('conversationSkillImportEnabled', enabled)
@@ -98,7 +125,8 @@ const createCommands = (persisted: Partial<SettingsSnapshot>): CommandMocks => {
     setProjectFilesFilter: vi.fn(({ filter }) => save('projectFilesFilter', filter)),
     setDefaultPermissionProfile: vi.fn(({ profile }) => save('defaultPermissionProfile', profile)),
     markOnboardingComplete: vi.fn().mockResolvedValue(snapshot({ onboardingCompletedAt: 42 })),
-    setPackageMirror: vi.fn((mirror) => Promise.resolve(mirror))
+    setPackageMirror: vi.fn((mirror) => Promise.resolve(mirror)),
+    setNetworkProxy: vi.fn((settings) => Promise.resolve(settings))
   }
 }
 
@@ -112,8 +140,13 @@ const createHarness = (): {
   const reconcileSnapshot = vi.fn((next: SettingsSnapshot) => {
     store.setState({
       onboardingCompletedAt: next.onboardingCompletedAt,
+      networkProxy: next.networkProxy,
       packageMirror: next.packageMirror,
       reasoningEffort: next.reasoningEffort,
+      reviewerModel: next.reviewerModel,
+      sessionDetailsModel: next.sessionDetailsModel,
+      subagentModel: next.subagentModel,
+      visionModel: next.visionModel,
       notificationsEnabled: next.notificationsEnabled,
       conversationSkillImportEnabled: next.conversationSkillImportEnabled,
       closePreference: next.closePreference,
@@ -124,6 +157,10 @@ const createHarness = (): {
   })
   const store = createStore<TestStore>((set, get) => ({
     reasoningEffort: 'default',
+    reviewerModelPending: false,
+    sessionDetailsModelPending: false,
+    subagentModelPending: false,
+    visionModelPending: false,
     notificationsEnabled: true,
     conversationSkillImportEnabled: true,
     closePreference: undefined,
@@ -230,5 +267,125 @@ describe('settings preferences slice', () => {
     commands.setPackageMirror.mockResolvedValueOnce({})
     await store.getState().setPackageMirror({})
     expect(store.getState().packageMirror).toBeUndefined()
+  })
+
+  it('persists scenario model preferences and clears their pending flags', async () => {
+    const reviewer = {
+      mode: 'fixed',
+      providerId: 'provider-1',
+      model: 'reviewer-model',
+      reasoningEffort: 'high'
+    } as const satisfies ReviewerModelConfiguration
+    const sessionDetails = {
+      mode: 'inherit',
+      reasoningEffort: 'low'
+    } as const satisfies SessionDetailsModelConfiguration
+    const subagent = {
+      mode: 'fixed',
+      providerId: 'provider-1',
+      model: 'subagent-model',
+      reasoningEffort: 'medium'
+    } as const satisfies SubagentModelConfiguration
+    const vision = {
+      providerId: 'provider-1',
+      model: 'vision-model',
+      reasoningEffort: 'default'
+    } as const satisfies VisionModelConfiguration
+
+    const reviewerWrite = store.getState().setReviewerModel(reviewer)
+    expect(store.getState().reviewerModelPending).toBe(true)
+    await reviewerWrite
+
+    const sessionDetailsWrite = store.getState().setSessionDetailsModel(sessionDetails)
+    expect(store.getState().sessionDetailsModelPending).toBe(true)
+    await sessionDetailsWrite
+
+    const subagentWrite = store.getState().setSubagentModel(subagent)
+    expect(store.getState().subagentModelPending).toBe(true)
+    await subagentWrite
+
+    const visionWrite = store.getState().setVisionModel(vision)
+    expect(store.getState().visionModelPending).toBe(true)
+    await visionWrite
+
+    expect(commands.setReviewerModel).toHaveBeenCalledWith({ configuration: reviewer })
+    expect(commands.setSessionDetailsModel).toHaveBeenCalledWith({ configuration: sessionDetails })
+    expect(commands.setSubagentModel).toHaveBeenCalledWith({ configuration: subagent })
+    expect(commands.setVisionModel).toHaveBeenCalledWith({ configuration: vision })
+    expect(store.getState()).toMatchObject({
+      reviewerModel: reviewer,
+      reviewerModelPending: false,
+      sessionDetailsModel: sessionDetails,
+      sessionDetailsModelPending: false,
+      subagentModel: subagent,
+      subagentModelPending: false,
+      visionModel: vision,
+      visionModelPending: false
+    })
+  })
+
+  it('refreshes settings and reports each rejected non-optimistic model write', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    commands.setReviewerModel.mockRejectedValueOnce(new Error('reviewer rejected'))
+    commands.setSubagentModel.mockRejectedValueOnce(new Error('subagent rejected'))
+    commands.setVisionModel.mockRejectedValueOnce(new Error('vision rejected'))
+
+    await store.getState().setReviewerModel({ mode: 'inherit' })
+    await store.getState().setSubagentModel({ mode: 'inherit' })
+    await store.getState().setVisionModel(undefined)
+
+    expect(commands.getSettings).toHaveBeenCalledTimes(3)
+    expect(reconcileSnapshot).toHaveBeenCalledTimes(3)
+    expect(store.getState()).toMatchObject({
+      reviewerModelPending: false,
+      subagentModelPending: false,
+      visionModelPending: false
+    })
+    expect(store.getState().settingsWriteError).toContain('Could not save Reviewer model.')
+    expect(store.getState().settingsWriteError).toContain('Could not save Subagent model.')
+    expect(store.getState().settingsWriteError).toContain('Could not save Vision model.')
+    expect(consoleError).toHaveBeenCalledTimes(3)
+  })
+
+  it('ignores a stale Reviewer model completion after a newer write settles', async () => {
+    const older = deferred<SettingsSnapshot>()
+    const newer = deferred<SettingsSnapshot>()
+    commands.setReviewerModel.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
+
+    const olderWrite = store.getState().setReviewerModel({ mode: 'inherit' })
+    const fixed = {
+      mode: 'fixed',
+      providerId: 'provider-1',
+      model: 'reviewer-model',
+      reasoningEffort: 'high'
+    } as const satisfies ReviewerModelConfiguration
+    const newerWrite = store.getState().setReviewerModel(fixed)
+
+    newer.resolve(snapshot({ reviewerModel: fixed }))
+    await newerWrite
+    older.resolve(snapshot({ reviewerModel: { mode: 'inherit' } }))
+    await olderWrite
+
+    expect(store.getState().reviewerModel).toEqual(fixed)
+    expect(store.getState().reviewerModelPending).toBe(false)
+    expect(reconcileSnapshot).toHaveBeenCalledOnce()
+  })
+
+  it('persists network proxy settings and fails closed when the command is unavailable', async () => {
+    const proxy = {
+      mode: 'manual',
+      server: 'http://127.0.0.1:1086',
+      bypassRules: 'localhost'
+    } as const satisfies NetworkProxySettings
+
+    await store.getState().setNetworkProxy(proxy)
+
+    expect(commands.setNetworkProxy).toHaveBeenCalledWith(proxy)
+    expect(store.getState().networkProxy).toEqual(proxy)
+
+    commands.setNetworkProxy = undefined as unknown as Mock
+    await expect(store.getState().setNetworkProxy({ mode: 'direct' })).rejects.toThrow(
+      'Network proxy settings are unavailable.'
+    )
   })
 })

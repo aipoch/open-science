@@ -4,7 +4,12 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { buildManifest, extractHighlights, parseSha256Sums } from './generate-version-manifest.mjs'
+import {
+  buildManifest,
+  extractHighlights,
+  parseSha256Sums,
+  readReleaseNotes
+} from './generate-version-manifest.mjs'
 
 const VERSION = '0.1.2'
 const CDN = 'https://cdn.example.com'
@@ -124,6 +129,38 @@ describe('extractHighlights', () => {
   })
 })
 
+describe('readReleaseNotes', () => {
+  let dir: string | undefined
+  afterEach(() => dir && rmSync(dir, { recursive: true, force: true }))
+
+  it('requires English and returns optional localized Markdown by canonical locale', () => {
+    dir = mkdtempSync(join(tmpdir(), 'release-notes-'))
+    writeFileSync(join(dir, 'en.md'), '  English notes\n')
+    writeFileSync(join(dir, 'zh-Hans.md'), '  简体中文说明\n')
+    writeFileSync(join(dir, 'fr.md'), '  Notes françaises\n')
+
+    expect(readReleaseNotes(dir)).toEqual({
+      notes: 'English notes',
+      localizedNotes: { 'zh-Hans': '简体中文说明', fr: 'Notes françaises' }
+    })
+  })
+
+  it('rejects a missing English fallback', () => {
+    dir = mkdtempSync(join(tmpdir(), 'release-notes-'))
+    writeFileSync(join(dir, 'ja.md'), '日本語')
+
+    expect(() => readReleaseNotes(dir)).toThrow(/require en\.md/)
+  })
+
+  it('rejects unsupported files instead of silently omitting release content', () => {
+    dir = mkdtempSync(join(tmpdir(), 'release-notes-'))
+    writeFileSync(join(dir, 'en.md'), 'English')
+    writeFileSync(join(dir, 'de.md'), 'Deutsch')
+
+    expect(() => readReleaseNotes(dir)).toThrow(/unsupported release-note file: de\.md/)
+  })
+})
+
 describe('buildManifest', () => {
   let dir: string | undefined
   afterEach(() => dir && rmSync(dir, { recursive: true, force: true }))
@@ -136,6 +173,7 @@ describe('buildManifest', () => {
       dir,
       version: VERSION,
       notes: 'Release notes here',
+      localizedNotes: { 'zh-Hans': '版本说明' },
       releaseDate: '2026-07-12T00:00:00Z',
       cdnBase: CDN,
       prefix: PREFIX
@@ -144,6 +182,7 @@ describe('buildManifest', () => {
     // version / notes / releaseDate pass through untouched.
     expect(manifest.version).toBe(VERSION)
     expect(manifest.notes).toBe('Release notes here')
+    expect(manifest.localizedNotes).toEqual({ 'zh-Hans': '版本说明' })
     expect(manifest.releaseDate).toBe('2026-07-12T00:00:00Z')
 
     // All five platform keys present.

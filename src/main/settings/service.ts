@@ -2,7 +2,6 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import type { CloseActionPreference } from '../../shared/window-controls'
-
 import type {
   ClaudeDetectResult,
   ClaudeInstallEvent,
@@ -51,6 +50,7 @@ import type {
   ProjectFilesFilterPreference,
   ReasoningEffort,
   ReviewerModelConfiguration,
+  SessionDetailsModelConfiguration as SessionDetailsModel,
   SubagentModelConfiguration,
   VisionModelConfiguration as VisionModel,
   SkillBundlePreviewResult,
@@ -66,7 +66,7 @@ import type {
 import { createLogger, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import type { PackageMirror } from '../../shared/mirror'
-import { resolveNetworkProxySettings, type NetworkProxySettings } from '../../shared/network-proxy'
+import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
@@ -108,13 +108,11 @@ import type { FetchLike } from '../skills/github-import'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredSettings } from './types'
 import type { CodexAuthControllerPort } from './codex-auth'
 import { createSettingsIdSequence } from './id-sequence'
-import { createSubagentModels, SubagentModelOwner } from './subagent-model-owner'
-import { createReviewerModels, ReviewerModelOwner } from './reviewer-model-owner'
-import { createVisionModels, VisionModelOwner } from './vision-model-owner'
-
+import { ScenarioModelOwner, createScenarioModels } from './scenario-model-owner'
 import type { SystemProxyEnvironment } from './system-proxy'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
+import { NetworkProxySettingsOwner } from './network-proxy-settings-owner'
 
 // Outcome of uninstalling a managed runtime. `activeBackendAffected` is true only when the removed
 // runtime backed the active framework, so the IPC layer reconnects the agent for that case alone —
@@ -139,8 +137,7 @@ export type SettingsServiceOptions = {
   // The machine's own Claude config dir, used by the shared provider for auth/spawn and scanned as a
   // user skill source. Injectable so tests don't touch the real ~/.claude.
   userClaudeDir?: string
-  // The machine's own Codex config dir, scanned for installed skills while Codex is active.
-  // Injectable for the same reason as userClaudeDir.
+  // The machine's own Codex config dir, scanned for installed skills; injectable like userClaudeDir.
   userCodexDir?: string
   // The framework-neutral Agents config dir. Codex and other compatible agents discover skills
   // under ~/.agents/skills; it is scanned regardless of the active framework.
@@ -192,11 +189,9 @@ class SettingsService {
   private readonly providers: ProviderAccountsModule
   private readonly runtimeManager: AgentRuntimeManager
   private readonly backendResolver: AgentBackendResolver
-  private readonly subagentModels: SubagentModelOwner
-  private readonly reviewerModels: ReviewerModelOwner
-  private readonly visionModels: VisionModelOwner
+  private readonly scenarioModels: ScenarioModelOwner
   private readonly storageRoot: string
-  private readonly applyNetworkProxy: (settings: NetworkProxySettings) => Promise<void>
+  private readonly networkProxy: NetworkProxySettingsOwner
   private readonly userClaudeDir: string
   private readonly log: Logger
   private customServerAuthenticator?: (serverId: string) => Promise<void>
@@ -205,7 +200,10 @@ class SettingsService {
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
-    this.applyNetworkProxy = options.applyNetworkProxy ?? (async () => undefined)
+    this.networkProxy = new NetworkProxySettingsOwner({
+      repository: this.repository,
+      apply: options.applyNetworkProxy ?? (async () => undefined)
+    })
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
@@ -265,17 +263,11 @@ class SettingsService {
       skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? '',
       getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh)
     })
-    this.subagentModels = createSubagentModels(
+    this.scenarioModels = createScenarioModels(
       this.repository,
       this.providers,
       this.backendResolver
     )
-    this.reviewerModels = createReviewerModels(
-      this.repository,
-      this.providers,
-      this.backendResolver
-    )
-    this.visionModels = createVisionModels(this.repository, this.providers, this.backendResolver)
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
@@ -367,11 +359,8 @@ class SettingsService {
     return this.notebookRuntimeSettings.setPackageMirror(request)
   }
 
-  async setNetworkProxy(request: SetNetworkProxyRequest): Promise<NetworkProxySettings> {
-    const settings = await this.repository.setNetworkProxy(request)
-    const networkProxy = resolveNetworkProxySettings(settings.networkProxy)
-    await this.applyNetworkProxy(networkProxy)
-    return networkProxy
+  setNetworkProxy(request: SetNetworkProxyRequest): Promise<NetworkProxySettings> {
+    return this.networkProxy.set(request)
   }
 
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {
@@ -394,26 +383,37 @@ class SettingsService {
   }
 
   async setSubagentModel(configuration: SubagentModelConfiguration): Promise<SettingsSnapshot> {
-    await this.subagentModels.set(configuration)
+    await this.scenarioModels.subagent.set(configuration)
     return this.getSettingsView()
   }
 
   async setReviewerModel(configuration: ReviewerModelConfiguration): Promise<SettingsSnapshot> {
-    await this.reviewerModels.set(configuration)
+    await this.scenarioModels.reviewer.set(configuration)
     return this.getSettingsView()
+  }
+
+  async setSessionDetailsModel(configuration: SessionDetailsModel): Promise<SettingsSnapshot> {
+    await this.scenarioModels.sessionDetails.set(configuration)
+    return this.getSettingsView()
+  }
+
+  async admitSessionDetailsExecutionTarget(
+    ...args: Parameters<ScenarioModelOwner['sessionDetails']['admit']>
+  ): ReturnType<ScenarioModelOwner['sessionDetails']['admit']> {
+    return this.scenarioModels.sessionDetails.admit(...args)
   }
 
   async setVisionModel(configuration: VisionModel | undefined): Promise<SettingsSnapshot> {
-    await this.visionModels.set(configuration)
+    await this.scenarioModels.vision.set(configuration)
     return this.getSettingsView()
   }
 
-  async admitVisionModel(): ReturnType<VisionModelOwner['admit']> {
-    return this.visionModels.admit()
+  async admitVisionModel(): ReturnType<ScenarioModelOwner['vision']['admit']> {
+    return this.scenarioModels.vision.admit()
   }
 
-  async admitReviewerExecutionModel(): ReturnType<ReviewerModelOwner['admit']> {
-    return this.reviewerModels.admit()
+  async admitReviewerExecutionModel(): ReturnType<ScenarioModelOwner['reviewer']['admit']> {
+    return this.scenarioModels.reviewer.admit()
   }
 
   // Projects one of the app's five stable user-intent slots through the active model's static effort
@@ -424,15 +424,15 @@ class SettingsService {
   }
 
   async admitSubagentExecutionModel(
-    ...args: Parameters<SubagentModelOwner['admit']>
-  ): ReturnType<SubagentModelOwner['admit']> {
-    return this.subagentModels.admit(...args)
+    ...args: Parameters<ScenarioModelOwner['subagent']['admit']>
+  ): ReturnType<ScenarioModelOwner['subagent']['admit']> {
+    return this.scenarioModels.subagent.admit(...args)
   }
 
   async resolveSubagentExecutionModel(
-    ...args: Parameters<SubagentModelOwner['resolve']>
-  ): ReturnType<SubagentModelOwner['resolve']> {
-    return this.subagentModels.resolve(...args)
+    ...args: Parameters<ScenarioModelOwner['subagent']['resolve']>
+  ): ReturnType<ScenarioModelOwner['subagent']['resolve']> {
+    return this.scenarioModels.subagent.resolve(...args)
   }
 
   async resolveActiveModelChangeTarget(): Promise<AgentModelChangeTarget | undefined> {
@@ -530,9 +530,9 @@ class SettingsService {
     return this.skills.buildSkillExport(id)
   }
 
-  // Specialist scopes intentionally see the installed catalog irrespective of Main Agent toggles.
-  // The result is rebuilt for every caller so future imports and removals take effect on the next turn.
-  async listSpecialistSkillCatalog(): Promise<
+  // Specialist scopes see the installed catalog irrespective of Main Agent toggles. Bundled
+  // Specialist startup validation can restrict this to immutable application resources.
+  async listSpecialistSkillCatalog(options: { bundledOnly?: boolean } = {}): Promise<
     Array<{
       id: string
       frameworkName: string
@@ -543,7 +543,7 @@ class SettingsService {
       compatibility?: string
     }>
   > {
-    return this.skills.listSpecialistSkillCatalog()
+    return this.skills.listSpecialistSkillCatalog(options)
   }
 
   // Returns the mcp-<id> skill names for connectors provisioned at the Main Agent level (enabled
@@ -615,8 +615,8 @@ class SettingsService {
   }
 
   // Imports a skill from a public GitHub URL (deduplicated), returning the outcome + refreshed list.
-  async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
-    return this.skills.importSkill(request)
+  async importSkill(request: ImportSkillRequest, signal?: AbortSignal): Promise<ImportSkillResult> {
+    return this.skills.importSkill(request, signal)
   }
 
   async getGitHubTokenStatus(): Promise<GitHubTokenStatus> {
@@ -665,15 +665,17 @@ class SettingsService {
     return this.skills.importSkillArchiveBatch(zip, items)
   }
 
-  // Lazily loads one selected GitHub candidate. The repository's bounded helper downloads only its
-  // SKILL.md; the display label is reconstructed from the public URL and contains no host paths.
-  async previewGitHubSkill(request: PreviewGitHubSkillRequest): Promise<SkillImportPreviewContent> {
-    return this.skills.previewGitHubSkill(request)
+  // Lazily previews one GitHub skill without exposing host paths.
+  async previewGitHubSkill(
+    request: PreviewGitHubSkillRequest,
+    signal?: AbortSignal
+  ): Promise<SkillImportPreviewContent> {
+    return this.skills.previewGitHubSkill(request, signal)
   }
 
   // Scans a GitHub repo for importable skill directories (marking already-imported ones).
-  async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
-    return this.skills.scanRepoSkills(request)
+  async scanRepoSkills(request: ScanRepoRequest, signal?: AbortSignal): Promise<ScanRepoResult> {
+    return this.skills.scanRepoSkills(request, signal)
   }
 
   // Compatibility facade for installed Skill discovery, preview, and batch import.
@@ -1047,9 +1049,9 @@ class SettingsService {
   }
 
   async resolveAdmittedSubagentBackend(
-    ...args: Parameters<SubagentModelOwner['resolveAdmittedBackend']>
-  ): ReturnType<SubagentModelOwner['resolveAdmittedBackend']> {
-    return this.subagentModels.resolveAdmittedBackend(...args)
+    ...args: Parameters<ScenarioModelOwner['subagent']['resolveAdmittedBackend']>
+  ): ReturnType<ScenarioModelOwner['subagent']['resolveAdmittedBackend']> {
+    return this.scenarioModels.subagent.resolveAdmittedBackend(...args)
   }
 
   async resolveAgentBackend(

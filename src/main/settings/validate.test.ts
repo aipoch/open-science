@@ -319,6 +319,30 @@ describe('validate: provider dispatch', () => {
     })
   })
 
+  it('rejects an oversized successful Anthropic validation response', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      Response.json({
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+        padding: 'x'.repeat(1024 * 1024)
+      })
+    )
+
+    const result = await validateProvider(
+      { type: 'custom', baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch }
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      category: 'unknown',
+      status: 200,
+      message: 'Provider validation response exceeded 1048576 bytes.'
+    })
+  })
+
   it('requires an actual function call from a Chat Completions bridge provider', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(chatSseResponse())
 
@@ -446,6 +470,28 @@ describe('validate: provider dispatch', () => {
     })
   })
 
+  it('bounds the local bridge validation response before inspecting tool calls', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        chatSseResponse(
+          `data: ${JSON.stringify({ choices: [{ delta: { content: 'x'.repeat(1024 * 1024) } }] })}\n\ndata: [DONE]\n\n`
+        )
+      )
+
+    const result = await validateProvider(
+      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      category: 'unknown',
+      status: 200,
+      message: 'Provider validation response exceeded 1048576 bytes.'
+    })
+  })
+
   it('keeps a text-only Chat Completions provider unverified', async () => {
     const fetchImpl = vi
       .fn()
@@ -498,6 +544,92 @@ describe('validate: provider dispatch', () => {
     })
   })
 
+  it('stops native Responses compatibility validation at the upstream response limit', async () => {
+    let chunk = 0
+    let releaseThirdPull: (() => void) | undefined
+    let reportThirdPull: (() => void) | undefined
+    const thirdPull = new Promise<'third-pull'>((resolve) => {
+      reportThirdPull = () => resolve('third-pull')
+    })
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          chunk += 1
+          if (chunk <= 2) {
+            controller.enqueue(new Uint8Array(600 * 1024).fill(120))
+            return
+          }
+          reportThirdPull?.()
+          return new Promise<void>((resolve) => {
+            releaseThirdPull = () => {
+              controller.close()
+              resolve()
+            }
+          })
+        },
+        cancel() {
+          releaseThirdPull?.()
+        }
+      },
+      { highWaterMark: 0 }
+    )
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+
+    const validation = validateProvider(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.x.ai/v1',
+        key: 'k',
+        model: 'm'
+      },
+      {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        requireNativeResponsesCompatibility: true
+      }
+    )
+    const winner = await Promise.race([validation.then(() => 'validation' as const), thirdPull])
+    releaseThirdPull?.()
+    const result = await validation
+
+    expect(winner).toBe('validation')
+    expect(result).toMatchObject({
+      ok: false,
+      category: 'unknown',
+      message: 'Provider validation response exceeded 1048576 bytes.'
+    })
+  })
+
+  it('preserves authentication classification for an oversized native Responses error', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response('x'.repeat(1024 * 1024 + 1), {
+        status: 401,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+
+    const result = await validateProvider(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.x.ai/v1',
+        key: 'k',
+        model: 'm'
+      },
+      {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        requireNativeResponsesCompatibility: true
+      }
+    )
+
+    expect(result).toEqual({ ok: false, category: 'auth', status: 401 })
+  })
+
   it('keeps the friendly auth guidance and does not surface a raw 401 body', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       status: 401,
@@ -516,11 +648,11 @@ describe('validate: provider dispatch', () => {
   })
 
   it('surfaces the gateway error body on a billing 402 (DeepSeek insufficient balance)', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      status: 402,
-      text: () =>
-        Promise.resolve('{"error":{"message":"Insufficient Balance","type":"unknown_error"}}')
-    } as unknown as Response)
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response('{"error":{"message":"Insufficient Balance","type":"unknown_error"}}', {
+        status: 402
+      })
+    )
 
     const result = await validateProvider(
       { type: 'custom', baseUrl: 'https://api.deepseek.com', key: 'k', model: 'deepseek-chat' },
@@ -536,10 +668,11 @@ describe('validate: provider dispatch', () => {
   })
 
   it('surfaces a JSON 5xx error message (e.g. an overloaded upstream)', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      status: 503,
-      text: () => Promise.resolve('{"error":{"message":"Service temporarily unavailable"}}')
-    } as unknown as Response)
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{"error":{"message":"Service temporarily unavailable"}}', { status: 503 })
+      )
 
     const result = await validateProvider(
       { type: 'custom', baseUrl: 'https://g/v1', key: 'k' },
@@ -551,6 +684,30 @@ describe('validate: provider dispatch', () => {
       category: 'server-error',
       status: 503,
       message: 'Service temporarily unavailable'
+    })
+  })
+
+  it('rejects an oversized provider error response while preserving its status category', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      Response.json(
+        {
+          error: { message: 'Service temporarily unavailable' },
+          padding: 'x'.repeat(1024 * 1024)
+        },
+        { status: 503 }
+      )
+    )
+
+    const result = await validateProvider(
+      { type: 'custom', baseUrl: 'https://g/v1', key: 'k' },
+      { fetchImpl: fetchImpl as unknown as typeof fetch }
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      category: 'server-error',
+      status: 503,
+      message: 'Provider validation response exceeded 1048576 bytes.'
     })
   })
 

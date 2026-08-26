@@ -17,6 +17,24 @@ import {
 const OVER_FILE = SKILL_IMPORT_LIMITS.maxFileBytes + 1
 const AT_FILE = SKILL_IMPORT_LIMITS.maxFileBytes
 
+type FetchSkillFilesWithDeadlines = (
+  location: Parameters<typeof fetchSkillFiles>[0],
+  fetchImpl: FetchLike,
+  options: { requestTimeoutMs: number; totalTimeoutMs: number }
+) => ReturnType<typeof fetchSkillFiles>
+
+const hangingFetch = (): FetchLike => (_url, init) =>
+  new Promise((_resolve, reject) => {
+    const signal = (init as { signal?: AbortSignal } | undefined)?.signal
+    if (!signal) {
+      reject(new Error('GitHub fetch did not receive an AbortSignal.'))
+      return
+    }
+    const rejectAborted = (): void => reject(signal.reason)
+    if (signal.aborted) rejectAborted()
+    else signal.addEventListener('abort', rejectAborted, { once: true })
+  })
+
 describe('createAuthenticatedGitHubFetch', () => {
   it('adds the token only to exact trusted HTTPS GitHub hosts', async () => {
     const requests: Array<{ url: string; headers?: Record<string, string> }> = []
@@ -250,6 +268,30 @@ describe('fetchSkillPreview', () => {
 })
 
 describe('fetchSkillFiles', () => {
+  it('aborts a stalled GitHub request at the per-request deadline', async () => {
+    const fetchWithDeadlines = fetchSkillFiles as unknown as FetchSkillFilesWithDeadlines
+
+    await expect(
+      fetchWithDeadlines(
+        { owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' },
+        hangingFetch(),
+        { requestTimeoutMs: 10, totalTimeoutMs: 1_000 }
+      )
+    ).rejects.toMatchObject({ name: 'TimeoutError' })
+  })
+
+  it('aborts a stalled GitHub import at the total-flow deadline', async () => {
+    const fetchWithDeadlines = fetchSkillFiles as unknown as FetchSkillFilesWithDeadlines
+
+    await expect(
+      fetchWithDeadlines(
+        { owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' },
+        hangingFetch(),
+        { requestTimeoutMs: 1_000, totalTimeoutMs: 10 }
+      )
+    ).rejects.toMatchObject({ name: 'TimeoutError' })
+  })
+
   it('downloads files relative to the skill directory', async () => {
     const files = await fetchSkillFiles(
       { owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' },

@@ -91,6 +91,14 @@ describe('isReportableRunFailure (text tier)', () => {
     expect(isReportableRunFailure('Run failed: connection reset')).toBe(true)
   })
 
+  it('recognizes the actionable provider connection reminder without the structural flag', () => {
+    expect(
+      isReportableRunFailure(
+        'Could not connect to the model provider for model "test-model". Check the base URL in Settings → Model and your proxy, VPN, or firewall, then retry. Connection detail: ConnectionRefused.'
+      )
+    ).toBe(false)
+  })
+
   it('does not swallow an ordinary app error that merely mentions a provider word', () => {
     // The text tier only matches the app's own exact strings, so an internal failure that happens to
     // contain a provider-ish word or number is never mistaken for an expected failure.
@@ -149,9 +157,11 @@ describe('isReportableRunFailure (text tier)', () => {
   it('does not report an unsupported Codex ACP version', () => {
     const message = buildUnsupportedCodexAcpVersionMessage('1.1.4')
     const wrapped = `Error invoking remote method 'acp:create-session': Error: ${message}`
+    const resumeWrapped = `Agent session resume failed: ${message}`
 
     expect(isReportableRunFailure(message)).toBe(false)
     expect(isReportableRunFailure(wrapped)).toBe(false)
+    expect(isReportableRunFailure(resumeWrapped)).toBe(false)
   })
 
   it('recognizes the framework-specific model-incompat message built by service.ts (prefix)', () => {

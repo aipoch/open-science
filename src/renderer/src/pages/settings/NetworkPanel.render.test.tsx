@@ -126,6 +126,30 @@ describe('NetworkPanel offline retry', () => {
     expect(getInfo).toHaveBeenCalledOnce()
   })
 
+  it('uses a neutral icon when the local connection type is unknown', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      network: {
+        getInfo: vi.fn().mockResolvedValue({
+          connectionType: 'unknown',
+          ipAddress: '10.8.0.2'
+        }),
+        checkConnectivity: vi.fn().mockResolvedValue(true)
+      }
+    }
+    Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true })
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+
+    await act(async () => {
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('10.8.0.2')
+    expect(container.querySelector('.lucide-network')).not.toBeNull()
+    expect(container.querySelector('.lucide-wifi')).toBeNull()
+    expect(container.querySelector('.lucide-ethernet-port')).toBeNull()
+  })
+
   it('does not let a stale getInfo rejection overwrite a newer success', async () => {
     let rejectFirst!: (reason: Error) => void
     const firstResult = new Promise<never>((_resolve, reject) => {

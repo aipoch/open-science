@@ -1,7 +1,11 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { describe, expect, it } from 'vitest'
 
-import { ACP_MODEL_TURN_COUNT_META_KEY, ACP_TURN_TOKEN_USAGE_META_KEY } from '../../shared/acp'
+import {
+  ACP_MODEL_CALL_USAGE_META_KEY,
+  ACP_MODEL_TURN_COUNT_META_KEY,
+  ACP_TURN_TOKEN_USAGE_META_KEY
+} from '../../shared/acp'
 import { createCodexTurnAdapter } from './codex-turn-adapter'
 
 describe('Codex turn adapter', () => {
@@ -71,6 +75,53 @@ describe('Codex turn adapter', () => {
     } satisfies PromptResponse
 
     expect(await probe.finalize({ response })).toEqual({ modelTurnCount: 3 })
+  })
+
+  it('publishes managed per-request metadata when it proves complete call coverage', async () => {
+    const probe = await createCodexTurnAdapter().begin({
+      providerSessionId: 'provider-session-1',
+      cwd: '/workspace'
+    })
+    const response = {
+      stopReason: 'end_turn',
+      _meta: {
+        [ACP_MODEL_TURN_COUNT_META_KEY]: 2,
+        [ACP_TURN_TOKEN_USAGE_META_KEY]: {
+          inputTokens: 31,
+          cachedReadTokens: 8,
+          outputTokens: 6
+        },
+        [ACP_MODEL_CALL_USAGE_META_KEY]: [
+          { inputTokens: 12, cachedReadTokens: 3, outputTokens: 3 },
+          { inputTokens: 19, cachedReadTokens: 5, outputTokens: 3 }
+        ]
+      }
+    } satisfies PromptResponse
+
+    expect(await probe.finalize({ response })).toMatchObject({
+      modelTurnCount: 2,
+      modelCalls: [
+        { inputTokens: 12, cacheTokens: 3, outputTokens: 3 },
+        { inputTokens: 19, cacheTokens: 5, outputTokens: 3 }
+      ]
+    })
+  })
+
+  it('uses terminal usage as one exact call only when the reported count proves one request', async () => {
+    const probe = await createCodexTurnAdapter().begin({
+      providerSessionId: 'provider-session-1',
+      cwd: '/workspace'
+    })
+    const response = {
+      stopReason: 'end_turn',
+      usage: { totalTokens: 18, inputTokens: 12, cachedReadTokens: 3, outputTokens: 3 },
+      _meta: { [ACP_MODEL_TURN_COUNT_META_KEY]: 1 }
+    } satisfies PromptResponse
+
+    expect(await probe.finalize({ response })).toMatchObject({
+      modelTurnCount: 1,
+      modelCalls: [{ inputTokens: 12, cacheTokens: 3, outputTokens: 3 }]
+    })
   })
 
   it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '3'])(

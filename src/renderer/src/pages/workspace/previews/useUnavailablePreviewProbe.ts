@@ -16,15 +16,26 @@ const useUnavailablePreviewProbe = ({
   projectId,
   sessionId,
   path,
-  source
+  source,
+  size,
+  mtimeMs
 }: {
   enabled: boolean
   projectId?: string
   sessionId?: string
   path: string
   source: PreviewFileSource
+  size?: number
+  mtimeMs?: number
 }): boolean => {
-  const requestKey = JSON.stringify([projectId ?? null, sessionId ?? null, source, path])
+  const requestKey = JSON.stringify([
+    projectId ?? null,
+    sessionId ?? null,
+    source,
+    path,
+    size ?? null,
+    mtimeMs ?? null
+  ])
   const [result, setResult] = useState<UnavailableProbeResult | null>(null)
   const hasCurrentResult = result?.requestKey === requestKey
 

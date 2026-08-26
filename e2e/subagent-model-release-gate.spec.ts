@@ -55,6 +55,8 @@ test('routes a Settings UI fixed model through production Delegation and Usage',
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Model', exact: true })
     .click()
+  // The Subagent selector now lives inside the collapsed Scenario models accordion row.
+  await settings.getByRole('button', { name: 'Expand Subagent settings', exact: true }).click()
   const model = settings.getByRole('combobox', { name: 'Subagent model Model' })
   const effort = settings.getByRole('combobox', { name: 'Subagent model Reasoning effort' })
   await expect(model).toContainText('Same as main model')
@@ -154,6 +156,7 @@ test('routes a Settings UI fixed model through production Delegation and Usage',
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Model', exact: true })
     .click()
+  await settings.getByRole('button', { name: 'Expand Subagent settings', exact: true }).click()
   await settings.getByRole('combobox', { name: 'Subagent model Model' }).click()
   await page.getByRole('option', { name: 'Same as main model', exact: true }).click()
   await expect(settings.getByRole('combobox', { name: 'Subagent model Model' })).toContainText(
@@ -277,6 +280,7 @@ test('fails closed, restores the fixed model, and routes Specialist but not Acti
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Model', exact: true })
     .click()
+  await settings.getByRole('button', { name: 'Expand Subagent settings', exact: true }).click()
   await settings.getByRole('combobox', { name: 'Subagent model Model' }).click()
   await page.getByRole('option', { name: `${SUBAGENT_MODEL} · ${SUBAGENT_PROVIDER_NAME}` }).click()
   await settings.getByRole('button', { name: 'Close settings' }).click()
@@ -300,6 +304,7 @@ test('fails closed, restores the fixed model, and routes Specialist but not Acti
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Model', exact: true })
     .click()
+  await settings.getByRole('button', { name: 'Expand Subagent settings', exact: true }).click()
   await expect(settings.getByRole('combobox', { name: 'Subagent model Model' })).toContainText(
     'Unavailable'
   )

@@ -4,6 +4,7 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn, formatByteSize } from '@/lib/utils'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
@@ -191,9 +192,8 @@ const TurnTokenUsage = ({
   const providers = useSettingsStore((state) =>
     open && runtimeIdentity ? state.providers : undefined
   )
-  const frameworkName = frameworks?.find(
-    (framework) => framework.id === runtimeIdentity?.frameworkId
-  )?.displayName
+  const framework = frameworks?.find((framework) => framework.id === runtimeIdentity?.frameworkId)
+  const frameworkName = framework?.displayName
   const providerId = resolveSessionProviderId(runtimeIdentity?.backendId)
   const provider = providers?.find((candidate) => candidate.id === providerId)
   const kindKey = provider ? providerKindKey(provider.type, provider.vendorId) : undefined
@@ -210,15 +210,15 @@ const TurnTokenUsage = ({
     usage?.cachedReadTokens !== undefined && usage.cachedWriteTokens !== undefined
   const entries: readonly TurnTokenUsageEntry[] = hasCacheBreakdown
     ? [
-        [t('Input'), usage.inputTokens, 'bg-chart-2'],
-        [t('Cache read'), usage.cachedReadTokens, 'bg-chart-4'],
+        [t('Input'), usage.inputTokens, 'bg-chart-1'],
+        [t('Cache read'), usage.cachedReadTokens, 'bg-chart-1/40'],
         [t('Cache write'), usage.cachedWriteTokens, 'bg-chart-3'],
-        [t('Output'), usage.outputTokens, 'bg-chart-1']
+        [t('Output'), usage.outputTokens, 'bg-chart-2']
       ]
     : [
-        [t('Input'), usage?.inputTokens, 'bg-chart-2'],
-        [t('Cache'), usage?.cacheTokens, 'bg-chart-4'],
-        [t('Output'), usage?.outputTokens, 'bg-chart-1']
+        [t('Input'), usage?.inputTokens, 'bg-chart-1'],
+        [t('Cache'), usage?.cacheTokens, 'bg-chart-1/40'],
+        [t('Output'), usage?.outputTokens, 'bg-chart-2']
       ]
   const totalTokens = usage ? usage.inputTokens + usage.cacheTokens + usage.outputTokens : undefined
   const safeTotalTokens = Number.isSafeInteger(totalTokens) ? totalTokens : undefined
@@ -321,7 +321,7 @@ const TurnTokenUsage = ({
             <div className="text-[13px] font-medium">{t('Usage')}</div>
             {frameworkName || provider ? (
               <div data-slot="turn-runtime-icons" className="flex items-center gap-1">
-                {frameworkName && runtimeIdentity?.frameworkId ? (
+                {framework ? (
                   <span
                     data-slot="turn-runtime-framework"
                     role="img"
@@ -329,7 +329,7 @@ const TurnTokenUsage = ({
                     title={t('Agent framework: {{name}}', { name: frameworkName })}
                     className="inline-flex size-5 items-center justify-center rounded-full border border-border bg-background"
                   >
-                    <AgentFrameworkIcon frameworkId={runtimeIdentity.frameworkId} size={12} />
+                    <AgentFrameworkIcon frameworkId={framework.id} size={12} />
                   </span>
                 ) : null}
                 {provider && kindKey ? (
@@ -639,6 +639,18 @@ const MessagePartsMeasurement = ({
         )
       }
 
+      if (part.type === 'session') {
+        return (
+          <span
+            key={index}
+            data-slot="user-message-measurement-part"
+            data-part-type="session"
+            data-content={`#${part.title}`}
+            className={cn(mentionPillClassName, measurementContentClassName)}
+          />
+        )
+      }
+
       return (
         <span
           key={index}
@@ -857,7 +869,9 @@ const ArtifactCard = ({
   const missing = useUnavailablePreviewProbe({
     enabled: isNearViewport,
     path: artifact.path,
-    source: 'artifact'
+    source: 'artifact',
+    size: artifact.size,
+    mtimeMs: artifact.mtimeMs
   })
 
   return (
@@ -1103,6 +1117,25 @@ const MessagePartsContent = ({
           )
         }
 
+        if (part.type === 'session') {
+          return (
+            <button
+              key={index}
+              type="button"
+              className={cn(
+                mentionPillClassName,
+                mentionButtonClassName,
+                'bg-accent text-accent-foreground'
+              )}
+              onClick={() => useNavigationStore.getState().openSessionById(part.sessionId, 'user')}
+              aria-label={t('Open session {{title}}', { title: part.title })}
+              title={part.title}
+            >
+              #{part.title}
+            </button>
+          )
+        }
+
         return (
           <span key={index} className="whitespace-pre-wrap">
             {part.text}
@@ -1248,7 +1281,10 @@ const WorkspaceMessageItemImpl = ({
       <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{message.content}</p>
     ) : null
   const hasInteractiveUserMessageContent = Boolean(
-    !staticParts && message.parts?.some((part) => part.type === 'skill' || part.type === 'artifact')
+    !staticParts &&
+    message.parts?.some(
+      (part) => part.type === 'skill' || part.type === 'artifact' || part.type === 'session'
+    )
   )
 
   return (

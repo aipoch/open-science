@@ -1910,6 +1910,34 @@ const hasHostLineageKeys = (value, required, optional = []) => {
   return required.every((key) => keys.includes(key)) && keys.every((key) => allowed.has(key))
 }
 
+const validatedHostPackageSource = (value) => {
+  if (
+    hasHostLineageKeys(value, ['type', 'repository'], ['ref', 'commit']) &&
+    value.type === 'github' &&
+    typeof value.repository === 'string' &&
+    (value.ref === undefined || typeof value.ref === 'string') &&
+    (value.commit === undefined || typeof value.commit === 'string')
+  ) {
+    return Object.freeze({
+      type: value.type,
+      repository: value.repository,
+      ...(value.ref !== undefined ? { ref: value.ref } : {}),
+      ...(value.commit !== undefined ? { commit: value.commit } : {})
+    })
+  }
+  if (
+    hasHostLineageKeys(value, ['type'], ['version']) &&
+    value.type === 'bioconductor' &&
+    (value.version === undefined || typeof value.version === 'string')
+  ) {
+    return Object.freeze({
+      type: value.type,
+      ...(value.version !== undefined ? { version: value.version } : {})
+    })
+  }
+  throw new Error('host.lineage.get returned an invalid package source')
+}
+
 const validatedHostLineageNode = (value) => {
   const required = [
     'file_id',
@@ -2168,7 +2196,8 @@ const validatedHostLineageEnvironment = (value) => {
         'library_rank',
         'library_scope',
         'built_for_runtime',
-        'priority'
+        'priority',
+        'source'
       ]
       if (
         !hasHostLineageKeys(entry, packageRequired, packageOptional) ||
@@ -2207,7 +2236,8 @@ const validatedHostLineageEnvironment = (value) => {
         ...(entry.built_for_runtime !== undefined
           ? { built_for_runtime: entry.built_for_runtime }
           : {}),
-        ...(entry.priority !== undefined ? { priority: entry.priority } : {})
+        ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
+        ...(entry.source !== undefined ? { source: validatedHostPackageSource(entry.source) } : {})
       })
     })
   )
@@ -2265,6 +2295,7 @@ const validatedHostLineageEnvironment = (value) => {
                   'renv',
                   'pak',
                   'biocmanager',
+                  'github',
                   'unknown'
                 ].includes(attempt.installer) ||
                 !Array.isArray(attempt.packages) ||
@@ -2319,7 +2350,8 @@ const validatedHostLineageEnvironment = (value) => {
                     'before_version',
                     'after_version',
                     'library_rank',
-                    'library_scope'
+                    'library_scope',
+                    'source'
                   ]
                   if (
                     !hasHostLineageKeys(change, changeRequired, changeOptional) ||
@@ -2340,13 +2372,16 @@ const validatedHostLineageEnvironment = (value) => {
                   ) {
                     throw new Error('host.lineage.get returned an invalid package change')
                   }
-                  return Object.freeze(
-                    Object.fromEntries(
+                  return Object.freeze({
+                    ...Object.fromEntries(
                       [...changeRequired, ...changeOptional]
-                        .filter((key) => change[key] !== undefined)
+                        .filter((key) => key !== 'source' && change[key] !== undefined)
                         .map((key) => [key, change[key]])
-                    )
-                  )
+                    ),
+                    ...(change.source !== undefined
+                      ? { source: validatedHostPackageSource(change.source) }
+                      : {})
+                  })
                 })
               )
             : undefined

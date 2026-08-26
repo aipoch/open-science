@@ -53,6 +53,37 @@ test('persists the selected theme after closing settings and relaunching', async
   await expect(page.getByRole('button', { name: 'Theme: Dark' })).toBeVisible()
 })
 
+test('persists Russian into the built main-process native quit dialog', async ({ app }) => {
+  let page = await app.completeOnboarding()
+
+  await page
+    .locator('button')
+    .filter({ has: page.locator('svg.lucide-languages') })
+    .click()
+  await page.getByRole('menuitem', { name: 'Русский', exact: true }).click()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
+
+  await expect
+    .poll(() => app.capturePersistedLocaleNativeQuitDialog())
+    .toEqual({
+      buttons: ['Отмена', 'Выйти'],
+      detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
+      includesRendererCatalog: false,
+      message: 'Выйти из Open Science?'
+    })
+
+  page = await app.restart()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
+  await expect
+    .poll(() => app.capturePersistedLocaleNativeQuitDialog())
+    .toEqual({
+      buttons: ['Отмена', 'Выйти'],
+      detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
+      includesRendererCatalog: false,
+      message: 'Выйти из Open Science?'
+    })
+})
+
 const localizedSettingsCases = [
   {
     language: 'Simplified Chinese',
@@ -65,6 +96,9 @@ const localizedSettingsCases = [
     general: '通用',
     appearance: '外观',
     interfaceLanguage: '界面语言',
+    mainModel: '主模型',
+    scenarioModels: '场景模型',
+    expandSubagent: '展开子智能体设置',
     reasoningEffort: '推理强度',
     defaultEffort: '默认',
     closeSettings: '关闭设置'
@@ -80,6 +114,9 @@ const localizedSettingsCases = [
     general: '一般',
     appearance: '外觀',
     interfaceLanguage: '介面語言',
+    mainModel: '主模型',
+    scenarioModels: '情境模型',
+    expandSubagent: '展開子智能體設定',
     reasoningEffort: '推理強度',
     defaultEffort: '預設',
     closeSettings: '關閉設定'
@@ -95,6 +132,9 @@ const localizedSettingsCases = [
     general: '一般',
     appearance: '外観',
     interfaceLanguage: '表示言語',
+    mainModel: 'メインモデル',
+    scenarioModels: 'シナリオモデル',
+    expandSubagent: 'サブエージェント設定を展開',
     reasoningEffort: '推論の強度',
     defaultEffort: 'デフォルト',
     closeSettings: '設定を閉じる'
@@ -110,6 +150,9 @@ const localizedSettingsCases = [
     general: '일반',
     appearance: '외관',
     interfaceLanguage: '인터페이스 언어',
+    mainModel: '메인 모델',
+    scenarioModels: '시나리오 모델',
+    expandSubagent: '서브에이전트 설정 펼치기',
     reasoningEffort: '추론 강도',
     defaultEffort: '기본값',
     closeSettings: '설정 닫기'
@@ -125,6 +168,9 @@ const localizedSettingsCases = [
     general: 'Общие',
     appearance: 'Внешний вид',
     interfaceLanguage: 'Язык интерфейса',
+    mainModel: 'Основная модель',
+    scenarioModels: 'Сценарные модели',
+    expandSubagent: 'Развернуть настройки: Субагент',
     reasoningEffort: 'Глубина рассуждений',
     defaultEffort: 'По умолчанию',
     closeSettings: 'Закрыть настройки'
@@ -140,6 +186,9 @@ const localizedSettingsCases = [
     general: 'Général',
     appearance: 'Apparence',
     interfaceLanguage: "Langue de l'interface",
+    mainModel: 'Modèle principal',
+    scenarioModels: 'Modèles de scénario',
+    expandSubagent: 'Développer les paramètres de Sous-agent',
     reasoningEffort: 'Effort de raisonnement',
     defaultEffort: 'Par défaut',
     closeSettings: 'Fermer les paramètres'
@@ -174,14 +223,16 @@ for (const localized of localizedSettingsCases) {
 
       await page.getByRole('button', { name: localized.modelSettings }).click()
       const settings = page.getByRole('dialog', { name: localized.settings })
-      const reasoningSection = settings.getByRole('region', { name: localized.reasoningEffort })
-      const effort = reasoningSection.getByRole('radiogroup', {
+      // Active model and Reasoning effort now share the Main model region; the effort control is
+      // still a named radiogroup, but the parent region title is Main model.
+      const mainModel = settings.getByRole('region', { name: localized.mainModel })
+      const effort = mainModel.getByRole('radiogroup', {
         name: localized.reasoningEffort
       })
       await expect(effort).toBeVisible()
       await expect
         .poll(() =>
-          reasoningSection.locator('p').evaluate((description) => {
+          mainModel.locator('p').evaluate((description) => {
             if (!(description instanceof HTMLElement)) return false
             return description.scrollWidth <= description.clientWidth + 1
           })
@@ -234,24 +285,38 @@ for (const localized of localizedSettingsCases) {
             .locator('[data-slot="settings-segment-label"]')
         ).toHaveAttribute('data-compact', 'true')
       }
-      const clippedPolicyLabels = await settings
-        .locator('[data-slot="settings-row"] [data-slot="select-trigger"] .truncate')
-        .evaluateAll((labels) =>
-          labels.flatMap((label) =>
-            label instanceof HTMLElement && label.scrollWidth > label.clientWidth + 1
-              ? [label.textContent?.trim()]
-              : []
+      const clippedPolicyLabels = async (): Promise<Array<string | undefined>> =>
+        settings
+          .locator('[data-slot="settings-row"] [data-slot="select-trigger"] .truncate')
+          .evaluateAll((labels) =>
+            labels.flatMap((label) =>
+              label instanceof HTMLElement && label.scrollWidth > label.clientWidth + 1
+                ? [label.textContent?.trim()]
+                : []
+            )
           )
-        )
-      expect(clippedPolicyLabels).toEqual([])
-      const firstPolicyRow = settings.locator('[data-slot="settings-row"]').first()
+      expect(await clippedPolicyLabels()).toEqual([])
+      const mainModelRow = mainModel.locator('[data-slot="settings-row"]').first()
       await expect
         .poll(() =>
-          firstPolicyRow.evaluate(
+          mainModelRow.evaluate(
             (row) => getComputedStyle(row).gridTemplateColumns.trim().split(/\s+/).length
           )
         )
         .toBe(1)
+
+      await settings.getByRole('button', { name: localized.expandSubagent, exact: true }).click()
+      const scenarioModels = settings.getByRole('region', { name: localized.scenarioModels })
+      const subagentRow = scenarioModels.locator('[data-slot="settings-row"]').first()
+      await expect(subagentRow).toBeVisible()
+      await expect
+        .poll(() =>
+          subagentRow.evaluate(
+            (row) => getComputedStyle(row).gridTemplateColumns.trim().split(/\s+/).length
+          )
+        )
+        .toBe(1)
+      expect(await clippedPolicyLabels()).toEqual([])
 
       const navigation = settings.getByRole('navigation', { name: localized.settings })
       if (!(await navigation.isVisible())) {

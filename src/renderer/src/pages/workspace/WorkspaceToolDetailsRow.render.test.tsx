@@ -3,14 +3,15 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import i18next from 'i18next'
 
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
 import { formatNotebookRunOutputLineMeta } from './notebook-run-figures'
+import { createManagedPreviewTestTransport } from './previews/managed-preview-test-support'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
+import { i18next } from '@/i18n'
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
   id: 'tool-1',
@@ -48,6 +49,21 @@ const createNotebookRun = (overrides: Partial<NotebookRunRecord> = {}): Notebook
   ],
   ...overrides
 })
+
+const installManagedImagePreview = (
+  readPreview: Window['api']['artifacts']['readPreview']
+): void => {
+  const transport = createManagedPreviewTestTransport({
+    encoding: 'base64',
+    read: (_source, request) => readPreview(request)
+  })
+  window.api.previewResources = {
+    acquire: vi.fn(transport.acquire),
+    readRange: vi.fn(),
+    release: vi.fn(transport.release)
+  }
+  vi.stubGlobal('fetch', vi.fn(transport.fetch))
+}
 
 describe('WorkspaceToolDetailsRow', () => {
   let container: HTMLDivElement
@@ -106,18 +122,20 @@ describe('WorkspaceToolDetailsRow', () => {
   })
 
   it('renders an image artifact-write result as an inline image preview', async () => {
+    const readPreview = vi.fn().mockResolvedValue({
+      content: 'aGVsbG8=',
+      encoding: 'base64',
+      size: 6,
+      truncated: false
+    })
     window.api = {
       artifacts: {
         openFile: vi.fn(),
-        readPreview: vi.fn().mockResolvedValue({
-          content: 'aGVsbG8=',
-          encoding: 'base64',
-          size: 6,
-          truncated: false
-        }),
+        readPreview,
         finalizeRunArtifacts: vi.fn()
       }
     } as unknown as Window['api']
+    installManagedImagePreview(readPreview)
 
     const activity = createActivity({
       providerToolName: 'write_artifact_file',
@@ -157,14 +175,14 @@ describe('WorkspaceToolDetailsRow', () => {
       )
     })
 
-    expect(window.api.artifacts.readPreview).toHaveBeenCalledWith({
-      path: '/artifacts/.pending/run-1/sin_curve.png',
-      maxBytes: 10 * 1024 * 1024,
-      encoding: 'base64',
-      // #147 added paginated reads; usePreviewFileContent now passes the page offset.
-      offset: 0
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'artifact',
+      path: '/artifacts/.pending/run-1/sin_curve.png'
     })
 
+    await waitFor(() =>
+      expect(container.querySelector('[data-testid="tool-output-image"]')).not.toBeNull()
+    )
     const image = container.querySelector('[data-testid="tool-output-image"]')
     expect(image?.getAttribute('src')).toBe('data:image/png;base64,aGVsbG8=')
     expect(container.textContent).toContain('sin_curve.png')
@@ -173,17 +191,19 @@ describe('WorkspaceToolDetailsRow', () => {
 
   it('falls back to the filename while the image preview is still loading', async () => {
     let resolveRead: ((value: unknown) => void) | undefined
+    const readPreview = vi.fn().mockReturnValue(
+      new Promise((resolve) => {
+        resolveRead = resolve
+      })
+    )
     window.api = {
       artifacts: {
         openFile: vi.fn(),
-        readPreview: vi.fn().mockReturnValue(
-          new Promise((resolve) => {
-            resolveRead = resolve
-          })
-        ),
+        readPreview,
         finalizeRunArtifacts: vi.fn()
       }
     } as unknown as Window['api']
+    installManagedImagePreview(readPreview)
 
     const activity = createActivity({
       providerToolName: 'write_artifact_file',
@@ -227,7 +247,9 @@ describe('WorkspaceToolDetailsRow', () => {
       resolveRead?.({ content: 'aGVsbG8=', encoding: 'base64', size: 6, truncated: false })
     })
 
-    expect(container.querySelector('[data-testid="tool-output-image"]')).not.toBeNull()
+    await waitFor(() =>
+      expect(container.querySelector('[data-testid="tool-output-image"]')).not.toBeNull()
+    )
   })
 
   it('renders a non-image, non-JSON tool output as a code section', async () => {

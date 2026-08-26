@@ -2824,12 +2824,22 @@ describe('session store', () => {
       content: ' complete'
     })
 
-    useSessionStore.getState().finishRun('transport-session-1', {
-      inputTokens: 31,
-      cacheTokens: 15,
-      outputTokens: 14,
-      turnCount: 3
-    })
+    useSessionStore.getState().finishRun(
+      'transport-session-1',
+      {
+        inputTokens: 31,
+        cacheTokens: 15,
+        outputTokens: 14,
+        turnCount: 3
+      },
+      undefined,
+      undefined,
+      [
+        { id: 'call-1', index: 0, inputTokens: 10, cacheTokens: 5, outputTokens: 4 },
+        { id: 'call-2', index: 1, inputTokens: 11, cacheTokens: 5, outputTokens: 5 },
+        { id: 'call-3', index: 2, inputTokens: 10, cacheTokens: 5, outputTokens: 5 }
+      ]
+    )
 
     const session = useSessionStore.getState().sessions[0]
     const agentMessage = session.messages[1]
@@ -2843,18 +2853,25 @@ describe('session store', () => {
       responseToMessageId: result?.messageId,
       eventIds: ['event-1', 'event-2'],
       status: 'complete',
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 },
+      modelCallUsage: [
+        { id: 'call-1', index: 0, inputTokens: 10, cacheTokens: 5, outputTokens: 4 },
+        { id: 'call-2', index: 1, inputTokens: 11, cacheTokens: 5, outputTokens: 5 },
+        { id: 'call-3', index: 2, inputTokens: 10, cacheTokens: 5, outputTokens: 5 }
+      ]
     })
     expect(agentMessage.completedAt).toBe(session.updatedAt)
     expect(
       session.conversationGraph?.messages.find((message) => message.id === agentMessage.id)
     ).toMatchObject({
       completedAt: agentMessage.completedAt,
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 },
+      modelCallUsage: agentMessage.modelCallUsage
     })
     expect(toPersistedSession(session).messages[1]).toMatchObject({
       completedAt: agentMessage.completedAt,
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 },
+      modelCallUsage: agentMessage.modelCallUsage
     })
     expect(session.status).toBe('idle')
     expect(session.activeRun).toBeUndefined()
@@ -4811,6 +4828,50 @@ describe('session store', () => {
       expect(persisted).not.toHaveProperty('interrupted')
     })
 
+    it('clears stale Session recovery when a successful Agent turn finishes', () => {
+      hydrateInterrupted({
+        status: 'running',
+        activeRun: { promptMessageId: 'prompt-1', startedAt: 10 },
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'prompt-1'
+        },
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Complete the task',
+            status: 'complete',
+            interrupted: true,
+            eventIds: [],
+            createdAt: 10,
+            updatedAt: 10
+          },
+          {
+            id: 'response-1',
+            role: 'agent',
+            content: 'Completed response',
+            status: 'streaming',
+            responseToMessageId: 'prompt-1',
+            eventIds: [],
+            createdAt: 11,
+            updatedAt: 11
+          }
+        ]
+      })
+
+      useSessionStore.getState().finishRun('resumable-session', undefined, 'prompt-1')
+      const session = useSessionStore.getState().sessions[0]
+
+      expect(session.status).toBe('idle')
+      expect(session.error).toBeUndefined()
+      expect(session.resumeRecovery).toBeUndefined()
+      expect(session.interrupted).toBeUndefined()
+      expect(session.messages[0]).toMatchObject({ id: 'prompt-1', interrupted: true })
+      expect(session.messages[1]).toMatchObject({ status: 'complete' })
+    })
+
     it('markResumed clears the interrupted state so the composer is usable', () => {
       hydrateInterrupted({
         providerSessionId: 'provider-session-old',
@@ -5252,12 +5313,12 @@ describe('session store public contract', () => {
 
   it('keeps production consumers on the public store facade', () => {
     expect(directConsumerPaths()).toEqual([
-      'src/renderer/src/App.tsx',
       'src/renderer/src/components/NotificationBell.tsx',
       'src/renderer/src/components/NotificationLiveToast.tsx',
       'src/renderer/src/components/global-search/GlobalSearchDialog.tsx',
       'src/renderer/src/components/job-binding-utils.ts',
       'src/renderer/src/components/notification-inbox-presentation.ts',
+      'src/renderer/src/hooks/useApplicationEventBindings.ts',
       'src/renderer/src/hooks/useLifecycleSync.ts',
       'src/renderer/src/hooks/useUnreadTaskViewSync.ts',
       'src/renderer/src/lib/acp/history-preamble.ts',
@@ -5289,15 +5350,16 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/ConversationPanel.tsx',
       'src/renderer/src/pages/workspace/DeleteSessionDialog.tsx',
       'src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.tsx',
+      'src/renderer/src/pages/workspace/EditSessionDialog.tsx',
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
-      'src/renderer/src/pages/workspace/RenameSessionDialog.tsx',
       'src/renderer/src/pages/workspace/SessionNotebookDialog.tsx',
       'src/renderer/src/pages/workspace/SubagentReleaseSurfaces.tsx',
       'src/renderer/src/pages/workspace/WorkspaceActivityIcon.tsx',
       'src/renderer/src/pages/workspace/WorkspaceAgentLoadingRow.tsx',
       'src/renderer/src/pages/workspace/WorkspaceArtifactVisibility.tsx',
       'src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceManagePackagesActivityRow.tsx',
       'src/renderer/src/pages/workspace/WorkspaceMessageItem.tsx',
       'src/renderer/src/pages/workspace/WorkspaceMessageScroller.tsx',
       'src/renderer/src/pages/workspace/WorkspacePage.tsx',
@@ -5311,6 +5373,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/agent-loading-message.ts',
       'src/renderer/src/pages/workspace/artifact-preview-utils.ts',
       'src/renderer/src/pages/workspace/artifact-preview.tsx',
+      'src/renderer/src/pages/workspace/composer/SessionMentionPopup.tsx',
       'src/renderer/src/pages/workspace/composer/composer-history.ts',
       'src/renderer/src/pages/workspace/context-window-trend.ts',
       'src/renderer/src/pages/workspace/generate-plan-activity-projection.ts',
@@ -5340,6 +5403,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-run-marks.ts',
       'src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',
+      'src/renderer/src/pages/workspace/workspace-session-details-controller.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-style.ts',
@@ -5912,6 +5976,7 @@ describe('branchInNewSession', () => {
               {
                 ...activeBranch,
                 id: 'preserved-inactive-branch',
+                parentBranchId: activeBranch.id,
                 headMessageId: session.messages[0]?.id,
                 updatedAt: Date.now() - 1
               }
@@ -6108,9 +6173,21 @@ describe('truncateSessionFromMessage', () => {
   it('prunes activity group references when edited resend removes their activities', () => {
     seedSession({
       activities: [
-        { ...createActivity('act-1', baseTime + 150), activityGroupId: 'group-1' },
-        { ...createActivity('act-2', baseTime + 250), activityGroupId: 'group-1' },
-        { ...createActivity('act-3', baseTime + 350), activityGroupId: 'group-2' }
+        {
+          ...createActivity('act-1', baseTime + 150),
+          activityGroupId: 'group-1',
+          promptMessageId: 'user-1'
+        },
+        {
+          ...createActivity('act-2', baseTime + 250),
+          activityGroupId: 'group-1',
+          promptMessageId: 'user-1'
+        },
+        {
+          ...createActivity('act-3', baseTime + 350),
+          activityGroupId: 'group-2',
+          promptMessageId: 'user-2'
+        }
       ],
       activityGroups: [
         {
@@ -6118,6 +6195,7 @@ describe('truncateSessionFromMessage', () => {
           title: 'First group',
           sortIndex: 1,
           activityIds: ['act-1', 'act-2'],
+          promptMessageId: 'user-1',
           createdAt: baseTime + 140,
           updatedAt: baseTime + 250,
           completedAt: baseTime + 260
@@ -6127,6 +6205,7 @@ describe('truncateSessionFromMessage', () => {
           title: 'Second group',
           sortIndex: 2,
           activityIds: ['act-3'],
+          promptMessageId: 'user-2',
           createdAt: baseTime + 340,
           updatedAt: baseTime + 350,
           completedAt: baseTime + 360

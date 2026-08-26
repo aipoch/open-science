@@ -5,6 +5,7 @@ import type {
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookRunRecord,
+  NotebookRunCursor,
   NotebookRunStaleness,
   NotebookRunSummary,
   NotebookSessionReference,
@@ -162,7 +163,9 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
   async state(
     session: Session,
     includeRunIds: readonly string[] = [],
-    historySummaryFrameId?: string
+    historySummaryFrameId?: string,
+    historyBefore?: NotebookRunCursor,
+    historyLimit = NOTEBOOK_RENDERER_RUN_LIMIT
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const document = await this.options.repository.loadOrCreate({
       projectId: session.projectId,
@@ -173,13 +176,15 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     const snapshot = session.snapshot()
     const targetedRunRead = includeRunIds.length > 0
     const summaryOnlyRead = historySummaryFrameId !== undefined && !targetedRunRead
-    const sparseRunRead = targetedRunRead || summaryOnlyRead
+    const pagedHistoryRead = historyBefore !== undefined
+    const sparseRunRead = targetedRunRead || summaryOnlyRead || pagedHistoryRead
     const runWindow = await this.options.repository.readSessionRunWindow(
       session.projectId,
       session.sessionId,
-      sparseRunRead ? 0 : NOTEBOOK_RENDERER_RUN_LIMIT,
+      targetedRunRead || summaryOnlyRead ? 0 : historyLimit,
       includeRunIds,
-      historySummaryFrameId
+      historySummaryFrameId,
+      historyBefore
     )
     const dependencyProjection = await this.options.dependencyAnalyzer
       .project({ projectId: session.projectId, sessionId: session.sessionId })
@@ -227,6 +232,9 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
         r: this.options.runtimeEnvironment?.(session, 'r') ?? DEFAULT_R_ENV
       },
       ...(runWindow.historySummary ? { historySummary: runWindow.historySummary } : {}),
+      ...(!targetedRunRead && !summaryOnlyRead && runWindow.historyPage
+        ? { historyPage: runWindow.historyPage }
+        : {}),
       runs: runWindow.runs.map((run) => this.toPublicRunRecord(run)),
       recentRuns: sparseRunRead
         ? []

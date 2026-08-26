@@ -10,6 +10,7 @@ import {
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
 import { saveSessionWithRevision } from './save-session'
+import { loadSessionMutationAuthority } from './repository'
 
 type PersistedSideChatProjection = PersistedSideChat
 
@@ -215,7 +216,7 @@ class SessionSideChatPersistenceOwner {
 
   private async loadMutable(projectId: string, sessionId: string): Promise<PersistedChatSession> {
     this.options.assertMutable(projectId, sessionId)
-    const loaded = await this.options.repository.loadSessionWithDiagnostics(projectId, sessionId)
+    const loaded = await loadSessionMutationAuthority(this.options.repository, projectId, sessionId)
     if (loaded.status === 'unreadable') {
       throw new Error('Cannot mutate Side chat because its parent Session JSON is unreadable.')
     }

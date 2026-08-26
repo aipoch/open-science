@@ -35,7 +35,10 @@ import {
 } from '../../shared/acp'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { type AgentFrameworkId } from '../../shared/settings'
-import type { MessageAttribution } from '../../shared/session-persistence'
+import {
+  sanitizeSessionReferences,
+  type MessageAttribution
+} from '../../shared/session-persistence'
 import {
   sanitizeAgentUserChoiceRequest,
   type AgentUserChoiceRequest,
@@ -54,6 +57,7 @@ import {
 } from '../agent-framework'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
+import { buildSessionReferencePrompt } from './session-reference-prompt'
 import { ConversationPermissionGrantStore } from './permission-broker'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import type { AcpPermissionContext } from './permission-context'
@@ -382,6 +386,18 @@ const errorMessage = (error: unknown): string => {
 
 const log = createLogger('acp')
 
+const PERMISSION_DENIED_CONTINUATION_TEXT =
+  'The user explicitly denied this operation. You do not have authorization to perform it. ' +
+  'Do not retry or approximate the denied operation with a different command, tool, or route, ' +
+  'and do not request permission for it again in this turn. Continue only with independent work ' +
+  'that is already permitted. If the denied operation is required, explain the boundary and wait ' +
+  'for the user to explicitly change their decision in a new message.'
+
+const PERMISSION_CANCELLED_CONTINUATION_TEXT =
+  'The pending permission interaction was cancelled without granting authorization. Do not ' +
+  'execute or retry the parked tool call unless the user explicitly approves it later. Continue ' +
+  'only with independent work that is already permitted, or explain what cannot be completed.'
+
 const PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS = 3
 const PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS = 25
 
@@ -421,7 +437,8 @@ class AcpRuntime {
     string,
     Readonly<{
       sessionId: string
-      provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
+      provenanceContext?: NonNullable<AcpPromptRequest['provenanceContext']>
+      referencedSessions?: AcpPromptRequest['referencedSessions']
     }>
   >()
   private readonly durableContinuationContext: AcpRuntimeSessionOwners['durableContinuationContext']
@@ -689,6 +706,10 @@ class AcpRuntime {
 
   liveSessionProjectId(sessionId: string): string | undefined {
     return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectId
+  }
+
+  isSessionReferenceAllowed(sessionId: string, referencedSessionId: string): boolean {
+    return this.sessionInteractions.isSessionReferenceAllowed(sessionId, referencedSessionId)
   }
 
   // Handoff adapters select their framework without reaching into session ownership maps. The
@@ -1141,6 +1162,11 @@ class AcpRuntime {
   private async prepareNativeFollowUpContent(
     request: AcpSteerFollowUpRequest
   ): Promise<NativeFollowUpPreparedContent> {
+    const referencedSessions = sanitizeSessionReferences(request.parts)
+    this.sessionInteractions.authorizeSessionReferences(
+      request.sessionId,
+      referencedSessions.map((reference) => reference.sessionId)
+    )
     const presented = await this.turnSkills.presentFollowUp({
       frameworkId: this.framework.id,
       text: request.text,
@@ -1157,7 +1183,9 @@ class AcpRuntime {
       appSessionId: request.sessionId,
       projectId: this.liveSessionProjectId(request.sessionId) ?? '',
       connectionGeneration: this.connectionGeneration,
-      text: followUpPromptText(presented),
+      text: [buildSessionReferencePrompt(referencedSessions), followUpPromptText(presented)]
+        .filter((segment): segment is string => Boolean(segment))
+        .join('\n\n'),
       historyImages: [],
       historyUploads: [],
       currentUploads: request.attachments ?? [],
@@ -1371,19 +1399,19 @@ class AcpRuntime {
       selectedOption?.kind.toLowerCase().startsWith('reject_')
     )
     if (permissionRequest && promptInteraction && continueAfterProviderCancellation) {
+      const referencedSessions = this.handoffContinuity.copyReferencedSessions(
+        permissionRequest.sessionId
+      )
       this.appContinuations.set(permissionRequest.sessionId, {
         condition: 'provider-cancelled',
         request: {
           sessionId: permissionRequest.sessionId,
-          text:
-            'The user denied the requested tool permission. Continue the current task without ' +
-            'that tool call. Use an alternative that does not require the denied permission, or ' +
-            'explain what cannot be completed. Do not request the same permission again unless the ' +
-            'user explicitly asks.',
+          text: PERMISSION_DENIED_CONTINUATION_TEXT,
           suppressUserMessage: true,
           ...(promptInteraction.promptMessageId
             ? { provenanceContext: { promptMessageId: promptInteraction.promptMessageId } }
-            : {})
+            : {}),
+          ...(referencedSessions?.length ? { referencedSessions } : {})
         }
       })
     }
@@ -1504,12 +1532,12 @@ class AcpRuntime {
     }
 
     const scope = decision.option?.scope
-    const text = decision.denied
-      ? 'The user denied the pending tool permission. Continue the current task without that tool ' +
-        'call. Use an alternative that does not require the denied permission, or explain what ' +
-        'cannot be completed. Do not request the same permission again unless the user explicitly asks.'
-      : `The user approved the pending tool permission${scope ? ` for ${scope}` : ''}. Retry only ` +
-        'the exact parked tool call and continue the current task. Do not broaden or reinterpret the approval.'
+    const text = response.cancelled
+      ? PERMISSION_CANCELLED_CONTINUATION_TEXT
+      : decision.denied
+        ? PERMISSION_DENIED_CONTINUATION_TEXT
+        : `The user approved the pending tool permission${scope ? ` for ${scope}` : ''}. Retry only ` +
+          'the exact parked tool call and continue the current task. Do not broaden or reinterpret the approval.'
     this.appContinuations.set(restored.sessionId, {
       condition: 'always',
       request: {
@@ -1517,6 +1545,9 @@ class AcpRuntime {
         text,
         suppressUserMessage: true,
         provenanceContext: continuation.provenanceContext,
+        ...(continuation.referencedSessions?.length
+          ? { referencedSessions: continuation.referencedSessions }
+          : {}),
         ...(continuation.historyReplay?.historyPreamble
           ? { historyPreamble: continuation.historyReplay.historyPreamble }
           : {}),
@@ -1602,7 +1633,7 @@ class AcpRuntime {
       }
     }
 
-    const liveProvenance = this.userChoiceProvenanceContexts.get(response.requestId)
+    const livePromptContext = this.userChoiceProvenanceContexts.get(response.requestId)
     const resolution = this.elicitationOwner.respond(response)
     this.userChoiceProvenanceContexts.delete(response.requestId)
     if (resolution.detached) {
@@ -1610,7 +1641,8 @@ class AcpRuntime {
         resolution.request,
         resolution.response,
         restoredContinuation?.historyReplay,
-        restoredContinuation?.provenanceContext ?? liveProvenance?.provenanceContext
+        restoredContinuation?.provenanceContext ?? livePromptContext?.provenanceContext,
+        restoredContinuation?.referencedSessions ?? livePromptContext?.referencedSessions
       )
       if (continuation) {
         this.appContinuations.set(resolution.request.sessionId, {
@@ -1718,10 +1750,17 @@ class AcpRuntime {
     )
 
     if (!pending) return { action: 'cancelled' }
-    if (promptInteraction?.kind === 'prompt' && promptInteraction.provenanceContext) {
+    const referencedSessions = this.handoffContinuity.copyReferencedSessions(request.sessionId)
+    if (
+      promptInteraction?.kind === 'prompt' &&
+      (promptInteraction.provenanceContext || referencedSessions?.length)
+    ) {
       this.userChoiceProvenanceContexts.set(requestId, {
         sessionId: request.sessionId,
-        provenanceContext: promptInteraction.provenanceContext
+        ...(promptInteraction.provenanceContext
+          ? { provenanceContext: promptInteraction.provenanceContext }
+          : {}),
+        ...(referencedSessions?.length ? { referencedSessions } : {})
       })
     }
     return { action: 'pending' }
@@ -1731,7 +1770,8 @@ class AcpRuntime {
     request: PendingElicitationRequest,
     response: CreateElicitationResponse,
     historyReplay?: ElicitationResponse['historyReplay'],
-    provenanceContext?: AcpPromptRequest['provenanceContext']
+    provenanceContext?: AcpPromptRequest['provenanceContext'],
+    referencedSessions?: AcpPromptRequest['referencedSessions']
   ): AcpPromptRequest | undefined {
     if (response.action === 'cancel') return undefined
     const content =
@@ -1785,6 +1825,7 @@ class AcpRuntime {
       text,
       suppressUserMessage: true,
       ...(continuationProvenance ? { provenanceContext: continuationProvenance } : {}),
+      ...(referencedSessions?.length ? { referencedSessions } : {}),
       ...(historyReplay?.historyPreamble ? { historyPreamble: historyReplay.historyPreamble } : {}),
       ...(historyReplay?.historyAttachments?.length
         ? { historyAttachments: historyReplay.historyAttachments }
@@ -1953,6 +1994,9 @@ class AcpRuntime {
             'Do not regenerate, broaden, or reinterpret the approved Plan.',
       suppressUserMessage: true,
       provenanceContext: continuation.provenanceContext,
+      ...(continuation.referencedSessions?.length
+        ? { referencedSessions: continuation.referencedSessions }
+        : {}),
       planContinuation: {
         projectId,
         artifactVersionId: plan.artifactVersionId,

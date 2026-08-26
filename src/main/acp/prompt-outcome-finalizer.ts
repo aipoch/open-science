@@ -2,6 +2,7 @@ import type { PromptResponse } from '@agentclientprotocol/sdk'
 
 import {
   ACP_PROMPT_FAILED_EVENT_TITLE,
+  type AcpModelCallUsage,
   type AcpRuntimeEvent,
   type AcpTerminalContextWindow,
   type AcpTurnTokenUsage
@@ -13,6 +14,7 @@ import type { AcpPermissionContext } from './permission-context'
 import type { PreparedPromptHandle } from './prompt-preparation-owner'
 import { describePromptError, isProviderPromptError } from './prompt-error'
 import type { ProviderPromptOutcome } from './provider-prompt-executor'
+import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
 import type { AcpSessionInteractionOwner as InteractionOwner } from './session-interaction-owner'
 import type { TurnSkillHandle, TurnSkillOutcome } from './turn-skill-owner'
@@ -51,15 +53,25 @@ type ObservedPromptStop = Readonly<{
   response: PromptResponse
   turnUsage?: Extract<ProviderPromptOutcome, { kind: 'stopped' }>['facts']['turnUsage']
   modelTurnCount?: number
+  modelCalls?: ReadonlyArray<AcpProviderModelCallUsage>
   terminalContextWindow?: AcpTerminalContextWindow
 }>
 
 type LogicalTurnUsage = Readonly<{
   turnUsage?: AcpTurnTokenUsage
+  modelCalls?: ReadonlyArray<AcpProviderModelCallUsage>
   unavailable?: true
+  modelCallsUnavailable?: true
 }>
 
 const MAX_LOGICAL_TURN_USAGE_ENTRIES = 500
+
+const inferredCallContextUsedTokens = (call: AcpProviderModelCallUsage): number | undefined => {
+  if (call.contextUsedTokens !== undefined) return call.contextUsedTokens
+  if (call.cachedReadTokens === undefined) return undefined
+  const used = call.inputTokens + call.cachedReadTokens
+  return Number.isSafeInteger(used) ? used : undefined
+}
 
 const sumTurnUsage = (
   left: AcpTurnTokenUsage,
@@ -106,9 +118,10 @@ export class AcpPromptOutcomeFinalizer {
   private accumulateTurnUsage(
     sessionId: string,
     promptMessageId: string | undefined,
-    turnUsage: AcpTurnTokenUsage | undefined
-  ): AcpTurnTokenUsage | undefined {
-    if (!promptMessageId) return turnUsage
+    turnUsage: AcpTurnTokenUsage | undefined,
+    modelCalls: ReadonlyArray<AcpProviderModelCallUsage> | undefined
+  ): LogicalTurnUsage {
+    if (!promptMessageId) return turnUsage ? { turnUsage } : { unavailable: true }
 
     const key = `${sessionId.length}:${sessionId}${promptMessageId}`
     const previous = this.logicalTurnUsage.get(key)
@@ -118,7 +131,20 @@ export class AcpPromptOutcomeFinalizer {
         : previous?.turnUsage
           ? sumTurnUsage(previous.turnUsage, turnUsage)
           : turnUsage
-    const next: LogicalTurnUsage = accumulated ? { turnUsage: accumulated } : { unavailable: true }
+    const accumulatedModelCalls =
+      !accumulated || !modelCalls || previous?.modelCallsUnavailable
+        ? undefined
+        : previous?.modelCalls
+          ? [...previous.modelCalls, ...modelCalls]
+          : [...modelCalls]
+    const next: LogicalTurnUsage = accumulated
+      ? {
+          turnUsage: accumulated,
+          ...(accumulatedModelCalls
+            ? { modelCalls: accumulatedModelCalls }
+            : { modelCallsUnavailable: true as const })
+        }
+      : { unavailable: true, modelCallsUnavailable: true }
 
     // Refresh insertion order so an active continuation is never the oldest retained entry.
     this.logicalTurnUsage.delete(key)
@@ -127,7 +153,7 @@ export class AcpPromptOutcomeFinalizer {
       const oldestKey = this.logicalTurnUsage.keys().next().value
       if (oldestKey) this.logicalTurnUsage.delete(oldestKey)
     }
-    return accumulated
+    return next
   }
 
   async finalize(
@@ -181,11 +207,20 @@ export class AcpPromptOutcomeFinalizer {
           : { modelTurnCount: observedStop.modelTurnCount })
       })
       if (!terminal) return false
-      const turnUsage = this.accumulateTurnUsage(
+      const logicalUsage = this.accumulateTurnUsage(
         sessionId,
         handles.promptMessageId,
-        terminal.turnUsage
+        terminal.turnUsage,
+        observedStop.modelCalls
       )
+      const modelCallUsage: AcpModelCallUsage[] | undefined =
+        handles.promptMessageId && logicalUsage.modelCalls
+          ? logicalUsage.modelCalls.map((call, index) => ({
+              id: `${handles.promptMessageId}:model-call:${index}`,
+              index,
+              ...call
+            }))
+          : undefined
       handles.pushEvent({
         kind: 'stop',
         level: 'info',
@@ -194,7 +229,8 @@ export class AcpPromptOutcomeFinalizer {
         timestamp: terminal.timestamp,
         title: 'Prompt stopped',
         text: observedStop.response.stopReason,
-        turnUsage,
+        turnUsage: logicalUsage.turnUsage,
+        ...(modelCallUsage ? { modelCallUsage } : {}),
         ...(observedStop.terminalContextWindow
           ? { terminalContextWindow: observedStop.terminalContextWindow }
           : {}),
@@ -237,6 +273,19 @@ export class AcpPromptOutcomeFinalizer {
         response,
         ...(facts.turnUsage ? { turnUsage: facts.turnUsage } : {}),
         ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount }),
+        ...(facts.modelCalls
+          ? {
+              modelCalls: facts.modelCalls.map((call) => ({
+                ...call,
+                ...(inferredCallContextUsedTokens(call) === undefined
+                  ? {}
+                  : { contextUsedTokens: inferredCallContextUsedTokens(call) }),
+                ...(capturedContext?.contextWindow.size === undefined
+                  ? {}
+                  : { contextWindowSize: capturedContext.contextWindow.size })
+              }))
+            }
+          : {}),
         ...(capturedContext
           ? {
               terminalContextWindow: {

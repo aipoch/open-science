@@ -11,7 +11,7 @@ import {
   type RunningDelegateExecution
 } from './execution-port'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../shared/acp'
 
 type Deferred<Value> = Readonly<{
   promise: Promise<Value>
@@ -34,8 +34,16 @@ type ExecutionControl = Readonly<{
   accept(): void
   rejectAcceptance(error?: Error): void
   emit(event: DelegateExecutionEvent): void
-  complete(response: string, turnUsage?: AcpTurnTokenUsage): void
-  completeTurn(response: string, turnUsage?: AcpTurnTokenUsage): Promise<void>
+  complete(
+    response: string,
+    turnUsage?: AcpTurnTokenUsage,
+    modelCallUsage?: readonly AcpModelCallUsage[]
+  ): void
+  completeTurn(
+    response: string,
+    turnUsage?: AcpTurnTokenUsage,
+    modelCallUsage?: readonly AcpModelCallUsage[]
+  ): Promise<void>
   fail(error?: Error): void
   cancel(): void
   rejectNextPermissionProfile(error?: Error): void
@@ -146,20 +154,20 @@ const createDeterministicDelegateExecution = (
         emit: (event) => {
           for (const listener of listeners) listener(event)
         },
-        complete: (response, turnUsage) => {
+        complete: (response, turnUsage, modelCallUsage) => {
           if (terminal) return
           terminal = true
           void (async () => {
-            await activeTurn?.complete?.(response, turnUsage)
+            await activeTurn?.complete?.(response, turnUsage, undefined, modelCallUsage)
             completion.resolve({
               status: 'completed',
               response,
-              ...(turnUsage ? { turnUsage } : {})
+              ...(turnUsage ? { turnUsage, ...(modelCallUsage ? { modelCallUsage } : {}) } : {})
             })
           })().catch((error) => completion.reject(error))
         },
-        async completeTurn(response, turnUsage) {
-          await activeTurn?.complete?.(response, turnUsage)
+        async completeTurn(response, turnUsage, modelCallUsage) {
+          await activeTurn?.complete?.(response, turnUsage, undefined, modelCallUsage)
           activeTurn = queuedTurns.shift()
           await activeTurn?.begin?.()
         },

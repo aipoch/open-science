@@ -1374,6 +1374,24 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
     expect(runArgv).not.toHaveBeenCalled()
   })
 
+  it('rejects flag-like package entries before starting micromamba', async () => {
+    const root = makeRoot()
+    const runArgv = vi.fn(async () => undefined)
+    const { deps } = makeNamedEnvDeps(root, { runArgv })
+    let error: unknown
+
+    try {
+      await new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python', [
+        '--offline'
+      ])
+    } catch (caught) {
+      error = caught
+    }
+
+    expect(runArgv).not.toHaveBeenCalled()
+    expect(error).toEqual(expect.objectContaining({ message: expect.stringMatching(/package/i) }))
+  })
+
   it('builds the create argv from the base floor + user packages (deduped), targeting envs/<name>', async () => {
     const root = makeRoot()
     const { deps, argvs } = makeNamedEnvDeps(root)
@@ -1724,7 +1742,7 @@ describe('DefaultRuntimeProvisioner.removeEnvironment', () => {
     expect(() => provisioner.removeEnvironment(DEFAULT_R_ENV)).toThrow(/Refusing to remove/)
   })
 
-  it('removes a named env and returns the refreshed list', () => {
+  it('removes a named env without rediscovering the remaining environments', () => {
     const root = makeRoot()
     const namedPrefix = envPrefix(root, 'my-analysis')
     mkdirSync(join(pythonBin(namedPrefix), '..'), { recursive: true })
@@ -1733,9 +1751,11 @@ describe('DefaultRuntimeProvisioner.removeEnvironment', () => {
     const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
     expect(provisioner.listEnvironments()).toHaveLength(1)
 
-    const remaining = provisioner.removeEnvironment('my-analysis')
+    const listEnvironments = vi.spyOn(provisioner, 'listEnvironments')
+    const result = provisioner.removeEnvironment('my-analysis')
 
-    expect(remaining).toEqual([])
+    expect(result).toBeUndefined()
+    expect(listEnvironments).not.toHaveBeenCalled()
     expect(existsSync(namedPrefix)).toBe(false)
   })
 })

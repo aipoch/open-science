@@ -21,6 +21,7 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { cn } from '@/lib/utils'
 import { useUpdateStore } from '@/stores/update-store'
 import { APP } from '../../../shared/app-config'
+import { isLocale } from '../../../shared/locale'
 import { formatBytes } from '../../../shared/update'
 
 const UPDATE_BACKGROUND_PROCESS_ERROR =
@@ -32,7 +33,7 @@ const UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR =
 // before a large download. Opened from the external capsule and the settings About section. When the
 // manifest carries no notes, it links to the matching GitHub release so the user can still read them.
 const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element | null => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const status = useUpdateStore((state) => state.status)
   const isOpen = useUpdateStore((state) => state.isDialogOpen)
   const closeDialog = useUpdateStore((state) => state.closeDialog)
@@ -48,6 +49,11 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
   const isBackgroundProcessError =
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_ERROR ||
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
+  const activeLanguage = i18n.resolvedLanguage ?? i18n.language
+  const locale = isLocale(activeLanguage) ? activeLanguage : 'en'
+  const localizedNotes = locale === 'en' ? undefined : dialogStatus?.localizedNotes?.[locale]
+  const releaseNotes = localizedNotes ?? dialogStatus?.notes
+  const isEnglishFallback = locale !== 'en' && !localizedNotes && Boolean(dialogStatus?.notes)
 
   return (
     <Dialog.Root
@@ -92,13 +98,18 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
             </div>
 
             <div className={dialogBodyClassName}>
-              {dialogStatus.notes ? (
+              {releaseNotes ? (
                 <div>
                   <p className="mb-1 text-xs font-medium text-muted-foreground">
                     {t("What's new")}
                   </p>
+                  {isEnglishFallback ? (
+                    <p className="mb-2 text-xs text-muted-foreground">
+                      {t('Localized release notes are unavailable; showing English.')}
+                    </p>
+                  ) : null}
                   <div className="max-h-96 overflow-auto rounded-lg bg-muted px-3 py-2">
-                    <AgentMarkdown content={dialogStatus.notes} />
+                    <AgentMarkdown content={releaseNotes} />
                   </div>
                   <ExternalTextLink href={releaseUrl} className="mt-2 text-xs">
                     {t('View full release notes on GitHub')}

@@ -122,6 +122,7 @@
         "src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts",
         "src/renderer/src/pages/workspace/use-side-chat-controller.ts",
         "src/renderer/src/pages/workspace/workspace-session-controller.ts",
+        "src/renderer/src/pages/workspace/workspace-session-details-controller.ts",
         "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.ts",
         "src/renderer/src/pages/workspace/composer-attachment-intake.ts",
         "src/renderer/src/pages/workspace/composer-upload-transfer.ts",
@@ -219,6 +220,9 @@
     },
     "compute_service": {
       "ownerPaths": [
+        "src/main/compute/approval-session-lifecycle.ts",
+        "src/main/compute/agent-compute-service.ts",
+        "src/main/compute/compute-approval-broker.ts",
         "src/main/compute/compute-host-profile-owner.ts",
         "src/main/compute/compute-job-lifecycle.ts",
         "src/main/compute/job-deletion-owner.ts",
@@ -246,6 +250,10 @@
       "consumerModules": [],
       "testFiles": {
         "owner": [
+          "src/main/compute/approval-session-lifecycle.test.ts",
+          "src/main/compute/agent-compute-service.test.ts",
+          "src/main/compute/agent-no-list-jobs.test.ts",
+          "src/main/compute/compute-approval-broker.test.ts",
           "src/main/compute/compute-job-lifecycle.test.ts",
           "src/main/compute/job-deletion-owner.test.ts",
           "src/main/compute/compute-service.architecture.test.ts",
@@ -382,10 +390,12 @@
     },
     "settings_provider_accounts": {
       "ownerPaths": [
+        "src/main/settings/bounded-response.ts",
         "src/main/settings/provider-accounts.ts",
         "src/main/settings/provider-auth-lifecycle.ts",
         "src/main/settings/provider-draft-projection.ts",
         "src/main/settings/provider-model-catalog-owner.ts",
+        "src/main/settings/provider-resource-limits.ts",
         "src/main/settings/provider-runtime-projection.ts",
         "src/main/settings/xai-oauth.ts",
         "src/main/settings/xai-provider-account-owner.ts"
@@ -506,6 +516,7 @@
     "settings_service_facade": {
       "ownerPaths": [
         "src/main/settings/service.ts",
+        "src/main/settings/network-proxy-settings-owner.ts",
         "src/main/settings/reviewer-model-owner.ts",
         "src/main/settings/subagent-model-owner.ts",
         "src/main/settings/vision-model-owner.ts"
@@ -707,6 +718,7 @@
         "src/main/session-persistence/message-delivery-owner.ts",
         "src/main/session-persistence/reconciliation-owner.ts",
         "src/main/session-persistence/relay-projection.ts",
+        "src/main/session-persistence/session-details-authority.ts",
         "src/main/session-persistence/side-chat-owner.ts",
         "src/main/session-persistence/state-owner.ts"
       ],
@@ -732,14 +744,49 @@
     },
     "i18n_catalog": {
       "ownerPaths": [
+        "src/shared/i18n/core.ts",
+        "src/shared/i18n/locales/fr.json",
+        "src/shared/i18n/locales/ja.json",
+        "src/shared/i18n/locales/ko.json",
+        "src/shared/i18n/locales/ru.json",
+        "src/shared/i18n/locales/zh-Hans.json",
+        "src/shared/i18n/locales/zh-Hant.json"
+      ],
+      "interfacePaths": ["src/shared/i18n/core.ts"],
+      "consumerModules": ["i18n_main_adapter", "i18n_renderer_adapter"],
+      "testFiles": {
+        "owner": ["src/renderer/src/i18n/resources.test.ts"],
+        "contract": [],
+        "consumer": []
+      },
+      "capabilityOverlays": ["i18n_catalog"],
+      "fallbackCapability": "shared_contract"
+    },
+    "i18n_main_adapter": {
+      "ownerPaths": [
+        "src/main/locale/main-process-messages.ts",
+        "src/main/locale/owner.ts",
+        "src/main/locale/resources.ts"
+      ],
+      "interfacePaths": [
+        "src/main/locale/main-process-messages.ts",
+        "src/main/locale/owner.ts",
+        "src/main/locale/resources.ts"
+      ],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": ["src/main/locale/owner.test.ts"],
+        "contract": ["src/renderer/src/i18n/resources.test.ts"],
+        "consumer": []
+      },
+      "capabilityOverlays": ["i18n_catalog"],
+      "fallbackCapability": "main_runtime"
+    },
+    "i18n_renderer_adapter": {
+      "ownerPaths": [
         "src/renderer/src/i18n/index.ts",
         "src/renderer/src/i18n/i18next.d.ts",
-        "src/renderer/src/i18n/resources.ts",
-        "src/renderer/src/locales/fr.json",
-        "src/renderer/src/locales/ja.json",
-        "src/renderer/src/locales/ko.json",
-        "src/renderer/src/locales/zh-Hans.json",
-        "src/renderer/src/locales/zh-Hant.json"
+        "src/renderer/src/i18n/resources.ts"
       ],
       "interfacePaths": ["src/renderer/src/i18n/resources.ts"],
       "consumerModules": [],

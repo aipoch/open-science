@@ -1,7 +1,7 @@
-import i18next from 'i18next'
 import { describe, expect, it } from 'vitest'
 
 import { isMirrorConfigured, mirrorStatusText, MIRROR_HELP_URL } from './mirror-view'
+import { i18next } from '@/i18n'
 
 // Pin English so the wording assertions stay stable regardless of the ambient locale.
 const t = i18next.getFixedT('en')
