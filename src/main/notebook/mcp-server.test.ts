@@ -1786,6 +1786,40 @@ describe('compactNotebookStateResult', () => {
     expect(JSON.stringify(compact)).not.toContain('image/png')
   })
 
+  it('keeps REPL connector guidance without exposing its host stack through notebook_state', () => {
+    const message =
+      'Error: connector call rejected: invalid_arguments. Invalid tool arguments for biomart/get_data: field "mart" is required. Correct the arguments to match the Input schema in the loaded mcp-biomart Skill, then retry the same method once. Do not retry unchanged or bypass host.mcp.'
+    const traceback = [
+      message,
+      '    at Object.hostMcp [as mcp] (/Users/alice/open-science/resources/notebook/repl_loop.js:1024:22)',
+      '    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)',
+      '    at async <repl>:3:20',
+      '    at async run (/Users/alice/open-science/resources/notebook/repl_loop.js:3562:19)'
+    ].join('\n')
+    const state = {
+      sessionId: 'session-1',
+      runs: [
+        {
+          runId: 'run-1',
+          kernelKind: 'repl',
+          status: 'failed',
+          text: { stdout: '', stderr: '', traceback, plain: [] }
+        }
+      ]
+    }
+
+    const compact = compactNotebookStateResult(state) as {
+      recentRuns: Array<{ outputPreview?: string }>
+    }
+    const serialized = JSON.stringify(compact)
+
+    expect(compact.recentRuns[0].outputPreview).toBe(message)
+    expect(serialized).not.toContain('node:internal')
+    expect(serialized).not.toContain('<repl>')
+    expect(serialized).not.toContain('repl_loop.js')
+    expect(state.runs[0].text.traceback).toBe(traceback)
+  })
+
   it('bounds dependency staleness on compact recent runs', () => {
     const recentRuns = Array.from({ length: 10 }, (_, index) => ({
       runId: `run-${index}`,

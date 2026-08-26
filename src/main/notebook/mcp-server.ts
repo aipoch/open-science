@@ -723,9 +723,14 @@ const compactStateRun = (
   const record = asRecord(value)
   if (!record) return value
   const text = asRecord(record.text)
-  const diagnosticOutput = ['traceback', 'stderr', 'stdout']
-    .map((field) => text?.[field])
-    .find((candidate) => typeof candidate === 'string' && candidate.length > 0)
+  const traceback = text?.traceback
+  const diagnosticOutput = [
+    record.kernelKind === 'repl' && typeof traceback === 'string'
+      ? compactReplTraceback(traceback)
+      : traceback,
+    text?.stderr,
+    text?.stdout
+  ].find((candidate) => typeof candidate === 'string' && candidate.length > 0)
   const displayOutput = Array.isArray(record.outputs)
     ? record.outputs
         .map((candidate) => {
