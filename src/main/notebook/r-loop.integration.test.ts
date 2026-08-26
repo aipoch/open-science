@@ -129,16 +129,17 @@ const installBlankPngMaterializationTrace = (
   ].join('\n')
 
 gate('r_loop.R', () => {
-  it('returns fresh bounded user variables without evaluating active bindings', async () => {
+  it('returns bounded binding metadata without evaluating any binding values', async () => {
     const { child, send, inspect } = startLoop(rscriptBin(), {})
     try {
       await send(
-        "x <- 41L; label <- '活跃变量'; .private <- 'hidden'; run <- 1L; con <- 'user con'; " +
+        "forced <- FALSE; x <- 41L; label <- '活跃变量'; .private <- 'hidden'; run <- 1L; con <- 'user con'; " +
           'items <- seq_len(100000L); blob <- raw(2000000L); huge_label <- strrep("活", 1000000L); ' +
           'makeActiveBinding("active_value", function() stop("must not evaluate"), .GlobalEnv); ' +
           'delayedAssign("lazy_value", stop("must not force"), assign.env = .GlobalEnv); ' +
           'create_lazy <- base::delayedAssign; ' +
           'create_lazy("indirect_lazy", stop("must not force"), assign.env = .GlobalEnv); ' +
+          'create_lazy("x", { forced <<- TRUE; 42L }, assign.env = .GlobalEnv); ' +
           'assign("indirect_eager", 99L, envir = .GlobalEnv)'
       )
       const first = await inspect()
@@ -147,6 +148,7 @@ gate('r_loop.R', () => {
         'blob',
         'con',
         'create_lazy',
+        'forced',
         'huge_label',
         'indirect_eager',
         'indirect_lazy',
@@ -156,43 +158,36 @@ gate('r_loop.R', () => {
         'run',
         'x'
       ])
-      expect(first.namespace?.variables.find(({ name }) => name === 'label')?.preview).toBe(
-        '活跃变量'
-      )
-      expect(first.namespace?.variables.find(({ name }) => name === 'run')?.preview).toBe('1')
-      expect(first.namespace?.variables.find(({ name }) => name === 'con')?.preview).toBe(
-        'user con'
-      )
-      expect(first.namespace?.variables.find(({ name }) => name === 'huge_label')).toMatchObject({
-        previewTruncated: true
+      expect(first.namespace?.variables.find(({ name }) => name === 'label')).toMatchObject({
+        type: 'binding',
+        preview: ''
       })
-      expect(
-        Buffer.byteLength(
-          first.namespace?.variables.find(({ name }) => name === 'huge_label')?.preview ?? '',
-          'utf8'
-        )
-      ).toBeLessThanOrEqual(512)
+      expect(first.namespace?.variables.find(({ name }) => name === 'x')).toMatchObject({
+        type: 'binding',
+        preview: ''
+      })
       expect(first.namespace?.variables.find(({ name }) => name === 'active_value')).toMatchObject({
         type: 'active binding',
-        preview: '<not evaluated>'
+        preview: ''
       })
       expect(first.namespace?.variables.find(({ name }) => name === 'lazy_value')).toMatchObject({
         type: 'lazy binding',
-        preview: '<not evaluated>'
+        preview: ''
       })
       expect(first.namespace?.variables.find(({ name }) => name === 'indirect_lazy')).toMatchObject(
         {
           type: 'binding',
-          preview: '<not evaluated>'
+          preview: ''
         }
       )
       expect(
         first.namespace?.variables.find(({ name }) => name === 'indirect_eager')
       ).toMatchObject({
         type: 'binding',
-        preview: '<not evaluated>'
+        preview: ''
       })
       expect(Buffer.byteLength(JSON.stringify(first), 'utf8')).toBeLessThan(256 * 1024)
+      expect((await send('forced')).stdout).toContain('FALSE')
 
       await send(
         'x <- 42L; rm(label); added <- list(ok = TRUE); lazy_value <- 7L; ' +
@@ -206,6 +201,7 @@ gate('r_loop.R', () => {
         'blob',
         'con',
         'create_lazy',
+        'forced',
         'huge_label',
         'indirect_eager',
         'indirect_lazy',
@@ -214,16 +210,13 @@ gate('r_loop.R', () => {
         'run',
         'x'
       ])
-      expect(refreshed.namespace?.variables.find(({ name }) => name === 'x')?.preview).toBe('42')
+      expect(refreshed.namespace?.variables.find(({ name }) => name === 'x')).toMatchObject({
+        type: 'binding',
+        preview: ''
+      })
       expect(
-        refreshed.namespace?.variables.find(({ name }) => name === 'lazy_value')?.preview
-      ).toBe('7')
-      expect(
-        refreshed.namespace?.variables.find(({ name }) => name === 'indirect_lazy')?.preview
-      ).toBe('9')
-      expect(
-        refreshed.namespace?.variables.find(({ name }) => name === 'indirect_eager')?.preview
-      ).toBe('100')
+        refreshed.namespace?.variables.find(({ name }) => name === 'lazy_value')
+      ).toMatchObject({ type: 'binding', preview: '' })
       expect(refreshed.namespace?.variables.find(({ name }) => name === '.private')).toMatchObject({
         private: true
       })

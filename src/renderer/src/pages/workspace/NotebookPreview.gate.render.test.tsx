@@ -375,6 +375,7 @@ describe('NotebookPreview per-kernel tabs', () => {
           })
         ),
         execute: vi.fn(() => Promise.resolve({})),
+        restart: vi.fn(),
         onChanged: vi.fn(() => vi.fn())
       },
       notebookEnv: {
@@ -479,6 +480,46 @@ describe('NotebookPreview per-kernel tabs', () => {
 
     expect(screen.queryByText('frame')).toBeNull()
     expect(screen.getByText('No live namespace')).toBeTruthy()
+  })
+
+  it('reloads an open namespace after its R kernel restarts', async () => {
+    await mountWithRuns(
+      [makeRun({ runId: 'r1', kernelKind: 'r', environment: 'default-r' })],
+      [
+        {
+          processKey: 'r:default-r',
+          kind: 'r',
+          environment: 'default-r',
+          status: 'idle',
+          restartRecommended: true
+        }
+      ]
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Inspect variables' }))
+    })
+    expect(window.api.notebook.inspectNamespace).toHaveBeenCalledTimes(1)
+
+    const state = vi.mocked(window.api.notebook.state)
+    const liveState = await state.mock.results[0]?.value
+    vi.mocked(window.api.notebook.restart).mockResolvedValue({
+      ...liveState,
+      environments: liveState.environments.map((environment) => ({
+        ...environment,
+        restartRecommended: false
+      }))
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Restart R kernel' }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(window.api.notebook.inspectNamespace).toHaveBeenCalledTimes(2)
+    expect(window.api.notebook.inspectNamespace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ language: 'r', environment: 'default-r' })
+    )
   })
 
   it('renders terminated notebook history as view-only without terminal controls', async () => {

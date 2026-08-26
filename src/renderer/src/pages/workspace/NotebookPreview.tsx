@@ -801,10 +801,12 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     setActionError(null)
     namespaceRequestId.current += 1
     namespaceRefreshQueued.current = false
+    namespaceLoadKey.current = undefined
     setNamespaceSnapshot(undefined)
     setNamespaceStatus('unavailable')
     try {
       const next = await window.api.notebook.restart(createNotebookRequest(item.notebook))
+      namespaceRefreshQueued.current = showVariables
       applyNotebookState(next)
     } catch (error) {
       setActionError(getErrorMessage(error))

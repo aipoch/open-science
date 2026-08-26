@@ -579,17 +579,16 @@ figure_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_LIMIT_
 figure_count_limit <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_COUNT_LIMIT", 12))
 figure_total_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES", 8 * 1024 * 1024))
 namespace_variable_limit <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_VARIABLE_LIMIT", 500))
-namespace_preview_limit_bytes <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_PREVIEW_LIMIT_BYTES", 512))
 namespace_response_limit_bytes <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_BYTES", 256 * 1024))
 
 namespace_state <- new.env(parent = emptyenv())
 namespace_state$internal_names <- character()
 namespace_state$lazy_names <- character()
-namespace_state$eager_names <- character()
+namespace_state$written_names <- character()
 
 # Base R intentionally does not expose whether an arbitrary environment binding is a promise.
-# Track direct delayedAssign() calls before they execute for a precise label. Unknown promise
-# expressions are still detected without evaluation by inspect_namespace() below.
+# Track direct delayedAssign() calls for a precise label and completed direct writes so user
+# shadows of bootstrap names remain visible. Inspection never reads a binding value.
 namespace_tracker <- base::local({
   delayed_assign_call <- function(expr) {
     if (!is.call(expr)) return(FALSE)
@@ -633,7 +632,7 @@ namespace_tracker <- base::local({
     prepare = function(expr) {
       lazy_names <- delayed_names(expr)
       namespace_state$lazy_names <- union(namespace_state$lazy_names, lazy_names)
-      namespace_state$eager_names <- setdiff(namespace_state$eager_names, lazy_names)
+      namespace_state$written_names <- setdiff(namespace_state$written_names, lazy_names)
       invisible(NULL)
     },
     commit = function(expr) {
@@ -643,10 +642,10 @@ namespace_tracker <- base::local({
       if (!delayed_assign_call(expr)) {
         namespace_state$lazy_names <- setdiff(namespace_state$lazy_names, written_names)
       }
-      namespace_state$eager_names <- union(namespace_state$eager_names, written_names)
+      namespace_state$written_names <- union(namespace_state$written_names, written_names)
       current_names <- ls(envir = .GlobalEnv, all.names = TRUE)
       namespace_state$lazy_names <- intersect(namespace_state$lazy_names, current_names)
-      namespace_state$eager_names <- intersect(namespace_state$eager_names, current_names)
+      namespace_state$written_names <- intersect(namespace_state$written_names, current_names)
       invisible(NULL)
     }
   )
@@ -672,50 +671,6 @@ inspect_namespace <- base::local({
     jsonlite::base64_enc(limit_text_raw(value, limit)$bytes)
   }
 
-  value_type <- function(value) {
-    classes <- attr(value, "class", exact = TRUE)
-    if (is.null(classes)) typeof(value) else paste(classes, collapse = "/")
-  }
-
-  value_shape <- function(value) {
-    dimensions <- attr(value, "dim", exact = TRUE)
-    if (!is.null(dimensions)) return(paste(dimensions, collapse = " x "))
-    if (is.null(attr(value, "class", exact = TRUE)) && (is.atomic(value) || is.list(value))) {
-      return(paste0(length(value), " items"))
-    }
-    NULL
-  }
-
-  value_preview <- function(value) {
-    truncated <- FALSE
-    classes <- attr(value, "class", exact = TRUE)
-    text <- if (is.null(value)) {
-      "NULL"
-    } else if (!is.null(classes) && "data.frame" %in% classes) {
-      dimensions <- attr(value, "dim", exact = TRUE)
-      paste0("data.frame [", dimensions[[1L]], " x ", dimensions[[2L]], "]")
-    } else if (!is.null(classes)) {
-      paste0("<", value_type(value), ">")
-    } else if (is.character(value)) {
-      truncated <- length(value) > 1L
-      if (length(value) == 0L) "character(0)" else value[[1L]]
-    } else if (is.atomic(value)) {
-      shown <- utils::head(value, 6L)
-      truncated <- length(value) > length(shown)
-      paste(as.character(shown), collapse = ", ")
-    } else if (is.list(value)) {
-      paste0("list [", length(value), "]")
-    } else if (is.function(value)) {
-      "<function>"
-    } else if (is.environment(value)) {
-      "<environment>"
-    } else {
-      paste0("<", value_type(value), ">")
-    }
-    limited <- limit_text_raw(text, namespace_preview_limit_bytes)
-    list(bytes = limited$bytes, truncated = truncated || limited$truncated)
-  }
-
   function(include_private = FALSE) {
     names <- ls(envir = .GlobalEnv, all.names = TRUE)
     active_names <- names[vapply(
@@ -725,7 +680,7 @@ inspect_namespace <- base::local({
       env = .GlobalEnv
     )]
     shadowed_internal_names <- union(
-      union(namespace_state$eager_names, namespace_state$lazy_names),
+      union(namespace_state$written_names, namespace_state$lazy_names),
       active_names
     )
     hidden_internal_names <- setdiff(
@@ -737,53 +692,18 @@ inspect_namespace <- base::local({
     variables <- list()
     remaining <- max(0L, namespace_response_limit_bytes - 256L)
     for (name in utils::head(names, namespace_variable_limit)) {
-      entry <- if (bindingIsActive(name, .GlobalEnv)) {
-        list(
-          name_base64 = encoded_text(name, 1024L),
-          type_base64 = encoded_text("active binding"),
-          preview_base64 = encoded_text("<not evaluated>")
-        )
+      binding_type <- if (bindingIsActive(name, .GlobalEnv)) {
+        "active binding"
+      } else if (name %in% namespace_state$lazy_names) {
+        "lazy binding"
       } else {
-        if (name %in% namespace_state$lazy_names) {
-          list(
-            name_base64 = encoded_text(name, 1024L),
-            type_base64 = encoded_text("lazy binding"),
-            preview_base64 = encoded_text("<not evaluated>")
-          )
-        } else if (!(name %in% namespace_state$eager_names)) {
-          # Base R has no stable public API for detecting arbitrary promise bindings. Only inspect
-          # names confirmed by a completed direct assignment; unknown bindings stay read-only.
-          list(
-            name_base64 = encoded_text(name, 1024L),
-            type_base64 = encoded_text("binding"),
-            preview_base64 = encoded_text("<not evaluated>")
-          )
-        } else {
-          tryCatch({
-            setTimeLimit(elapsed = 0.05, transient = TRUE)
-            value <- get(name, envir = .GlobalEnv, inherits = FALSE)
-            preview <- value_preview(value)
-            shape <- value_shape(value)
-            item <- list(
-              name_base64 = encoded_text(name, 1024L),
-              type_base64 = encoded_text(value_type(value)),
-              preview_base64 = jsonlite::base64_enc(preview$bytes)
-            )
-            if (is.atomic(value) && is.null(attr(value, "class", exact = TRUE))) {
-              item$size_bytes <- as.numeric(utils::object.size(value))
-            }
-            if (!is.null(shape)) item$shape_base64 <- encoded_text(shape)
-            if (isTRUE(preview$truncated)) item$preview_truncated <- TRUE
-            item
-          }, error = function(error) {
-            list(
-              name_base64 = encoded_text(name, 1024L),
-              type_base64 = encoded_text("unavailable"),
-              preview_base64 = encoded_text("<inspection failed>")
-            )
-          }, finally = setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE))
-        }
+        "binding"
       }
+      entry <- list(
+        name_base64 = encoded_text(name, 1024L),
+        type_base64 = encoded_text(binding_type),
+        preview_base64 = encoded_text("")
+      )
       if (startsWith(name, ".")) entry$is_private <- TRUE
       encoded_size <- nchar(
         jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null"),
@@ -803,7 +723,6 @@ inspect_namespace <- base::local({
   base::list(
     namespace_state = namespace_state,
     namespace_variable_limit = namespace_variable_limit,
-    namespace_preview_limit_bytes = namespace_preview_limit_bytes,
     namespace_response_limit_bytes = namespace_response_limit_bytes
   ),
   parent = base::baseenv()
