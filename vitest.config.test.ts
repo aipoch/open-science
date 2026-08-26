@@ -59,9 +59,11 @@ it('ratchets full coverage without raising selective changed-source thresholds',
   expect(coverageThresholdsFor({ VITEST_CHANGED_COVERAGE_THRESHOLDS: '0' })).toMatchObject(
     FULL_COVERAGE_THRESHOLDS
   )
-  expect(vitestConfig.test?.coverage).toMatchObject({
-    thresholds: expect.objectContaining(FULL_COVERAGE_THRESHOLDS)
-  })
+  expect(vitestConfig.test?.coverage?.thresholds).toEqual(
+    coverageThresholdsEnabled(process.env)
+      ? expect.objectContaining(FULL_COVERAGE_THRESHOLDS)
+      : undefined
+  )
 })
 
 it('keeps a safe default timeout for schema-backed hooks', () => {
