@@ -883,6 +883,7 @@ export class MarketplaceService {
         id: item.id,
         displayName: item.display_name,
         summary: item.summary,
+        ...(item.author ? { author: item.author } : {}),
         publisher: item.publisher,
         version: item.latest.version,
         ...(installed
@@ -960,6 +961,7 @@ export class MarketplaceService {
         specialistId: release.specialist_id,
         displayName: listing.display_name,
         summary: listing.summary,
+        ...(listing.author ? { author: listing.author } : {}),
         publisher: listing.publisher,
         version: release.version,
         repository: release.source.repository,

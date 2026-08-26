@@ -53,6 +53,37 @@ test('persists the selected theme after closing settings and relaunching', async
   await expect(page.getByRole('button', { name: 'Theme: Dark' })).toBeVisible()
 })
 
+test('persists Russian into the built main-process native quit dialog', async ({ app }) => {
+  let page = await app.completeOnboarding()
+
+  await page
+    .locator('button')
+    .filter({ has: page.locator('svg.lucide-languages') })
+    .click()
+  await page.getByRole('menuitem', { name: 'Русский', exact: true }).click()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
+
+  await expect
+    .poll(() => app.capturePersistedLocaleNativeQuitDialog())
+    .toEqual({
+      buttons: ['Отмена', 'Выйти'],
+      detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
+      includesRendererCatalog: false,
+      message: 'Выйти из Open Science?'
+    })
+
+  page = await app.restart()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
+  await expect
+    .poll(() => app.capturePersistedLocaleNativeQuitDialog())
+    .toEqual({
+      buttons: ['Отмена', 'Выйти'],
+      detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
+      includesRendererCatalog: false,
+      message: 'Выйти из Open Science?'
+    })
+})
+
 const localizedSettingsCases = [
   {
     language: 'Simplified Chinese',

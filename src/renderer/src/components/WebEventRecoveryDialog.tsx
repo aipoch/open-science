@@ -69,7 +69,7 @@ const WebEventRecoveryDialog = ({
             <div className={dialogFooterClassName}>
               <Button type="button" onClick={() => window.location.reload()}>
                 <RefreshCw aria-hidden="true" />
-                {t('Reload')}
+                {t('Reload', { context: 'window', ns: 'common' })}
               </Button>
             </div>
           ) : null}

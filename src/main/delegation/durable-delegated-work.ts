@@ -266,7 +266,10 @@ const createDurableDelegatedWork = (
                 endedAt,
                 fallbackResponse: outcome.response,
                 ...(outcome.turnUsage
-                  ? { turnUsage: outcome.turnUsage }
+                  ? {
+                      turnUsage: outcome.turnUsage,
+                      ...(outcome.modelCallUsage ? { modelCallUsage: outcome.modelCallUsage } : {})
+                    }
                   : outcome.turnUsageUnavailable
                     ? { turnUsageUnavailable: true }
                     : {})
@@ -691,7 +694,7 @@ const createDurableDelegatedWork = (
         'Delegated work is unavailable for this Agent framework configuration. Open Settings and choose a certified configuration.'
       )
     }
-    const { requests, resolvedAgents } = await admissionPolicy.admit(
+    const { requests, resolvedAgents, contracts } = await admissionPolicy.admit(
       requestOrRequests,
       caller.parentSpecialistProfileId
     )
@@ -702,6 +705,7 @@ const createDurableDelegatedWork = (
       admissions = admissionPolicy.buildChildren(
         requests,
         resolvedAgents,
+        contracts,
         executionModel,
         createId,
         now

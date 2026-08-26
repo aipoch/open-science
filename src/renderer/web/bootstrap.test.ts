@@ -470,6 +470,147 @@ describe('Web bootstrap event connection', () => {
     await expect(request).resolves.toMatchObject({ id: 'project-1' })
   })
 
+  it('streams a managed file to the browser-selected destination without buffering a Blob', async () => {
+    const savedBytes: number[] = []
+    const createWritable = vi.fn().mockResolvedValue(
+      new WritableStream<Uint8Array>({
+        write: (chunk) => {
+          savedBytes.push(...chunk)
+        }
+      })
+    )
+    const showSaveFilePicker = vi.fn().mockResolvedValue({ createWritable })
+    vi.stubGlobal('showSaveFilePicker', showSaveFilePicker)
+    const resourceResponse = new Response(new Uint8Array([1, 2, 3]))
+    const blob = vi.spyOn(resourceResponse, 'blob')
+    let released = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url === '/api/bootstrap') {
+          return new Response(JSON.stringify(bootstrapPayload), {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          })
+        }
+        if (url === '/rpc/preview-resources%3Aacquire') {
+          return new Response(
+            JSON.stringify({
+              protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+              ok: true,
+              result: { id: 'resource-1', url: '/preview/resource-1', size: 3 }
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+        }
+        if (url === '/preview/resource-1') return resourceResponse
+        if (url === '/rpc/preview-resources%3Arelease') {
+          released = true
+          return new Response(
+            JSON.stringify({
+              protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+              ok: true,
+              result: null
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+        }
+        throw new Error(`Unexpected fetch: ${url}`)
+      })
+    )
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL = vi.fn(() => 'blob:test')
+        static revokeObjectURL = vi.fn()
+      }
+    )
+
+    const api = await loadBootstrap()
+    await expect(
+      api.saveManagedFile({
+        source: 'artifact',
+        path: 'artifact-1/report.bin',
+        suggestedName: 'report.bin'
+      })
+    ).resolves.toEqual({ saved: true })
+
+    expect(showSaveFilePicker).toHaveBeenCalledWith({ suggestedName: 'report.bin' })
+    expect(createWritable).toHaveBeenCalledOnce()
+    expect(blob).not.toHaveBeenCalled()
+    expect(savedBytes).toEqual([1, 2, 3])
+    expect(released).toBe(true)
+  })
+
+  it('rejects an oversized managed file before Blob fallback fetch and releases it', async () => {
+    const previewFetch = vi.fn()
+    let released = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url === '/api/bootstrap') {
+          return new Response(JSON.stringify(bootstrapPayload), {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          })
+        }
+        if (url === '/rpc/preview-resources%3Aacquire') {
+          return new Response(
+            JSON.stringify({
+              protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+              ok: true,
+              result: {
+                id: 'resource-1',
+                url: '/preview/resource-1',
+                size: 512 * 1024 * 1024 + 1
+              }
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+        }
+        if (url === '/preview/resource-1') {
+          previewFetch()
+          return new Response(new Blob(['large file']))
+        }
+        if (url === '/rpc/preview-resources%3Arelease') {
+          released = true
+          return new Response(
+            JSON.stringify({
+              protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+              ok: true,
+              result: null
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+        }
+        throw new Error(`Unexpected fetch: ${url}`)
+      })
+    )
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL = vi.fn(() => 'blob:test')
+        static revokeObjectURL = vi.fn()
+      }
+    )
+
+    const api = await loadBootstrap()
+    await expect(
+      api.saveManagedFile({
+        source: 'upload',
+        path: 'upload-1/data.bin',
+        suggestedName: 'data.bin'
+      })
+    ).rejects.toMatchObject({ name: 'WebManagedFileSizeLimitError' })
+
+    expect(previewFetch).not.toHaveBeenCalled()
+    expect(released).toBe(true)
+  })
+
   it('settles a stalled managed download and releases its acquired resource', async () => {
     let downloadSignal: AbortSignal | undefined
     let released = false

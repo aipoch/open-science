@@ -16,6 +16,7 @@ import {
   WEB_EVENT_SURFACE_ATTRIBUTE,
   type WebEventConnectionPhase
 } from '../../shared/web-event-connection'
+import { WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME } from '../../shared/file-save'
 import { installWebRendererContracts } from './api-installer'
 import { i18next, initI18n } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
@@ -47,6 +48,7 @@ const BOOTSTRAP_ATTEMPTS = 8
 const BOOTSTRAP_TIMEOUT_MS = 8_000
 const WEB_RPC_TIMEOUT_MS = 30_000
 const WEB_DOWNLOAD_TIMEOUT_MS = 5 * 60_000
+const WEB_BLOB_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024
 const EVENT_CONNECTION_ATTEMPTS = 8
 const EVENT_CONNECTION_IDLE_TIMEOUT_MS = 30_000
 const MODEL_OWNED_WEB_RPC_CHANNELS = new Set(['notebook:execute', 'notebook:run-cell'])
@@ -395,6 +397,17 @@ const downloadBlob = (blob: Blob, name: string): void => {
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
+type BrowserSaveFileHandle = {
+  createWritable: () => Promise<WritableStream<Uint8Array>>
+}
+
+type BrowserSaveFilePicker = (options: { suggestedName: string }) => Promise<BrowserSaveFileHandle>
+
+const webManagedFileSizeLimitError = (): Error =>
+  Object.assign(new Error('Managed file exceeds the Web Blob download limit.'), {
+    name: WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME
+  })
+
 const installWebApi = async (): Promise<EventCursor> => {
   const parsedBootstrap = webRpcBootstrapSchema.safeParse(await fetchBootstrap())
   if (!parsedBootstrap.success) {
@@ -423,19 +436,49 @@ const installWebApi = async (): Promise<EventCursor> => {
         path: string
         suggestedName: string
       }) => {
-        const resource = (await invoke('preview-resources:acquire', [
-          { source: request.source, path: request.path }
-        ])) as { id: string; url: string }
+        const showSaveFilePicker = (
+          window as unknown as { showSaveFilePicker?: BrowserSaveFilePicker }
+        ).showSaveFilePicker
+        let writable: WritableStream<Uint8Array> | undefined
+        if (showSaveFilePicker) {
+          try {
+            const handle = await showSaveFilePicker.call(window, {
+              suggestedName: request.suggestedName
+            })
+            writable = await handle.createWritable()
+          } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') return { saved: false }
+            throw error
+          }
+        }
+
+        let resource: { id: string; url: string; size: number } | undefined
         try {
-          const blob = await withRequestTimeout(WEB_DOWNLOAD_TIMEOUT_MS, async (signal) => {
-            const response = await fetch(resource.url, { signal })
+          const acquiredResource = (await invoke('preview-resources:acquire', [
+            { source: request.source, path: request.path }
+          ])) as { id: string; url: string; size: number }
+          resource = acquiredResource
+          if (!writable && acquiredResource.size > WEB_BLOB_DOWNLOAD_MAX_BYTES) {
+            throw webManagedFileSizeLimitError()
+          }
+          await withRequestTimeout(WEB_DOWNLOAD_TIMEOUT_MS, async (signal) => {
+            const response = await fetch(acquiredResource.url, { signal })
             if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`)
-            return await response.blob()
+            if (writable) {
+              if (!response.body) throw new Error('Download failed: response body is unavailable.')
+              await response.body.pipeTo(writable, { signal })
+              return
+            }
+            downloadBlob(await response.blob(), request.suggestedName)
           })
-          downloadBlob(blob, request.suggestedName)
           return { saved: true }
+        } catch (error) {
+          if (writable) await writable.abort(error).catch(() => undefined)
+          throw error
         } finally {
-          await invoke('preview-resources:release', [{ resourceId: resource.id }])
+          if (resource) {
+            await invoke('preview-resources:release', [{ resourceId: resource.id }])
+          }
         }
       },
       'window.close': () => {

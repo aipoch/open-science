@@ -6,6 +6,8 @@ import type {
 } from '../delegation/durable-delegated-work'
 import { MAX_DELEGATE_NAME_CODE_POINTS } from '../delegation/delegated-work-admission'
 
+const MAX_DELEGATE_BATCH_ITEMS = 4
+
 const RUNNING_OBSERVATION_SCHEMA = {
   type: 'object',
   required: ['frameId', 'attemptId', 'name', 'agentName', 'status'],
@@ -175,6 +177,7 @@ const DELEGATE_AGENT_CONTRACT = {
       {
         type: 'array',
         minItems: 1,
+        maxItems: MAX_DELEGATE_BATCH_ITEMS,
         items: DELEGATE_REQUEST_OBJECT_SCHEMA
       }
     ]
@@ -263,9 +266,16 @@ const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
 
 const parseDelegateRpcCall = (params: Readonly<Record<string, unknown>>): DelegateRpcCall => {
   const request = params.request
-  if (!isRecord(request) && !Array.isArray(request)) {
+  const requests = Array.isArray(request) ? request : [request]
+  const requestObjects = requests.filter(isRecord)
+  if (requests.length === 0 || requestObjects.length !== requests.length) {
     throw new Error(
       'host.delegate request must be one object or a non-empty object array; pass it as the first argument.'
+    )
+  }
+  if (requests.length > MAX_DELEGATE_BATCH_ITEMS) {
+    throw new Error(
+      `host.delegate request batches must contain from 1 through ${MAX_DELEGATE_BATCH_ITEMS} objects.`
     )
   }
   if (params.options !== undefined && !isRecord(params.options)) {
@@ -313,10 +323,10 @@ const parseDelegateRpcCall = (params: Readonly<Record<string, unknown>>): Delega
   }
   return {
     // Semantic request validation remains in DelegatedWorkAdmissionPolicy so RPC callers retain
-    // the existing domain errors for empty arrays, tasks, profiles, and input identities.
+    // the existing domain errors for tasks, profiles, and input identities.
     request: Array.isArray(request)
-      ? request.map((candidate) => mapRequest(candidate as Record<string, unknown>))
-      : mapRequest(request),
+      ? requestObjects.map(mapRequest)
+      : mapRequest(requestObjects[0]),
     options: {
       ...(typeof requestedOptions.wait === 'boolean' ? { wait: requestedOptions.wait } : {}),
       ...(typeof timeoutSeconds === 'number' ? { timeoutSeconds } : {})

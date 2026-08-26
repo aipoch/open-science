@@ -87,6 +87,28 @@ describe('ProvidersPanel: unexpected command failures', () => {
     expect(details?.open).toBe(false)
     expect(details?.textContent).toContain('/private/provider.sock')
   })
+
+  it('localizes a browser-captured oversized Claude token error', async () => {
+    useSettingsStore.setState({
+      ...useSettingsStore.getState(),
+      loginIsolatedClaudeBrowser: vi.fn().mockResolvedValue({
+        ok: false,
+        category: 'unknown',
+        message: 'Claude sign-in token must not exceed 16384 bytes.'
+      }) as never
+    })
+    render()
+
+    const signIn = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Sign in with browser"]'
+    )
+    switchTo('zh-Hans')
+    await act(async () => signIn?.click())
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Claude 令牌不得超过 16384 字节。'
+    )
+  })
 })
 
 describe('ProvidersPanel: claude-isolated browser + paste race', () => {

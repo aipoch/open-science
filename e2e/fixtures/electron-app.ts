@@ -100,6 +100,12 @@ type ElectronApp = {
   readonly page: Page
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
   beginResourceProfile: (options?: RuntimeResourceProfilerOptions) => Promise<void>
+  capturePersistedLocaleNativeQuitDialog: () => Promise<{
+    buttons: string[]
+    detail: string
+    includesRendererCatalog: boolean
+    message: string
+  } | null>
   completeOnboarding: () => Promise<Page>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
@@ -316,6 +322,100 @@ class ElectronAppHarness implements ElectronApp {
     const profiler = new RuntimeResourceProfiler(options)
     this.resourceProfiler = profiler
     await profiler.attach(this.runningApplication)
+  }
+
+  async capturePersistedLocaleNativeQuitDialog(): Promise<{
+    buttons: string[]
+    detail: string
+    includesRendererCatalog: boolean
+    message: string
+  } | null> {
+    return this.runningApplication.evaluate(async ({ app, dialog }) => {
+      const { readFileSync, readdirSync } = process.getBuiltinModule('node:fs')
+      const { createRequire } = process.getBuiltinModule('node:module')
+      const { join } = process.getBuiltinModule('node:path')
+      const appRoot = app.getAppPath()
+      const mainRoot = join(appRoot, 'out', 'main')
+      const chunk = (prefix: string): string => {
+        const name = readdirSync(mainRoot).find(
+          (candidate) => candidate.startsWith(`${prefix}-`) && candidate.endsWith('.js')
+        )
+        if (!name) throw new Error(`Built Electron chunk ${prefix} was not found.`)
+        return join(mainRoot, name)
+      }
+      const requireFromApp = createRequire(join(appRoot, 'package.json'))
+      const nativeChunk = chunk('main-process-messages')
+      const nativeSource = readFileSync(nativeChunk, 'utf8')
+      const ownerModule = requireFromApp(chunk('owner')) as {
+        LocalePreferenceOwner: new (
+          systemLanguageTags: readonly string[],
+          repository: { setLocalePreference: (locale: string) => Promise<void> },
+          initialPreference: string
+        ) => {
+          t: (key: string, options?: Record<string, string | number>) => string
+        }
+      }
+      const close = requireFromApp(chunk('window-close-confirm')) as {
+        createElectronCloseConfirm: (
+          getWindow: () => undefined,
+          preferences: {
+            get: () => Promise<undefined>
+            set: () => Promise<void>
+          },
+          translate: (key: string, options?: Record<string, string | number>) => string
+        ) => (
+          variant: 'quit',
+          sessions: Array<{ projectId: string; sessionId: string; kind: 'agent' }>
+        ) => Promise<string>
+      }
+      const storageRoot = process.env.OPEN_SCIENCE_STORAGE_ROOT
+      if (!storageRoot) throw new Error('Electron E2E storage root is unavailable.')
+      const settings = JSON.parse(readFileSync(join(storageRoot, 'settings.json'), 'utf8')) as {
+        localePreference?: string
+      }
+      if (!settings.localePreference || settings.localePreference === 'system') {
+        return null
+      }
+      const localeOwner = new ownerModule.LocalePreferenceOwner(
+        ['en-US'],
+        { setLocalePreference: async () => undefined },
+        settings.localePreference
+      )
+      let captured: { buttons?: string[]; detail?: string; message?: string } | undefined
+      const descriptor = Object.getOwnPropertyDescriptor(dialog, 'showMessageBox')
+      Object.defineProperty(dialog, 'showMessageBox', {
+        configurable: true,
+        value: async (...args: unknown[]) => {
+          captured = args.at(-1) as typeof captured
+          return { checkboxChecked: false, response: 0 }
+        }
+      })
+
+      try {
+        const confirm = close.createElectronCloseConfirm(
+          () => undefined,
+          { get: async () => undefined, set: async () => undefined },
+          (key, options) => localeOwner.t(key, options)
+        )
+        await confirm('quit', [{ projectId: 'e2e', sessionId: 'e2e', kind: 'agent' }])
+      } finally {
+        if (descriptor) Object.defineProperty(dialog, 'showMessageBox', descriptor)
+        else Reflect.deleteProperty(dialog, 'showMessageBox')
+      }
+
+      if (!captured?.buttons || !captured.detail || !captured.message) {
+        throw new Error('Native quit dialog options were not captured.')
+      }
+      return {
+        buttons: captured.buttons,
+        detail: captured.detail,
+        includesRendererCatalog: [
+          'Настройки',
+          'This directory does not exist or is not a directory'
+        ].some((sentinel) => nativeSource.includes(sentinel)),
+        message: captured.message
+      }
+    })
   }
 
   async markResourceProfilePhase(phase: string): Promise<void> {

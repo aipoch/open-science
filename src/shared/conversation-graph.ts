@@ -9,7 +9,8 @@ import { parseNestedDelegateInvocationId } from './delegated-caller-source'
 export type PersistedRuntimeSegment = {
   id: string
   agentFrameId: string
-  frameworkId: AgentFrameworkId
+  // Historical evidence may outlive the runtime's current framework registry.
+  frameworkId: string
   backendId?: string
   agentName?: string
   model?: string

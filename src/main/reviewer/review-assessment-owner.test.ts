@@ -1,7 +1,10 @@
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { PrismaClient } from '@prisma/client'
 
 import type { AcpRuntime } from '../acp/runtime'
 import type {
@@ -12,7 +15,8 @@ import type {
   TurnScope
 } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import type { ReviewRepository } from './repository'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { ReviewRepository } from './repository'
 
 const harness = vi.hoisted(() => ({
   events: [] as string[],
@@ -537,5 +541,53 @@ describe('review assessment owner', () => {
     expect(published.findLast((candidate) => candidate.id === 'assessment-review')).toEqual(
       commandRead.find((candidate) => candidate.id === 'assessment-review')
     )
+  })
+
+  it('keeps a committed Review complete when the post-commit projection read is unavailable', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-reviewer-owner-'))
+    const realClient = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(realClient)
+    let submissionCommitted = false
+    let projectionReadFailed = false
+    const failingClient = {
+      review: {
+        ...realClient.review,
+        findMany: (...args: Parameters<typeof realClient.review.findMany>) => {
+          if (submissionCommitted && !projectionReadFailed) {
+            projectionReadFailed = true
+            return Promise.reject(new Error('temporary Review projection failure'))
+          }
+          return realClient.review.findMany(...args)
+        }
+      },
+      finding: realClient.finding,
+      reviewFindingDisposition: realClient.reviewFindingDisposition,
+      reviewScopeSnapshot: realClient.reviewScopeSnapshot,
+      $executeRaw: realClient.$executeRaw.bind(realClient),
+      $transaction: ((callback: (tx: Record<string, unknown>) => Promise<unknown>) =>
+        realClient
+          .$transaction((tx) => callback(tx as unknown as Record<string, unknown>))
+          .then((result) => {
+            submissionCommitted = true
+            return result
+          })) as PrismaClient['$transaction']
+    } as unknown as PrismaClient
+    const reviewRepository = new ReviewRepository(() => Promise.resolve(failingClient))
+
+    try {
+      const result = await runReviewAssessment({
+        ...commonOptions(reviewRepository),
+        mode: 'initial'
+      })
+      const stableRepository = new ReviewRepository(() => Promise.resolve(realClient))
+      const [stored] = await stableRepository.getReviewsForProjectSession('project-1', 'session-1')
+
+      expect(result.review).toMatchObject({ lifecycle: 'complete', outcome: 'pass' })
+      expect(stored).toMatchObject({ lifecycle: 'complete', outcome: 'pass' })
+      expect(stored.checks).toHaveLength(1)
+    } finally {
+      await realClient.$disconnect()
+      await rm(storageRoot, { recursive: true, force: true })
+    }
   })
 })

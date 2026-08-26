@@ -1,5 +1,6 @@
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
 import { spawnClaudeCli, waitForAbortableOperation } from './claude-cli-process'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { augmentedPathEnv } from './shell-path'
 
 // Claude-isolated auth lifecycle. Mirrors CodexAuthController in shape (getStatus / loginIsolated /
@@ -282,6 +283,14 @@ export class ClaudeIsolatedAuthController {
         supported: true,
         authenticated: false,
         message: 'Paste the token printed by `claude setup-token`.'
+      }
+    }
+
+    if (Buffer.byteLength(trimmed, 'utf8') > PROVIDER_RESOURCE_LIMITS.apiKeyBytes) {
+      return {
+        supported: true,
+        authenticated: false,
+        message: `Claude sign-in token must not exceed ${PROVIDER_RESOURCE_LIMITS.apiKeyBytes} bytes.`
       }
     }
 

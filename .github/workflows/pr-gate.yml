@@ -95,6 +95,11 @@ jobs:
           echo "dir=$trusted_dir" >> "$GITHUB_OUTPUT"
 
           required=(
+            scripts/ci/module-impact-authority.mjs
+            scripts/ci/module-impact-shadow.mjs
+            scripts/ci/module-test-impact.mjs
+            scripts/ci/module-impact.json
+            scripts/ci/validate-module-impact.mjs
             scripts/ci/classify-pr-changes.mjs
             scripts/ci/change-impact.json
           )
@@ -155,7 +160,7 @@ jobs:
             exit 0
           fi
           if [[ "$TRUSTED_CLASSIFIER_SOURCE" == "base" ]]; then
-            node "$TRUSTED_CLASSIFIER_DIR/classify-pr-changes.mjs" --base "$BASE_SHA" --head "$HEAD_SHA"
+            node "$TRUSTED_CLASSIFIER_DIR/module-impact-authority.mjs" --base "$BASE_SHA" --head "$HEAD_SHA"
             exit 0
           fi
 
@@ -216,62 +221,6 @@ jobs:
             )
           }
           NODE
-
-      - name: Prepare trusted module shadow
-        id: trusted_module_shadow
-        continue-on-error: true
-        shell: bash
-        env:
-          BASE_SHA: ${{ steps.revisions.outputs.base }}
-        run: |
-          set -euo pipefail
-          trusted_dir="$RUNNER_TEMP/pr-gate-trusted-module-shadow"
-          mkdir -p "$trusted_dir"
-          echo "dir=$trusted_dir" >> "$GITHUB_OUTPUT"
-
-          required=(
-            scripts/ci/module-impact-shadow.mjs
-            scripts/ci/module-test-impact.mjs
-            scripts/ci/module-impact.json
-            scripts/ci/validate-module-impact.mjs
-            scripts/ci/classify-pr-changes.mjs
-            scripts/ci/change-impact.json
-          )
-          for file in "${required[@]}"; do
-            if ! git cat-file -e "${BASE_SHA}:${file}" 2>/dev/null; then
-              echo "source=bootstrap" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
-          for file in "${required[@]}"; do
-            git show "${BASE_SHA}:${file}" > "$trusted_dir/${file##*/}"
-          done
-          echo "source=base" >> "$GITHUB_OUTPUT"
-
-      - name: Publish module impact shadow
-        continue-on-error: true
-        env:
-          AUTHORITATIVE_PLAN: ${{ steps.classify.outputs.plan }}
-          BASE_SHA: ${{ steps.revisions.outputs.base }}
-          HEAD_SHA: ${{ steps.revisions.outputs.head }}
-          TRUSTED_MODULE_SHADOW_DIR: ${{ steps.trusted_module_shadow.outputs.dir }}
-          TRUSTED_MODULE_SHADOW_SOURCE: ${{ steps.trusted_module_shadow.outputs.source }}
-        run: |
-          if [[ "$TRUSTED_MODULE_SHADOW_SOURCE" == "base" ]]; then
-            node "$TRUSTED_MODULE_SHADOW_DIR/module-impact-shadow.mjs" \
-              --base "$BASE_SHA" \
-              --head "$HEAD_SHA" \
-              --authoritative-plan "$AUTHORITATIVE_PLAN"
-            exit 0
-          fi
-
-          printf '%s\n' \
-            '## Module impact shadow' \
-            '' \
-            'Status: **bootstrap pending**' \
-            '' \
-            'The base revision does not yet contain the trusted shadow reporter. Module evidence will be published for subsequent changes after this control-plane update merges.' \
-            >> "$GITHUB_STEP_SUMMARY"
 
   policy:
     name: PR policy
@@ -536,9 +485,10 @@ jobs:
         continue-on-error: true
         env:
           BASE_SHA: ${{ needs.preflight.outputs.base }}
-        # Vitest coverage.changed inherits --changed, so this enforces thresholds only for the
-        # affected source boundary while using the same test execution.
-        run: npx vitest run --coverage --changed "$BASE_SHA"
+          HEAD_SHA: ${{ needs.preflight.outputs.head }}
+        # The module graph selects owner, contract, and consumer tests. Coverage remains scoped to
+        # changed sources without handing test discovery back to Vitest's static --changed graph.
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA"
       - name: Download full-suite blob reports
         if: ${{ needs.unit_shard.result != 'skipped' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -869,7 +819,7 @@ jobs:
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

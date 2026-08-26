@@ -780,6 +780,108 @@ describe('WorkspaceElicitationCard choice question', () => {
 })
 
 describe('WorkspaceElicitationCard generic ACP form', () => {
+  it.each([
+    [
+      'a wrong-kind preset',
+      {
+        id: 'attempts',
+        label: 'Attempts',
+        kind: 'integer' as const,
+        required: true,
+        defaultValue: '2'
+      }
+    ],
+    [
+      'an out-of-enum preset',
+      {
+        id: 'approach',
+        label: 'Approach',
+        kind: 'single-select' as const,
+        required: true,
+        options: [
+          { value: 'minimal', label: 'Minimal' },
+          { value: 'expanded', label: 'Expanded' }
+        ],
+        defaultValue: 'unsupported'
+      }
+    ],
+    [
+      'an invalid formatted preset',
+      {
+        id: 'contact',
+        label: 'Contact',
+        kind: 'text' as const,
+        required: true,
+        format: 'email' as const,
+        defaultValue: 'not-an-email'
+      }
+    ]
+  ])('keeps Continue disabled for %s', async (_label, field) => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{ message: 'Provide a value', fields: [field], state: 'pending' }}
+          request={{
+            requestId: 'generic-invalid-default',
+            sessionId: 'session-1',
+            toolCallId: 'tool-generic-invalid-default',
+            message: 'Provide a value',
+            fields: [field]
+          }}
+          onRespond={onRespond}
+        />
+      )
+    })
+
+    const continueButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Continue'
+    )
+    expect(continueButton?.disabled).toBe(true)
+    await act(async () => continueButton?.click())
+    expect(onRespond).not.toHaveBeenCalled()
+  })
+
+  it('submits an RFC3339 date-time default accepted by Main', async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    const field = {
+      id: 'scheduled-at',
+      label: 'Scheduled at',
+      kind: 'text' as const,
+      required: true,
+      format: 'date-time' as const,
+      defaultValue: '2026-08-02T12:00:00.123456Z'
+    }
+
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{ message: 'Choose a time', fields: [field], state: 'pending' }}
+          request={{
+            requestId: 'generic-date-time-default',
+            sessionId: 'session-1',
+            toolCallId: 'tool-generic-date-time-default',
+            message: 'Choose a time',
+            fields: [field]
+          }}
+          onRespond={onRespond}
+        />
+      )
+    })
+
+    const continueButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Continue'
+    )
+    expect(continueButton?.disabled).toBe(false)
+    await act(async () => continueButton?.click())
+    expect(onRespond).toHaveBeenCalledWith({
+      requestId: 'generic-date-time-default',
+      action: 'accept',
+      answers: [{ fieldId: 'scheduled-at', value: '2026-08-02T12:00:00.123456Z' }]
+    })
+  })
+
   it('keeps non-question form fields on the generic submit path', async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined)
     const genericFields = [

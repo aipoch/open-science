@@ -31,10 +31,11 @@ import { crossResourceTagsMigration } from './migrations/0011-cross-resource-tag
 import { tagOrderingMigration } from './migrations/0012-tag-ordering'
 import { sessionProjectionMigration } from './migrations/0013-session-projection'
 import { reviewQueryIndexesMigration } from './migrations/0014-review-query-indexes'
+import { sessionModelCallUsageMigration } from './migrations/0015-session-model-call-usage'
 import {
   managedFileVersionFoundationCurrentSchemaAdoptionStatements,
   managedFileVersionFoundationMigration
-} from './migrations/0015-managed-file-version-foundation'
+} from './migrations/0016-managed-file-version-foundation'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -224,6 +225,13 @@ const LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM = checksumMigrat
   managedFileVersionFoundationMigration.statements,
   managedFileVersionFoundationMigration.verifiers
 )
+const LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID =
+  '0015_managed_file_version_foundation'
+const LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM = checksumMigrationPayload(
+  LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
+  managedFileVersionFoundationMigration.statements,
+  managedFileVersionFoundationMigration.verifiers
+)
 const VISION_EVIDENCE_CHECKSUM = checksumMigrationPayload(
   visionEvidenceMigration.id,
   visionEvidenceMigration.statements,
@@ -259,6 +267,12 @@ const REVIEW_QUERY_INDEXES_CHECKSUM = checksumMigrationPayload(
   reviewQueryIndexesMigration.statements,
   reviewQueryIndexesMigration.verifiers,
   reviewQueryIndexesMigration.operations
+)
+const SESSION_MODEL_CALL_USAGE_CHECKSUM = checksumMigrationPayload(
+  sessionModelCallUsageMigration.id,
+  sessionModelCallUsageMigration.statements,
+  sessionModelCallUsageMigration.verifiers,
+  sessionModelCallUsageMigration.operations
 )
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
@@ -406,6 +420,12 @@ const MIGRATION_MANIFEST = [
   {
     ...reviewQueryIndexesMigration,
     checksum: REVIEW_QUERY_INDEXES_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionModelCallUsageMigration,
+    checksum: SESSION_MODEL_CALL_USAGE_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   },
@@ -1032,6 +1052,10 @@ const LEGACY_MANAGED_FILE_VERSION_LEDGER_IDENTITIES = [
   {
     id: LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
     checksum: LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
+  },
+  {
+    id: LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
+    checksum: LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
   }
 ] as const satisfies readonly LegacyManagedFileVersionLedgerIdentity[]
 

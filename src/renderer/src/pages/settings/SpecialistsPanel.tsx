@@ -1626,7 +1626,7 @@ const InstalledSpecialistsPanel = ({
                                 data-specialist-metadata="publisher"
                               >
                                 <span className="truncate">
-                                  {t('By {{publisher}}', {
+                                  {t('Publisher: {{publisher}}', {
                                     publisher: item.marketplaceProvenance.publisher
                                   })}
                                 </span>
@@ -1830,12 +1830,12 @@ const InstalledSpecialistsPanel = ({
                                     variant="outline"
                                     className="h-5 max-w-full px-1.5 text-[11px] font-normal text-muted-foreground"
                                     data-specialist-metadata="publisher"
-                                    title={t('By {{publisher}}', {
+                                    title={t('Publisher: {{publisher}}', {
                                       publisher: item.marketplaceProvenance.publisher
                                     })}
                                   >
                                     <span className="truncate">
-                                      {t('By {{publisher}}', {
+                                      {t('Publisher: {{publisher}}', {
                                         publisher: item.marketplaceProvenance.publisher
                                       })}
                                     </span>

@@ -3,6 +3,7 @@ export type SettingsWriteKey =
   | 'agentFramework'
   | 'reasoningEffort'
   | 'reviewerModel'
+  | 'sessionDetailsModel'
   | 'subagentModel'
   | 'visionModel'
   | 'notifications'
@@ -14,6 +15,7 @@ export type SettingsWriteKey =
 
 export type OptimisticSettingsWriteKey =
   | 'reasoningEffort'
+  | 'sessionDetailsModel'
   | 'notifications'
   | 'conversationSkillImport'
   | 'closePreference'

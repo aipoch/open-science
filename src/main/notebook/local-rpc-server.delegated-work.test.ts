@@ -311,6 +311,51 @@ describe('authenticated delegatedWorkCall route', () => {
     connection.release()
   })
 
+  it('rejects malformed or over-capacity arrays at the authenticated host seam', async () => {
+    const delegate = vi.fn(async () => ({ kind: 'receipts' as const, children: [] }))
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      delegatedWorkService: { delegate }
+    })
+    const connection = await server.issueControlConnection('session-1', 'project-1', 'root-frame')
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-call-1',
+      originatingUserMessageId: 'origin-message-1'
+    })
+
+    const shapeError =
+      'host.delegate request must be one object or a non-empty object array; pass it as the first argument.'
+    for (const { request, error } of [
+      { request: [], error: shapeError },
+      { request: [null], error: shapeError },
+      { request: ['not-an-object'], error: shapeError },
+      {
+        request: Array.from({ length: 5 }, (_, index) => ({
+          task: `Task ${index + 1}`,
+          name: `Child ${index + 1}`
+        })),
+        error: 'host.delegate request batches must contain from 1 through 4 objects.'
+      }
+    ]) {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'delegatedWorkCall', params: { request } })
+      })
+
+      expect(response.status).toBe(500)
+      await expect(response.json()).resolves.toEqual({ error })
+    }
+    expect(delegate).not.toHaveBeenCalled()
+    endInvocation()
+    connection.release()
+  })
+
   it('derives delegation authority from the active control capability and ignores forged owner fields', async () => {
     const session = { projectId: 'trusted-project', sessionId: 'trusted-session' }
     const execution = createDeterministicDelegateExecution()

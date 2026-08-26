@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { classifyChanges } from './classify-pr-changes.mjs'
+import { runModuleImpactAuthorityCli } from './module-impact-authority.mjs'
 import {
   createModuleImpactShadowReport,
   formatModuleImpactShadowSummary,
@@ -37,7 +38,7 @@ describe('module impact shadow', () => {
       { path: 'src/renderer/src/stores/session-store.ts', status: 'modified' }
     ])
 
-    expect(report.enforcement).toBe('non-blocking')
+    expect(report.enforcement).toBe('blocking')
     expect(report.authoritative.mode).toBe('selective')
     expect(report.shadow).toMatchObject({
       mode: 'selective',
@@ -53,7 +54,7 @@ describe('module impact shadow', () => {
     expect(report.comparison.coverage).toBe('covered')
   })
 
-  it('records mode and lane disagreements without making them blocking', () => {
+  it('records candidate mode and lane disagreements before blocking resolution', () => {
     const modulePlan = createAffectedTestPlan(
       [{ path: 'src/main/artifacts/repository.ts', status: 'modified' }],
       manifestOnlyGraph
@@ -67,7 +68,7 @@ describe('module impact shadow', () => {
     }
     const report = createModuleImpactShadowReport(authoritativePlan, modulePlan)
 
-    expect(report.enforcement).toBe('non-blocking')
+    expect(report.enforcement).toBe('blocking')
     expect(report.comparison.modeAgreement).toBe(false)
     expect(report.comparison.coverage).toBe('gap')
     expect(report.comparison.missingLanes).toContain('unit_macos')
@@ -75,7 +76,7 @@ describe('module impact shadow', () => {
       'mode: authoritative full != shadow selective',
       expect.stringContaining('missing authoritative lanes:')
     ])
-    expect(formatModuleImpactShadowSummary(report)).toContain('Planned coverage: **gap**')
+    expect(formatModuleImpactShadowSummary(report)).toContain('Candidate coverage: **gap**')
   })
 
   it.each([
@@ -110,25 +111,132 @@ describe('module impact shadow', () => {
     expect(report.comparison.coverage).toBe(authoritativeMode === 'full' ? 'covered' : 'gap')
   })
 
-  it.each(['fr.json', 'ja.json', 'ko.json', 'zh-Hans.json', 'zh-Hant.json'])(
+  it('promotes an unowned added Main file to the complete authoritative Windows plan', () => {
+    const report = reportFor([{ path: 'src/main/platform-launcher.ts', status: 'added' }])
+
+    expect(report.enforcement).toBe('blocking')
+    expect(report.resolved).toMatchObject({
+      mode: 'full',
+      lanes: expect.arrayContaining([
+        'unit_macos',
+        'windows_runtime',
+        'windows_path',
+        'e2e_functional_windows',
+        'e2e_workspace_windows'
+      ]),
+      bundles: expect.arrayContaining(['unit', 'windows_core', 'windows_e2e'])
+    })
+    expect(report.resolved.reasonChains).toContain(
+      'src/main/platform-launcher.ts -> unknown module owner -> full'
+    )
+  })
+
+  it('merges a known Module capability overlay into the selective authoritative plan', () => {
+    const report = reportFor([{ path: 'src/main/artifacts/repository.ts', status: 'modified' }])
+
+    expect(report.authoritative.lanes).not.toContain('windows_runtime')
+    expect(report.resolved).toMatchObject({
+      mode: 'selective',
+      lanes: expect.arrayContaining(['unit_macos', 'windows_runtime', 'windows_path']),
+      bundles: expect.arrayContaining(['unit', 'windows_core'])
+    })
+    expect(report.resolved.reasonChains).toContain(
+      'src/main/artifacts/repository.ts -> artifact_storage'
+    )
+  })
+
+  it('publishes the resolved module authority through the existing PR Gate outputs', () => {
+    const base = '1'.repeat(40)
+    const head = '2'.repeat(40)
+    const execute = vi.fn().mockReturnValue(Buffer.from('A\0src/main/platform-launcher.ts\0'))
+    const append = vi.fn()
+
+    const { plan } = runModuleImpactAuthorityCli(
+      ['--base', base, '--head', head],
+      { GITHUB_OUTPUT: '/output', GITHUB_STEP_SUMMARY: '/summary' },
+      { cwd: '/repo', execute, append }
+    )
+
+    expect(execute).toHaveBeenCalledWith(
+      'git',
+      ['diff', '--name-status', '-z', base, head],
+      expect.objectContaining({ cwd: '/repo' })
+    )
+    expect(plan).toMatchObject({
+      mode: 'full',
+      lanes: expect.arrayContaining(['windows_runtime', 'e2e_workspace_windows'])
+    })
+    expect(append).toHaveBeenCalledWith(
+      '/output',
+      expect.stringContaining(`plan=${JSON.stringify(plan)}`)
+    )
+    expect(append).toHaveBeenCalledWith('/summary', expect.stringContaining('Resolved mode'))
+  })
+
+  it('does not require module ownership for a documentation-only plan', () => {
+    const execute = vi.fn().mockReturnValue(Buffer.from('M\0docs/architecture.md\0'))
+    const { plan, report } = runModuleImpactAuthorityCli(
+      ['--base', '1'.repeat(40), '--head', '2'.repeat(40)],
+      {},
+      { cwd: '/repo', execute, write: vi.fn() }
+    )
+
+    expect(plan).toMatchObject({
+      mode: 'selective',
+      lanes: ['policy', 'docs'],
+      bundles: ['policy', 'static']
+    })
+    expect(report.shadow.graphStatus).toBe('not-used')
+  })
+
+  it.each(['fr.json', 'ja.json', 'ko.json', 'ru.json', 'zh-Hans.json', 'zh-Hant.json'])(
     'owns %s catalog edits as a selective i18n module instead of an unknown full plan',
     (catalog) => {
-      const report = reportFor([
-        { path: `src/renderer/src/locales/${catalog}`, status: 'modified' }
-      ])
+      const report = reportFor([{ path: `src/shared/i18n/locales/${catalog}`, status: 'modified' }])
 
       expect(report.authoritative.mode).toBe('selective')
       expect(report.shadow).toMatchObject({
         mode: 'selective',
-        modules: ['i18n_catalog']
+        modules: ['i18n_catalog', 'i18n_main_adapter', 'i18n_renderer_adapter']
       })
-      expect(report.shadow.testFiles).toEqual(['src/renderer/src/i18n/resources.test.ts'])
+      expect(report.shadow.testFiles).toEqual([
+        'src/main/locale/owner.test.ts',
+        'src/renderer/src/i18n/resources.test.ts'
+      ])
+      expect(report.shadow.fallbackCapabilities).toEqual([
+        'main_runtime',
+        'renderer_view',
+        'shared_contract'
+      ])
       expect(report.comparison.requiredLanes).toContain('i18n')
       expect(report.comparison.selectedLanes).toContain('i18n')
       expect(report.comparison.missingLanes).toEqual([])
       expect(report.comparison.coverage).toBe('covered')
     }
   )
+
+  it.each([
+    ['main resources', 'src/main/locale/resources.ts', 'i18n_main_adapter', 'main_runtime'],
+    [
+      'main translator',
+      'src/main/locale/main-process-messages.ts',
+      'i18n_main_adapter',
+      'main_runtime'
+    ],
+    ['main locale owner', 'src/main/locale/owner.ts', 'i18n_main_adapter', 'main_runtime'],
+    ['renderer', 'src/renderer/src/i18n/resources.ts', 'i18n_renderer_adapter', 'renderer_view']
+  ])('uses the %s process fallback for its i18n adapter', (_surface, path, module, fallback) => {
+    const report = reportFor([{ path, status: 'modified' }])
+
+    expect(report.shadow).toMatchObject({
+      mode: 'selective',
+      modules: [module],
+      capabilityOverlays: ['i18n_catalog'],
+      fallbackCapabilities: [fallback]
+    })
+    expect(report.comparison.missingLanes).toEqual([])
+    expect(report.comparison.coverage).toBe('covered')
+  })
 
   it('keeps slash-based macOS and Linux fixtures portable and handles no diff', () => {
     for (const path of [
@@ -218,7 +326,7 @@ describe('module impact shadow', () => {
     expect(write).toHaveBeenCalledWith(`${JSON.stringify(report)}\n`)
     expect(append).toHaveBeenCalledWith(
       '/summary',
-      expect.stringContaining('## Module impact shadow')
+      expect.stringContaining('## Module impact authority')
     )
   })
 

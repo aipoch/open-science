@@ -30,7 +30,6 @@ const ALL_PACKAGE_CODES = [
   // Content layer (package/validator.ts)
   'package.json-invalid',
   'package.required-file-missing',
-  'package.top-level-content-forbidden',
   'package.executable-content-present',
   'manifest.object-required',
   'manifest.field-forbidden',

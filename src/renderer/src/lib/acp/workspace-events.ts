@@ -5,6 +5,7 @@ import {
   ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
   type AcpContextWindowSample,
+  type AcpModelCallUsage,
   type AcpRuntimeEvent,
   type AcpTurnTokenUsage
 } from '../../../../shared/acp'
@@ -79,6 +80,7 @@ type DeferredArtifactEvent = {
 type PendingArtifactTurnUsage = {
   turnUsage?: AcpTurnTokenUsage
   turnUsageUnavailable?: true
+  modelCallUsage?: readonly AcpModelCallUsage[]
 }
 
 // The runtime deliberately publishes generated files immediately before its stop event. Providers may
@@ -258,7 +260,8 @@ const attachArtifactEvent = (
     eventId: event.id,
     artifacts: event.artifacts,
     turnUsage: turnUsage?.turnUsage,
-    turnUsageUnavailable: turnUsage?.turnUsageUnavailable
+    turnUsageUnavailable: turnUsage?.turnUsageUnavailable,
+    modelCallUsage: turnUsage?.modelCallUsage
   })
 
 const finalizeArtifactEvent = async (
@@ -685,7 +688,9 @@ const applyWorkspaceRuntimeEvent = async (
         'cancelled',
         INTERRUPTED_TURN_ERROR,
         terminalPromptMessageId,
-        contextWindowSample
+        contextWindowSample,
+        event.turnUsage,
+        event.modelCallUsage
       )
       return true
     }
@@ -708,7 +713,13 @@ const applyWorkspaceRuntimeEvent = async (
       }
     }
 
-    store.finishRun(event.sessionId, event.turnUsage, terminalPromptMessageId, contextWindowSample)
+    store.finishRun(
+      event.sessionId,
+      event.turnUsage,
+      terminalPromptMessageId,
+      contextWindowSample,
+      event.modelCallUsage
+    )
 
     const terminalSession = useSessionStore
       .getState()
@@ -741,7 +752,8 @@ const applyWorkspaceRuntimeEvent = async (
       pendingByPrompt.set(terminalPromptMessageId, {
         ...(event.turnUsage
           ? { turnUsage: event.turnUsage }
-          : { turnUsageUnavailable: true as const })
+          : { turnUsageUnavailable: true as const }),
+        modelCallUsage: event.modelCallUsage
       })
       if (pendingByPrompt.size > MAX_PENDING_ARTIFACT_TURNS_PER_SESSION) {
         const oldestPromptMessageId = pendingByPrompt.keys().next().value

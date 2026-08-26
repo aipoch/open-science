@@ -1,5 +1,6 @@
 import {
   isClaudeApiConnectionFailure,
+  PROVIDER_CONNECTION_FAILED_PREFIX,
   PROVIDER_RESOURCE_NOT_FOUND_PREFIX
 } from '../../shared/run-error-classification'
 
@@ -142,11 +143,34 @@ const isProviderNotFound = (
   return isApiError(error) || /resource_not_found/i.test(raw) || hasNotFoundType
 }
 
-// Produces the session-visible error text for a failed prompt: an actionable message for a provider
-// not-found, else the original message untouched.
+// claude-agent-acp currently forwards some explicit provider 4xx and connect-time failures as a
+// generic ACP internal RequestError with `data.errorKind: 'unknown'`. The fixed wrapper and JSON-RPC
+// code are the remaining machine-stable boundary; require both so ordinary app errors containing a
+// status number or the word "connect" stay reportable. Do not infer 5xx ownership here:
+// provider-tagged 5xx errors still use the structural APIError/provider-error paths above, while an
+// untagged internal 5xx may be an adapter defect.
+const isClaudeProviderApiError = (error: unknown): boolean =>
+  error instanceof Error &&
+  error.name === 'RequestError' &&
+  errorCode(error) === -32603 &&
+  (CLAUDE_PROVIDER_CLIENT_ERROR_PATTERN.test(error.message) ||
+    isClaudeApiConnectionFailure(error.message))
+
+const connectionFailureDetail = (message: string): string | undefined =>
+  message.match(/\(([A-Za-z][A-Za-z0-9_-]{0,63})\)\s*$/)?.[1]
+
+// Produces the session-visible error text for a failed prompt: actionable guidance for recognized
+// provider configuration/connectivity failures, else the original message untouched.
 export const describePromptError = (error: unknown, ctx: PromptErrorContext = {}): string => {
   const raw = rawErrorMessage(error)
   const detail = extractUpstreamDetail(raw)
+
+  if (isClaudeProviderApiError(error) && isClaudeApiConnectionFailure(raw)) {
+    const modelPart = ctx.model ? ` for model "${ctx.model}"` : ''
+    const connectionDetail = connectionFailureDetail(raw)
+
+    return `${PROVIDER_CONNECTION_FAILED_PREFIX}${modelPart}. Check the base URL in Settings → Model and your proxy, VPN, or firewall, then retry.${connectionDetail ? ` Connection detail: ${connectionDetail}.` : ''}`
+  }
 
   if (!isProviderNotFound(error, raw, detail)) return raw
 
@@ -174,19 +198,6 @@ const isProviderErrorKind = (error: unknown): boolean => {
     return false
   }
 }
-
-// claude-agent-acp currently forwards some explicit provider 4xx and connect-time failures as a
-// generic ACP internal RequestError with `data.errorKind: 'unknown'`. The fixed wrapper and JSON-RPC
-// code are the remaining machine-stable boundary; require both so ordinary app errors containing a
-// status number or the word "connect" stay reportable. Do not infer 5xx ownership here:
-// provider-tagged 5xx errors still use the structural APIError/provider-error paths above, while an
-// untagged internal 5xx may be an adapter defect.
-const isClaudeProviderApiError = (error: unknown): boolean =>
-  error instanceof Error &&
-  error.name === 'RequestError' &&
-  errorCode(error) === -32603 &&
-  (CLAUDE_PROVIDER_CLIENT_ERROR_PATTERN.test(error.message) ||
-    isClaudeApiConnectionFailure(error.message))
 
 // Whether a failed prompt originates from the model provider (an upstream LLM/HTTP failure the agent
 // relayed) rather than from the app's own ACP layer. Provider failures are the user's/provider's to

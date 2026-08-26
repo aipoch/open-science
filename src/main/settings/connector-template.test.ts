@@ -37,6 +37,79 @@ describe('Connector configuration templates', () => {
     })
   })
 
+  it('imports multiple MCP client servers without importing credential values', () => {
+    const preview = parseConnectorTemplate(
+      JSON.stringify({
+        mcpServers: {
+          'local-search': {
+            command: 'npx',
+            args: ['-y', '@example/search-mcp'],
+            env: { API_TOKEN: 'must-not-be-imported' }
+          },
+          'Remote Search': {
+            type: 'streamable-http',
+            url: 'https://mcp.example.test/mcp',
+            headers: { Authorization: 'Bearer must-not-be-imported' }
+          }
+        }
+      })
+    )
+
+    expect(preview.ready).toBe(true)
+    expect(preview.sourceFormat).toBe('mcp-client')
+    expect(preview.definitions).toEqual([
+      expect.objectContaining({
+        name: 'local-search',
+        displayName: 'local-search',
+        transport: 'stdio',
+        requiredSecrets: { environment: ['API_TOKEN'] }
+      }),
+      expect.objectContaining({
+        name: 'remote-search',
+        displayName: 'Remote Search',
+        transport: 'streamable_http',
+        requiredSecrets: { headers: ['Authorization'] }
+      })
+    ])
+    expect(JSON.stringify(preview)).not.toContain('must-not-be-imported')
+    expect(preview.diagnostics.map((item) => item.code)).toEqual(
+      expect.arrayContaining([
+        'connector-template.normalized-name',
+        'connector-template.secret-values-excluded'
+      ])
+    )
+  })
+
+  it('recognizes MCP Registry manifests without treating them as client configuration', () => {
+    const preview = parseConnectorTemplate(
+      JSON.stringify({
+        $schema: 'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json',
+        name: 'io.example/search',
+        packages: [{ registryType: 'npm', identifier: '@example/search' }]
+      })
+    )
+
+    expect(preview).toMatchObject({
+      ready: false,
+      diagnostics: [{ code: 'connector-template.registry-manifest' }]
+    })
+  })
+
+  it('rejects an MCP client entry whose explicit transport conflicts with its fields', () => {
+    const preview = parseConnectorTemplate(
+      JSON.stringify({
+        mcpServers: {
+          broken: { type: 'stdio', url: 'https://mcp.example.test/mcp' }
+        }
+      })
+    )
+
+    expect(preview.ready).toBe(false)
+    expect(preview.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'connector-template.transport-fields' })
+    )
+  })
+
   it('parses a remote OAuth template without requiring client-specific fields', () => {
     const preview = parseConnectorTemplate(
       JSON.stringify({
@@ -318,6 +391,40 @@ describe('Connector configuration templates', () => {
       required_secrets: { environment: ['API_TOKEN'] }
     })
     expect(result.contents).not.toContain('local-id')
+    expect(JSON.parse(result.mcpClientContents!)).toEqual({
+      mcpServers: {
+        'example-server': {
+          command: 'npx',
+          args: ['-y', '@example/mcp'],
+          env: { API_TOKEN: '${API_TOKEN}' }
+        }
+      }
+    })
+    expect(result.preview.mcpClientDigest).toMatch(/^[a-f0-9]{64}$/)
+    expect(result.preview.mcpClientSuggestedFileName).toBe('mcp-example-server.json')
+  })
+
+  it('exports remote MCP client transport labels and excludes OAuth state', () => {
+    const result = buildConnectorTemplateExport({
+      id: 'remote-id',
+      name: 'remote-search',
+      displayName: 'Remote Search',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test/mcp',
+      oauth: { scopes: ['openid'] }
+    })
+
+    expect(JSON.parse(result.mcpClientContents!)).toEqual({
+      mcpServers: {
+        'remote-search': {
+          type: 'http',
+          url: 'https://mcp.example.test/mcp'
+        }
+      }
+    })
+    expect(result.preview.mcpClientDiagnostics).toContainEqual(
+      expect.objectContaining({ code: 'connector-template.mcp-oauth-excluded' })
+    )
   })
 
   it('invalidates an export preview when the process-local cache resets', async () => {

@@ -109,7 +109,7 @@ const createDelegatedTurnLifecycle = (options: {
             begin: () => openArtifact(context, `${options.attemptId}:${context.promptMessageId}`)
           }
         : {}),
-      async complete(response, turnUsage, turnUsageUnavailable) {
+      async complete(response, turnUsage, turnUsageUnavailable, modelCallUsage) {
         const completedAt = options.now()
         const turnUpdates = selectRuntimeScopeUpdates(
           options.runtimeUpdates.slice(stagedRuntimeUpdateCount),
@@ -129,7 +129,7 @@ const createDelegatedTurnLifecycle = (options: {
             endedAt: completedAt,
             terminalStatus: 'completed',
             ...(turnUsage
-              ? { turnUsage }
+              ? { turnUsage, ...(modelCallUsage ? { modelCallUsage } : {}) }
               : turnUsageUnavailable
                 ? { turnUsageUnavailable: true }
                 : {}),

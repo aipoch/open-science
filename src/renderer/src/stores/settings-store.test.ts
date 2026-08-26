@@ -34,6 +34,7 @@ type SettingsApi = {
   onInstallLog: ReturnType<typeof vi.fn>
   setAgentFramework: ReturnType<typeof vi.fn>
   setReasoningEffort: ReturnType<typeof vi.fn>
+  setSessionDetailsModel: ReturnType<typeof vi.fn>
   setNotificationsEnabled: ReturnType<typeof vi.fn>
   setConversationSkillImportEnabled: ReturnType<typeof vi.fn>
   setClosePreference: ReturnType<typeof vi.fn>
@@ -175,6 +176,11 @@ beforeEach(() => {
       .fn()
       .mockImplementation((request: { effort: string }) =>
         Promise.resolve({ ...snapshot([]), reasoningEffort: request.effort })
+      ),
+    setSessionDetailsModel: vi
+      .fn()
+      .mockImplementation((request: { configuration: SettingsSnapshot['sessionDetailsModel'] }) =>
+        Promise.resolve({ ...snapshot([]), sessionDetailsModel: request.configuration })
       ),
     setNotificationsEnabled: vi
       .fn()
@@ -1789,6 +1795,49 @@ describe('settings store: setAgentFramework', () => {
     // The lock must survive: dropping it mid-install would let a second install start.
     expect(codex.isInstalling).toBe(true)
     expect(selectAnyInstalling(useSettingsStore.getState())).toBe(true)
+  })
+})
+
+describe('settings store: setSessionDetailsModel', () => {
+  it('applies the selected policy optimistically before Main confirms', async () => {
+    let resolveIpc: (value: SettingsSnapshot) => void = () => undefined
+    api.setSessionDetailsModel.mockImplementation(
+      () =>
+        new Promise<SettingsSnapshot>((resolve) => {
+          resolveIpc = resolve
+        })
+    )
+    const selected = {
+      mode: 'fixed' as const,
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'medium' as const
+    }
+
+    const pending = useSettingsStore.getState().setSessionDetailsModel(selected)
+
+    expect(useSettingsStore.getState().sessionDetailsModel).toEqual(selected)
+    expect(useSettingsStore.getState().sessionDetailsModelPending).toBe(true)
+    resolveIpc({ ...snapshot([]), sessionDetailsModel: selected })
+    await pending
+    expect(useSettingsStore.getState().sessionDetailsModel).toEqual(selected)
+    expect(useSettingsStore.getState().sessionDetailsModelPending).toBe(false)
+  })
+
+  it('rolls back to the confirmed policy when Main rejects the write', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    api.setSessionDetailsModel.mockRejectedValue(new Error('ipc down'))
+
+    await useSettingsStore.getState().setSessionDetailsModel({ mode: 'disabled' })
+
+    expect(useSettingsStore.getState().sessionDetailsModel).toEqual({
+      mode: 'inherit',
+      reasoningEffort: 'low'
+    })
+    expect(useSettingsStore.getState().sessionDetailsModelPending).toBe(false)
+    expect(useSettingsStore.getState().settingsWriteError).toBe(
+      'Could not save Session details model. Refresh the model catalog and try again.'
+    )
   })
 })
 

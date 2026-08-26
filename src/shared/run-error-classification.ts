@@ -100,6 +100,7 @@ export const buildActiveModelIncompatibleMessage = (frameworkDisplayName: string
 // classifier).
 export const PROVIDER_RESOURCE_NOT_FOUND_PREFIX =
   'The model provider could not find the requested resource'
+export const PROVIDER_CONNECTION_FAILED_PREFIX = 'Could not connect to the model provider'
 
 // Claude Code's fixed unreachable-API wrapper. Recognized here so createSession failRun and persisted
 // pre-flag sessions hide Report without a stored-schema migration. Match the distinctive
@@ -144,6 +145,8 @@ export const isExpectedRunFailure = (error: string | null | undefined): boolean 
   if (isUnsupportedCodexAcpVersionError(message)) return true
   // The reworded provider not-found (a model-config problem the user fixes in Settings, not a bug).
   if (message.startsWith(PROVIDER_RESOURCE_NOT_FOUND_PREFIX)) return true
+  // The actionable provider connection reminder produced for Claude Code connection failures.
+  if (message.startsWith(PROVIDER_CONNECTION_FAILED_PREFIX)) return true
   // Model↔framework incompatibility raised at spawn/createSession. The main-side message names the
   // framework (`…compatible with Codex.`) while the resume path rewords it to a generic form; both
   // share this leading phrase, so one prefix covers the createSession path (which is not reworded) and

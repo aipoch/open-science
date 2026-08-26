@@ -114,7 +114,8 @@ type NotebookLocalRpcServerOptions = {
       cmd: string,
       intent: string,
       loginShell?: boolean,
-      timeoutSeconds?: number
+      timeoutSeconds?: number,
+      signal?: AbortSignal
     ): Promise<unknown>
     list(sessionId: string): Promise<ComputeHost[]>
     listHosts(sessionId: string): Promise<AgentComputeHostSummary[]>
@@ -136,7 +137,8 @@ type NotebookLocalRpcServerOptions = {
       context: { sessionId: string; projectId: string },
       providerId: string,
       remotePath: string,
-      dest: { kind: 'session-cache' }
+      dest: { kind: 'session-cache' },
+      signal?: AbortSignal
     ): Promise<unknown>
     submitJob(
       context: { sessionId: string; projectId: string },
@@ -151,7 +153,8 @@ type NotebookLocalRpcServerOptions = {
         harvestConfig?: string
         timeoutSeconds?: number
         workspaceCwd?: string
-      }
+      },
+      signal?: AbortSignal
     ): Promise<unknown>
     getJobStatus(
       context: { sessionId: string; projectId: string },
@@ -2066,7 +2069,8 @@ class NotebookLocalRpcServer {
             cmd,
             intent,
             loginShell,
-            timeoutSeconds
+            timeoutSeconds,
+            signal
           )
         } catch (err) {
           // Re-throw compute call errors as structured error objects so the Python shim can
@@ -2138,9 +2142,15 @@ class NotebookLocalRpcServer {
       if (op === 'download') {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const remotePath = typeof params.remote_path === 'string' ? params.remote_path : ''
-        return this.computeService.download(context, providerId, remotePath, {
-          kind: 'session-cache'
-        })
+        return this.computeService.download(
+          context,
+          providerId,
+          remotePath,
+          {
+            kind: 'session-cache'
+          },
+          signal
+        )
       }
 
       // op='submit_job' — non-blocking job submission (design.md §3a).
@@ -2171,7 +2181,8 @@ class NotebookLocalRpcServer {
               providerId,
               intent,
               command,
-              options
+              options,
+              signal
             )
           }
 
@@ -2195,7 +2206,8 @@ class NotebookLocalRpcServer {
             providerId,
             intent,
             command,
-            options
+            options,
+            signal
           )
           const invocation = { fingerprint, submission, completed: false }
           sessionInvocations.set(invocationId, invocation)

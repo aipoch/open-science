@@ -1,17 +1,17 @@
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
-import type {
-  DelegationPolicy,
-  LoadAllSessionsResult,
-  PersistedChatMessage,
-  PersistedChatSession,
-  PersistedSideChat,
-  PersistedSideChatRelay,
-  SaveSessionOptions,
-  SaveSessionManifestRequest,
-  UpdateSessionArchiveRequest,
-  SessionRuntimeContext,
-  SessionLoadFailure,
-  SessionLoadWarning
+import {
+  type DelegationPolicy,
+  type LoadAllSessionsResult,
+  type PersistedChatMessage,
+  type PersistedChatSession,
+  type PersistedSideChat,
+  type PersistedSideChatRelay,
+  type SaveSessionOptions,
+  type SaveSessionManifestRequest,
+  type UpdateSessionArchiveRequest,
+  type SessionRuntimeContext,
+  type SessionLoadFailure,
+  type SessionLoadWarning
 } from '../../shared/session-persistence'
 import type {
   AttachDelegatedMessageArtifactsInput,
@@ -72,12 +72,13 @@ import {
   SessionDelegatedWorkPersistenceOwner
 } from './delegated-work-owner'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
-import { isSessionCatalogAuthoritative } from './catalog-authority'
+import { assertSessionIdentityOwnership, isSessionCatalogAuthoritative } from './catalog-authority'
 import {
   createSafeSessionUpdatePublisher as safeSessionUpdates,
   type SessionUpdatePublisher
 } from './session-update-publication'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
+import { mutateSessionDetailsAuthority } from './session-details-authority'
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
@@ -163,21 +164,6 @@ const emitRecoverableDiagnostic = (
   }
 }
 
-const assertSessionIdentityOwnership = async (
-  repository: SessionMutationRepository,
-  stateOwner: Pick<SessionPersistenceStateOwner, 'metadataSnapshot'>,
-  session: Pick<PersistedChatSession, 'id' | 'projectId'>
-): Promise<void> => {
-  const metadata = stateOwner.metadataSnapshot()
-  const existingProjectId = metadata.sessions.find((item) => item.id === session.id)?.projectId
-  if (existingProjectId !== undefined && existingProjectId !== session.projectId) {
-    throw new Error('Cannot save a Session id that is already owned by another Project.')
-  }
-  if (metadata.isComplete) return
-
-  await repository.assertSessionIdentityOwnership(session.id, session.projectId)
-}
-
 // Serializes authoritative Session JSON and derived file-index mutations at their owning Project and
 // Session scopes. Catalog-wide reconciliation uses an exclusive barrier so unrelated Projects overlap
 // without allowing a late save to race or revive durable deletion authority.
@@ -207,32 +193,21 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     onDelegatedWorkSessionUpdated?: SessionUpdatePublisher
   ) {
     const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
-    const assertMutable = (
-      projectId: string,
-      sessionId: string,
-      operation: 'save' | 'mutate'
-    ): void => {
-      if (this.deletedProjects.has(projectId)) {
-        throw new Error(`Cannot ${operation} a session whose project has been deleted.`)
-      }
-      if (this.deletedSessions.has(sessionKey(projectId, sessionId))) {
-        throw new Error(`Cannot ${operation} a session that has been deleted.`)
-      }
-    }
     this.stateOwner = new SessionPersistenceStateOwner({
       repository,
       fileIndex,
       provenance,
       uploads,
       log,
-      assertMutable,
+      assertMutable: (projectId, sessionId, operation) =>
+        this.assertMutable(projectId, sessionId, operation),
       notifyFilesChanged: (event) => this.notifyFilesChanged(event),
       notifyRuntimeContextSessionUpdated: (session) =>
         publishSessionUpdate(session, 'runtime-context')
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,
-      assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
+      assertMutable: (projectId, sessionId) => this.assertMutable(projectId, sessionId, 'mutate'),
       recordSession: (session) => this.stateOwner.recordSession(session),
       notifySessionUpdated: (session) => publishSessionUpdate(session, 'runtime-context')
     })
@@ -269,7 +244,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         key
           ? this.operationScheduler.runSession(key.projectId, key.sessionId, work)
           : this.operationScheduler.runGlobal(work),
-      assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
+      assertMutable: (projectId, sessionId) => this.assertMutable(projectId, sessionId, 'mutate'),
       markStartupRecoveryComplete: () => {
         this.delegatedStartupRecoveryComplete = true
       },
@@ -815,18 +790,34 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     mutation: () => Promise<Result>
   ): Promise<Result> {
     return this.operationScheduler.runSession(projectId, sessionId, async () => {
-      if (this.deletedProjects.has(projectId)) {
-        throw new Error('Cannot mutate a session whose project has been deleted.')
-      }
-      if (this.deletedSessions.has(sessionKey(projectId, sessionId))) {
-        throw new Error('Cannot mutate a session that has been deleted.')
-      }
+      this.assertMutable(projectId, sessionId, 'mutate')
       try {
         return await mutation()
       } finally {
         // Force the next save to validate Artifact finalization's binding before reusing topology.
         this.stateOwner.invalidateBindingTopology(projectId, sessionId)
       }
+    })
+  }
+
+  // Session details is Main-owned metadata: its background lifecycle and the manual edit command
+  // must compare and replace one authoritative Session inside the same lane as every other Session
+  // mutation. It does not change transcript/file bindings, so the normal file-index and provenance
+  // reconciliation performed by a whole renderer save would be unnecessary work here.
+  mutateSessionDetailsAuthority(
+    projectId: string,
+    sessionId: string,
+    mutation: (session: PersistedChatSession) => PersistedChatSession | undefined
+  ): Promise<PersistedChatSession | undefined> {
+    return this.operationScheduler.runSession(projectId, sessionId, () => {
+      this.assertMutable(projectId, sessionId, 'mutate')
+      return mutateSessionDetailsAuthority(
+        this.repository,
+        projectId,
+        sessionId,
+        mutation,
+        (session) => this.stateOwner.recordSession(session)
+      )
     })
   }
 
@@ -962,6 +953,15 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       (receiptKind) =>
         this.deletionOwner.reconcileSessionDeletion(projectId, sessionId, receiptKind)
     )
+  }
+
+  private assertMutable(projectId: string, sessionId: string, operation: 'save' | 'mutate'): void {
+    if (this.deletedProjects.has(projectId)) {
+      throw new Error(`Cannot ${operation} a session whose project has been deleted.`)
+    }
+    if (this.deletedSessions.has(sessionKey(projectId, sessionId))) {
+      throw new Error(`Cannot ${operation} a session that has been deleted.`)
+    }
   }
 
   // Renderer notifications are derived state. They must never change the result of an authoritative

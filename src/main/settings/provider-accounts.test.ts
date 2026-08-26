@@ -157,6 +157,75 @@ describe('ProviderAccountsModule', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
+  it.each([
+    ['name', 'n'.repeat(129), 'Provider name must not exceed 128 characters.'],
+    [
+      'baseUrl',
+      `https://gateway.example/${'x'.repeat(2_049)}`,
+      'Base URL must not exceed 2048 characters.'
+    ],
+    ['model', 'm'.repeat(513), 'Model ID must not exceed 512 characters.'],
+    ['key', 'k'.repeat(16 * 1024 + 1), 'API key must not exceed 16384 bytes.']
+  ] as const)(
+    'rejects an oversized provider %s before persistence',
+    async (field, value, message) => {
+      await expect(
+        module.upsertProvider({
+          type: 'custom',
+          name: 'Lab gateway',
+          baseUrl: 'https://lab.example/v1',
+          model: 'lab-model',
+          key: 'secret-key',
+          apiEndpoints: ['openai'],
+          [field]: value
+        })
+      ).rejects.toThrow(message)
+
+      expect((await repository.getSettings()).providers).toEqual([])
+    }
+  )
+
+  it('rejects an oversized unsaved validation draft before provider probing', async () => {
+    await expect(
+      module.validateProvider({
+        draft: {
+          type: 'custom',
+          name: 'n'.repeat(129),
+          baseUrl: 'https://lab.example/v1',
+          model: 'lab-model',
+          key: 'secret-key',
+          apiEndpoints: ['responses']
+        }
+      })
+    ).rejects.toThrow('Provider name must not exceed 128 characters.')
+  })
+
+  it('rejects creating a provider after the durable provider limit is reached', async () => {
+    for (let index = 0; index < 64; index += 1) {
+      await module.upsertProvider({
+        type: 'custom',
+        name: `Provider ${index}`,
+        baseUrl: `https://provider-${index}.example/v1`,
+        model: `model-${index}`,
+        key: `key-${index}`,
+        apiEndpoints: ['openai']
+      })
+    }
+
+    await expect(
+      module.upsertProvider({
+        type: 'custom',
+        name: 'Provider 65',
+        baseUrl: 'https://provider-65.example/v1',
+        model: 'model-65',
+        key: 'key-65',
+        apiEndpoints: ['openai']
+      })
+    ).rejects.toThrow('Provider limit of 64 reached.')
+
+    expect((await repository.getSettings()).providers).toHaveLength(64)
+  })
+
   it('rejects a stale update without recreating the deleted provider', async () => {
     const draft = {
       type: 'custom' as const,

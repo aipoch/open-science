@@ -36,6 +36,16 @@
       "expression": "length(trim(\"messageId\")) > 0 AND \"completedAtMs\" >= 0 AND \"inputTokens\" >= 0 AND \"cacheTokens\" >= 0 AND \"outputTokens\" >= 0"
     },
     {
+      "tableName": "SessionModelCallUsage",
+      "name": "SessionModelCallUsage_identity_check",
+      "expression": "length(trim(\"messageId\")) > 0 AND length(trim(\"callId\")) > 0 AND \"callIndex\" >= 0 AND (\"sourceInvocationId\" IS NULL OR length(trim(\"sourceInvocationId\")) > 0) AND (\"frameworkId\" IS NULL OR length(trim(\"frameworkId\")) > 0) AND (\"backendId\" IS NULL OR length(trim(\"backendId\")) > 0) AND (\"model\" IS NULL OR length(trim(\"model\")) > 0)"
+    },
+    {
+      "tableName": "SessionModelCallUsage",
+      "name": "SessionModelCallUsage_nonnegative_check",
+      "expression": "\"inputTokens\" >= 0 AND \"cacheTokens\" >= 0 AND \"outputTokens\" >= 0 AND ((\"cachedReadTokens\" IS NULL AND \"cachedWriteTokens\" IS NULL) OR (\"cachedReadTokens\" >= 0 AND \"cachedWriteTokens\" >= 0)) AND (\"contextUsedTokens\" IS NULL OR \"contextUsedTokens\" >= 0) AND (\"contextWindowSize\" IS NULL OR \"contextWindowSize\" > 0)"
+    },
+    {
       "tableName": "SessionRun",
       "name": "SessionRun_nonnegative_check",
       "expression": "length(trim(\"messageId\")) > 0 AND \"createdAtMs\" >= 0"

@@ -11,6 +11,7 @@ import {
   createCodexAuthEnvironment,
   ensureCodexAuthHome,
   importCodexAuthentication,
+  projectSafeCodexProviderRoute,
   type CodexAuthSession
 } from './codex-auth'
 
@@ -159,6 +160,38 @@ describe('createCodexAuthEnvironment', () => {
 })
 
 describe('importCodexAuthentication', () => {
+  it('projects only a validated provider route from app-owned configuration', () => {
+    expect(
+      projectSafeCodexProviderRoute(
+        [
+          'cli_auth_credentials_store = "file"',
+          'model_provider = "subscription-route"',
+          '',
+          '[model_providers.subscription-route]',
+          'name = "OpenAI"',
+          'base_url = "http://127.0.0.1:1087/v1"',
+          'wire_api = "responses"',
+          'requires_openai_auth = true',
+          '',
+          '[mcp_servers.private]',
+          'command = "private-command"',
+          ''
+        ].join('\n')
+      )
+    ).toBe(
+      [
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers."subscription-route"]',
+        'name = "OpenAI"',
+        'base_url = "http://127.0.0.1:1087/v1"',
+        'wire_api = "responses"',
+        'requires_openai_auth = true',
+        ''
+      ].join('\n')
+    )
+  })
+
   it('copies auth.json without unrelated Codex config or private runtime data', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-auth-import-'))
     const source = join(root, 'source')

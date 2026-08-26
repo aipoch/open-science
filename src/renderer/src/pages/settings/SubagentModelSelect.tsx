@@ -24,33 +24,58 @@ import {
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 import { SettingsField, SettingsRow } from './SettingsLayout'
-import {
-  isCodexSubscriptionProvider,
-  type SubagentModelConfiguration
-} from '../../../../shared/settings'
+import { isCodexSubscriptionProvider, type ReasoningEffort } from '../../../../shared/settings'
 
 const INHERIT_KEY = 'same-as-main-model'
+const DISABLED_KEY = 'not-configured'
 
-type ModelPolicySelectProps = Readonly<{
+type EnabledModelPolicyConfiguration =
+  | Readonly<{ mode: 'inherit'; reasoningEffort?: ReasoningEffort }>
+  | Readonly<{
+      mode: 'fixed'
+      providerId: string
+      model: string
+      reasoningEffort: ReasoningEffort
+    }>
+
+type ModelPolicyConfiguration = EnabledModelPolicyConfiguration | Readonly<{ mode: 'disabled' }>
+
+type ModelPolicySelectBaseProps = Readonly<{
   modelAriaLabel: string
   reasoningEffortAriaLabel: string
   inheritLabel: string
-  configuration: SubagentModelConfiguration
   pending: boolean
-  setConfiguration: (configuration: SubagentModelConfiguration) => Promise<void>
   entryFilter?: (entry: ConfiguredModelCatalogEntry) => boolean
 }>
 
-const ModelPolicySelect = ({
-  modelAriaLabel,
-  reasoningEffortAriaLabel,
-  inheritLabel,
-  configuration,
-  pending,
-  setConfiguration,
-  entryFilter
-}: ModelPolicySelectProps): React.JSX.Element => {
+type ModelPolicySelectProps = ModelPolicySelectBaseProps &
+  (
+    | Readonly<{
+        variant: 'standard'
+        configuration: EnabledModelPolicyConfiguration
+        setConfiguration: (configuration: EnabledModelPolicyConfiguration) => Promise<void>
+      }>
+    | Readonly<{
+        variant: 'session-details'
+        configuration: ModelPolicyConfiguration
+        setConfiguration: (configuration: ModelPolicyConfiguration) => Promise<void>
+        disabledLabel: string
+      }>
+  )
+
+const ModelPolicySelect = (props: ModelPolicySelectProps): React.JSX.Element => {
+  const {
+    modelAriaLabel,
+    reasoningEffortAriaLabel,
+    inheritLabel,
+    configuration,
+    pending,
+    entryFilter
+  } = props
   const { t } = useTranslation()
+  const isSessionDetails = props.variant === 'session-details'
+  const disabledLabel = isSessionDetails ? props.disabledLabel : undefined
+  const defaultReasoningEffort = isSessionDetails ? 'low' : 'default'
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const claudeSubscriptionProviderId = useSettingsStore(
@@ -69,7 +94,9 @@ const ModelPolicySelect = ({
   const selectedKey =
     configuration.mode === 'inherit'
       ? INHERIT_KEY
-      : configuredModelKey(configuration.providerId, configuration.model)
+      : configuration.mode === 'disabled'
+        ? DISABLED_KEY
+        : configuredModelKey(configuration.providerId, configuration.model)
   const selectedEntry =
     configuration.mode === 'fixed'
       ? eligibleCatalog.find((entry) => entry.key === selectedKey && entry.selectable)
@@ -77,19 +104,29 @@ const ModelPolicySelect = ({
   const selectedProvider = selectedEntry
     ? providers.find((provider) => provider.id === selectedEntry.providerId)
     : undefined
-  const effortProfile = selectedEntry
-    ? resolveProviderReasoningEffortProfile(selectedProvider, selectedEntry.model)
+  const activeProvider = providers.find((provider) => provider.id === activeProviderId)
+  const activeModel = useSettingsStore((state) => state.activeModel) ?? activeProvider?.model
+  const effortProvider = configuration.mode === 'inherit' ? activeProvider : selectedProvider
+  const effortModel = configuration.mode === 'inherit' ? activeModel : selectedEntry?.model
+  const effortProfile = effortModel
+    ? resolveProviderReasoningEffortProfile(effortProvider, effortModel)
     : undefined
+  const configuredEffort =
+    configuration.mode === 'disabled'
+      ? undefined
+      : (configuration.reasoningEffort ?? defaultReasoningEffort)
   const effortControl =
-    configuration.mode === 'fixed' && effortProfile
-      ? resolveReasoningEffortControl(configuration.reasoningEffort, effortProfile)
+    configuration.mode !== 'disabled' &&
+    (configuration.mode === 'fixed' || isSessionDetails) &&
+    effortProfile
+      ? resolveReasoningEffortControl(configuredEffort ?? defaultReasoningEffort, effortProfile)
       : undefined
   const selectedEffortIntent =
-    configuration.mode === 'fixed' && configuration.reasoningEffort !== 'default'
+    configuration.mode !== 'disabled' && configuredEffort !== 'default'
       ? (effortControl?.options.find((option) => option.value === effortControl.selectedValue)
-          ?.intent ?? configuration.reasoningEffort)
-      : configuration.mode === 'fixed'
-        ? configuration.reasoningEffort
+          ?.intent ?? configuredEffort)
+      : configuration.mode !== 'disabled'
+        ? configuredEffort
         : undefined
   const groups = providers
     .map((provider) => ({
@@ -109,7 +146,21 @@ const ModelPolicySelect = ({
           disabled={pending}
           onValueChange={(key) => {
             if (key === INHERIT_KEY) {
-              void setConfiguration({ mode: 'inherit' })
+              void props.setConfiguration(
+                isSessionDetails
+                  ? {
+                      mode: 'inherit',
+                      reasoningEffort:
+                        configuration.mode === 'disabled'
+                          ? defaultReasoningEffort
+                          : (configuration.reasoningEffort ?? defaultReasoningEffort)
+                    }
+                  : { mode: 'inherit' }
+              )
+              return
+            }
+            if (key === DISABLED_KEY && props.variant === 'session-details') {
+              void props.setConfiguration({ mode: 'disabled' })
               return
             }
             const identity = parseConfiguredModelKey(key)
@@ -120,14 +171,16 @@ const ModelPolicySelect = ({
             const provider = providers.find((candidate) => candidate.id === identity.providerId)
             const profile = resolveProviderReasoningEffortProfile(provider, identity.model)
             const reasoningEffort =
-              configuration.mode === 'fixed' && effortProfile
-                ? projectReasoningEffortIntent(
-                    configuration.reasoningEffort,
-                    effortProfile,
-                    profile
-                  )
-                : 'default'
-            void setConfiguration({ mode: 'fixed', ...identity, reasoningEffort })
+              configuration.mode !== 'disabled' && effortProfile
+                ? isSessionDetails && (!effortProfile.supported || !profile.supported)
+                  ? (configuredEffort ?? defaultReasoningEffort)
+                  : projectReasoningEffortIntent(
+                      configuredEffort ?? defaultReasoningEffort,
+                      effortProfile,
+                      profile
+                    )
+                : defaultReasoningEffort
+            void props.setConfiguration({ mode: 'fixed', ...identity, reasoningEffort })
           }}
         >
           <SelectTrigger aria-label={modelAriaLabel}>
@@ -145,6 +198,8 @@ const ModelPolicySelect = ({
                     </span>
                   </span>
                 </>
+              ) : configuration.mode === 'disabled' ? (
+                <span className="truncate">{disabledLabel}</span>
               ) : unavailable ? (
                 <span className="truncate">
                   {configuration.model} · {configuration.providerId} · {t('Unavailable')}
@@ -180,12 +235,21 @@ const ModelPolicySelect = ({
                 ))}
               </SelectGroup>
             ))}
+            {disabledLabel ? <SelectItem value={DISABLED_KEY}>{disabledLabel}</SelectItem> : null}
           </SelectContent>
         </Select>
       </SettingsField>
-
       <SettingsField label={t('Reasoning effort')}>
-        {configuration.mode === 'inherit' ? (
+        {configuration.mode === 'disabled' ? (
+          <Select value={DISABLED_KEY} disabled>
+            <SelectTrigger aria-label={reasoningEffortAriaLabel}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={DISABLED_KEY}>{disabledLabel}</SelectItem>
+            </SelectContent>
+          </Select>
+        ) : configuration.mode === 'inherit' && !isSessionDetails ? (
           <Select value={INHERIT_KEY} disabled>
             <SelectTrigger aria-label={reasoningEffortAriaLabel}>
               <SelectValue />
@@ -217,14 +281,14 @@ const ModelPolicySelect = ({
                 reasoningEffort !== 'max'
               )
                 return
-              void setConfiguration({ ...configuration, reasoningEffort })
+              void props.setConfiguration({ ...configuration, reasoningEffort })
             }}
           >
             <SelectTrigger aria-label={reasoningEffortAriaLabel}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="default">{t('Default')}</SelectItem>
+              {!isSessionDetails ? <SelectItem value="default">{t('Default')}</SelectItem> : null}
               {effortControl?.options.map((option) => (
                 <SelectItem key={option.intent} value={option.intent}>
                   {option.label}
@@ -243,12 +307,50 @@ const SubagentModelSelect = (): React.JSX.Element => {
 
   return (
     <ModelPolicySelect
+      variant="standard"
       modelAriaLabel={t('Subagent model Model')}
       reasoningEffortAriaLabel={t('Subagent model Reasoning effort')}
       inheritLabel={t('Same as main model')}
       configuration={useSettingsStore((state) => state.subagentModel)}
       pending={useSettingsStore((state) => state.subagentModelPending)}
-      setConfiguration={useSettingsStore((state) => state.setSubagentModel)}
+      setConfiguration={(next) =>
+        useSettingsStore.getState().setSubagentModel(
+          next.mode === 'inherit'
+            ? { mode: 'inherit' }
+            : {
+                mode: 'fixed',
+                providerId: next.providerId,
+                model: next.model,
+                reasoningEffort: next.reasoningEffort
+              }
+        )
+      }
+    />
+  )
+}
+
+const SessionDetailsModelSelect = (): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <ModelPolicySelect
+      variant="session-details"
+      modelAriaLabel={t('Session details model Model')}
+      reasoningEffortAriaLabel={t('Session details model Reasoning effort')}
+      inheritLabel={t('Same as main model')}
+      disabledLabel={t('Not configured')}
+      entryFilter={(entry) => !isCodexSubscriptionProvider(entry.providerType)}
+      configuration={useSettingsStore((state) => state.sessionDetailsModel)}
+      pending={useSettingsStore((state) => state.sessionDetailsModelPending)}
+      setConfiguration={(next) =>
+        useSettingsStore
+          .getState()
+          .setSessionDetailsModel(
+            next.mode === 'inherit'
+              ? { mode: 'inherit', reasoningEffort: next.reasoningEffort ?? 'low' }
+              : next
+          )
+      }
     />
   )
 }
@@ -258,12 +360,24 @@ const ReviewerModelSelect = (): React.JSX.Element => {
 
   return (
     <ModelPolicySelect
+      variant="standard"
       modelAriaLabel={t('Reviewer model Model')}
       reasoningEffortAriaLabel={t('Reviewer model Reasoning effort')}
       inheritLabel={t('Follow main model')}
       configuration={useSettingsStore((state) => state.reviewerModel)}
       pending={useSettingsStore((state) => state.reviewerModelPending)}
-      setConfiguration={useSettingsStore((state) => state.setReviewerModel)}
+      setConfiguration={(next) =>
+        useSettingsStore.getState().setReviewerModel(
+          next.mode === 'inherit'
+            ? { mode: 'inherit' }
+            : {
+                mode: 'fixed',
+                providerId: next.providerId,
+                model: next.model,
+                reasoningEffort: next.reasoningEffort
+              }
+        )
+      }
     />
   )
 }
@@ -275,14 +389,13 @@ const VisionModelSelect = (): React.JSX.Element => {
 
   return (
     <ModelPolicySelect
+      variant="standard"
       modelAriaLabel={t('Vision model Model')}
       reasoningEffortAriaLabel={t('Vision model Reasoning effort')}
       inheritLabel={t('Not configured')}
       configuration={configuration ? { mode: 'fixed', ...configuration } : { mode: 'inherit' }}
       pending={useSettingsStore((state) => state.visionModelPending)}
-      entryFilter={(entry) =>
-        entry.supportsImageInput && !isCodexSubscriptionProvider(entry.providerType)
-      }
+      entryFilter={(entry) => entry.supportsImageInput}
       setConfiguration={(next) =>
         setVisionModel(
           next.mode === 'fixed'
@@ -298,4 +411,4 @@ const VisionModelSelect = (): React.JSX.Element => {
   )
 }
 
-export { ReviewerModelSelect, SubagentModelSelect, VisionModelSelect }
+export { ReviewerModelSelect, SessionDetailsModelSelect, SubagentModelSelect, VisionModelSelect }

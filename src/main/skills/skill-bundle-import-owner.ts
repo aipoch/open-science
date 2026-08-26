@@ -16,6 +16,7 @@ import {
   scanRepoForSkills,
   type FetchLike,
   type FetchedSkillFile,
+  type GitHubFetchOptions,
   type ScannedSkill
 } from './github-import'
 import { parseSkillDocument } from './frontmatter'
@@ -193,7 +194,8 @@ export class SkillBundleImportOwner {
   async importFromGitHub(
     url: string,
     fetchImpl?: FetchLike,
-    reservedNames: readonly string[] = []
+    reservedNames: readonly string[] = [],
+    options: GitHubFetchOptions = {}
   ): Promise<ImportOutcome> {
     const location = parseGitHubSkillUrl(url)
     if (!location) throw new Error('Not a recognizable GitHub URL.')
@@ -201,7 +203,7 @@ export class SkillBundleImportOwner {
     const fetcher = fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined)
     if (!fetcher) throw new Error('No fetch implementation available.')
 
-    const files = await fetchSkillFiles(location, fetcher)
+    const files = await fetchSkillFiles(location, fetcher, options)
     const signature = signatureOf(files)
     const preview = parsedSkillPreview(
       files
@@ -229,14 +231,18 @@ export class SkillBundleImportOwner {
     })
   }
 
-  async previewGitHubSkill(url: string, fetchImpl?: FetchLike): Promise<ParsedSkillPreview> {
+  async previewGitHubSkill(
+    url: string,
+    fetchImpl?: FetchLike,
+    options: GitHubFetchOptions = {}
+  ): Promise<ParsedSkillPreview> {
     const location = parseGitHubSkillUrl(url)
     if (!location) throw new Error('Not a recognizable GitHub URL.')
 
     const fetcher = fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined)
     if (!fetcher) throw new Error('No fetch implementation available.')
 
-    const { skillMd, files } = await fetchSkillPreview(location, fetcher)
+    const { skillMd, files } = await fetchSkillPreview(location, fetcher, options)
     const fallbackName = location.path.split('/').filter(Boolean).pop() ?? location.repo
     return parsedSkillPreview(skillMd.toString('utf8'), files, fallbackName)
   }
@@ -332,7 +338,8 @@ export class SkillBundleImportOwner {
 
   async scanRepo(
     repoInput: string,
-    fetchImpl?: FetchLike
+    fetchImpl?: FetchLike,
+    options: GitHubFetchOptions = {}
   ): Promise<(ScannedSkill & { alreadyImported: boolean })[]> {
     const repo = parseGitHubRepo(repoInput)
     if (!repo) throw new Error('Not a recognizable GitHub repo (owner/repo or a github.com URL).')
@@ -341,7 +348,7 @@ export class SkillBundleImportOwner {
     if (!fetcher) throw new Error('No fetch implementation available.')
 
     const [found, index] = await Promise.all([
-      scanRepoForSkills(repo, fetcher),
+      scanRepoForSkills(repo, fetcher, options),
       this.transactions.runRecovered(() => this.importedIndex())
     ])
     return found.map((skill) => ({

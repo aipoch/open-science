@@ -41,6 +41,7 @@ import {
   mergeRuntimeConversationAuthority,
   retainRuntimePlanProjection
 } from './session-store-persistence-merge'
+import * as sessionDetails from './session-store-session-details'
 
 export type SessionStatus = PersistedSessionStatus
 export type ChatMessageRole = PersistedMessageRole
@@ -126,6 +127,7 @@ export type ApplyDurableSessionProjectionInput = {
     | 'runtime-context-authority'
     | 'compute-host-access-authority'
     | 'delegated-authority'
+    | 'session-details-authority'
 }
 
 export type SessionPersistenceActions = {
@@ -263,6 +265,7 @@ export const hydrateToolActivity = (activity: PersistedToolActivity): ToolActivi
 export const hydrateSession = (session: PersistedChatSession): ChatSession => {
   const hydrated: ChatSession = {
     ...session,
+    ...sessionDetails.projectLegacySessionDetails(session),
     permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     activities: session.activities?.map(hydrateToolActivity),
     interrupted:
@@ -346,16 +349,6 @@ const withTransientSessionState = (
     pendingContextReplayMessageId: source.pendingContextReplayMessageId,
     interactionState: source.interactionState
   }
-}
-
-const withAcknowledgedUnsavedTitle = (
-  projected: ChatSession,
-  durable: PersistedChatSession
-): ChatSession => {
-  if (projected.unsavedTitle !== true || projected.title !== durable.title) return projected
-  const next = { ...projected }
-  delete next.unsavedTitle
-  return next
 }
 
 const projectDurablePlanAuthority = (
@@ -581,6 +574,16 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         } as Partial<State>
       }
 
+      if (mode === 'session-details-authority') {
+        const projected = sessionDetails.projectSessionDetailsAuthority(current, session)
+        markExternallyHydratedSession(projected, session)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          )
+        } as Partial<State>
+      }
+
       if (mode === 'permission-authority') {
         const currentRevision = current.runtimeContext?.revision
         const incomingRevision = session.runtimeContext?.revision
@@ -744,7 +747,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           projected === merged &&
           sessionRevision(session) <= sessionRevision(current)
         ) {
-          const acknowledged = withAcknowledgedUnsavedTitle(current, session)
+          const acknowledged = sessionDetails.withAcknowledgedUnsavedTitle(current, session)
           if (acknowledged === current) return state
           markExternallyHydratedSession(acknowledged, session)
           return {
@@ -755,7 +758,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         }
       }
 
-      projected = withAcknowledgedUnsavedTitle(
+      projected = sessionDetails.withAcknowledgedUnsavedTitle(
         {
           ...projected,
           revision: Math.max(sessionRevision(projected), sessionRevision(session))

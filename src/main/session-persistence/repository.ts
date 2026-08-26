@@ -21,7 +21,11 @@ import {
 } from '../../shared/session-persistence'
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
-import { buildSessionProjection, type SessionProjectionRepository } from './projection'
+import {
+  assertSessionProjectionStorageShape,
+  buildSessionProjection,
+  type SessionProjectionRepository
+} from './projection'
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
@@ -35,6 +39,13 @@ const PROJECT_DELETION_COMMIT_MARKER = '.project-deletion-committed'
 const MANIFEST_FILE = 'manifest.json'
 const PRE_S2_BACKUP_SUFFIX = '.pre-s2-backup'
 const PRE_SUBAGENT_MODEL_BACKUP_SUFFIX = '.pre-subagent-model-backup'
+
+const nextSessionRevision = (revision: number): number => {
+  if (!Number.isSafeInteger(revision) || revision < 0 || revision >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('Session revision cannot be incremented safely.')
+  }
+  return revision + 1
+}
 
 const hasS2AttemptSchema = (value: unknown): boolean => {
   if (typeof value !== 'object' || value === null) return false
@@ -118,12 +129,34 @@ type SessionLoadDiagnostics = {
 
 type SessionScanOptions = {
   mode?: 'repair' | 'read-only'
+  // Main-owned same-process mutations read durable authority without applying app-restart recovery.
+  preserveRuntimeState?: boolean
 }
 
 type SessionLoadDiagnostic =
   | { status: 'found'; session: PersistedChatSession }
   | { status: 'missing' }
   | { status: 'unreadable' }
+
+type SessionMutationAuthorityRepository = {
+  loadSessionWithDiagnostics(
+    projectId: string,
+    sessionId: string,
+    options?: SessionScanOptions
+  ): Promise<SessionLoadDiagnostic>
+}
+
+// Same-process read-modify-write paths must observe the durable runtime state verbatim. Startup
+// hydration deliberately does not use this seam because it owns app-restart recovery.
+export const loadSessionMutationAuthority = (
+  repository: SessionMutationAuthorityRepository,
+  projectId: string,
+  sessionId: string
+): Promise<SessionLoadDiagnostic> =>
+  repository.loadSessionWithDiagnostics(projectId, sessionId, {
+    mode: 'read-only',
+    preserveRuntimeState: true
+  })
 
 type ProjectSessionLoadDiagnostics = {
   sessions: PersistedChatSession[]
@@ -142,6 +175,7 @@ type SessionDirectoryEntry = {
 
 type SessionRepositoryDependencies = {
   hasActiveRuntimePrompt(projectId: string, sessionId: string): boolean
+  hasLiveRuntimeSession(projectId: string, sessionId: string): boolean
   remove(path: string, options: { force: boolean; recursive: boolean }): Promise<void>
   readDirectoryEntries(path: string): Promise<SessionDirectoryEntry[]>
   readManifestFile(path: string): Promise<string>
@@ -152,6 +186,7 @@ type SessionRepositoryDependencies = {
 
 const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
   hasActiveRuntimePrompt: () => false,
+  hasLiveRuntimeSession: () => false,
   remove: (path, options) => rm(path, options),
   readDirectoryEntries: (path) => readdir(path, { withFileTypes: true }),
   readManifestFile: (path) => readFile(path, 'utf8'),
@@ -264,6 +299,8 @@ class SessionRepository {
     this.dependencies = {
       hasActiveRuntimePrompt:
         dependencies.hasActiveRuntimePrompt ?? DEFAULT_DEPENDENCIES.hasActiveRuntimePrompt,
+      hasLiveRuntimeSession:
+        dependencies.hasLiveRuntimeSession ?? DEFAULT_DEPENDENCIES.hasLiveRuntimeSession,
       remove: dependencies.remove ?? DEFAULT_DEPENDENCIES.remove,
       readDirectoryEntries:
         dependencies.readDirectoryEntries ?? DEFAULT_DEPENDENCIES.readDirectoryEntries,
@@ -422,6 +459,7 @@ class SessionRepository {
       if (freshResult.diagnostics?.isComplete === false) {
         return { result: freshResult, sessions: projectIncompleteSummaries(freshResult) }
       }
+      for (const session of freshResult.sessions) assertSessionProjectionStorageShape(session)
       const assignments = await this.projection!.numberAssignments()
       const existingNumberById = new Map(assignments.map(({ id, number }) => [id, number]))
       const existingIdByNumber = new Map(assignments.map(({ id, number }) => [number, id]))
@@ -570,7 +608,10 @@ class SessionRepository {
     const read = await this.readSessionFile(
       this.sessionFilePath(safeProjectId, safeSessionId),
       safeProjectId,
-      { quarantineInvalidFiles: options.mode !== 'read-only' }
+      {
+        quarantineInvalidFiles: options.mode !== 'read-only',
+        preserveRuntimeState: options.preserveRuntimeState
+      }
     )
     if (!read.isComplete || read.wasQuarantined) return { status: 'unreadable' }
 
@@ -731,9 +772,7 @@ class SessionRepository {
       if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
         throw new Error('Session expected revision must be a non-negative integer.')
       }
-      const current = await this.loadSessionWithDiagnostics(session.projectId, session.id, {
-        mode: 'read-only'
-      })
+      const current = await loadSessionMutationAuthority(this, session.projectId, session.id)
       if (current.status === 'unreadable') {
         throw new Error('Cannot compare Session revision because durable JSON is unreadable.')
       }
@@ -742,14 +781,18 @@ class SessionRepository {
         throw new SessionRevisionConflictError(expectedRevision, actualRevision)
       }
     }
+    const nextRevision = nextSessionRevision(actualRevision)
 
+    if (this.projection && this.projectionWritesSuspended) {
+      assertSessionProjectionStorageShape(session)
+    }
     const projectedSession =
       this.projection && !this.projectionWritesSuspended
         ? await this.projection.prepareSave(session)
         : session
     const durableSession: PersistedChatSession = {
       ...projectedSession,
-      revision: actualRevision + 1
+      revision: nextRevision
     }
     await this.writeSession(durableSession)
     if (this.projectionWritesSuspended) {
@@ -772,7 +815,9 @@ class SessionRepository {
       const key = `${session.projectId}:${session.id}`
       const durableSession: PersistedChatSession = {
         ...session,
-        revision: Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0) + 1
+        revision: nextSessionRevision(
+          Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
+        )
       }
       await this.writeSessionToDirectory(durableSession, this.deletedProjectDir(session.projectId))
       if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
@@ -1294,6 +1339,7 @@ class SessionRepository {
       missingIsIncomplete?: boolean
       quarantineInvalidFiles?: boolean
       scanMetrics?: SessionScanMetrics
+      preserveRuntimeState?: boolean
     } = {}
   ): Promise<{
     session?: PersistedChatSession
@@ -1307,7 +1353,8 @@ class SessionRepository {
     try {
       read = await readDurableJsonFile(
         filePath,
-        (contents) => this.decodeSessionContents(filePath, projectId, contents),
+        (contents) =>
+          this.decodeSessionContents(filePath, projectId, contents, options.preserveRuntimeState),
         {
           readDirectoryEntries: this.dependencies.readDirectoryEntries,
           readFile: this.dependencies.readSessionFile,
@@ -1381,12 +1428,17 @@ class SessionRepository {
   private decodeSessionContents(
     filePath: string,
     projectId: string,
-    contents: string
+    contents: string,
+    preserveRuntimeState?: boolean
   ): { session: PersistedChatSession; bytes: number } {
     const decoded = decodeSessionFile(JSON.parse(contents) as unknown, {
       preserveLegacyUploadPaths: true,
-      preserveRuntimeState: (sessionId) =>
-        this.dependencies.hasActiveRuntimePrompt(projectId, sessionId)
+      preserveRuntimeState:
+        preserveRuntimeState === true
+          ? true
+          : (sessionId) =>
+              this.dependencies.hasActiveRuntimePrompt(projectId, sessionId) ||
+              this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
     })
     if (decoded.status === 'unsupported-version') throw new UnsupportedSessionFileError()
     if (decoded.status === 'invalid') throw new Error('Invalid Session file')

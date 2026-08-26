@@ -737,7 +737,7 @@ describe('WorkspaceSidebar accessible render', () => {
         getTextContent(element).includes('Notebook review') &&
         typeof element.props.onClick === 'function'
     )
-    const renameItems = elements.filter((element) => getTextContent(element).trim() === 'Rename…')
+    const renameItems = elements.filter((element) => getTextContent(element).trim() === 'Edit…')
     const downloadItems = elements.filter(
       (element) => getTextContent(element).trim() === 'Download all artifacts'
     )
@@ -1236,7 +1236,7 @@ describe('WorkspaceSidebar accessible render', () => {
     })
     const elements = collectElements(tree)
     const pinItem = elements.find((element) => getTextContent(element).trim() === 'Pin')
-    const renameItem = elements.find((element) => getTextContent(element).trim() === 'Rename…')
+    const renameItem = elements.find((element) => getTextContent(element).trim() === 'Edit…')
     const deleteItem = elements.find((element) => getTextContent(element).trim() === 'Delete')
 
     expect(pinItem?.props.disabled).toBe(true)

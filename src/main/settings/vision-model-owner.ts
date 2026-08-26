@@ -1,10 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import {
-  isCodexSubscriptionProvider,
-  providerValidationFailed,
-  type VisionModelConfiguration
-} from '../../shared/settings'
+import { providerValidationFailed, type VisionModelConfiguration } from '../../shared/settings'
 import { DEFAULT_AGENT_FRAMEWORK_ID, getAgentFramework } from '../agent-framework'
 import type { AgentBackendResolver, ExplicitAgentBackendTarget } from './backend-resolver'
 import type { ProviderAccountsModule } from './provider-accounts'
@@ -32,9 +28,6 @@ class VisionModelOwner {
         throw new Error(
           'The selected Vision model is no longer available. Refresh the model catalog.'
         )
-      }
-      if (isCodexSubscriptionProvider(provider.type)) {
-        throw new Error('Codex subscription models cannot run as the Vision model.')
       }
       const framework = getAgentFramework(
         frameworkId ?? settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
@@ -68,9 +61,6 @@ class VisionModelOwner {
     const provider = settings.providers.find((entry) => entry.id === configuration.providerId)
     if (!provider || providerValidationFailed(provider)) {
       throw new Error('The configured Vision model provider is unavailable.')
-    }
-    if (isCodexSubscriptionProvider(provider.type)) {
-      throw new Error('The configured Vision model transport is unavailable.')
     }
     const { frameworkId } = await this.options.backendResolver.captureConfiguredSelection()
     const framework = getAgentFramework(frameworkId)

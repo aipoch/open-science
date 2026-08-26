@@ -35,6 +35,9 @@ type PastedTextUndoReceipt = {
   attachmentDoc?: ComposerDoc
 }
 
+type ComposerHistorySnapshot = ComposerDraft & { caret?: ComposerCaretPosition }
+type ComposerHistoryRef = { current: Record<string, ComposerHistorySnapshot[]> }
+
 export type ComposerUploadApi = UploadStagingApi & {
   claimLocalFile?: (request: { transferId: string }) => Promise<void>
 }
@@ -60,15 +63,21 @@ type WorkspaceComposerUploadController = {
     isUploading: boolean
   }
   actions: {
-    changeDoc: (doc: ComposerDoc) => void
+    changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     stageFiles: (files: File[]) => void
-    stagePastedText: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
+    stagePastedText: (
+      doc: ComposerDoc,
+      node: ComposerPastedTextStage,
+      caret?: ComposerCaretPosition
+    ) => void
     cancelTransfer: (transfer: ComposerUploadTransfer) => void
     removeAttachment: (attachment: UploadedAttachment) => void
     restorePastedText: (pastedTextId: string) => void
-    undoPastedTextRemoval: () => boolean
+    undo: (caret?: ComposerCaretPosition) => boolean
+    redo: (caret?: ComposerCaretPosition) => boolean
     setError: (error: string | null) => void
     clearPastedTextUndo: (draftKey?: string) => void
+    clearUndo: (draftKey?: string) => void
   }
   lifecycle: {
     activateDraftAttachments: (draft: ComposerDraft) => void
@@ -127,6 +136,10 @@ export const useWorkspaceComposerUploadController = ({
   const cancelledTransfersRef = useRef(new Set<string>())
   const deletionCleanupRef = useRef<Record<string, ComposerDeletionCleanup>>({})
   const removedPastedTextRef = useRef<Record<string, PastedTextUndoReceipt[]>>({})
+  const preferSnapshotUndoRef = useRef(new Set<string>())
+  const undoRef = useRef<Record<string, ComposerHistorySnapshot[]>>({})
+  const redoRef = useRef<Record<string, ComposerHistorySnapshot[]>>({})
+  const transferFilesRef = useRef<Record<string, File>>({})
   const setActiveAttachments = useCallback((next: UploadedAttachment[]): void => {
     attachmentsRef.current = next
     setAttachments(next)
@@ -137,31 +150,57 @@ export const useWorkspaceComposerUploadController = ({
     },
     [setActiveAttachments]
   )
+  const setActiveTransfers = useCallback((next: ComposerUploadTransfer[]): void => {
+    transfersRef.current = next
+    setTransfers(next)
+  }, [])
+  const updateActiveTransfers = useCallback(
+    (update: (current: ComposerUploadTransfer[]) => ComposerUploadTransfer[]): void => {
+      setActiveTransfers(update(transfersRef.current))
+    },
+    [setActiveTransfers]
+  )
   const clearPastedTextUndo = useCallback(
     (draftKey = activeDraftKeyRef.current): void => {
       delete removedPastedTextRef.current[draftKey]
+      preferSnapshotUndoRef.current.delete(draftKey)
     },
     [activeDraftKeyRef]
   )
   const clearAllPastedTextUndo = useCallback((): void => {
     removedPastedTextRef.current = {}
+    preferSnapshotUndoRef.current.clear()
   }, [])
-
-  useEffect(() => {
-    transfersRef.current = transfers
-  }, [transfers])
   useEffect(
     () => () => {
       const transferIds = new Set(Object.keys(controllersRef.current))
+      const retainedAttachmentPaths = new Set(attachmentsRef.current.map(({ path }) => path))
+      const historyAttachments = new Map<string, UploadedAttachment>()
       for (const transfer of transfersRef.current) transferIds.add(transfer.transferId)
       for (const draft of Object.values(draftsRef.current)) {
         for (const transfer of draft.attachmentTransfers) transferIds.add(transfer.transferId)
+        for (const attachment of draft.attachments) retainedAttachmentPaths.add(attachment.path)
+      }
+      for (const history of [undoRef.current, redoRef.current]) {
+        for (const stack of Object.values(history)) {
+          for (const snapshot of stack) {
+            for (const transfer of snapshot.attachmentTransfers)
+              transferIds.add(transfer.transferId)
+            for (const attachment of snapshot.attachments)
+              historyAttachments.set(attachment.path, attachment)
+          }
+        }
       }
       for (const transferId of transferIds) {
         cancelledTransfersRef.current.add(transferId)
         controllersRef.current[transferId]?.abort()
-        void uploads.abortTransfer({ transferId })
+        void uploads.abortTransfer({ transferId }).catch(() => undefined)
       }
+      for (const [path] of historyAttachments) {
+        if (!retainedAttachmentPaths.has(path))
+          void uploads.deleteUpload({ path }).catch(() => undefined)
+      }
+      transferFilesRef.current = {}
     },
     [draftsRef, uploads]
   )
@@ -174,19 +213,130 @@ export const useWorkspaceComposerUploadController = ({
     },
     [uploads]
   )
+  const currentSnapshot = useCallback(
+    (caret?: ComposerCaretPosition): ComposerHistorySnapshot => ({
+      doc: docRef.current,
+      attachments: [...attachmentsRef.current],
+      attachmentTransfers: [...transfersRef.current],
+      caret
+    }),
+    [docRef]
+  )
+  const releaseHistoryResources = useCallback(
+    (snapshots: readonly ComposerHistorySnapshot[]): void => {
+      if (snapshots.length === 0) return
+      const retainedAttachmentPaths = new Set(attachmentsRef.current.map(({ path }) => path))
+      const retainedTransferIds = new Set(transfersRef.current.map(({ transferId }) => transferId))
+      for (const draft of Object.values(draftsRef.current)) {
+        for (const attachment of draft.attachments) retainedAttachmentPaths.add(attachment.path)
+        for (const transfer of draft.attachmentTransfers)
+          retainedTransferIds.add(transfer.transferId)
+      }
+      for (const cleanup of Object.values(deletionCleanupRef.current)) {
+        for (const attachment of cleanup.attachments) retainedAttachmentPaths.add(attachment.path)
+        for (const transfer of cleanup.attachmentTransfers)
+          retainedTransferIds.add(transfer.transferId)
+      }
+      for (const history of [undoRef.current, redoRef.current]) {
+        for (const stack of Object.values(history)) {
+          for (const snapshot of stack) {
+            for (const attachment of snapshot.attachments)
+              retainedAttachmentPaths.add(attachment.path)
+            for (const transfer of snapshot.attachmentTransfers)
+              retainedTransferIds.add(transfer.transferId)
+          }
+        }
+      }
+
+      const discardedAttachments = new Map<string, UploadedAttachment>()
+      const discardedTransferIds = new Set<string>()
+      for (const snapshot of snapshots) {
+        for (const attachment of snapshot.attachments) {
+          if (!retainedAttachmentPaths.has(attachment.path))
+            discardedAttachments.set(attachment.path, attachment)
+        }
+        for (const transfer of snapshot.attachmentTransfers) {
+          if (!retainedTransferIds.has(transfer.transferId))
+            discardedTransferIds.add(transfer.transferId)
+        }
+      }
+      deleteAttachmentFiles([...discardedAttachments.values()])
+      for (const transferId of discardedTransferIds) delete transferFilesRef.current[transferId]
+    },
+    [deleteAttachmentFiles, draftsRef]
+  )
+  const clearRedo = useCallback(
+    (draftKey: string): void => {
+      const discarded = redoRef.current[draftKey] ?? []
+      delete redoRef.current[draftKey]
+      releaseHistoryResources(discarded)
+    },
+    [releaseHistoryResources]
+  )
+  const clearUndo = useCallback(
+    (draftKey = activeDraftKeyRef.current): void => {
+      const discarded = [...(undoRef.current[draftKey] ?? []), ...(redoRef.current[draftKey] ?? [])]
+      delete undoRef.current[draftKey]
+      delete redoRef.current[draftKey]
+      preferSnapshotUndoRef.current.delete(draftKey)
+      releaseHistoryResources(discarded)
+    },
+    [activeDraftKeyRef, releaseHistoryResources]
+  )
+  const pushSnapshot = useCallback(
+    (history: ComposerHistoryRef, draftKey: string, snapshot: ComposerHistorySnapshot): void => {
+      const stack = history.current[draftKey] ?? []
+      const next = [...stack, snapshot]
+      history.current[draftKey] = next.slice(-100)
+      releaseHistoryResources(next.slice(0, -100))
+    },
+    [releaseHistoryResources]
+  )
+  const captureUndo = useCallback(
+    (draftKey = activeDraftKeyRef.current, caret?: ComposerCaretPosition): void => {
+      clearRedo(draftKey)
+      pushSnapshot(undoRef, draftKey, currentSnapshot(caret))
+    },
+    [activeDraftKeyRef, clearRedo, currentSnapshot, pushSnapshot]
+  )
+  const reconcileHistorySnapshots = useCallback(
+    (
+      draftKey: string,
+      update: (snapshot: ComposerHistorySnapshot) => ComposerHistorySnapshot
+    ): void => {
+      for (const history of [undoRef, redoRef]) {
+        const stack = history.current[draftKey]
+        if (stack) history.current[draftKey] = stack.map(update)
+      }
+    },
+    []
+  )
+  const reconcileFailedPastedTextUndo = useCallback(
+    (draftKey: string, pastedTextId: string, transferId: string): void => {
+      reconcileHistorySnapshots(draftKey, (snapshot) => ({
+        ...snapshot,
+        doc: restorePastedTextNode(snapshot.doc, pastedTextId)?.doc ?? snapshot.doc,
+        attachmentTransfers: snapshot.attachmentTransfers.filter(
+          (candidate) => candidate.transferId !== transferId
+        )
+      }))
+      delete transferFilesRef.current[transferId]
+    },
+    [reconcileHistorySnapshots]
+  )
   const updateDraftTransfers = useCallback(
     (
       draftKey: string,
       update: (current: ComposerUploadTransfer[]) => ComposerUploadTransfer[]
     ): void => {
       if (activeDraftKeyRef.current === draftKey) {
-        setTransfers(update)
+        updateActiveTransfers(update)
         return
       }
       const draft = draftsRef.current[draftKey]
       if (draft) draft.attachmentTransfers = update(draft.attachmentTransfers)
     },
-    [activeDraftKeyRef, draftsRef]
+    [activeDraftKeyRef, draftsRef, updateActiveTransfers]
   )
   const updateDraftDoc = useCallback(
     (draftKey: string, update: (current: ComposerDoc) => ComposerDoc): void => {
@@ -226,7 +376,9 @@ export const useWorkspaceComposerUploadController = ({
         return
       }
       if (activeDraftKeyRef.current === draftKey) {
-        setTransfers((current) => current.filter((transfer) => transfer.transferId !== transferId))
+        updateActiveTransfers((current) =>
+          current.filter((transfer) => transfer.transferId !== transferId)
+        )
         updateActiveAttachments((current) => [...current, attachment])
       } else {
         const draft = draftsRef.current[draftKey]
@@ -245,12 +397,33 @@ export const useWorkspaceComposerUploadController = ({
           }))
         )
       }
+      reconcileHistorySnapshots(draftKey, (snapshot) =>
+        snapshot.attachmentTransfers.some((transfer) => transfer.transferId === transferId)
+          ? {
+              ...snapshot,
+              doc: pastedTextId
+                ? updatePastedTextNode(snapshot.doc, pastedTextId, (node) => ({
+                    ...node,
+                    transferId: undefined,
+                    attachmentId: attachment.id
+                  }))
+                : snapshot.doc,
+              attachmentTransfers: snapshot.attachmentTransfers.filter(
+                (transfer) => transfer.transferId !== transferId
+              ),
+              attachments: [...snapshot.attachments, attachment]
+            }
+          : snapshot
+      )
+      delete transferFilesRef.current[transferId]
     },
     [
       activeDraftKeyRef,
       docRef,
       draftsRef,
+      reconcileHistorySnapshots,
       updateActiveAttachments,
+      updateActiveTransfers,
       updateDraftDoc,
       updateDraftTransfers,
       uploads
@@ -317,10 +490,12 @@ export const useWorkspaceComposerUploadController = ({
               const message = asText(uploadError)
               if (transfer.pastedTextId) {
                 updateTransfer({ remove: true })
+                reconcileFailedPastedTextUndo(draftKey, transfer.pastedTextId, transfer.transferId)
                 restorePastedTextInline(draftKey, transfer.pastedTextId)
               } else {
                 updateTransfer({ status: 'error', error: message })
               }
+              delete transferFilesRef.current[transfer.transferId]
               if (activeDraftKeyRef.current === draftKey) setError(message)
             }
           } finally {
@@ -334,6 +509,7 @@ export const useWorkspaceComposerUploadController = ({
       activeDraftKeyRef,
       commitDraftAttachment,
       restorePastedTextInline,
+      reconcileFailedPastedTextUndo,
       updateDraftTransfers,
       uploads
     ]
@@ -364,7 +540,9 @@ export const useWorkspaceComposerUploadController = ({
           status: 'queued' as const
         }
       }))
-      setTransfers((current) => [...current, ...pending.map(({ transfer }) => transfer)])
+      for (const item of pending) transferFilesRef.current[item.transfer.transferId] = item.file
+      captureUndo(draftKey)
+      updateActiveTransfers((current) => [...current, ...pending.map(({ transfer }) => transfer)])
       deletionCleanupRef.current[draftKey]?.attachmentTransfers.push(
         ...pending.map(({ transfer }) => transfer)
       )
@@ -379,7 +557,9 @@ export const useWorkspaceComposerUploadController = ({
       markChanged,
       runPendingUploads,
       supportsImageInput,
-      transfers.length
+      transfers.length,
+      captureUndo,
+      updateActiveTransfers
     ]
   )
 
@@ -388,7 +568,7 @@ export const useWorkspaceComposerUploadController = ({
       if (node.transferId) {
         cancelledTransfersRef.current.add(node.transferId)
         controllersRef.current[node.transferId]?.abort()
-        setTransfers((current) =>
+        updateActiveTransfers((current) =>
           current.filter((transfer) => transfer.transferId !== node.transferId)
         )
         void uploads.abortTransfer({ transferId: node.transferId }).catch(() => undefined)
@@ -405,7 +585,7 @@ export const useWorkspaceComposerUploadController = ({
         .deleteUpload({ path: attachment.path })
         .catch((deleteError) => setError(asText(deleteError)))
     },
-    [updateActiveAttachments, uploads]
+    [updateActiveAttachments, updateActiveTransfers, uploads]
   )
 
   const reconcileRemovedPastedTextUploads = useCallback(
@@ -426,11 +606,17 @@ export const useWorkspaceComposerUploadController = ({
   )
 
   const stagePastedText = useCallback(
-    (nextDoc: ComposerDoc, staged: ComposerPastedTextStage, preserveRemovalUndo = false): void => {
+    (
+      nextDoc: ComposerDoc,
+      staged: ComposerPastedTextStage,
+      preserveRemovalUndo = false,
+      caret?: ComposerCaretPosition
+    ): void => {
       const draftKey = activeDraftKeyRef.current
       if (!preserveRemovalUndo) clearPastedTextUndo(draftKey)
       clearHistory(draftKey)
       markChanged(draftKey)
+      if (!preserveRemovalUndo) captureUndo(draftKey, caret)
       const releasedSlots = reconcileRemovedPastedTextUploads(nextDoc, draftKey)
       const nodes: readonly ComposerPastedTextNode[] = Array.isArray(staged)
         ? staged
@@ -476,8 +662,9 @@ export const useWorkspaceComposerUploadController = ({
       setActiveDoc(stagedDoc)
       if (restoredCaret) requestCaret(restoredCaret)
       if (pending.length === 0) return
+      for (const item of pending) transferFilesRef.current[item.transfer.transferId] = item.file
       const pendingTransfers = pending.map(({ transfer }) => transfer)
-      setTransfers((current) => [...current, ...pendingTransfers])
+      updateActiveTransfers((current) => [...current, ...pendingTransfers])
       deletionCleanupRef.current[draftKey]?.attachmentTransfers.push(...pendingTransfers)
       runPendingUploads(draftKey, pending)
     },
@@ -492,13 +679,16 @@ export const useWorkspaceComposerUploadController = ({
       requestCaret,
       runPendingUploads,
       setActiveDoc,
-      transfers.length
+      transfers.length,
+      captureUndo,
+      updateActiveTransfers
     ]
   )
 
   const removePastedText = useCallback(
     (node: ComposerPastedTextNode): void => {
       const draftKey = activeDraftKeyRef.current
+      clearUndo(draftKey)
       const stack = removedPastedTextRef.current[draftKey] ?? []
       removedPastedTextRef.current[draftKey] = [
         ...stack,
@@ -512,7 +702,15 @@ export const useWorkspaceComposerUploadController = ({
       setActiveDoc(removePastedTextNode(docRef.current, node.id))
       deletePastedTextUpload(node, draftKey)
     },
-    [activeDraftKeyRef, clearHistory, deletePastedTextUpload, docRef, markChanged, setActiveDoc]
+    [
+      activeDraftKeyRef,
+      clearHistory,
+      clearUndo,
+      deletePastedTextUpload,
+      docRef,
+      markChanged,
+      setActiveDoc
+    ]
   )
 
   const restorePastedText = useCallback(
@@ -532,6 +730,7 @@ export const useWorkspaceComposerUploadController = ({
           attachmentDoc: docRef.current
         }
       ].slice(-10)
+      clearRedo(draftKey)
       clearHistory(draftKey)
       markChanged(draftKey)
       restorePastedTextInline(draftKey, pastedTextId)
@@ -540,6 +739,7 @@ export const useWorkspaceComposerUploadController = ({
     [
       activeDraftKeyRef,
       clearHistory,
+      clearRedo,
       deletePastedTextUpload,
       docRef,
       markChanged,
@@ -567,7 +767,7 @@ export const useWorkspaceComposerUploadController = ({
   }, [activeDraftKeyRef, docRef, stagePastedText])
 
   const changeDoc = useCallback(
-    (nextDoc: ComposerDoc): void => {
+    (nextDoc: ComposerDoc, caret?: ComposerCaretPosition): void => {
       const draftKey = activeDraftKeyRef.current
       const serializedNextDoc = JSON.stringify(nextDoc)
       // Backspace/Delete emits the current doc with exactly one atomic marker removed. Reuse the
@@ -581,6 +781,8 @@ export const useWorkspaceComposerUploadController = ({
         removePastedText(atomicallyRemovedPastedText)
         return
       }
+      if (serializedNextDoc === JSON.stringify(docRef.current)) return
+      captureUndo(draftKey, caret)
       clearPastedTextUndo(draftKey)
       clearHistory(draftKey)
       reconcileRemovedPastedTextUploads(nextDoc, draftKey)
@@ -595,8 +797,185 @@ export const useWorkspaceComposerUploadController = ({
       markChanged,
       reconcileRemovedPastedTextUploads,
       removePastedText,
-      setActiveDoc
+      setActiveDoc,
+      captureUndo
     ]
+  )
+
+  const popSnapshot = useCallback(
+    (history: ComposerHistoryRef, draftKey: string): ComposerHistorySnapshot | undefined => {
+      const stack = history.current[draftKey]
+      const snapshot = stack?.at(-1)
+      if (!snapshot) return undefined
+      if (stack.length > 1) history.current[draftKey] = stack.slice(0, -1)
+      else delete history.current[draftKey]
+      return snapshot
+    },
+    []
+  )
+  const applySnapshot = useCallback(
+    (snapshot: ComposerHistorySnapshot, restartTransfers: boolean): void => {
+      const draftKey = activeDraftKeyRef.current
+      const resourcesToRelease = [currentSnapshot(), snapshot]
+      let targetDoc = snapshot.doc
+      const currentAttachmentIds = new Set(attachmentsRef.current.map(({ id }) => id))
+      const targetAttachments = restartTransfers
+        ? [...snapshot.attachments]
+        : snapshot.attachments.filter(({ id }) => currentAttachmentIds.has(id))
+      const currentTransferIds = new Set(transfersRef.current.map(({ transferId }) => transferId))
+      const targetTransfers = restartTransfers
+        ? []
+        : snapshot.attachmentTransfers.filter(({ transferId }) =>
+            currentTransferIds.has(transferId)
+          )
+      const pending: Array<{ file: File; transfer: ComposerUploadTransfer }> = []
+
+      if (restartTransfers) {
+        for (const previous of snapshot.attachmentTransfers) {
+          const active = transfersRef.current.find(
+            ({ transferId }) => transferId === previous.transferId
+          )
+          if (active) {
+            targetTransfers.push(active)
+            continue
+          }
+          if (previous.status === 'error') {
+            targetTransfers.push(previous)
+            continue
+          }
+          if (previous.status !== 'queued' && previous.status !== 'uploading') continue
+          const file = transferFilesRef.current[previous.transferId]
+          if (!file) continue
+          const transfer: ComposerUploadTransfer = {
+            ...previous,
+            transferId: crypto.randomUUID(),
+            receivedBytes: 0,
+            status: 'queued',
+            error: undefined
+          }
+          transferFilesRef.current[transfer.transferId] = file
+          delete transferFilesRef.current[previous.transferId]
+          targetTransfers.push(transfer)
+          pending.push({ file, transfer })
+          if (previous.pastedTextId) {
+            targetDoc = updatePastedTextNode(targetDoc, previous.pastedTextId, (node) => ({
+              ...node,
+              transferId: transfer.transferId,
+              attachmentId: undefined
+            }))
+          }
+          reconcileHistorySnapshots(draftKey, (stored) => ({
+            ...stored,
+            doc: previous.pastedTextId
+              ? updatePastedTextNode(stored.doc, previous.pastedTextId, (node) => ({
+                  ...node,
+                  transferId: transfer.transferId,
+                  attachmentId: undefined
+                }))
+              : stored.doc,
+            attachmentTransfers: stored.attachmentTransfers.map((candidate) =>
+              candidate.transferId === previous.transferId ? transfer : candidate
+            )
+          }))
+        }
+      }
+
+      const targetTransferIds = new Set(targetTransfers.map(({ transferId }) => transferId))
+      for (const transfer of transfersRef.current) {
+        if (targetTransferIds.has(transfer.transferId)) continue
+        cancelledTransfersRef.current.add(transfer.transferId)
+        controllersRef.current[transfer.transferId]?.abort()
+        void uploads.abortTransfer({ transferId: transfer.transferId }).catch(() => undefined)
+      }
+
+      clearHistory(draftKey)
+      markChanged(draftKey)
+      const availableAttachmentIds = new Set(targetAttachments.map(({ id }) => id))
+      const availableTransferIds = new Set(targetTransfers.map(({ transferId }) => transferId))
+      const pastedTextToRestage = targetDoc.nodes.filter(
+        (node): node is ComposerPastedTextNode =>
+          node.type === 'pasted-text' &&
+          (node.attachmentId
+            ? !availableAttachmentIds.has(node.attachmentId)
+            : !node.transferId || !availableTransferIds.has(node.transferId))
+      )
+      setActiveAttachments(targetAttachments)
+      setActiveTransfers(targetTransfers)
+      if (pastedTextToRestage.length > 0) {
+        const restagedIds = new Set(pastedTextToRestage.map(({ id }) => id))
+        stagePastedText(
+          {
+            nodes: targetDoc.nodes.map((node) =>
+              node.type === 'pasted-text' && restagedIds.has(node.id)
+                ? { ...node, attachmentId: undefined, transferId: undefined }
+                : node
+            )
+          },
+          pastedTextToRestage.map((node) => ({
+            ...node,
+            attachmentId: undefined,
+            transferId: undefined
+          })),
+          true
+        )
+      } else {
+        setActiveDoc(targetDoc)
+      }
+      if (pending.length > 0) runPendingUploads(draftKey, pending)
+      releaseHistoryResources(resourcesToRelease)
+      requestCaret(snapshot.caret ?? { nodeIndex: targetDoc.nodes.length, offset: 0 })
+    },
+    [
+      activeDraftKeyRef,
+      clearHistory,
+      currentSnapshot,
+      markChanged,
+      reconcileHistorySnapshots,
+      releaseHistoryResources,
+      requestCaret,
+      runPendingUploads,
+      setActiveAttachments,
+      setActiveDoc,
+      setActiveTransfers,
+      stagePastedText,
+      uploads
+    ]
+  )
+  const undo = useCallback(
+    (caret?: ComposerCaretPosition): boolean => {
+      const draftKey = activeDraftKeyRef.current
+      const preferSnapshot = preferSnapshotUndoRef.current.delete(draftKey)
+      if (!preferSnapshot && removedPastedTextRef.current[draftKey]?.length) {
+        pushSnapshot(redoRef, draftKey, currentSnapshot(caret))
+        return undoPastedTextRemoval()
+      }
+      const snapshot = popSnapshot(undoRef, draftKey)
+      if (!snapshot) return false
+      pushSnapshot(redoRef, draftKey, currentSnapshot(caret))
+      applySnapshot(snapshot, false)
+      return true
+    },
+    [
+      activeDraftKeyRef,
+      applySnapshot,
+      currentSnapshot,
+      popSnapshot,
+      pushSnapshot,
+      undoPastedTextRemoval
+    ]
+  )
+  const redo = useCallback(
+    (caret?: ComposerCaretPosition): boolean => {
+      const draftKey = activeDraftKeyRef.current
+      const snapshot = popSnapshot(redoRef, draftKey)
+      if (!snapshot) return false
+      pushSnapshot(undoRef, draftKey, currentSnapshot(caret))
+      if (removedPastedTextRef.current[draftKey]?.length)
+        preferSnapshotUndoRef.current.add(draftKey)
+      applySnapshot(snapshot, true)
+      return true
+    },
+    [activeDraftKeyRef, applySnapshot, currentSnapshot, popSnapshot, pushSnapshot]
   )
 
   const cancelTransfer = useCallback(
@@ -613,6 +992,7 @@ export const useWorkspaceComposerUploadController = ({
       }
       const draftKey = activeDraftKeyRef.current
       clearPastedTextUndo(draftKey)
+      clearUndo(draftKey)
       markChanged(draftKey)
       cancelledTransfersRef.current.add(transfer.transferId)
       controllersRef.current[transfer.transferId]?.abort()
@@ -626,15 +1006,17 @@ export const useWorkspaceComposerUploadController = ({
       void uploads
         .abortTransfer({ transferId: transfer.transferId })
         .catch(() => undefined)
-        .finally(() =>
+        .finally(() => {
+          delete transferFilesRef.current[transfer.transferId]
           updateDraftTransfers(draftKey, (current) =>
             current.filter((candidate) => candidate.transferId !== transfer.transferId)
           )
-        )
+        })
     },
     [
       activeDraftKeyRef,
       clearPastedTextUndo,
+      clearUndo,
       docRef,
       markChanged,
       removePastedText,
@@ -654,6 +1036,7 @@ export const useWorkspaceComposerUploadController = ({
         return
       }
       clearPastedTextUndo()
+      clearUndo()
       markChanged()
       updateActiveAttachments((current) => current.filter((item) => item.id !== attachment.id))
       const cleanup = deletionCleanupRef.current[activeDraftKeyRef.current]
@@ -667,6 +1050,7 @@ export const useWorkspaceComposerUploadController = ({
     [
       activeDraftKeyRef,
       clearPastedTextUndo,
+      clearUndo,
       docRef,
       markChanged,
       removePastedText,
@@ -678,10 +1062,10 @@ export const useWorkspaceComposerUploadController = ({
   const activateDraftAttachments = useCallback(
     (draft: ComposerDraft): void => {
       setActiveAttachments(draft.attachments)
-      setTransfers(draft.attachmentTransfers)
+      setActiveTransfers(draft.attachmentTransfers)
       clearAllPastedTextUndo()
     },
-    [clearAllPastedTextUndo, setActiveAttachments]
+    [clearAllPastedTextUndo, setActiveAttachments, setActiveTransfers]
   )
 
   const clearActiveAttachments = useCallback(
@@ -720,14 +1104,16 @@ export const useWorkspaceComposerUploadController = ({
       delete draftsRef.current[draftKey]
       clearHistory(draftKey)
       clearPastedTextUndo(draftKey)
+      clearUndo(draftKey)
       for (const transfer of cleanup.attachmentTransfers) {
+        delete transferFilesRef.current[transfer.transferId]
         cancelledTransfersRef.current.add(transfer.transferId)
         controllersRef.current[transfer.transferId]?.abort()
         void uploads.abortTransfer({ transferId: transfer.transferId })
       }
       deleteAttachmentFiles(cleanup.attachments)
     },
-    [clearHistory, clearPastedTextUndo, deleteAttachmentFiles, draftsRef, uploads]
+    [clearHistory, clearPastedTextUndo, clearUndo, deleteAttachmentFiles, draftsRef, uploads]
   )
 
   return {
@@ -740,13 +1126,15 @@ export const useWorkspaceComposerUploadController = ({
     actions: {
       changeDoc,
       stageFiles,
-      stagePastedText,
+      stagePastedText: (doc, node, caret) => stagePastedText(doc, node, false, caret),
       cancelTransfer,
       removeAttachment,
       restorePastedText,
-      undoPastedTextRemoval,
+      undo,
+      redo,
       setError,
-      clearPastedTextUndo
+      clearPastedTextUndo,
+      clearUndo
     },
     lifecycle: {
       activateDraftAttachments,

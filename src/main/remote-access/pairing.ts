@@ -31,6 +31,7 @@ type BrowserDescription = { browser: string; platform: string }
 
 type PairingGrant = {
   decision: RemotePairingDecision
+  sessionId: string
   cookieValue: string
 }
 
@@ -41,7 +42,7 @@ type PendingPairing = BrowserDescription & {
   address?: string
   requestedAt: number
   expiresAt: number
-  status: 'pending' | 'approved' | 'rejected'
+  status: 'pending' | 'approving' | 'approved' | 'rejected'
   grant?: PairingGrant
 }
 
@@ -157,8 +158,11 @@ export class RemoteSessionPairingManager {
   private readonly pending = new Map<string, PendingPairing>()
   private readonly oneTimeSessions = new Map<string, OneTimeSession>()
   private readonly pendingRevocations = new Set<string>()
+  private readonly unclaimedTrustedBrowserCleanup = new Set<string>()
   private readonly now: () => number
   private storedMutationQueue: Promise<void> = Promise.resolve()
+  private unclaimedTrustedBrowserCleanupTask: Promise<void> | undefined
+  private authorizationGeneration = 0
 
   private constructor(
     private readonly options: PairingManagerOptions,
@@ -267,28 +271,52 @@ export class RemoteSessionPairingManager {
     const sessionId = randomUUID()
     const secret = randomBytes(32).toString('base64url')
     const cookieValue = `${sessionId}.${secret}`
-    if (decision === 'once') {
-      this.oneTimeSessions.set(sessionId, {
-        tokenHash: hash(secret),
-        expiresAt: this.now() + ONE_TIME_SESSION_TTL_MS
-      })
-    } else {
-      const trusted: StoredTrustedBrowser = {
-        id: sessionId,
-        browser: request.browser,
-        platform: request.platform,
-        tokenHash: hash(secret),
-        createdAt: this.now(),
-        lastSeenAt: this.now()
+    const authorizationGeneration = this.authorizationGeneration
+    request.status = 'approving'
+    request.grant = { decision, sessionId, cookieValue }
+
+    try {
+      if (decision === 'once') {
+        this.oneTimeSessions.set(sessionId, {
+          tokenHash: hash(secret),
+          expiresAt: this.now() + ONE_TIME_SESSION_TTL_MS
+        })
+      } else {
+        const trusted: StoredTrustedBrowser = {
+          id: sessionId,
+          browser: request.browser,
+          platform: request.platform,
+          tokenHash: hash(secret),
+          createdAt: this.now(),
+          lastSeenAt: this.now()
+        }
+        await this.commitStoredMutation((stored) => ({
+          ...stored,
+          trustedBrowsers: [...stored.trustedBrowsers, trusted]
+        }))
       }
-      await this.commitStoredMutation((stored) => ({
-        ...stored,
-        trustedBrowsers: [...stored.trustedBrowsers, trusted]
-      }))
+
+      if (
+        authorizationGeneration !== this.authorizationGeneration ||
+        this.pending.get(requestId) !== request
+      ) {
+        if (decision === 'once') this.oneTimeSessions.delete(sessionId)
+        else await this.cleanupUnclaimedTrustedBrowsers([sessionId])
+        throw new Error('This pairing request has expired or is no longer pending.')
+      }
+
+      request.status = 'approved'
+      this.options.onChanged()
+    } catch (error) {
+      if (
+        authorizationGeneration === this.authorizationGeneration &&
+        this.pending.get(requestId) === request
+      ) {
+        request.status = 'pending'
+        request.grant = undefined
+      }
+      throw error
     }
-    request.status = 'approved'
-    request.grant = { decision, cookieValue }
-    this.options.onChanged()
   }
 
   reject(requestId: string): void {
@@ -323,10 +351,18 @@ export class RemoteSessionPairingManager {
     }
   }
 
-  clearTransientAccess(): void {
+  async clearTransientAccess(): Promise<void> {
+    this.authorizationGeneration += 1
+    const unclaimedTrustedBrowsers = new Set(
+      [...this.pending.values()].flatMap((request) =>
+        request.grant?.decision === 'always' ? [request.grant.sessionId] : []
+      )
+    )
     this.pending.clear()
     this.oneTimeSessions.clear()
     this.options.onChanged()
+    const changed = await this.cleanupUnclaimedTrustedBrowsers(unclaimedTrustedBrowsers)
+    if (changed) this.options.onChanged()
   }
 
   readonly webAccess: ExternalWebAccess = {
@@ -382,6 +418,15 @@ export class RemoteSessionPairingManager {
     if (request.method !== 'GET' && request.method !== 'HEAD') return 'denied'
 
     const pending = this.ensurePending(request, response)
+    if (!pending) {
+      const retryAt = Math.min(...[...this.pending.values()].map((entry) => entry.expiresAt))
+      response.setHeader(
+        'retry-after',
+        String(Math.max(1, Math.ceil((retryAt - this.now()) / 1_000)))
+      )
+      json(response, 429, { error: 'Too many pairing requests. Try again later.' })
+      return 'handled'
+    }
     const page = renderPairingPage(pending)
     response.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
@@ -426,15 +471,15 @@ export class RemoteSessionPairingManager {
     return sessionAccess ? { sessionId: sessionAccess.sessionId } : undefined
   }
 
-  private ensurePending(request: IncomingMessage, response: ServerResponse): PendingPairing {
+  private ensurePending(
+    request: IncomingMessage,
+    response: ServerResponse
+  ): PendingPairing | undefined {
     this.pruneExpired()
     const existing = this.readPendingCookie(request)
     if (existing) return existing
 
-    if (this.pending.size >= MAX_PENDING_REQUESTS) {
-      const oldest = [...this.pending.values()].sort((a, b) => a.requestedAt - b.requestedAt)[0]
-      if (oldest) this.pending.delete(oldest.id)
-    }
+    if (this.pending.size >= MAX_PENDING_REQUESTS) return undefined
 
     const id = randomUUID()
     const secret = randomBytes(24).toString('base64url')
@@ -478,7 +523,7 @@ export class RemoteSessionPairingManager {
       json(response, 200, { status: 'expired' })
       return
     }
-    if (pending.status === 'pending') {
+    if (pending.status === 'pending' || pending.status === 'approving') {
       json(response, 200, { status: 'pending', expiresAt: pending.expiresAt })
       return
     }
@@ -552,14 +597,62 @@ export class RemoteSessionPairingManager {
     return operation
   }
 
+  private removeStoredTrustedBrowsers(browserIds: Set<string>): Promise<boolean> {
+    return this.commitStoredMutation((stored) => {
+      const trustedBrowsers = stored.trustedBrowsers.filter(
+        (browser) => !browserIds.has(browser.id)
+      )
+      return trustedBrowsers.length === stored.trustedBrowsers.length
+        ? undefined
+        : { ...stored, trustedBrowsers }
+    })
+  }
+
+  private async cleanupUnclaimedTrustedBrowsers(browserIds: Iterable<string>): Promise<boolean> {
+    for (const browserId of browserIds) this.unclaimedTrustedBrowserCleanup.add(browserId)
+    if (this.unclaimedTrustedBrowserCleanup.size === 0) return false
+
+    const cleanup = new Set(this.unclaimedTrustedBrowserCleanup)
+    const changed = await this.removeStoredTrustedBrowsers(cleanup)
+    for (const browserId of cleanup) this.unclaimedTrustedBrowserCleanup.delete(browserId)
+    return changed
+  }
+
+  private scheduleUnclaimedTrustedBrowserCleanup(): void {
+    if (this.unclaimedTrustedBrowserCleanupTask || this.unclaimedTrustedBrowserCleanup.size === 0) {
+      return
+    }
+
+    let succeeded = false
+    const cleanupTask = this.cleanupUnclaimedTrustedBrowsers([])
+      .then((changed) => {
+        succeeded = true
+        if (changed) this.options.onChanged()
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.unclaimedTrustedBrowserCleanupTask !== cleanupTask) return
+        this.unclaimedTrustedBrowserCleanupTask = undefined
+        if (succeeded) this.scheduleUnclaimedTrustedBrowserCleanup()
+      })
+    this.unclaimedTrustedBrowserCleanupTask = cleanupTask
+  }
+
   private pruneExpired(): void {
     const now = this.now()
     for (const [id, request] of this.pending) {
-      if (request.expiresAt <= now) this.pending.delete(id)
+      if (request.expiresAt > now) continue
+      if (request.grant?.decision === 'always') {
+        this.unclaimedTrustedBrowserCleanup.add(request.grant.sessionId)
+      } else if (request.grant?.decision === 'once') {
+        this.oneTimeSessions.delete(request.grant.sessionId)
+      }
+      this.pending.delete(id)
     }
     for (const [id, session] of this.oneTimeSessions) {
       if (session.expiresAt <= now) this.oneTimeSessions.delete(id)
     }
+    this.scheduleUnclaimedTrustedBrowserCleanup()
   }
 }
 

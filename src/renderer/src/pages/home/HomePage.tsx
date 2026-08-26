@@ -24,6 +24,7 @@ import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -140,6 +141,25 @@ const rowClassName =
 
 const rowActionClassName =
   'shrink-0 rounded p-0.5 text-text-300 opacity-100 transition-[opacity,color,background-color] duration-150 ease-out hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 data-[state=open]:opacity-100'
+
+const withSessionDescriptionTooltip = (
+  description: string | undefined,
+  trigger: React.JSX.Element
+): React.JSX.Element => {
+  const displayDescription = description?.trim()
+  if (!displayDescription) return trigger
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+        <TooltipContent className="max-w-80 px-3 py-2 leading-5">
+          {displayDescription}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
 
 // Landing screen: pick a project or jump back into a recent session.
 const HomePage = ({
@@ -643,74 +663,90 @@ const HomePage = ({
 
                 return (
                   <div key={session.id} className="home-session-card group relative min-w-0">
-                    <button
-                      type="button"
-                      className="flex min-h-36 w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
-                      onClick={() => openSession(session.projectId, session.id, 'user')}
-                      aria-label={
-                        waitReason
-                          ? t(homeSessionWaitAriaLabelKeys[waitReason], { title: session.title })
-                          : completed
-                            ? t('Open session {{title}}, completed', { title: session.title })
-                            : t('Open session {{title}}, running', { title: session.title })
-                      }
-                    >
-                      <span
-                        className={cn(
-                          'min-w-0 max-w-full truncate text-base font-semibold text-text-000',
-                          completed && 'pr-10',
-                          !waiting && !completed && 'home-session-title-running'
-                        )}
+                    {withSessionDescriptionTooltip(
+                      session.description,
+                      <button
+                        type="button"
+                        // Fixed height sized to the tallest content (status row + title +
+                        // two-line description, ~154px); cards without a description keep the
+                        // height and mt-auto sinks the project line.
+                        className="flex h-[156px] w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 pb-3 px-[18px] pt-4 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
+                        onClick={() => openSession(session.projectId, session.id, 'user')}
+                        aria-label={
+                          waitReason
+                            ? t(homeSessionWaitAriaLabelKeys[waitReason], { title: session.title })
+                            : completed
+                              ? t('Open session {{title}}, completed', { title: session.title })
+                              : t('Open session {{title}}, running', { title: session.title })
+                        }
                       >
-                        {session.title}
-                      </span>
-                      <span className="mt-1 truncate text-xs text-text-100">
-                        {projectNames.get(session.projectId) ?? t('Unknown project')}
-                      </span>
-                      <span className="mt-auto flex w-full items-end justify-between gap-3 pt-6">
+                        {/* Status leads the card — the Home grid answers "what needs me" at a glance. */}
+                        <span className="flex w-full items-center justify-between gap-3">
+                          <span
+                            className={cn(
+                              'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
+                              waiting
+                                ? 'bg-session-waiting/10 text-session-waiting'
+                                : completed
+                                  ? 'bg-success-000/10 text-success-000'
+                                  : 'bg-session-running/10 text-session-running'
+                            )}
+                          >
+                            {completed ? (
+                              <Check className="size-3" strokeWidth={2} aria-hidden="true" />
+                            ) : waiting ? (
+                              <span
+                                className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <LoaderCircle
+                                className="size-3.5 animate-spin motion-reduce:animate-none"
+                                strokeWidth={2}
+                                aria-hidden="true"
+                              />
+                            )}
+                            {t(
+                              waitReason
+                                ? sessionWaitReasonLabelKeys[waitReason]
+                                : completed
+                                  ? 'Completed'
+                                  : 'Running'
+                            )}
+                          </span>
+                          {/* Flush right on every card — a reserved dismiss gap leaves the time
+                              floating left of where a long truncated title ends. */}
+                          <span className="shrink-0 text-xs text-text-100">
+                            {completed
+                              ? isJustNow
+                                ? t('just now')
+                                : relativeActivityTime
+                              : waiting
+                                ? t('waiting {{time}}', { time: relativeActivityTime })
+                                : t('running {{time}}', { time: relativeActivityTime })}
+                          </span>
+                        </span>
                         <span
                           className={cn(
-                            'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
-                            waiting
-                              ? 'bg-session-waiting/10 text-session-waiting'
-                              : completed
-                                ? 'bg-success-000/10 text-success-000'
-                                : 'bg-session-running/10 text-session-running'
+                            'mt-2.5 min-w-0 max-w-full truncate text-base font-semibold text-text-000',
+                            !waiting && !completed && 'home-session-title-running'
                           )}
                         >
-                          {completed ? (
-                            <Check className="size-3" strokeWidth={2} aria-hidden="true" />
-                          ) : waiting ? (
-                            <span
-                              className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <LoaderCircle
-                              className="size-3.5 animate-spin motion-reduce:animate-none"
-                              strokeWidth={2}
-                              aria-hidden="true"
-                            />
-                          )}
-                          {t(
-                            waitReason
-                              ? sessionWaitReasonLabelKeys[waitReason]
-                              : completed
-                                ? 'Completed'
-                                : 'Running'
-                          )}
+                          {session.title}
                         </span>
-                        <span className="shrink-0 text-xs text-text-100">
-                          {completed
-                            ? isJustNow
-                              ? t('just now')
-                              : relativeActivityTime
-                            : waiting
-                              ? t('waiting {{time}}', { time: relativeActivityTime })
-                              : t('running {{time}}', { time: relativeActivityTime })}
+                        {session.description?.trim() ? (
+                          <span
+                            data-testid="session-description-preview"
+                            className="mt-1.5 line-clamp-2 break-words text-xs leading-[1.4] text-text-300"
+                          >
+                            {session.description.trim()}
+                          </span>
+                        ) : null}
+                        <span className="mt-auto w-full truncate pt-3 text-xs text-text-100">
+                          {projectNames.get(session.projectId) ?? t('Unknown project')}
                         </span>
-                      </span>
-                    </button>
+                      </button>
+                    )}
                     {completed ? (
                       <button
                         type="button"

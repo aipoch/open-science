@@ -48,12 +48,17 @@ const composerPlaceholderClassName =
 
 type ComposerEditorProps = {
   doc: ComposerDoc
-  onDocChange: (doc: ComposerDoc) => void
+  onDocChange: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
   onSubmit: () => void
   onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
-  onLongTextPaste?: (doc: ComposerDoc, node: ComposerPastedTextStage) => void
+  onLongTextPaste?: (
+    doc: ComposerDoc,
+    node: ComposerPastedTextStage,
+    caret?: ComposerCaretPosition
+  ) => void
   onLocatePastedText?: (pastedTextId: string) => void
-  onUndoPastedTextRemoval?: () => boolean
+  onUndo?: (caret?: ComposerCaretPosition) => boolean
+  onRedo?: (caret?: ComposerCaretPosition) => boolean
   disabled?: boolean
   placeholder: string
   className?: string
@@ -370,14 +375,36 @@ const moveCaretToEnd = (root: HTMLElement): void => {
 
 const moveCaretToPosition = (root: HTMLElement, position: ComposerCaretPosition): void => {
   const node = root.childNodes[position.nodeIndex]
-  if (!node || node.nodeType !== Node.TEXT_NODE) return moveCaretToEnd(root)
   root.focus()
   const range = document.createRange()
-  range.setStart(node, Math.min(position.offset, node.textContent?.length ?? 0))
+  if (!node) range.setStart(root, root.childNodes.length)
+  else if (node.nodeType === Node.TEXT_NODE) {
+    range.setStart(node, Math.min(position.offset, node.textContent?.length ?? 0))
+  } else {
+    range.setStart(root, position.nodeIndex)
+  }
   range.collapse(true)
   const selection = window.getSelection()
   selection?.removeAllRanges()
   selection?.addRange(range)
+}
+
+const currentCaretPosition = (root: HTMLElement): ComposerCaretPosition | undefined => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return undefined
+  const range = selection.getRangeAt(0)
+  if (!root.contains(range.startContainer)) return undefined
+  if (range.startContainer === root) {
+    return { nodeIndex: Math.min(range.startOffset, root.childNodes.length), offset: 0 }
+  }
+  let topLevel: Node = range.startContainer
+  while (topLevel.parentNode && topLevel.parentNode !== root) topLevel = topLevel.parentNode
+  const nodeIndex = Array.prototype.indexOf.call(root.childNodes, topLevel) as number
+  if (nodeIndex < 0) return undefined
+  return {
+    nodeIndex,
+    offset: topLevel.nodeType === Node.TEXT_NODE ? range.startOffset : 0
+  }
 }
 
 const canReceiveFocus = (root: HTMLElement): boolean =>
@@ -392,7 +419,8 @@ export const ComposerEditor = ({
   onPaste,
   onLongTextPaste,
   onLocatePastedText,
-  onUndoPastedTextRemoval,
+  onUndo,
+  onRedo,
   disabled = false,
   placeholder,
   className,
@@ -415,8 +443,9 @@ export const ComposerEditor = ({
   const [activeMentionOptionId, setActiveMentionOptionId] = useState<string | undefined>()
   const restoreHistoryCaretRef = useRef(false)
   const handledCaretRequestRef = useRef<number | undefined>(undefined)
-  // Tracks IME composition so Enter never submits mid-composition.
+  // Tracks IME composition synchronously for handlers and reactively for placeholder visibility.
   const composingRef = useRef(false)
+  const [isComposing, setIsComposing] = useState(false)
 
   // At most one skill per message: once a chip exists, suppress the trigger so a further `/` does nothing.
   const hasSkill = doc.nodes.some((node) => node.type === 'skill')
@@ -424,7 +453,7 @@ export const ComposerEditor = ({
     (node) => node.type !== 'pasted-text' && (node.type !== 'text' || node.text !== '')
   )
   const hasPastedText = doc.nodes.some((node) => node.type === 'pasted-text')
-  const showInlinePlaceholder = hasPastedText && !hasVisibleContent
+  const showInlinePlaceholder = hasPastedText && !hasVisibleContent && !isComposing
 
   // The hook guards a null current internally; widen the element type for its generic ref option.
   const mention = useMentionTrigger({
@@ -445,11 +474,17 @@ export const ComposerEditor = ({
     disabled: disabled || docSessionCount(doc) >= MAX_COMPOSER_SESSION_MENTIONS
   })
   const mentionPopupOpen = mention.active || artifactMention.active || sessionMention.active
+  const undoCaretRef = useRef<ComposerCaretPosition | undefined>(undefined)
 
   // Read the live DOM back into a doc and notify the parent.
   const emitDocFromDom = useCallback((): void => {
     const root = editorRef.current
-    if (root) onDocChange(domToDoc(root))
+    if (root) {
+      const nextDoc = domToDoc(root)
+      if (undoCaretRef.current) onDocChange(nextDoc, undoCaretRef.current)
+      else onDocChange(nextDoc)
+    }
+    undoCaretRef.current = undefined
   }, [onDocChange])
 
   // Apply the incoming doc to the DOM only when it diverges from what the editor already shows.
@@ -484,7 +519,9 @@ export const ComposerEditor = ({
     if (root && restoreFocusRequest !== undefined && canReceiveFocus(root)) moveCaretToEnd(root)
   }, [restoreFocusRequest])
 
-  const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])
+  const handleInput = useCallback((): void => {
+    if (!composingRef.current) emitDocFromDom()
+  }, [emitDocFromDom])
 
   // Clicking an `@` mention chip opens the file in the preview workbench, like the sent-message
   // pills do. Linked-folder chips resolve rootId + relativePath through the granted-roots store
@@ -587,18 +624,29 @@ export const ComposerEditor = ({
       return
     }
     if (disabled) return
+    if (
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete')
+    ) {
+      const root = editorRef.current
+      undoCaretRef.current = root ? currentCaretPosition(root) : undefined
+    }
     const primaryUndoModifier =
       (event.metaKey && !event.ctrlKey) || (event.ctrlKey && !event.metaKey)
+    const historyAction = event.shiftKey ? onRedo : onUndo
     if (
       event.key.toLowerCase() === 'z' &&
       primaryUndoModifier &&
       !event.altKey &&
-      !event.shiftKey &&
       !event.repeat &&
       !event.nativeEvent.isComposing &&
-      onUndoPastedTextRemoval?.()
+      historyAction
     ) {
       event.preventDefault()
+      const root = editorRef.current
+      historyAction(root ? currentCaretPosition(root) : undefined)
       return
     }
     // While either mention popup is open it owns Enter/arrow keys; leave them to its document listener.
@@ -633,6 +681,7 @@ export const ComposerEditor = ({
       const chip = root && chipBesideCaret(root, event.key === 'Backspace' ? 'before' : 'after')
       if (chip) {
         event.preventDefault()
+        undoCaretRef.current = currentCaretPosition(root)
         chip.remove()
         emitDocFromDom()
         return
@@ -646,6 +695,8 @@ export const ComposerEditor = ({
   }
 
   const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    const activeRoot = editorRef.current
+    undoCaretRef.current = activeRoot ? currentCaretPosition(activeRoot) : undefined
     // Forward first so the panel can route file attachments to its intake.
     onPaste(event)
     if (disabled || event.isDefaultPrevented()) return
@@ -659,7 +710,8 @@ export const ComposerEditor = ({
         ? insertComposerClipboardFragmentAtCaret(root, internalFragment)
         : []
       if (root && pastedTextNodes.length > 0) {
-        onLongTextPaste(domToDoc(root), pastedTextNodes)
+        onLongTextPaste(domToDoc(root), pastedTextNodes, undoCaretRef.current)
+        undoCaretRef.current = undefined
       }
       return
     }
@@ -674,7 +726,10 @@ export const ComposerEditor = ({
           id: crypto.randomUUID(),
           text
         }
-        if (root && insertPastedTextAtCaret(root, node)) onLongTextPaste(domToDoc(root), node)
+        if (root && insertPastedTextAtCaret(root, node)) {
+          onLongTextPaste(domToDoc(root), node, undoCaretRef.current)
+          undoCaretRef.current = undefined
+        }
       } else {
         if (root && insertPlainTextAtCaret(root, text)) emitDocFromDom()
       }
@@ -690,6 +745,7 @@ export const ComposerEditor = ({
   const handleCut = (event: React.ClipboardEvent<HTMLDivElement>): void => {
     const root = editorRef.current
     if (!root || !writeComposerClipboardSelection(root, doc, event)) return
+    undoCaretRef.current = currentCaretPosition(root)
     const selection = window.getSelection()
     if (!selection || selection.rangeCount === 0) return
     const range = selection.getRangeAt(0)
@@ -713,12 +769,16 @@ export const ComposerEditor = ({
 
   // Replace the active `/query` token with a skill chip, then close the popup.
   const handleSelectSkill = (skill: SkillView): void => {
+    const root = editorRef.current
+    undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.displayName })
     mention.cancel()
   }
 
   // Replace the active `@query` token with an artifact chip, then close the popup.
   const handleSelectArtifact = (ref: PickedArtifact): void => {
+    const root = editorRef.current
+    undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     artifactMention.replaceTokenWith({
       type: 'artifact',
       id: ref.id,
@@ -733,6 +793,8 @@ export const ComposerEditor = ({
   }
 
   const handleSelectSession = (session: PickedSession): void => {
+    const root = editorRef.current
+    undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     sessionMention.replaceTokenWith(session)
     sessionMention.cancel()
   }
@@ -761,16 +823,27 @@ export const ComposerEditor = ({
           className
         )}
         onInput={handleInput}
+        onBeforeInput={() => {
+          const root = editorRef.current
+          if (!composingRef.current) {
+            undoCaretRef.current = root ? currentCaretPosition(root) : undefined
+          }
+        }}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
         onCopy={handleCopy}
         onCut={handleCut}
         onCompositionStart={() => {
+          const root = editorRef.current
+          undoCaretRef.current = root ? currentCaretPosition(root) : undefined
           composingRef.current = true
+          setIsComposing(true)
         }}
         onCompositionEnd={() => {
           composingRef.current = false
+          setIsComposing(false)
+          emitDocFromDom()
         }}
       />
       <span id={historyDescriptionId} className="sr-only">
@@ -779,7 +852,7 @@ export const ComposerEditor = ({
       <span id={historyStatusId} role="status" aria-live="polite" className="sr-only">
         {historyStatus}
       </span>
-      {!hasVisibleContent && !hasPastedText ? (
+      {!isComposing && !hasVisibleContent && !hasPastedText ? (
         <div aria-hidden="true" className={composerPlaceholderClassName}>
           {placeholder}
         </div>

@@ -84,6 +84,7 @@ describe('ComposerMessageQueue', () => {
 
     const trigger = container.querySelector('[data-testid="composer-queue-trigger"]')!
     expect(trigger.parentElement?.dataset.testid).toBe('notebook-bar')
+    expect(trigger.textContent).toContain('Not saved')
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
     expect(container.querySelector('[data-testid="composer-queue-item"]')).toBeNull()
     click(trigger)

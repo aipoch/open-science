@@ -53,10 +53,11 @@ class UserSkillCatalogObserver {
   private watcher: FSWatcher | undefined
   private debounceTimer: ReturnType<typeof setTimeout> | undefined
   private reconcileTimer: ReturnType<typeof setInterval> | undefined
-  private fingerprint = ''
+  private fingerprint: string | undefined
   private reconcileDrain: Promise<void> | undefined
   private reconcilePending = false
   private reconcileForcePending = false
+  private initialReconciliationFailed = false
   private disposed = false
 
   constructor(private readonly options: UserSkillCatalogObserverOptions) {}
@@ -66,8 +67,6 @@ class UserSkillCatalogObserver {
     await Promise.all(
       OBSERVED_SOURCES.map((source) => mkdir(join(skillsRoot, source), { recursive: true }))
     )
-    this.fingerprint = catalogFingerprint(await this.options.catalog.list())
-
     try {
       this.watcher = (this.options.watchDirectory ?? watch)(skillsRoot, { recursive: true }, () =>
         this.scheduleReconcile()
@@ -86,6 +85,8 @@ class UserSkillCatalogObserver {
       })
       this.startPeriodicReconciliation()
     }
+
+    void this.enqueueReconcile(false)
   }
 
   notifyCatalogChanged(): Promise<void> {
@@ -147,6 +148,7 @@ class UserSkillCatalogObserver {
         await this.reconcile(force)
       } catch (error) {
         failure ??= error
+        if (this.fingerprint === undefined) this.initialReconciliationFailed = true
         log.warn('user skill catalog reconciliation failed', diagnosticErrorFields(error))
       }
     }
@@ -157,9 +159,12 @@ class UserSkillCatalogObserver {
     if (this.disposed) return
     const fingerprint = catalogFingerprint(await this.options.catalog.list())
     if (this.disposed) return
-    const changed = fingerprint !== this.fingerprint
+    const changed = this.fingerprint !== undefined && fingerprint !== this.fingerprint
+    const recoveredInitialReconciliation =
+      this.fingerprint === undefined && this.initialReconciliationFailed
     this.fingerprint = fingerprint
-    if (changed || force) await this.options.onCatalogChanged()
+    this.initialReconciliationFailed = false
+    if (changed || recoveredInitialReconciliation || force) await this.options.onCatalogChanged()
   }
 }
 

@@ -364,18 +364,21 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     } as unknown as ComputeApprovalBroker
 
     const service = makeOwner(runner, repo, broker, jobRepo)
+    const signal = new AbortController().signal
 
     await service.submitJob(
       'ssh:biowulf',
       'test',
       'echo hi',
       {},
-      { sessionId: 's1', projectId: 'p1' }
+      { sessionId: 's1', projectId: 'p1' },
+      signal
     )
 
     expect(requestWithContext).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ operation: 'submit_job' })
+      expect.objectContaining({ operation: 'submit_job' }),
+      signal
     )
   })
 

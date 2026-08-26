@@ -121,8 +121,9 @@ const createConnectorApplication = (
       skillImportApprovals.createSessionCancellationGuard(sessionId),
     previewBundle: (bundle) => deps.settings.previewSkillArchive(bundle),
     importBundle: (bundle, items) => deps.settings.importSkillArchiveBatch(bundle, items),
-    scanGitHub: async (url) => (await deps.settings.scanRepoSkills({ repo: url })).skills,
-    importGitHub: (url) => deps.settings.importSkill({ url }),
+    scanGitHub: async (url, signal) =>
+      (await deps.settings.scanRepoSkills({ repo: url }, signal)).skills,
+    importGitHub: (url, signal) => deps.settings.importSkill({ url }, signal),
     requestApproval: (request, cancellation) => skillImportApprovals.request(request, cancellation),
     onSkillsChanged: deps.onSkillsChanged
   })

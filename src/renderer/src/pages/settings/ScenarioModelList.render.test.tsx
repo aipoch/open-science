@@ -40,6 +40,7 @@ describe('ScenarioModelList', () => {
       ],
       setSubagentModel: vi.fn(async () => undefined),
       setReviewerModel: vi.fn(async () => undefined),
+      setSessionDetailsModel: vi.fn(async () => undefined),
       setVisionModel: vi.fn(async () => undefined)
     })
   })
@@ -53,16 +54,42 @@ describe('ScenarioModelList', () => {
 
     expect(document.body.textContent).toContain('Scenario models')
     expect(document.body.textContent).toContain(
-      'Models for subagents, review, and image understanding.'
+      'Models for session details, subagents, review, and image understanding.'
     )
 
+    const sessionDetailsRow = rowButton('Session details')
     const subagentRow = rowButton('Subagent')
     const reviewerRow = rowButton('Reviewer')
     const visionRow = rowButton('Vision')
+    expect(sessionDetailsRow?.getAttribute('aria-expanded')).toBe('false')
     expect(subagentRow?.getAttribute('aria-expanded')).toBe('false')
     expect(reviewerRow?.getAttribute('aria-expanded')).toBe('false')
     expect(visionRow?.getAttribute('aria-expanded')).toBe('false')
+    expect(visionRow?.compareDocumentPosition(sessionDetailsRow!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(
+      Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>(
+          '[aria-controls^="scenario-model-panel-"]'
+        )
+      ).map((row) => row.getAttribute('aria-label'))
+    ).toEqual([
+      'Expand Subagent settings',
+      'Expand Reviewer settings',
+      'Expand Vision settings',
+      'Expand Session details settings'
+    ])
 
+    expect(sessionDetailsRow?.textContent).toContain('Same as main model')
+    expect(sessionDetailsRow?.textContent).toContain('Low')
+    expect(sessionDetailsRow?.querySelector('[data-slot="badge"]')?.className).toContain('bg-muted')
+    expect(sessionDetailsRow?.querySelector('[data-slot="badge"]')?.className).toContain(
+      'text-muted-foreground'
+    )
+    expect(sessionDetailsRow?.querySelector('[data-slot="badge"]')?.className).not.toContain(
+      'status-info'
+    )
     expect(subagentRow?.textContent).toContain('Same as main model')
     expect(reviewerRow?.textContent).toContain('Follow main model')
     expect(visionRow?.textContent).toContain('Not configured')
@@ -216,6 +243,45 @@ describe('ScenarioModelList', () => {
     act(() => root.unmount())
   })
 
+  it('summarizes an image-capable Codex subscription Vision model as available', () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'codex',
+      agentFrameworks: [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          supportsSkills: true,
+          supportedApiTypes: ['responses']
+        }
+      ],
+      providers: [
+        {
+          id: 'builtin-codex-isolated',
+          type: 'codex-isolated',
+          name: 'Codex subscription',
+          apiEndpoints: ['responses'],
+          models: ['gpt-5.6-sol'],
+          supportsImageInput: true,
+          hasKey: false,
+          needsKey: false
+        }
+      ],
+      visionModel: {
+        providerId: 'builtin-codex-isolated',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'high'
+      }
+    })
+    const root = renderList()
+
+    const visionRow = rowButton('Vision')
+    expect(visionRow?.textContent).toContain('gpt-5.6-sol')
+    expect(visionRow?.textContent).toContain('Codex subscription')
+    expect(visionRow?.textContent).not.toContain('Unavailable')
+
+    act(() => root.unmount())
+  })
+
   it('marks a Vision model without image input as unavailable', () => {
     useSettingsStore.setState({
       providers: [
@@ -244,6 +310,37 @@ describe('ScenarioModelList', () => {
     expect(visionRow?.textContent).toContain('Unavailable')
     // The provider still exists, so the tail keeps its name rather than the raw id.
     expect(visionRow?.textContent).toContain('Provider T')
+
+    act(() => root.unmount())
+  })
+
+  it('marks a persisted Codex subscription Session details target unavailable', () => {
+    useSettingsStore.setState({
+      providers: [
+        {
+          id: 'codex-shared',
+          type: 'codex-shared',
+          name: 'Codex subscription',
+          apiEndpoints: ['openai'],
+          model: 'gpt-5.6',
+          models: ['gpt-5.6'],
+          supportsImageInput: true,
+          hasKey: true,
+          needsKey: false
+        }
+      ],
+      sessionDetailsModel: {
+        mode: 'fixed',
+        providerId: 'codex-shared',
+        model: 'gpt-5.6',
+        reasoningEffort: 'low'
+      }
+    })
+    const root = renderList()
+
+    const sessionDetailsRow = rowButton('Session details')
+    expect(sessionDetailsRow?.textContent).toContain('gpt-5.6')
+    expect(sessionDetailsRow?.textContent).toContain('Unavailable')
 
     act(() => root.unmount())
   })

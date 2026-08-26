@@ -1,4 +1,4 @@
-import type { AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../shared/acp'
 import type { ArtifactFile } from '../../shared/artifacts'
 import type {
   PersistedActivityGroup,
@@ -201,6 +201,7 @@ type DurableMessage = {
   eventIds?: string[]
   images?: PersistedMessageImage[]
   turnUsage?: AcpTurnTokenUsage
+  modelCallUsage?: AcpModelCallUsage[]
   turnUsageUnavailable?: true
   createdAt: number
   updatedAt?: number

@@ -8,7 +8,8 @@ import {
   createAffectedTestPlan,
   createModuleTestPlan,
   executeModuleTestPlan,
-  formatModuleTestPlan
+  formatModuleTestPlan,
+  runModuleTestCli
 } from './module-test-impact.mjs'
 
 const currentStatus = JSON.stringify({
@@ -455,6 +456,53 @@ describe('module test impact commands', () => {
       ['/npm/bin/npm-cli.js', 'test', '--', ...plan.testFiles],
       expect.objectContaining({ cwd: '/repo', stdio: 'inherit' })
     )
+    write.mockRestore()
+  })
+
+  it('keeps changed-source coverage separate from authoritative affected test selection', () => {
+    const base = '1'.repeat(40)
+    const head = '2'.repeat(40)
+    const execute = vi.fn((command: string, arguments_: string[]) => {
+      if (command === 'git' && arguments_[0] === 'merge-base') return `${base}\n`
+      if (command === 'git' && arguments_[0] === 'diff') {
+        return Buffer.from('M\0src/main/artifacts/repository.ts\0')
+      }
+      if (command === 'codegraph' && arguments_[0] === 'status') return currentStatus
+      if (command === 'codegraph' && arguments_[0] === 'affected') {
+        return JSON.stringify({ affectedTests: [] })
+      }
+      throw new Error(`Unexpected command: ${command} ${arguments_.join(' ')}`)
+    })
+    const spawn = vi.fn(() => ({ status: 0 }))
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const expectedPlan = createAffectedTestPlan(
+      [{ path: 'src/main/artifacts/repository.ts', status: 'modified' }],
+      { status: 'current', testFiles: [] }
+    )
+
+    expect(
+      runModuleTestCli(['affected', '--base', base, '--head', head, '--coverage-changed', base], {
+        cwd: '/repo',
+        execute,
+        spawn,
+        environment: { npm_execpath: '/npm/bin/npm-cli.js' },
+        nodeExecutable: '/node'
+      })
+    ).toBe(0)
+    expect(spawn).toHaveBeenCalledWith(
+      '/node',
+      [
+        '/npm/bin/npm-cli.js',
+        'test',
+        '--',
+        '--coverage',
+        '--coverage.changed',
+        base,
+        ...expectedPlan.testFiles
+      ],
+      expect.objectContaining({ cwd: '/repo', stdio: 'inherit' })
+    )
+    expect(spawn.mock.calls[0]?.[1]).toContain('src/main/reviewer/ipc.test.ts')
     write.mockRestore()
   })
 

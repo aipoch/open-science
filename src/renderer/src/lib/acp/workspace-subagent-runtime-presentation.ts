@@ -129,7 +129,15 @@ const useSubagentRuntimePresentation = (
       if (applyRuntimePresentationEvent(event, store, presentationContext)) return
       if (event.kind === 'stop') {
         presentationContext.activityGroupToolCallIdsBySession.delete(session.id)
-        store.getState().finishRun(session.id, event.turnUsage, update.scope.promptMessageId)
+        store
+          .getState()
+          .finishRun(
+            session.id,
+            event.turnUsage,
+            update.scope.promptMessageId,
+            undefined,
+            event.modelCallUsage
+          )
       } else if (event.kind === 'error') {
         presentationContext.activityGroupToolCallIdsBySession.delete(session.id)
         store

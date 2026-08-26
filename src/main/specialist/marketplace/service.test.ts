@@ -102,6 +102,7 @@ describe('MarketplaceService', () => {
             id: 'example-specialist',
             display_name: 'Example Specialist',
             summary: 'Example workflows.',
+            author: 'Example Author',
             publisher: { id: 'example', name: 'Example' },
             latest: {
               version: '1.0.0',
@@ -228,7 +229,16 @@ describe('MarketplaceService', () => {
     })
     await service.addSource({ candidateToken: inspected.candidateToken })
     const listed = await service.list()
-    expect(listed.specialists.map((item) => item.id)).toEqual(['example-specialist'])
+    expect(listed.specialists).toMatchObject([
+      { id: 'example-specialist', author: 'Example Author' }
+    ])
+    await expect(
+      service.getRelease({
+        sourceId: listed.sources[0].id,
+        specialistId: 'example-specialist',
+        version: '1.0.0'
+      })
+    ).resolves.toMatchObject({ author: 'Example Author' })
 
     packages.preview.mockResolvedValueOnce({
       candidateToken: 'mismatched-package-candidate',

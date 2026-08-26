@@ -1,6 +1,7 @@
 import { appendFile, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { extname, join } from 'node:path'
 
 // Lightweight structured file logger for the main process. Kept free of Electron imports so it stays
@@ -36,6 +37,17 @@ let config: LoggerConfig | undefined
 let writeChain: Promise<void> = Promise.resolve()
 // Running size of the live file; undefined until seeded from disk on the first write after init.
 let currentBytes: number | undefined
+const diagnosticCorrelation = new AsyncLocalStorage<string>()
+
+const runWithDiagnosticCorrelation = <Result>(operation: () => Result): Result => {
+  let correlationId: string
+  try {
+    correlationId = randomUUID()
+  } catch {
+    return operation()
+  }
+  return diagnosticCorrelation.run(correlationId, operation)
+}
 
 // Turns arbitrary log payloads into JSON-safe values, unwrapping Errors (whose fields are non-enumerable)
 // so a stack trace actually lands in the log instead of `{}`.
@@ -692,7 +704,8 @@ const formatLine = (
   scope: string,
   message: string,
   data?: unknown,
-  runId?: string
+  runId?: string,
+  correlationId?: string
 ): string => {
   const record: Record<string, unknown> = {
     t: new Date().toISOString(),
@@ -702,6 +715,7 @@ const formatLine = (
   }
 
   if (runId !== undefined) record.runId = runId
+  if (correlationId !== undefined) record.correlationId = correlationId
   if (data !== undefined) record.data = toSerializable(data)
 
   try {
@@ -712,6 +726,7 @@ const formatLine = (
       t: record.t,
       level,
       ...(runId === undefined ? {} : { runId }),
+      ...(correlationId === undefined ? {} : { correlationId }),
       scope,
       msg: message,
       data: '[unserializable]'
@@ -826,7 +841,14 @@ const writeFatalLogSync = (scope: string, message: string, data?: unknown): void
     mkdirSync(config.logDir, { recursive: true })
     appendFileSync(
       join(config.logDir, config.fileName),
-      `${formatLine('error', scope, message, data, config.runId)}\n`,
+      `${formatLine(
+        'error',
+        scope,
+        message,
+        data,
+        config.runId,
+        diagnosticCorrelation.getStore()
+      )}\n`,
       'utf8'
     )
   } catch {
@@ -836,7 +858,14 @@ const writeFatalLogSync = (scope: string, message: string, data?: unknown): void
 
 const emit = (level: LogLevel, scope: string, message: string, data?: unknown): void => {
   const mirror = config?.mirrorToConsole ?? true
-  const line = formatLine(level, scope, message, data, config?.runId)
+  const line = formatLine(
+    level,
+    scope,
+    message,
+    data,
+    config?.runId,
+    diagnosticCorrelation.getStore()
+  )
 
   if (mirror) {
     const consoleMethod = level === 'debug' ? 'log' : level
@@ -875,5 +904,6 @@ export {
   formatLine,
   getLogFilePath,
   initLogger,
+  runWithDiagnosticCorrelation,
   writeFatalLogSync
 }

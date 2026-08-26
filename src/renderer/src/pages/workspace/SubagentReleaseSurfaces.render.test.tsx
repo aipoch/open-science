@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ChatSession } from '@/stores/session-store'
@@ -38,6 +38,7 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
+import { useSubagentRuntimePresentation } from '@/lib/acp/workspace-subagent-runtime-presentation'
 
 import {
   SubagentAvailabilityNotice,
@@ -536,6 +537,20 @@ describe('release-gate Subagent surfaces', () => {
     session.agentStatus = 'root retry status'
     useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
     const rootBefore = structuredClone(useSessionStore.getState().sessions[0])
+    const detail = {
+      frameId: 'child-a',
+      status: 'running' as const,
+      attempt: session.runtimeContext?.delegatedWork?.records
+        .find(({ agentFrameId }) => agentFrameId === 'child-a')
+        ?.attempts.at(-1),
+      messages:
+        session.conversationGraph?.messages.filter(
+          ({ agentFrameId }) => agentFrameId === 'child-a'
+        ) ?? []
+    }
+    const presentation = renderHook(() =>
+      useSubagentRuntimePresentation(runtimeUpdateHarness.subscribe, session, detail)
+    )
 
     renderSurface(
       <SubagentPreview
@@ -634,13 +649,38 @@ describe('release-gate Subagent surfaces', () => {
           timestamp: 1_700_000_000_020,
           kind: 'stop',
           level: 'info',
-          turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+          turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 },
+          modelCallUsage: [
+            {
+              id: 'child-stream:model-call:0',
+              index: 0,
+              sourceInvocationId: 'provider-child-call-1',
+              inputTokens: 31,
+              cacheTokens: 15,
+              outputTokens: 14,
+              contextUsedTokens: 46,
+              contextWindowSize: 128_000
+            }
+          ]
         }
       })
     })
 
     expect(screen.getByRole('button', { name: 'Token usage for this response' })).toBeTruthy()
     expect(screen.queryByText('Thinking')).toBeNull()
+    expect(presentation.result.current.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          streamId: 'child-stream',
+          modelCallUsage: [
+            expect.objectContaining({
+              id: 'child-stream:model-call:0',
+              sourceInvocationId: 'provider-child-call-1'
+            })
+          ]
+        })
+      ])
+    )
     expect(useSessionStore.getState().sessions[0]).toEqual(rootBefore)
   })
 

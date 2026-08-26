@@ -12,7 +12,7 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export function prismaClientFingerprintMismatchMessage(schemaPath, clientSchemaPath) {
   return [
     'Generated Prisma Client is out of date with prisma/schema.prisma.',
-    'Run `npx prisma generate` (or `npm install`) in this worktree before tests.',
+    'Run `npx prisma generate` (or `npm install`) in this worktree before development commands or tests.',
     `Source: ${schemaPath}`,
     `Client: ${clientSchemaPath}`
   ].join('\n')

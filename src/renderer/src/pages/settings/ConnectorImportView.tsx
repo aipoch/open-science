@@ -43,6 +43,7 @@ export function ConnectorImportView({
   const { t } = useTranslation()
 
   const [selection, setSelection] = useState<ConnectorTemplateSelectionResult>()
+  const [selectedDefinitionIndex, setSelectedDefinitionIndex] = useState(0)
   const [selecting, setSelecting] = useState(false)
   const [error, setError] = useState<string>()
 
@@ -51,7 +52,10 @@ export function ConnectorImportView({
     setError(undefined)
     try {
       const result = await window.api.settings.selectCustomServerTemplate(request)
-      if (!result.cancelled) setSelection(result)
+      if (!result.cancelled) {
+        setSelection(result)
+        setSelectedDefinitionIndex(0)
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('Could not validate the configuration.'))
     } finally {
@@ -88,7 +92,8 @@ export function ConnectorImportView({
   })
 
   const preview = selection && !selection.cancelled ? selection.preview : undefined
-  const definition = preview?.definition
+  const definitions = preview?.definitions ?? (preview?.definition ? [preview.definition] : [])
+  const definition = definitions[selectedDefinitionIndex]
   const secretNames = [
     ...(definition?.requiredSecrets?.environment ?? []),
     ...(definition?.requiredSecrets?.headers ?? [])
@@ -99,11 +104,11 @@ export function ConnectorImportView({
       <div className="flex w-full flex-col gap-5">
         <div>
           <h2 className="text-base font-semibold text-foreground">
-            {t('Import Connector configuration')}
+            {t('Import Connector or MCP configuration')}
           </h2>
           <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
             {t(
-              'Add one credential-free Connector configuration from your computer. You will review the settings and enter any required credentials before it is added.'
+              'Import an Open Science Connector or MCP client configuration. You will review one server and enter any required credentials before it is added.'
             )}
           </p>
         </div>
@@ -126,7 +131,7 @@ export function ConnectorImportView({
           </span>
           <span className="max-w-sm text-xs text-muted-foreground">
             {t(
-              'Choose one .json file up to {{size}}. Credentials are never imported from the file.',
+              'Choose one .json file up to {{size}}. Credential values are never imported from the file.',
               { size: kb(CONNECTOR_TEMPLATE_MAX_BYTES) }
             )}
           </span>
@@ -154,6 +159,22 @@ export function ConnectorImportView({
               <FileJson className="size-4 text-muted-foreground" aria-hidden="true" />
               <h3 className="text-sm font-medium text-foreground">{t('Configuration preview')}</h3>
             </div>
+            {definitions.length > 1 ? (
+              <label className="mb-3 grid gap-1.5 text-sm">
+                <span className="font-medium text-foreground">{t('MCP server')}</span>
+                <select
+                  value={selectedDefinitionIndex}
+                  onChange={(event) => setSelectedDefinitionIndex(Number(event.target.value))}
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                >
+                  {definitions.map((item, index) => (
+                    <option key={item.name} value={index}>
+                      {item.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <dl className="divide-y divide-border border-y border-border text-sm">
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
                 <dt className="text-muted-foreground">{t('Display name')}</dt>

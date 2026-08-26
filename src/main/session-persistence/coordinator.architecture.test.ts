@@ -60,6 +60,7 @@ const productionFiles = [
   'message-delivery-owner.ts',
   'reconciliation-owner.ts',
   'relay-projection.ts',
+  'session-details-authority.ts',
   'side-chat-owner.ts',
   'state-owner.ts'
 ] as const
@@ -440,6 +441,7 @@ describe('Session persistence coordinator architecture', () => {
         'loadPersistedSideChats',
         'markCommittedProjectSessionsPrepared',
         'mutateSessionComputeHostAccess',
+        'mutateSessionDetailsAuthority',
         'patchSessionRuntimeContext',
         'pruneSessionEnabledComputeHosts',
         'readChildren',
@@ -469,7 +471,7 @@ describe('Session persistence coordinator architecture', () => {
       ].sort()
     )
     expect(methods(facade, 'private')).toEqual(
-      ['notifyFilesChanged', 'notifySessionsDeleted'].sort()
+      ['assertMutable', 'notifyFilesChanged', 'notifySessionsDeleted'].sort()
     )
     expect(publicNonMethodMembers(facade)).toEqual([])
 
@@ -662,6 +664,7 @@ describe('Session persistence coordinator architecture', () => {
         'containsMessageOnActiveBranch',
         'loadSessionForContinuation',
         'mutateSessionComputeHostAccess',
+        'mutateSessionDetailsAuthority',
         'patchSessionRuntimeContext',
         'readSessionRuntimeContext',
         'runSessionMutation',
@@ -724,7 +727,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(33)
+    expect(expectedSchedulerRoute.size).toBe(34)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -973,6 +976,7 @@ describe('Session persistence coordinator architecture', () => {
         'deletion-owner.ts',
         'delegated-work-owner.ts',
         'reconciliation-owner.ts',
+        'session-details-authority.ts',
         'side-chat-owner.ts',
         'state-owner.ts'
       ].sort()
@@ -982,6 +986,7 @@ describe('Session persistence coordinator architecture', () => {
       ['legacy-upload.ts', 'state-owner.ts'].sort()
     )
     expect(sessionDependencies('reconciliation-owner.ts')).toEqual(['legacy-upload.ts'])
+    expect(sessionDependencies('session-details-authority.ts')).toEqual([])
     expect(sessionDependencies('side-chat-owner.ts')).toEqual([])
     expect(sessionDependencies('message-delivery-owner.ts')).toEqual([])
     expect(sessionDependencies('delegated-question-owner.ts')).toEqual(

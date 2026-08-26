@@ -359,9 +359,11 @@ describe('Settings backend ownership architecture', () => {
     ])
     expect(exportInventoryFrom(settingsPaths.subagentModelSettings)).toEqual([
       'type:ReviewerModelValidator',
+      'type:SessionDetailsModelValidator',
       'type:SubagentModelValidator',
       'type:VisionModelValidator',
       'value:buildReviewerModelMutation',
+      'value:buildSessionDetailsModelMutation',
       'value:buildSubagentModelMutation',
       'value:buildVisionModelMutation'
     ])
@@ -410,6 +412,7 @@ describe('Settings backend ownership architecture', () => {
       'setReviewerModel',
       'setRuntimeEnablement',
       'setRuntimeSelection',
+      'setSessionDetailsModel',
       'setSkillEnabled',
       'setSkillsEnabled',
       'setSubagentModel',
@@ -492,7 +495,7 @@ describe('Settings backend ownership architecture', () => {
   it('locks the SettingsService application interface', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
-        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSubagentExecutionModel admitVisionModel authenticateCustomServer buildCustomServerTemplateExport
+        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel authenticateCustomServer buildCustomServerTemplateExport
         buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codexSkillCatalog
         codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodex
         detectOpencode dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
@@ -513,7 +516,7 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotificationsEnabled
-        setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
+        setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSessionDetailsModel setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodex
         uninstallOpencode updateCustomServer updateSkill upsertProvider validateProvider waitXaiOAuthLogin withHostSkillRead
       `
@@ -538,6 +541,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/provider-model-catalog-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
+      'src/main/settings/session-details-model-owner.ts',
       'src/main/settings/skill-catalog.ts',
       'src/main/settings/subagent-model-owner.ts',
       'src/main/settings/vision-model-owner.ts',
@@ -565,6 +569,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/provider-transport-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
+      'src/main/settings/session-details-model-owner.ts',
       'src/main/settings/subagent-model-owner.ts',
       'src/main/settings/vision-model-owner.ts'
     ])
@@ -577,6 +582,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/reviewer/model-runtime-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
+      'src/main/settings/session-details-model-owner.ts',
       'src/main/settings/subagent-model-owner.ts',
       'src/main/settings/vision-model-owner.ts',
       'src/main/side-chat/runtime-owner.ts'
@@ -703,6 +709,7 @@ describe('Settings backend ownership architecture', () => {
       'providers',
       'reasoningEffort',
       'reviewerModel',
+      'sessionDetailsModel',
       'subagentModel',
       'version',
       'visionModel'
@@ -786,10 +793,12 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/provider-token-limits.ts'
     ])
     expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
+      'src/main/settings/bounded-response.ts',
       'src/main/settings/provider-accounts.ts',
       'src/main/settings/provider-auth-lifecycle.ts',
       'src/main/settings/provider-draft-projection.ts',
       'src/main/settings/provider-model-catalog-owner.ts',
+      'src/main/settings/provider-resource-limits.ts',
       'src/main/settings/provider-runtime-projection.ts',
       'src/main/settings/xai-oauth.ts',
       'src/main/settings/xai-provider-account-owner.ts'

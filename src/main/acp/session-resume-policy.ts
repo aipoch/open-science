@@ -157,6 +157,19 @@ const isCodexResponsesResumeContext = (
   (context.currentModelRoute === 'codex-responses' ||
     context.currentModelRoute === 'codex-responses-compatibility')
 
+const hasNoStructuredErrorData = (value: unknown): boolean => {
+  if (value === undefined) return true
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  try {
+    const prototype = Object.getPrototypeOf(value)
+    return (
+      (prototype === Object.prototype || prototype === null) && Reflect.ownKeys(value).length === 0
+    )
+  } catch {
+    return false
+  }
+}
+
 // ARD-04 intentionally adds this pure policy without a production caller. ARD-20 exclusively owns
 // the Runtime cutover once its transaction seams exist; integrating here would violate the serialized
 // hot-file boundary. Session ownership, protocol calls, and replay stay with those transactions.
@@ -306,7 +319,7 @@ class AcpSessionResumePolicy {
     if (describesUnresumableSession(details.value)) {
       return adoptableFailure('legacy-unresumable-details')
     }
-    if (data.value === undefined && isCodexResponsesResumeContext(context)) {
+    if (hasNoStructuredErrorData(data.value) && isCodexResponsesResumeContext(context)) {
       return adoptableFailure('legacy-codex-session-unavailable')
     }
     return authoritativeFailure('unrelated-internal-error')

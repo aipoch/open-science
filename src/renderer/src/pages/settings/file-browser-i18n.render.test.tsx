@@ -4,12 +4,12 @@
 // produced by an earlier event and is only rendered later (see the language-switch cases).
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import i18next from 'i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost } from '../../../../shared/compute'
 import type { DirListing, LocalFile } from '../../../../shared/remote-fs'
 import { FileBrowserModal } from './FileBrowserModal'
+import { i18next } from '@/i18n'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'

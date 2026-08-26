@@ -73,6 +73,55 @@ export function requiredLanesForModulePlan(
   )
 }
 
+function bundlesForLanes(lanes, manifest) {
+  const bundles = lanes.map((lane) => {
+    const bundle = manifest.laneBundles[lane]
+    if (!bundle) throw new Error(`Missing execution bundle for selected lane: ${lane}`)
+    return bundle
+  })
+  return ordered(bundles, manifest.bundleOrder)
+}
+
+export function resolveAuthoritativePlan(
+  candidatePlan,
+  modulePlan,
+  changeImpactManifest = defaultChangeImpactManifest
+) {
+  if (candidatePlan.mode === 'full' || !strings(candidatePlan.bundles).includes('unit')) {
+    return candidatePlan
+  }
+
+  const moduleReasons = strings(modulePlan.reasonChains)
+  if (modulePlan.mode === 'full') {
+    return {
+      schemaVersion: candidatePlan.schemaVersion ?? changeImpactManifest.schemaVersion,
+      mode: 'full',
+      roots: unique([...strings(candidatePlan.roots), 'module_impact']).sort(),
+      lanes: [...changeImpactManifest.laneOrder],
+      bundles: [...changeImpactManifest.bundleOrder],
+      reasonChains: unique([...strings(candidatePlan.reasonChains), ...moduleReasons]).sort()
+    }
+  }
+
+  const lanes = ordered(
+    [
+      ...strings(candidatePlan.lanes),
+      ...requiredLanesForModulePlan(modulePlan, changeImpactManifest)
+    ],
+    changeImpactManifest.laneOrder
+  )
+  return {
+    ...candidatePlan,
+    roots: unique([
+      ...strings(candidatePlan.roots),
+      ...strings(modulePlan.modules).map((moduleId) => `module:${moduleId}`)
+    ]).sort(),
+    lanes,
+    bundles: bundlesForLanes(lanes, changeImpactManifest),
+    reasonChains: unique([...strings(candidatePlan.reasonChains), ...moduleReasons]).sort()
+  }
+}
+
 export function createModuleImpactShadowReport(
   authoritativePlan,
   modulePlan,
@@ -97,6 +146,7 @@ export function createModuleImpactShadowReport(
   const additionalAuthoritativeLanes = selectedLanes.filter((lane) => !requiredLaneSet.has(lane))
   const modeAgreement = authoritativePlan.mode === modulePlan.mode
   const disagreements = []
+  const resolved = resolveAuthoritativePlan(authoritativePlan, modulePlan, changeImpactManifest)
 
   if (!modeAgreement) {
     disagreements.push(
@@ -112,7 +162,7 @@ export function createModuleImpactShadowReport(
 
   return {
     schemaVersion: 1,
-    enforcement: 'non-blocking',
+    enforcement: 'blocking',
     authoritative: {
       mode: authoritativePlan.mode,
       roots: strings(authoritativePlan.roots).sort(),
@@ -130,6 +180,7 @@ export function createModuleImpactShadowReport(
       graphReason: modulePlan.graphReason,
       reasonChains: strings(modulePlan.reasonChains).sort()
     },
+    resolved,
     comparison: {
       modeAgreement,
       coverage: missingLanes.length === 0 ? 'covered' : 'gap',
@@ -164,39 +215,45 @@ function bulletList(values) {
 }
 
 export function formatModuleImpactShadowSummary(report) {
-  return `## Module impact shadow
+  return `## Module impact authority
 
-- Enforcement: **non-blocking**
-- Authoritative mode: **${escapeHtml(report.authoritative.mode)}**
-- Shadow mode: **${escapeHtml(report.shadow.mode)}**
-- Planned coverage: **${escapeHtml(report.comparison.coverage)}**
+- Enforcement: **${escapeHtml(report.enforcement)}**
+- Candidate mode: **${escapeHtml(report.authoritative.mode)}**
+- Module mode: **${escapeHtml(report.shadow.mode)}**
+- Resolved mode: **${escapeHtml(report.resolved.mode)}**
+- Candidate coverage: **${escapeHtml(report.comparison.coverage)}**
 - CodeGraph: **${escapeHtml(report.shadow.graphStatus)}**${report.shadow.graphReason ? ` (${escapeHtml(report.shadow.graphReason)})` : ''}
 
-### Shadow selection
+### Module selection
 
 - Modules: ${inlineList(report.shadow.modules)}
 - Tests: ${inlineList(report.shadow.testFiles)}
 - Capability overlays: ${inlineList(report.shadow.capabilityOverlays)}
 - Fallback capabilities: ${inlineList(report.shadow.fallbackCapabilities)}
 
-### Required versus authoritative lanes
+### Required versus candidate lanes
 
 - Required lanes: ${inlineList(report.comparison.requiredLanes)}
-- Selected lanes: ${inlineList(report.comparison.selectedLanes)}
+- Candidate lanes: ${inlineList(report.comparison.selectedLanes)}
+- Resolved lanes: ${inlineList(report.resolved.lanes)}
 - Missing lanes: ${inlineList(report.comparison.missingLanes)}
-- Additional authoritative lanes: ${inlineList(report.comparison.additionalAuthoritativeLanes)}
+- Additional candidate lanes: ${inlineList(report.comparison.additionalAuthoritativeLanes)}
 
-### Disagreements
+### Candidate disagreements
 
 ${bulletList(report.comparison.disagreements)}
 
-### Authoritative reason chains
+### Candidate reason chains
 
 ${bulletList(report.authoritative.reasonChains)}
 
-### Shadow reason chains
+### Module reason chains
 
 ${bulletList(report.shadow.reasonChains)}
+
+### Resolved reason chains
+
+${bulletList(report.resolved.reasonChains)}
 `
 }
 

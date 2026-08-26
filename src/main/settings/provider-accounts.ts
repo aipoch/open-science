@@ -56,6 +56,7 @@ import type { StoredProvider, StoredSettings } from './types'
 import type { XaiOAuthControllerPort } from './xai-oauth'
 import { XaiProviderAccountOwner } from './xai-provider-account-owner'
 import { ProviderModelCatalogOwner } from './provider-model-catalog-owner'
+import { assertProviderCapacity, assertProviderDraftLimits } from './provider-resource-limits'
 
 type ProviderAccountsModuleOptions = {
   repository: SettingsRepository
@@ -118,11 +119,11 @@ class ProviderAccountsModule {
     }
     return changed
   }
-
   async upsertProvider(request: UpsertProviderRequest): Promise<void> {
     return this.auth.serializeAccountMutation(() => this.upsertProviderNow(request))
   }
   private async upsertProviderNow(request: UpsertProviderRequest): Promise<void> {
+    assertProviderDraftLimits(request)
     const settings = await this.repository.getSettings()
     if (
       request.requireExisting &&
@@ -143,7 +144,7 @@ class ProviderAccountsModule {
     const existing = requestedId
       ? settings.providers.find((provider) => provider.id === requestedId)
       : undefined
-
+    assertProviderCapacity(settings.providers.length, existing !== undefined)
     const reimportCodexAuthentication =
       request.type === 'codex-shared' && request.reimportCodexAuthentication === true
     await this.auth.prepareCodexProviderUpsert(request, existing, () => {
@@ -346,14 +347,13 @@ class ProviderAccountsModule {
   async getClaudeIsolatedStatus(): Promise<ValidateProviderResult> {
     return this.auth.getClaudeIsolatedStatus()
   }
-
   async setActiveProvider(id: string, model?: string): Promise<void> {
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find((candidate) => candidate.id === id)
     await this.repository.setActiveProvider(id, this.resolveActiveModel(provider, model))
   }
-
   async validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult> {
+    if (request.draft) assertProviderDraftLimits(request.draft)
     const settings = await this.repository.getSettings()
     const resolved = this.resolveValidationTarget(request, settings)
     if (!resolved) {

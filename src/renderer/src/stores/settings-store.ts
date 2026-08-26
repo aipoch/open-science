@@ -5,6 +5,7 @@ import {
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
+  DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
   isCodexSubscriptionProvider
 } from '../../../shared/settings'
 import {
@@ -78,6 +79,7 @@ import type {
   ProviderView,
   ReasoningEffort,
   ReviewerModelConfiguration,
+  SessionDetailsModelConfiguration,
   SettingsSnapshot,
   AppIconVariant,
   SubagentModelConfiguration,
@@ -120,6 +122,8 @@ type SettingsStoreData = RuntimeSetupState &
     reasoningEffort: ReasoningEffort
     reviewerModel: ReviewerModelConfiguration
     reviewerModelPending: boolean
+    sessionDetailsModel: SessionDetailsModelConfiguration
+    sessionDetailsModelPending: boolean
     subagentModel: SubagentModelConfiguration
     subagentModelPending: boolean
     visionModel: VisionModelConfiguration | undefined
@@ -183,6 +187,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   reviewerModel: { mode: 'inherit' },
   reviewerModelPending: false,
+  sessionDetailsModel: DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
+  sessionDetailsModelPending: false,
   subagentModel: { mode: 'inherit' },
   subagentModelPending: false,
   visionModel: undefined,
@@ -207,6 +213,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   networkProxy: snapshot.networkProxy ?? DEFAULT_NETWORK_PROXY_SETTINGS,
   reasoningEffort: snapshot.reasoningEffort,
   reviewerModel: snapshot.reviewerModel ?? { mode: 'inherit' },
+  sessionDetailsModel: snapshot.sessionDetailsModel ?? DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
   subagentModel: snapshot.subagentModel ?? { mode: 'inherit' },
   visionModel: snapshot.visionModel,
   // Defensive: main always fills this, but an untyped snapshot (tests, older backends) must not

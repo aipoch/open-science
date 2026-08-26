@@ -110,6 +110,12 @@ const stopped = (
   facts: {
     turnUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3 },
     modelTurnCount: 4,
+    modelCalls: [
+      { sourceInvocationId: 'call-a', inputTokens: 3, cacheTokens: 1, outputTokens: 1 },
+      { sourceInvocationId: 'call-b', inputTokens: 2, cacheTokens: 0, outputTokens: 1 },
+      { sourceInvocationId: 'call-c', inputTokens: 3, cacheTokens: 1, outputTokens: 0 },
+      { sourceInvocationId: 'call-d', inputTokens: 2, cacheTokens: 0, outputTokens: 1 }
+    ],
     contextUsedTokens: 12,
     lastModelStepUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3 }
   }
@@ -134,6 +140,44 @@ describe('AcpPromptOutcomeFinalizer', () => {
           outputTokens: 3,
           turnCount: 4
         },
+        modelCallUsage: [
+          {
+            id: 'prompt-1:model-call:0',
+            index: 0,
+            sourceInvocationId: 'call-a',
+            inputTokens: 3,
+            cacheTokens: 1,
+            outputTokens: 1,
+            contextWindowSize: 128_000
+          },
+          {
+            id: 'prompt-1:model-call:1',
+            index: 1,
+            sourceInvocationId: 'call-b',
+            inputTokens: 2,
+            cacheTokens: 0,
+            outputTokens: 1,
+            contextWindowSize: 128_000
+          },
+          {
+            id: 'prompt-1:model-call:2',
+            index: 2,
+            sourceInvocationId: 'call-c',
+            inputTokens: 3,
+            cacheTokens: 1,
+            outputTokens: 0,
+            contextWindowSize: 128_000
+          },
+          {
+            id: 'prompt-1:model-call:3',
+            index: 3,
+            sourceInvocationId: 'call-d',
+            inputTokens: 2,
+            cacheTokens: 0,
+            outputTokens: 1,
+            contextWindowSize: 128_000
+          }
+        ],
         terminalContextWindow: {
           termination: { kind: 'stop', stopReason: 'end_turn' },
           contextWindow: { used: 12, size: 128_000 },
@@ -306,6 +350,33 @@ describe('AcpPromptOutcomeFinalizer', () => {
     expect(harness.journal.filter((entry) => entry === 'event:artifact')).toHaveLength(1)
     expect(harness.journal.indexOf('event:artifact')).toBeLessThan(
       harness.journal.indexOf('event:stop')
+    )
+  })
+
+  it('guides the user when Claude Code cannot connect to the model provider', async () => {
+    const harness = createHarness({ now: () => 321 })
+    const error = Object.assign(
+      new Error('Internal error: API Error: Unable to connect to API (ConnectionRefused)'),
+      {
+        code: -32603,
+        data: { errorKind: 'unknown' },
+        name: 'RequestError'
+      }
+    )
+
+    await expect(
+      new AcpPromptOutcomeFinalizer().finalize(harness.handles, {
+        kind: 'failed',
+        error
+      })
+    ).rejects.toBe(error)
+
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        providerError: true,
+        text: 'Could not connect to the model provider for model "test-model". Check the base URL in Settings → Model and your proxy, VPN, or firewall, then retry. Connection detail: ConnectionRefused.'
+      })
     )
   })
 

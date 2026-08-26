@@ -5,6 +5,8 @@ type SaveBlobFileRequest = {
   data: ArrayBuffer
 }
 
+const WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME = 'WebManagedFileSizeLimitError'
+
 type SaveBlobFileResult = {
   saved: boolean
   filePath?: string
@@ -70,6 +72,7 @@ type SaveProjectArtifactFailure = SaveProjectArtifactFile & {
 type SaveProjectArtifactsResult =
   { saved: false } | { saved: true; filePath?: string; failures?: SaveProjectArtifactFailure[] }
 
+export { WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME }
 export type {
   SaveBlobFileRequest,
   SaveBlobFileResult,

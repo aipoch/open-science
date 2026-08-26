@@ -26,6 +26,8 @@ import {
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import { isWindowsPlatform, listWindowsDrives } from './windows-drive-listing'
 
+const LOCAL_DIR_STAT_CONCURRENCY = 16
+
 // The slice of the granted-roots repository the feature persists through. Structural so tests can
 // inject an in-memory store; production wires the SQLite-backed GrantedLocalRootsRepository.
 export type GrantedLocalRootsStore = {
@@ -202,21 +204,26 @@ export class LocalFsService {
     const capped = truncated ? dirents.slice(0, LOCAL_DIR_ENTRY_CAP) : dirents
 
     const entries: LocalDirEntry[] = []
-    for (const dirent of capped) {
-      const isDirectory = dirent.isDirectory()
-      // Stat each entry for size/mtime; skip entries that vanish or deny access mid-listing so one
-      // unreadable file never fails the whole directory.
-      try {
-        const entryStat = await stat(join(resolvedPath, dirent.name))
-        entries.push({
-          name: dirent.name,
-          isDirectory: isDirectory || entryStat.isDirectory(),
-          size: entryStat.isDirectory() ? 0 : entryStat.size,
-          mtimeMs: Math.round(entryStat.mtimeMs)
+    for (let offset = 0; offset < capped.length; offset += LOCAL_DIR_STAT_CONCURRENCY) {
+      const batch = await Promise.all(
+        capped.slice(offset, offset + LOCAL_DIR_STAT_CONCURRENCY).map(async (dirent) => {
+          const isDirectory = dirent.isDirectory()
+          // Stat each entry for size/mtime; skip entries that vanish or deny access mid-listing so
+          // one unreadable file never fails the whole directory.
+          try {
+            const entryStat = await stat(join(resolvedPath, dirent.name))
+            return {
+              name: dirent.name,
+              isDirectory: isDirectory || entryStat.isDirectory(),
+              size: entryStat.isDirectory() ? 0 : entryStat.size,
+              mtimeMs: Math.round(entryStat.mtimeMs)
+            }
+          } catch {
+            return { name: dirent.name, isDirectory, size: 0, mtimeMs: 0 }
+          }
         })
-      } catch {
-        entries.push({ name: dirent.name, isDirectory, size: 0, mtimeMs: 0 })
-      }
+      )
+      entries.push(...batch)
     }
 
     return { entries: sortLocalEntries(entries), truncated, resolvedPath }

@@ -205,6 +205,7 @@ const api: OpenScienceAPI = {
       unwrapApplicationCommandOutcome(
         await electronRendererContracts.invoke('sessions.saveSession', session, options)
       ),
+    editDetails: (request) => electronRendererContracts.invoke('sessions.editDetails', request),
     updateArchive: (request) => electronRendererContracts.invoke('sessions.updateArchive', request),
     // Removes one session file.
     deleteSession: (request) => electronRendererContracts.invoke('sessions.deleteSession', request),
@@ -253,6 +254,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.setReasoningEffort', request),
     setReviewerModel: (request) =>
       electronRendererContracts.invoke('settings.setReviewerModel', request),
+    setSessionDetailsModel: (request) =>
+      electronRendererContracts.invoke('settings.setSessionDetailsModel', request),
     setSubagentModel: (request) =>
       electronRendererContracts.invoke('settings.setSubagentModel', request),
     setVisionModel: (request) =>

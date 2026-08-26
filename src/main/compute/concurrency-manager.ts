@@ -260,6 +260,7 @@ export class ConcurrencyManager {
       do {
         this.reconciliationRequested = false
         const queuedJobs = await this.jobRepository.findQueuedJobs()
+        const operations: Promise<void>[] = []
 
         for (const job of queuedJobs) {
           const owner = { projectId: job.project_id, sessionId: job.session_id }
@@ -291,12 +292,13 @@ export class ConcurrencyManager {
             }
           })()
           this.ownerOperations.set(operation, owner)
-          try {
-            await operation
-          } finally {
-            this.ownerOperations.delete(operation)
-          }
+          operations.push(
+            operation.finally(() => {
+              this.ownerOperations.delete(operation)
+            })
+          )
         }
+        await Promise.all(operations)
       } while (this.reconciliationRequested)
     } finally {
       this.dispatching = false

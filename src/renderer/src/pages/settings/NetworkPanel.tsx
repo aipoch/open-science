@@ -1,4 +1,4 @@
-import { EthernetPort, RefreshCw, Wifi, WifiOff } from 'lucide-react'
+import { EthernetPort, Network, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -190,12 +190,14 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   // always renders as Checking… — including an offline Retry.
   const isChecking = connectivity === 'unknown'
 
-  // Tile icon follows the actual link: WifiOff while offline, then by connection type.
+  // Tile icon follows the actual link; unknown/unclassified interfaces stay visually neutral.
   const networkIcon = !isOnline
     ? WifiOff
     : networkInfo?.connectionType === 'ethernet'
       ? EthernetPort
-      : Wifi
+      : networkInfo?.connectionType === 'wifi'
+        ? Wifi
+        : Network
 
   if (view.kind === 'proxy') return <NetworkProxyForm onDone={() => onNavigate({ kind: 'list' })} />
 

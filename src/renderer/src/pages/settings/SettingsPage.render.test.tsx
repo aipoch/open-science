@@ -799,7 +799,7 @@ describe('SettingsPage layout', () => {
       'lg:grid-cols-[minmax(0,1fr)_auto]'
     )
     expect(document.body.textContent).toContain(
-      'Models for subagents, review, and image understanding.'
+      'Models for session details, subagents, review, and image understanding.'
     )
     // The add action lives with the list as a dashed ghost row, not a section-header button.
     const addRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -1584,6 +1584,120 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('reports when post-save Provider validation does not complete', async () => {
+    installCustomProviderSnapshot()
+    const validateProvider = vi.fn().mockRejectedValue(new Error('settings IPC unavailable'))
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
+      validateProvider
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+
+    await waitFor(() => {
+      expect(validateProvider).toHaveBeenCalledWith({ providerId: 'custom-messages' })
+      expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+        'Could not test the provider connection.'
+      )
+    })
+  })
+
+  it('ignores an older post-save Provider validation failure', async () => {
+    installCustomProviderSnapshot()
+    let rejectFirstValidation: ((error: Error) => void) | undefined
+    let resolveSecondValidation: (() => void) | undefined
+    const validateProvider = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectFirstValidation = reject
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSecondValidation = resolve
+          })
+      )
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
+      validateProvider
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+    await waitFor(() => expect(validateProvider).toHaveBeenCalledTimes(1))
+
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+    await waitFor(() => expect(validateProvider).toHaveBeenCalledTimes(2))
+
+    await act(async () => rejectFirstValidation?.(new Error('stale settings IPC failure')))
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent ?? '').not.toContain(
+      'Could not test the provider connection.'
+    )
+    expect(document.body.textContent).toContain('Testing…')
+
+    await act(async () => resolveSecondValidation?.())
+    await waitFor(() => expect(document.body.textContent).not.toContain('Testing…'))
+  })
+
+  it('ignores post-save Provider validation after the provider disappears', async () => {
+    installCustomProviderSnapshot()
+    let rejectValidation: ((error: Error) => void) | undefined
+    const validateProvider = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectValidation = reject
+        })
+    )
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
+      validateProvider
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+    await waitFor(() => expect(validateProvider).toHaveBeenCalledOnce())
+
+    act(() => useSettingsStore.setState({ providers: [] }))
+    await act(async () => rejectValidation?.(new Error('deleted provider validation failure')))
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent ?? '').not.toContain(
+      'Could not test the provider connection.'
+    )
+  })
+
   it('switches to the General panel and shows the diagnostic log file', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -2264,6 +2378,8 @@ describe('SettingsPage layout', () => {
       expect(document.body.textContent).toContain('Chrome on iOS · iOS/iPadOS')
       expect(document.body.textContent).toContain('Google Chrome · Windows')
       expect(document.body.textContent).toContain('123456')
+      expect(document.body.textContent).toContain('Allow for up to 12 hours')
+      expect(document.body.textContent).not.toContain('Allow once')
       expect(document.body.textContent).toContain(
         'Two-step verification requests and trusted browsers can be managed below'
       )

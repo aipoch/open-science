@@ -540,26 +540,20 @@ describe('validateSpecialistPackage', () => {
     )
   })
 
-  it('rejects README.md and accepts README.txt as the only package guidance file', () => {
-    const rejected = validateSpecialistPackage(
+  it('accepts extra package attachments without treating them as bundled Skills', () => {
+    const result = validateSpecialistPackage(
       packageFiles(validManifest, validSpecialistJson, [
-        { path: 'README.md', bytes: encoder.encode('old guide') }
-      ]),
-      catalog,
-      'zip'
-    )
-    const accepted = validateSpecialistPackage(
-      packageFiles(validManifest, validSpecialistJson, [
-        { path: 'README.txt', bytes: encoder.encode('new guide') }
+        { path: 'README.txt', bytes: encoder.encode('new guide') },
+        { path: 'LICENSE', bytes: encoder.encode('MIT') },
+        { path: 'THIRD_PARTY_NOTICES.txt', bytes: encoder.encode('Third-party notices') },
+        { path: 'attachments/guide.pdf', bytes: encoder.encode('attachment') }
       ]),
       catalog,
       'zip'
     )
 
-    expect(rejected.preview.diagnostics).toContainEqual(
-      expect.objectContaining({ code: 'package.top-level-content-forbidden', path: 'README.md' })
-    )
-    expect(accepted.preview.installable).toBe(true)
+    expect(result.preview.installable).toBe(true)
+    expect(result.preview.summary?.skills).toEqual([])
   })
 
   it('blocks protected identities and duplicate public names', () => {

@@ -68,4 +68,17 @@ describe('describeValidation', () => {
       "This provider isn't compatible with the active agent framework."
     )
   })
+
+  it('localizes an application-generated provider resource-limit message', () => {
+    expect(
+      describeValidation(
+        {
+          ok: false,
+          category: 'unknown',
+          message: 'Provider validation response exceeded 1048576 bytes.'
+        },
+        i18next.getFixedT('zh-Hans')
+      )
+    ).toBe('服务商校验响应超过 1048576 字节。')
+  })
 })

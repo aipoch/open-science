@@ -824,7 +824,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                       disabled={busy !== null}
                       onClick={() => approve(request.id, 'once')}
                     >
-                      {t('Allow once')}
+                      {t('Allow for up to 12 hours')}
                     </Button>
                     <Button
                       type="button"

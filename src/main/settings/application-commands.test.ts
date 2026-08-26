@@ -53,6 +53,7 @@ const expectedChannels = [
   'settings:set-network-proxy',
   'settings:set-project-files-filter',
   'settings:set-reviewer-model',
+  'settings:set-session-details-model',
   'settings:set-subagent-model',
   'settings:set-vision-model',
   'settings:validate-provider'
@@ -118,7 +119,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings core application commands', () => {
-  it('installs the exact 40-command inventory and dispatches a remote-safe preflight query', async () => {
+  it('installs the exact 41-command inventory and dispatches a remote-safe preflight query', async () => {
     const { dependencies, serviceMethod } = createDependencies()
     const preflight = { agentReady: true }
     serviceMethod('getPreflight').mockResolvedValue(preflight)
@@ -172,6 +173,9 @@ describe('Settings core application commands', () => {
     await invoke('refreshProviderModels', [{ providerId: 'provider-1' }])
     await invoke('scanRepoSkills', [{ repo: 'org/repo' }])
     await invoke('setReviewerModel', [{ configuration: { mode: 'inherit' } }])
+    await invoke('setSessionDetailsModel', [
+      { configuration: { mode: 'inherit', reasoningEffort: 'low' } }
+    ])
     await invoke('setSubagentModel', [{ configuration: { mode: 'inherit' } }])
     await invoke('validateProvider', [{ providerId: 'provider-1' }])
 
@@ -190,6 +194,10 @@ describe('Settings core application commands', () => {
     })
     expect(serviceMethod('scanRepoSkills')).toHaveBeenCalledWith({ repo: 'org/repo' })
     expect(serviceMethod('setReviewerModel')).toHaveBeenCalledWith({ mode: 'inherit' })
+    expect(serviceMethod('setSessionDetailsModel')).toHaveBeenCalledWith({
+      mode: 'inherit',
+      reasoningEffort: 'low'
+    })
     expect(serviceMethod('setSubagentModel')).toHaveBeenCalledWith({ mode: 'inherit' })
     expect(serviceMethod('validateProvider')).toHaveBeenCalledWith({ providerId: 'provider-1' })
   })

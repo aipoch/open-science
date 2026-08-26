@@ -35,6 +35,7 @@ import { TagService } from './tags/service'
 import {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+  MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID,
   MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
 } from '../shared/lifecycle-events'
 
@@ -66,6 +67,7 @@ import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { createComputeIpcModule } from './compute/ipc'
+import { bindComputeApprovalSessionLifecycle } from './compute/approval-session-lifecycle'
 import type { ComputeJobOwnerLiveness } from './compute/job-deletion-owner'
 import { AgentComputeService } from './compute/agent-compute-service'
 import { createSessionCatalogHydration } from './compute/session-catalog-hydration'
@@ -213,6 +215,7 @@ import { SideChatRuntimeOwner } from './side-chat/runtime-owner'
 import { type SessionPersistenceBackend } from './session-persistence/ipc'
 import { MainMessageAttributionAuthority } from './session-persistence/message-attribution-authority'
 import { SessionDeletionOwner } from './session-deletion/owner'
+import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from './session-details/owner'
 import { tryDecryptKey } from './settings/crypto'
 import { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers } from './settings/ipc'
 import { registerLocalFsIpcHandlers } from './local-fs/ipc'
@@ -300,6 +303,7 @@ import type {
   PersistedChatSession,
   SessionSummary
 } from '../shared/session-persistence'
+import { editSessionDetailsRequestSchema } from '../shared/session-persistence'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import { withDataRootWrite } from './storage/migration-state'
@@ -516,10 +520,12 @@ const createApplicationModules = async (
   const sideChatOwnerRef: { current: SideChatRuntimeOwner | undefined } = {
     current: undefined
   }
-  const sessionRepository = createDefaultSessionRepository((projectId, sessionId) =>
-    (runtimeRef.current?.getActivePromptSessions() ?? []).some(
-      (session) => session.projectId === projectId && session.sessionId === sessionId
-    )
+  const sessionRepository = createDefaultSessionRepository(
+    (projectId, sessionId) =>
+      (runtimeRef.current?.getActivePromptSessions() ?? []).some(
+        (session) => session.projectId === projectId && session.sessionId === sessionId
+      ),
+    (projectId, sessionId) => runtimeRef.current?.hasLiveSession(projectId, sessionId) ?? false
   )
   const projectRepository = createDefaultProjectRepository()
   const previewStateRepository = createDefaultPreviewStateRepository()
@@ -1103,22 +1109,19 @@ const createApplicationModules = async (
   // the same repository while keeping their dynamic Connector/custom-Skill catalog separate.
   const specialistRepository = new SpecialistRepository(resolveStorageRoot())
   const appVersion = app.getVersion()
-  const specialistSkills = await settingsService.listSpecialistSkillCatalog()
-  const packageSkills = await specialistPackageSkillAdapter.snapshot()
+  const specialistSkills = await settingsService.listSpecialistSkillCatalog({ bundledOnly: true })
   composition.phase('specialist-catalog')
   const builtinRegistry = new BuiltinSpecialistRegistry({
     appVersion,
     builtinSkills: composeBuiltinSkillCatalog(appVersion, specialistSkills),
     skills: specialistSkills.map((skill) => {
-      const packageSkill = packageSkills.find((candidate) => candidate.id === skill.id)
       return {
         id: skill.id,
         name: skill.frameworkName,
         builtin: skill.source === 'featured',
         displayName: skill.displayName,
         source: skill.source,
-        mainEnabled: skill.mainEnabled,
-        ...(packageSkill ?? {})
+        mainEnabled: skill.mainEnabled
       }
     }),
     connectorIds: ALL_CONNECTOR_IDS,
@@ -1571,6 +1574,7 @@ const createApplicationModules = async (
         name: 'compute-job-runtime',
         capability: undefined,
         start: () => jobPoller.start(),
+        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         dispose: () => jobPoller.stop()
       }
     }
@@ -2055,7 +2059,9 @@ const createApplicationModules = async (
     appVersion: app.getVersion(),
     configRoot,
     profileNamespace: 'vision-evidence',
-    resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
+    resolveTarget: (target, context) =>
+      settingsService.resolveExplicitAgentBackend(target, context),
+    allowNativeCodexSubscription: true
   })
   void visionInferenceRunner
     .sweepStaleProfiles()
@@ -2192,6 +2198,21 @@ const createApplicationModules = async (
   })
   // ACP identity resolution and the Specialist settings IPC must use the same service instance.
   // Creating it only for settings leaves create-session unable to resolve a selected UUID.
+  const approvalSessionLifecycle = bindComputeApprovalSessionLifecycle(
+    {
+      onSessionTurnStarted: (sessionId, turnToken) =>
+        skillImportApprovalBroker.beginSessionTurn(sessionId, turnToken),
+      onSessionTurnEnded: (sessionId, turnToken) =>
+        skillImportApprovalBroker.endSessionTurn(sessionId, turnToken),
+      onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) =>
+        skillImportApprovalBroker.allowSessionTurnAttachment(sessionId, turnToken, attachmentUri),
+      onSessionCancellationRequested: (sessionId) =>
+        skillImportApprovalBroker.cancelSession(sessionId),
+      onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
+      onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll()
+    },
+    computeIpcModule.handlers
+  )
   const runtime = await modules.add(
     {
       mcpEntryPath: mainEntryPath,
@@ -2209,22 +2230,23 @@ const createApplicationModules = async (
       permissionGrantRegistry,
       taskNotifications,
       notificationInbox,
-      onSessionTurnStarted: (sessionId, turnToken) =>
-        skillImportApprovalBroker.beginSessionTurn(sessionId, turnToken),
-      onSessionTurnEnded: (sessionId, turnToken) =>
-        skillImportApprovalBroker.endSessionTurn(sessionId, turnToken),
-      onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) =>
-        skillImportApprovalBroker.allowSessionTurnAttachment(sessionId, turnToken, attachmentUri),
+      onSessionTurnStarted: approvalSessionLifecycle.onSessionTurnStarted,
+      onSessionTurnEnded: approvalSessionLifecycle.onSessionTurnEnded,
+      onSkillImportAttachmentEligible: approvalSessionLifecycle.onSkillImportAttachmentEligible,
       onTrustedMessageAttribution: (projectId, event) =>
         messageAttributionAuthority.recordRuntimeEvent(projectId, event),
-      onSessionCancellationRequested: (sessionId) =>
-        skillImportApprovalBroker.cancelSession(sessionId),
-      onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
-      onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll(),
+      onSessionCancellationRequested: approvalSessionLifecycle.onSessionCancellationRequested,
+      onSessionUnavailable: approvalSessionLifecycle.onSessionUnavailable,
+      onAllSessionsCancellationRequested:
+        approvalSessionLifecycle.onAllSessionsCancellationRequested,
+      onSessionDeleteStarted: (sessionId) =>
+        computeIpcModule.handlers.approvalBeginSessionDeletion(sessionId),
       beforeSessionDelete: async (sessionId) => {
         await sideChatOwnerRef.current?.invalidateParents([sessionId])
         await notebookService.shutdownSession(sessionId)
       },
+      afterSessionDelete: (sessionId, retained) =>
+        computeIpcModule.handlers.approvalFinishSessionDeletion(sessionId, retained),
       initializationBarrier: initialConnectorSkillsReady,
       profileService,
       sessionPersistenceCoordinator,
@@ -2752,6 +2774,104 @@ const createApplicationModules = async (
     reviewRepository,
     messageAttributionAuthority
   )
+  const sessionDetailsOwner = await modules.add(
+    {
+      appVersion: app.getVersion(),
+      configRoot,
+      settingsService,
+      sessionPersistenceBackend,
+      sessionPersistenceCoordinator
+    },
+    (dependencies) => {
+      const log = createLogger('session-details')
+      const inference = new RestrictedInferenceRunner({
+        appVersion: dependencies.appVersion,
+        configRoot: dependencies.configRoot,
+        profileNamespace: 'session-details',
+        resolveTarget: (target, context) =>
+          dependencies.settingsService.resolveExplicitAgentBackend(target, context)
+      })
+      const owner = createSessionDetailsOwner({
+        sessions: {
+          listSessions: async () =>
+            (await dependencies.sessionPersistenceBackend.loadAll()).sessions,
+          mutateSession: (projectId, sessionId, mutation) =>
+            dependencies.sessionPersistenceCoordinator.mutateSessionDetailsAuthority(
+              projectId,
+              sessionId,
+              (session) => {
+                const result = mutation(session)
+                return result.kind === 'write' ? result.session : undefined
+              }
+            )
+        },
+        targets: {
+          resolve: async (session) => {
+            const admission =
+              await dependencies.settingsService.admitSessionDetailsExecutionTarget(session)
+            if (admission.mode === 'disabled') return { mode: 'disabled' }
+            if (!inference.supportsTarget(admission.target)) return { mode: 'unavailable' }
+            return {
+              mode: 'admitted',
+              frameworkId: admission.target.frameworkId,
+              providerId: admission.target.providerId,
+              model:
+                admission.target.model.kind === 'required'
+                  ? admission.target.model.id
+                  : 'provider-default',
+              reasoningEffort: admission.target.reasoningEffort
+            }
+          }
+        },
+        inference: {
+          generate: async (request) => {
+            if (!request.target.providerId) {
+              throw new Error('Session details inference requires a provider target.')
+            }
+            const result = await inference.run({
+              prompt: buildSessionDetailsUserPrompt(request.firstMessage),
+              target: {
+                frameworkId: request.target.frameworkId,
+                providerId: request.target.providerId,
+                model: { kind: 'required', id: request.target.model },
+                reasoningEffort: request.target.reasoningEffort
+              },
+              systemPrompt: request.systemInstruction,
+              agentName: 'Session details',
+              description: 'Generate a Session title and description',
+              signal: request.signal,
+              outputLimitBytes: 8_192
+            })
+            return { output: result.text, usage: result.usage }
+          }
+        },
+        lifecycle: {
+          publish: (session) =>
+            applicationEvents.publish(LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId: MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID
+            })
+        },
+        log
+      })
+      return {
+        name: 'session-details',
+        capability: owner,
+        start: async () => {
+          await inference
+            .sweepStaleProfiles()
+            .catch((error) =>
+              log.warn('stale Session details profile cleanup failed', diagnosticErrorFields(error))
+            )
+          await owner.start()
+        },
+        dispose: async () => {
+          await owner.shutdown()
+          await inference.shutdown()
+        }
+      }
+    }
+  )
   declareElectronAdapter('specialist', () =>
     registerSpecialistIpcHandlers(
       profileService,
@@ -3067,12 +3187,17 @@ const createApplicationModules = async (
         )
     }
   })
-  declareElectronAdapter('session-persistence', () =>
+  declareElectronAdapter('session-persistence', () => {
+    ipcMainHandle('sessions:edit-details', (_event, request) => {
+      const validatedRequest = editSessionDetailsRequestSchema.parse(request)
+      return withDataRootWrite(() => sessionDetailsOwner.edit(validatedRequest))
+    })
     registerSessionPersistenceIpcHandlers(
       sessionPersistenceBackend,
       reviewRepository,
       sessionPersistenceHandlers,
       async (session) => {
+        sessionDetailsOwner.afterSessionSaved(session)
         try {
           await delegatedWork.root.wakeMessages?.(session.id)
         } catch (error) {
@@ -3083,7 +3208,7 @@ const createApplicationModules = async (
         }
       }
     )
-  )
+  })
   const conversationExportService = createConversationExportService({
     translate,
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
@@ -3265,6 +3390,12 @@ const createApplicationModules = async (
       projects: projectHandlers,
       sessions: {
         ...sessionPersistenceHandlers,
+        editDetails: (request) => sessionDetailsOwner.edit(request),
+        saveSession: async (session, options) => {
+          const result = await sessionPersistenceHandlers.saveSession(session, options)
+          sessionDetailsOwner.afterSessionSaved(result.session)
+          return result
+        },
         deleteSession: (request) => sessionDeletionOwner.delete(request)
       },
       uploads: uploadCommandOwner,

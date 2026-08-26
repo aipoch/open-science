@@ -141,6 +141,7 @@ const createDependencies = () => {
     messages: []
   }
   const sessions = {
+    editDetails: vi.fn(async () => session),
     list: vi.fn(),
     loadAll: vi.fn(),
     loadOne: vi.fn(),
@@ -218,6 +219,7 @@ const WRAPPED_COMMAND_KEYS = [
   'projectDelete',
   'projectUpdate',
   'sessionDelete',
+  'sessionEditDetails',
   'sessionExportConversation',
   'sessionList',
   'sessionLoadAll',
@@ -252,7 +254,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 52 current data and content invoke channels', () => {
+  it('owns exactly the 53 current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -287,6 +289,7 @@ describe('Data and content application commands', () => {
         'projects:list',
         'projects:update',
         'sessions:delete-session',
+        'sessions:edit-details',
         'sessions:export-conversation',
         'sessions:list',
         'sessions:load-all',
@@ -735,6 +738,12 @@ describe('Data and content application commands', () => {
     const deleteProjectRequest = { id: 'project-1' }
     const manifestRequest = { lastProjectId: 'project-1', lastSessionId: 'session-1' }
     const deleteSessionRequest = { projectId: 'project-1', sessionId: 'session-1' }
+    const editDetailsRequest = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      title: 'Edited',
+      description: 'Description'
+    }
 
     await expect(
       router.dispatcher.invoke(
@@ -771,6 +780,12 @@ describe('Data and content application commands', () => {
         invocation([deleteSessionRequest] as const)
       )
     ).resolves.toEqual({ status: 'deleted', runtimeDetached: true })
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionEditDetails,
+        invocation([editDetailsRequest] as const)
+      )
+    ).resolves.toBe(deps.session)
 
     expect(deps.projects.update).toHaveBeenCalledWith(updateRequest)
     expect(deps.projects.delete).toHaveBeenCalledWith('project-1')
@@ -780,7 +795,8 @@ describe('Data and content application commands', () => {
     expect(deps.sessions.loadUsage).toHaveBeenCalledOnce()
     expect(deps.sessions.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(deps.sessions.deleteSession).toHaveBeenCalledWith(deleteSessionRequest)
-    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(5)
+    expect(deps.sessions.editDetails).toHaveBeenCalledWith(editDetailsRequest)
+    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(6)
     expect(deps.events.publish).toHaveBeenCalledWith('project:updated', deps.project)
     expect(deps.events.publish).toHaveBeenCalledWith('project:deleted', {
       projectId: 'project-1'
@@ -858,6 +874,45 @@ describe('Data and content application commands', () => {
     expect(error).toMatchObject({ code: 'invalid-command-result' })
     expect(deps.sessions.deleteSession).toHaveBeenCalledTimes(1)
     expect(deps.events.publish).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      label: 'unknown extra field',
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        title: 'Edited',
+        description: '',
+        force: true
+      }
+    },
+    {
+      label: 'empty session id',
+      request: {
+        projectId: 'project-1',
+        sessionId: '',
+        title: 'Edited',
+        description: ''
+      }
+    },
+    {
+      label: 'missing description',
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        title: 'Edited'
+      }
+    }
+  ])('rejects a malformed Session details edit request ($label)', async ({ request }) => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    const { result: dispatched } = dispatchCommand(router, 'sessionEditDetails', [request])
+
+    await expect(dispatched).rejects.toMatchObject({ code: 'invalid-command-arguments' })
+    expect(deps.sessions.editDetails).not.toHaveBeenCalled()
   })
 
   it('keeps native and local upload/export capability restrictions and standalone invalidation', async () => {

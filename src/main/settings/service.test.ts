@@ -3386,10 +3386,11 @@ describe('SettingsService: official vendors', () => {
     mockedNet.fetch.mockClear()
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        status: 200,
-        json: () => Promise.resolve({ data: [{ id: 'deepseek-v5' }, { id: 'deepseek-v4-pro' }] })
-      })
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ data: [{ id: 'deepseek-v5' }, { id: 'deepseek-v4-pro' }] }))
+        )
     )
 
     const created = (
@@ -3652,10 +3653,11 @@ describe('SettingsService: image-input capability', () => {
     // A refresh surfaces a Claude id not shipped in the registry; it must still count as vision.
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        status: 200,
-        json: () => Promise.resolve({ data: [{ id: 'claude-opus-5-unreleased' }] })
-      })
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ data: [{ id: 'claude-opus-5-unreleased' }] }))
+        )
     )
 
     const created = (
@@ -3682,10 +3684,11 @@ describe('SettingsService: image-input capability', () => {
     // A refresh reorders Kimi's catalog so a text-only id leads, while the spawned default stays kimi-k3.
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        status: 200,
-        json: () => Promise.resolve({ data: [{ id: 'kimi-k2.7-code' }, { id: 'kimi-k3' }] })
-      })
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ data: [{ id: 'kimi-k2.7-code' }, { id: 'kimi-k3' }] }))
+        )
     )
     const created = (
       await service.upsertProvider({ type: 'official', name: 'Kimi', vendorId: 'kimi', key: 'k' })
@@ -4331,13 +4334,15 @@ describe('SettingsService: skills', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { importFromGitHub, list: () => Promise.resolve([]) } as any
     })
+    const signal = new AbortController().signal
 
-    await service.importSkill({ url: 'https://github.com/o/r/tree/main/skills/demo' })
+    await service.importSkill({ url: 'https://github.com/o/r/tree/main/skills/demo' }, signal)
 
     expect(importFromGitHub).toHaveBeenCalledWith(
       'https://github.com/o/r/tree/main/skills/demo',
       netFetch,
-      ['demo']
+      ['demo'],
+      { signal }
     )
   })
 
@@ -4349,10 +4354,11 @@ describe('SettingsService: skills', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { scanRepo } as any
     })
+    const signal = new AbortController().signal
 
-    await service.scanRepoSkills({ repo: 'o/r' })
+    await service.scanRepoSkills({ repo: 'o/r' }, signal)
 
-    expect(scanRepo).toHaveBeenCalledWith('o/r', netFetch)
+    expect(scanRepo).toHaveBeenCalledWith('o/r', netFetch, { signal })
   })
 
   it('searches GitHub repositories for keyword input without scanning a guessed repo', async () => {
@@ -4414,7 +4420,7 @@ describe('SettingsService: skills', () => {
       sourceLabel: 'github.com/o/r@main/skills/demo',
       body: '# Demo'
     })
-    expect(previewGitHubSkill).toHaveBeenCalledWith(url, netFetch)
+    expect(previewGitHubSkill).toHaveBeenCalledWith(url, netFetch, { signal: undefined })
   })
 })
 
@@ -5635,6 +5641,27 @@ describe('SettingsService: Reviewer model', () => {
 })
 
 describe('SettingsService: Vision model', () => {
+  it('persists and admits an image-capable Codex subscription model', async () => {
+    const service = createService()
+    const codex = (await service.upsertProvider({ type: 'codex-isolated' })).providers[0]
+    await repository.setAgentFramework('codex')
+    const configuration = {
+      providerId: codex.id,
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'high' as const
+    }
+
+    await expect(service.setVisionModel(configuration)).resolves.toMatchObject({
+      visionModel: configuration
+    })
+    await expect(service.admitVisionModel()).resolves.toMatchObject({
+      frameworkId: 'codex',
+      providerId: configuration.providerId,
+      model: { kind: 'required', id: 'gpt-5.6-sol' },
+      reasoningEffort: 'high'
+    })
+  })
+
   it('persists and admits one image-capable fixed target', async () => {
     const service = createService()
     const created = await service.upsertProvider({

@@ -178,6 +178,7 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       'Session',
       'PendingSessionReconciliation',
       'SessionTurnUsage',
+      'SessionModelCallUsage',
       'SessionRun',
       'SessionArtifactRef'
     ],
