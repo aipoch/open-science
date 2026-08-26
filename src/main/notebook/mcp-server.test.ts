@@ -591,6 +591,12 @@ describe('repl_execute tool', () => {
     expect(tool?.description).toContain('notebook_execute')
   })
 
+  it('directs Node module loading through the CommonJS REPL contract', () => {
+    expect(tool?.description).toContain(
+      "This is a CommonJS REPL: load Node modules with `require('node:fs')`, not dynamic `import()`."
+    )
+  })
+
   it('advertises the role-scoped subagent Host SDK on the only tool that can call it', () => {
     expect(tool?.description).toContain('Main/root agents')
     expect(tool?.description).toContain('host.help')
