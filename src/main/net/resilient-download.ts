@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream, type WriteStream } from 'node:fs'
-import { rename, rm, stat } from 'node:fs/promises'
+import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 
@@ -21,16 +21,17 @@ export type ResilientDownloadDeps = {
   rmImpl?: (path: string) => Promise<void>
   renameImpl?: (from: string, to: string) => Promise<void>
   openReadStreamImpl?: (path: string) => NodeJS.ReadableStream
+  readTextImpl?: (path: string) => Promise<string>
+  writeTextImpl?: (path: string, text: string) => Promise<void>
   sleep?: (ms: number) => Promise<void>
   now?: () => number
 }
 
 export type ResilientDownloadOpts = {
   expectedSha256?: string
-  // Expected total byte size, normally from a manifest. Short-read detection (retry a stream that
-  // closes early) needs a known total: it comes from the response Content-Length OR this field. If
-  // both are absent, a silently truncated stream is accepted without retry — callers that may hit a
-  // server or CDN redirect that strips Content-Length should always supply this from their manifest.
+  // Exact byte size, normally from a manifest. It is both the short-read target and a hard write
+  // ceiling, including response metadata and each streamed chunk. If this and Content-Length are
+  // absent, a silently truncated stream cannot be distinguished from a complete unknown-size body.
   expectedSize?: number
   maxRetries?: number
   stallTimeoutMs?: number
@@ -47,6 +48,29 @@ const MAX_BACKOFF_MS = 30_000
 // Signals that a server closed the stream before delivering all expected bytes (short read).
 class IncompleteStreamError extends Error {}
 
+// The response cannot belong to the expected representation (oversized metadata/body or an invalid
+// resume range). It is terminal for this invocation, and the untrusted partial is removed after its
+// write handle has been closed.
+class DownloadResponseIntegrityError extends Error {}
+
+type ResumeValidator = {
+  kind: 'etag' | 'last-modified'
+  value: string
+}
+
+type ResumeMetadata = {
+  version: 1
+  urlSha256: string
+  validator: ResumeValidator
+  expectedSize?: number
+}
+
+type ContentRange = {
+  start: number
+  end: number
+  total?: number
+}
+
 // Marks an error terminal so the retry loop rethrows instead of retrying. Local filesystem faults
 // (open/write/end failing with ENOSPC, EIO, EACCES, …) and rename failures are not transient network
 // problems — re-downloading will not fix a full or unwritable disk, and after a partial write the
@@ -58,6 +82,67 @@ const markTerminal = <E>(error: E): E => {
 
 const isAbortError = (e: unknown): boolean =>
   e instanceof Error && (e.name === 'AbortError' || e.name === 'TimeoutError')
+
+const strongEtag = (headers: Headers): ResumeValidator | undefined => {
+  const etag = headers.get('etag')?.trim()
+  return etag && !etag.toLowerCase().startsWith('w/') ? { kind: 'etag', value: etag } : undefined
+}
+
+const resumeValidatorFrom = (headers: Headers): ResumeValidator | undefined => {
+  const etag = strongEtag(headers)
+  if (etag) return etag
+  const lastModified = headers.get('last-modified')?.trim()
+  return lastModified ? { kind: 'last-modified', value: lastModified } : undefined
+}
+
+const parseResumeMetadata = (text: string): ResumeMetadata | undefined => {
+  try {
+    const value = JSON.parse(text) as Partial<ResumeMetadata>
+    const validator = value.validator
+    if (
+      value.version !== 1 ||
+      typeof value.urlSha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(value.urlSha256) ||
+      !validator ||
+      (validator.kind !== 'etag' && validator.kind !== 'last-modified') ||
+      typeof validator.value !== 'string' ||
+      validator.value.length === 0 ||
+      (value.expectedSize !== undefined &&
+        (!Number.isSafeInteger(value.expectedSize) || value.expectedSize < 0))
+    ) {
+      return undefined
+    }
+    return value as ResumeMetadata
+  } catch {
+    return undefined
+  }
+}
+
+const parseContentRange = (value: string | null): ContentRange | undefined => {
+  const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/i.exec(value?.trim() ?? '')
+  if (!match) return undefined
+  const start = Number(match[1])
+  const end = Number(match[2])
+  const total = match[3] === '*' ? undefined : Number(match[3])
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    start < 0 ||
+    end < start ||
+    (total !== undefined && (!Number.isSafeInteger(total) || total <= end))
+  ) {
+    return undefined
+  }
+  return { start, end, ...(total === undefined ? {} : { total }) }
+}
+
+const parseContentLength = (value: string | null): number | undefined => {
+  if (value === null) return undefined
+  const normalized = value.trim()
+  if (!/^\d+$/.test(normalized)) return undefined
+  const length = Number(normalized)
+  return Number.isSafeInteger(length) ? length : undefined
+}
 
 export const resilientDownload = async (
   url: string,
@@ -71,11 +156,15 @@ export const resilientDownload = async (
   const removeFile = d.rmImpl ?? ((p) => rm(p, { force: true }))
   const renameFile = d.renameImpl ?? rename
   const openRead = d.openReadStreamImpl ?? ((p) => createReadStream(p))
+  const readText = d.readTextImpl ?? ((p) => readFile(p, 'utf8'))
+  const writeText = d.writeTextImpl ?? ((p, text) => writeFile(p, text, 'utf8'))
   const sleep = d.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)))
   const now = d.now ?? (() => Date.now())
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES
   const stallMs = opts.stallTimeoutMs ?? DEFAULT_STALL_MS
   const partPath = `${destPath}.part`
+  const metadataPath = `${partPath}.meta`
+  const urlSha256 = createHash('sha256').update(url).digest('hex')
 
   const partSize = async (): Promise<number> => {
     try {
@@ -118,11 +207,26 @@ export const resilientDownload = async (
   // reconcile when the .part is behind the hash (partial OS flush after destroy).
   let hash = createHash('sha256')
   let hashSeededTo = 0
+  let resumeValidator: ResumeValidator | undefined
 
-  // Seed from any .part that already exists before the first attempt (e.g. a manual retry after the
-  // app was restarted; within a session this is usually 0 and is a no-op).
+  // Seed a partial retained by an earlier call only when its sidecar binds it to this exact request.
+  // Current callers scope target paths to one app session, but the helper itself does not assume that.
   {
-    const initial = await partSize()
+    let initial = await partSize()
+    if (initial > 0) {
+      const metadata = await readText(metadataPath).then(parseResumeMetadata, () => undefined)
+      if (
+        metadata?.urlSha256 === urlSha256 &&
+        metadata.expectedSize === opts.expectedSize &&
+        (opts.expectedSize == null || initial <= opts.expectedSize)
+      ) {
+        resumeValidator = metadata.validator
+      } else {
+        await removeFile(partPath)
+        await removeFile(metadataPath).catch(() => undefined)
+        initial = 0
+      }
+    }
     await seedHash(hash, initial)
     hashSeededTo = initial
   }
@@ -170,8 +274,19 @@ export const resilientDownload = async (
 
     try {
       let offset = await partSize()
+      if (offset > 0 && !resumeValidator) {
+        await removeFile(partPath)
+        await removeFile(metadataPath).catch(() => undefined)
+        offset = 0
+        hash = createHash('sha256')
+        hashSeededTo = 0
+      }
       const headers: Record<string, string> = {}
-      if (offset > 0) headers['Range'] = `bytes=${offset}-`
+      if (offset > 0) {
+        headers['Range'] = `bytes=${offset}-`
+        if (resumeValidator) headers['If-Range'] = resumeValidator.value
+      }
+      const requestedValidator = offset > 0 ? resumeValidator : undefined
 
       armStall()
       const res = await fetchImpl(url, { headers, signal: combined })
@@ -188,10 +303,49 @@ export const resilientDownload = async (
       }
       if (!res.body) throw new Error('response had no body')
 
+      const responseValidator = resumeValidatorFrom(res.headers)
+      const contentLengthHeader = res.headers.get('content-length')
+      const contentLength = parseContentLength(contentLengthHeader)
+      if (contentLengthHeader !== null && contentLength === undefined) {
+        throw new DownloadResponseIntegrityError('invalid Content-Length')
+      }
+      const contentRange =
+        res.status === 206 ? parseContentRange(res.headers.get('content-range')) : undefined
+      if (res.status === 206) {
+        if (!contentRange || contentRange.start !== offset) {
+          throw new DownloadResponseIntegrityError(`invalid Content-Range for offset ${offset}`)
+        }
+        if (
+          opts.expectedSize != null &&
+          (contentRange.end >= opts.expectedSize ||
+            (contentRange.total != null && contentRange.total > opts.expectedSize))
+        ) {
+          throw new DownloadResponseIntegrityError(
+            `Content-Range exceeds expected size ${opts.expectedSize}`
+          )
+        }
+        if (contentLength != null && contentRange.end - contentRange.start + 1 !== contentLength) {
+          throw new DownloadResponseIntegrityError(
+            'Content-Range length does not match Content-Length'
+          )
+        }
+        if (requestedValidator) {
+          const responseValue = res.headers
+            .get(requestedValidator.kind === 'etag' ? 'etag' : 'last-modified')
+            ?.trim()
+          if (responseValue && responseValue !== requestedValidator.value) {
+            throw new DownloadResponseIntegrityError(
+              `206 response validator does not match ${requestedValidator.kind}`
+            )
+          }
+        }
+      }
+
       // Server returned 200 while we had a partial — it ignored Range, so discard and restart.
       const resuming = res.status === 206 && offset > 0
       if (!resuming && offset > 0) {
         await removeFile(partPath)
+        await removeFile(metadataPath).catch(() => undefined)
         offset = 0
         // Reset the hoisted hash since we are restarting from byte 0.
         hash = createHash('sha256')
@@ -209,8 +363,32 @@ export const resilientDownload = async (
       }
       // else: hash already covers [0, offset) — no I/O needed.
 
-      const rawContentLength = Number(res.headers.get('content-length'))
-      const total = rawContentLength > 0 ? offset + rawContentLength : opts.expectedSize
+      if (!resuming) resumeValidator = responseValidator
+      if (resumeValidator) {
+        const metadata: ResumeMetadata = {
+          version: 1,
+          urlSha256,
+          validator: resumeValidator,
+          ...(opts.expectedSize === undefined ? {} : { expectedSize: opts.expectedSize })
+        }
+        try {
+          await writeText(metadataPath, `${JSON.stringify(metadata)}\n`)
+        } catch (metadataError) {
+          throw markTerminal(metadataError)
+        }
+      }
+
+      if (
+        opts.expectedSize != null &&
+        contentLength != null &&
+        offset + contentLength > opts.expectedSize
+      ) {
+        throw new DownloadResponseIntegrityError(
+          `response exceeds expected size (${offset + contentLength} > ${opts.expectedSize})`
+        )
+      }
+      const total =
+        opts.expectedSize ?? (contentLength == null ? undefined : offset + contentLength)
       const meter = new SpeedMeter({ now })
       let transferred = offset
       meter.record(transferred)
@@ -231,6 +409,11 @@ export const resilientDownload = async (
       for await (const chunk of nodeStream) {
         if (fileError) throw fileError
         const buf = Buffer.from(chunk as Uint8Array)
+        if (opts.expectedSize != null && transferred + buf.length > opts.expectedSize) {
+          throw new DownloadResponseIntegrityError(
+            `response exceeds expected size (${transferred + buf.length} > ${opts.expectedSize})`
+          )
+        }
         // Update the hash only AFTER the write is confirmed. If the write callback rejects, the hash
         // must NOT have consumed these bytes — otherwise it runs ahead of the persisted .part and,
         // when the next attempt resumes at the same offset (no re-seed), the digest is corrupted.
@@ -274,6 +457,7 @@ export const resilientDownload = async (
         // swallow that error rather than let it escape — otherwise the loop would retry with a dead
         // hash. A leftover .part is harmless (the next run re-checks or overwrites it).
         await removeFile(partPath).catch(() => undefined)
+        await removeFile(metadataPath).catch(() => undefined)
         throw new DownloadChecksumError()
       }
 
@@ -285,6 +469,7 @@ export const resilientDownload = async (
       } catch (renameError) {
         throw markTerminal(renameError)
       }
+      await removeFile(metadataPath).catch(() => undefined)
       opts.onProgress?.({
         phase: 'downloading',
         transferred,
@@ -313,7 +498,15 @@ export const resilientDownload = async (
       }
       // Terminal errors: never retry.
       if (error instanceof DownloadChecksumError) throw error
-      if ((error as { terminal?: boolean }).terminal) throw error
+      if (error instanceof DownloadResponseIntegrityError) {
+        await removeFile(partPath).catch(() => undefined)
+        await removeFile(metadataPath).catch(() => undefined)
+        throw error
+      }
+      if ((error as { terminal?: boolean }).terminal) {
+        await removeFile(metadataPath).catch(() => undefined)
+        throw error
+      }
       if (opts.signal?.aborted) throw opts.signal.reason ?? error
       if (isAbortError(error) && !controller.signal.aborted) throw error
       lastError = error
