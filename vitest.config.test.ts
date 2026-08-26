@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import vitestConfig, {
   coverageThresholdsEnabled,
   resolveVitestMaxWorkers,
+  shardCollectionEnabled,
   VITEST_ARCHITECTURE_TEST_GLOBS,
   VITEST_COVERAGE_EXCLUDE_PATTERNS,
   VITEST_EXCLUDE_PATTERNS,
@@ -25,6 +26,9 @@ it('excludes the Electron IPC composition root from coverage', () => {
 })
 
 it('defers coverage thresholds only for explicit shard collection', () => {
+  expect(shardCollectionEnabled({})).toBe(false)
+  expect(shardCollectionEnabled({ VITEST_DEFER_COVERAGE_THRESHOLDS: '1' })).toBe(true)
+  expect(shardCollectionEnabled({ VITEST_DEFER_COVERAGE_THRESHOLDS: '0' })).toBe(false)
   expect(coverageThresholdsEnabled({})).toBe(true)
   expect(coverageThresholdsEnabled({ VITEST_DEFER_COVERAGE_THRESHOLDS: '1' })).toBe(false)
   expect(coverageThresholdsEnabled({ VITEST_DEFER_COVERAGE_THRESHOLDS: '0' })).toBe(true)
