@@ -131,6 +131,19 @@ gate('python_loop.py', () => {
     }
   }, 60_000)
 
+  it('keeps the final JSON response within budget for non-ASCII names and previews', async () => {
+    const { child, send, inspect } = startLoop(pyBin as string, {})
+    try {
+      await send("globals().update({f'变量{i}': '汉' * 1000 for i in range(500)})")
+      const response = await inspect()
+
+      expect(response.namespace?.variables_truncated).toBe(true)
+      expect(Buffer.byteLength(JSON.stringify(response), 'utf8')).toBeLessThan(256 * 1024)
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
   it('executes non-ASCII source sent over the stdin protocol', async () => {
     const { child, send } = startLoop(pyBin as string, {})
     try {

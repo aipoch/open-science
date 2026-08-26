@@ -286,6 +286,33 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   })
 
+  it('drops a kernel when namespace inspection exceeds its hard timeout', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-namespace-timeout-')
+    const previousHang = process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG
+    process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG = '1'
+    const onTerminated = vi.fn()
+    const executor = new NotebookKernelExecutor({
+      pythonBin: python3,
+      pythonLoopPath: FIXTURE,
+      platform: 'linux',
+      namespaceInspectionTimeoutMs: 25,
+      onTerminated
+    })
+    try {
+      await executor.execute({ ...baseRequest(cwdDir), code: 'activate' })
+
+      await expect(
+        executor.inspectNamespace({ language: 'python', environment: DEFAULT_PY_ENV })
+      ).rejects.toThrow('namespace inspection timed out after 25ms')
+      expect(procFor(executor, 'python')).toBeUndefined()
+      expect(onTerminated).toHaveBeenCalledWith('python', DEFAULT_PY_ENV)
+    } finally {
+      if (previousHang === undefined) delete process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG
+      else process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG = previousHang
+      await executor.shutdown()
+    }
+  })
+
   it('normalizes persisted working-file paths across operating systems', () => {
     expect(
       toPortableNotebookRelativePath(

@@ -584,6 +584,69 @@ namespace_response_limit_bytes <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_N
 
 namespace_state <- new.env(parent = emptyenv())
 namespace_state$internal_names <- character()
+namespace_state$lazy_names <- character()
+
+# Base R intentionally does not expose whether an arbitrary environment binding is a promise.
+# Track direct delayedAssign() calls before they execute so the inspector can leave the common
+# case untouched. Unknown/indirect cases are still protected by the per-binding and request-level
+# inspection deadlines below.
+namespace_tracker <- base::local({
+  delayed_assign_call <- function(expr) {
+    if (!is.call(expr)) return(FALSE)
+    head <- expr[[1L]]
+    if (identical(head, as.name("delayedAssign"))) return(TRUE)
+    is.call(head) && length(head) == 3L &&
+      identical(head[[1L]], as.name("::")) &&
+      identical(head[[2L]], as.name("base")) &&
+      identical(head[[3L]], as.name("delayedAssign"))
+  }
+
+  delayed_names <- function(expr) {
+    found <- character()
+    visit <- function(node) {
+      if (!is.call(node)) return(invisible(NULL))
+      if (delayed_assign_call(node) && length(node) >= 2L &&
+          is.character(node[[2L]]) && length(node[[2L]]) == 1L) {
+        found <<- union(found, node[[2L]])
+      }
+      if (length(node) > 1L) {
+        for (index in seq.int(2L, length(node))) visit(node[[index]])
+      }
+      invisible(NULL)
+    }
+    visit(expr)
+    found
+  }
+
+  direct_written_names <- function(expr) {
+    if (!is.call(expr) || length(expr) < 2L) return(character())
+    head <- expr[[1L]]
+    head_name <- if (is.symbol(head)) as.character(head) else ""
+    if (head_name %in% c("<-", "=", "<<-") &&
+        is.symbol(expr[[2L]])) {
+      return(as.character(expr[[2L]]))
+    }
+    character()
+  }
+
+  list(
+    prepare = function(expr) {
+      namespace_state$lazy_names <- union(namespace_state$lazy_names, delayed_names(expr))
+      invisible(NULL)
+    },
+    commit = function(expr) {
+      # Only clear names for a completed, direct top-level write. Nested control flow remains
+      # conservatively marked lazy because not all paths necessarily executed.
+      if (!delayed_assign_call(expr)) {
+        namespace_state$lazy_names <- setdiff(
+          namespace_state$lazy_names,
+          direct_written_names(expr)
+        )
+      }
+      invisible(NULL)
+    }
+  )
+}, envir = base::list2env(base::list(namespace_state = namespace_state), parent = base::baseenv()))
 
 inspect_namespace <- base::local({
   limit_text_raw <- function(value, limit) {
@@ -603,21 +666,29 @@ inspect_namespace <- base::local({
   }
 
   value_type <- function(value) {
-    classes <- class(value)
-    if (length(classes) == 0L) typeof(value) else paste(classes, collapse = "/")
+    classes <- attr(value, "class", exact = TRUE)
+    if (is.null(classes)) typeof(value) else paste(classes, collapse = "/")
   }
 
   value_shape <- function(value) {
-    dimensions <- dim(value)
+    dimensions <- attr(value, "dim", exact = TRUE)
     if (!is.null(dimensions)) return(paste(dimensions, collapse = " x "))
-    if (is.atomic(value) || is.list(value)) return(paste0(length(value), " items"))
+    if (is.null(attr(value, "class", exact = TRUE)) && (is.atomic(value) || is.list(value))) {
+      return(paste0(length(value), " items"))
+    }
     NULL
   }
 
   value_preview <- function(value) {
     truncated <- FALSE
+    classes <- attr(value, "class", exact = TRUE)
     text <- if (is.null(value)) {
       "NULL"
+    } else if (!is.null(classes) && "data.frame" %in% classes) {
+      dimensions <- attr(value, "dim", exact = TRUE)
+      paste0("data.frame [", dimensions[[1L]], " x ", dimensions[[2L]], "]")
+    } else if (!is.null(classes)) {
+      paste0("<", value_type(value), ">")
     } else if (is.character(value)) {
       truncated <- length(value) > 1L
       if (length(value) == 0L) "character(0)" else value[[1L]]
@@ -625,8 +696,6 @@ inspect_namespace <- base::local({
       shown <- utils::head(value, 6L)
       truncated <- length(value) > length(shown)
       paste(as.character(shown), collapse = ", ")
-    } else if (is.data.frame(value)) {
-      paste0("data.frame [", nrow(value), " x ", ncol(value), "]")
     } else if (is.list(value)) {
       paste0("list [", length(value), "]")
     } else if (is.function(value)) {
@@ -656,18 +725,37 @@ inspect_namespace <- base::local({
           preview_base64 = encoded_text("<not evaluated>")
         )
       } else {
-        value <- get(name, envir = .GlobalEnv, inherits = FALSE)
-        preview <- value_preview(value)
-        shape <- value_shape(value)
-        item <- list(
-          name_base64 = encoded_text(name, 1024L),
-          type_base64 = encoded_text(value_type(value)),
-          preview_base64 = jsonlite::base64_enc(preview$bytes)
-        )
-        if (is.atomic(value)) item$size_bytes <- as.numeric(utils::object.size(value))
-        if (!is.null(shape)) item$shape_base64 <- encoded_text(shape)
-        if (isTRUE(preview$truncated)) item$preview_truncated <- TRUE
-        item
+        if (name %in% namespace_state$lazy_names) {
+          list(
+            name_base64 = encoded_text(name, 1024L),
+            type_base64 = encoded_text("lazy binding"),
+            preview_base64 = encoded_text("<not evaluated>")
+          )
+        } else {
+          tryCatch({
+            setTimeLimit(elapsed = 0.05, transient = TRUE)
+            value <- get(name, envir = .GlobalEnv, inherits = FALSE)
+            preview <- value_preview(value)
+            shape <- value_shape(value)
+            item <- list(
+              name_base64 = encoded_text(name, 1024L),
+              type_base64 = encoded_text(value_type(value)),
+              preview_base64 = jsonlite::base64_enc(preview$bytes)
+            )
+            if (is.atomic(value) && is.null(attr(value, "class", exact = TRUE))) {
+              item$size_bytes <- as.numeric(utils::object.size(value))
+            }
+            if (!is.null(shape)) item$shape_base64 <- encoded_text(shape)
+            if (isTRUE(preview$truncated)) item$preview_truncated <- TRUE
+            item
+          }, error = function(error) {
+            list(
+              name_base64 = encoded_text(name, 1024L),
+              type_base64 = encoded_text("unavailable"),
+              preview_base64 = encoded_text("<inspection failed>")
+            )
+          }, finally = setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE))
+        }
       }
       if (startsWith(name, ".")) entry$is_private <- TRUE
       encoded_size <- nchar(
@@ -1309,7 +1397,9 @@ run <- base::local({
           idx <- 0L
           tryCatch({
             for (idx in seq_along(exprs)) {
+              namespace_tracker$prepare(exprs[[idx]])
               res <- withVisible(eval(exprs[[idx]], envir = globalenv()))
+              namespace_tracker$commit(exprs[[idx]])
               if (isTRUE(res$visible)) print(res$value)
               mark_recorded_plot()
             }
@@ -1393,7 +1483,8 @@ run <- base::local({
     figure_total_limit_bytes = figure_total_limit_bytes,
     capture_environment = capture_environment,
     assert_no_package_mutation = assert_no_package_mutation,
-    output_sink_policy_env = output_sink_policy_env
+    output_sink_policy_env = output_sink_policy_env,
+    namespace_tracker = namespace_tracker
   ),
   parent = base::baseenv()
 ))

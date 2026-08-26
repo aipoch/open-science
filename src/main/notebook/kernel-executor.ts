@@ -83,6 +83,7 @@ type CancelIdleTimer = (handle: IdleTimerHandle) => void
 // alive until an explicit shutdown/restart or session teardown.
 const DEFAULT_IDLE_MS = 0
 const DEFAULT_CANCELLATION_GRACE_MS = 2_000
+const DEFAULT_NAMESPACE_INSPECTION_TIMEOUT_MS = 5_000
 // Queued behind an interrupted R request before its queue is released. The sleep gives a SIGINT that
 // raced with the original response an interruptible, side-effect-free request to land in.
 const R_INTERRUPT_PROBE_CODE = 'base::Sys.sleep(0.05)'
@@ -160,6 +161,9 @@ export type NotebookKernelExecutorOptions = {
   // Time allowed for a POSIX kernel to acknowledge SIGINT before its process tree is dropped. The
   // short grace preserves responsive namespaces without letting cancellation hang indefinitely.
   cancellationGraceMs?: number
+  // Hard limit for the read-only namespace request. Expiry drops the kernel because a stuck
+  // interpreter cannot safely accept another framed request.
+  namespaceInspectionTimeoutMs?: number
   // Injectable idle-timer scheduler/canceller so tests drive idle-shutdown with a fake clock instead
   // of waiting out the real idle window.
   scheduleIdleTimer?: ScheduleIdleTimer
@@ -343,6 +347,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private readonly onIdleShutdown?: (kind: KernelProcessKind, env: string) => void
   private readonly onTerminated?: (kind: KernelProcessKind, env: string) => void
   private readonly cancellationGraceMs: number
+  private readonly namespaceInspectionTimeoutMs: number
   private readonly platform: NodeJS.Platform
 
   constructor(options: NotebookKernelExecutorOptions = {}) {
@@ -355,6 +360,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     this.onIdleShutdown = options.onIdleShutdown
     this.onTerminated = options.onTerminated
     this.cancellationGraceMs = options.cancellationGraceMs ?? DEFAULT_CANCELLATION_GRACE_MS
+    this.namespaceInspectionTimeoutMs =
+      options.namespaceInspectionTimeoutMs ?? DEFAULT_NAMESPACE_INSPECTION_TIMEOUT_MS
     this.platform = options.platform ?? process.platform
   }
 
@@ -870,6 +877,20 @@ class NotebookKernelExecutor implements NotebookExecutor {
     return new Promise((resolve, reject) => {
       const pending: PendingRequest = { reqId, resolve, reject, cancelled: false }
       proc.pending = pending
+      pending.cancellationTimer = this.scheduleIdleTimer(() => {
+        pending.cancellationTimer = undefined
+        if (proc.pending !== pending) return
+        this.clearPendingResources(pending)
+        proc.pending = undefined
+        this.dropProc(proc)
+        this.killChildTracked(proc)
+        this.onTerminated?.(proc.kind, proc.env)
+        reject(
+          new Error(
+            `Notebook namespace inspection timed out after ${this.namespaceInspectionTimeoutMs}ms.`
+          )
+        )
+      }, this.namespaceInspectionTimeoutMs)
       try {
         proc.child.stdin.write(
           proc.kind === 'r'
@@ -877,6 +898,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
             : framePythonNamespaceRequest(reqId, includePrivate)
         )
       } catch (error) {
+        this.clearPendingResources(pending)
         if (proc.pending === pending) proc.pending = undefined
         this.rearmIdleTimerIfLive(proc)
         reject(error)

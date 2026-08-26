@@ -96,6 +96,9 @@ def main():
         code = request.get("code", "")
         req_id = request.get("req_id")
         if request.get("operation") == "inspect_namespace":
+            if os.environ.get("OPEN_SCIENCE_FAKE_NAMESPACE_HANG") == "1":
+                time.sleep(30)
+                continue
             include_private = request.get("include_private") is True or code == "private"
             variables = [
                 {"name": "answer", "type": "int", "size_bytes": 28, "preview": "42"}

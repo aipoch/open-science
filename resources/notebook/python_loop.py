@@ -537,7 +537,9 @@ def _inspect_namespace(include_private=False):
         shape = _namespace_shape(value)
         if shape:
             entry["shape"] = _limit_namespace_text(shape, 256)[0]
-        encoded_size = len(json.dumps(entry, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + 1
+        # Match main()'s default ensure_ascii=True serialization so non-ASCII previews cannot
+        # expand after this response-budget check.
+        encoded_size = len(json.dumps(entry, separators=(",", ":")).encode("utf-8")) + 1
         if encoded_size > remaining:
             break
         variables.append(entry)
