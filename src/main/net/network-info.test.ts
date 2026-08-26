@@ -33,6 +33,8 @@ Hardware Port: Ethernet
 Device: en6
 Hardware Port: Thunderbolt Bridge
 Device: bridge0
+Hardware Port: USB 10/100/1000 LAN
+Device: en7
 `
 
 describe('selectActiveIpv4', () => {
@@ -63,6 +65,7 @@ describe('parseHardwarePorts', () => {
     expect(ports.get('en0')).toBe('Wi-Fi')
     expect(ports.get('en6')).toBe('Ethernet')
     expect(ports.get('bridge0')).toBe('Thunderbolt Bridge')
+    expect(ports.get('en7')).toBe('USB 10/100/1000 LAN')
   })
 
   it('returns an empty map for empty output', () => {
@@ -98,6 +101,21 @@ describe('createConnectionTypeResolver', () => {
     try {
       const resolve = createConnectionTypeResolver(execFile as never)
       await expect(resolve({ bridge0: [ipv4('10.0.0.3')] })).resolves.toBe('unknown')
+    } finally {
+      Object.defineProperty(process, 'platform', originalPlatform!)
+    }
+  })
+
+  it('classifies a mapped USB LAN hardware port as ethernet', async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const execFile = vi.fn((_cmd, _args, _options, callback) => {
+      callback(null, HARDWARE_PORTS_OUTPUT, '')
+    })
+
+    try {
+      const resolve = createConnectionTypeResolver(execFile as never)
+      await expect(resolve({ en7: [ipv4('10.0.0.4')] })).resolves.toBe('ethernet')
     } finally {
       Object.defineProperty(process, 'platform', originalPlatform!)
     }

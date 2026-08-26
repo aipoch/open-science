@@ -58,8 +58,8 @@ const parseHardwarePorts = (output: string): Map<string, string> => {
 }
 
 // macOS-only classification: the active IPv4 interface's device is looked up in the hardware
-// port map. Only names explicitly identifying Wi-Fi or Ethernet are classified; other hardware
-// ports remain unknown. The
+// port map. Only names explicitly identifying Wi-Fi or a wired Ethernet/LAN port are classified;
+// other hardware ports remain unknown. The
 // hardware port list is exec'd once and the promise cached. On other platforms (or when the
 // device is virtual/unmapped or the lookup fails) classification is unknown.
 const createConnectionTypeResolver = (
@@ -96,7 +96,7 @@ const createConnectionTypeResolver = (
       const portName = (await hardwarePorts()).get(name)
       if (portName === undefined) return 'unknown'
       if (portName.includes('Wi-Fi')) return 'wifi'
-      if (portName.includes('Ethernet')) return 'ethernet'
+      if (/\b(?:Ethernet|LAN)\b/i.test(portName)) return 'ethernet'
       return 'unknown'
     }
     return 'unknown'
