@@ -61,6 +61,15 @@ export type NativeResponsesToolAliases = Map<string, NativeResponsesToolIdentity
 
 type NativeFetch = typeof fetch
 
+type NativeResponsesStreamSummary = Readonly<{
+  terminalEventType: string
+  terminalStatus?: string
+  terminalOutputItemCount: number
+  terminalMessageCount: number
+  observedFunctionCallCount: number
+  observedArtifactFunctionCallCount: number
+}>
+
 const log = createLogger('native-responses-compatibility')
 const DEFAULT_RESPONSE_HEADER_TIMEOUT_MS = 2 * 60_000
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 5 * 60_000
@@ -119,6 +128,23 @@ const upstreamResponseType = (contentType: string): 'event-stream' | 'json' | 'b
 
 const isObject = (value: unknown): value is JsonObject =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const containsText = (value: unknown, marker: string): boolean => {
+  if (typeof value === 'string') return value.includes(marker)
+  if (Array.isArray(value)) return value.some((item) => containsText(item, marker))
+  return isObject(value) && Object.values(value).some((item) => containsText(item, marker))
+}
+
+const isArtifactTool = (value: unknown, aliases: NativeResponsesToolAliases): boolean => {
+  if (!isObject(value) || typeof value.name !== 'string') return false
+  const identity =
+    typeof value.namespace === 'string'
+      ? { namespace: value.namespace, name: value.name }
+      : aliases.get(value.name)
+  return (
+    identity?.namespace === 'mcp__open_science_artifacts' && identity.name === 'write_artifact_file'
+  )
+}
 
 const namespaceAlias = (namespace: string, name: string): string => `${namespace}__${name}`
 
@@ -292,12 +318,93 @@ const copyResponseHeaders = (upstream: Response): Record<string, string> => {
   return headers
 }
 
-const rewriteSseLine = (line: string, aliases: NativeResponsesToolAliases): string => {
+const streamSummaryObserver = (
+  aliases: NativeResponsesToolAliases
+): Readonly<{
+  observe: (value: unknown) => void
+  summary: () => NativeResponsesStreamSummary | undefined
+}> => {
+  const functionCallKeys = new Set<string>()
+  const artifactFunctionCallKeys = new Set<string>()
+  let terminal:
+    | Readonly<{
+        type: string
+        status?: string
+        output: unknown[]
+      }>
+    | undefined
+
+  const observeFunctionCall = (item: unknown, outputIndex?: unknown): void => {
+    if (!isObject(item) || (item.type !== 'function_call' && item.type !== 'custom_tool_call')) {
+      return
+    }
+    const key =
+      typeof item.call_id === 'string'
+        ? `call:${item.call_id}`
+        : typeof item.id === 'string'
+          ? `id:${item.id}`
+          : typeof outputIndex === 'number'
+            ? `index:${outputIndex}`
+            : `anonymous:${functionCallKeys.size}`
+    functionCallKeys.add(key)
+    if (isArtifactTool(item, aliases)) artifactFunctionCallKeys.add(key)
+  }
+
+  const observe = (value: unknown): void => {
+    if (!isObject(value)) return
+    if (
+      (value.type === 'response.output_item.added' || value.type === 'response.output_item.done') &&
+      isObject(value.item)
+    ) {
+      observeFunctionCall(value.item, value.output_index)
+    }
+    if (
+      (value.type !== 'response.completed' &&
+        value.type !== 'response.failed' &&
+        value.type !== 'response.incomplete') ||
+      !isObject(value.response)
+    ) {
+      return
+    }
+    const output = Array.isArray(value.response.output) ? value.response.output : []
+    output.forEach((item, index) => observeFunctionCall(item, index))
+    terminal = {
+      type: value.type,
+      ...(typeof value.response.status === 'string' ? { status: value.response.status } : {}),
+      output
+    }
+  }
+
+  return {
+    observe,
+    summary: () => {
+      if (!terminal) return undefined
+      return {
+        terminalEventType: terminal.type,
+        ...(terminal.status ? { terminalStatus: terminal.status } : {}),
+        terminalOutputItemCount: terminal.output.length,
+        terminalMessageCount: terminal.output.filter(
+          (item) => isObject(item) && item.type === 'message'
+        ).length,
+        observedFunctionCallCount: functionCallKeys.size,
+        observedArtifactFunctionCallCount: artifactFunctionCallKeys.size
+      }
+    }
+  }
+}
+
+const rewriteSseLine = (
+  line: string,
+  aliases: NativeResponsesToolAliases,
+  observe: (value: unknown) => void
+): string => {
   if (!line.startsWith('data:')) return line
   const data = line.slice('data:'.length).trimStart()
   if (!data || data === '[DONE]') return line
   try {
-    return `data: ${JSON.stringify(restoreNativeResponsesPayload(JSON.parse(data), aliases))}`
+    const payload = JSON.parse(data) as unknown
+    observe(payload)
+    return `data: ${JSON.stringify(restoreNativeResponsesPayload(payload, aliases))}`
   } catch {
     return line
   }
@@ -308,21 +415,23 @@ const streamResponse = async (
   response: ServerResponse,
   aliases: NativeResponsesToolAliases,
   onActivity: () => void
-): Promise<void> => {
+): Promise<NativeResponsesStreamSummary | undefined> => {
   if (!upstream.body) throw new Error('native Responses upstream returned no body')
   response.writeHead(upstream.status, copyResponseHeaders(upstream))
   const decoder = new TextDecoder()
   let buffered = ''
+  const observer = streamSummaryObserver(aliases)
   for await (const chunk of upstream.body) {
     onActivity()
     buffered += decoder.decode(chunk, { stream: true })
     const lines = buffered.split('\n')
     buffered = lines.pop() ?? ''
-    for (const line of lines) response.write(`${rewriteSseLine(line, aliases)}\n`)
+    for (const line of lines) response.write(`${rewriteSseLine(line, aliases, observer.observe)}\n`)
   }
   buffered += decoder.decode()
-  if (buffered) response.write(rewriteSseLine(buffered, aliases))
+  if (buffered) response.write(rewriteSseLine(buffered, aliases, observer.observe))
   response.end()
+  return observer.summary()
 }
 
 const readResponseText = async (upstream: Response, onActivity: () => void): Promise<string> => {
@@ -659,6 +768,17 @@ export class NativeResponsesCompatibilityProxy {
                 Buffer.byteLength(JSON.stringify(upstreamRequestWithoutInput), 'utf8') -
                 (Object.keys(upstreamRequestWithoutInput).length > 0 ? 9 : 8)
             )
+      const inputItems = Array.isArray(upstreamInput) ? upstreamInput : []
+      const developerItems = inputItems.filter(
+        (item) => isObject(item) && item.type === 'message' && item.role === 'developer'
+      )
+      const topLevelArtifactInstructionPresent = containsText(
+        upstreamRequest.instructions,
+        '<open_science_artifact_instructions>'
+      )
+      const developerArtifactInstructionPresent = developerItems.some((item) =>
+        containsText(item.content, '<open_science_artifact_instructions>')
+      )
       log.info('native Responses compatibility request', {
         requestId,
         requestBytes,
@@ -675,6 +795,17 @@ export class NativeResponsesCompatibilityProxy {
         toolDefinitionCount: Array.isArray(upstreamRequest.tools)
           ? upstreamRequest.tools.length
           : 0,
+        developerInstructionItemCount: developerItems.length,
+        topLevelArtifactInstructionPresent,
+        developerArtifactInstructionPresent,
+        artifactInstructionPresent:
+          topLevelArtifactInstructionPresent || developerArtifactInstructionPresent,
+        artifactToolPresent:
+          Array.isArray(upstreamRequest.tools) &&
+          upstreamRequest.tools.some((tool: unknown) => isArtifactTool(tool, aliases)),
+        functionCallOutputHistoryCount: inputItems.filter(
+          (item) => isObject(item) && item.type === 'function_call_output'
+        ).length,
         promptCacheKeyPresent: promptCacheKey !== undefined,
         namespaceToolCount: aliases.size,
         stream: body.stream === true,
@@ -773,7 +904,11 @@ export class NativeResponsesCompatibilityProxy {
         response.end(snapshot.body)
       } else if (responseType === 'event-stream') {
         armStreamIdleTimeout()
-        await streamResponse(upstream, response, aliases, armStreamIdleTimeout)
+        const summary = await streamResponse(upstream, response, aliases, armStreamIdleTimeout)
+        log.info('native Responses compatibility stream completed', {
+          requestId,
+          ...(summary ?? { terminalEventType: 'missing' })
+        })
       } else if (responseType === 'json') {
         armStreamIdleTimeout()
         const payload = restoreNativeResponsesPayload(

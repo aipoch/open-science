@@ -387,6 +387,218 @@ describe('native Responses compatibility', () => {
     })
   })
 
+  it('diagnoses a completed stream that stops after a Notebook file without saving an Artifact', async () => {
+    const privateAssistantText = 'I will export the private result as an artifact:'
+    const upstream = [
+      {
+        type: 'response.output_item.done',
+        output_index: 0,
+        item: {
+          id: 'message-1',
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: privateAssistantText }]
+        }
+      },
+      {
+        type: 'response.completed',
+        response: {
+          id: 'response-1',
+          status: 'completed',
+          output: [
+            {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: privateAssistantText }]
+            }
+          ]
+        }
+      },
+      '[DONE]'
+    ]
+      .map((event) => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`)
+      .join('')
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.example/v1', model: 'model-a' },
+      vi.fn(
+        async () =>
+          new Response(upstream, {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' }
+          })
+      )
+    )
+    const connection = await proxy.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          stream: true,
+          instructions: 'base provider instructions',
+          input: [
+            {
+              type: 'message',
+              role: 'developer',
+              content: '<open_science_artifact_instructions>private guidance'
+            },
+            {
+              type: 'function_call',
+              namespace: 'mcp__open_science_notebook',
+              name: 'notebook_execute',
+              call_id: 'notebook-call-1',
+              arguments: '{}'
+            },
+            {
+              type: 'function_call_output',
+              call_id: 'notebook-call-1',
+              output: '{"workingFiles":[{"relativePath":"data/private.png"}]}'
+            }
+          ],
+          tools: [
+            {
+              type: 'namespace',
+              name: 'mcp__open_science_notebook',
+              tools: [
+                {
+                  type: 'function',
+                  name: 'notebook_execute',
+                  parameters: { type: 'object' }
+                }
+              ]
+            },
+            {
+              type: 'namespace',
+              name: 'mcp__open_science_artifacts',
+              tools: [
+                {
+                  type: 'function',
+                  name: 'write_artifact_file',
+                  parameters: { type: 'object' }
+                }
+              ]
+            }
+          ]
+        })
+      })
+
+      const responseBody = await response.text()
+      expect(response.ok, responseBody).toBe(true)
+      expect(responseBody).toContain('response.completed')
+      expect(responseBody).toContain(privateAssistantText)
+      expect(responseBody).not.toContain('write_artifact_file')
+      const requestLog = logSpies.info.mock.calls.find(
+        ([message]) => message === 'native Responses compatibility request'
+      )
+      const streamLog = logSpies.info.mock.calls.find(
+        ([message]) => message === 'native Responses compatibility stream completed'
+      )
+      expect(requestLog?.[1]).toMatchObject({
+        topLevelArtifactInstructionPresent: false,
+        developerArtifactInstructionPresent: true,
+        artifactInstructionPresent: true,
+        artifactToolPresent: true,
+        functionCallOutputHistoryCount: 1
+      })
+      expect(streamLog?.[1]).toMatchObject({
+        requestId: requestLog?.[1]?.requestId,
+        terminalEventType: 'response.completed',
+        terminalStatus: 'completed',
+        terminalOutputItemCount: 1,
+        terminalMessageCount: 1,
+        observedFunctionCallCount: 0,
+        observedArtifactFunctionCallCount: 0
+      })
+      expect(
+        JSON.stringify(Object.values(logSpies).flatMap((spy) => spy.mock.calls))
+      ).not.toContain(privateAssistantText)
+    } finally {
+      await proxy.close()
+    }
+  })
+
+  it('counts an Artifact call emitted before a sparse terminal event', async () => {
+    const artifactCall = {
+      id: 'artifact-call-item-1',
+      type: 'function_call',
+      name: 'mcp__open_science_artifacts__write_artifact_file',
+      call_id: 'artifact-call-1',
+      arguments: '{}'
+    }
+    const upstream = [
+      { type: 'response.output_item.added', output_index: 0, item: artifactCall },
+      { type: 'response.output_item.done', output_index: 0, item: artifactCall },
+      {
+        type: 'response.completed',
+        response: {
+          id: 'response-1',
+          status: 'completed',
+          output: [{ ...artifactCall, id: undefined }]
+        }
+      },
+      '[DONE]'
+    ]
+      .map((event) => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`)
+      .join('')
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.example/v1', model: 'model-a' },
+      vi.fn(
+        async () =>
+          new Response(upstream, {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' }
+          })
+      )
+    )
+    const connection = await proxy.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          stream: true,
+          input: [],
+          tools: [
+            {
+              type: 'namespace',
+              name: 'mcp__open_science_artifacts',
+              tools: [
+                {
+                  type: 'function',
+                  name: 'write_artifact_file',
+                  parameters: { type: 'object' }
+                }
+              ]
+            }
+          ]
+        })
+      })
+
+      expect(response.ok, await response.text()).toBe(true)
+      const streamLog = logSpies.info.mock.calls.find(
+        ([message]) => message === 'native Responses compatibility stream completed'
+      )
+      expect(streamLog?.[1]).toMatchObject({
+        terminalEventType: 'response.completed',
+        terminalOutputItemCount: 1,
+        observedFunctionCallCount: 1,
+        observedArtifactFunctionCallCount: 1
+      })
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('aborts a native Responses stream after the configured idle period', async () => {
     let upstreamSignal: AbortSignal | undefined
     let failUpstream: ((reason?: unknown) => void) | undefined
