@@ -843,6 +843,45 @@ describe('WorkspaceElicitationCard generic ACP form', () => {
     expect(onRespond).not.toHaveBeenCalled()
   })
 
+  it('submits an RFC3339 date-time default accepted by Main', async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    const field = {
+      id: 'scheduled-at',
+      label: 'Scheduled at',
+      kind: 'text' as const,
+      required: true,
+      format: 'date-time' as const,
+      defaultValue: '2026-08-02T12:00:00Z'
+    }
+
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{ message: 'Choose a time', fields: [field], state: 'pending' }}
+          request={{
+            requestId: 'generic-date-time-default',
+            sessionId: 'session-1',
+            toolCallId: 'tool-generic-date-time-default',
+            message: 'Choose a time',
+            fields: [field]
+          }}
+          onRespond={onRespond}
+        />
+      )
+    })
+
+    const continueButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Continue'
+    )
+    expect(continueButton?.disabled).toBe(false)
+    await act(async () => continueButton?.click())
+    expect(onRespond).toHaveBeenCalledWith({
+      requestId: 'generic-date-time-default',
+      action: 'accept',
+      answers: [{ fieldId: 'scheduled-at', value: '2026-08-02T12:00:00Z' }]
+    })
+  })
+
   it('keeps non-question form fields on the generic submit path', async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined)
     const genericFields = [

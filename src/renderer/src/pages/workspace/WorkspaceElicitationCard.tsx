@@ -85,13 +85,27 @@ const valueForSubmission = (field: ElicitationField, value: ElicitationValue): E
     ? (normalizeLocalDateTime(value) ?? value)
     : value
 
+const valueForTextInput = (
+  field: ElicitationField,
+  value: ElicitationValue | undefined
+): string => {
+  if (typeof value !== 'string' || field.format !== 'date-time') {
+    return typeof value === 'string' ? value : ''
+  }
+  if (normalizeLocalDateTime(value) || !isValidElicitationValue(field, value)) return value
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (part: number, width = 2): string => String(part).padStart(width, '0')
+  const milliseconds = date.getMilliseconds()
+  const fraction = milliseconds === 0 ? '' : `.${pad(milliseconds, 3)}`
+  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${fraction}`
+}
+
 const hasValidValue = (field: ElicitationField, value: ElicitationValue | undefined): boolean => {
   if (value === undefined) return !field.required
   if (field.required && typeof value === 'string' && value.trim().length === 0) return false
   if (field.required && Array.isArray(value) && value.length === 0) return false
-  if (field.format === 'date-time' && typeof value === 'string' && !normalizeLocalDateTime(value)) {
-    return false
-  }
   return isValidElicitationValue(field, valueForSubmission(field, value))
 }
 
@@ -847,7 +861,7 @@ const WorkspaceElicitationCard = ({
                         ? 'datetime-local'
                         : undefined
               const textProps = {
-                value: typeof value === 'string' ? value : '',
+                value: valueForTextInput(field, value),
                 disabled: isSubmitting,
                 required: field.required,
                 minLength: field.minLength,
