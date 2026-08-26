@@ -169,8 +169,8 @@ test('shows context compaction loading and completion inside the Session transcr
 test('previews and opens an Agent HTTPS source link in the isolated preview tab', async ({
   app
 }, testInfo) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   let sourceDocumentRequestCount = 0
   let releaseSourceDocument: (() => void) | undefined
   const sourceDocumentGate = new Promise<void>((resolve) => {
@@ -457,8 +457,8 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
 })
 
 test('shows the Electron failure reason when a source request fails', async ({ app }, testInfo) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   app.allowRendererConsoleError('Failed to load resource: net::ERR_CONNECTION_REFUSED')
   let sourceDocumentRequestCount = 0
   await page.route('https://citation.example/paper', async (route) => {
