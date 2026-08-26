@@ -227,6 +227,223 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).not.toContain('-top-6 h-6 bg-gradient-to-t from-rail-card-bg')
   })
 
+  it('wraps desktop Session rows in the shared delayed-preview provider only', async () => {
+    const { SESSION_HOVER_PREVIEW_DELAY_MS, SESSION_HOVER_PREVIEW_SKIP_DELAY_MS } =
+      await import('./SessionHoverPreview')
+    const desktop = await renderSidebar([createSession({ id: 'session-a' })])
+    const mobile = await renderSidebar([createSession({ id: 'session-a' })], true)
+    const desktopContainer = document.createElement('div')
+    const mobileContainer = document.createElement('div')
+    desktopContainer.innerHTML = desktop
+    mobileContainer.innerHTML = mobile
+    const desktopSessionButton = desktopContainer.querySelector('[data-slot="session-open-button"]')
+    const mobileSessionButton = mobileContainer.querySelector('[data-slot="session-open-button"]')
+
+    expect(SESSION_HOVER_PREVIEW_DELAY_MS).toBe(2_000)
+    expect(SESSION_HOVER_PREVIEW_SKIP_DELAY_MS).toBe(300)
+    expect(desktopSessionButton?.getAttribute('data-state')).toBe('closed')
+    expect(desktopSessionButton?.closest('[title="Analysis session"]')).toBeNull()
+    expect(mobileSessionButton?.getAttribute('data-state')).toBeNull()
+    expect(mobileSessionButton?.closest('[title="Analysis session"]')).not.toBeNull()
+  })
+
+  it('delays the first pointer preview and switches directly to the next Session', async () => {
+    vi.useFakeTimers()
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const pointerOver = (target: Element, relatedTarget: EventTarget | null = null): void => {
+      const event = new MouseEvent('pointerover', { bubbles: true, relatedTarget })
+      Object.defineProperty(event, 'pointerType', { value: 'mouse' })
+      target.dispatchEvent(event)
+    }
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview
+              session={{ id: 'first', title: 'First Session', description: 'First Description' }}
+            >
+              <button type="button">First trigger</button>
+            </SessionHoverPreview>
+            <SessionHoverPreview
+              session={{ id: 'second', title: 'Second Session', description: 'Second Description' }}
+            >
+              <button type="button">Second trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const [first, second] = Array.from(container.querySelectorAll('button'))
+      if (!first || !second) throw new Error('Session preview triggers did not render')
+
+      await act(async () => pointerOver(first))
+      await act(async () => vi.advanceTimersByTime(1_999))
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
+
+      await act(async () => vi.advanceTimersByTime(1))
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')?.textContent).toBe(
+        'First SessionFirst Description'
+      )
+
+      const leave = new MouseEvent('pointerout', { bubbles: true, relatedTarget: second })
+      Object.defineProperty(leave, 'pointerType', { value: 'mouse' })
+      await act(async () => first.dispatchEvent(leave))
+      await act(async () => pointerOver(second, first))
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')?.textContent).toBe(
+        'Second SessionSecond Description'
+      )
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+      vi.useRealTimers()
+    }
+  })
+
+  it('opens a Session preview immediately on keyboard focus', async () => {
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview
+              session={{
+                id: 'focused',
+                title: 'Focused Session',
+                description: 'Focused Description'
+              }}
+            >
+              <button type="button">Focus trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+
+      await act(async () => trigger.focus())
+
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')?.textContent).toBe(
+        'Focused SessionFocused Description'
+      )
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
+  it('renders full Session title and Description in the hover preview', async () => {
+    const { SessionHoverPreviewCard } = await import('./SessionHoverPreview')
+    const html = renderToStaticMarkup(
+      <SessionHoverPreviewCard
+        session={{ title: 'Complete analysis title', description: 'Compare both cohorts.' }}
+      />
+    )
+    const withoutDescription = renderToStaticMarkup(
+      <SessionHoverPreviewCard session={{ title: 'Title only', description: '   ' }} />
+    )
+
+    expect(html).toContain('data-slot="session-hover-preview"')
+    expect(html).toContain('Complete analysis title')
+    expect(html).toContain('Compare both cohorts.')
+    expect(withoutDescription).toContain('Title only')
+    expect(withoutDescription).not.toContain('<p class="mt-2')
+  })
+
+  it('scrolls only an overflowing Session title and resets it on pointer leave', async () => {
+    const { SessionTitleMarquee } = await import('./SessionHoverPreview')
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const originalMatchMedia = window.matchMedia
+    window.matchMedia = vi.fn().mockReturnValue({ matches: false })
+
+    try {
+      await act(async () => {
+        root.render(
+          <button type="button">
+            <SessionTitleMarquee title="A title wider than the Session row" />
+          </button>
+        )
+      })
+      const viewport = container.querySelector<HTMLElement>('[data-slot="session-title-marquee"]')
+      const content = viewport?.firstElementChild as HTMLElement | null
+      const trigger = viewport?.closest('button')
+      const cancel = vi.fn()
+      const animate = vi.fn().mockReturnValue({ cancel } as unknown as Animation)
+      expect(viewport).not.toBeNull()
+      expect(content).not.toBeNull()
+      if (!viewport || !content) throw new Error('Session title marquee did not render')
+      Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 100 })
+      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 180 })
+      Object.defineProperty(content, 'animate', { configurable: true, value: animate })
+
+      await act(async () => {
+        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
+      })
+      expect(animate).toHaveBeenCalledWith(
+        [{ transform: 'translateX(0)' }, { transform: 'translateX(-80px)' }],
+        expect.objectContaining({ delay: 300, duration: 2_800, fill: 'forwards' })
+      )
+
+      await act(async () => {
+        trigger?.dispatchEvent(new MouseEvent('pointerleave'))
+      })
+      expect(cancel).toHaveBeenCalledTimes(1)
+
+      animate.mockClear()
+      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 90 })
+      await act(async () => {
+        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
+      })
+      expect(animate).not.toHaveBeenCalled()
+    } finally {
+      act(() => root.unmount())
+      window.matchMedia = originalMatchMedia
+    }
+  })
+
+  it('keeps overflowing Session titles still when reduced motion is requested', async () => {
+    const { SessionTitleMarquee } = await import('./SessionHoverPreview')
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const originalMatchMedia = window.matchMedia
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true })
+
+    try {
+      await act(async () => {
+        root.render(
+          <button type="button">
+            <SessionTitleMarquee title="A title wider than the Session row" />
+          </button>
+        )
+      })
+      const viewport = container.querySelector<HTMLElement>('[data-slot="session-title-marquee"]')
+      const content = viewport?.firstElementChild as HTMLElement | null
+      const trigger = viewport?.closest('button')
+      const animate = vi.fn()
+      if (!viewport || !content) throw new Error('Session title marquee did not render')
+      Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 100 })
+      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 180 })
+      Object.defineProperty(content, 'animate', { configurable: true, value: animate })
+
+      await act(async () => {
+        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
+      })
+      expect(animate).not.toHaveBeenCalled()
+    } finally {
+      act(() => root.unmount())
+      window.matchMedia = originalMatchMedia
+    }
+  })
+
   it('docks the update action on the row above Settings', async () => {
     useUpdateStore.setState({
       status: { state: 'available', current: '0.2.0', latest: '0.3.0' }
@@ -734,7 +951,7 @@ describe('WorkspaceSidebar accessible render', () => {
     const notebookButton = elements.find(
       (element) =>
         element.type === 'button' &&
-        getTextContent(element).includes('Notebook review') &&
+        element.props['data-slot'] === 'session-open-button' &&
         typeof element.props.onClick === 'function'
     )
     const renameItems = elements.filter((element) => getTextContent(element).trim() === 'Edit…')

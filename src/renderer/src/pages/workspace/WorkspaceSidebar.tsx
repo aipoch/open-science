@@ -35,6 +35,11 @@ import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import { NotificationBell } from '@/components/NotificationBell'
 
 import { projectPresentedSessionActionability } from './session-wait-reason'
+import {
+  SessionHoverPreview,
+  SessionHoverPreviewProvider,
+  SessionTitleMarquee
+} from './SessionHoverPreview'
 
 type WorkspaceSidebarProps = {
   projectName: string
@@ -424,198 +429,221 @@ const WorkspaceSidebarView = ({
 
           <div className="mx-2 my-1 h-px bg-border-300/15" />
 
-          <div className="min-h-0 flex-1 overflow-y-auto py-1">
-            {sections.map((section) => (
-              <div key={section.label}>
-                <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-muted-foreground">
-                  {t(section.label)}
-                </div>
-                {section.items.map((session) => {
-                  const isActive = session.id === activeSessionId
-                  const shortcutNumber = shortcutNumberBySessionId.get(session.id)
-                  const presentedStatus = getPresentedSessionStatus(session)
-                  const isExportDisabled =
-                    (session.activeMessageCount ?? session.messages.length) === 0 ||
-                    presentedStatus === 'running' ||
-                    presentedStatus === 'waiting-for-user' ||
-                    presentedStatus === 'waiting-permission' ||
-                    presentedStatus === 'waiting-plan-approval'
-
-                  return (
-                    <div
-                      key={session.id}
-                      className={cn(sessionRowClassName, isActive && 'bg-bg-300 text-text-000')}
-                      title={session.title}
-                    >
-                      <div className="flex w-full min-w-0 items-center">
-                        <button
-                          type="button"
-                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
-                          aria-current={isActive ? 'page' : undefined}
-                          aria-keyshortcuts={
-                            shortcutNumber
-                              ? `${isMac ? 'Meta' : 'Control'}+${shortcutNumber}`
-                              : undefined
-                          }
-                          onClick={() => onOpenSession(session.id)}
+          <SessionHoverPreviewProvider>
+            <div className="min-h-0 flex-1 overflow-y-auto py-1">
+              {sections.map((section) => (
+                <div key={section.label}>
+                  <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-muted-foreground">
+                    {t(section.label)}
+                  </div>
+                  {section.items.map((session) => {
+                    const isActive = session.id === activeSessionId
+                    const shortcutNumber = shortcutNumberBySessionId.get(session.id)
+                    const presentedStatus = getPresentedSessionStatus(session)
+                    const isExportDisabled =
+                      (session.activeMessageCount ?? session.messages.length) === 0 ||
+                      presentedStatus === 'running' ||
+                      presentedStatus === 'waiting-for-user' ||
+                      presentedStatus === 'waiting-permission' ||
+                      presentedStatus === 'waiting-plan-approval'
+                    const openSessionButton = (
+                      <button
+                        type="button"
+                        data-slot="session-open-button"
+                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
+                        aria-current={isActive ? 'page' : undefined}
+                        aria-keyshortcuts={
+                          shortcutNumber
+                            ? `${isMac ? 'Meta' : 'Control'}+${shortcutNumber}`
+                            : undefined
+                        }
+                        onClick={() => onOpenSession(session.id)}
+                      >
+                        <span
+                          className="inline-flex size-3 shrink-0 items-center justify-center"
+                          aria-hidden="true"
                         >
                           <span
-                            className="inline-flex size-3 shrink-0 items-center justify-center"
-                            aria-hidden="true"
-                          >
-                            <span
-                              className={cn(
-                                'size-[7px] shrink-0 rounded-full',
-                                sessionStatusDotClassName[presentedStatus]
-                              )}
-                            />
-                          </span>
-                          <span className="sr-only">
-                            {t('Session status: {{status}}', {
-                              status: t(sessionStatusLabelKeys[presentedStatus])
-                            })}
-                          </span>
-                          <span
                             className={cn(
-                              'min-w-0 flex-1 overflow-hidden whitespace-nowrap',
-                              section.label === 'Active' &&
-                                presentedStatus !== 'idle' &&
-                                'font-semibold'
+                              'size-[7px] shrink-0 rounded-full',
+                              sessionStatusDotClassName[presentedStatus]
                             )}
-                          >
-                            {session.title}
-                          </span>
-                          {showSessionShortcuts && shortcutNumber ? (
-                            <kbd
-                              aria-hidden="true"
-                              className="relative z-[2] mr-5 shrink-0 rounded-full bg-bg-300 px-1.5 py-0.5 font-sans text-[11px] font-medium leading-none tabular-nums text-text-100"
-                            >
-                              {isMac ? `⌘${shortcutNumber}` : `Ctrl+${shortcutNumber}`}
-                            </kbd>
-                          ) : null}
-                        </button>
-
-                        <span
-                          aria-hidden="true"
+                          />
+                        </span>
+                        <span className="sr-only">
+                          {t('Session status: {{status}}', {
+                            status: t(sessionStatusLabelKeys[presentedStatus])
+                          })}
+                        </span>
+                        <SessionTitleMarquee
+                          title={session.title}
                           className={cn(
-                            'pointer-events-none absolute inset-y-0 right-0 z-[1] w-12 rounded-r-md bg-gradient-to-r from-transparent via-rail-card-bg to-rail-card-bg group-hover:via-bg-300 group-hover:to-bg-300',
-                            isActive && 'via-bg-300 to-bg-300'
+                            section.label === 'Active' &&
+                              presentedStatus !== 'idle' &&
+                              'font-semibold'
                           )}
                         />
-
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              type="button"
-                              className={cn(sessionRowActionClassName, mobileMode && 'opacity-100')}
-                              aria-label={t('Open actions for {{title}}', { title: session.title })}
-                            >
-                              <span
-                                className="flex size-3.5 items-center justify-center"
-                                aria-hidden="true"
-                              >
-                                <MoreVertical className="size-3.5" strokeWidth={2} />
-                              </span>
-                            </button>
-                          </DropdownMenuTrigger>
-                          {/* Session action menu: uses shadcn default light-surface tokens. */}
-                          <DropdownMenuContent
-                            aria-label={t('Session actions')}
-                            className={cn('min-w-[9rem]', mobileMode && 'z-[80]')}
-                            side="right"
-                            align="start"
-                            sideOffset={6}
+                        {showSessionShortcuts && shortcutNumber ? (
+                          <kbd
+                            aria-hidden="true"
+                            className="relative z-[2] mr-5 shrink-0 rounded-full bg-bg-300 px-1.5 py-0.5 font-sans text-[11px] font-medium leading-none tabular-nums text-text-100"
                           >
-                            {/* Pin / Unpin toggles the conversation into or out of the pinned section. */}
-                            <DropdownMenuItem
-                              className="gap-2"
-                              disabled={!canMutateConversations}
-                              onSelect={() => onTogglePin(session)}
-                            >
-                              <span className={sessionMenuIconClassName}>
-                                {session.pinned ? (
-                                  <PinOff className="size-4" strokeWidth={2} aria-hidden="true" />
-                                ) : (
-                                  <Pin className="size-4" strokeWidth={2} aria-hidden="true" />
+                            {isMac ? `⌘${shortcutNumber}` : `Ctrl+${shortcutNumber}`}
+                          </kbd>
+                        ) : null}
+                      </button>
+                    )
+
+                    return (
+                      <div
+                        key={session.id}
+                        className={cn(sessionRowClassName, isActive && 'bg-bg-300 text-text-000')}
+                        title={mobileMode ? session.title : undefined}
+                      >
+                        <div className="flex w-full min-w-0 items-center">
+                          {mobileMode ? (
+                            openSessionButton
+                          ) : (
+                            <SessionHoverPreview session={session}>
+                              {openSessionButton}
+                            </SessionHoverPreview>
+                          )}
+
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              'pointer-events-none absolute inset-y-0 right-0 z-[1] w-12 rounded-r-md bg-gradient-to-r from-transparent via-rail-card-bg to-rail-card-bg group-hover:via-bg-300 group-hover:to-bg-300',
+                              isActive && 'via-bg-300 to-bg-300'
+                            )}
+                          />
+
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                type="button"
+                                className={cn(
+                                  sessionRowActionClassName,
+                                  mobileMode && 'opacity-100'
                                 )}
-                              </span>
-                              {session.pinned ? t('Unpin') : t('Pin')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="gap-2"
-                              disabled={!canMutateConversations}
-                              onSelect={() => onRenameSession(session)}
+                                aria-label={t('Open actions for {{title}}', {
+                                  title: session.title
+                                })}
+                              >
+                                <span
+                                  className="flex size-3.5 items-center justify-center"
+                                  aria-hidden="true"
+                                >
+                                  <MoreVertical className="size-3.5" strokeWidth={2} />
+                                </span>
+                              </button>
+                            </DropdownMenuTrigger>
+                            {/* Session action menu: uses shadcn default light-surface tokens. */}
+                            <DropdownMenuContent
+                              aria-label={t('Session actions')}
+                              className={cn('min-w-[9rem]', mobileMode && 'z-[80]')}
+                              side="right"
+                              align="start"
+                              sideOffset={6}
                             >
-                              <span className={sessionMenuIconClassName}>
-                                <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
-                              </span>
-                              {t('Edit…')}
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            {canDownloadArtifacts ? (
+                              {/* Pin / Unpin toggles the conversation into or out of the pinned section. */}
                               <DropdownMenuItem
                                 className="gap-2"
-                                onSelect={() => onDownloadArtifacts(session)}
+                                disabled={!canMutateConversations}
+                                onSelect={() => onTogglePin(session)}
                               >
                                 <span className={sessionMenuIconClassName}>
-                                  <Download className="size-4" strokeWidth={2} aria-hidden="true" />
+                                  {session.pinned ? (
+                                    <PinOff className="size-4" strokeWidth={2} aria-hidden="true" />
+                                  ) : (
+                                    <Pin className="size-4" strokeWidth={2} aria-hidden="true" />
+                                  )}
                                 </span>
-                                {t('Download all artifacts')}
+                                {session.pinned ? t('Unpin') : t('Pin')}
                               </DropdownMenuItem>
-                            ) : null}
-                            <DropdownMenuItem
-                              className="gap-2"
-                              onSelect={() => onViewNotebook(session)}
-                            >
-                              <span className={sessionMenuIconClassName}>
-                                <BookOpen className="size-4" strokeWidth={2} aria-hidden="true" />
-                              </span>
-                              {t('View notebook')}
-                            </DropdownMenuItem>
-                            {onExportSession ? (
                               <DropdownMenuItem
                                 className="gap-2"
-                                disabled={isExportDisabled}
-                                onSelect={() => onExportSession(session)}
+                                disabled={!canMutateConversations}
+                                onSelect={() => onRenameSession(session)}
                               >
                                 <span className={sessionMenuIconClassName}>
-                                  <Download className="size-4" strokeWidth={2} aria-hidden="true" />
+                                  <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
                                 </span>
-                                {t('Export conversation…')}
+                                {t('Edit…')}
                               </DropdownMenuItem>
-                            ) : null}
-                            <DropdownMenuItem
-                              className="gap-2"
-                              disabled={!canArchiveSession?.(session)}
-                              onSelect={() => onArchiveSession?.(session)}
-                            >
-                              <span className={sessionMenuIconClassName}>
-                                <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
-                              </span>
-                              {/* The verb. Bare 'Archive' is the noun (a .zip) in the file browser. */}
-                              {t('Archive', { context: 'verb' })}
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            {/* Delete uses the project's danger token pair for light surfaces. */}
-                            <DropdownMenuItem
-                              className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
-                              disabled={!canDeleteConversations}
-                              onSelect={() => onDeleteSession(session)}
-                            >
-                              <span className={sessionMenuIconClassName}>
-                                <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
-                              </span>
-                              {t('Delete')}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                              <DropdownMenuSeparator />
+                              {canDownloadArtifacts ? (
+                                <DropdownMenuItem
+                                  className="gap-2"
+                                  onSelect={() => onDownloadArtifacts(session)}
+                                >
+                                  <span className={sessionMenuIconClassName}>
+                                    <Download
+                                      className="size-4"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                  </span>
+                                  {t('Download all artifacts')}
+                                </DropdownMenuItem>
+                              ) : null}
+                              <DropdownMenuItem
+                                className="gap-2"
+                                onSelect={() => onViewNotebook(session)}
+                              >
+                                <span className={sessionMenuIconClassName}>
+                                  <BookOpen className="size-4" strokeWidth={2} aria-hidden="true" />
+                                </span>
+                                {t('View notebook')}
+                              </DropdownMenuItem>
+                              {onExportSession ? (
+                                <DropdownMenuItem
+                                  className="gap-2"
+                                  disabled={isExportDisabled}
+                                  onSelect={() => onExportSession(session)}
+                                >
+                                  <span className={sessionMenuIconClassName}>
+                                    <Download
+                                      className="size-4"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                  </span>
+                                  {t('Export conversation…')}
+                                </DropdownMenuItem>
+                              ) : null}
+                              <DropdownMenuItem
+                                className="gap-2"
+                                disabled={!canArchiveSession?.(session)}
+                                onSelect={() => onArchiveSession?.(session)}
+                              >
+                                <span className={sessionMenuIconClassName}>
+                                  <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
+                                </span>
+                                {/* The verb. Bare 'Archive' is the noun (a .zip) in the file browser. */}
+                                {t('Archive', { context: 'verb' })}
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              {/* Delete uses the project's danger token pair for light surfaces. */}
+                              <DropdownMenuItem
+                                className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
+                                disabled={!canDeleteConversations}
+                                onSelect={() => onDeleteSession(session)}
+                              >
+                                <span className={sessionMenuIconClassName}>
+                                  <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
+                                </span>
+                                {t('Delete')}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </div>
-                    </div>
-                  )
-                })}
-              </div>
-            ))}
-          </div>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+          </SessionHoverPreviewProvider>
 
           <div className="relative shrink-0 px-2 pt-2">
             <div
