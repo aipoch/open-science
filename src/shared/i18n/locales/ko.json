@@ -578,6 +578,8 @@
     "Could not add that interpreter.": "해당 인터프리터를 추가할 수 없습니다.",
     "Could not archive project.": "프로젝트를 보관하지 못했습니다.",
     "Could not cancel the setup.": "설정을 취소할 수 없습니다.",
+    "Could not change folder access.": "폴더 접근 권한을 변경할 수 없습니다.",
+    "Could not remove folder access.": "폴더 접근 권한을 제거할 수 없습니다.",
     "Could not change package-install authorization.": "패키지 설치 권한을 변경할 수 없습니다.",
     "Could not change that runtime.": "런타임을 변경할 수 없습니다.",
     "Could not check the data folder. Try again.": "데이터 폴더를 확인할 수 없습니다. 다시 시도해 보세요.",

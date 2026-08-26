@@ -589,6 +589,8 @@
     "Could not add that interpreter.": "Не удалось добавить интерпретатор.",
     "Could not archive project.": "Не удалось архивировать проект.",
     "Could not cancel the setup.": "Не удалось отменить настройку.",
+    "Could not change folder access.": "Не удалось изменить доступ к папке.",
+    "Could not remove folder access.": "Не удалось удалить доступ к папке.",
     "Could not change package-install authorization.": "Не удалось изменить разрешение на установку пакетов.",
     "Could not change that runtime.": "Не удалось изменить эту среду выполнения.",
     "Could not check the data folder. Try again.": "Не удалось проверить папку с данными. Попробуйте снова.",

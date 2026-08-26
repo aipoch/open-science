@@ -630,6 +630,8 @@
     "Could not add that interpreter.": "无法添加该解释器。",
     "Could not archive project.": "无法归档项目。",
     "Could not cancel the setup.": "无法取消该设置流程。",
+    "Could not change folder access.": "无法更改文件夹访问权限。",
+    "Could not remove folder access.": "无法移除文件夹访问权限。",
     "Could not change package-install authorization.": "无法更改软件包安装授权。",
     "Could not change that runtime.": "无法更改该运行时。",
     "Could not check the data folder. Try again.": "无法检查数据文件夹。请重试。",

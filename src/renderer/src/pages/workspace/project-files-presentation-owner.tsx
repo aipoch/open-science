@@ -443,20 +443,20 @@ const GrantedRootMenuRow = ({
   root,
   isSelected,
   onSelect,
-  onCloseMenu
+  onCloseMenu,
+  onMutation
 }: {
   root: GrantedLocalRoot
   isSelected: boolean
   onSelect: (root: GrantedLocalRoot) => void
   onCloseMenu: () => void
+  onMutation: (kind: 'change' | 'remove', mutation: () => Promise<unknown>) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const setAccess = useGrantedFoldersStore((state) => state.setAccess)
   const remove = useGrantedFoldersStore((state) => state.remove)
 
-  // The whole row is the submenu trigger: hovering it opens the manage submenu (Radix hover
-  // intent), while clicking still selects the folder. Clicking a sub-trigger would normally open
-  // the submenu instead, so the click is default-prevented and the menu closed manually.
+  // Hover opens the submenu; click selects the folder and closes the parent menu explicitly.
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger asChild>
@@ -508,7 +508,7 @@ const GrantedRootMenuRow = ({
           <DropdownMenuItem
             className="gap-2"
             data-testid={`granted-root-allow-writes-${root.id}`}
-            onSelect={() => void setAccess(root.id, 'rw').catch(() => undefined)}
+            onSelect={() => onMutation('change', () => setAccess(root.id, 'rw'))}
           >
             <LockOpen
               className="size-4 shrink-0 text-text-300"
@@ -521,7 +521,7 @@ const GrantedRootMenuRow = ({
           <DropdownMenuItem
             className="gap-2"
             data-testid={`granted-root-make-read-only-${root.id}`}
-            onSelect={() => void setAccess(root.id, 'ro').catch(() => undefined)}
+            onSelect={() => onMutation('change', () => setAccess(root.id, 'ro'))}
           >
             <Lock className="size-4 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
             <span>{t('Make read-only')}</span>
@@ -530,7 +530,7 @@ const GrantedRootMenuRow = ({
         <DropdownMenuItem
           className="gap-2 text-danger-000 data-[highlighted]:text-danger-000"
           data-testid={`granted-root-remove-${root.id}`}
-          onSelect={() => void remove(root.id).catch(() => undefined)}
+          onSelect={() => onMutation('remove', () => remove(root.id))}
         >
           <Trash2 className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
           <span>{t('Remove access')}</span>
@@ -540,8 +540,7 @@ const GrantedRootMenuRow = ({
   )
 }
 
-// Keeps all/uploads filters fixed while session choices expand through their own group-header cursor,
-// preventing menu exploration from advancing any file collection shown in the content area.
+// Session choices paginate independently so menu exploration never advances the visible files.
 const ProjectFilesFilterMenu = ({
   label,
   options,
@@ -557,6 +556,7 @@ const ProjectFilesFilterMenu = ({
   onBrowseLocal,
   onAddFolder,
   onSelectGrantedRoot,
+  onGrantedRootMutation,
   localMachineName,
   isLocalSelected,
   selectedLocalRootId
@@ -575,9 +575,9 @@ const ProjectFilesFilterMenu = ({
   onBrowseLocal: () => void
   onAddFolder: () => void
   onSelectGrantedRoot: (root: GrantedLocalRoot) => void
+  onGrantedRootMutation: (kind: 'change' | 'remove', mutation: () => Promise<unknown>) => void
   localMachineName: string | undefined
   isLocalSelected: boolean
-  // Id of the granted folder the local browser is scoped to; undefined means the machine itself.
   selectedLocalRootId: string | undefined
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -595,7 +595,6 @@ const ProjectFilesFilterMenu = ({
   const selectedLocalRoot = selectedLocalRootId
     ? grantedRoots.find((root) => root.id === selectedLocalRootId)
     : undefined
-  // The machine row is checked only when the local browser is not scoped to a granted folder.
   const isMachineSelected = isLocalSelected && selectedLocalRoot === undefined
 
   useEffect(() => {
@@ -725,6 +724,7 @@ const ProjectFilesFilterMenu = ({
               isSelected={root.id === selectedLocalRootId}
               onSelect={onSelectGrantedRoot}
               onCloseMenu={() => setMenuOpen(false)}
+              onMutation={onGrantedRootMutation}
             />
           ))}
           <DropdownMenuItem

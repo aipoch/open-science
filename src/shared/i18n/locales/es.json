@@ -598,6 +598,8 @@
     "Could not add that interpreter.": "No se pudo agregar ese intérprete.",
     "Could not archive project.": "No se pudo archivar el proyecto.",
     "Could not cancel the setup.": "No se pudo cancelar la configuración.",
+    "Could not change folder access.": "No se pudo cambiar el acceso a la carpeta.",
+    "Could not remove folder access.": "No se pudo eliminar el acceso a la carpeta.",
     "Could not change package-install authorization.": "No se pudo cambiar la autorización de instalación del paquete.",
     "Could not change that runtime.": "No se pudo cambiar ese entorno de ejecución.",
     "Could not check the data folder. Try again.": "No se pudo comprobar la carpeta de datos. Inténtelo de nuevo.",

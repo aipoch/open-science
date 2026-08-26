@@ -4383,6 +4383,74 @@ describe('ProjectFilesView — granted local folders', () => {
     expect(useGrantedFoldersStore.getState().roots).toEqual([])
   })
 
+  it('shows the failed access change and retries it from the toast', async () => {
+    setGrantedRootAccess.mockRejectedValueOnce(new Error('database unavailable'))
+    await renderFilesView()
+    await openFilterMenu()
+    await hoverElement(document.body.querySelector('[data-testid="granted-root-root-1"]'))
+
+    await waitFor(() => {
+      expect(
+        document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
+      ).not.toBeNull()
+    })
+    await clickElement(
+      document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
+    )
+    expect(setGrantedRootAccess).toHaveBeenCalledWith({ id: 'root-1', access: 'rw' })
+
+    await waitFor(() => {
+      expect(document.body.querySelector('[data-testid="granted-root-error-toast"]')).not.toBeNull()
+    })
+    const toast = document.body.querySelector('[data-testid="granted-root-error-toast"]')
+    expect(toast?.textContent).toContain('Could not change folder access.')
+    expect(toast?.textContent).toContain('database unavailable')
+    expect(useGrantedFoldersStore.getState().roots[0]?.access).toBe('ro')
+
+    await clickElement(
+      Array.from(toast?.querySelectorAll('button') ?? []).find(
+        (button) => button.textContent === 'Retry'
+      )
+    )
+
+    expect(setGrantedRootAccess).toHaveBeenCalledTimes(2)
+    expect(useGrantedFoldersStore.getState().roots[0]?.access).toBe('rw')
+    expect(document.body.querySelector('[data-testid="granted-root-error-toast"]')).toBeNull()
+  })
+
+  it('shows the failed access removal and retries it from the toast', async () => {
+    removeGrantedRoot.mockRejectedValueOnce(new Error('database unavailable'))
+    await renderFilesView()
+    await openFilterMenu()
+    await hoverElement(document.body.querySelector('[data-testid="granted-root-root-1"]'))
+
+    await waitFor(() => {
+      expect(
+        document.body.querySelector('[data-testid="granted-root-remove-root-1"]')
+      ).not.toBeNull()
+    })
+    await clickElement(document.body.querySelector('[data-testid="granted-root-remove-root-1"]'))
+    expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
+
+    await waitFor(() => {
+      expect(document.body.querySelector('[data-testid="granted-root-error-toast"]')).not.toBeNull()
+    })
+    const toast = document.body.querySelector('[data-testid="granted-root-error-toast"]')
+    expect(toast?.textContent).toContain('Could not remove folder access.')
+    expect(toast?.textContent).toContain('database unavailable')
+    expect(useGrantedFoldersStore.getState().roots).toEqual([grantedRoot])
+
+    await clickElement(
+      Array.from(toast?.querySelectorAll('button') ?? []).find(
+        (button) => button.textContent === 'Retry'
+      )
+    )
+
+    expect(removeGrantedRoot).toHaveBeenCalledTimes(2)
+    expect(useGrantedFoldersStore.getState().roots).toEqual([])
+    expect(document.body.querySelector('[data-testid="granted-root-error-toast"]')).toBeNull()
+  })
+
   it('opens the manage submenu when the row itself is hovered', async () => {
     await renderFilesView()
     await openFilterMenu()

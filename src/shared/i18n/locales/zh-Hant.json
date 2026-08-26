@@ -629,6 +629,8 @@
     "Could not add that interpreter.": "無法新增該解譯器。",
     "Could not archive project.": "無法封存專案。",
     "Could not cancel the setup.": "無法取消該設定流程。",
+    "Could not change folder access.": "無法變更資料夾存取權限。",
+    "Could not remove folder access.": "無法移除資料夾存取權限。",
     "Could not change package-install authorization.": "無法變更套件安裝授權。",
     "Could not change that runtime.": "無法變更該執行環境。",
     "Could not check the data folder. Try again.": "無法檢查資料夾。請再試一次。",

@@ -559,6 +559,8 @@
     "Could not add that interpreter.": "そのインタープリターを追加できませんでした。",
     "Could not archive project.": "プロジェクトをアーカイブできませんでした。",
     "Could not cancel the setup.": "セットアップをキャンセルできませんでした。",
+    "Could not change folder access.": "フォルダーのアクセス権を変更できませんでした。",
+    "Could not remove folder access.": "フォルダーへのアクセス権を削除できませんでした。",
     "Could not change package-install authorization.": "パッケージのインストール権限を変更できませんでした。",
     "Could not change that runtime.": "そのランタイムを変更できませんでした。",
     "Could not check the data folder. Try again.": "データフォルダーを確認できませんでした。もう一度やり直してください。",
