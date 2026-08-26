@@ -851,7 +851,7 @@ describe('WorkspaceElicitationCard generic ACP form', () => {
       kind: 'text' as const,
       required: true,
       format: 'date-time' as const,
-      defaultValue: '2026-08-02T12:00:00Z'
+      defaultValue: '2026-08-02T12:00:00.123456Z'
     }
 
     await act(async () => {
@@ -878,7 +878,7 @@ describe('WorkspaceElicitationCard generic ACP form', () => {
     expect(onRespond).toHaveBeenCalledWith({
       requestId: 'generic-date-time-default',
       action: 'accept',
-      answers: [{ fieldId: 'scheduled-at', value: '2026-08-02T12:00:00Z' }]
+      answers: [{ fieldId: 'scheduled-at', value: '2026-08-02T12:00:00.123456Z' }]
     })
   })
 
