@@ -133,7 +133,7 @@ gate('r_loop.R', () => {
     const { child, send, inspect } = startLoop(rscriptBin(), {})
     try {
       await send(
-        "x <- 41L; label <- '活跃变量'; .private <- 'hidden'; " +
+        "x <- 41L; label <- '活跃变量'; .private <- 'hidden'; run <- 1L; con <- 'user con'; " +
           'items <- seq_len(100000L); blob <- raw(2000000L); huge_label <- strrep("活", 1000000L); ' +
           'makeActiveBinding("active_value", function() stop("must not evaluate"), .GlobalEnv); ' +
           'delayedAssign("lazy_value", stop("must not force"), assign.env = .GlobalEnv); ' +
@@ -145,6 +145,7 @@ gate('r_loop.R', () => {
       expect(first.namespace?.variables.map(({ name }) => name)).toEqual([
         'active_value',
         'blob',
+        'con',
         'create_lazy',
         'huge_label',
         'indirect_eager',
@@ -152,10 +153,15 @@ gate('r_loop.R', () => {
         'items',
         'label',
         'lazy_value',
+        'run',
         'x'
       ])
       expect(first.namespace?.variables.find(({ name }) => name === 'label')?.preview).toBe(
         '活跃变量'
+      )
+      expect(first.namespace?.variables.find(({ name }) => name === 'run')?.preview).toBe('1')
+      expect(first.namespace?.variables.find(({ name }) => name === 'con')?.preview).toBe(
+        'user con'
       )
       expect(first.namespace?.variables.find(({ name }) => name === 'huge_label')).toMatchObject({
         previewTruncated: true
@@ -198,12 +204,14 @@ gate('r_loop.R', () => {
         'active_value',
         'added',
         'blob',
+        'con',
         'create_lazy',
         'huge_label',
         'indirect_eager',
         'indirect_lazy',
         'items',
         'lazy_value',
+        'run',
         'x'
       ])
       expect(refreshed.namespace?.variables.find(({ name }) => name === 'x')?.preview).toBe('42')

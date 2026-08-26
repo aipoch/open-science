@@ -426,7 +426,7 @@ except ImportError:
 
 _globals = {"__name__": "__main__"}
 exec(compile(_BOOTSTRAP, "<bootstrap>", "exec"), _globals)
-_namespace_internal_names = frozenset(_globals)
+_namespace_internal_bindings = dict(_globals)
 
 _namespace_repr = reprlib.Repr()
 _namespace_repr.maxlevel = 2
@@ -510,7 +510,9 @@ def _namespace_preview(value):
 def _inspect_namespace(include_private=False):
     names = sorted(
         name for name in _globals if isinstance(name, str)
-        if name not in _namespace_internal_names and (include_private or not name.startswith("_"))
+        if (name not in _namespace_internal_bindings or
+            _globals[name] is not _namespace_internal_bindings[name])
+        and (include_private or not name.startswith("_"))
     )
     variables = []
     remaining = max(0, _namespace_response_limit - 256)

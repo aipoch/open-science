@@ -717,10 +717,22 @@ inspect_namespace <- base::local({
   }
 
   function(include_private = FALSE) {
-    names <- sort(setdiff(
-      ls(envir = .GlobalEnv, all.names = TRUE),
-      namespace_state$internal_names
-    ))
+    names <- ls(envir = .GlobalEnv, all.names = TRUE)
+    active_names <- names[vapply(
+      names,
+      bindingIsActive,
+      logical(1),
+      env = .GlobalEnv
+    )]
+    shadowed_internal_names <- union(
+      union(namespace_state$eager_names, namespace_state$lazy_names),
+      active_names
+    )
+    hidden_internal_names <- setdiff(
+      namespace_state$internal_names,
+      shadowed_internal_names
+    )
+    names <- sort(setdiff(names, hidden_internal_names))
     if (!isTRUE(include_private)) names <- names[!startsWith(names, ".")]
     variables <- list()
     remaining <- max(0L, namespace_response_limit_bytes - 256L)
@@ -1505,8 +1517,8 @@ run <- base::local({
 ))
 lockEnvironment(environment(run), bindings = TRUE)
 
-# Capture the loop's trusted startup bindings once. The inspector subtracts this baseline from
-# .GlobalEnv, while the request loop keeps a private reference to the inspector itself.
+# Capture the loop's trusted startup names once. The inspector hides unchanged bootstrap names but
+# reveals confirmed user shadows, while the request loop keeps private references to trusted code.
 namespace_state$internal_names <- ls(envir = .GlobalEnv, all.names = TRUE)
 rm(namespace_state)
 

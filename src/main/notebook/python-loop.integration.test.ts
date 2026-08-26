@@ -87,7 +87,7 @@ gate('python_loop.py', () => {
     const { child, send, inspect } = startLoop(pyBin as string, {})
     try {
       await send(
-        "x = 41; label = '活跃变量'; _private = 'hidden'; " +
+        "x = 41; label = '活跃变量'; _private = 'hidden'; sys = 1; json = 'user json'; " +
           "items = list(range(10000)); blob = b'x' * 2000000; " +
           "Explosive = type('Explosive', (), {'__repr__': lambda self: (_ for _ in ()).throw(RuntimeError('no repr'))}); explosive = Explosive(); mixed = [explosive]; globals()[0] = 'non-string key'"
       )
@@ -97,14 +97,20 @@ gate('python_loop.py', () => {
         'blob',
         'explosive',
         'items',
+        'json',
         'label',
         'mixed',
+        'sys',
         'x'
       ])
       expect(first.namespace?.variables.find(({ name }) => name === 'blob')).toMatchObject({
         size_bytes: 2_000_033,
         preview: expect.stringMatching(/^b'/)
       })
+      expect(first.namespace?.variables.find(({ name }) => name === 'sys')?.preview).toBe('1')
+      expect(first.namespace?.variables.find(({ name }) => name === 'json')?.preview).toBe(
+        "'user json'"
+      )
       expect(Buffer.byteLength(JSON.stringify(first), 'utf8')).toBeLessThan(256 * 1024)
 
       await send("x = 42; del label; added = {'ok': True}")
@@ -116,7 +122,9 @@ gate('python_loop.py', () => {
         'blob',
         'explosive',
         'items',
+        'json',
         'mixed',
+        'sys',
         'x'
       ])
       expect(refreshed.namespace?.variables.find(({ name }) => name === 'mixed')?.preview).toBe(
