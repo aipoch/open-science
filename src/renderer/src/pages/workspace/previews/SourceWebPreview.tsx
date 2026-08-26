@@ -1,4 +1,4 @@
-import { ExternalLink, Globe2 } from 'lucide-react'
+import { ExternalLink, Globe2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -61,12 +61,15 @@ const SourcePreviewSkeleton = (): React.JSX.Element => {
 
 const SourceWebPreviewContent = ({
   item,
-  sourceUrl
+  sourceUrl,
+  onClose
 }: {
   item: PreviewSourceItem
   sourceUrl: URL
+  onClose?: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const closeLabel = t('Close preview of {{title}}', { title: item.title })
   const hasLifecycleMonitor = Boolean(window.api?.sourcePreview?.onLoadState)
   const [frameAttempt, setFrameAttempt] = useState(0)
   const [progressRun, setProgressRun] = useState(0)
@@ -200,7 +203,7 @@ const SourceWebPreviewContent = ({
     <div className="flex size-full min-h-0 flex-col bg-bg-000">
       <header
         data-source-preview-header=""
-        className="relative flex h-10 shrink-0 items-center gap-2 border-b border-border-300/50 px-3"
+        className="relative flex h-10 shrink-0 items-start gap-1 border-b border-border-300/50 px-2 py-1"
       >
         <div className="min-w-0 flex-1">
           <div
@@ -223,20 +226,35 @@ const SourceWebPreviewContent = ({
               <Button
                 type="button"
                 variant="ghost"
-                size="icon"
+                size="icon-xs"
+                className="text-text-100 hover:text-text-000"
                 data-source-preview-header-external=""
                 aria-label={t('Open source in browser')}
                 onClick={() => window.open(sourceUrl.href, '_blank', 'noreferrer')}
               >
-                <ExternalLink
-                  data-source-preview-header-external-icon=""
-                  className="size-4"
-                  aria-hidden="true"
-                />
+                <ExternalLink data-source-preview-header-external-icon="" aria-hidden="true" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{t('Open source in browser')}</TooltipContent>
           </Tooltip>
+          {onClose ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="text-text-100 hover:text-text-000"
+                  data-source-preview-header-close=""
+                  aria-label={closeLabel}
+                  onClick={onClose}
+                >
+                  <X aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{closeLabel}</TooltipContent>
+            </Tooltip>
+          ) : null}
         </TooltipProvider>
         {isProgressVisible ? (
           <div
@@ -302,7 +320,13 @@ const SourceWebPreviewContent = ({
   )
 }
 
-const SourceWebPreview = ({ item }: { item: PreviewSourceItem }): React.JSX.Element => {
+const SourceWebPreview = ({
+  item,
+  onClose
+}: {
+  item: PreviewSourceItem
+  onClose?: () => void
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const sourceUrl = parseHttpsSourceUrl(item.url)
 
@@ -314,7 +338,14 @@ const SourceWebPreview = ({ item }: { item: PreviewSourceItem }): React.JSX.Elem
     )
   }
 
-  return <SourceWebPreviewContent key={sourceUrl.href} item={item} sourceUrl={sourceUrl} />
+  return (
+    <SourceWebPreviewContent
+      key={sourceUrl.href}
+      item={item}
+      sourceUrl={sourceUrl}
+      onClose={onClose}
+    />
+  )
 }
 
 export { SourceWebPreview }

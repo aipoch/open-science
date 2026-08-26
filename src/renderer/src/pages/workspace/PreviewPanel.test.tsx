@@ -236,12 +236,20 @@ describe('PreviewPanel', () => {
     const sourceHeaderExternal = sourceHeader?.querySelector<HTMLButtonElement>(
       '[data-source-preview-header-external]'
     )
-    expect(sourceHeaderExternal?.dataset.size).toBe('icon')
-    expect(
-      sourceHeaderExternal
-        ?.querySelector('[data-source-preview-header-external-icon]')
-        ?.getAttribute('class')
-    ).toContain('size-4')
+    const sourceHeaderClose = sourceHeader?.querySelector<HTMLButtonElement>(
+      '[data-source-preview-header-close]'
+    )
+    expect(sourceHeader?.className).toContain('items-start')
+    expect(sourceHeader?.className).not.toContain('items-center')
+    expect(sourceHeader?.className).toContain('px-2')
+    expect(sourceHeader?.className).toContain('py-1')
+    expect(sourceHeaderExternal?.dataset.size).toBe('icon-xs')
+    expect(sourceHeaderExternal?.className).toContain('text-text-100')
+    expect(sourceHeaderExternal?.className).toContain('hover:text-text-000')
+    expect(sourceHeaderClose?.dataset.size).toBe('icon-xs')
+    expect(sourceHeaderClose?.className).toContain('text-text-100')
+    expect(sourceHeaderClose?.className).toContain('hover:text-text-000')
+    expect(sourceHeaderExternal?.nextElementSibling).toBe(sourceHeaderClose)
     expect(iframe?.getAttribute('src')).toBe('https://example.com/paper')
     expect(iframe?.getAttribute('sandbox')).toBe(
       'allow-same-origin allow-scripts allow-forms allow-popups'
@@ -249,6 +257,12 @@ describe('PreviewPanel', () => {
     expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')
     expect(iframe?.getAttribute('title')).toBe('Source preview: Genome study')
     expect(container.querySelector('[aria-label="Open source in browser"]')).not.toBeNull()
+    const sourcePanel = iframe?.closest<HTMLElement>('[role="tabpanel"]')
+    expect(sourcePanel?.className).toContain('rounded-md')
+    expect(sourcePanel?.className).toContain('bg-bg-000')
+    expect(sourcePanel?.className).toContain('shadow-card')
+    expect(sourcePanel?.parentElement?.className).toContain('pl-2')
+    expect(sourcePanel?.parentElement?.className).toContain('pr-1')
 
     await act(async () => {
       usePreviewWorkbenchStore.getState().activateItem('item-1')
@@ -264,6 +278,24 @@ describe('PreviewPanel', () => {
 
     expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
     expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(false)
+  })
+
+  it('closes a source preview from the header action', async () => {
+    const sourceItem = createSourceItem()
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
+
+    await renderPanel(true)
+
+    const closeButton = container.querySelector<HTMLButtonElement>(
+      '[data-source-preview-header-close]'
+    )
+    expect(closeButton?.getAttribute('aria-label')).toBe('Close preview of Genome study')
+
+    await act(async () => closeButton?.click())
+
+    expect(usePreviewWorkbenchStore.getState().items).not.toContainEqual(sourceItem)
+    expect(container.querySelector('[data-source-preview-frame]')).toBeNull()
+    expect(releaseSourcePreview).toHaveBeenCalledWith('https://example.com/paper')
   })
 
   it('keeps an HTTPS source iframe mounted while the preview panel is collapsed', async () => {

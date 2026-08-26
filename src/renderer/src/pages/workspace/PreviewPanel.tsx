@@ -503,10 +503,12 @@ const PreviewToolPanel = ({
 
 const PreviewSourcePanel = ({
   item,
-  isActive
+  isActive,
+  onClose
 }: {
   item: PreviewSourceItem
   isActive: boolean
+  onClose: (id: string) => void
 }): React.JSX.Element => (
   <section
     role="tabpanel"
@@ -514,9 +516,9 @@ const PreviewSourcePanel = ({
     aria-labelledby={getPreviewTabId(item.id)}
     tabIndex={0}
     hidden={!isActive}
-    className="size-full min-h-0 overflow-hidden"
+    className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card"
   >
-    <SourceWebPreview item={item} />
+    <SourceWebPreview item={item} onClose={() => onClose(item.id)} />
   </section>
 )
 
@@ -566,7 +568,12 @@ const PreviewPanelSurface = ({
           />
         </div>
       ) : null}
-      <div className={cn('min-h-0 flex-1', activeItem?.type === 'file' && 'pl-2 pr-1')}>
+      <div
+        className={cn(
+          'min-h-0 flex-1',
+          (activeItem?.type === 'file' || activeItem?.type === 'source') && 'pl-2 pr-1'
+        )}
+      >
         {!activeItem ? (
           <PreviewActiveContent
             key={activeContentKey}
@@ -593,7 +600,14 @@ const PreviewPanelSurface = ({
           if (item.type === 'source') {
             // Source frames stay mounted while their tabs exist so browser and failure state survive
             // tab switches. Removing the item still unmounts the whole subtree and releases the page.
-            return <PreviewSourcePanel key={item.id} item={item} isActive={isActivePanel} />
+            return (
+              <PreviewSourcePanel
+                key={item.id}
+                item={item}
+                isActive={isActivePanel}
+                onClose={removeItem}
+              />
+            )
           }
 
           return isActivePanel ? (

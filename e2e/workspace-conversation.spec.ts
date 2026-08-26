@@ -351,7 +351,14 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   const sourceHeader = page.locator('[data-source-preview-header]')
   const sourceHeaderTitle = sourceHeader.locator('[data-source-preview-header-title]')
   const sourceHeaderUrl = sourceHeader.locator('[data-source-preview-header-url]')
+  const sourceHeaderButtons = sourceHeader.locator('button')
   await expect(sourceHeader.locator('.lucide-link-2')).toHaveCount(0)
+  await expect(sourceHeaderButtons).toHaveCount(2)
+  await expect(sourceHeaderButtons.nth(0)).toHaveAttribute(
+    'data-source-preview-header-external',
+    ''
+  )
+  await expect(sourceHeaderButtons.nth(1)).toHaveAttribute('data-source-preview-header-close', '')
   await expect(sourceHeaderTitle).toHaveText('Fixture study')
   await expect(
     sourceHeaderUrl.getByText('https://citation.example/paper', { exact: true })
@@ -359,18 +366,62 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   const sourceHeaderVisuals = await sourceHeader.evaluate((header) => {
     const title = header.querySelector<HTMLElement>('[data-source-preview-header-title]')
     const url = header.querySelector<HTMLElement>('[data-source-preview-header-url]')
+    const externalButton = header.querySelector<HTMLElement>(
+      '[data-source-preview-header-external]'
+    )
+    const closeButton = header.querySelector<HTMLElement>('[data-source-preview-header-close]')
     const externalIcon = header.querySelector<SVGElement>(
       '[data-source-preview-header-external-icon]'
     )
-    if (!title || !url || !externalIcon) throw new Error('Source header layout is incomplete')
+    if (!title || !url || !externalButton || !closeButton || !externalIcon) {
+      throw new Error('Source header layout is incomplete')
+    }
+    const headerRect = header.getBoundingClientRect()
+    const titleRect = title.getBoundingClientRect()
+    const externalButtonRect = externalButton.getBoundingClientRect()
+    const closeButtonRect = closeButton.getBoundingClientRect()
     return {
       titleColor: getComputedStyle(title).color,
       urlColor: getComputedStyle(url).color,
-      externalIconWidth: externalIcon.getBoundingClientRect().width
+      actionColor: getComputedStyle(externalButton).color,
+      closeColor: getComputedStyle(closeButton).color,
+      externalButtonWidth: externalButtonRect.width,
+      externalButtonHeight: externalButtonRect.height,
+      closeButtonWidth: closeButtonRect.width,
+      closeButtonHeight: closeButtonRect.height,
+      externalIconWidth: externalIcon.getBoundingClientRect().width,
+      actionTopOffset: externalButtonRect.top - headerRect.top,
+      actionTitleTopDelta: Math.abs(externalButtonRect.top - titleRect.top)
     }
   })
   expect(sourceHeaderVisuals.titleColor).not.toBe(sourceHeaderVisuals.urlColor)
-  expect(sourceHeaderVisuals.externalIconWidth).toBeGreaterThanOrEqual(16)
+  expect(sourceHeaderVisuals.actionColor).toBe(sourceHeaderVisuals.closeColor)
+  expect(sourceHeaderVisuals.actionColor).not.toBe(sourceHeaderVisuals.titleColor)
+  expect(sourceHeaderVisuals.externalButtonWidth).toBe(24)
+  expect(sourceHeaderVisuals.externalButtonHeight).toBe(24)
+  expect(sourceHeaderVisuals.closeButtonWidth).toBe(24)
+  expect(sourceHeaderVisuals.closeButtonHeight).toBe(24)
+  expect(sourceHeaderVisuals.externalIconWidth).toBe(12)
+  expect(sourceHeaderVisuals.actionTopOffset).toBeCloseTo(4, 0)
+  expect(sourceHeaderVisuals.actionTitleTopDelta).toBeLessThanOrEqual(1)
+  const sourcePanel = page.getByRole('tabpanel').filter({ has: sourceFrame })
+  const sourceIslandVisuals = await sourcePanel.evaluate((panel) => {
+    const parent = panel.parentElement
+    if (!parent) throw new Error('Source preview island has no layout parent')
+    const panelRect = panel.getBoundingClientRect()
+    const parentRect = parent.getBoundingClientRect()
+    const style = getComputedStyle(panel)
+    return {
+      leftInset: panelRect.left - parentRect.left,
+      rightInset: parentRect.right - panelRect.right,
+      borderRadius: Number.parseFloat(style.borderTopLeftRadius),
+      boxShadow: style.boxShadow
+    }
+  })
+  expect(sourceIslandVisuals.leftInset).toBeCloseTo(8, 0)
+  expect(sourceIslandVisuals.rightInset).toBeCloseTo(4, 0)
+  expect(sourceIslandVisuals.borderRadius).toBeGreaterThan(0)
+  expect(sourceIslandVisuals.boxShadow).not.toBe('none')
   releaseSourceDocument?.()
   await expect(
     page.frameLocator('[data-source-preview-frame]').getByRole('heading', {
@@ -398,7 +449,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(sourceFrame).toBeVisible()
   expect(sourceDocumentRequestCount).toBe(1)
 
-  await page.locator('[data-preview-close="Fixture study"]').click()
+  await sourcePanel.locator('[data-source-preview-header-close]').click()
   await expect(sourceFrame).toHaveCount(0)
   await sourceLink.hover()
   await page.locator('[data-source-preview-hover-url]').click()
