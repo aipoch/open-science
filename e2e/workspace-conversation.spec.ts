@@ -22,6 +22,14 @@ const createProject = async (page: Page): Promise<void> => {
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 
+const clickPermissionDecision = async (page: Page, decision: 'allow' | 'deny'): Promise<void> => {
+  const button = page
+    .getByTestId('permission-actions')
+    .getByTestId(decision === 'allow' ? 'allow-primary' : 'deny-button')
+  await expect(button).toBeEnabled()
+  await button.click()
+}
+
 test('edits and navigates message revisions that persist after relaunch', async ({ app }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
@@ -120,7 +128,10 @@ test('resolves Agent permission requests through both Allow and Deny decisions',
   } finally {
     await page.mouse.up()
   }
-  await page.getByRole('button', { name: /^Allow/ }).click()
+  // Park the cursor so a leftover handle capture cannot keep resizing the panel
+  // while Playwright tries to click Allow.
+  await page.mouse.move(8, 8)
+  await clickPermissionDecision(page, 'allow')
   await expect(page.getByText('Fixture permission allowed.', { exact: true })).toBeVisible()
   await expect(composer).toBeVisible()
 
@@ -130,7 +141,7 @@ test('resolves Agent permission requests through both Allow and Deny decisions',
   await expect(page.getByText('Write fixture output', { exact: true })).toBeVisible()
   await expect(page.getByTestId('permission-composer')).toBeVisible()
   await expect(composer).toBeHidden()
-  await page.getByRole('button', { name: 'Deny', exact: true }).click()
+  await clickPermissionDecision(page, 'deny')
   await expect(page.getByText('Fixture permission denied.', { exact: true })).toBeVisible()
   await expect(composer).toBeVisible()
 })

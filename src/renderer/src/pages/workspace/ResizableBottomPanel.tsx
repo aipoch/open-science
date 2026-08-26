@@ -135,6 +135,7 @@ const ResizableBottomPanel = ({
             : 'inset-x-0 h-8 rounded-lg [@media(pointer:coarse)]:h-11'
         }`}
         onKeyDown={handleResizeKeyDown}
+        onLostPointerCapture={endPointerDrag}
         onPointerCancel={endPointerDrag}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
