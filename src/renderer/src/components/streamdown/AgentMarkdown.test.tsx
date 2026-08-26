@@ -169,6 +169,23 @@ describe('AgentMarkdown renderer recovery', () => {
     )
   })
 
+  it('loads plugins for fences on indented list continuations', async () => {
+    streamdownHarness.shouldThrow = false
+
+    const listCode = '- Code sample:\n\n    ```ts\n    const value = 1\n    ```'
+    await act(async () => {
+      root.render(<AgentMarkdown content={listCode} />)
+    })
+    expect(streamdownHarness.plugins?.code).toEqual({ name: 'shiki' })
+
+    const listMermaid = '1. Diagram:\n\n    ```mermaid\n    graph TD\n      A --> B\n    ```'
+    await act(async () => {
+      root.render(<AgentMarkdown content={listMermaid} />)
+    })
+    expect(streamdownHarness.plugins?.mermaid).toEqual({ name: 'mermaid' })
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(listMermaid)
+  })
+
   it('keeps the original message and sibling UI visible when rich Markdown rendering fails', async () => {
     await act(async () => {
       root.render(

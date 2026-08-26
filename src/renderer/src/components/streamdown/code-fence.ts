@@ -3,6 +3,7 @@
 const FENCE_LINE = /^[ \t]{0,3}(`{3,}|~{3,})/
 const BLOCKQUOTE_PREFIX = /^\s{0,3}>\s?/u
 const LIST_MARKER = /^\s{0,3}(?:[-+*]|\d+[.)])\s+/u
+const LEADING_WHITESPACE = /^\s*/u
 
 type MarkdownPluginNeeds = {
   code: boolean
@@ -42,6 +43,9 @@ const getMarkdownPluginNeeds = (markdown: string): MarkdownPluginNeeds => {
   const tracker = createCodeFenceTracker()
   let code = false
   let fenceBlockquoteDepth = 0
+  let fenceListIndent = 0
+  let listBlockquoteDepth = 0
+  let listContentIndent = 0
 
   for (const rawLine of markdown.split('\n')) {
     const wasOpen = tracker.isOpen()
@@ -53,10 +57,33 @@ const getMarkdownPluginNeeds = (markdown: string): MarkdownPluginNeeds => {
       line = line.slice(prefix.length)
       blockquoteDepth += 1
     }
-    if (!wasOpen) line = line.replace(LIST_MARKER, '')
+
+    if (wasOpen && fenceListIndent > 0) {
+      const indentation = line.match(LEADING_WHITESPACE)?.[0].length ?? 0
+      if (indentation >= fenceListIndent) line = line.slice(fenceListIndent)
+    } else if (!wasOpen) {
+      const listMarker = line.match(LIST_MARKER)?.[0]
+      if (listMarker) {
+        listContentIndent = listMarker.length
+        listBlockquoteDepth = blockquoteDepth
+        line = line.slice(listContentIndent)
+      } else if (line.trim() && listContentIndent > 0) {
+        const indentation = line.match(LEADING_WHITESPACE)?.[0].length ?? 0
+        if (blockquoteDepth === listBlockquoteDepth && indentation >= listContentIndent) {
+          line = line.slice(listContentIndent)
+        } else {
+          listContentIndent = 0
+        }
+      }
+    }
 
     const isOpen = tracker.feed(line)
-    if (!wasOpen && isOpen) fenceBlockquoteDepth = blockquoteDepth
+    if (!wasOpen && isOpen) {
+      fenceBlockquoteDepth = blockquoteDepth
+      fenceListIndent = listContentIndent
+    } else if (wasOpen && !isOpen) {
+      fenceListIndent = 0
+    }
     if (wasOpen || !isOpen) continue
 
     code = true
