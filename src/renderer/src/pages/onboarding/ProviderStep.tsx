@@ -181,7 +181,10 @@ const ProviderStep = ({
 
       return result
     } catch (error) {
-      const message = error instanceof Error ? error.message : t('Could not save the Claude token.')
+      const message =
+        error instanceof Error
+          ? localizeProviderResourceMessage(error.message, tSettings)
+          : t('Could not save the Claude token.')
       setValidationOk(false)
       setValidationMessage(message)
       return { ok: false, category: 'unknown', message }

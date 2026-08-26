@@ -50,7 +50,7 @@ type ProviderActionError = {
 type ProviderPanelError = string | ProviderActionError
 
 const providerErrorCopy = (error: ProviderPanelError, t: TFunction): string => {
-  if (typeof error === 'string') return error
+  if (typeof error === 'string') return localizeProviderResourceMessage(error, t)
 
   switch (error.action) {
     case 'test':

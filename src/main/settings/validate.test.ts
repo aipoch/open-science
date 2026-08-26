@@ -605,6 +605,31 @@ describe('validate: provider dispatch', () => {
     })
   })
 
+  it('preserves authentication classification for an oversized native Responses error', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response('x'.repeat(1024 * 1024 + 1), {
+        status: 401,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+
+    const result = await validateProvider(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.x.ai/v1',
+        key: 'k',
+        model: 'm'
+      },
+      {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        requireNativeResponsesCompatibility: true
+      }
+    )
+
+    expect(result).toEqual({ ok: false, category: 'auth', status: 401 })
+  })
+
   it('keeps the friendly auth guidance and does not surface a raw 401 body', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       status: 401,

@@ -373,6 +373,50 @@ describe('ProviderStep', () => {
     expect(onAdvance).toHaveBeenCalledOnce()
   })
 
+  it('localizes an oversized pasted Claude token error', async () => {
+    let resolveBrowserLogin!: (result: ValidateProviderResult) => void
+    const browserLogin = new Promise<ValidateProviderResult>((resolve) => {
+      resolveBrowserLogin = resolve
+    })
+    const cancelIsolatedClaudeLogin = vi.fn().mockImplementation(async () => {
+      resolveBrowserLogin({
+        ok: false,
+        category: 'unknown',
+        applied: false,
+        cancelled: true
+      })
+    })
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('builtin-claude-isolated'),
+      loginIsolatedClaudeBrowser: vi.fn(() => browserLogin),
+      loginIsolatedClaude: vi
+        .fn()
+        .mockRejectedValue(new Error('Claude sign-in token must not exceed 16384 bytes.')),
+      cancelIsolatedClaudeLogin
+    })
+    readyClaudeEnvironment()
+
+    await renderStep()
+    await switchToIsolatedClaudeSignIn()
+    await clickButton(/sign in & continue/i)
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+
+    const modal = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const input = modal?.querySelector<HTMLInputElement>('#claude-setup-token-input')
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(input, 'sk-ant-oversized')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const submit = Array.from(modal?.querySelectorAll('button') ?? []).at(-1)
+    await act(async () => submit?.click())
+
+    expect(document.body.textContent).toContain('Claude 令牌不得超过 16384 字节。')
+    expect(document.body.textContent).not.toContain(
+      'Claude sign-in token must not exceed 16384 bytes.'
+    )
+  })
+
   it('does not advance when a pasted Claude token result was not applied', async () => {
     let resolveBrowserLogin!: (result: ValidateProviderResult) => void
     const cancelIsolatedClaudeLogin = vi.fn().mockImplementation(async () => {

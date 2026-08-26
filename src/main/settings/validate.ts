@@ -503,7 +503,8 @@ const createBoundedValidationFetch =
       if (!(error instanceof ResponseBodyLimitError)) throw error
       const bodyText = JSON.stringify({ error: { message: error.message } })
       return new Response(bodyText, {
-        status: 413,
+        status: response.ok ? 413 : response.status,
+        ...(response.ok ? {} : { statusText: response.statusText }),
         headers: {
           'content-type': 'application/json',
           'content-length': String(Buffer.byteLength(bodyText, 'utf8'))
@@ -530,7 +531,12 @@ const validateProviderThroughLocalResponsesAdapter = async (
       body: JSON.stringify(adapter.body),
       signal: controller.signal
     })
-    let category = classifyStatus(response.status)
+    const upstreamStatus = Number(response.headers.get('x-open-science-upstream-status'))
+    const status =
+      Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599
+        ? upstreamStatus
+        : response.status
+    let category = classifyStatus(status)
     let bodyText: string
     try {
       bodyText = await readBoundedResponseText(
@@ -541,7 +547,7 @@ const validateProviderThroughLocalResponsesAdapter = async (
     } catch (error) {
       if (error instanceof ResponseBodyLimitError) {
         return toResult('unknown', {
-          status: response.status,
+          status,
           message: error.message
         })
       }
@@ -549,12 +555,12 @@ const validateProviderThroughLocalResponsesAdapter = async (
     }
     const providerMessage = extractProviderErrorMessage(bodyText)
 
-    if ((response.status === 400 || response.status === 404) && providerMessage) {
+    if ((status === 400 || status === 404) && providerMessage) {
       category = isModelNotFoundMessage(providerMessage) ? 'model-not-found' : 'unknown'
     }
     if (category !== 'ok') {
       return toResult(category, {
-        status: response.status,
+        status,
         ...(category === 'unknown' || category === 'server-error'
           ? { message: providerMessage }
           : {})
@@ -562,12 +568,12 @@ const validateProviderThroughLocalResponsesAdapter = async (
     }
     if (!adapter.hasRequiredToolCall(bodyText)) {
       return toResult('unknown', {
-        status: response.status,
+        status,
         message: adapter.missingToolCallMessage
       })
     }
 
-    return toResult('ok', { status: response.status })
+    return toResult('ok', { status })
   } catch (error) {
     return toResult(classifyFetchError(error), {
       message: error instanceof Error ? error.message : String(error)
