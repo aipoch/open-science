@@ -1,11 +1,8 @@
 #include <node_api.h>
 
-#include <algorithm>
 #include <cerrno>
-#include <cmath>
-#include <cstddef>
-#include <cstdint>
 #include <cstdlib>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -15,28 +12,20 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
-#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #ifdef __linux__
-#include <sys/syscall.h>
 #ifndef AT_EMPTY_PATH
 #define AT_EMPTY_PATH 0x1000
 #endif
-#ifndef RENAME_NOREPLACE
-#define RENAME_NOREPLACE (1 << 0)
+#ifndef O_TMPFILE
+#define O_TMPFILE (020000000 | O_DIRECTORY)
 #endif
 #endif
 #ifdef __APPLE__
-#include <CommonCrypto/CommonDigest.h>
 #include <stdio.h>
 #include <sys/clonefile.h>
-#ifndef RENAME_EXCL
-#define RENAME_EXCL 0x00000004
-#endif
-#elif defined(__linux__)
-#include <openssl/sha.h>
 #endif
 #endif
 
@@ -76,14 +65,6 @@ bool IsSimpleName(const std::string& value) {
   return true;
 }
 
-bool IsSha256Hex(const std::string& value) {
-  if (value.size() != 64) return false;
-  return std::all_of(value.begin(), value.end(), [](unsigned char character) {
-    return (character >= '0' && character <= '9') ||
-           (character >= 'a' && character <= 'f');
-  });
-}
-
 bool SplitRelativePath(const std::string& value, std::vector<std::string>* components) {
   if (value.empty()) return true;
   size_t start = 0;
@@ -101,26 +82,6 @@ bool SplitRelativePath(const std::string& value, std::vector<std::string>* compo
     start = separator + 1;
   }
   return false;
-}
-
-bool ReadPathArguments(
-    napi_env env,
-    napi_callback_info info,
-    size_t expected_argc,
-    napi_value* argv,
-    std::string* root,
-    std::vector<std::string>* parent_components,
-    std::string* name) {
-  size_t argc = expected_argc;
-  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok ||
-      argc != expected_argc) {
-    return false;
-  }
-  std::string relative_parent;
-  return ReadString(env, argv[0], root) && !root->empty() &&
-         ReadString(env, argv[1], &relative_parent) &&
-         SplitRelativePath(relative_parent, parent_components) && ReadString(env, argv[2], name) &&
-         IsSimpleName(*name);
 }
 
 #ifdef _WIN32
@@ -454,21 +415,6 @@ void CloseAnchoredDirectories(int root_fd, int parent_fd) {
   close(root_fd);
 }
 
-bool UnlinkNameIfIdentityMatches(
-    int parent_fd,
-    const std::string& name,
-    const struct stat& expected_info) {
-  struct stat current_info {};
-  if (fstatat(parent_fd, name.c_str(), &current_info, AT_SYMLINK_NOFOLLOW) != 0) {
-    return errno == ENOENT;
-  }
-  if (!S_ISREG(current_info.st_mode) || current_info.st_dev != expected_info.st_dev ||
-      current_info.st_ino != expected_info.st_ino) {
-    return false;
-  }
-  return unlinkat(parent_fd, name.c_str(), 0) == 0 || errno == ENOENT;
-}
-
 bool NativeTestHooksEnabled() {
   const char* enabled = std::getenv("OPEN_SCIENCE_NATIVE_TEST_HOOKS");
   const char* node_env = std::getenv("NODE_ENV");
@@ -478,225 +424,19 @@ bool NativeTestHooksEnabled() {
          std::strcmp(vitest, "true") == 0;
 }
 
-void ExitAfterDurableTempForTest() {
+void PauseAfterOpenedSourceForTest() {
   if (!NativeTestHooksEnabled()) return;
-  const char* test_exit = std::getenv("OPEN_SCIENCE_TEST_EXIT_AFTER_DURABLE_TEMP");
-  if (test_exit != nullptr && std::strcmp(test_exit, "86") == 0) _exit(86);
-}
-
-void PauseAfterVerifiedTempForTest() {
-  if (!NativeTestHooksEnabled()) return;
-  const char* marker = std::getenv("OPEN_SCIENCE_TEST_VERIFIED_TEMP_MARKER");
-  const char* resume = std::getenv("OPEN_SCIENCE_TEST_VERIFIED_TEMP_RESUME");
+  const char* marker = std::getenv("OPEN_SCIENCE_TEST_OPENED_SOURCE_MARKER");
+  const char* resume = std::getenv("OPEN_SCIENCE_TEST_OPENED_SOURCE_RESUME");
   if (marker == nullptr || resume == nullptr || marker[0] == '\0' || resume[0] == '\0') return;
   const int marker_fd = open(marker, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-  if (marker_fd < 0) _exit(87);
-  static constexpr char kVerified[] = "verified";
-  if (write(marker_fd, kVerified, sizeof(kVerified) - 1) !=
-          static_cast<ssize_t>(sizeof(kVerified) - 1) ||
-      fsync(marker_fd) != 0) {
-    close(marker_fd);
-    _exit(87);
-  }
+  if (marker_fd < 0) _exit(91);
   close(marker_fd);
   for (size_t attempt = 0; attempt < 10'000; attempt += 1) {
     if (access(resume, F_OK) == 0) return;
     usleep(1'000);
   }
-  _exit(88);
-}
-
-void PauseAfterBoundedReadSizeForTest() {
-  if (!NativeTestHooksEnabled()) return;
-  const char* marker = std::getenv("OPEN_SCIENCE_TEST_BOUNDED_READ_MARKER");
-  const char* resume = std::getenv("OPEN_SCIENCE_TEST_BOUNDED_READ_RESUME");
-  if (marker == nullptr || resume == nullptr || marker[0] == '\0' || resume[0] == '\0') return;
-  const int marker_fd = open(marker, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-  if (marker_fd < 0) _exit(89);
-  close(marker_fd);
-  for (size_t attempt = 0; attempt < 10'000; attempt += 1) {
-    if (access(resume, F_OK) == 0) return;
-    usleep(1'000);
-  }
-  _exit(90);
-}
-
-bool OpenAnchoredParent(
-    const std::string& root,
-    const std::vector<std::string>& parent_components,
-    bool create,
-    int* root_fd_out,
-    int* parent_fd_out,
-    int* error_out) {
-  const int root_fd = open(root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-  if (root_fd < 0) {
-    *error_out = errno;
-    return false;
-  }
-
-  int parent_fd = root_fd;
-  for (const std::string& component : parent_components) {
-    int next_fd =
-        openat(parent_fd, component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    bool created = false;
-    if (next_fd < 0 && errno == ENOENT && create) {
-      if (mkdirat(parent_fd, component.c_str(), 0700) != 0) {
-        *error_out = errno;
-        CloseAnchoredDirectories(root_fd, parent_fd);
-        return false;
-      }
-      created = true;
-      next_fd =
-          openat(parent_fd, component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    }
-    if (next_fd < 0) {
-      *error_out = errno;
-      CloseAnchoredDirectories(root_fd, parent_fd);
-      return false;
-    }
-    if (created && (fsync(next_fd) != 0 || fsync(parent_fd) != 0)) {
-      *error_out = errno;
-      close(next_fd);
-      CloseAnchoredDirectories(root_fd, parent_fd);
-      return false;
-    }
-    if (parent_fd != root_fd) close(parent_fd);
-    parent_fd = next_fd;
-  }
-  *root_fd_out = root_fd;
-  *parent_fd_out = parent_fd;
-  return true;
-}
-
-bool VerifyFdSha256(
-    int file_fd,
-    size_t expected_size,
-    const std::string& expected_sha256,
-    bool* matches,
-    int* error_out) {
-  *matches = false;
-  struct stat info {};
-  if (fstat(file_fd, &info) != 0) {
-    *error_out = errno;
-    return false;
-  }
-  if (!S_ISREG(info.st_mode)) {
-    *error_out = ELOOP;
-    return false;
-  }
-  if (info.st_size < 0 || static_cast<uintmax_t>(info.st_size) != expected_size) return true;
-  if (lseek(file_fd, 0, SEEK_SET) < 0) {
-    *error_out = errno;
-    return false;
-  }
-
-#ifdef __APPLE__
-  CC_SHA256_CTX context;
-  if (CC_SHA256_Init(&context) != 1) {
-    *error_out = EIO;
-    return false;
-  }
-#elif defined(__linux__)
-  SHA256_CTX context;
-  if (SHA256_Init(&context) != 1) {
-    *error_out = EIO;
-    return false;
-  }
-#endif
-  std::vector<unsigned char> chunk(64 * 1024);
-  size_t total = 0;
-  while (true) {
-    const ssize_t count = read(file_fd, chunk.data(), chunk.size());
-    if (count < 0 && errno == EINTR) continue;
-    if (count < 0) {
-      *error_out = errno;
-      return false;
-    }
-    if (count == 0) break;
-    const size_t byte_count = static_cast<size_t>(count);
-    if (byte_count > expected_size - (std::min)(total, expected_size)) return true;
-#ifdef __APPLE__
-    if (CC_SHA256_Update(&context, chunk.data(), static_cast<CC_LONG>(byte_count)) != 1) {
-      *error_out = EIO;
-      return false;
-    }
-#elif defined(__linux__)
-    if (SHA256_Update(&context, chunk.data(), byte_count) != 1) {
-      *error_out = EIO;
-      return false;
-    }
-#endif
-    total += byte_count;
-  }
-  if (total != expected_size) return true;
-
-#ifdef __APPLE__
-  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
-  if (CC_SHA256_Final(digest, &context) != 1) {
-    *error_out = EIO;
-    return false;
-  }
-#elif defined(__linux__)
-  unsigned char digest[SHA256_DIGEST_LENGTH];
-  if (SHA256_Final(digest, &context) != 1) {
-    *error_out = EIO;
-    return false;
-  }
-#endif
-  static constexpr char kHex[] = "0123456789abcdef";
-  std::string actual_sha256;
-  actual_sha256.resize(64);
-  for (size_t index = 0; index < 32; index += 1) {
-    actual_sha256[index * 2] = kHex[digest[index] >> 4];
-    actual_sha256[index * 2 + 1] = kHex[digest[index] & 0x0f];
-  }
-  *matches = actual_sha256 == expected_sha256;
-  return true;
-}
-
-bool FileDescriptorMatchesBytes(
-    int file_fd,
-    const void* expected_bytes,
-    size_t expected_size,
-    int* error_out) {
-  struct stat info {};
-  if (fstat(file_fd, &info) != 0) {
-    *error_out = errno;
-    return false;
-  }
-  if (!S_ISREG(info.st_mode) || info.st_size < 0 ||
-      static_cast<uintmax_t>(info.st_size) != expected_size) {
-    *error_out = EIO;
-    return false;
-  }
-  if (lseek(file_fd, 0, SEEK_SET) < 0) {
-    *error_out = errno;
-    return false;
-  }
-  const auto* expected = static_cast<const unsigned char*>(expected_bytes);
-  std::vector<unsigned char> chunk(64 * 1024);
-  size_t offset = 0;
-  while (offset < expected_size) {
-    const size_t requested = (std::min)(chunk.size(), expected_size - offset);
-    const ssize_t count = read(file_fd, chunk.data(), requested);
-    if (count < 0 && errno == EINTR) continue;
-    if (count <= 0 ||
-        std::memcmp(chunk.data(), expected + offset, static_cast<size_t>(count)) != 0) {
-      *error_out = count < 0 ? errno : EIO;
-      return false;
-    }
-    offset += static_cast<size_t>(count);
-  }
-  unsigned char growth_probe = 0;
-  ssize_t probe_count = 0;
-  do {
-    probe_count = read(file_fd, &growth_probe, 1);
-  } while (probe_count < 0 && errno == EINTR);
-  if (probe_count != 0) {
-    *error_out = probe_count < 0 ? errno : EIO;
-    return false;
-  }
-  return true;
+  _exit(92);
 }
 
 #ifdef __linux__
@@ -724,543 +464,59 @@ int LinkOpenFileDescriptorNoReplace(
   if (result != 0 && errno == ENOENT) errno = ENOTSUP;
   return result;
 }
-#endif
 
-napi_value WriteAndPublishNoReplacePosix(
-    napi_env env,
-    const std::string& root,
-    const std::vector<std::string>& parent_components,
-    const std::string& temporary_name,
-    const std::string& destination_name,
-    const void* bytes,
-    size_t byte_length) {
-  int root_fd = -1;
-  int parent_fd = -1;
-  int error = 0;
-  if (!OpenAnchoredParent(root, parent_components, true, &root_fd, &parent_fd, &error)) {
-    return ThrowError(env, "Could not create the anchored temporary parent.", PosixErrorCode(error));
-  }
-  const int file_fd = openat(
-      parent_fd,
-      temporary_name.c_str(),
-      O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-      0600);
-  if (file_fd < 0) {
-    error = errno;
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not exclusively create the temporary file.", PosixErrorCode(error));
-  }
+int PublishCopiedFileDescriptorNoReplace(
+    int source_fd,
+    int parent_fd,
+    const std::string& destination_name) {
+  const int copy_fd = openat(parent_fd, ".", O_TMPFILE | O_RDWR | O_CLOEXEC, 0600);
+  if (copy_fd < 0) return -1;
 
-  const auto* cursor = static_cast<const unsigned char*>(bytes);
-  size_t remaining = byte_length;
-  while (remaining > 0) {
-    const ssize_t written = write(file_fd, cursor, remaining);
-    if (written < 0) {
+  char buffer[64 * 1024];
+  for (;;) {
+    const ssize_t bytes_read = read(source_fd, buffer, sizeof(buffer));
+    if (bytes_read == 0) break;
+    if (bytes_read < 0) {
       if (errno == EINTR) continue;
-      error = errno;
-      close(file_fd);
-      (void)unlinkat(parent_fd, temporary_name.c_str(), 0);
-      CloseAnchoredDirectories(root_fd, parent_fd);
-      return ThrowError(env, "Could not write the temporary file.", PosixErrorCode(error));
+      const int error = errno;
+      close(copy_fd);
+      errno = error;
+      return -1;
     }
-    cursor += written;
-    remaining -= static_cast<size_t>(written);
-  }
-  if (fsync(file_fd) != 0) {
-    error = errno;
-    close(file_fd);
-    (void)unlinkat(parent_fd, temporary_name.c_str(), 0);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not sync the temporary file.", PosixErrorCode(error));
-  }
-  // Persist the temporary directory entry before publication so startup recovery can find the
-  // complete file even if the process exits between this barrier and the no-replace publish.
-  if (fsync(parent_fd) != 0) {
-    error = errno;
-    close(file_fd);
-    (void)unlinkat(parent_fd, temporary_name.c_str(), 0);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not sync the temporary file parent.", PosixErrorCode(error));
-  }
-  ExitAfterDurableTempForTest();
-  struct stat source_info {};
-  if (fstat(file_fd, &source_info) != 0 || !S_ISREG(source_info.st_mode)) {
-    error = errno == 0 ? ELOOP : errno;
-    close(file_fd);
-    (void)unlinkat(parent_fd, temporary_name.c_str(), 0);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "The temporary file identity is invalid.", PosixErrorCode(error));
-  }
-  PauseAfterVerifiedTempForTest();
 
-#ifdef __linux__
-  const int result = LinkOpenFileDescriptorNoReplace(file_fd, parent_fd, destination_name);
-  const int publish_error = result == 0 ? 0 : errno;
-#elif defined(__APPLE__)
-  const int result = fclonefileat(file_fd, parent_fd, destination_name.c_str(), 0);
-  const int publish_error = result == 0 ? 0 : errno;
-#else
-#error Unsupported platform for anchored managed-file publication
-#endif
-  if (result != 0) {
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Atomic no-replace publication failed.", PosixErrorCode(publish_error));
-  }
-
-  const int destination_fd =
-      openat(parent_fd, destination_name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-  struct stat destination_info {};
-  bool destination_is_owned =
-      destination_fd >= 0 && fstat(destination_fd, &destination_info) == 0 &&
-      S_ISREG(destination_info.st_mode);
-#ifdef __linux__
-  destination_is_owned = destination_is_owned && source_info.st_dev == destination_info.st_dev &&
-                         source_info.st_ino == destination_info.st_ino;
-#elif defined(__APPLE__)
-  if (destination_is_owned) {
-    destination_is_owned =
-        FileDescriptorMatchesBytes(destination_fd, bytes, byte_length, &error);
-  }
-#endif
-  if (!destination_is_owned) {
-    if (destination_fd >= 0) close(destination_fd);
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Published destination identity changed.", "ELOOP");
-  }
-  if (fsync(destination_fd) != 0) {
-    error = errno;
-    close(destination_fd);
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not sync the published destination.", PosixErrorCode(error));
-  }
-  if (fsync(parent_fd) != 0) {
-    error = errno;
-    close(destination_fd);
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not sync the published destination.", PosixErrorCode(error));
-  }
-  close(destination_fd);
-  (void)UnlinkNameIfIdentityMatches(parent_fd, temporary_name, source_info);
-  if (fsync(parent_fd) != 0) {
-    error = errno;
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not sync temporary file cleanup.", PosixErrorCode(error));
-  }
-  close(file_fd);
-  CloseAnchoredDirectories(root_fd, parent_fd);
-  napi_value undefined;
-  napi_get_undefined(env, &undefined);
-  return undefined;
-}
-
-napi_value ReadFilePosix(
-    napi_env env,
-    const std::string& root,
-    const std::vector<std::string>& parent_components,
-    const std::string& name,
-    size_t max_bytes = std::numeric_limits<size_t>::max()) {
-  int root_fd = -1;
-  int parent_fd = -1;
-  int error = 0;
-  if (!OpenAnchoredParent(root, parent_components, false, &root_fd, &parent_fd, &error)) {
-    return ThrowError(env, "Could not open the anchored file parent.", PosixErrorCode(error));
-  }
-  const int file_fd = openat(parent_fd, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-  if (file_fd < 0) {
-    error = errno;
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not open the anchored file.", PosixErrorCode(error));
-  }
-  struct stat info {};
-  if (fstat(file_fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0) {
-    error = errno == 0 ? ELOOP : errno;
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "The anchored file is not regular.", PosixErrorCode(error));
-  }
-  if (static_cast<uintmax_t>(info.st_size) > std::numeric_limits<size_t>::max()) {
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "The anchored file is too large.", "EIO");
-  }
-  if (static_cast<uintmax_t>(info.st_size) > max_bytes) {
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "The anchored file exceeds the bounded read limit.", "EFBIG");
-  }
-  PauseAfterBoundedReadSizeForTest();
-  void* output = nullptr;
-  napi_value buffer;
-  const size_t size = static_cast<size_t>(info.st_size);
-  if (napi_create_buffer(env, size, &output, &buffer) != napi_ok) {
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not allocate the anchored file buffer.", "EIO");
-  }
-  auto* cursor = static_cast<unsigned char*>(output);
-  size_t remaining = size;
-  while (remaining > 0) {
-    const ssize_t count = read(file_fd, cursor, remaining);
-    if (count < 0 && errno == EINTR) continue;
-    if (count <= 0) {
-      error = count == 0 ? EIO : errno;
-      close(file_fd);
-      CloseAnchoredDirectories(root_fd, parent_fd);
-      return ThrowError(env, "Could not read the anchored file.", PosixErrorCode(error));
+    ssize_t written = 0;
+    while (written < bytes_read) {
+      const ssize_t result = write(copy_fd, buffer + written, bytes_read - written);
+      if (result < 0) {
+        if (errno == EINTR) continue;
+        const int error = errno;
+        close(copy_fd);
+        errno = error;
+        return -1;
+      }
+      if (result == 0) {
+        close(copy_fd);
+        errno = EIO;
+        return -1;
+      }
+      written += result;
     }
-    cursor += count;
-    remaining -= static_cast<size_t>(count);
-  }
-  unsigned char growth_probe = 0;
-  while (true) {
-    const ssize_t count = read(file_fd, &growth_probe, 1);
-    if (count < 0 && errno == EINTR) continue;
-    if (count > 0) {
-      close(file_fd);
-      CloseAnchoredDirectories(root_fd, parent_fd);
-      return ThrowError(env, "The anchored file grew during the bounded read.", "EFBIG");
-    }
-    if (count < 0) {
-      error = errno;
-      close(file_fd);
-      CloseAnchoredDirectories(root_fd, parent_fd);
-      return ThrowError(env, "Could not complete the anchored bounded read.", PosixErrorCode(error));
-    }
-    break;
-  }
-  close(file_fd);
-  CloseAnchoredDirectories(root_fd, parent_fd);
-  return buffer;
-}
-
-napi_value PublishVerifiedNoReplacePosix(
-    napi_env env,
-    const std::string& root,
-    const std::vector<std::string>& parent_components,
-    const std::string& temporary_name,
-    const std::string& destination_name,
-    const void* expected_bytes,
-    size_t expected_size) {
-  int root_fd = -1;
-  int parent_fd = -1;
-  int error = 0;
-  if (!OpenAnchoredParent(root, parent_components, false, &root_fd, &parent_fd, &error)) {
-    return ThrowError(env, "Could not open the anchored recovery parent.", PosixErrorCode(error));
-  }
-  const int file_fd = openat(parent_fd, temporary_name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-  if (file_fd < 0) {
-    error = errno;
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not open the anchored recovery temp.", PosixErrorCode(error));
-  }
-  struct stat info {};
-  if (fstat(file_fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0 ||
-      static_cast<uintmax_t>(info.st_size) != expected_size) {
-    error = errno == 0 ? EIO : errno;
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "The anchored recovery temp size is invalid.", PosixErrorCode(error));
-  }
-  const auto* expected = static_cast<const unsigned char*>(expected_bytes);
-  std::vector<unsigned char> chunk(64 * 1024);
-  size_t offset = 0;
-  while (offset < expected_size) {
-    const size_t requested = (std::min)(chunk.size(), expected_size - offset);
-    const ssize_t count = read(file_fd, chunk.data(), requested);
-    if (count < 0 && errno == EINTR) continue;
-    if (count <= 0 || std::memcmp(chunk.data(), expected + offset, static_cast<size_t>(count)) != 0) {
-      error = count < 0 ? errno : EIO;
-      close(file_fd);
-      CloseAnchoredDirectories(root_fd, parent_fd);
-      return ThrowError(env, "The anchored recovery temp content is invalid.", PosixErrorCode(error));
-    }
-    offset += static_cast<size_t>(count);
-  }
-  unsigned char growth_probe = 0;
-  ssize_t probe_count = 0;
-  do {
-    probe_count = read(file_fd, &growth_probe, 1);
-  } while (probe_count < 0 && errno == EINTR);
-  if (probe_count != 0) {
-    error = probe_count < 0 ? errno : EIO;
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "The anchored recovery temp content is invalid.", PosixErrorCode(error));
-  }
-  if (fsync(file_fd) != 0) {
-    error = errno;
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not sync the anchored recovery temp.", PosixErrorCode(error));
-  }
-  PauseAfterVerifiedTempForTest();
-
-#ifdef __linux__
-  const int result = LinkOpenFileDescriptorNoReplace(file_fd, parent_fd, destination_name);
-  const int publish_error = result == 0 ? 0 : errno;
-#elif defined(__APPLE__)
-  const int result = fclonefileat(file_fd, parent_fd, destination_name.c_str(), 0);
-  const int publish_error = result == 0 ? 0 : errno;
-#else
-#error Unsupported platform for anchored managed-file recovery publication
-#endif
-  if (result != 0) {
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Atomic no-replace recovery publication failed.", PosixErrorCode(publish_error));
   }
 
-  const int destination_fd =
-      openat(parent_fd, destination_name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-  struct stat destination_info {};
-  bool destination_is_owned =
-      destination_fd >= 0 && fstat(destination_fd, &destination_info) == 0 &&
-      S_ISREG(destination_info.st_mode);
-#ifdef __linux__
-  destination_is_owned = destination_is_owned && info.st_dev == destination_info.st_dev &&
-                         info.st_ino == destination_info.st_ino;
-#elif defined(__APPLE__)
-  if (destination_is_owned) {
-    destination_is_owned =
-        FileDescriptorMatchesBytes(destination_fd, expected_bytes, expected_size, &error);
+  if (fsync(copy_fd) != 0) {
+    const int error = errno;
+    close(copy_fd);
+    errno = error;
+    return -1;
   }
-#endif
-  if (!destination_is_owned) {
-    if (destination_fd >= 0) close(destination_fd);
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Published recovery destination identity changed.", "ELOOP");
-  }
-  if (fsync(destination_fd) != 0) {
-    error = errno;
-    close(destination_fd);
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not sync the recovered destination.", PosixErrorCode(error));
-  }
-  if (fsync(parent_fd) != 0) {
-    error = errno;
-    close(destination_fd);
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not sync the recovered destination.", PosixErrorCode(error));
-  }
-  close(destination_fd);
-  (void)UnlinkNameIfIdentityMatches(parent_fd, temporary_name, info);
-  if (fsync(parent_fd) != 0) {
-    error = errno;
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not sync recovery temp cleanup.", PosixErrorCode(error));
-  }
-  close(file_fd);
-  CloseAnchoredDirectories(root_fd, parent_fd);
-  napi_value undefined;
-  napi_get_undefined(env, &undefined);
-  return undefined;
-}
-
-napi_value VerifyFilePosix(
-    napi_env env,
-    const std::string& root,
-    const std::vector<std::string>& parent_components,
-    const std::string& name,
-    size_t expected_size,
-    const std::string& expected_sha256) {
-  int root_fd = -1;
-  int parent_fd = -1;
-  int error = 0;
-  if (!OpenAnchoredParent(root, parent_components, false, &root_fd, &parent_fd, &error)) {
-    return ThrowError(env, "Could not open the anchored verification parent.", PosixErrorCode(error));
-  }
-  const int file_fd = openat(parent_fd, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-  if (file_fd < 0) {
-    error = errno;
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not open the anchored verification file.", PosixErrorCode(error));
-  }
-  bool matches = false;
-  const bool verified = VerifyFdSha256(file_fd, expected_size, expected_sha256, &matches, &error);
-  close(file_fd);
-  CloseAnchoredDirectories(root_fd, parent_fd);
-  if (!verified) {
-    return ThrowError(env, "Could not verify the anchored file.", PosixErrorCode(error));
-  }
-  napi_value result;
-  napi_get_boolean(env, matches, &result);
+  const int result =
+      LinkOpenFileDescriptorNoReplace(copy_fd, parent_fd, destination_name);
+  const int error = result == 0 ? 0 : errno;
+  close(copy_fd);
+  errno = error;
   return result;
 }
-
-napi_value StatFilePosix(
-    napi_env env,
-    const std::string& root,
-    const std::vector<std::string>& parent_components,
-    const std::string& name) {
-  int root_fd = -1;
-  int parent_fd = -1;
-  int error = 0;
-  if (!OpenAnchoredParent(root, parent_components, false, &root_fd, &parent_fd, &error)) {
-    return ThrowError(env, "Could not open the anchored file parent.", PosixErrorCode(error));
-  }
-  const int file_fd = openat(parent_fd, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-  if (file_fd < 0) {
-    error = errno;
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not open the anchored file.", PosixErrorCode(error));
-  }
-  struct stat info {};
-  if (fstat(file_fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0) {
-    error = errno == 0 ? ELOOP : errno;
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "The anchored file is not regular.", PosixErrorCode(error));
-  }
-  close(file_fd);
-  CloseAnchoredDirectories(root_fd, parent_fd);
-  napi_value result;
-  napi_create_object(env, &result);
-  napi_value size;
-  napi_create_double(env, static_cast<double>(info.st_size), &size);
-  napi_set_named_property(env, result, "sizeBytes", size);
-  return result;
-}
-
-napi_value RemoveFilePosix(
-    napi_env env,
-    const std::string& root,
-    const std::vector<std::string>& parent_components,
-    const std::string& name) {
-  int root_fd = -1;
-  int parent_fd = -1;
-  int error = 0;
-  if (!OpenAnchoredParent(root, parent_components, false, &root_fd, &parent_fd, &error)) {
-    if (error == ENOENT) {
-      napi_value removed;
-      napi_get_boolean(env, false, &removed);
-      return removed;
-    }
-    return ThrowError(env, "Could not open the anchored cleanup parent.", PosixErrorCode(error));
-  }
-  const int file_fd = openat(parent_fd, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-  if (file_fd < 0) {
-    error = errno;
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    if (error == ENOENT) {
-      napi_value removed;
-      napi_get_boolean(env, false, &removed);
-      return removed;
-    }
-    return ThrowError(env, "Could not open the anchored cleanup file.", PosixErrorCode(error));
-  }
-  struct stat info {};
-  if (fstat(file_fd, &info) != 0 || !S_ISREG(info.st_mode)) {
-    error = errno == 0 ? ELOOP : errno;
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "The anchored cleanup target is not regular.", PosixErrorCode(error));
-  }
-  struct stat current_info {};
-  if (fstatat(parent_fd, name.c_str(), &current_info, AT_SYMLINK_NOFOLLOW) != 0) {
-    error = errno;
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not verify the anchored cleanup target.", PosixErrorCode(error));
-  }
-  if (!S_ISREG(current_info.st_mode) || current_info.st_dev != info.st_dev ||
-      current_info.st_ino != info.st_ino) {
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "The anchored cleanup target identity changed.", "EAGAIN");
-  }
-  if (unlinkat(parent_fd, name.c_str(), 0) != 0) {
-    error = errno;
-    close(file_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not remove the anchored file.", PosixErrorCode(error));
-  }
-  close(file_fd);
-  if (fsync(parent_fd) != 0) {
-    error = errno;
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not sync anchored cleanup.", PosixErrorCode(error));
-  }
-  CloseAnchoredDirectories(root_fd, parent_fd);
-  napi_value removed;
-  napi_get_boolean(env, true, &removed);
-  return removed;
-}
-
-napi_value ListDirectoryPosix(
-    napi_env env,
-    const std::string& root,
-    const std::vector<std::string>& parent_components) {
-  int root_fd = -1;
-  int parent_fd = -1;
-  int error = 0;
-  if (!OpenAnchoredParent(root, parent_components, false, &root_fd, &parent_fd, &error)) {
-    return ThrowError(env, "Could not open the anchored directory.", PosixErrorCode(error));
-  }
-  const int directory_fd = dup(parent_fd);
-  if (directory_fd < 0) {
-    error = errno;
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not duplicate the anchored directory.", PosixErrorCode(error));
-  }
-  DIR* directory = fdopendir(directory_fd);
-  if (directory == nullptr) {
-    error = errno;
-    close(directory_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Could not enumerate the anchored directory.", PosixErrorCode(error));
-  }
-
-  napi_value entries;
-  napi_create_array(env, &entries);
-  uint32_t index = 0;
-  errno = 0;
-  while (dirent* entry = readdir(directory)) {
-    const std::string name(entry->d_name);
-    if (name == "." || name == "..") continue;
-    struct stat info {};
-    if (fstatat(parent_fd, name.c_str(), &info, AT_SYMLINK_NOFOLLOW) != 0) {
-      error = errno;
-      closedir(directory);
-      CloseAnchoredDirectories(root_fd, parent_fd);
-      return ThrowError(env, "Could not inspect an anchored directory entry.", PosixErrorCode(error));
-    }
-    napi_value item;
-    napi_create_object(env, &item);
-    napi_value name_value;
-    napi_create_string_utf8(env, name.c_str(), name.size(), &name_value);
-    napi_set_named_property(env, item, "name", name_value);
-    napi_value is_file;
-    napi_get_boolean(env, S_ISREG(info.st_mode), &is_file);
-    napi_set_named_property(env, item, "isFile", is_file);
-#ifdef __APPLE__
-    const double mtime_ms = static_cast<double>(info.st_mtimespec.tv_sec) * 1000.0 +
-                            static_cast<double>(info.st_mtimespec.tv_nsec) / 1000000.0;
-#else
-    const double mtime_ms = static_cast<double>(info.st_mtim.tv_sec) * 1000.0 +
-                            static_cast<double>(info.st_mtim.tv_nsec) / 1000000.0;
 #endif
-    napi_value mtime_value;
-    napi_create_double(env, mtime_ms, &mtime_value);
-    napi_set_named_property(env, item, "mtimeMs", mtime_value);
-    napi_set_element(env, entries, index++, item);
-  }
-  error = errno;
-  closedir(directory);
-  CloseAnchoredDirectories(root_fd, parent_fd);
-  if (error != 0) {
-    return ThrowError(env, "Could not enumerate the anchored directory.", PosixErrorCode(error));
-  }
-  return entries;
-}
 
 napi_value PublishPosix(
     napi_env env,
@@ -1287,7 +543,12 @@ napi_value PublishPosix(
     parent_fd = next_fd;
   }
 
-  const int source_fd = openat(parent_fd, source.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  bool source_writable = true;
+  int source_fd = openat(parent_fd, source.c_str(), O_RDWR | O_NOFOLLOW | O_CLOEXEC);
+  if (source_fd < 0 && (errno == EACCES || errno == EPERM || errno == EROFS)) {
+    source_writable = false;
+    source_fd = openat(parent_fd, source.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  }
   if (source_fd < 0) {
     const int error = errno;
     if (parent_fd != root_fd) close(parent_fd);
@@ -1303,42 +564,27 @@ napi_value PublishPosix(
     close(root_fd);
     return ThrowError(env, "The publication source is not anchored safely.", PosixErrorCode(error));
   }
+  PauseAfterOpenedSourceForTest();
 
 #ifdef __linux__
-  int result = static_cast<int>(syscall(
-      SYS_renameat2,
-      parent_fd,
-      source.c_str(),
-      parent_fd,
-      destination.c_str(),
-      RENAME_NOREPLACE));
-  int rename_error = result == 0 ? 0 : errno;
-  if (result != 0 &&
-      (rename_error == ENOSYS || rename_error == EOPNOTSUPP || rename_error == EINVAL)) {
-    // linkat creates the destination name atomically without replacing an existing entry. This
-    // preserves no-replace publication on older kernels and filesystems that reject renameat2.
-    result = linkat(parent_fd, source.c_str(), parent_fd, destination.c_str(), 0);
-    rename_error = result == 0 ? 0 : errno;
-    if (result != 0 && rename_error != EEXIST && rename_error != ENOTEMPTY) {
-      rename_error = ENOTSUP;
-    }
-    if (result == 0) {
-      // Publication is already complete once linkat succeeds. A failed best-effort unlink leaves
-      // only the verified temporary alias, which recovery can reclaim as a stale attempt later.
-      (void)unlinkat(parent_fd, source.c_str(), 0);
-    }
-  }
+  const int result = PublishCopiedFileDescriptorNoReplace(source_fd, parent_fd, destination);
+  const int publish_error = result == 0 ? 0 : errno;
 #elif defined(__APPLE__)
-  const int result =
-      renameatx_np(parent_fd, source.c_str(), parent_fd, destination.c_str(), RENAME_EXCL);
-  const int rename_error = result == 0 ? 0 : errno;
+  if (fsync(source_fd) != 0) {
+    const int sync_error = errno;
+    close(source_fd);
+    CloseAnchoredDirectories(root_fd, parent_fd);
+    return ThrowError(env, "Publication source sync failed.", PosixErrorCode(sync_error));
+  }
+  const int result = fclonefileat(source_fd, parent_fd, destination.c_str(), 0);
+  const int publish_error = result == 0 ? 0 : errno;
 #else
 #error Unsupported platform for atomic no-replace publication
 #endif
   if (result != 0) {
     close(source_fd);
     CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Atomic no-replace publication failed.", PosixErrorCode(rename_error));
+    return ThrowError(env, "Atomic no-replace publication failed.", PosixErrorCode(publish_error));
   }
 
   if (fsync(parent_fd) != 0) {
@@ -1347,6 +593,9 @@ napi_value PublishPosix(
     CloseAnchoredDirectories(root_fd, parent_fd);
     return ThrowError(env, "Atomic publication directory sync failed.", PosixErrorCode(sync_error));
   }
+  // POSIX has no portable identity-conditional unlink. Truncate the already-open private source
+  // when writable, leaving a harmless alias without touching any concurrent pathname replacement.
+  if (source_writable) (void)ftruncate(source_fd, 0);
   close(source_fd);
   CloseAnchoredDirectories(root_fd, parent_fd);
 
@@ -1438,189 +687,7 @@ napi_value PublishNoReplace(napi_env env, napi_callback_info info) {
 #endif
 }
 
-napi_value WriteAndPublishNoReplace(napi_env env, napi_callback_info info) {
-  napi_value argv[5];
-  std::string root;
-  std::string temporary_name;
-  std::string destination_name;
-  std::vector<std::string> parent_components;
-  if (!ReadPathArguments(env, info, 5, argv, &root, &parent_components, &temporary_name) ||
-      !ReadString(env, argv[3], &destination_name) || !IsSimpleName(destination_name)) {
-    return ThrowError(
-        env,
-        "writeAndPublishNoReplace requires a safe root, parent, temporary name, destination, and Buffer.",
-        "EINVAL");
-  }
-  bool is_buffer = false;
-  void* bytes = nullptr;
-  size_t byte_length = 0;
-  if (napi_is_buffer(env, argv[4], &is_buffer) != napi_ok || !is_buffer ||
-      napi_get_buffer_info(env, argv[4], &bytes, &byte_length) != napi_ok) {
-    return ThrowError(env, "writeAndPublishNoReplace bytes must be a Buffer.", "EINVAL");
-  }
-#ifdef _WIN32
-  return ThrowError(env, "Anchored write publication is unavailable on this platform.",
-                    "ENOTSUP");
-#else
-  return WriteAndPublishNoReplacePosix(
-      env, root, parent_components, temporary_name, destination_name, bytes, byte_length);
-#endif
-}
-
-napi_value ReadAnchoredFile(napi_env env, napi_callback_info info) {
-  napi_value argv[3];
-  std::string root;
-  std::string name;
-  std::vector<std::string> parent_components;
-  if (!ReadPathArguments(env, info, 3, argv, &root, &parent_components, &name)) {
-    return ThrowError(env, "readFile requires a safe root, parent, and name.", "EINVAL");
-  }
-#ifdef _WIN32
-  return ThrowError(env, "Anchored file reading is unavailable on this platform.", "ENOTSUP");
-#else
-  return ReadFilePosix(env, root, parent_components, name);
-#endif
-}
-
-napi_value ReadAnchoredFileBounded(napi_env env, napi_callback_info info) {
-  napi_value argv[4];
-  std::string root;
-  std::string name;
-  std::vector<std::string> parent_components;
-  if (!ReadPathArguments(env, info, 4, argv, &root, &parent_components, &name)) {
-    return ThrowError(env, "readFileBounded requires a safe root, parent, name, and maxBytes.", "EINVAL");
-  }
-  double max_bytes = 0;
-  if (napi_get_value_double(env, argv[3], &max_bytes) != napi_ok || !std::isfinite(max_bytes) ||
-      std::floor(max_bytes) != max_bytes || max_bytes < 0 ||
-      max_bytes > 9007199254740991.0 ||
-      max_bytes > static_cast<double>(std::numeric_limits<size_t>::max())) {
-    return ThrowError(env, "readFileBounded maxBytes is invalid.", "EINVAL");
-  }
-#ifdef _WIN32
-  return ThrowError(env, "Anchored bounded reading is unavailable on this platform.", "ENOTSUP");
-#else
-  return ReadFilePosix(env, root, parent_components, name, static_cast<size_t>(max_bytes));
-#endif
-}
-
-napi_value PublishVerifiedNoReplace(napi_env env, napi_callback_info info) {
-  napi_value argv[5];
-  std::string root;
-  std::string temporary_name;
-  std::string destination_name;
-  std::vector<std::string> parent_components;
-  if (!ReadPathArguments(env, info, 5, argv, &root, &parent_components, &temporary_name) ||
-      !ReadString(env, argv[3], &destination_name) || !IsSimpleName(destination_name)) {
-    return ThrowError(env, "publishVerifiedNoReplace requires safe anchored names and expected bytes.", "EINVAL");
-  }
-  bool is_buffer = false;
-  void* bytes = nullptr;
-  size_t byte_length = 0;
-  if (napi_is_buffer(env, argv[4], &is_buffer) != napi_ok || !is_buffer ||
-      napi_get_buffer_info(env, argv[4], &bytes, &byte_length) != napi_ok) {
-    return ThrowError(env, "publishVerifiedNoReplace expected bytes must be a Buffer.", "EINVAL");
-  }
-#ifdef _WIN32
-  return ThrowError(env, "Anchored recovery publication is unavailable on this platform.", "ENOTSUP");
-#else
-  return PublishVerifiedNoReplacePosix(
-      env, root, parent_components, temporary_name, destination_name, bytes, byte_length);
-#endif
-}
-
-napi_value VerifyAnchoredFile(napi_env env, napi_callback_info info) {
-  napi_value argv[5];
-  std::string root;
-  std::string name;
-  std::string expected_sha256;
-  std::vector<std::string> parent_components;
-  if (!ReadPathArguments(env, info, 5, argv, &root, &parent_components, &name) ||
-      !ReadString(env, argv[4], &expected_sha256) || !IsSha256Hex(expected_sha256)) {
-    return ThrowError(
-        env, "verifyFile requires a safe root, parent, name, size, and lowercase SHA-256.", "EINVAL");
-  }
-  double expected_size = 0;
-  if (napi_get_value_double(env, argv[3], &expected_size) != napi_ok ||
-      !std::isfinite(expected_size) || std::floor(expected_size) != expected_size ||
-      expected_size < 0 || expected_size > 9007199254740991.0 ||
-      expected_size > static_cast<double>(std::numeric_limits<size_t>::max())) {
-    return ThrowError(env, "verifyFile expected size is invalid.", "EINVAL");
-  }
-#ifdef _WIN32
-  return ThrowError(env, "Anchored streaming verification is unavailable on this platform.",
-                    "ENOTSUP");
-#else
-  return VerifyFilePosix(
-      env,
-      root,
-      parent_components,
-      name,
-      static_cast<size_t>(expected_size),
-      expected_sha256);
-#endif
-}
-
-napi_value StatAnchoredFile(napi_env env, napi_callback_info info) {
-  napi_value argv[3];
-  std::string root;
-  std::string name;
-  std::vector<std::string> parent_components;
-  if (!ReadPathArguments(env, info, 3, argv, &root, &parent_components, &name)) {
-    return ThrowError(env, "statFile requires a safe root, parent, and name.", "EINVAL");
-  }
-#ifdef _WIN32
-  return ThrowError(env, "Anchored file metadata is unavailable on this platform.", "ENOTSUP");
-#else
-  return StatFilePosix(env, root, parent_components, name);
-#endif
-}
-
-napi_value RemoveAnchoredFile(napi_env env, napi_callback_info info) {
-  napi_value argv[3];
-  std::string root;
-  std::string name;
-  std::vector<std::string> parent_components;
-  if (!ReadPathArguments(env, info, 3, argv, &root, &parent_components, &name)) {
-    return ThrowError(env, "removeFile requires a safe root, parent, and name.", "EINVAL");
-  }
-#ifdef _WIN32
-  return ThrowError(env, "Anchored file cleanup is unavailable on this platform.", "ENOTSUP");
-#else
-  return RemoveFilePosix(env, root, parent_components, name);
-#endif
-}
-
-napi_value ListAnchoredDirectory(napi_env env, napi_callback_info info) {
-  size_t argc = 2;
-  napi_value argv[2];
-  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 2) {
-    return ThrowError(env, "listDirectory requires a safe root and parent.", "EINVAL");
-  }
-  std::string root;
-  std::string relative_parent;
-  std::vector<std::string> parent_components;
-  if (!ReadString(env, argv[0], &root) || root.empty() ||
-      !ReadString(env, argv[1], &relative_parent) ||
-      !SplitRelativePath(relative_parent, &parent_components)) {
-    return ThrowError(env, "listDirectory requires a safe root and parent.", "EINVAL");
-  }
-#ifdef _WIN32
-  return ThrowError(env, "Anchored directory enumeration is unavailable on this platform.",
-                    "ENOTSUP");
-#else
-  return ListDirectoryPosix(env, root, parent_components);
-#endif
-}
-
 napi_value Init(napi_env env, napi_value exports) {
-  napi_value supports_anchored_writes;
-#ifdef _WIN32
-  napi_get_boolean(env, false, &supports_anchored_writes);
-#else
-  napi_get_boolean(env, true, &supports_anchored_writes);
-#endif
-  napi_set_named_property(env, exports, "supportsAnchoredWrites", supports_anchored_writes);
   napi_value publish;
   napi_create_function(
       env, "publishNoReplace", NAPI_AUTO_LENGTH, PublishNoReplace, nullptr, &publish);
@@ -1629,38 +696,6 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(
       env, "inspectPath", NAPI_AUTO_LENGTH, InspectPath, nullptr, &inspect_path);
   napi_set_named_property(env, exports, "inspectPath", inspect_path);
-  napi_value write_and_publish;
-  napi_create_function(env, "writeAndPublishNoReplace", NAPI_AUTO_LENGTH,
-                       WriteAndPublishNoReplace, nullptr, &write_and_publish);
-  napi_set_named_property(env, exports, "writeAndPublishNoReplace", write_and_publish);
-  napi_value read_file;
-  napi_create_function(
-      env, "readFile", NAPI_AUTO_LENGTH, ReadAnchoredFile, nullptr, &read_file);
-  napi_set_named_property(env, exports, "readFile", read_file);
-  napi_value read_file_bounded;
-  napi_create_function(env, "readFileBounded", NAPI_AUTO_LENGTH,
-                       ReadAnchoredFileBounded, nullptr, &read_file_bounded);
-  napi_set_named_property(env, exports, "readFileBounded", read_file_bounded);
-  napi_value publish_verified;
-  napi_create_function(env, "publishVerifiedNoReplace", NAPI_AUTO_LENGTH,
-                       PublishVerifiedNoReplace, nullptr, &publish_verified);
-  napi_set_named_property(env, exports, "publishVerifiedNoReplace", publish_verified);
-  napi_value verify_file;
-  napi_create_function(
-      env, "verifyFile", NAPI_AUTO_LENGTH, VerifyAnchoredFile, nullptr, &verify_file);
-  napi_set_named_property(env, exports, "verifyFile", verify_file);
-  napi_value stat_file;
-  napi_create_function(
-      env, "statFile", NAPI_AUTO_LENGTH, StatAnchoredFile, nullptr, &stat_file);
-  napi_set_named_property(env, exports, "statFile", stat_file);
-  napi_value remove_file;
-  napi_create_function(
-      env, "removeFile", NAPI_AUTO_LENGTH, RemoveAnchoredFile, nullptr, &remove_file);
-  napi_set_named_property(env, exports, "removeFile", remove_file);
-  napi_value list_directory;
-  napi_create_function(
-      env, "listDirectory", NAPI_AUTO_LENGTH, ListAnchoredDirectory, nullptr, &list_directory);
-  napi_set_named_property(env, exports, "listDirectory", list_directory);
   return exports;
 }
 

@@ -7,9 +7,7 @@ import {
   MANAGED_TEXT_EDIT_EXTENSIONS,
   MANAGED_TEXT_EDIT_MAX_BYTES,
   buildManagedVersionStoredFilename,
-  createManagedVersionStorageTag,
   inspectManagedTextEditEligibility,
-  isManagedVersionStoredFilename,
   isSafeManagedFileBasename
 } from './managed-file-versions'
 
@@ -139,12 +137,6 @@ describe('managed text edit eligibility', () => {
 })
 
 describe('managed version storage names', () => {
-  it('builds a storage tag from the injected secure random index source', () => {
-    const indexes = [0, 10, 20, 29, 16, 28, 0, 25]
-
-    expect(createManagedVersionStorageTag(() => indexes.shift()!)).toBe('vaku3q2az')
-  })
-
   it('prefixes only a safe stable basename', () => {
     expect(buildManagedVersionStoredFilename('README.md', 'vk3m8q2az')).toBe('vk3m8q2az_README.md')
     expect(() => buildManagedVersionStoredFilename('../README.md', 'vk3m8q2az')).toThrow(
@@ -185,14 +177,6 @@ describe('managed version storage names', () => {
     ).toBe(253)
     expect(encode(oversizedUnicodeName).byteLength).toBe(246)
     expect(isSafeManagedFileBasename(oversizedUnicodeName)).toBe(false)
-  })
-
-  it('recognizes only portable managed storage filenames', () => {
-    expect(isManagedVersionStoredFilename('vk3m8q2az_README.md')).toBe(true)
-    expect(isManagedVersionStoredFilename('vABC12345_README.md')).toBe(false)
-    expect(isManagedVersionStoredFilename('vk3m8q2az_CON.txt')).toBe(false)
-    expect(isManagedVersionStoredFilename('vk3m8q2az_report?.md')).toBe(false)
-    expect(isManagedVersionStoredFilename(`vk3m8q2az_${'界'.repeat(81)}.md`)).toBe(false)
   })
 })
 

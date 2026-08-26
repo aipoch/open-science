@@ -14,9 +14,6 @@
         }],
         ["OS!='win'", {
           "cflags_cc": ["-std=c++17"]
-        }],
-        ["OS=='linux'", {
-          "libraries": ["-lcrypto"]
         }]
       ]
     }

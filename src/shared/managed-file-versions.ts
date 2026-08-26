@@ -3,8 +3,6 @@ const MANAGED_DIFF_MAX_INPUT_BYTES = 2 * 1024 * 1024
 const MANAGED_DIFF_MAX_OUTPUT_LINES = 20_000
 const MANAGED_DIFF_MAX_OUTPUT_BYTES = 500 * 1024
 const MANAGED_VERSION_STORAGE_TAG_PATTERN = /^v[a-z0-9]{8}$/
-const MANAGED_VERSION_STORED_FILENAME_PATTERN = /^(v[a-z0-9]{8})_(.+)$/
-const STORAGE_TAG_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 const MAX_PORTABLE_FILENAME_COMPONENT_BYTES = 255
 const MANAGED_VERSION_FILENAME_PREFIX_BYTES = 10
 const MAX_MANAGED_FILE_BASENAME_BYTES =
@@ -173,8 +171,6 @@ type ManagedTextEditEligibility =
     }
   | { editable: false; reason: ManagedTextEditUnavailableReason }
 
-type SecureRandomIndexSource = (upperBound: number) => number
-
 const extensionOf = (filename: string): string | undefined => {
   const index = filename.lastIndexOf('.')
   if (index <= 0 || index === filename.length - 1) return undefined
@@ -219,18 +215,6 @@ const inspectManagedTextEditEligibility = (
   }
 }
 
-const createManagedVersionStorageTag = (randomIndex: SecureRandomIndexSource): string => {
-  let suffix = ''
-  for (let index = 0; index < 8; index += 1) {
-    const value = randomIndex(STORAGE_TAG_ALPHABET.length)
-    if (!Number.isInteger(value) || value < 0 || value >= STORAGE_TAG_ALPHABET.length) {
-      throw new RangeError('Secure random index must be an integer in the requested range.')
-    }
-    suffix += STORAGE_TAG_ALPHABET[value]
-  }
-  return `v${suffix}`
-}
-
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).byteLength
 const hasControlCharacter = (value: string): boolean =>
   Array.from(value).some((character) => {
@@ -258,16 +242,6 @@ const buildManagedVersionStoredFilename = (filename: string, storageTag: string)
   return `${storageTag}_${filename}`
 }
 
-const isManagedVersionStoredFilename = (filename: string): boolean => {
-  const match = MANAGED_VERSION_STORED_FILENAME_PATTERN.exec(filename)
-  return (
-    !!match &&
-    MANAGED_VERSION_STORAGE_TAG_PATTERN.test(match[1]!) &&
-    isSafeManagedFileBasename(match[2]!) &&
-    utf8ByteLength(filename) <= MAX_PORTABLE_FILENAME_COMPONENT_BYTES
-  )
-}
-
 export {
   MANAGED_DIFF_MAX_INPUT_BYTES,
   MANAGED_DIFF_MAX_OUTPUT_BYTES,
@@ -275,11 +249,8 @@ export {
   MANAGED_TEXT_EDIT_EXTENSIONS,
   MANAGED_TEXT_EDIT_MAX_BYTES,
   MANAGED_VERSION_STORAGE_TAG_PATTERN,
-  MANAGED_VERSION_STORED_FILENAME_PATTERN,
   buildManagedVersionStoredFilename,
-  createManagedVersionStorageTag,
   inspectManagedTextEditEligibility,
-  isManagedVersionStoredFilename,
   isSafeManagedFileBasename,
   type ManagedFileIdentity,
   type ManagedFileSource,
@@ -299,6 +270,5 @@ export {
   type ManagedTextEditEligibility,
   type ManagedTextEditUnavailableReason,
   type ManagedTextFormat,
-  type SaveTextEditResult,
-  type SecureRandomIndexSource
+  type SaveTextEditResult
 }
