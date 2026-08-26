@@ -27,7 +27,6 @@ import type {
 } from '../../shared/notebook'
 import {
   isNotebookRunCursor,
-  parseNotebookLanguage,
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT
@@ -581,15 +580,12 @@ class NotebookRuntimeService {
     return enablement.enabled[envId] === false || enablement.enabled[interp] === false
   }
 
-  // The DEFAULT env name / process key for a language, matching resolveEnvName / dataProcessKey.
   private defaultEnvNameFor(language: NotebookLanguage): string {
     return language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
   }
 
-  // The conda env NAME a run uses for a language, derived from the SESSION BINDING (v4: the binding,
-  // not a per-call argument, picks the env). A managed binding runs in its conda env (default-python or
-  // an agent-created named env); an external binding or no binding runs under the language's DEFAULT
-  // env name (an external binding overrides the interpreter but is tracked on the default env key).
+  // The Session binding picks the run's conda env. External or missing bindings use the language's
+  // default env key, even when an external binding overrides the interpreter.
   private resolveRunEnv(session: RuntimeSession, language: NotebookLanguage): string {
     const binding = session.runtimeBinding(language)
     if (binding?.source === 'managed' && binding.envName) return binding.envName
@@ -922,41 +918,7 @@ class NotebookRuntimeService {
   }
 
   async inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot> {
-    return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
-      const language = parseNotebookLanguage(request.language)
-      const environment = resolveEnvName(language, request.environment)
-      const processKey = dataProcessKey(language, environment)
-      const session = this.sessions.get(this.sessionLifecycle.laneForRequest(request))
-      if (!session) return { status: 'unavailable', reason: 'kernel-not-live' }
-
-      const kernelEpochId = session.currentKernelEpochId(processKey)
-      if (!kernelEpochId) return { status: 'unavailable', reason: 'kernel-not-live' }
-
-      try {
-        const result = await session.enqueueExecution(
-          processKey,
-          () =>
-            session.inspectNamespace({
-              language,
-              environment,
-              includePrivate: request.includePrivate === true
-            }),
-          deletionSignal
-        )
-        if (session.currentKernelEpochId(processKey) !== kernelEpochId) {
-          return { status: 'unavailable', reason: 'kernel-restarted' }
-        }
-        if (result.status === 'unavailable') {
-          return { status: 'unavailable', reason: 'kernel-not-live' }
-        }
-        return { ...result, language, environment, kernelEpochId }
-      } catch (error) {
-        if (session.currentKernelEpochId(processKey) !== kernelEpochId) {
-          return { status: 'unavailable', reason: 'kernel-restarted' }
-        }
-        throw error
-      }
-    })
+    return this.sessionLifecycle.inspectNamespace(request)
   }
 
   // Resolves the durable reference for a session, preferring the live runtime session but falling

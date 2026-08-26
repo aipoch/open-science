@@ -686,8 +686,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // Runtime events have no process key, so mark the open snapshot stale and wait for the refreshed
   // notebook state. Once the selected kernel is idle, coalesce all queued events into one read.
   useEffect(() => {
+    if (!showVariables) return
     return window.api.notebook.onChanged((event) => {
-      if (!showVariables || event.sessionId !== item.notebook.sessionId) return
+      if (event.sessionId !== item.notebook.sessionId) return
       namespaceRefreshQueued.current = true
       setNamespaceStatus((status) => (status === 'ready' ? 'stale' : status))
     })

@@ -1,10 +1,13 @@
 import type {
   NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
+  NotebookNamespaceRequest,
+  NotebookNamespaceSnapshot,
   NotebookRunSource,
   NotebookSessionReference,
   NotebookSessionRequest
 } from '../../shared/notebook'
+import { parseNotebookLanguage } from '../../shared/notebook'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
 import { NotebookRunRepository, getNotebookRunJsonPath } from './repository'
 import {
@@ -15,7 +18,7 @@ import {
 } from './session-aggregate'
 import { NotebookSessionRegistry } from './session-registry'
 import type { NotebookRuntimeBindingOwner } from './runtime-binding'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from './runtime-paths'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV, resolveEnvName } from './runtime-paths'
 import type { KernelProcessKind } from './kernel-executor'
 import {
   createFrameNotebookLane,
@@ -233,6 +236,44 @@ class NotebookSessionLifecycleOwner {
       })
       .catch(() => undefined)
     return running
+  }
+
+  inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot> {
+    return this.runProjectOperation(request, async (deletionSignal) => {
+      const language = parseNotebookLanguage(request.language)
+      const environment = resolveEnvName(language, request.environment)
+      const processKey = processKeyFor(language, environment)
+      const session = this.options.sessions.get(this.laneForRequest(request))
+      if (!session) return { status: 'unavailable', reason: 'kernel-not-live' }
+
+      const kernelEpochId = session.currentKernelEpochId(processKey)
+      if (!kernelEpochId) return { status: 'unavailable', reason: 'kernel-not-live' }
+
+      try {
+        const result = await session.enqueueExecution(
+          processKey,
+          () =>
+            session.inspectNamespace({
+              language,
+              environment,
+              includePrivate: request.includePrivate === true
+            }),
+          deletionSignal
+        )
+        if (session.currentKernelEpochId(processKey) !== kernelEpochId) {
+          return { status: 'unavailable', reason: 'kernel-restarted' }
+        }
+        if (result.status === 'unavailable') {
+          return { status: 'unavailable', reason: 'kernel-not-live' }
+        }
+        return { ...result, language, environment, kernelEpochId }
+      } catch (error) {
+        if (session.currentKernelEpochId(processKey) !== kernelEpochId) {
+          return { status: 'unavailable', reason: 'kernel-restarted' }
+        }
+        throw error
+      }
+    })
   }
 
   createExecutor(lane: NotebookLaneIdentity): NotebookSessionOwnedExecutor {
