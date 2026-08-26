@@ -1121,6 +1121,29 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession.mock.calls[1][1]).toEqual({ conflictRebaseFields: ['title'] })
   })
 
+  it('bounds fast whole-Session writes during a 30 fps live stream', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const session = createPersistedSession()
+      const writeLatest = vi.fn(async () => session)
+      const persistence = createOrderedSessionPersistence(createApi())
+      const writes: Promise<PersistedChatSession>[] = []
+
+      for (let frame = 0; frame < 30; frame += 1) {
+        writes.push(persistence.saveLatestSession('session:session-1', writeLatest))
+        await vi.advanceTimersByTimeAsync(33)
+      }
+
+      await vi.runAllTimersAsync()
+      await Promise.all(writes)
+
+      expect(writeLatest).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('chains queued local saves from the last acknowledged durable revision', async () => {
     const firstSave = createDeferred<PersistedChatSession>()
     const saveSession = vi

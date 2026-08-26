@@ -508,6 +508,8 @@ const mergeSaveSessionOptions = (
   return conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
 }
 
+const LATEST_SESSION_SAVE_INTERVAL_MS = 500
+
 // Serializes every renderer-originated Session write through one ordering seam. Store snapshots at
 // the queue tail use latest-wins coalescing; explicit Session and Manifest writes remain barriers, so
 // Artifact finalization cannot be overtaken by an older store snapshot.
@@ -522,9 +524,29 @@ const createOrderedSessionPersistence = (
         target: string
         task: LatestSessionSaveTask
         options: SaveSessionOptions | undefined
+        bypassCadence?: boolean
+        releaseCadence?: () => void
       }
     | undefined
   let pendingLatestPromise: Promise<PersistedChatSession> | undefined
+  let latestSessionSaveStartedAt = Number.NEGATIVE_INFINITY
+
+  const waitForLatestSessionSaveCadence = async (
+    entry: NonNullable<typeof pendingLatest>
+  ): Promise<void> => {
+    const waitMs = latestSessionSaveStartedAt + LATEST_SESSION_SAVE_INTERVAL_MS - performance.now()
+    if (waitMs > 0 && !entry.bypassCadence) {
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(resolve, waitMs)
+        entry.releaseCadence = () => {
+          clearTimeout(timeout)
+          resolve()
+        }
+      })
+    }
+    entry.releaseCadence = undefined
+    latestSessionSaveStartedAt = performance.now()
+  }
 
   const acknowledgeSession = (session: PersistedChatSession): void => {
     const revision = sessionRevision(session)
@@ -544,6 +566,10 @@ const createOrderedSessionPersistence = (
   }
 
   const enqueue = <Result>(task: () => Promise<Result>): Promise<Result> => {
+    if (pendingLatest) {
+      pendingLatest.bypassCadence = true
+      pendingLatest.releaseCadence?.()
+    }
     pendingLatest = undefined
     pendingLatestPromise = undefined
     const run = queue.then(task, task)
@@ -582,15 +608,17 @@ const createOrderedSessionPersistence = (
     }
 
     const entry = { target, task, options }
-    const runTask = (): Promise<PersistedChatSession> => {
+    const runTask = async (): Promise<PersistedChatSession> => {
+      // A fast IPC/disk round-trip otherwise defeats latest-wins coalescing and rewrites the entire
+      // Session at the live presentation frame rate. Keep the entry replaceable while it waits.
+      await waitForLatestSessionSaveCadence(entry)
       if (pendingLatest === entry) {
         pendingLatest = undefined
         pendingLatestPromise = undefined
       }
-      return entry.task(entry.options).then((durable) => {
-        acknowledgeSession(durable)
-        return durable
-      })
+      const durable = await entry.task(entry.options)
+      acknowledgeSession(durable)
+      return durable
     }
     const run = queue.then(runTask, runTask)
     pendingLatest = entry
@@ -605,6 +633,9 @@ const createOrderedSessionPersistence = (
   return {
     saveLatestSession,
     seedAcknowledgedSessions: (sessions) => {
+      // A newly hydrated store starts a fresh live-save cadence. The ordered queue remains shared,
+      // but a save from the previous mount must not delay this mount's first observable write.
+      latestSessionSaveStartedAt = Number.NEGATIVE_INFINITY
       for (const session of sessions) {
         acknowledgedRevisions.set(session.id, sessionRevision(session))
         acknowledgedSessions.set(session.id, structuredClone(session))
