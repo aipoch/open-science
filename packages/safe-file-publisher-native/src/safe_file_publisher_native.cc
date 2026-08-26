@@ -1,7 +1,6 @@
 #include <node_api.h>
 
 #include <cerrno>
-#include <cstdlib>
 #include <cstddef>
 #include <cstring>
 #include <limits>
@@ -16,16 +15,16 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #ifdef __linux__
-#ifndef AT_EMPTY_PATH
-#define AT_EMPTY_PATH 0x1000
-#endif
-#ifndef O_TMPFILE
-#define O_TMPFILE (020000000 | O_DIRECTORY)
+#include <sys/syscall.h>
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
 #endif
 #endif
 #ifdef __APPLE__
 #include <stdio.h>
-#include <sys/clonefile.h>
+#ifndef RENAME_EXCL
+#define RENAME_EXCL 0x00000004
+#endif
 #endif
 #endif
 
@@ -403,120 +402,11 @@ const char* PosixErrorCode(int error) {
     case EPERM:
       return "EPERM";
     case ELOOP:
-    case ENOTDIR:
       return "ELOOP";
     default:
       return "EIO";
   }
 }
-
-void CloseAnchoredDirectories(int root_fd, int parent_fd) {
-  if (parent_fd != root_fd) close(parent_fd);
-  close(root_fd);
-}
-
-bool NativeTestHooksEnabled() {
-  const char* enabled = std::getenv("OPEN_SCIENCE_NATIVE_TEST_HOOKS");
-  const char* node_env = std::getenv("NODE_ENV");
-  const char* vitest = std::getenv("VITEST");
-  return enabled != nullptr && std::strcmp(enabled, "1") == 0 && node_env != nullptr &&
-         std::strcmp(node_env, "test") == 0 && vitest != nullptr &&
-         std::strcmp(vitest, "true") == 0;
-}
-
-void PauseAfterOpenedSourceForTest() {
-  if (!NativeTestHooksEnabled()) return;
-  const char* marker = std::getenv("OPEN_SCIENCE_TEST_OPENED_SOURCE_MARKER");
-  const char* resume = std::getenv("OPEN_SCIENCE_TEST_OPENED_SOURCE_RESUME");
-  if (marker == nullptr || resume == nullptr || marker[0] == '\0' || resume[0] == '\0') return;
-  const int marker_fd = open(marker, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-  if (marker_fd < 0) _exit(91);
-  close(marker_fd);
-  for (size_t attempt = 0; attempt < 10'000; attempt += 1) {
-    if (access(resume, F_OK) == 0) return;
-    usleep(1'000);
-  }
-  _exit(92);
-}
-
-#ifdef __linux__
-int LinkOpenFileDescriptorNoReplace(
-    int file_fd,
-    int parent_fd,
-    const std::string& destination_name) {
-  // AT_EMPTY_PATH binds publication to the descriptor that was verified. Some kernels require a
-  // capability for this form, so the fallback resolves the same open descriptor through procfs.
-  int result = linkat(file_fd, "", parent_fd, destination_name.c_str(), AT_EMPTY_PATH);
-  if (result == 0) return 0;
-  const int direct_error = errno;
-  if (direct_error != EPERM && direct_error != EINVAL && direct_error != ENOENT &&
-      direct_error != ENOSYS && direct_error != EOPNOTSUPP) {
-    errno = direct_error;
-    return -1;
-  }
-  const std::string source_fd_path = "/proc/self/fd/" + std::to_string(file_fd);
-  result = linkat(
-      AT_FDCWD,
-      source_fd_path.c_str(),
-      parent_fd,
-      destination_name.c_str(),
-      AT_SYMLINK_FOLLOW);
-  if (result != 0 && errno == ENOENT) errno = ENOTSUP;
-  return result;
-}
-
-int PublishCopiedFileDescriptorNoReplace(
-    int source_fd,
-    int parent_fd,
-    const std::string& destination_name) {
-  const int copy_fd = openat(parent_fd, ".", O_TMPFILE | O_RDWR | O_CLOEXEC, 0600);
-  if (copy_fd < 0) return -1;
-
-  char buffer[64 * 1024];
-  for (;;) {
-    const ssize_t bytes_read = read(source_fd, buffer, sizeof(buffer));
-    if (bytes_read == 0) break;
-    if (bytes_read < 0) {
-      if (errno == EINTR) continue;
-      const int error = errno;
-      close(copy_fd);
-      errno = error;
-      return -1;
-    }
-
-    ssize_t written = 0;
-    while (written < bytes_read) {
-      const ssize_t result = write(copy_fd, buffer + written, bytes_read - written);
-      if (result < 0) {
-        if (errno == EINTR) continue;
-        const int error = errno;
-        close(copy_fd);
-        errno = error;
-        return -1;
-      }
-      if (result == 0) {
-        close(copy_fd);
-        errno = EIO;
-        return -1;
-      }
-      written += result;
-    }
-  }
-
-  if (fsync(copy_fd) != 0) {
-    const int error = errno;
-    close(copy_fd);
-    errno = error;
-    return -1;
-  }
-  const int result =
-      LinkOpenFileDescriptorNoReplace(copy_fd, parent_fd, destination_name);
-  const int error = result == 0 ? 0 : errno;
-  close(copy_fd);
-  errno = error;
-  return result;
-}
-#endif
 
 napi_value PublishPosix(
     napi_env env,
@@ -543,12 +433,7 @@ napi_value PublishPosix(
     parent_fd = next_fd;
   }
 
-  bool source_writable = true;
-  int source_fd = openat(parent_fd, source.c_str(), O_RDWR | O_NOFOLLOW | O_CLOEXEC);
-  if (source_fd < 0 && (errno == EACCES || errno == EPERM || errno == EROFS)) {
-    source_writable = false;
-    source_fd = openat(parent_fd, source.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-  }
+  const int source_fd = openat(parent_fd, source.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
   if (source_fd < 0) {
     const int error = errno;
     if (parent_fd != root_fd) close(parent_fd);
@@ -564,40 +449,44 @@ napi_value PublishPosix(
     close(root_fd);
     return ThrowError(env, "The publication source is not anchored safely.", PosixErrorCode(error));
   }
-  PauseAfterOpenedSourceForTest();
 
 #ifdef __linux__
-  const int result = PublishCopiedFileDescriptorNoReplace(source_fd, parent_fd, destination);
-  const int publish_error = result == 0 ? 0 : errno;
-#elif defined(__APPLE__)
-  if (fsync(source_fd) != 0) {
-    const int sync_error = errno;
-    close(source_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Publication source sync failed.", PosixErrorCode(sync_error));
+  int result = static_cast<int>(syscall(
+      SYS_renameat2,
+      parent_fd,
+      source.c_str(),
+      parent_fd,
+      destination.c_str(),
+      RENAME_NOREPLACE));
+  int rename_error = result == 0 ? 0 : errno;
+  if (result != 0 &&
+      (rename_error == ENOSYS || rename_error == EOPNOTSUPP || rename_error == EINVAL)) {
+    // linkat creates the destination name atomically without replacing an existing entry. This
+    // preserves no-replace publication on older kernels and filesystems that reject renameat2.
+    result = linkat(parent_fd, source.c_str(), parent_fd, destination.c_str(), 0);
+    rename_error = result == 0 ? 0 : errno;
+    if (result != 0 && rename_error != EEXIST && rename_error != ENOTEMPTY) {
+      rename_error = ENOTSUP;
+    }
+    if (result == 0) {
+      // Publication is already complete once linkat succeeds. A failed best-effort unlink leaves
+      // only the verified temporary alias, which recovery can reclaim as a stale attempt later.
+      (void)unlinkat(parent_fd, source.c_str(), 0);
+    }
   }
-  const int result = fclonefileat(source_fd, parent_fd, destination.c_str(), 0);
-  const int publish_error = result == 0 ? 0 : errno;
+#elif defined(__APPLE__)
+  const int result =
+      renameatx_np(parent_fd, source.c_str(), parent_fd, destination.c_str(), RENAME_EXCL);
+  const int rename_error = result == 0 ? 0 : errno;
 #else
 #error Unsupported platform for atomic no-replace publication
 #endif
-  if (result != 0) {
-    close(source_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Atomic no-replace publication failed.", PosixErrorCode(publish_error));
-  }
-
-  if (fsync(parent_fd) != 0) {
-    const int sync_error = errno;
-    close(source_fd);
-    CloseAnchoredDirectories(root_fd, parent_fd);
-    return ThrowError(env, "Atomic publication directory sync failed.", PosixErrorCode(sync_error));
-  }
-  // POSIX has no portable identity-conditional unlink. Truncate the already-open private source
-  // when writable, leaving a harmless alias without touching any concurrent pathname replacement.
-  if (source_writable) (void)ftruncate(source_fd, 0);
   close(source_fd);
-  CloseAnchoredDirectories(root_fd, parent_fd);
+  if (parent_fd != root_fd) close(parent_fd);
+  close(root_fd);
+  if (result != 0) {
+    return ThrowError(env, "Atomic no-replace publication failed.", PosixErrorCode(rename_error));
+  }
 
   napi_value undefined;
   napi_get_undefined(env, &undefined);

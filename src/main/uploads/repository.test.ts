@@ -1278,9 +1278,8 @@ describe('upload repository', () => {
     expect(hardLinkUnavailable).toHaveBeenCalledOnce()
     await expect(readFile(finalPath)).resolves.toEqual(content)
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(readFile(staleRecoveryTemporaryPath)).resolves.toEqual(content.subarray(0, 1))
+    await expect(readFile(staleRecoveryTemporaryPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(readFile(freshRecoveryTemporaryPath)).resolves.toEqual(content.subarray(0, 2))
-    await rm(staleRecoveryTemporaryPath)
     await rm(freshRecoveryTemporaryPath)
 
     await expect(

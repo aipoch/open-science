@@ -5,7 +5,6 @@ node_modules
 # Build outputs
 dist/
 out/
-packages/*/build/
 dist-e2e-mac/
 dist-e2e-win/
 release/
