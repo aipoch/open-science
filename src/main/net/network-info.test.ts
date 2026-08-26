@@ -73,6 +73,36 @@ describe('parseHardwarePorts', () => {
 // The resolver shells out to networksetup, which only exists on macOS; the injected execFile
 // seam is exercised on darwin only.
 describe('createConnectionTypeResolver', () => {
+  it('keeps an active interface missing from the hardware-port table unknown', async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const execFile = vi.fn((_cmd, _args, _options, callback) => {
+      callback(null, HARDWARE_PORTS_OUTPUT, '')
+    })
+
+    try {
+      const resolve = createConnectionTypeResolver(execFile as never)
+      await expect(resolve({ utun3: [ipv4('10.8.0.2')] })).resolves.toBe('unknown')
+    } finally {
+      Object.defineProperty(process, 'platform', originalPlatform!)
+    }
+  })
+
+  it('keeps a known non-Wi-Fi and non-Ethernet hardware port unknown', async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const execFile = vi.fn((_cmd, _args, _options, callback) => {
+      callback(null, HARDWARE_PORTS_OUTPUT, '')
+    })
+
+    try {
+      const resolve = createConnectionTypeResolver(execFile as never)
+      await expect(resolve({ bridge0: [ipv4('10.0.0.3')] })).resolves.toBe('unknown')
+    } finally {
+      Object.defineProperty(process, 'platform', originalPlatform!)
+    }
+  })
+
   it.runIf(process.platform === 'darwin')('classifies a Wi-Fi hardware port as wifi', async () => {
     const execFile = vi.fn((_cmd, _args, _options, callback) => {
       callback(null, HARDWARE_PORTS_OUTPUT, '')
@@ -95,15 +125,15 @@ describe('createConnectionTypeResolver', () => {
   )
 
   it.runIf(process.platform === 'darwin')(
-    'falls back to ethernet when the port lookup fails and caches the attempt',
+    'keeps the type unknown when the port lookup fails and caches the attempt',
     async () => {
       const execFile = vi.fn((_cmd, _args, _options, callback) => {
         callback(new Error('not found'), '', '')
       })
       const resolve = createConnectionTypeResolver(execFile as never)
 
-      await expect(resolve({ en0: [ipv4('192.168.1.10')] })).resolves.toBe('ethernet')
-      await expect(resolve({ en0: [ipv4('192.168.1.10')] })).resolves.toBe('ethernet')
+      await expect(resolve({ en0: [ipv4('192.168.1.10')] })).resolves.toBe('unknown')
+      await expect(resolve({ en0: [ipv4('192.168.1.10')] })).resolves.toBe('unknown')
       expect(execFile).toHaveBeenCalledTimes(1)
     }
   )
