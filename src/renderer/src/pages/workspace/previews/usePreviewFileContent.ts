@@ -95,6 +95,11 @@ const readManagedPreviewPage = async (
         signal: request.signal
       })
       if (!response.ok) {
+        if (response.status === 404) {
+          throw Object.assign(new Error('ENOENT: managed preview file is no longer available.'), {
+            code: 'ENOENT'
+          })
+        }
         throw new Error(`Managed preview request failed with status ${response.status}.`)
       }
       size = readResponseSize(response, resource.size)

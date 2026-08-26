@@ -537,6 +537,24 @@ describe('PreviewFileContent', () => {
     expect(window.api.artifacts.openFile).not.toHaveBeenCalled()
   })
 
+  it('keeps the unavailable classification when a managed fetch returns 404 after acquire', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 404 }))
+
+    await renderFile(
+      createFileItem({ format: 'text', name: 'gone.txt', path: '/workspace/gone.txt' })
+    )
+
+    expect(container.textContent).toContain('This file is no longer available')
+    expect(container.querySelector('pre')).toBeNull()
+    expect(consoleError).not.toHaveBeenCalledWith('Failed to read file preview', expect.anything())
+    expect(window.api.previewResources.release).toHaveBeenCalledWith({
+      resourceId: 'resource-1'
+    })
+
+    consoleError.mockRestore()
+  })
+
   it('renders line numbers next to formatted JSON previews', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
       content: '{"name":"sample","values":[1,true]}',
