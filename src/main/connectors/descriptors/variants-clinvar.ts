@@ -302,7 +302,10 @@ export const VARIANTS_CLINVAR_TOOLS: ToolDescriptor[] = [
     input: {
       type: 'object',
       properties: {
-        accessions: { type: 'array', items: { type: 'string' } }
+        accessions: {
+          type: ['string', 'array'],
+          items: { type: 'string' }
+        }
       },
       required: ['accessions']
     },

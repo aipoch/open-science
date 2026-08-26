@@ -212,7 +212,9 @@ const FileTile = ({
     sessionId,
     managedFileId: fileId,
     path: previewArtifact.path,
-    source
+    source,
+    size,
+    mtimeMs: timestamp
   })
 
   return (
@@ -303,7 +305,9 @@ const FileListRow = ({
     sessionId: file.sessionId,
     managedFileId: file.sourceFileId,
     path: file.path,
-    source: file.source
+    source: file.source,
+    size: file.size,
+    mtimeMs: file.mtimeMs
   })
   const sizeLabel = formatByteSize(file.size)
   const relativeTimeLabel = formatRelativeFileTime(file.mtimeMs ?? file.sortAtMs, t)

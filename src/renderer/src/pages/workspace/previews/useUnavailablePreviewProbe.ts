@@ -10,7 +10,7 @@ type UnavailableProbeResult = {
   unavailable: boolean
 }
 
-// Probes one managed path only while its card is near the viewport and caches the result per path.
+// Probes one managed file only while its card is near the viewport and caches by file revision.
 const useUnavailablePreviewProbe = ({
   enabled,
   projectId,
@@ -18,7 +18,9 @@ const useUnavailablePreviewProbe = ({
   managedFileId,
   selectedVersionId,
   path,
-  source
+  source,
+  size,
+  mtimeMs
 }: {
   enabled: boolean
   projectId?: string
@@ -27,6 +29,8 @@ const useUnavailablePreviewProbe = ({
   selectedVersionId?: string
   path: string
   source: PreviewFileSource
+  size?: number
+  mtimeMs?: number
 }): boolean => {
   const requestKey = JSON.stringify([
     projectId ?? null,
@@ -34,7 +38,9 @@ const useUnavailablePreviewProbe = ({
     source,
     managedFileId ?? null,
     selectedVersionId ?? null,
-    path
+    path,
+    size ?? null,
+    mtimeMs ?? null
   ])
   const [result, setResult] = useState<UnavailableProbeResult | null>(null)
   const hasCurrentResult = result?.requestKey === requestKey

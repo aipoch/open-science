@@ -869,7 +869,9 @@ const ArtifactCard = ({
   const missing = useUnavailablePreviewProbe({
     enabled: isNearViewport,
     path: artifact.path,
-    source: 'artifact'
+    source: 'artifact',
+    size: artifact.size,
+    mtimeMs: artifact.mtimeMs
   })
 
   return (

@@ -3,10 +3,11 @@ import { useEffect, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
-import { createPreviewRequestScope, getPreviewFileReader } from './preview-file-reader'
+import { createPreviewRequestScope } from './preview-file-reader'
 import { isUnavailableFileError } from './preview-errors'
 
 export const PREVIEW_TEXT_MAX_BYTES = 1024 * 1024
+const MAX_PREVIEW_BYTES = 10 * 1024 * 1024
 
 type PreviewPagination = {
   pageNumber: number
@@ -35,6 +36,103 @@ type UsePreviewFileContentRequest = {
   source?: PreviewFileSource
   maxBytes?: number
   encoding?: 'utf8' | 'base64'
+}
+
+const encodeBase64 = (bytes: Uint8Array): string => {
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 32 * 1024) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32 * 1024))
+  }
+  return btoa(binary)
+}
+
+const readResponseSize = (response: Response, fallback: number): number => {
+  const contentRange = response.headers.get('content-range')
+  const match = contentRange?.match(/\/(\d+)$/u)
+  if (!match) return fallback
+
+  const size = Number(match[1])
+  return Number.isSafeInteger(size) && size >= 0 ? size : fallback
+}
+
+const readManagedPreviewPage = async (
+  request: UsePreviewFileContentRequest & {
+    source: PreviewFileSource
+    maxBytes: number
+    encoding: 'utf8' | 'base64'
+    offset: number
+    signal: AbortSignal
+  }
+): Promise<ArtifactPreviewResult> => {
+  const requestScope = createPreviewRequestScope(request)
+  const resource = await window.api.previewResources.acquire({
+    source: request.source,
+    path: request.path,
+    ...requestScope,
+    ...(request.managedFileId ? { fileId: request.managedFileId } : {}),
+    ...(request.selectedVersionId ? { versionId: request.selectedVersionId } : {})
+  })
+
+  try {
+    if (request.signal.aborted) throw request.signal.reason
+
+    const requestedBytes = Number.isFinite(request.maxBytes)
+      ? Math.floor(request.maxBytes)
+      : PREVIEW_TEXT_MAX_BYTES
+    const maxBytes = Math.max(1, Math.min(requestedBytes, MAX_PREVIEW_BYTES))
+    if (
+      !Number.isSafeInteger(request.offset) ||
+      request.offset < 0 ||
+      request.offset > resource.size
+    ) {
+      throw new Error('Invalid managed file preview offset.')
+    }
+
+    const readBudget = request.encoding === 'utf8' ? maxBytes + 3 : maxBytes
+    const end = Math.min(resource.size, request.offset + readBudget)
+    let bytes = new Uint8Array()
+    let size = resource.size
+    if (end > request.offset) {
+      const response = await fetch(resource.url, {
+        cache: 'no-store',
+        headers: { Range: `bytes=${request.offset}-${end - 1}` },
+        signal: request.signal
+      })
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw Object.assign(new Error('ENOENT: managed preview file is no longer available.'), {
+            code: 'ENOENT'
+          })
+        }
+        throw new Error(`Managed preview request failed with status ${response.status}.`)
+      }
+      size = readResponseSize(response, resource.size)
+      bytes = new Uint8Array(await response.arrayBuffer())
+    }
+
+    let contentBytesRead = Math.min(bytes.length, maxBytes)
+    if (request.encoding === 'utf8') {
+      while (contentBytesRead < bytes.length && (bytes[contentBytesRead] & 0xc0) === 0x80) {
+        contentBytesRead += 1
+      }
+    }
+    const contentBytes = bytes.subarray(0, contentBytesRead)
+    const nextOffset = request.offset + contentBytesRead
+
+    return {
+      content:
+        request.encoding === 'utf8'
+          ? new TextDecoder().decode(contentBytes)
+          : encodeBase64(contentBytes),
+      encoding: request.encoding,
+      size,
+      truncated: size > nextOffset,
+      offset: request.offset,
+      ...(size > nextOffset ? { nextOffset } : {})
+    }
+  } finally {
+    await window.api.previewResources.release({ resourceId: resource.id }).catch(() => undefined)
+  }
 }
 
 // Centralizes artifact/upload preview reads so each renderer only handles parsing and display.
@@ -77,21 +175,25 @@ export const usePreviewFileContent = ({
 
   useEffect(() => {
     let canceled = false
-    const readPreview = getPreviewFileReader(source)
+    const abortController = new AbortController()
 
-    void readPreview({
-      ...createPreviewRequestScope({ projectId, sessionId, source, path }),
+    void readManagedPreviewPage({
+      projectId,
+      sessionId,
+      source,
       path,
-      ...(managedFileId ? { fileId: managedFileId } : {}),
-      ...(selectedVersionId ? { versionId: selectedVersionId } : {}),
+      ...(managedFileId ? { managedFileId } : {}),
+      ...(selectedVersionId ? { selectedVersionId } : {}),
       maxBytes,
       encoding,
-      offset
+      offset,
+      signal: abortController.signal
     })
       .then((preview) => {
         if (!canceled) setState({ status: 'ready', preview, requestKey })
       })
       .catch((error) => {
+        if (canceled) return
         // Unavailable files (missing / outside storage) surface as a handled preview state; only
         // log genuine read failures to avoid console noise for deleted/relocated files.
         if (!isUnavailableFileError(error)) console.error('Failed to read file preview', error)
@@ -100,6 +202,7 @@ export const usePreviewFileContent = ({
 
     return () => {
       canceled = true
+      abortController.abort()
     }
   }, [
     encoding,

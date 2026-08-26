@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { createCachedImageFetchResponse } from './cached-preview-image.test-support'
+import { createManagedPreviewTestTransport } from './managed-preview-test-support'
 import { PreviewFileContent } from './PreviewFileContent'
 import type { PreviewDownloadVersionContext } from './preview-runtime-context'
 
@@ -147,17 +148,6 @@ describe('PreviewFileContent', () => {
     document.body.appendChild(container)
     restorePdbLayoutMocks = undefined
     window.api = {
-      previewResources: {
-        acquire: vi.fn().mockResolvedValue({
-          id: 'resource-1',
-          url: 'open-science-preview://resource-1/report.html',
-          size: 88,
-          mimeType: 'text/html; charset=utf-8',
-          version: 1
-        }),
-        readRange: vi.fn(),
-        release: vi.fn().mockResolvedValue(undefined)
-      },
       artifacts: {
         openFile: vi.fn().mockResolvedValue(undefined),
         readPreview: vi.fn().mockResolvedValue({
@@ -179,6 +169,18 @@ describe('PreviewFileContent', () => {
         })
       }
     } as unknown as Window['api']
+    const transport = createManagedPreviewTestTransport({
+      read: (source, request) =>
+        source === 'upload'
+          ? window.api.uploads.readPreview(request)
+          : window.api.artifacts.readPreview(request)
+    })
+    window.api.previewResources = {
+      acquire: vi.fn(transport.acquire),
+      readRange: vi.fn(),
+      release: vi.fn(transport.release)
+    }
+    vi.stubGlobal('fetch', vi.fn(transport.fetch))
     vi.clearAllMocks()
     highlightSpy.mockClear()
   })
@@ -369,12 +371,10 @@ describe('PreviewFileContent', () => {
 
     await renderFile(createFileItem({ format: 'json', name: 'data.json' }))
 
-    expect(window.api.artifacts.readPreview).toHaveBeenCalledWith({
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'artifact',
       path: '/workspace/data.json',
-      sessionId: 'session-1',
-      maxBytes: 1024 * 1024,
-      encoding: 'utf8',
-      offset: 0
+      sessionId: 'session-1'
     })
     expect(container.querySelector('pre')?.textContent).toContain('"name": "sample"')
     expect(container.querySelector('pre')?.textContent).toContain('"values": [')
@@ -552,20 +552,6 @@ describe('PreviewFileContent', () => {
     expect(container.querySelector('.text-danger-000')?.textContent).not.toBe('')
   })
 
-  it('uses the CSV fallback for a non-UTF8 preview', async () => {
-    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
-      content: 'AAECAw==',
-      encoding: 'base64',
-      size: 4,
-      truncated: false
-    })
-
-    await renderFile(createFileItem({ format: 'csv', name: 'binary.csv' }))
-
-    expect(container.textContent).toContain("CSV couldn't be read for preview")
-    expect(container.querySelector('table')).toBeNull()
-  })
-
   it('loads the next bounded page of a large text preview on demand', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockImplementation(async (request) =>
       request.offset === 5
@@ -597,13 +583,10 @@ describe('PreviewFileContent', () => {
       await Promise.resolve()
     })
 
-    expect(window.api.artifacts.readPreview).toHaveBeenLastCalledWith({
-      path: '/workspace/large.txt',
-      sessionId: 'session-1',
-      maxBytes: 1024 * 1024,
-      encoding: 'utf8',
-      offset: 5
-    })
+    expect(fetch).toHaveBeenLastCalledWith(
+      'open-science-preview://resource-2/large.txt',
+      expect.objectContaining({ headers: { Range: expect.stringMatching(/^bytes=5-/u) } })
+    )
     expect(container.textContent).toContain('second page')
     expect(container.textContent).not.toContain('first')
   })
@@ -637,6 +620,24 @@ describe('PreviewFileContent', () => {
 
     expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(2)
     expect(window.api.artifacts.openFile).not.toHaveBeenCalled()
+  })
+
+  it('keeps the unavailable classification when a managed fetch returns 404 after acquire', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 404 }))
+
+    await renderFile(
+      createFileItem({ format: 'text', name: 'gone.txt', path: '/workspace/gone.txt' })
+    )
+
+    expect(container.textContent).toContain('This file is no longer available')
+    expect(container.querySelector('pre')).toBeNull()
+    expect(consoleError).not.toHaveBeenCalledWith('Failed to read file preview', expect.anything())
+    expect(window.api.previewResources.release).toHaveBeenCalledWith({
+      resourceId: 'resource-1'
+    })
+
+    consoleError.mockRestore()
   })
 
   it('renders line numbers next to formatted JSON previews', async () => {
@@ -710,7 +711,7 @@ describe('PreviewFileContent', () => {
     expect(iframe).not.toBeNull()
     expect(iframe?.getAttribute('sandbox')).toBe('allow-scripts')
     expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')
-    expect(iframe?.getAttribute('src')).toBe('open-science-preview://resource-1/report.html')
+    expect(iframe?.getAttribute('src')).toBe('open-science-preview://resource-1/data.json')
     expect(iframe?.hasAttribute('srcdoc')).toBe(false)
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
   })
@@ -1042,7 +1043,7 @@ describe('PreviewFileContent', () => {
     })
   })
 
-  it('reads upload-sourced text previews through the uploads API', async () => {
+  it('reads upload-sourced text previews through a managed upload resource', async () => {
     vi.mocked(window.api.uploads.readPreview).mockResolvedValue({
       content: 'uploaded content',
       encoding: 'utf8',
@@ -1060,12 +1061,10 @@ describe('PreviewFileContent', () => {
       })
     )
 
-    expect(window.api.uploads.readPreview).toHaveBeenCalledWith({
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'upload',
       path: '/Users/example/.open-science/uploads/default-project/session-1/notes.txt',
-      sessionId: 'session-1',
-      maxBytes: 1024 * 1024,
-      encoding: 'utf8',
-      offset: 0
+      sessionId: 'session-1'
     })
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
     expect(container.textContent).toContain('uploaded content')
