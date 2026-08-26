@@ -507,8 +507,11 @@ def _inspect_namespace(include_private=False):
         value = _globals[name]
         preview, preview_truncated = _namespace_preview(value)
         value_type = type(value)
+        display_name, name_truncated = _limit_namespace_text(name, 1021)
+        if name_truncated:
+            display_name += "…"
         entry = {
-            "name": name,
+            "name": display_name,
             "type": _namespace_type_name(value),
             "preview": preview,
         }
@@ -516,7 +519,7 @@ def _inspect_namespace(include_private=False):
             entry["preview_truncated"] = True
         if name.startswith("_"):
             entry["is_private"] = True
-        if value_type.__module__ == "builtins" and value_type in (
+        if value_type in (
             str, bytes, bytearray, int, float, complex, bool, list, tuple, dict, set, frozenset
         ):
             try:

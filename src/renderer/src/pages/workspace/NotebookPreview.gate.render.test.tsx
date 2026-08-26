@@ -452,6 +452,35 @@ describe('NotebookPreview per-kernel tabs', () => {
     )
   })
 
+  it('clears a live namespace snapshot when its kernel terminates', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Inspect variables' }))
+    })
+    expect(screen.getByText('frame')).toBeTruthy()
+
+    const state = vi.mocked(window.api.notebook.state)
+    const liveState = await state.mock.results[0]?.value
+    state.mockResolvedValue({
+      ...liveState,
+      kernelStatus: 'terminated',
+      environments: liveState.environments.map((environment) => ({
+        ...environment,
+        status: 'terminated'
+      }))
+    })
+    const onChanged = vi.mocked(window.api.notebook.onChanged).mock.calls[0]?.[0]
+
+    await act(async () => {
+      onChanged?.(item.notebook)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(screen.queryByText('frame')).toBeNull()
+    expect(screen.getByText('No live namespace')).toBeTruthy()
+  })
+
   it('renders terminated notebook history as view-only without terminal controls', async () => {
     await mountWithRuns(
       [

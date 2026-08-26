@@ -669,10 +669,25 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   }
   const loadLatestNamespace = useEffectEvent(loadNamespace)
 
+  // A namespace snapshot is only valid for the lifetime of its kernel. Clear it immediately when
+  // the selected kernel is lost, and invalidate any inspection response already in flight.
+  useEffect(() => {
+    if (!isNamespaceLost && !isHistoricalEnvironmentView) return
+    namespaceRequestId.current += 1
+    namespaceRefreshQueued.current = false
+    namespaceLoadKey.current = undefined
+    const timeoutId = window.setTimeout(() => {
+      setNamespaceSnapshot(undefined)
+      setNamespaceError(undefined)
+      setNamespaceStatus('unavailable')
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [isHistoricalEnvironmentView, isNamespaceLost])
+
   // Opening the view, switching target, or changing the private-name filter starts a fresh read.
   // Reopening never treats an old snapshot as current, and target checks drop late responses.
   useEffect(() => {
-    if (!showVariables || !activeDataLanguage) {
+    if (!showVariables || !activeDataLanguage || isNamespaceLost || isHistoricalEnvironmentView) {
       namespaceLoadKey.current = undefined
       return
     }
@@ -681,7 +696,14 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     namespaceLoadKey.current = loadKey
     namespaceRefreshQueued.current = false
     void loadLatestNamespace()
-  }, [activeDataLanguage, selectedTarget, showPrivateVariables, showVariables])
+  }, [
+    activeDataLanguage,
+    isHistoricalEnvironmentView,
+    isNamespaceLost,
+    selectedTarget,
+    showPrivateVariables,
+    showVariables
+  ])
 
   // Runtime events have no process key, so mark the open snapshot stale and wait for the refreshed
   // notebook state. Once the selected kernel is idle, coalesce all queued events into one read.
@@ -715,10 +737,14 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   ])
 
   const activeNamespaceSnapshot =
+    !isNamespaceLost &&
+    !isHistoricalEnvironmentView &&
     namespaceSnapshot &&
     `${namespaceSnapshot.language}:${namespaceSnapshot.environment}` === selectedTarget
       ? namespaceSnapshot
       : undefined
+  const activeNamespaceStatus =
+    isNamespaceLost || isHistoricalEnvironmentView ? 'unavailable' : namespaceStatus
   const normalizedNamespaceFilter = namespaceFilter.trim().toLocaleLowerCase()
   const visibleNamespaceVariables = (activeNamespaceSnapshot?.variables ?? []).filter(
     (variable) =>
@@ -855,7 +881,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         <button
           type="button"
           aria-label={t('Refresh variables')}
-          disabled={namespaceButtonDisabled || namespaceStatus === 'loading'}
+          disabled={namespaceButtonDisabled || activeNamespaceStatus === 'loading'}
           onClick={() => void loadNamespace()}
           className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border-100 px-2 text-[11px] text-text-200 transition-colors hover:bg-bg-200 disabled:cursor-not-allowed disabled:opacity-45"
           data-testid="notebook-variables-refresh"
@@ -863,7 +889,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           <RefreshCw
             className={cn(
               'size-3.5',
-              (namespaceStatus === 'loading' || namespaceStatus === 'refreshing') && 'animate-spin'
+              (activeNamespaceStatus === 'loading' || activeNamespaceStatus === 'refreshing') &&
+                'animate-spin'
             )}
             aria-hidden="true"
           />
@@ -871,14 +898,14 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </button>
       </div>
 
-      {namespaceStatus === 'stale' || namespaceStatus === 'refreshing' ? (
+      {activeNamespaceStatus === 'stale' || activeNamespaceStatus === 'refreshing' ? (
         <div className="shrink-0 border-b border-border-100 bg-bg-200 px-3 py-1.5 text-[11px] text-text-200">
-          {namespaceStatus === 'refreshing'
+          {activeNamespaceStatus === 'refreshing'
             ? t('Variables changed. Refreshing...')
             : t('Variables may have changed.')}
         </div>
       ) : null}
-      {namespaceStatus === 'error' ? (
+      {activeNamespaceStatus === 'error' ? (
         <div className="shrink-0 border-b border-border-100 bg-danger-900 px-3 py-1.5 text-[11px] text-danger-000">
           {namespaceError ?? t('Could not inspect variables.')}
         </div>
@@ -891,11 +918,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
 
       <div className="min-h-0 flex-1 overflow-auto">
         {!activeNamespaceSnapshot &&
-        (namespaceStatus === 'loading' || namespaceStatus === 'empty') ? (
+        (activeNamespaceStatus === 'loading' || activeNamespaceStatus === 'empty') ? (
           <div className="flex h-full items-center justify-center px-6 text-center text-xs text-text-300">
             {t('Reading live variables...')}
           </div>
-        ) : namespaceStatus === 'unavailable' ? (
+        ) : activeNamespaceStatus === 'unavailable' ? (
           <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center">
             <div className="text-xs font-medium text-text-100">{t('No live namespace')}</div>
             <div className="max-w-sm text-[11px] leading-5 text-text-300">
