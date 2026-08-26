@@ -83,6 +83,8 @@ type ComposerAgentControlsMenuProps = {
   readOnly?: boolean
   // Memory may be reconfigured again after context replacement while transcript replay is pending.
   memoryReadOnly?: boolean
+  // Auto-review is a durable preference and does not depend on the provider transcript state.
+  autoReviewReadOnly?: boolean
   // Permission mode remains independently editable during a running prompt.
   permissionProfileReadOnly?: boolean
   // Grant revocation remains independently available while a turn is running.
@@ -101,7 +103,7 @@ type ComposerAgentControlsMenuProps = {
   onComputeHostSelectedChange?: (providerId: string, selected: boolean) => void
   // Specialist submenu: shown when showSpecialist is true (the composer decides, mirroring the
   // old standalone picker's visibility rule). specialistReadOnly marks a bound session whose
-  // identity is fixed; the menu's readOnly (session running) also locks it down.
+  // identity is fixed. It defaults to the menu's general read-only state for isolated consumers.
   showSpecialist?: boolean
   specialistId?: string
   specialistUnavailable?: boolean
@@ -159,6 +161,7 @@ const ComposerAgentControlsMenu = ({
   memoryEnabled = true,
   readOnly = false,
   memoryReadOnly = readOnly,
+  autoReviewReadOnly = readOnly,
   permissionProfileReadOnly = readOnly,
   grantActionsReadOnly = readOnly,
   autoReviewDisabled = false,
@@ -174,7 +177,7 @@ const ComposerAgentControlsMenu = ({
   showSpecialist = false,
   specialistId,
   specialistUnavailable = false,
-  specialistReadOnly = false,
+  specialistReadOnly = readOnly,
   onSpecialistChange,
   openRequest,
   computeOpenRequest
@@ -470,7 +473,7 @@ const ComposerAgentControlsMenu = ({
 
               {/* The whole row toggles auto-review; the Switch is a visual indicator only. */}
               <DropdownMenuItem
-                disabled={readOnly || autoReviewDisabled}
+                disabled={autoReviewReadOnly || autoReviewDisabled}
                 className="items-center gap-2 px-2 py-1.5"
                 onSelect={(event) => {
                   event.preventDefault()
@@ -537,7 +540,7 @@ const ComposerAgentControlsMenu = ({
                     selectedId={specialistId}
                     onChange={onSpecialistChange ?? (() => undefined)}
                     unavailable={specialistUnavailable}
-                    readOnly={specialistReadOnly || readOnly}
+                    readOnly={specialistReadOnly}
                   />
                 </>
               ) : (

@@ -428,7 +428,7 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
   })
 
-  it('keeps send available and blocks branch while history replay is pending', () => {
+  it('keeps send and message branching available while history replay is pending', () => {
     const replaySession = session({ pendingHistoryReplay: { kind: 'all' } })
     const startSideChat = vi.fn(async () => true)
     const input = options({
@@ -441,14 +441,19 @@ describe('workspace conversation controller', () => {
 
     expect(hook.result.current.availability).toMatchObject({
       submit: true,
-      branch: false
+      branch: true
     })
     act(() => hook.result.current.actions.branch('agent-message-a'))
     act(() => hook.result.current.actions.sideChat.start())
-    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [], mode: 'branch' }))
-    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branchSourceSessionId: 'session-a',
+        branchSourceMessageId: 'agent-message-a'
+      })
+    )
     expect(startSideChat).not.toHaveBeenCalled()
 
+    vi.mocked(input.runtime.sendMessage).mockClear()
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({

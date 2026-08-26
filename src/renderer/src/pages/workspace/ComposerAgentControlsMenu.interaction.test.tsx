@@ -751,7 +751,8 @@ describe('ComposerAgentControlsMenu', () => {
     ).toBe('true')
   })
 
-  it('keeps Memory editable while replay locks other agent controls', () => {
+  it('keeps replay-independent controls editable while provider controls stay locked', () => {
+    const onAutoReviewChange = vi.fn()
     const onMemoryChange = vi.fn()
 
     act(() => {
@@ -761,22 +762,34 @@ describe('ComposerAgentControlsMenu', () => {
           autoReviewEnabled={false}
           memoryEnabled={false}
           readOnly={true}
+          autoReviewReadOnly={false}
           memoryReadOnly={false}
+          specialistReadOnly={false}
           onProfileChange={vi.fn()}
-          onAutoReviewChange={vi.fn()}
+          onAutoReviewChange={onAutoReviewChange}
           onMemoryChange={onMemoryChange}
+          showSpecialist
+          onSpecialistChange={vi.fn()}
         />
       )
     })
 
-    expect(
-      findButton('Auto-reviewA reviewer agent checks every change before it lands.').disabled
-    ).toBe(true)
+    const autoReviewRow = findButton(
+      'Auto-reviewA reviewer agent checks every change before it lands.'
+    )
+    expect(autoReviewRow.disabled).toBe(false)
     const memoryRow = findButton('MemoryLet the agent recall and save memory in this conversation.')
     expect(memoryRow.disabled).toBe(false)
+    expect(
+      container
+        .querySelector('[data-testid="specialist-submenu-stub"]')
+        ?.getAttribute('data-read-only')
+    ).toBe('false')
 
+    act(() => autoReviewRow.click())
     act(() => memoryRow.click())
 
+    expect(onAutoReviewChange).toHaveBeenCalledWith(true)
     expect(onMemoryChange).toHaveBeenCalledWith(true)
   })
 

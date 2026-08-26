@@ -11,7 +11,11 @@ const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
 
 const persistedMemoryState = async (
   page: Page
-): Promise<{ memoryEnabled: boolean; pendingHistoryReplay: unknown } | null> =>
+): Promise<{
+  memoryEnabled: boolean
+  autoReviewEnabled: boolean
+  pendingHistoryReplay: unknown
+} | null> =>
   page.evaluate(async (title) => {
     const session = (await window.api.sessions.loadAll()).sessions.find(
       (candidate) => candidate.title === title
@@ -19,6 +23,7 @@ const persistedMemoryState = async (
     if (!session) return null
     return {
       memoryEnabled: session.memoryEnabled !== false,
+      autoReviewEnabled: session.autoReviewEnabled === true,
       pendingHistoryReplay: session.pendingHistoryReplay ?? null
     }
   }, USER_MESSAGE)
@@ -114,6 +119,24 @@ test('keeps Memory reversible while the replacement session awaits history repla
     .poll(() => persistedMemoryState(page))
     .toEqual({
       memoryEnabled: false,
+      autoReviewEnabled: false,
+      pendingHistoryReplay: { kind: 'all' }
+    })
+
+  const autoReview = page.getByRole('menuitem', {
+    name: 'Auto-review A reviewer agent checks every change before it lands.'
+  })
+  const specialist = page.getByTestId('specialist-submenu-trigger')
+  const branch = page.getByRole('button', { name: 'Branch in new session' })
+  await expect(autoReview).toBeEnabled()
+  await expect(specialist).toBeEnabled()
+
+  await autoReview.click()
+  await expect
+    .poll(() => persistedMemoryState(page))
+    .toEqual({
+      memoryEnabled: false,
+      autoReviewEnabled: true,
       pendingHistoryReplay: { kind: 'all' }
     })
   await expect(memory).toBeEnabled()
@@ -123,9 +146,21 @@ test('keeps Memory reversible while the replacement session awaits history repla
     .poll(() => persistedMemoryState(page))
     .toEqual({
       memoryEnabled: true,
+      autoReviewEnabled: true,
       pendingHistoryReplay: { kind: 'all' }
     })
   await expect(memory).toBeEnabled()
+
+  await page.keyboard.press('Escape')
+  await page.getByText(AGENT_REPLY, { exact: true }).hover()
+  await expect(branch).toBeEnabled()
+  await branch.click()
+  await expect
+    .poll(async () => {
+      const sessions = (await page.evaluate(async () => window.api.sessions.loadAll())).sessions
+      return sessions.some((session) => session.branchSource !== undefined)
+    })
+    .toBe(true)
 })
 
 test('resolves Agent permission requests through both Allow and Deny decisions', async ({

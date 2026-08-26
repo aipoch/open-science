@@ -437,7 +437,6 @@ export const projectSessionBranchSnapshot = (
 
 export const canBranchInNewSession = (session: ChatSession): boolean =>
   !session.isPending &&
-  !session.pendingHistoryReplay &&
   !session.activeRun &&
   session.status !== 'running' &&
   session.status !== 'waiting-for-user' &&

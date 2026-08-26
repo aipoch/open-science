@@ -70,6 +70,7 @@ import { useSideChatController } from './use-side-chat-controller'
 import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 import { createWorkspaceComputeHostAccessController } from './workspace-compute-host-access-controller'
 import { useWorkspaceSessionAgentConfiguration } from './workspace-session-agent-configuration-controller'
+import { resolveWorkspaceAgentControlAvailability } from './workspace-agent-control-availability'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -83,7 +84,6 @@ const newConversationDraftKeyFor = (projectId: string): string => `new:${project
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
-// Renders the workspace shell and bridges the chat surface to the session store.
 const WorkspacePage = ({
   isSessionPersistenceHydrated,
   isSessionPersistenceReady,
@@ -472,8 +472,6 @@ const WorkspacePage = ({
     setNewConversationSelectedComputeHosts,
     setError: setAttachmentError
   })
-  // True while any review for the active session is in the 'running' lifecycle.
-  // Select the Project-scoped review array so pushes stay reactive without cross-Project collisions.
   const activeSessionId = activeSession?.id
   const isReviewing = useReviewStore((state) => {
     if (!activeSessionId) return false
@@ -595,18 +593,14 @@ const WorkspacePage = ({
     activeSession?.id,
     !canEditMessage || activeSessionSaveAsSkillPending || conversation.queue.items.length > 0
   )
-  const canChangeAgentControls =
+  const agentControlAvailability = resolveWorkspaceAgentControlAvailability(
     isSessionPersistenceReady &&
-    activeSessionActionability?.actions.changeAgentControls.allowed !== false &&
-    !activeSessionHasRuntimeInteraction &&
-    !activeSession?.compacting &&
-    conversation.queue.items.length === 0
-  const canChangeMemory =
-    isSessionPersistenceReady &&
-    activeSessionActionability?.actions.changeMemory.allowed !== false &&
-    !activeSessionHasRuntimeInteraction &&
-    !activeSession?.compacting &&
-    conversation.queue.items.length === 0
+      !activeSessionHasRuntimeInteraction &&
+      !activeSession?.compacting &&
+      conversation.queue.items.length === 0,
+    sessionController.view.specialist.barrierInFlight,
+    activeSessionActionability?.actions
+  )
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
     !activeSessionHasSendPreparation &&
@@ -1138,8 +1132,7 @@ const WorkspacePage = ({
               respond: respondToElicitation
             }}
             agentControls={{
-              canChange: canChangeAgentControls,
-              canChangeMemory,
+              ...agentControlAvailability,
               modelConfiguration: activeAgentConfiguration,
               modelUnavailable: agentConfigurationUnavailable,
               changeModelConfiguration: changeAgentConfiguration,

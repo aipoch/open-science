@@ -8,7 +8,7 @@ describe('branchWorkspaceSessionFromMessage', () => {
     useSessionStore.setState(createInitialSessionState())
   })
 
-  it('creates the provider branch with the inherited conversation Memory preference', async () => {
+  it('creates a fresh provider branch from replay-pending persisted history', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',
       content: 'first question',
@@ -23,6 +23,13 @@ describe('branchWorkspaceSessionFromMessage', () => {
     })
     useSessionStore.getState().finishRun('source-session')
     useSessionStore.getState().setMemoryEnabled('source-session', false)
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'source-session'
+          ? { ...session, pendingHistoryReplay: { kind: 'all' as const } }
+          : session
+      )
+    }))
     const failure = new Error('stop after provider request')
     const createSession = vi.fn(async () => {
       throw failure

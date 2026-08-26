@@ -290,7 +290,9 @@ type ConversationPanelElicitation = {
 
 type ConversationPanelAgentControls = {
   canChange: boolean
+  canChangeAutoReview: boolean
   canChangeMemory: boolean
+  canChangeSpecialist: boolean
   modelConfiguration?: SessionAgentConfiguration
   modelUnavailable?: boolean
   changeModelConfiguration?: (configuration: SessionAgentConfiguration) => void
@@ -449,7 +451,9 @@ const ConversationPanel = ({
   const { requests: pendingElicitations, respond: onRespondToElicitation } = elicitation
   const {
     canChange: canChangeAgentControls,
+    canChangeAutoReview,
     canChangeMemory,
+    canChangeSpecialist,
     modelConfiguration,
     modelUnavailable = false,
     changeModelConfiguration = () => undefined,
@@ -1805,6 +1809,7 @@ const ConversationPanel = ({
                           autoReviewEnabled={autoReviewEnabled}
                           memoryEnabled={memoryEnabled}
                           readOnly={!canChangeAgentControls}
+                          autoReviewReadOnly={!canChangeAutoReview}
                           memoryReadOnly={!canChangeMemory}
                           permissionProfileReadOnly={!canChangePermissionProfile}
                           grantActionsReadOnly={false}
@@ -1826,6 +1831,7 @@ const ConversationPanel = ({
                           }
                           specialistId={specialistId}
                           specialistUnavailable={specialistUnavailable}
+                          specialistReadOnly={!canChangeSpecialist}
                           onSpecialistChange={onSpecialistChange}
                           openRequest={agentControlsOpenRequest}
                           computeOpenRequest={computeControlsOpenRequest}
@@ -1833,7 +1839,7 @@ const ConversationPanel = ({
 
                         <ComposerSpecialistPicker
                           selectedId={specialistId}
-                          readOnly={!canChangeAgentControls}
+                          readOnly={!canChangeSpecialist}
                           onChange={onSpecialistChange}
                         />
 

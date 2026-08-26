@@ -256,7 +256,9 @@ describe('WorkspacePage send gate while compacting', () => {
       await renderPage()
 
       expect(conversationProps.agentControls.canChange).toBe(false)
+      expect(conversationProps.agentControls.canChangeAutoReview).toBe(false)
       expect(conversationProps.agentControls.canChangeMemory).toBe(false)
+      expect(conversationProps.agentControls.canChangeSpecialist).toBe(false)
       expect(conversationProps.permissions.canChangePermissionProfile).toBe(true)
     }
   )
@@ -641,7 +643,7 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.conversation.availability.revise).toBe(false)
   })
 
-  it('blocks follow-on Session actions until a pending history replay is sent', async () => {
+  it('keeps replay-independent Session actions available until history replay is sent', async () => {
     useSessionStore.setState({
       sessions: [
         createSession({
@@ -676,7 +678,7 @@ describe('WorkspacePage send gate while compacting', () => {
     })
 
     expect(conversationProps.conversation.availability.submit).toBe(true)
-    expect(conversationProps.conversation.availability.branch).toBe(false)
+    expect(conversationProps.conversation.availability.branch).toBe(true)
     expect(conversationProps.workflows.review.disabled).toBe(true)
     expect(conversationProps.workflows.saveAsSkill.disabled).toBe(true)
     expect(conversationProps.contextWindow.canCompact).toBe(false)
@@ -684,7 +686,9 @@ describe('WorkspacePage send gate while compacting', () => {
       'Send a message to reconnect this session before compacting.'
     )
     expect(conversationProps.agentControls.canChange).toBe(false)
+    expect(conversationProps.agentControls.canChangeAutoReview).toBe(true)
     expect(conversationProps.agentControls.canChangeMemory).toBe(true)
+    expect(conversationProps.agentControls.canChangeSpecialist).toBe(true)
     expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
     expect(conversationProps.view.sideChatDisabledReason).toBe(
       'Resolve the current Session operation first.'

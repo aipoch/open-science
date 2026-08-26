@@ -89,6 +89,8 @@ vi.mock('./ComposerModelPicker', () => ({
 vi.mock('./ComposerAgentControlsMenu', () => ({
   ComposerAgentControlsMenu: (props: {
     readOnly?: boolean
+    memoryReadOnly?: boolean
+    autoReviewReadOnly?: boolean
     permissionProfileReadOnly?: boolean
     grantActionsReadOnly?: boolean
     autoReviewDisabled?: boolean
@@ -99,10 +101,12 @@ vi.mock('./ComposerAgentControlsMenu', () => ({
       type="button"
       data-testid="mock-agent-controls"
       data-read-only={String(props.readOnly === true)}
+      data-memory-read-only={String(props.memoryReadOnly)}
+      data-auto-review-read-only={String(props.autoReviewReadOnly)}
       data-permission-read-only={String(props.permissionProfileReadOnly === true)}
       data-grants-read-only={String(props.grantActionsReadOnly === true)}
       data-auto-review-disabled={String(props.autoReviewDisabled === true)}
-      data-specialist-read-only={String(props.specialistReadOnly === true)}
+      data-specialist-read-only={String(props.specialistReadOnly)}
       data-open-request={props.openRequest ?? 0}
     >
       Agent controls
@@ -475,7 +479,9 @@ const createPanelDefaults = (): PanelProps => ({
   },
   agentControls: {
     canChange: true,
+    canChangeAutoReview: true,
     canChangeMemory: true,
+    canChangeSpecialist: true,
     autoReviewEnabled: true,
     enabledComputeHosts: [],
     selectedComputeHosts: [],
@@ -2010,7 +2016,7 @@ describe('ConversationPanel composer intake', () => {
     ).toBe(false)
   })
 
-  it('keeps send and Plan first available while Branch stays disabled for a pending replay', () => {
+  it('keeps send, Plan first, and Branch available for a pending replay', () => {
     const session: ChatSession = {
       id: 'session-replay',
       projectId: 'project-a',
@@ -2029,7 +2035,7 @@ describe('ConversationPanel composer intake', () => {
       conversation: {
         availability: {
           submit: true,
-          branch: false
+          branch: true
         },
         actions: {
           submit: {
@@ -2050,7 +2056,24 @@ describe('ConversationPanel composer intake', () => {
     expect(
       (container.querySelector('[data-testid="menu-branch-in-new-session"]') as HTMLButtonElement)
         .disabled
-    ).toBe(true)
+    ).toBe(false)
+  })
+
+  it('threads replay-independent agent controls separately from provider controls', () => {
+    renderPanel({
+      agentControls: {
+        canChange: false,
+        canChangeAutoReview: true,
+        canChangeMemory: true,
+        canChangeSpecialist: true
+      }
+    })
+
+    const controls = container.querySelector('[data-testid="mock-agent-controls"]')
+    expect(controls?.getAttribute('data-read-only')).toBe('true')
+    expect(controls?.getAttribute('data-memory-read-only')).toBe('false')
+    expect(controls?.getAttribute('data-auto-review-read-only')).toBe('false')
+    expect(controls?.getAttribute('data-specialist-read-only')).toBe('false')
   })
 
   it('offers Side chat between Plan first and Branch for a text-only existing Session draft', () => {
