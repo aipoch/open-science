@@ -71,7 +71,9 @@ describe('Plan-aware JSON preview', () => {
 
     render(<PlanJsonPreview item={item} />)
 
-    expect(await screen.findByRole('heading', { name: 'Analyze one dataset' })).toBeTruthy()
+    const heading = await screen.findByRole('heading', { name: 'Analyze one dataset' })
+    expect(heading.className).not.toContain('line-clamp-3')
+    expect(screen.getAllByText('Analyze one dataset')).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'View raw JSON' })).toBeTruthy()
     expect(screen.getByLabelText('Analyze the data status: completed')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()

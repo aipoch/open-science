@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ActivePlanProjection } from '../../../../../shared/session-plan/contract'
@@ -142,7 +142,7 @@ describe('Plan Preview workbench integration', () => {
       />
     )
 
-    expect(screen.getByText('Historical branch Plan')).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 1, name: 'Historical branch Plan' })).toBeTruthy()
   })
 
   it('uses the shared full-screen state and applies the approved projection', async () => {
@@ -231,6 +231,99 @@ describe('Plan Preview workbench integration', () => {
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
     expect(screen.getByText(/original Agent interaction has ended/u)).toBeTruthy()
     expect(screen.getByText('Session Plan')).toBeTruthy()
+  })
+
+  it('preserves the Plan scroll position across a streamed durable progress refresh', () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Plan progress',
+          cwd: '/workspace',
+          status: 'running',
+          messages: [],
+          runtimeContext: {
+            version: 1,
+            revision: pendingProjection.revision,
+            plan: {
+              artifactId: pendingProjection.artifactId,
+              artifactVersionId: pendingProjection.artifactVersionId,
+              artifactChecksum: pendingProjection.artifactChecksum,
+              approval: pendingProjection.approval,
+              stepStatuses: pendingProjection.stepStatuses
+            }
+          },
+          activePlanProjection: pendingProjection,
+          artifacts: sessionPlanArtifacts,
+          createdAt: 1,
+          updatedAt: 2
+        } as never
+      ]
+    })
+    const item = {
+      id: 'tool:session-1:plan:version-1',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      type: 'tool' as const,
+      toolKind: 'plan' as const,
+      title: 'Session Plan',
+      planArtifactVersionId: 'version-1'
+    }
+    const { container, rerender } = render(<PreviewToolContent item={item} />)
+    const viewport = container.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
+    expect(viewport).not.toBeNull()
+    if (!viewport) return
+
+    viewport.scrollTop = 240
+    const source = useSessionStore.getState().sessions[0]
+    const streamedStepStatuses = {
+      'Analyze the data': { status: 'in_progress' as const, updatedAt: 3 }
+    }
+    act(() => {
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: {
+          ...source,
+          activePlanProjection: undefined,
+          runtimeContext: {
+            ...source.runtimeContext!,
+            revision: 4,
+            plan: { ...source.runtimeContext!.plan!, stepStatuses: streamedStepStatuses }
+          },
+          updatedAt: 3
+        } as never,
+        mode: 'runtime-context-authority'
+      })
+    })
+    const streamingViewport = container.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]'
+    )
+    expect(streamingViewport).toBe(viewport)
+    expect(streamingViewport?.scrollTop).toBe(240)
+
+    rerender(<PreviewToolContent item={{ ...item }} />)
+    expect(container.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')).toBe(
+      viewport
+    )
+
+    const refreshedProjection: ActivePlanProjection = {
+      ...pendingProjection,
+      revision: 4,
+      lifecycle: 'in_progress',
+      stepStatuses: streamedStepStatuses,
+      stepStates: streamedStepStatuses,
+      counts: { ...pendingProjection.counts, inProgress: 1 }
+    }
+    act(() => {
+      useSessionStore.getState().setActivePlanProjection('session-1', refreshedProjection)
+    })
+
+    const updatedViewport = container.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]'
+    )
+    expect(updatedViewport).toBe(viewport)
+    expect(updatedViewport?.scrollTop).toBe(240)
   })
 
   it('routes restored pending Plan decisions through the session-bound responder', async () => {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ActivePlanProjection } from '../../../../../shared/session-plan/contract'
@@ -299,6 +299,54 @@ describe('Session Plan renderer surfaces', () => {
     expect(onRespond).toHaveBeenCalledOnce()
     expect(onRespond).toHaveBeenCalledWith('rejected')
     expect(onToggleFullScreen).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a long Preview summary compact while retaining its full text at the bottom', () => {
+    const longSummary =
+      'Compare longitudinal cohorts, validate every source, reconcile conflicting evidence, produce publication-ready figures, and draft a complete review report with limitations.'
+    render(
+      <PlanPreviewSurface
+        projection={{
+          ...projection,
+          document: { ...projection.document, task_summary: longSummary }
+        }}
+      />
+    )
+
+    const heading = screen.getByRole('heading', { level: 1, name: longSummary })
+    expect(heading.className).toContain('line-clamp-3')
+    const summaryCopies = screen.getAllByText(longSummary)
+    expect(summaryCopies).toHaveLength(2)
+    const fullSummary = summaryCopies.find((element) => element !== heading)
+    expect(fullSummary?.className).toContain('text-xs')
+    expect(fullSummary?.parentElement?.lastElementChild).toBe(fullSummary)
+  })
+
+  it('reveals the complete Preview summary after a deliberate pointer hover', async () => {
+    vi.useFakeTimers()
+    const longSummary =
+      'Compare longitudinal cohorts, validate every source, reconcile conflicting evidence, produce publication-ready figures, and draft a complete review report with limitations.'
+    try {
+      render(
+        <PlanPreviewSurface
+          projection={{
+            ...projection,
+            document: { ...projection.document, task_summary: longSummary }
+          }}
+        />
+      )
+
+      const heading = screen.getByRole('heading', { level: 1, name: longSummary })
+      fireEvent.pointerMove(heading, { pointerType: 'mouse' })
+      expect(screen.queryByRole('tooltip')).toBeNull()
+
+      await act(() => vi.advanceTimersByTimeAsync(1_199))
+      expect(screen.queryByRole('tooltip')).toBeNull()
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      expect(screen.getByRole('tooltip').textContent).toBe(longSummary)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('overlays every public step status while hiding ordinary status notes', () => {

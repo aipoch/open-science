@@ -1,7 +1,8 @@
 import { LoaderCircle } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { ActivePlanProjection } from '../../../../../shared/session-plan/contract'
 import { Button } from '@/components/ui/button'
 import {
   selectProjectSessionReviewLoadError,
@@ -10,7 +11,7 @@ import {
 } from '@/stores/review-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { type PreviewToolItem, usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { useSessionStore } from '@/stores/session-store'
+import { type ChatSession, type SessionStore, useSessionStore } from '@/stores/session-store'
 
 import { NotebookPreview } from '../NotebookPreview'
 import type { NotebookPreviewItem } from '../NotebookPreview'
@@ -23,6 +24,54 @@ import { useIsSideChatOpenForSession } from '../use-side-chat-controller'
 
 const isNotebookPreviewItem = (item: PreviewToolItem): item is NotebookPreviewItem =>
   item.toolKind === 'notebook' && Boolean(item.notebook)
+
+const resolvePlanProjection = (
+  session: ChatSession | undefined,
+  planArtifactVersionId: string | undefined
+): ActivePlanProjection | undefined => {
+  const activePlanProjection = session?.activePlanProjection
+  if (!planArtifactVersionId) return activePlanProjection
+
+  return (
+    session?.planHistoryProjections?.find(
+      (projection) => projection.artifactVersionId === planArtifactVersionId
+    ) ??
+    (activePlanProjection?.artifactVersionId === planArtifactVersionId
+      ? activePlanProjection
+      : undefined)
+  )
+}
+
+// Durable progress updates can invalidate the full projection while WorkspacePage reloads it.
+// Keep the matching document visible for that short gap so the preview viewport stays mounted.
+const createVisiblePlanProjectionSelector = (
+  sessionId: string,
+  planArtifactVersionId: string | undefined
+): ((state: SessionStore) => ActivePlanProjection | undefined) => {
+  let retainedProjection: ActivePlanProjection | undefined
+
+  return (state) => {
+    const session = state.sessions.find((candidate) => candidate.id === sessionId)
+    const projection = resolvePlanProjection(session, planArtifactVersionId)
+    if (projection) {
+      retainedProjection = projection
+      return projection
+    }
+
+    const runtimePlan = session?.runtimeContext?.plan
+    const retainedMatchesRuntime =
+      retainedProjection &&
+      runtimePlan &&
+      retainedProjection.artifactVersionId === runtimePlan.artifactVersionId &&
+      retainedProjection.artifactId === runtimePlan.artifactId &&
+      retainedProjection.artifactChecksum === runtimePlan.artifactChecksum &&
+      (!planArtifactVersionId || retainedProjection.artifactVersionId === planArtifactVersionId)
+
+    if (retainedMatchesRuntime) return retainedProjection
+    retainedProjection = undefined
+    return undefined
+  }
+}
 
 // Renders the Session reviewer panel from persisted review data for the tool item's session.
 const SessionReviewerContent = ({
@@ -104,29 +153,26 @@ const SessionReviewerContent = ({
   return <SessionReviewerPanel review={review} activeFindingId={item.reviewerActiveFindingId} />
 }
 
-export const PreviewToolContent = ({
+const PlanPreviewToolContent = ({
   item,
   restoredPlanResponder
 }: {
   item: PreviewToolItem
   restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element | null => {
-  const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const isSideChatOpen = useIsSideChatOpenForSession(item.sessionId)
   const planSession = useSessionStore((state) =>
     state.sessions.find((session) => session.id === item.sessionId)
   )
+  const [selectVisiblePlanProjection] = useState(() =>
+    createVisiblePlanProjectionSelector(item.sessionId, item.planArtifactVersionId)
+  )
+  const visiblePlanProjection = useSessionStore(selectVisiblePlanProjection)
   const isPlanExpanded = usePreviewWorkbenchStore((state) => state.expandedToolItemId === item.id)
   const setToolItemExpanded = usePreviewWorkbenchStore((state) => state.setToolItemExpanded)
   const activePlanProjection = planSession?.activePlanProjection
-  const planProjection = item.planArtifactVersionId
-    ? (planSession?.planHistoryProjections?.find(
-        (projection) => projection.artifactVersionId === item.planArtifactVersionId
-      ) ??
-      (activePlanProjection?.artifactVersionId === item.planArtifactVersionId
-        ? activePlanProjection
-        : undefined))
-    : activePlanProjection
+  const planProjection = resolvePlanProjection(planSession, item.planArtifactVersionId)
+  const runtimePlan = planSession?.runtimeContext?.plan
 
   const respondPlan = async (decision: 'approved' | 'rejected'): Promise<void> => {
     if (!planProjection || !item.projectId) return
@@ -143,7 +189,40 @@ export const PreviewToolContent = ({
   const hasPlanResponsePath =
     planSession?.activeRun !== undefined || restoredPlanResponder?.sessionId === item.sessionId
   const canRespondToPlan =
-    planSession?.status === 'waiting-plan-approval' && hasPlanResponsePath && !isSideChatOpen
+    planProjection !== undefined &&
+    planSession?.status === 'waiting-plan-approval' &&
+    hasPlanResponsePath &&
+    !isSideChatOpen
+
+  if (!visiblePlanProjection || !planSession) return null
+  const currentPlanArtifactVersionId =
+    activePlanProjection?.artifactVersionId ?? runtimePlan?.artifactVersionId
+  const stale = visiblePlanProjection.artifactVersionId !== currentPlanArtifactVersionId
+  // The Plan's real artifact filename from the Session's artifact metadata; absent when the
+  // artifact entry has not been loaded, in which case the header shows the label only.
+  const planFilename = planSession.artifacts?.find(
+    (artifact) => artifact.versionId === visiblePlanProjection.artifactVersionId
+  )?.name
+  return (
+    <PlanPreviewSurface
+      projection={visiblePlanProjection}
+      stale={stale}
+      isFullScreen={isPlanExpanded}
+      planFilename={planFilename}
+      onRespond={canRespondToPlan ? respondPlan : undefined}
+      onToggleFullScreen={() => setToolItemExpanded(isPlanExpanded ? null : item.id)}
+    />
+  )
+}
+
+export const PreviewToolContent = ({
+  item,
+  restoredPlanResponder
+}: {
+  item: PreviewToolItem
+  restoredPlanResponder?: RestoredPlanResponder
+}): React.JSX.Element | null => {
+  const activeProjectId = useNavigationStore((state) => state.activeProjectId)
 
   // Remount the Files tool per project so its transient dialog cannot outlive the project it opened.
   if (item.toolKind === 'files') {
@@ -159,21 +238,11 @@ export const PreviewToolContent = ({
   }
 
   if (item.toolKind === 'plan') {
-    if (!planProjection || !planSession) return null
-    const stale = planProjection.artifactVersionId !== activePlanProjection?.artifactVersionId
-    // The Plan's real artifact filename from the Session's artifact metadata; absent when the
-    // artifact entry has not been loaded, in which case the header shows the label only.
-    const planFilename = planSession.artifacts?.find(
-      (artifact) => artifact.versionId === planProjection.artifactVersionId
-    )?.name
     return (
-      <PlanPreviewSurface
-        projection={planProjection}
-        stale={stale}
-        isFullScreen={isPlanExpanded}
-        planFilename={planFilename}
-        onRespond={canRespondToPlan ? respondPlan : undefined}
-        onToggleFullScreen={() => setToolItemExpanded(isPlanExpanded ? null : item.id)}
+      <PlanPreviewToolContent
+        key={`${item.sessionId}:${item.planArtifactVersionId ?? 'active'}`}
+        item={item}
+        restoredPlanResponder={restoredPlanResponder}
       />
     )
   }
