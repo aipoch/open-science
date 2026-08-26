@@ -18,7 +18,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
-const SESSION_HOVER_PREVIEW_DELAY_MS = 2_000
+const SESSION_HOVER_PREVIEW_DELAY_MS = 0
 const SESSION_HOVER_PREVIEW_SKIP_DELAY_MS = 300
 
 type SessionPreviewContent = {
@@ -32,7 +32,7 @@ type SessionHoverPreviewContextValue = {
   activeSessionId: string | null
   closeNow: (sessionId: string) => void
   keepOpen: () => void
-  requestOpen: (sessionId: string, immediate?: boolean) => void
+  requestOpen: (sessionId: string) => void
   scheduleClose: (sessionId: string) => void
 }
 
@@ -41,15 +41,7 @@ const SessionHoverPreviewContext = createContext<SessionHoverPreviewContextValue
 const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): React.JSX.Element => {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const activeSessionIdRef = useRef<string | null>(null)
-  const pendingSessionIdRef = useRef<string | null>(null)
-  const openTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const closeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
-
-  const clearOpenTimer = useCallback((): void => {
-    clearTimeout(openTimerRef.current)
-    openTimerRef.current = undefined
-    pendingSessionIdRef.current = null
-  }, [])
 
   const keepOpen = useCallback((): void => {
     clearTimeout(closeTimerRef.current)
@@ -57,30 +49,16 @@ const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): Rea
   }, [])
 
   const requestOpen = useCallback(
-    (sessionId: string, immediate = false): void => {
+    (sessionId: string): void => {
       keepOpen()
-      if (immediate || activeSessionIdRef.current !== null) {
-        clearOpenTimer()
-        activeSessionIdRef.current = sessionId
-        setActiveSessionId(sessionId)
-        return
-      }
-      if (pendingSessionIdRef.current === sessionId) return
-
-      clearOpenTimer()
-      pendingSessionIdRef.current = sessionId
-      openTimerRef.current = setTimeout(() => {
-        pendingSessionIdRef.current = null
-        activeSessionIdRef.current = sessionId
-        setActiveSessionId(sessionId)
-      }, SESSION_HOVER_PREVIEW_DELAY_MS)
+      activeSessionIdRef.current = sessionId
+      setActiveSessionId(sessionId)
     },
-    [clearOpenTimer, keepOpen]
+    [keepOpen]
   )
 
   const scheduleClose = useCallback(
     (sessionId: string): void => {
-      if (pendingSessionIdRef.current === sessionId) clearOpenTimer()
       if (activeSessionIdRef.current !== sessionId) return
 
       keepOpen()
@@ -90,28 +68,21 @@ const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): Rea
         setActiveSessionId(null)
       }, SESSION_HOVER_PREVIEW_SKIP_DELAY_MS)
     },
-    [clearOpenTimer, keepOpen]
+    [keepOpen]
   )
 
   const closeNow = useCallback(
     (sessionId: string): void => {
-      if (pendingSessionIdRef.current === sessionId) clearOpenTimer()
       if (activeSessionIdRef.current !== sessionId) return
 
       keepOpen()
       activeSessionIdRef.current = null
       setActiveSessionId(null)
     },
-    [clearOpenTimer, keepOpen]
+    [keepOpen]
   )
 
-  useEffect(
-    () => () => {
-      clearOpenTimer()
-      keepOpen()
-    },
-    [clearOpenTimer, keepOpen]
-  )
+  useEffect(() => () => keepOpen(), [keepOpen])
 
   const value = useMemo(
     () => ({ activeSessionId, closeNow, keepOpen, requestOpen, scheduleClose }),
@@ -166,7 +137,7 @@ const SessionTitleMarquee = ({
         [{ transform: 'translateX(0)' }, { transform: `translateX(-${overflow}px)` }],
         {
           delay: 300,
-          duration: Math.min(12_000, Math.max(2_000, overflow * 35)),
+          duration: overflow * 35,
           easing: 'linear',
           fill: 'forwards'
         }
@@ -280,7 +251,7 @@ const SessionHoverPreview = ({
           if (event.currentTarget.matches(':focus-visible')) return
           scheduleClose(session.id)
         }}
-        onFocus={() => requestOpen(session.id, true)}
+        onFocus={() => requestOpen(session.id)}
         onBlur={(event) => {
           if (event.currentTarget.matches(':hover')) return
           scheduleClose(session.id)

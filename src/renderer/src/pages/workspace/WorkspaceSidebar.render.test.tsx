@@ -227,7 +227,7 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).not.toContain('-top-6 h-6 bg-gradient-to-t from-rail-card-bg')
   })
 
-  it('wraps desktop Session rows in the shared delayed-preview provider only', async () => {
+  it('wraps desktop Session rows in the shared hover-preview provider only', async () => {
     const { SESSION_HOVER_PREVIEW_DELAY_MS, SESSION_HOVER_PREVIEW_SKIP_DELAY_MS } =
       await import('./SessionHoverPreview')
     const desktop = await renderSidebar([createSession({ id: 'session-a' })])
@@ -239,7 +239,7 @@ describe('WorkspaceSidebar accessible render', () => {
     const desktopSessionButton = desktopContainer.querySelector('[data-slot="session-open-button"]')
     const mobileSessionButton = mobileContainer.querySelector('[data-slot="session-open-button"]')
 
-    expect(SESSION_HOVER_PREVIEW_DELAY_MS).toBe(2_000)
+    expect(SESSION_HOVER_PREVIEW_DELAY_MS).toBe(0)
     expect(SESSION_HOVER_PREVIEW_SKIP_DELAY_MS).toBe(300)
     expect(desktopSessionButton?.getAttribute('data-state')).toBe('closed')
     expect(desktopSessionButton?.closest('[title="Analysis session"]')).toBeNull()
@@ -247,7 +247,7 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(mobileSessionButton?.closest('[title="Analysis session"]')).not.toBeNull()
   })
 
-  it('delays the first pointer preview and switches directly to the next Session', async () => {
+  it('opens pointer previews immediately and switches directly to the next Session', async () => {
     vi.useFakeTimers()
     const { SessionHoverPreview, SessionHoverPreviewProvider } =
       await import('./SessionHoverPreview')
@@ -285,11 +285,6 @@ describe('WorkspaceSidebar accessible render', () => {
       if (!first || !second) throw new Error('Session preview triggers did not render')
 
       await act(async () => pointerOver(first))
-      await act(async () => vi.advanceTimersByTime(1_999))
-      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
-      expect(firstPreviewRequest).not.toHaveBeenCalled()
-
-      await act(async () => vi.advanceTimersByTime(1))
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')?.textContent).toBe(
         'First SessionFirst Description'
       )
@@ -303,44 +298,6 @@ describe('WorkspaceSidebar accessible render', () => {
         'Second SessionSecond Description'
       )
       expect(secondPreviewRequest).toHaveBeenCalledOnce()
-    } finally {
-      act(() => root.unmount())
-      container.remove()
-      vi.useRealTimers()
-    }
-  })
-
-  it('cancels a pending Session preview when its row is removed', async () => {
-    vi.useFakeTimers()
-    const { SessionHoverPreview, SessionHoverPreviewProvider } =
-      await import('./SessionHoverPreview')
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    const root = createRoot(container)
-
-    try {
-      await act(async () => {
-        root.render(
-          <SessionHoverPreviewProvider>
-            <SessionHoverPreview session={{ id: 'removed', title: 'Removed Session' }}>
-              <button type="button">Removed trigger</button>
-            </SessionHoverPreview>
-          </SessionHoverPreviewProvider>
-        )
-      })
-      const trigger = container.querySelector('button')
-      if (!trigger) throw new Error('Session preview trigger did not render')
-      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
-      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
-
-      await act(async () => trigger.dispatchEvent(pointerOver))
-      await act(async () => vi.advanceTimersByTime(1_000))
-      await act(async () =>
-        root.render(<SessionHoverPreviewProvider>{null}</SessionHoverPreviewProvider>)
-      )
-      await act(async () => vi.advanceTimersByTime(1_000))
-
-      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
     } finally {
       act(() => root.unmount())
       container.remove()
@@ -372,7 +329,6 @@ describe('WorkspaceSidebar accessible render', () => {
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
 
       await act(async () => trigger.dispatchEvent(pointerOver))
-      await act(async () => vi.advanceTimersByTime(2_000))
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
       await act(async () =>
@@ -486,6 +442,16 @@ describe('WorkspaceSidebar accessible render', () => {
         trigger?.dispatchEvent(new MouseEvent('pointerleave'))
       })
       expect(cancel).toHaveBeenCalledTimes(1)
+
+      animate.mockClear()
+      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 260 })
+      await act(async () => {
+        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
+      })
+      expect(animate).toHaveBeenCalledWith(
+        [{ transform: 'translateX(0)' }, { transform: 'translateX(-160px)' }],
+        expect.objectContaining({ delay: 300, duration: 5_600, fill: 'forwards' })
+      )
 
       animate.mockClear()
       Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 90 })
