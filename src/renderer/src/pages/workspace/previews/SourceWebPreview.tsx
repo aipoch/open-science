@@ -275,20 +275,26 @@ const SourceWebPreviewContent = ({
         {loadState.phase === 'failed' ? (
           <div
             data-source-preview-error=""
-            className="absolute inset-0 z-10 flex items-center justify-center overflow-y-auto bg-bg-000 px-5 py-8"
+            className="absolute inset-0 z-10 overflow-y-auto bg-bg-000"
           >
-            <ErrorNotice
-              icon={Globe2}
-              tone="amber"
-              title={t('Could not load this source')}
-              description={failureDescription}
-              errorCode={getFailureCode(loadState)}
-              secondaryButton={{
-                label: t('Open source in browser'),
-                onClick: () => window.open(sourceUrl.href, '_blank', 'noreferrer')
-              }}
-              primaryButton={{ label: t('Try again'), onClick: retry }}
-            />
+            {/* Matching 40% offsets make the top gap 80% of the previous centered gap. */}
+            <div
+              data-source-preview-error-content=""
+              className="absolute left-1/2 top-[40%] flex w-full -translate-x-1/2 -translate-y-[40%] justify-center px-5"
+            >
+              <ErrorNotice
+                icon={Globe2}
+                tone="amber"
+                title={t('Could not load this source')}
+                description={failureDescription}
+                errorCode={getFailureCode(loadState)}
+                secondaryButton={{
+                  label: t('Open source in browser'),
+                  onClick: () => window.open(sourceUrl.href, '_blank', 'noreferrer')
+                }}
+                primaryButton={{ label: t('Try again'), onClick: retry }}
+              />
+            </div>
           </div>
         ) : null}
       </div>

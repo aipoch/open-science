@@ -435,6 +435,16 @@ test('shows the Electron failure reason when a source request fails', async ({ a
   await expect(sourceError).toContainText('ERR_CONNECTION_REFUSED (-102)')
   await expect(page.locator('[data-source-preview-skeleton]')).toHaveCount(0)
   await expect(page.locator('[data-source-preview-progress]')).toHaveCount(0)
+  const errorNotice = sourceError.locator('[data-source-preview-error-content] > section')
+  const [errorBounds, noticeBounds] = await Promise.all([
+    sourceError.boundingBox(),
+    errorNotice.boundingBox()
+  ])
+  expect(errorBounds).not.toBeNull()
+  expect(noticeBounds).not.toBeNull()
+  const centeredTopGap = (errorBounds!.height - noticeBounds!.height) / 2
+  const actualTopGap = noticeBounds!.y - errorBounds!.y
+  expect(actualTopGap).toBeCloseTo(centeredTopGap * 0.8, 0)
   expect(sourceDocumentRequestCount).toBe(1)
   await page.screenshot({ path: testInfo.outputPath('source-preview-error.png') })
 
