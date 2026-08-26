@@ -37,6 +37,11 @@ const ID_DELIM_RE = /[,\s]/
 // Result sources, presentation order (current release first) — mirrors upstream SOURCE_ORDER.
 const SOURCE_ORDER = ['zinc22', 'zinc20']
 
+const STRING_OR_STRING_ARRAY = {
+  type: ['string', 'array'],
+  items: { type: 'string' }
+}
+
 type ZincRecord = {
   zinc_id?: string
   smiles?: string
@@ -401,8 +406,7 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
       type: 'object',
       properties: {
         zinc_ids: {
-          type: 'array',
-          items: { type: 'string' },
+          ...STRING_OR_STRING_ARRAY,
           description: 'One or more ZINC ids, e.g. ZINC000000000012 (max 100 per call).'
         },
         max_results: {
@@ -503,8 +507,7 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
       type: 'object',
       properties: {
         supplier_codes: {
-          type: 'array',
-          items: { type: 'string' },
+          ...STRING_OR_STRING_ARRAY,
           description: 'One or more vendor catalog codes, e.g. MCULE-2311834287 (max 100 per call).'
         },
         max_results: {
@@ -597,8 +600,7 @@ export const ZINC_TOOLS: ToolDescriptor[] = [
       type: 'object',
       properties: {
         zinc_ids: {
-          type: 'array',
-          items: { type: 'string' },
+          ...STRING_OR_STRING_ARRAY,
           description: 'ZINC ids to prepare, e.g. ZINC000000000012 (max 50 per call).'
         },
         timeout_s: {

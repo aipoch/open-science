@@ -55,6 +55,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
 
 const inputSchemaCompiler = new Ajv2020({
   strict: true,
+  allowUnionTypes: true,
   allErrors: false,
   validateFormats: false,
   coerceTypes: false,

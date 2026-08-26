@@ -61,6 +61,34 @@ describe('ConnectorService', () => {
     const out = await svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] }, internal)
     expect(out).toEqual({ n_requested: 1, duplicates: [], records: [{ CID: 1 }], not_found: [] })
   })
+  it('preserves bundled handler support for a single id when the schema recommends a list', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({
+        status: 'ok',
+        records: [{ 'requested-id': 'PMC9046468', pmcid: 'PMC9046468', pmid: 34713412 }]
+      })
+    )
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => ({ enabledIds: ['pubmed'], autoAllowIds: [] }),
+      resolveApiKey: () => undefined
+    })
+
+    const out = (await svc.call(
+      'pubmed',
+      'convert_article_ids',
+      { ids: 'PMC9046468', id_type: 'pmcid' },
+      internal
+    )) as { records: Array<Record<string, unknown>> }
+
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('ids=PMC9046468')
+    expect(out.records[0]).toMatchObject({
+      pmcid: 'PMC9046468',
+      pmid: '34713412',
+      'requested-id': 'PMC9046468'
+    })
+  })
   it('rejects bundled tool arguments that do not match the registered JSON Schema', async () => {
     const engine = {
       call: vi.fn().mockResolvedValue({ accepted: true })

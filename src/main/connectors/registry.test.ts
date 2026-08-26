@@ -33,6 +33,25 @@ describe('registry + catalog', () => {
       /invalid tool arguments.*cids.*array/i
     )
   })
+  it('accepts scalar forms that bundled handlers normalize to one-item lists', () => {
+    const cases = [
+      ['pubmed', 'get_article_metadata', 'pmids', '35486828'],
+      ['pubmed', 'find_related_articles', 'pmids', '35486828'],
+      ['pubmed', 'convert_article_ids', 'ids', 'PMC9046468'],
+      ['pubmed', 'get_full_text_article', 'pmc_ids', 'PMC9046468'],
+      ['pubmed', 'get_copyright_status', 'pmids', '35891187'],
+      ['variants', 'clinvar_get_records', 'accessions', 'VCV000045122'],
+      ['zinc', 'zinc_search_by_id', 'zinc_ids', 'ZINC000000000012'],
+      ['zinc', 'zinc_search_by_supplier', 'supplier_codes', 'MCULE-2311834287'],
+      ['zinc', 'zinc_get_3d', 'zinc_ids', 'ZINC000000000012']
+    ] as const
+
+    for (const [connector, method, field, value] of cases) {
+      const descriptor = getDescriptor(connector, method)!
+      expect(() => validateToolArguments(descriptor, { [field]: value })).not.toThrow()
+      expect(() => validateToolArguments(descriptor, { [field]: [value] })).not.toThrow()
+    }
+  })
   it('uses Schema-required fields instead of the drifted descriptor required list', () => {
     const descriptor = getDescriptor('biorxiv', 'get_preprint')!
 
