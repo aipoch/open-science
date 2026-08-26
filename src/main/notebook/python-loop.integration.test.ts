@@ -152,6 +152,24 @@ gate('python_loop.py', () => {
     }
   }, 60_000)
 
+  it('does not dereference spoofed scientific object properties', async () => {
+    const { child, send, inspect } = startLoop(pyBin as string, {})
+    try {
+      await send(
+        "shape_reads = []; Spoof = type('ndarray', (), {'__module__': 'numpy', 'shape': property(lambda self: shape_reads.append('read') or (1, 2))}); spoof = Spoof()"
+      )
+
+      const response = await inspect()
+      expect(response.namespace?.variables.find(({ name }) => name === 'spoof')).toMatchObject({
+        type: 'numpy.ndarray',
+        preview: '<numpy.ndarray>'
+      })
+      expect((await send('len(shape_reads)')).result).toBe('0')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
   it('executes non-ASCII source sent over the stdin protocol', async () => {
     const { child, send } = startLoop(pyBin as string, {})
     try {

@@ -457,8 +457,8 @@ def _limit_namespace_text(value, limit):
 
 def _namespace_type_name(value):
     value_type = type(value)
-    module = getattr(value_type, "__module__", "")
-    qualname = getattr(value_type, "__qualname__", "")
+    module = type.__getattribute__(value_type, "__module__")
+    qualname = type.__getattribute__(value_type, "__qualname__")
     if not isinstance(module, str):
         module = ""
     if not isinstance(qualname, str) or not qualname:
@@ -469,19 +469,8 @@ def _namespace_type_name(value):
 
 def _namespace_shape(value):
     value_type = type(value)
-    try:
-        if value_type in (str, bytes, bytearray, list, tuple, dict, set, frozenset):
-            return f"{len(value)} items"
-        module = getattr(value_type, "__module__", "")
-        name = getattr(value_type, "__name__", "")
-        if module == "numpy" and name == "ndarray":
-            return " × ".join(str(part) for part in value.shape)
-        if isinstance(module, str) and module.startswith("pandas.") and name in ("DataFrame", "Series"):
-            return " × ".join(str(part) for part in value.shape)
-        if module == "matplotlib.figure" and name == "Figure":
-            return f"{len(value.axes)} axes"
-    except Exception:
-        return None
+    if value_type in (str, bytes, bytearray, list, tuple, dict, set, frozenset):
+        return f"{len(value)} items"
     return None
 
 
@@ -498,8 +487,6 @@ def _namespace_preview(value):
             text = f"{value_type.__name__} [{len(value)}]"
         elif value_type in (type(None), str, bytes, bytearray, int, float, complex, bool):
             text = _namespace_repr.repr(value)
-        elif value_type.__module__ == "matplotlib.figure" and value_type.__name__ == "Figure":
-            text = f"Figure ({len(value.axes)} axes)"
         else:
             text = f"<{_namespace_type_name(value)}>"
     except Exception:
