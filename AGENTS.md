@@ -157,6 +157,18 @@ Spanish entries use these binding terms:
 | Main model           | **Modelo principal**        | Settings main-model label; not a Main Agent role  |
 | Subagent / Subagents | **Subagente / Subagentes**  | Translate as a complete compound                  |
 | Shell                | **Línea de comandos**       | User-facing label; `Notebook` remains English     |
+| Prompt               | **Prompt**                  | Established AI community term                     |
+| System prompt        | **Prompt del sistema**      | Translate the compound, retain `prompt`           |
+| Jupyter kernel       | **Kernel**                  | Keep the scientific-computing term                |
+| Computer             | **Equipo**                  | Neutral international Spanish                     |
+| Compute Host         | **Host de cálculo**         | Scientific/HPC host                               |
+| Endpoint             | **Endpoint**                | Established developer term                        |
+
+Spanish copy uses neutral international wording and formal `usted` or impersonal constructions.
+Use infinitives for button and menu commands, and the formal imperative for instructions in full
+sentences. Use sentence case, `…` for ellipses, and `p. ej.,` for examples. Preserve product names,
+configuration fields, protocol labels, and other technical identifiers such as `Claude Agent`,
+`MCP Registry`, `Streamable HTTP`, `User`, `Port`, `command`, `url`, `PATH`, and GitHub `Star`.
 
 Exact technical identifiers are exempt from prose translation. Keep file names, extensions,
 commands, paths, protocol identifiers, and code spans unchanged, including `SKILL.md`, `.skill`,

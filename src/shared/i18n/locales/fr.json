@@ -1055,6 +1055,7 @@
     "Installation network": "Réseau d'installation",
     "Installation network unavailable": "Réseau d'installation indisponible",
     "Installed": "Installé",
+    "Installed_specialists": "Installés",
     "Removed": "Supprimé",
     "Removed R packages need a kernel restart to unload.": "Les paquets R supprimés nécessitent un redémarrage du noyau pour être déchargés.",
     "Unchanged": "Inchangé",

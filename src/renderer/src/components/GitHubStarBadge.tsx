@@ -239,14 +239,14 @@ const GitHubStarBadge = ({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  aria-label={t('Dismiss')}
+                  aria-label={t('Close')}
                   onClick={() => setStarNudgeOpen(false)}
                   className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-bg-000/70 transition-colors duration-150 hover:bg-bg-000/10 hover:text-bg-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/70 active:translate-y-px motion-reduce:transform-none motion-reduce:transition-none [@media(pointer:coarse)]:size-11"
                 >
                   <X className="size-3.5" aria-hidden="true" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="top">{t('Dismiss')}</TooltipContent>
+              <TooltipContent side="top">{t('Close')}</TooltipContent>
             </Tooltip>
           </TooltipProvider>
         </div>

@@ -1013,6 +1013,7 @@
     "Installation network": "설치 네트워크",
     "Installation network unavailable": "설치 네트워크 불가",
     "Installed": "설치됨",
+    "Installed_specialists": "설치됨",
     "Removed": "제거됨",
     "Removed R packages need a kernel restart to unload.": "제거한 R 패키지를 언로드하려면 커널을 다시 시작해야 합니다.",
     "Unchanged": "변경 없음",

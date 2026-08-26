@@ -1049,6 +1049,7 @@
     "Installation network": "Сеть установки",
     "Installation network unavailable": "Сеть установки недоступна",
     "Installed": "Установлено",
+    "Installed_specialists": "Установленные",
     "Removed": "Удалено",
     "Removed R packages need a kernel restart to unload.": "Для выгрузки удалённых пакетов R необходимо перезапустить ядро.",
     "Unchanged": "Без изменений",

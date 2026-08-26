@@ -1207,7 +1207,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         <X className="size-3.5" aria-hidden="true" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>{t('Dismiss')}</TooltipContent>
+                    <TooltipContent>{t('Close')}</TooltipContent>
                   </Tooltip>
                 </div>
               ) : null}

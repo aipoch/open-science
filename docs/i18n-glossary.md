@@ -179,30 +179,37 @@ this pair backwards is the single most common failure in Simplified-to-Tradition
 Spanish is translated directly from the English source key. These terms are binding for prose in
 the `common`, `native`, and `renderer` namespaces:
 
-| en               | es                       |
-| ---------------- | ------------------------ |
-| project          | proyecto                 |
-| session          | sesión                   |
-| workspace        | espacio de trabajo       |
-| agent            | agente                   |
-| subagent         | subagente                |
-| agent framework  | framework de agentes     |
-| main agent       | agente principal         |
-| model            | modelo                   |
-| main model       | modelo principal         |
-| provider         | proveedor                |
-| skill            | habilidad                |
-| specialist       | especialista             |
-| marketplace      | mercado                  |
-| connector        | conector                 |
-| shell            | línea de comandos        |
-| token            | token                    |
-| runtime          | entorno de ejecución     |
-| reasoning effort | esfuerzo de razonamiento |
-| running          | en ejecución             |
-| failed           | falló                    |
-| resume           | reanudar                 |
-| light (theme)    | claro                    |
+| en               | es                                              |
+| ---------------- | ----------------------------------------------- |
+| project          | proyecto                                        |
+| session          | sesión                                          |
+| workspace        | espacio de trabajo                              |
+| agent            | agente                                          |
+| subagent         | subagente                                       |
+| agent framework  | framework de agentes                            |
+| main agent       | agente principal                                |
+| model            | modelo                                          |
+| main model       | modelo principal                                |
+| provider         | proveedor                                       |
+| skill            | habilidad                                       |
+| specialist       | especialista                                    |
+| marketplace      | mercado                                         |
+| connector        | conector                                        |
+| shell            | línea de comandos                               |
+| token            | token                                           |
+| runtime          | entorno de ejecución                            |
+| reasoning effort | esfuerzo de razonamiento                        |
+| running          | en ejecución                                    |
+| failed (clause)  | falló                                           |
+| failed (status)  | error / fallido / fallida, according to context |
+| resume           | reanudar                                        |
+| light (theme)    | claro                                           |
+| prompt           | prompt                                          |
+| system prompt    | prompt del sistema                              |
+| Jupyter kernel   | kernel                                          |
+| computer         | equipo                                          |
+| Compute Host     | host de cálculo                                 |
+| endpoint         | endpoint                                        |
 
 ## Style rules
 
@@ -220,6 +227,14 @@ the `common`, `native`, and `renderer` namespaces:
   `ревью` when established Russian UI terms are available.
 - French prose uses French punctuation and sentence case. Retained product names and technical
   identifiers keep their original spelling.
+- Spanish uses neutral international wording. Prefer `equipo` over the regional `computadora` or
+  `ordenador`, `archivo` over `fichero`, and established community terms such as `prompt`, `kernel`,
+  `endpoint`, `framework` and `host` when translating them would make the interface less precise.
+  Use formal `usted` or impersonal constructions consistently. Button and menu commands use the
+  infinitive; instructions in complete sentences use the formal imperative. Use sentence case,
+  `…` for ellipses and `p. ej.,` for examples. Keep product names, configuration fields, protocol
+  labels and other technical identifiers unchanged, including `Claude Agent`, `MCP Registry`,
+  `Streamable HTTP`, `User`, `Port`, `command`, `url`, `PATH` and `Star` on GitHub.
 - One half-width space between Chinese and Latin script (`使用 Claude 模型`). No space between a
   number and a Chinese unit that reads as one word (`5 分钟` takes the space; `12k` is not split).
 - Second person is 你, never 您 — it matches the supportive, non-authoritative tone `docs/design.md`
