@@ -354,13 +354,18 @@ export const sanitizeElicitationField = (value: unknown): ElicitationField | und
   if (!id || !label || !kind || !ELICITATION_FIELD_KINDS.has(kind)) return undefined
 
   const description = cappedString(value.description, MAX_ELICITATION_MESSAGE_CHARS)
-  const options = Array.isArray(value.options) ? value.options.map(sanitizeOption) : undefined
   if (
     value.options !== undefined &&
-    (!options ||
-      options.length === 0 ||
-      options.length > MAX_ELICITATION_OPTIONS_PER_FIELD ||
-      options.some((option) => !option) ||
+    (!Array.isArray(value.options) ||
+      value.options.length === 0 ||
+      value.options.length > MAX_ELICITATION_OPTIONS_PER_FIELD)
+  ) {
+    return undefined
+  }
+  const options = Array.isArray(value.options) ? value.options.map(sanitizeOption) : undefined
+  if (
+    options &&
+    (options.some((option) => !option) ||
       new Set(options.map((option) => option!.value)).size !== options.length)
   ) {
     return undefined

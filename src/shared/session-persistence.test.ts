@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
+import { MAX_ELICITATION_OPTIONS_PER_FIELD } from './elicitation'
 
 import {
   SESSION_FILE_VERSION,
@@ -1547,6 +1548,27 @@ describe('sanitizeToolActivity', () => {
     })
 
     expect(activity).not.toHaveProperty('elicitation')
+  })
+
+  it('rejects an oversized option list before reading its entries', () => {
+    const options = new Array(MAX_ELICITATION_OPTIONS_PER_FIELD + 1)
+    Object.defineProperty(options, 0, {
+      get: () => {
+        throw new Error('oversized options should be rejected before entry access')
+      }
+    })
+
+    expect(() =>
+      sanitizeToolActivity({
+        id: 'tool-oversized-options',
+        status: 'in_progress',
+        elicitation: {
+          message: 'Choose an option',
+          fields: [{ id: 'answer', label: 'Answer', kind: 'single-select', options }],
+          state: 'pending'
+        }
+      })
+    ).not.toThrow()
   })
 
   it('removes an invalid persisted default without discarding the elicitation', () => {
