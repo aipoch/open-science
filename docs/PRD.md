@@ -87,6 +87,41 @@ do not become alternate state stores.
 | Notebook runtime                | Own runtime discovery, Session binding decisions, execution, environment operations, and durable run history. It consumes enablement snapshots through the named Settings capability rather than owning or reading raw Settings state.                                                                                                                                                            |
 | Persistence and artifact owners | Own project/session files, uploads, artifact versions, provenance, and deletion/finalization coordination. Application commands receive narrow handler capabilities instead of repositories.                                                                                                                                                                                                      |
 
+### Durable external component ownership
+
+A durable external component is a resource created by Open Science that survives its creating
+process outside app-managed storage or in a third-party control plane. Examples include launch
+agents, system services, scheduled tasks, command launchers, shared caches, and provider-managed
+service records. A child process that is stopped with its owning runtime is not durable, but its
+owner must still dispose it through the normal runtime lifecycle.
+
+Every new durable external component must ship with one owning module and a complete lifecycle
+contract from its first release:
+
+- Record an exact immutable identifier, canonical path, or ownership receipt when creation succeeds.
+  If creation and receipt persistence cannot be atomic, use a crash-recoverable journal that makes
+  interrupted creation and cleanup retryable.
+- Define how the owner creates or starts, stops, removes, and reconciles the component, including the
+  app-uninstall path. When a platform has no application-uninstall hook, expose an explicit removal
+  action before the component ships and document when the user must run it.
+- Stop the component before removing its files or registration. Both stop and removal must be
+  idempotent, preserve shared and user-managed resources, and fail closed when ownership cannot be
+  proved.
+- Never infer ownership by broadly scanning system directories, matching names alone, or adopting an
+  unrecorded resource that merely resembles an app-created component. Recovery may query the exact
+  recorded identity and validate immutable ownership evidence.
+- Cover creation, stop-before-remove ordering, interrupted-cleanup retry, repeated removal, and
+  preservation of unowned or shared resources on every supported platform where behavior differs.
+
+Current external effects use feature-local ownership evidence rather than a generic registry. The
+command-line launcher verifies its exact target and managed content marker before replacement or
+removal. Windows managed-runtime cache cleanup requires a provenance marker and trusted ownership.
+Remote access does not install its third-party agent, but it does persist the exact IDs of two
+provider-managed service records. Turning remote access off deliberately retains those records for
+reuse; a future complete-removal workflow must continue to operate on the recorded IDs rather than
+discovering candidates by scanning or name matching. Custom stdio Connector processes remain
+process-scoped and are closed by Connector deletion and application shutdown.
+
 The Composer owns the desired model and reasoning-effort preference for its Session. On Session
 selection, the renderer validates that preference against the current provider inventory and ACP
 framework. An unavailable preference is lazily replaced only when the Settings default is itself
