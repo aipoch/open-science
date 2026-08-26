@@ -175,6 +175,24 @@ describe('ContextWindowDialog', () => {
     document.body.innerHTML = ''
   })
 
+  it('does not inspect Session history while closed', () => {
+    const closedSession = session()
+    Object.defineProperty(closedSession, 'messages', {
+      get: () => {
+        throw new Error('closed dialog inspected Session history')
+      }
+    })
+
+    expect(() => {
+      act(() => {
+        root.render(
+          <ContextWindowDialog open={false} session={closedSession} onOpenChange={vi.fn()} />
+        )
+      })
+    }).not.toThrow()
+    expect(document.body.querySelector('[data-slot="context-window-dialog"]')).toBeNull()
+  })
+
   it('shows current composition, stacked run history, and stable latest-run details', () => {
     act(() => {
       root.render(<ContextWindowDialog open session={session()} onOpenChange={vi.fn()} />)

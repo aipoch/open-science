@@ -1133,6 +1133,81 @@ const ContextCallHistory = ({
   )
 }
 
+type ContextWindowDialogDataProps = Pick<ContextWindowDialogProps, 'session' | 'contextUsage'> & {
+  granularity: ContextWindowGranularity
+}
+
+// Radix mounts this child only while the dialog is present. Keep history projection here so a
+// closed dialog does not rescan the active Session on every streaming message or tool update.
+const ContextWindowDialogData = ({
+  granularity,
+  session,
+  contextUsage
+}: ContextWindowDialogDataProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const messages = session?.messages
+  const activities = session?.activities
+  const conversationGraph = session?.conversationGraph
+  const points = useMemo(
+    () =>
+      granularity !== 'turn' || messages === undefined
+        ? []
+        : selectContextWindowTrendPoints({ activities, conversationGraph, messages }),
+    [activities, conversationGraph, granularity, messages]
+  )
+  const latestPoint = points.at(-1)
+  const currentUsage = contextUsage ?? latestPoint?.sample.contextWindow
+  const callPoints = useMemo(
+    () =>
+      granularity !== 'call' || messages === undefined
+        ? []
+        : selectContextWindowCallPoints({ activities, conversationGraph, messages }),
+    [activities, conversationGraph, granularity, messages]
+  )
+  const callSummary = useMemo(() => summarizeContextWindowCallPoints(callPoints), [callPoints])
+
+  return (
+    <div className="space-y-6">
+      {granularity === 'turn' ? (
+        <>
+          {currentUsage ? (
+            <CurrentComposition
+              usage={currentUsage}
+              model={session?.agentModel ?? latestPoint?.runtime?.model}
+            />
+          ) : null}
+          {points.length ? (
+            <ContextHistory points={points} />
+          ) : (
+            <div className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center">
+              <div className="max-w-sm">
+                <Activity className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
+                <h3 className="mt-3 text-sm font-medium text-foreground">
+                  {t('No run history yet')}
+                </h3>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t(
+                    'A bar appears after a run completes, is interrupted, or ends with an error. Older sessions remain compatible and may not contain history data.'
+                  )}
+                </p>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <ContextCallSummary summary={callSummary} />
+          {callPoints.length ? (
+            <ContextCallHistory points={callPoints} />
+          ) : (
+            <ContextCallEmptyState />
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 const ContextWindowDialog = ({
   open,
   session,
@@ -1141,26 +1216,6 @@ const ContextWindowDialog = ({
 }: ContextWindowDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [granularity, setGranularity] = useState<ContextWindowGranularity>('turn')
-  const messages = session?.messages
-  const activities = session?.activities
-  const conversationGraph = session?.conversationGraph
-  const points = useMemo(
-    () =>
-      messages === undefined
-        ? []
-        : selectContextWindowTrendPoints({ activities, conversationGraph, messages }),
-    [activities, conversationGraph, messages]
-  )
-  const latestPoint = points.at(-1)
-  const currentUsage = contextUsage ?? latestPoint?.sample.contextWindow
-  const callPoints = useMemo(
-    () =>
-      messages === undefined
-        ? []
-        : selectContextWindowCallPoints({ activities, conversationGraph, messages }),
-    [activities, conversationGraph, messages]
-  )
-  const callSummary = useMemo(() => summarizeContextWindowCallPoints(callPoints), [callPoints])
   const contentRef = useRef<HTMLDivElement>(null)
 
   return (
@@ -1226,47 +1281,11 @@ const ContextWindowDialog = ({
             className={cn(dialogBodyClassName, 'min-h-0 flex-1 overflow-y-auto')}
             data-slot="context-window-dialog-body"
           >
-            <div className="space-y-6">
-              {granularity === 'turn' ? (
-                <>
-                  {currentUsage ? (
-                    <CurrentComposition
-                      usage={currentUsage}
-                      model={session?.agentModel ?? latestPoint?.runtime?.model}
-                    />
-                  ) : null}
-                  {points.length ? (
-                    <ContextHistory points={points} />
-                  ) : (
-                    <div className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center">
-                      <div className="max-w-sm">
-                        <Activity
-                          className="mx-auto size-6 text-muted-foreground"
-                          aria-hidden="true"
-                        />
-                        <h3 className="mt-3 text-sm font-medium text-foreground">
-                          {t('No run history yet')}
-                        </h3>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                          {t(
-                            'A bar appears after a run completes, is interrupted, or ends with an error. Older sessions remain compatible and may not contain history data.'
-                          )}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <ContextCallSummary summary={callSummary} />
-                  {callPoints.length ? (
-                    <ContextCallHistory points={callPoints} />
-                  ) : (
-                    <ContextCallEmptyState />
-                  )}
-                </>
-              )}
-            </div>
+            <ContextWindowDialogData
+              granularity={granularity}
+              session={session}
+              contextUsage={contextUsage}
+            />
           </div>
         </Dialog.Content>
       </Dialog.Portal>
