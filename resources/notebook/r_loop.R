@@ -625,7 +625,24 @@ namespace_tracker <- base::local({
         is.symbol(expr[[2L]])) {
       return(as.character(expr[[2L]]))
     }
-    character()
+    is_assign <- identical(head, as.name("assign")) ||
+      (is.call(head) && length(head) == 3L &&
+       identical(head[[1L]], as.name("::")) &&
+       identical(head[[2L]], as.name("base")) &&
+       identical(head[[3L]], as.name("assign")))
+    if (!is_assign) return(character())
+    matched <- match.call(base::assign, expr, expand.dots = FALSE)
+    name <- matched$x
+    if (!is.character(name) || length(name) != 1L) return(character())
+    target <- matched$envir
+    position <- matched$pos
+    targets_global <- is.null(target) && is.null(position) ||
+      identical(target, as.name(".GlobalEnv")) ||
+      identical(target, quote(globalenv())) ||
+      identical(position, as.name(".GlobalEnv")) ||
+      identical(position, quote(globalenv())) ||
+      identical(position, 1L) || identical(position, 1)
+    if (targets_global) name else character()
   }
 
   list(
