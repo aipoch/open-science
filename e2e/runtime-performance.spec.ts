@@ -1,5 +1,5 @@
-import { test as playwrightTest } from '@playwright/test'
-import { createProject, sendPrompt } from './certification/helpers'
+import { expect, test as playwrightTest } from '@playwright/test'
+import { createProject, openProjectSession, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 
 const PROFILE_PROJECT_NAME = 'Runtime performance fixture'
@@ -7,6 +7,8 @@ const ACP_PROMPT = 'Summarize the deterministic fixture.'
 const ACP_REPLY = `Deterministic reply: ${ACP_PROMPT}`
 const NOTEBOOK_PROMPT = 'Profile the notebook lifecycle.'
 const NOTEBOOK_REPLY = 'Notebook lifecycle verified for'
+const STRESS_PROMPT = 'Run the runtime resource stress journey.'
+const STRESS_REPLY = 'Runtime resource stress journey complete.'
 
 const positiveIntegerEnvironment = (name: string, fallback: number): number => {
   const raw = process.env[name]?.trim()
@@ -20,11 +22,12 @@ const positiveIntegerEnvironment = (name: string, fallback: number): number => {
 
 const phaseDurationMs = positiveIntegerEnvironment('OPEN_SCIENCE_PERF_PHASE_MS', 10_000)
 const sampleIntervalMs = positiveIntegerEnvironment('OPEN_SCIENCE_PERF_INTERVAL_MS', 1_000)
+const stressCycles = positiveIntegerEnvironment('OPEN_SCIENCE_PERF_STRESS_CYCLES', 1)
 
 test('records isolated startup, ACP, Notebook, and recovery resource trends', async ({
   app
 }, testInfo) => {
-  playwrightTest.setTimeout(180_000)
+  playwrightTest.setTimeout(180_000 + stressCycles * 15_000)
   await app.completeOnboarding()
   await app.configureFakeAgent()
   await app.beginResourceProfile({
@@ -50,12 +53,22 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
     await sendPrompt(page, ACP_PROMPT, ACP_REPLY, 60_000)
     await app.sampleResourceProfileNow()
 
-    await app.markResourceProfilePhase('notebook-tool')
-    await sendPrompt(page, NOTEBOOK_PROMPT, NOTEBOOK_REPLY, 60_000)
-    await app.sampleResourceProfileNow()
+    for (let cycle = 0; cycle < stressCycles; cycle += 1) {
+      await app.markResourceProfilePhase('session-stress')
+      await sendPrompt(page, `${STRESS_PROMPT} Cycle ${cycle + 1}.`, STRESS_REPLY, 60_000)
+      await app.sampleResourceProfileNow()
+
+      await app.markResourceProfilePhase('notebook-tool')
+      await sendPrompt(page, NOTEBOOK_PROMPT, NOTEBOOK_REPLY, 60_000)
+      await app.sampleResourceProfileNow()
+    }
 
     page = await app.restart({ resourceProfilePhase: 'recovery' })
     await page.waitForTimeout(phaseDurationMs)
+    await openProjectSession(page, PROFILE_PROJECT_NAME, ACP_PROMPT)
+    await expect(page.getByText(STRESS_REPLY, { exact: false }).last()).toBeVisible({
+      timeout: 60_000
+    })
     await app.sampleResourceProfileNow()
   } finally {
     result = await app.finishResourceProfile()
@@ -65,5 +78,10 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
     path: result.summaryMarkdownPath,
     contentType: 'text/markdown'
   })
+  const recoveryStorage = result.summary.phases.recovery?.storage
+  expect(recoveryStorage?.sessionFileCount.last).toBeGreaterThan(0)
+  expect(recoveryStorage?.sessionBytes.last).toBeGreaterThan(0)
+  expect(recoveryStorage?.notebookRunFileCount.last).toBeGreaterThan(0)
+  expect(recoveryStorage?.notebookRunBytes.last).toBeGreaterThan(0)
   console.log(`Runtime performance summary: ${result.summaryMarkdownPath}`)
 })

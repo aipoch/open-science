@@ -30,6 +30,7 @@ const RELIABLE_FAILURE_PROMPT = 'Start the reliable messaging post-fence failure
 const RELIABLE_FAILURE_OBSERVE_PROMPT = 'Observe the reliable messaging post-fence failure.'
 const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.'
 const LONG_STREAM_PROMPT = 'Stream the long scroll journey.'
+const RUNTIME_RESOURCE_STRESS_PROMPT = 'Run the runtime resource stress journey.'
 const QUEUE_GATE_PROMPT = 'Hold the queue until the reveal finishes.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
 const TOOL_LAYOUT_SHIFT_PROMPT = 'Run the tool layout stability journey.'
@@ -630,6 +631,24 @@ if (process.argv.includes('--version')) {
             }
           })
           reply = ''
+        } else if (prompt.includes(RUNTIME_RESOURCE_STRESS_PROMPT)) {
+          const stressMessageId = `e2e-message-${nextMessageId++}`
+          const payload = 'x'.repeat(2_048)
+          for (let chunk = 0; chunk < 90; chunk += 1) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: stressMessageId,
+                content: {
+                  type: 'text',
+                  text: `Resource stress chunk ${chunk}: ${payload}\n`
+                }
+              }
+            })
+            await delay(30)
+          }
+          reply = 'Runtime resource stress journey complete.'
         } else if (prompt.includes(LONG_STREAM_PROMPT)) {
           // Mirror a real agent turn: text segment -> tool call -> second text segment ->
           // tool completion -> trailing segment, with separate message ids per segment.

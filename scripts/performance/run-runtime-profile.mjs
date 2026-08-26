@@ -8,6 +8,7 @@ Options:
   --repeat=<count>       Comparable runs to record (default: 3)
   --phase-ms=<ms>        Idle and recovery phase duration (default: 10000)
   --interval-ms=<ms>     Sampling interval from 250 to 10000 (default: 1000)
+  --stress-cycles=<n>    Sustained Session + Notebook cycles per run (default: 1)
   --output=<directory>   Local output root (default: test-results/performance)
   --skip-build           Reuse the existing Electron E2E build
   --help                 Show this help
@@ -29,6 +30,7 @@ const options = {
   repeat: 3,
   phaseMs: 10_000,
   intervalMs: 1_000,
+  stressCycles: 1,
   output: undefined,
   skipBuild: false
 }
@@ -57,6 +59,13 @@ for (const argument of process.argv.slice(2)) {
       1_000,
       { min: 250, max: 10_000 }
     )
+  } else if (argument.startsWith('--stress-cycles=')) {
+    options.stressCycles = parsePositiveInteger(
+      '--stress-cycles',
+      argument.slice('--stress-cycles='.length),
+      1,
+      { max: 20 }
+    )
   } else if (argument.startsWith('--output=')) {
     const value = argument.slice('--output='.length).trim()
     if (!value) throw new Error('--output must not be empty.')
@@ -83,6 +92,7 @@ const environment = {
   ...process.env,
   OPEN_SCIENCE_PERF_PHASE_MS: String(options.phaseMs),
   OPEN_SCIENCE_PERF_INTERVAL_MS: String(options.intervalMs),
+  OPEN_SCIENCE_PERF_STRESS_CYCLES: String(options.stressCycles),
   ...(options.output ? { OPEN_SCIENCE_PERF_OUTPUT_ROOT: options.output } : {})
 }
 
