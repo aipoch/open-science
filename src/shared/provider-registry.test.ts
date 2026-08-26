@@ -46,6 +46,22 @@ describe('provider registry', () => {
     expect(OFFICIAL_VENDORS[anthropicIndex + 1]?.id).toBe('xai')
   })
 
+  it('places OpenCode Go and Zen immediately before OpenRouter with curated Chat catalogs', () => {
+    const openRouterIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'openrouter')
+
+    expect(
+      OFFICIAL_VENDORS.slice(openRouterIndex - 2, openRouterIndex + 1).map(({ id }) => id)
+    ).toEqual(['opencode-go', 'opencode', 'openrouter'])
+    expect(resolveVendorBaseUrl('opencode-go')).toBe('https://opencode.ai/zen/go/v1')
+    expect(resolveVendorBaseUrl('opencode')).toBe('https://opencode.ai/zen/v1')
+    expect(resolveVendorApiEndpoints('opencode-go')).toEqual(['openai'])
+    expect(resolveVendorApiEndpoints('opencode')).toEqual(['openai'])
+    expect(resolveVendorModelsUrl('opencode-go')).toBeUndefined()
+    expect(resolveVendorModelsUrl('opencode')).toBeUndefined()
+    expect(defaultVendorModel('opencode-go')).toBe('kimi-k2.7-code')
+    expect(defaultVendorModel('opencode')).toBe('kimi-k2.7-code')
+  })
+
   it('resolves a single-endpoint vendor base URL', () => {
     expect(resolveVendorBaseUrl('openai')).toBe('https://api.openai.com')
     expect(getOfficialVendor('openai')?.apiEndpoints).toEqual(['responses'])

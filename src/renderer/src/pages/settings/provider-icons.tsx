@@ -101,6 +101,16 @@ export const ProviderKindIcon = ({
     return <img src={claudeLogo} alt="" className={cn('size-5 shrink-0', className)} />
   }
 
+  if (kindKey === 'official:opencode-go' || kindKey === 'official:opencode') {
+    return (
+      <OpenCode
+        size={20}
+        className={cn('size-5 shrink-0 text-foreground', className)}
+        aria-hidden="true"
+      />
+    )
+  }
+
   const vendorId = kindKey.slice('official:'.length) as OfficialVendorId
   const logo = VENDOR_LOGO[vendorId]
 

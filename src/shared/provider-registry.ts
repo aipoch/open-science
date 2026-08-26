@@ -31,6 +31,8 @@ export type OfficialVendorId =
   | 'xiaomimimo'
   | 'sensenova'
   | 'volcengine'
+  | 'opencode-go'
+  | 'opencode'
   | 'openrouter'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
@@ -605,6 +607,40 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         'doubao-seed-2-0-mini-260215'
       ]
     }
+  },
+  {
+    id: 'opencode-go',
+    label: 'OpenCode Go',
+    reasoningEffort: 'unsupported',
+    apiEndpoints: ['openai'],
+    baseUrl: 'https://opencode.ai/zen/go/v1',
+    apiKeyUrl: 'https://opencode.ai/zen',
+    // The public catalog mixes Chat Completions, Responses, and Messages models but does not expose
+    // protocol metadata. Keep this list to models that use the provider's default OpenAI-compatible
+    // package instead of offering a refresh that could surface models this transport cannot drive.
+    models: [
+      { id: 'kimi-k2.7-code', contextWindow: 262_144 },
+      { id: 'kimi-k3', contextWindow: 1_048_576 },
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
+      { id: 'glm-5.3', contextWindow: 1_000_000 }
+    ]
+  },
+  {
+    id: 'opencode',
+    label: 'OpenCode Zen',
+    reasoningEffort: 'unsupported',
+    apiEndpoints: ['openai'],
+    baseUrl: 'https://opencode.ai/zen/v1',
+    apiKeyUrl: 'https://opencode.ai/zen',
+    // Zen's public list has the same mixed-protocol limitation as Go, so this catalog is deliberately
+    // curated to default OpenAI-compatible models.
+    models: [
+      { id: 'kimi-k2.7-code', contextWindow: 262_144 },
+      { id: 'kimi-k3', contextWindow: 1_048_576 },
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
+      { id: 'glm-5.2', contextWindow: 1_000_000 }
+    ]
   },
   // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
   {
