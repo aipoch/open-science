@@ -3,7 +3,7 @@
 [![Descargar](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![Versión](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
 [![Licencia](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
-[![Sitio web](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/)
+[![Sitio web](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
 
 <p align="center">
@@ -19,7 +19,7 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-Open Science es un entorno local y de código abierto para científicos e investigadores, compatible con distintos modelos de IA. Permite realizar investigaciones reproducibles e inspeccionables con agentes científicos de IA, ejecutar Python y R, conectarse a fuentes de datos científicos y trabajar en macOS, Windows y Linux. Cree un proyecto, describa su objetivo de investigación en lenguaje natural y permita que los agentes lean archivos, busquen en la web, ejecuten código, consulten fuentes de datos científicos y produzcan informes, tablas y figuras con procedencia rastreable, todo en un mismo espacio de trabajo.
+Open Science es un entorno local y de código abierto, desarrollado por [AIPOCH](https://aipoch.com/open-science) para científicos e investigadores, compatible con distintos modelos de IA. Permite realizar investigaciones reproducibles e inspeccionables con agentes científicos de IA, ejecutar Python y R, conectarse a fuentes de datos científicos y trabajar en macOS, Windows y Linux. Cree un proyecto, describa su objetivo de investigación en lenguaje natural y permita que los agentes lean archivos, busquen en la web, ejecuten código, consulten fuentes de datos científicos y produzcan informes, tablas y figuras con procedencia rastreable, todo en un mismo espacio de trabajo.
 
 Open Science respalda la investigación computacional y con uso intensivo de datos en todas las disciplinas, incluidos el aprendizaje automático, la estadística, las ciencias biológicas, la química, la ciencia de los materiales, la física y las ciencias ambientales. Acompaña todo el proceso de investigación, desde la revisión bibliográfica y el desarrollo de hipótesis hasta la ejecución de código, el análisis de datos, la simulación, la visualización y la producción de resultados rastreables.
 
@@ -313,7 +313,7 @@ La hoja de ruta del producto y el estado de la capacidad se mantienen en [ROADMA
 
 <img width="1920" height="1140" alt="Función de Open Science en el ecosistema AIPOCH como capa de orquestación de escritorio para flujos de trabajo abiertos de IA científica" src="https://github.com/user-attachments/assets/0ab847b1-1b7d-43f4-8c11-480a578e6c7d" />
 
-[AIPOCH](https://aipoch.com/open-science) ([GitHub org](https://github.com/aipoch) ) crea Open Science como la capa de orquestación de escritorio para flujos de trabajo de IA científicos abiertos.
+[AIPOCH](https://aipoch.com/) ([GitHub org](https://github.com/aipoch)) desarrolla [Open Science](https://aipoch.com/open-science) como la capa de orquestación de escritorio para flujos de trabajo de IA científicos abiertos.
 
 - [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills) es una colección más amplia de más de 500 habilidades de investigación médica y científica basadas en archivos, todas las cuales pueden inspeccionarse, importarse y combinarse con Open Science de GitHub.
 - Open Science proporciona el espacio de trabajo del proyecto/sesión, el entorno de ejecución del agente, la ejecución, los artefactos, las vistas previas, los permisos y los conectores que convierten esas instrucciones en un flujo de trabajo interactivo.
@@ -407,7 +407,7 @@ Open Science agradece informes de errores, propuestas de funciones, debates sobr
 | [GitHub Discusiones](https://github.com/aipoch/open-science/discussions) | Preguntas de diseño, propuestas de hoja de ruta y conversaciones técnicas más largas |
 | [Discord](https://discord.gg/zxQAYjReRv)                                 | Ayuda comunitaria, coordinación de contribuyentes y discusión informal               |
 | [X / @aipoch_ai](https://x.com/aipoch_ai)                                | Anuncios de versiones y novedades sobre el desarrollo público                        |
-| [Sitio web](https://aipoch.com/)                                         | Descripción general del producto, descargas y el resto del ecosistema AIPOCH         |
+| [Sitio web de Open Science](https://aipoch.com/open-science)             | Descripción general oficial del producto y descargas                                 |
 
 Antes de abrir una incidencia pública, elimine de los registros y las capturas de pantalla las claves API, los tokens, las rutas de archivos privados, los datos no publicados, los identificadores de pacientes y cualquier otro material confidencial. Consulte [CONTRIBUTING.md](CONTRIBUTING.md) para conocer el flujo de trabajo de desarrollo.
 
