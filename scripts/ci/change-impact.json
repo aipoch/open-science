@@ -172,8 +172,6 @@
         "src/main/update/electron-updater-strategy.ts",
         "src/main/session-persistence/**",
         "src/main/file-save.ts",
-        "src/main/managed-file-versions/version-file-operator.test.ts",
-        "src/main/managed-file-versions/version-file-operator.ts",
         "src/main/specialist/repository.ts",
         "src/preload/**/*windows*.ts",
         "src/preload/**/*powershell*.ts",
@@ -185,28 +183,6 @@
         "src/shared/update.ts"
       ],
       "capabilities": ["windows_sensitive"]
-    },
-    {
-      "id": "version_file_operator_harness",
-      "role": "owner",
-      "paths": [
-        "scripts/run-version-file-operator-electron-contract.mjs",
-        "scripts/run-version-file-operator-electron-contract.test.ts",
-        "scripts/version-file-operator-electron-contract.ts"
-      ],
-      "capabilities": []
-    },
-    {
-      "id": "version_file_operator",
-      "role": "overlay",
-      "paths": [
-        "scripts/run-version-file-operator-electron-contract.mjs",
-        "scripts/run-version-file-operator-electron-contract.test.ts",
-        "scripts/version-file-operator-electron-contract.ts",
-        "src/main/managed-file-versions/version-file-operator.test.ts",
-        "src/main/managed-file-versions/version-file-operator.ts"
-      ],
-      "capabilities": ["version_file_operator"]
     },
     {
       "id": "renderer_view",
@@ -287,10 +263,6 @@
         "e2e_functional_windows",
         "e2e_workspace_windows"
       ]
-    },
-    "version_file_operator": {
-      "consumers": [],
-      "lanes": ["windows_runtime", "build"]
     },
     "renderer_view": {
       "consumers": ["e2e_functional", "e2e_accessibility", "e2e_visual", "i18n_catalog"],

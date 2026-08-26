@@ -328,11 +328,6 @@ describe('pull request change classification', () => {
     ['session persistence', 'src/main/session-persistence/ipc.ts'],
     ['notebook shell process', 'src/main/notebook/shell-process.ts'],
     ['file save', 'src/main/file-save.ts'],
-    ['immutable version file operator', 'src/main/managed-file-versions/version-file-operator.ts'],
-    [
-      'immutable version file operator contract',
-      'src/main/managed-file-versions/version-file-operator.test.ts'
-    ],
     ['specialist repository', 'src/main/specialist/repository.ts'],
     ['notebook runtime settings', 'src/main/settings/notebook-runtime-settings.ts'],
     ['preferences', 'src/main/settings/preferences.ts'],
@@ -354,24 +349,6 @@ describe('pull request change classification', () => {
     expect(plan.lanes).not.toContain('windows_runtime')
     expect(plan.lanes).not.toContain('windows_path')
   })
-
-  it.each([
-    ['source', 'src/main/managed-file-versions/version-file-operator.ts'],
-    ['contract', 'src/main/managed-file-versions/version-file-operator.test.ts'],
-    ['Electron harness', 'scripts/version-file-operator-electron-contract.ts'],
-    ['Electron runner', 'scripts/run-version-file-operator-electron-contract.mjs'],
-    ['Electron runner contract', 'scripts/run-version-file-operator-electron-contract.test.ts']
-  ])(
-    'selects every immutable-version contract platform for operator %s changes',
-    (_label, path) => {
-      const plan = classifyChanges([{ path, status: 'modified' }])
-
-      expect(plan.roots).toContain('version_file_operator')
-      expect(plan.lanes).toEqual(expect.arrayContaining(['windows_runtime', 'build']))
-      expect(plan.bundles).toEqual(expect.arrayContaining(['windows_core', 'macos_e2e']))
-      expect(plan.reasonChains).toContain(`${path} -> version_file_operator`)
-    }
-  )
 
   it.each([
     ['renderer view', 'src/renderer/src/components/Button.tsx'],
