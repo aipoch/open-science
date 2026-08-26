@@ -214,6 +214,7 @@ const createSessionDelegatedWorkRecords = (
               eventIds: [...(message.eventIds ?? [])],
               images: message.images?.map((image) => ({ ...image })),
               turnUsage: message.turnUsage ? { ...message.turnUsage } : undefined,
+              modelCallUsage: message.modelCallUsage?.map((call) => ({ ...call })),
               turnUsageUnavailable: message.turnUsageUnavailable,
               createdAt: message.createdAt,
               completedAt: message.completedAt ?? message.updatedAt ?? message.createdAt,
@@ -291,6 +292,9 @@ const createSessionDelegatedWorkRecords = (
                   turnUsage: input.terminalMessage.turnUsage
                     ? { ...input.terminalMessage.turnUsage }
                     : undefined,
+                  modelCallUsage: input.terminalMessage.modelCallUsage?.map((call) => ({
+                    ...call
+                  })),
                   turnUsageUnavailable: input.terminalMessage.turnUsageUnavailable,
                   createdAt: input.terminalMessage.createdAt,
                   completedAt:

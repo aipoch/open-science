@@ -65,6 +65,12 @@ const rendererCatalogs = {
 } as const
 
 const TRANSLATED = LOCALES.filter((locale): locale is TranslatedLocale => locale !== 'en')
+const MANDATORY_GENERIC_PRODUCT_NOUNS: ReadonlySet<string> = new Set([
+  'Subagent',
+  'Skill',
+  'Specialist',
+  'Connector'
+])
 
 const catalog = (locale: TranslatedLocale): Catalog => sourceCatalogs[locale] as Catalog
 
@@ -212,11 +218,47 @@ describe('supported catalog registration', () => {
 })
 
 describe('runtime catalog fallback', () => {
+  it.each([
+    [
+      'ja',
+      'セッション呼び出しの概要',
+      'このセッションは呼び出し追跡より前に作成されたか、フレームワークがターンの集計使用量のみを報告した可能性があります。'
+    ],
+    [
+      'ru',
+      'Сводка вызовов сессии',
+      'Эта сессия могла быть создана до появления отслеживания вызовов, либо её фреймворк сообщил только суммарное использование хода.'
+    ],
+    ['zh-Hans', '会话调用摘要', '此会话可能早于调用追踪功能，或其框架仅报告了轮次聚合用量。'],
+    ['zh-Hant', '會話呼叫摘要', '此工作階段可能早於呼叫追蹤功能，或其框架僅回報了輪次彙總用量。']
+  ] as const)('%s localizes Session in Context Window copy', (locale, summary, emptyState) => {
+    expect(rendererCatalogs[locale]['Session call summary']).toBe(summary)
+    expect(
+      rendererCatalogs[locale][
+        'This Session may predate call tracking, or its framework reported only aggregate turn usage.'
+      ]
+    ).toBe(emptyState)
+  })
+
   it('ships and registers the Russian catalog', () => {
     expect(
       existsSync(join(__dirname, '..', '..', '..', 'shared', 'i18n', 'locales', 'ru.json'))
     ).toBe(true)
     expect('ru' in resources).toBe(true)
+  })
+
+  it.each([
+    ['fr', 'Tours', 'Appels'],
+    ['ja', 'ターン', '呼び出し'],
+    ['ko', '턴', '호출'],
+    ['ru', 'Ходы', 'Вызовы'],
+    ['zh-Hans', '轮次', '调用'],
+    ['zh-Hant', '輪次', '呼叫']
+  ] as const)('translates Context Window detail levels for %s', (locale, turns, calls) => {
+    const renderer = initI18n(locale)
+
+    expect(renderer.t('Turns')).toBe(turns)
+    expect(renderer.t('Calls')).toBe(calls)
   })
 
   it('keeps valid translations without copying the catalog', () => {
@@ -506,6 +548,59 @@ describe.each(TRANSLATED)('%s native catalog', (locale) => {
 })
 
 describe('process catalog boundaries', () => {
+  it.each([
+    {
+      locale: 'fr' as const,
+      expected: {
+        Subagent: 'Sous-agent',
+        Skill: 'Compétence',
+        Specialist: 'Spécialiste',
+        Connector: 'Connecteur'
+      }
+    },
+    {
+      locale: 'ja' as const,
+      expected: {
+        Subagent: 'サブエージェント',
+        Skill: 'スキル',
+        Specialist: 'スペシャリスト',
+        Connector: 'コネクタ'
+      }
+    },
+    {
+      locale: 'ko' as const,
+      expected: {
+        Subagent: '서브에이전트',
+        Skill: '스킬',
+        Specialist: '스페셜리스트',
+        Connector: '커넥터'
+      }
+    },
+    {
+      locale: 'ru' as const,
+      expected: {
+        Subagent: 'Субагент',
+        Skill: 'Навык',
+        Specialist: 'Специалист',
+        Connector: 'Коннектор'
+      }
+    },
+    {
+      locale: 'zh-Hans' as const,
+      expected: { Subagent: '子智能体', Skill: '技能', Specialist: '专家', Connector: '连接器' }
+    },
+    {
+      locale: 'zh-Hant' as const,
+      expected: { Subagent: '子智能體', Skill: '技能', Specialist: '專家', Connector: '連接器' }
+    }
+  ])('shares mandatory generic product nouns with main for $locale', ({ locale, expected }) => {
+    const main = createNativeI18n(locale)
+
+    expect(
+      Object.fromEntries([...MANDATORY_GENERIC_PRODUCT_NOUNS].map((key) => [key, main.t(key)]))
+    ).toEqual(expected)
+  })
+
   it('loads only common and native namespaces in main', () => {
     expect(
       Object.fromEntries(
@@ -2869,6 +2964,7 @@ const codeOnly = (source: string): string =>
 describe('semantic key leaks', () => {
   const SEMANTIC_PATH = /^[a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9-]+){2,}$/
 
+  // This guard scans the full source tree and runs under coverage in the selective CI lane.
   it('no t() call passes a dotted semantic path', () => {
     const offenders = SCAN_ROOTS.flatMap(sourceFiles).flatMap((path) => {
       const source = codeOnly(readFileSync(path, 'utf8'))
@@ -2879,7 +2975,7 @@ describe('semantic key leaks', () => {
     })
 
     expect(offenders).toEqual([])
-  })
+  }, 30_000)
 })
 
 // ---------------------------------------------------------------------------
@@ -3376,13 +3472,13 @@ describe('main NativeTranslator catalog guard', () => {
     expect(orphans).toEqual([])
   })
 
-  it.each(TRANSLATED)('every %s common key still matches a main source literal', (locale) => {
+  it.each(TRANSLATED)('every %s common key has a main source or runtime contract', (locale) => {
     const orphans = orphanedCatalogKeys(
       Object.keys(commonCatalogs[locale]),
       sites,
       REQUIRED_PLURAL_CATEGORIES[locale],
       'common'
-    )
+    ).filter((key) => !MANDATORY_GENERIC_PRODUCT_NOUNS.has(key))
 
     expect(orphans).toEqual([])
   })

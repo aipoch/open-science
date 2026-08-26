@@ -97,6 +97,7 @@ const ownerNames = [
   'session-store-run-activity-helpers',
   'session-store-run-output-helpers',
   'session-store-run-projection-owner',
+  'session-store-session-details',
   'session-store-run-terminal-helpers'
 ] as const
 const privateOwnerTargets = new Set(ownerNames.map((name) => modulePath(resolve(__dirname, name))))

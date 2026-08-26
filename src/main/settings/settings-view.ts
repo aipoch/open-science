@@ -1,4 +1,8 @@
-import type { ProviderView, SettingsSnapshot } from '../../shared/settings'
+import {
+  DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
+  type ProviderView,
+  type SettingsSnapshot
+} from '../../shared/settings'
 import { resolveNetworkProxySettings } from '../../shared/network-proxy'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
@@ -55,6 +59,8 @@ export const buildSettingsSnapshot = (
     reasoningEffort: preferences.reasoningEffort,
     subagentModel: settings.subagentModel ?? { mode: 'inherit' },
     reviewerModel: settings.reviewerModel ?? { mode: 'inherit' },
+    sessionDetailsModel:
+      settings.sessionDetailsModel ?? DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
     visionModel: settings.visionModel,
     notificationsEnabled: preferences.notificationsEnabled,
     conversationSkillImportEnabled: preferences.conversationSkillImportEnabled,

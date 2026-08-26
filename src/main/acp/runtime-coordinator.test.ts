@@ -3554,6 +3554,100 @@ describe('AcpRuntimeCoordinator', () => {
     expect(onSessionUnavailable).toHaveBeenCalledWith('session-1')
   })
 
+  it('holds the Session deletion lifecycle until runtime deletion settles', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const onSessionDeleteStarted = vi.fn()
+    const beforeSessionDelete = vi.fn().mockResolvedValue(undefined)
+    const afterSessionDelete = vi.fn()
+    const delegatedDeletion = createDeferred<void>()
+    const delegatedWork: RootDelegatedWorkControl = {
+      pendingPermissions: () => [],
+      subscribe: () => () => undefined,
+      respondToPermission: async () => false,
+      setPermissionProfile: async () => undefined,
+      stopSession: async () => undefined,
+      stopAll: async () => undefined,
+      deleteSession: vi.fn(() => delegatedDeletion.promise),
+      deleteProject: async () => undefined
+    }
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      undefined,
+      undefined,
+      { onSessionDeleteStarted, beforeSessionDelete, afterSessionDelete },
+      undefined,
+      delegatedWork
+    )
+    const deletion = createDeferred<AcpStateSnapshot>()
+    created[0].deleteSession.mockReturnValueOnce(deletion.promise)
+
+    await coordinator.createSession()
+    const deleting = coordinator.deleteSession({ sessionId: 'session-1' })
+    await vi.waitFor(() => expect(delegatedWork.deleteSession).toHaveBeenCalledOnce())
+
+    expect(onSessionDeleteStarted).toHaveBeenCalledWith('session-1')
+    expect(onSessionDeleteStarted.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(delegatedWork.deleteSession).mock.invocationCallOrder[0]
+    )
+    expect(beforeSessionDelete).not.toHaveBeenCalled()
+    expect(afterSessionDelete).not.toHaveBeenCalled()
+
+    delegatedDeletion.resolve()
+    await vi.waitFor(() => expect(created[0].deleteSession).toHaveBeenCalledOnce())
+
+    expect(beforeSessionDelete).toHaveBeenCalledWith('session-1')
+    expect(afterSessionDelete).not.toHaveBeenCalled()
+
+    deletion.resolve(emptySnapshot())
+    await deleting
+
+    expect(afterSessionDelete).toHaveBeenCalledWith('session-1', false)
+    expect(created[0].deleteSession.mock.invocationCallOrder[0]).toBeLessThan(
+      afterSessionDelete.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('releases the Session deletion lifecycle when runtime deletion fails', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const afterSessionDelete = vi.fn()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      undefined,
+      undefined,
+      { afterSessionDelete }
+    )
+
+    await coordinator.createSession()
+    created[0].deleteSession.mockRejectedValueOnce(new Error('delete failed'))
+
+    await expect(coordinator.deleteSession({ sessionId: 'session-1' })).rejects.toThrow(
+      'delete failed'
+    )
+    expect(afterSessionDelete).toHaveBeenCalledWith('session-1', true)
+  })
+
   it('invalidates a successfully deleted detached session without a runtime state event', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const onSessionUnavailable = vi.fn()
@@ -3611,6 +3705,7 @@ describe('AcpRuntimeCoordinator', () => {
   it('preserves a session adopted by a new generation while the old delete is in flight', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const onSessionUnavailable = vi.fn()
+    const afterSessionDelete = vi.fn()
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) => {
         const fake = createFakeRuntime({
@@ -3625,7 +3720,8 @@ describe('AcpRuntimeCoordinator', () => {
       '',
       undefined,
       undefined,
-      onSessionUnavailable
+      onSessionUnavailable,
+      { afterSessionDelete }
     )
 
     await coordinator.createSession()
@@ -3650,6 +3746,7 @@ describe('AcpRuntimeCoordinator', () => {
       expect.any(String)
     )
     expect(onSessionUnavailable).not.toHaveBeenCalled()
+    expect(afterSessionDelete).toHaveBeenCalledWith('session-1', true)
   })
 
   it('attempts every runtime quit teardown and preserves the surviving snapshot primary', async () => {

@@ -302,6 +302,26 @@ describe('ComposerEditor', () => {
     expect(document.body.querySelector('[aria-hidden="true"]')).toBeNull()
   })
 
+  it('hides the placeholder while an IME composition is active', () => {
+    renderEditor({ doc: emptyDoc })
+    const hasPlaceholder = (): boolean =>
+      Array.from(document.body.querySelectorAll('[aria-hidden="true"]')).some(
+        (node) => node.textContent === 'Ask anything'
+      )
+
+    expect(hasPlaceholder()).toBe(true)
+
+    act(() => {
+      editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+    })
+    expect(hasPlaceholder()).toBe(false)
+
+    act(() => {
+      editor().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+    })
+    expect(hasPlaceholder()).toBe(true)
+  })
+
   it('keeps an inline placeholder and a visible caret host after a pasted-text marker', () => {
     renderEditor({ focusRequest: 'session-a' })
     const root = editor()

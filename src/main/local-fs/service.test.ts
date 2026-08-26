@@ -119,6 +119,43 @@ describe('LocalFsService.listDir', () => {
     expect(listing.entries.some((entry) => entry.name === 'file-4999')).toBe(false)
   })
 
+  it('stats directory entries with bounded concurrency while preserving result order', async () => {
+    const dirents = Array.from({ length: 20 }, (_, index) => ({
+      name: `file-${String(index).padStart(2, '0')}`,
+      isDirectory: () => false,
+      isSymbolicLink: () => false
+    }))
+    let releaseFirstBatch!: () => void
+    const firstBatch = new Promise<void>((resolve) => {
+      releaseFirstBatch = resolve
+    })
+    let inFlight = 0
+    let maxInFlight = 0
+
+    vi.mocked(readdir).mockResolvedValueOnce(dirents as never)
+    vi.mocked(stat).mockImplementation(async (path) => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await firstBatch
+      inFlight -= 1
+      return {
+        isDirectory: () => false,
+        size: Number(String(path).slice(-2)),
+        mtimeMs: 1
+      } as never
+    })
+
+    const pending = service.listDir(root)
+    await vi.waitFor(() => expect(stat).toHaveBeenCalled())
+    const startedBeforeRelease = vi.mocked(stat).mock.calls.length
+    releaseFirstBatch()
+    const listing = await pending
+
+    expect(startedBeforeRelease).toBeGreaterThan(1)
+    expect(maxInFlight).toBeLessThanOrEqual(16)
+    expect(listing.entries.map((entry) => entry.name)).toEqual(dirents.map((entry) => entry.name))
+  })
+
   it('resolves symlinks and .. via realpath', async () => {
     const link = join(root, 'link-to-sub')
     await symlink(join(root, 'sub'), link)

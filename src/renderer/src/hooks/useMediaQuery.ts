@@ -15,6 +15,7 @@ const useMediaQuery = (query: string): boolean => {
     const media = window.matchMedia(query)
     const update = (): void => setMatches(media.media === query && media.matches)
     media.addEventListener?.('change', update)
+    update()
 
     return () => media.removeEventListener?.('change', update)
   }, [query])

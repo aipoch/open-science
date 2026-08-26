@@ -301,6 +301,7 @@ export class AgentRuntimeManager {
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly executeClaudeProbe: ExecuteClaudeProbe
+  private activeInstallId: string | undefined
   private environmentCheckRuntimeProbe: ReusableRuntimeProbe | undefined
   private preflightRuntimeProbe: ReusableRuntimeProbe | undefined
   private readonly installManagedClaudeImpl: (
@@ -487,39 +488,41 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    if (request.source === 'managed') {
-      const registries =
-        request.managedRegistry === 'npmmirror'
-          ? [DEFAULT_REGISTRIES[1], DEFAULT_REGISTRIES[0]]
-          : DEFAULT_REGISTRIES
-      const outcome = await this.installManagedClaudeImpl({
-        installId,
-        onEvent,
-        dataRoot: this.storageRoot,
-        registries
-      })
+    return this.runExclusiveInstall(installId, async () => {
+      if (request.source === 'managed') {
+        const registries =
+          request.managedRegistry === 'npmmirror'
+            ? [DEFAULT_REGISTRIES[1], DEFAULT_REGISTRIES[0]]
+            : DEFAULT_REGISTRIES
+        const outcome = await this.installManagedClaudeImpl({
+          installId,
+          onEvent,
+          dataRoot: this.storageRoot,
+          registries
+        })
 
-      if (outcome.result.ok && outcome.resolvedPath) {
-        const installedVersion = await this.detectDeps.getVersion(outcome.resolvedPath)
-        if (!installedVersion) {
-          const error =
-            'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
-          onEvent({ kind: 'log', installId, stream: 'system', chunk: `${error}\n` })
-          return { installId, ok: false, error }
+        if (outcome.result.ok && outcome.resolvedPath) {
+          const installedVersion = await this.detectDeps.getVersion(outcome.resolvedPath)
+          if (!installedVersion) {
+            const error =
+              'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
+            onEvent({ kind: 'log', installId, stream: 'system', chunk: `${error}\n` })
+            return { installId, ok: false, error }
+          }
+
+          await this.repository.setClaudeInfo({
+            resolvedPath: outcome.resolvedPath,
+            version: outcome.version
+          })
         }
 
-        await this.repository.setClaudeInfo({
-          resolvedPath: outcome.resolvedPath,
-          version: outcome.version
-        })
+        return outcome.result
       }
 
-      return outcome.result
-    }
-
-    const result = await runInstallWithFallback({ source: request.source, installId, onEvent })
-    if (result.ok) await this.detectClaude()
-    return result
+      const result = await runInstallWithFallback({ source: request.source, installId, onEvent })
+      if (result.ok) await this.detectClaude()
+      return result
+    })
   }
 
   async installOpencode(
@@ -528,26 +531,28 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-opencode-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    if (request.source === 'managed') {
-      const outcome = await this.installManagedOpencodeImpl({
+    return this.runExclusiveInstall(installId, async () => {
+      if (request.source === 'managed') {
+        const outcome = await this.installManagedOpencodeImpl({
+          installId,
+          onEvent,
+          dataRoot: this.storageRoot
+        })
+        if (outcome.result.ok && outcome.resolvedPath) {
+          await this.repository.setOpencodeInfo(outcome.resolvedPath, outcome.version)
+        }
+        return outcome.result
+      }
+
+      const result = await runInstallWithFallback({
+        source: request.source,
         installId,
         onEvent,
-        dataRoot: this.storageRoot
+        installTarget: OPENCODE_INSTALL_TARGET
       })
-      if (outcome.result.ok && outcome.resolvedPath) {
-        await this.repository.setOpencodeInfo(outcome.resolvedPath, outcome.version)
-      }
-      return outcome.result
-    }
-
-    const result = await runInstallWithFallback({
-      source: request.source,
-      installId,
-      onEvent,
-      installTarget: OPENCODE_INSTALL_TARGET
+      if (result.ok) await this.detectOpencode()
+      return result
     })
-    if (result.ok) await this.detectOpencode()
-    return result
   }
 
   async installCodex(
@@ -556,50 +561,68 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-codex-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    if (request.source === 'managed') {
-      const settings = await this.repository.getSettings()
-      const configuredCodexPath = settings.codex?.nativePath
-      const managedCodexPath =
-        this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.storageRoot)
-      const externalCodexPath =
-        configuredCodexPath && configuredCodexPath !== managedCodexPath
-          ? configuredCodexPath
-          : undefined
-      const existingCodexPath =
-        externalCodexPath && (await this.codexDetectDeps.getCodexVersion(externalCodexPath))
-          ? externalCodexPath
-          : undefined
-      const outcome = await this.installManagedCodexImpl({
+    return this.runExclusiveInstall(installId, async () => {
+      if (request.source === 'managed') {
+        const settings = await this.repository.getSettings()
+        const configuredCodexPath = settings.codex?.nativePath
+        const managedCodexPath =
+          this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.storageRoot)
+        const externalCodexPath =
+          configuredCodexPath && configuredCodexPath !== managedCodexPath
+            ? configuredCodexPath
+            : undefined
+        const existingCodexPath =
+          externalCodexPath && (await this.codexDetectDeps.getCodexVersion(externalCodexPath))
+            ? externalCodexPath
+            : undefined
+        const outcome = await this.installManagedCodexImpl({
+          installId,
+          onEvent,
+          dataRoot: this.storageRoot,
+          ...(existingCodexPath ? { existingCodexPath } : {})
+        })
+        if (
+          outcome.result.ok &&
+          outcome.adapterPath &&
+          outcome.adapterVersion &&
+          outcome.codexPath &&
+          outcome.codexVersion
+        ) {
+          await this.repository.setCodexInfo({
+            resolvedPath: outcome.adapterPath,
+            version: outcome.adapterVersion,
+            nativePath: outcome.codexPath,
+            nativeVersion: outcome.codexVersion
+          })
+        }
+        return outcome.result
+      }
+
+      const result = await runInstallWithFallback({
+        source: request.source,
         installId,
         onEvent,
-        dataRoot: this.storageRoot,
-        ...(existingCodexPath ? { existingCodexPath } : {})
+        installTarget: CODEX_INSTALL_TARGET
       })
-      if (
-        outcome.result.ok &&
-        outcome.adapterPath &&
-        outcome.adapterVersion &&
-        outcome.codexPath &&
-        outcome.codexVersion
-      ) {
-        await this.repository.setCodexInfo({
-          resolvedPath: outcome.adapterPath,
-          version: outcome.adapterVersion,
-          nativePath: outcome.codexPath,
-          nativeVersion: outcome.codexVersion
-        })
-      }
-      return outcome.result
+      if (result.ok) await this.detectCodex()
+      return result
+    })
+  }
+
+  private async runExclusiveInstall(
+    installId: string,
+    install: () => Promise<ClaudeInstallResult>
+  ): Promise<ClaudeInstallResult> {
+    if (this.activeInstallId !== undefined) {
+      return { installId, ok: false, error: 'Another install is already in progress.' }
     }
 
-    const result = await runInstallWithFallback({
-      source: request.source,
-      installId,
-      onEvent,
-      installTarget: CODEX_INSTALL_TARGET
-    })
-    if (result.ok) await this.detectCodex()
-    return result
+    this.activeInstallId = installId
+    try {
+      return await install()
+    } finally {
+      if (this.activeInstallId === installId) this.activeInstallId = undefined
+    }
   }
 
   async uninstallClaude(): Promise<RuntimeUninstallResult> {

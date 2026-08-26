@@ -190,6 +190,12 @@ type ComputeHandlers = {
   approvalReplayPending: () => void
   approvalPauseSession: (sessionId: string) => void
   approvalResumeSession: (sessionId: string) => void
+  approvalCancelSession: (sessionId: string) => void
+  approvalCancelAll: () => void
+  approvalCompleteGlobalCancellation: () => void
+  approvalCompleteSessionCancellation: (sessionId: string) => void
+  approvalBeginSessionDeletion: (sessionId: string) => void
+  approvalFinishSessionDeletion: (sessionId: string, retained: boolean) => void
   // Returns JobSummary[] for a session, optionally filtered by status (renderer feed, issue 05).
   jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
@@ -436,6 +442,14 @@ const createComputeHandlers = (
     approvalReplayPending: () => broker.replayPending(),
     approvalPauseSession: (sessionId) => broker.pauseSession(sessionId),
     approvalResumeSession: (sessionId) => broker.resumeSession(sessionId),
+    approvalCancelSession: (sessionId) => broker.cancelSession(sessionId),
+    approvalCancelAll: () => broker.cancelAll(),
+    approvalCompleteGlobalCancellation: () => broker.completeGlobalCancellation(),
+    approvalCompleteSessionCancellation: (sessionId) =>
+      broker.completeSessionCancellation(sessionId),
+    approvalBeginSessionDeletion: (sessionId) => broker.beginSessionDeletion(sessionId),
+    approvalFinishSessionDeletion: (sessionId, retained) =>
+      broker.finishSessionDeletion(sessionId, retained),
     jobsList: async (filter) => {
       if (!jobRepository || !storageRoot) return []
       const hosts = await repository.list()

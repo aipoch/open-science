@@ -10,7 +10,12 @@ vi.mock('electron', () => ({
 }))
 
 import type { PersistedChatSession, PersistedToolActivity } from '../../shared/session-persistence'
-import { DEV_SESSION_DIR_NAME, SessionRepository, getSessionPersistenceDir } from './repository'
+import {
+  DEV_SESSION_DIR_NAME,
+  SessionRepository,
+  getSessionPersistenceDir,
+  loadSessionMutationAuthority
+} from './repository'
 
 let storageRoot: string | undefined
 
@@ -61,6 +66,70 @@ afterEach(async () => {
 })
 
 describe('session persistence repository (per-session files)', () => {
+  it('preserves a running Session when its runtime is live before a prompt becomes active', async () => {
+    const repository = new SessionRepository(await createStorageRoot(), {
+      hasActiveRuntimePrompt: () => false,
+      hasLiveRuntimeSession: () => true
+    })
+    await repository.saveSession(
+      createSession({
+        status: 'running',
+        activeRun: { promptMessageId: 'message-1', startedAt: 1710000000200 }
+      })
+    )
+
+    const loaded = await repository.loadSessionWithDiagnostics('project-a', 'session-1')
+
+    expect(loaded).toMatchObject({
+      status: 'found',
+      session: {
+        status: 'running',
+        activeRun: { promptMessageId: 'message-1', startedAt: 1710000000200 }
+      }
+    })
+    expect(loaded.status === 'found' ? loaded.session.resumeRecovery : undefined).toBeUndefined()
+    expect(loaded.status === 'found' ? loaded.session.error : undefined).toBeUndefined()
+  })
+
+  it('persists self-healed recovery state on the next ordinary write', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(
+      createSession({
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'message-1'
+        },
+        messages: [
+          ...createSession().messages,
+          {
+            id: 'response-1',
+            role: 'agent',
+            content: 'Completed response',
+            status: 'complete',
+            responseToMessageId: 'message-1',
+            eventIds: [],
+            createdAt: 1710000000200,
+            completedAt: 1710000000300,
+            updatedAt: 1710000000300
+          }
+        ]
+      })
+    )
+
+    const restored = await repository.loadSessionWithDiagnostics('project-a', 'session-1')
+    expect(restored.status).toBe('found')
+    if (restored.status !== 'found') throw new Error('Expected Session to be restored.')
+    expect(restored.session.resumeRecovery).toBeUndefined()
+    await repository.saveSession(restored.session)
+
+    const authority = await loadSessionMutationAuthority(repository, 'project-a', 'session-1')
+    expect(authority.status).toBe('found')
+    expect(
+      authority.status === 'found' ? authority.session.resumeRecovery : undefined
+    ).toBeUndefined()
+  })
+
   it('preserves one immutable pre-S2 Session backup before the first initiating-Turn write', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     const legacy = createSession({

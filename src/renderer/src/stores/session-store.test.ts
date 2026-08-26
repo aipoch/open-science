@@ -2830,12 +2830,22 @@ describe('session store', () => {
       content: ' complete'
     })
 
-    useSessionStore.getState().finishRun('transport-session-1', {
-      inputTokens: 31,
-      cacheTokens: 15,
-      outputTokens: 14,
-      turnCount: 3
-    })
+    useSessionStore.getState().finishRun(
+      'transport-session-1',
+      {
+        inputTokens: 31,
+        cacheTokens: 15,
+        outputTokens: 14,
+        turnCount: 3
+      },
+      undefined,
+      undefined,
+      [
+        { id: 'call-1', index: 0, inputTokens: 10, cacheTokens: 5, outputTokens: 4 },
+        { id: 'call-2', index: 1, inputTokens: 11, cacheTokens: 5, outputTokens: 5 },
+        { id: 'call-3', index: 2, inputTokens: 10, cacheTokens: 5, outputTokens: 5 }
+      ]
+    )
 
     const session = useSessionStore.getState().sessions[0]
     const agentMessage = session.messages[1]
@@ -2849,18 +2859,25 @@ describe('session store', () => {
       responseToMessageId: result?.messageId,
       eventIds: ['event-1', 'event-2'],
       status: 'complete',
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 },
+      modelCallUsage: [
+        { id: 'call-1', index: 0, inputTokens: 10, cacheTokens: 5, outputTokens: 4 },
+        { id: 'call-2', index: 1, inputTokens: 11, cacheTokens: 5, outputTokens: 5 },
+        { id: 'call-3', index: 2, inputTokens: 10, cacheTokens: 5, outputTokens: 5 }
+      ]
     })
     expect(agentMessage.completedAt).toBe(session.updatedAt)
     expect(
       session.conversationGraph?.messages.find((message) => message.id === agentMessage.id)
     ).toMatchObject({
       completedAt: agentMessage.completedAt,
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 },
+      modelCallUsage: agentMessage.modelCallUsage
     })
     expect(toPersistedSession(session).messages[1]).toMatchObject({
       completedAt: agentMessage.completedAt,
-      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 }
+      turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 3 },
+      modelCallUsage: agentMessage.modelCallUsage
     })
     expect(session.status).toBe('idle')
     expect(session.activeRun).toBeUndefined()
@@ -4817,6 +4834,50 @@ describe('session store', () => {
       expect(persisted).not.toHaveProperty('interrupted')
     })
 
+    it('clears stale Session recovery when a successful Agent turn finishes', () => {
+      hydrateInterrupted({
+        status: 'running',
+        activeRun: { promptMessageId: 'prompt-1', startedAt: 10 },
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'prompt-1'
+        },
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Complete the task',
+            status: 'complete',
+            interrupted: true,
+            eventIds: [],
+            createdAt: 10,
+            updatedAt: 10
+          },
+          {
+            id: 'response-1',
+            role: 'agent',
+            content: 'Completed response',
+            status: 'streaming',
+            responseToMessageId: 'prompt-1',
+            eventIds: [],
+            createdAt: 11,
+            updatedAt: 11
+          }
+        ]
+      })
+
+      useSessionStore.getState().finishRun('resumable-session', undefined, 'prompt-1')
+      const session = useSessionStore.getState().sessions[0]
+
+      expect(session.status).toBe('idle')
+      expect(session.error).toBeUndefined()
+      expect(session.resumeRecovery).toBeUndefined()
+      expect(session.interrupted).toBeUndefined()
+      expect(session.messages[0]).toMatchObject({ id: 'prompt-1', interrupted: true })
+      expect(session.messages[1]).toMatchObject({ status: 'complete' })
+    })
+
     it('markResumed clears the interrupted state so the composer is usable', () => {
       hydrateInterrupted({
         providerSessionId: 'provider-session-old',
@@ -5297,9 +5358,9 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/ConversationPanel.tsx',
       'src/renderer/src/pages/workspace/DeleteSessionDialog.tsx',
       'src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.tsx',
+      'src/renderer/src/pages/workspace/EditSessionDialog.tsx',
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
-      'src/renderer/src/pages/workspace/RenameSessionDialog.tsx',
       'src/renderer/src/pages/workspace/SessionNotebookDialog.tsx',
       'src/renderer/src/pages/workspace/SubagentReleaseSurfaces.tsx',
       'src/renderer/src/pages/workspace/WorkspaceActivityIcon.tsx',
@@ -5351,6 +5412,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-run-marks.ts',
       'src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',
+      'src/renderer/src/pages/workspace/workspace-session-details-controller.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-style.ts',

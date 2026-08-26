@@ -100,7 +100,7 @@ const entrySourceExpression = `("origin" = 'user' AND "sourceSessionId" IS NULL 
 const entryRevisionExpression = `"revision" >= 1`
 
 const agentMemoryMigration = {
-  id: '0015_agent_memory',
+  id: '0016_agent_memory',
   statements: [
     `CREATE TABLE IF NOT EXISTS "MemorySettings" (
       "id" TEXT NOT NULL PRIMARY KEY,

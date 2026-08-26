@@ -351,7 +351,7 @@ class AcpSessionUpdateProjector {
             tool: canonicalTool ?? event.providerToolName ?? event.toolKind,
             toolCallId: event.toolCallId,
             sessionId: routed.sessionId,
-            reason: extractToolFailureText(event.toolContent)
+            reason: extractToolFailureText(event.toolContent, event.rawOutput)
           })
         )
       }

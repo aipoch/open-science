@@ -211,11 +211,12 @@ const createSessionPersistenceHandlers = (
 
 // Creates the production repository rooted at the (dev-aware) storage root.
 const createDefaultSessionRepository = (
-  hasActiveRuntimePrompt: (projectId: string, sessionId: string) => boolean = () => false
+  hasActiveRuntimePrompt: (projectId: string, sessionId: string) => boolean = () => false,
+  hasLiveRuntimeSession: (projectId: string, sessionId: string) => boolean = () => false
 ): SessionRepository =>
   new SessionRepository(
     resolveStorageRoot(),
-    { hasActiveRuntimePrompt },
+    { hasActiveRuntimePrompt, hasLiveRuntimeSession },
     new SessionProjectionRepository(() => getProjectDbClient(resolveStorageRoot()))
   )
 

@@ -164,9 +164,8 @@ const messageValue = (value: unknown): boolean => {
     const attribution = recordValue(message.agentAttribution)
     if (
       !attribution ||
-      (attribution.frameworkId !== 'claude-code' &&
-        attribution.frameworkId !== 'opencode' &&
-        attribution.frameworkId !== 'codex') ||
+      typeof attribution.frameworkId !== 'string' ||
+      attribution.frameworkId.trim().length === 0 ||
       !optionalString(attribution.agentName) ||
       !optionalString(attribution.model)
     ) {

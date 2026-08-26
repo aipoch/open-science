@@ -4,6 +4,7 @@ import {
   normalizeClaudeCodeRefusalText,
   sanitizeAcpMessageImage,
   type AcpMessageImage,
+  type AcpModelCallUsage,
   type AcpTurnTokenUsage
 } from '../../../shared/acp'
 import {
@@ -53,6 +54,7 @@ export type AttachRunArtifactsInput = {
   artifacts: ArtifactFile[]
   turnUsage?: AcpTurnTokenUsage
   turnUsageUnavailable?: true
+  modelCallUsage?: readonly AcpModelCallUsage[]
 }
 
 export type ReplaceMessageArtifactsInput = {
@@ -439,9 +441,17 @@ export const projectRunArtifacts = (
             eventIds: appendUniqueStrings(message.eventIds, [input.eventId]),
             artifactIds: appendUniqueStrings(message.artifactIds, incomingArtifactIds),
             ...(input.turnUsage
-              ? { turnUsage: input.turnUsage, turnUsageUnavailable: undefined }
+              ? {
+                  turnUsage: input.turnUsage,
+                  turnUsageUnavailable: undefined,
+                  modelCallUsage: input.modelCallUsage?.map((call) => ({ ...call }))
+                }
               : input.turnUsageUnavailable
-                ? { turnUsage: undefined, turnUsageUnavailable: true as const }
+                ? {
+                    turnUsage: undefined,
+                    turnUsageUnavailable: true as const,
+                    modelCallUsage: undefined
+                  }
                 : {}),
             updatedAt: now
           }
@@ -469,7 +479,10 @@ export const projectRunArtifacts = (
     eventIds: [input.eventId],
     artifactIds: incomingArtifactIds,
     ...(input.turnUsage
-      ? { turnUsage: input.turnUsage }
+      ? {
+          turnUsage: input.turnUsage,
+          modelCallUsage: input.modelCallUsage?.map((call) => ({ ...call }))
+        }
       : input.turnUsageUnavailable
         ? { turnUsageUnavailable: true as const }
         : {}),

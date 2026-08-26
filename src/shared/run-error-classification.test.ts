@@ -91,6 +91,14 @@ describe('isReportableRunFailure (text tier)', () => {
     expect(isReportableRunFailure('Run failed: connection reset')).toBe(true)
   })
 
+  it('recognizes the actionable provider connection reminder without the structural flag', () => {
+    expect(
+      isReportableRunFailure(
+        'Could not connect to the model provider for model "test-model". Check the base URL in Settings → Model and your proxy, VPN, or firewall, then retry. Connection detail: ConnectionRefused.'
+      )
+    ).toBe(false)
+  })
+
   it('does not swallow an ordinary app error that merely mentions a provider word', () => {
     // The text tier only matches the app's own exact strings, so an internal failure that happens to
     // contain a provider-ish word or number is never mistaken for an expected failure.

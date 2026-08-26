@@ -43,6 +43,7 @@ type FakeSettingsService = Record<
   | 'setAgentFramework'
   | 'setReasoningEffort'
   | 'setReviewerModel'
+  | 'setSessionDetailsModel'
   | 'setSubagentModel'
   | 'setVisionModel'
   | 'resolveActiveReasoningEffort'
@@ -125,6 +126,11 @@ const createFakeService = (): FakeSettingsService => ({
   setReviewerModel: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], reviewerModel: { mode: 'inherit' } }),
+  setSessionDetailsModel: vi.fn().mockResolvedValue({
+    claude: {},
+    providers: [],
+    sessionDetailsModel: { mode: 'inherit', reasoningEffort: 'low' }
+  }),
   setSubagentModel: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], subagentModel: { mode: 'inherit' } }),
@@ -1146,6 +1152,23 @@ describe('settings IPC handlers', () => {
       })
     ).rejects.toThrow('Invalid Reviewer model configuration.')
     expect(service.setReviewerModel).toHaveBeenCalledOnce()
+  })
+
+  it('validates and forwards a Session details model policy', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const configuration = { mode: 'inherit' as const, reasoningEffort: 'low' as const }
+    const snapshot = { claude: {}, providers: [], sessionDetailsModel: configuration }
+    service.setSessionDetailsModel.mockResolvedValue(snapshot)
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    await expect(invoke('settings:set-session-details-model', { configuration })).resolves.toBe(
+      snapshot
+    )
+    expect(service.setSessionDetailsModel).toHaveBeenCalledWith(configuration)
+    await expect(
+      invoke('settings:set-session-details-model', { configuration: { mode: 'inherit' } })
+    ).rejects.toThrow('Invalid Session details model configuration.')
   })
 
   it('validates, clears, and forwards the Vision model configuration', async () => {

@@ -1345,6 +1345,85 @@ describe('HomePage activity overview', () => {
     ).not.toBeNull()
   })
 
+  it('omits an empty Session description from update cards', async () => {
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [{ ...session('empty', 'Empty description', 'running', 600_000), description: '' }]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const card = container.querySelector('[aria-label="Open session Empty description, running"]')
+    expect(card?.querySelector('[data-testid="session-description-preview"]')).toBeNull()
+  })
+
+  it('shows a short Session description in its update card', async () => {
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          ...session('short', 'Short description', 'running', 600_000),
+          description: 'Compare the two study cohorts.'
+        }
+      ]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const preview = container.querySelector('[data-testid="session-description-preview"]')
+    expect(preview?.textContent).toBe('Compare the two study cohorts.')
+  })
+
+  it('clamps a long Session description to two lines and exposes the full text on focus', async () => {
+    const description =
+      'Compare the longitudinal outcomes across both study cohorts while preserving every relevant qualification from the generated Session metadata.'
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [{ ...session('long', 'Long description', 'running', 600_000), description }]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const card = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open session Long description, running"]'
+    )
+    const preview = card?.querySelector('[data-testid="session-description-preview"]')
+    expect(card?.tagName).toBe('BUTTON')
+    expect(preview?.classList.contains('line-clamp-2')).toBe(true)
+    expect(preview?.textContent).toBe(description)
+
+    await act(async () => card?.focus())
+    const tooltip = document.body.querySelector<HTMLElement>('[role="tooltip"]')
+    expect(tooltip?.textContent).toBe(description)
+  })
+
   it('keeps a timed-out Plan approval visible with its exact wait reason', async () => {
     useProjectStore.setState({
       ...createInitialProjectState(),

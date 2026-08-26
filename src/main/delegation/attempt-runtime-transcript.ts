@@ -5,6 +5,7 @@ import {
 import {
   getAcpRuntimeEventText,
   type AcpAgentRuntimeUpdate,
+  type AcpModelCallUsage,
   type AcpTurnTokenUsage
 } from '../../shared/acp'
 import type {
@@ -29,6 +30,7 @@ type ProjectAttemptRuntimeTranscriptInput = Readonly<{
   fallbackResponse: string
   endedAt: number
   turnUsage?: AcpTurnTokenUsage
+  modelCallUsage?: readonly AcpModelCallUsage[]
   turnUsageUnavailable?: true
   terminalStatus?: 'completed' | 'error' | 'cancelled'
   createMessageId(): string
@@ -39,6 +41,7 @@ type StageAttemptRuntimeTranscriptInput = Readonly<{
   endedAt: number
   fallbackResponse?: string
   turnUsage?: AcpTurnTokenUsage
+  modelCallUsage?: readonly AcpModelCallUsage[]
   turnUsageUnavailable?: true
 }>
 
@@ -230,8 +233,10 @@ const projectAttemptRuntimeTranscript = (
     message.completedAt = isTerminalMessage ? input.endedAt : message.updatedAt
     message.updatedAt = message.completedAt
     if (isTerminalMessage && terminalStatus === 'completed') {
-      if (input.turnUsage) message.turnUsage = input.turnUsage
-      else if (input.turnUsageUnavailable) message.turnUsageUnavailable = true
+      if (input.turnUsage) {
+        message.turnUsage = input.turnUsage
+        if (input.modelCallUsage) message.modelCallUsage = [...input.modelCallUsage]
+      } else if (input.turnUsageUnavailable) message.turnUsageUnavailable = true
     }
   }
 
@@ -296,7 +301,10 @@ const createAttemptRuntimeTranscriptStager = (options: {
       endedAt: input.endedAt,
       terminalStatus: input.terminalStatus,
       ...(input.turnUsage
-        ? { turnUsage: input.turnUsage }
+        ? {
+            turnUsage: input.turnUsage,
+            ...(input.modelCallUsage ? { modelCallUsage: input.modelCallUsage } : {})
+          }
         : input.turnUsageUnavailable
           ? { turnUsageUnavailable: true }
           : {}),

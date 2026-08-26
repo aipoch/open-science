@@ -1,6 +1,7 @@
 import {
   sanitizeAcpContextWindowSample,
   type AcpContextWindowSample,
+  type AcpModelCallUsage,
   type AcpTurnTokenUsage
 } from '../../../shared/acp'
 import { isReportableRunFailure } from '../../../shared/run-error-classification'
@@ -85,6 +86,7 @@ const completeStreamingMessages = (
   messages: ChatMessage[],
   promptMessageId: string | undefined,
   turnUsage: AcpTurnTokenUsage | undefined,
+  modelCallUsage: readonly AcpModelCallUsage[] | undefined,
   now: number
 ): ChatMessage[] => {
   const promptResponses = promptMessageId
@@ -106,12 +108,21 @@ const completeStreamingMessages = (
       (ownsTurnUsageFooter && message.status === 'complete' && message.completedAt === undefined)
     return {
       ...message,
-      ...(belongsToPrompt ? { turnUsage: undefined, turnUsageUnavailable: undefined } : {}),
+      ...(belongsToPrompt
+        ? {
+            turnUsage: undefined,
+            turnUsageUnavailable: undefined,
+            modelCallUsage: undefined
+          }
+        : {}),
       ...(completesStream ? { status: 'complete' as const } : {}),
       ...(recordsCompletion ? { completedAt: now } : {}),
       ...(ownsTurnUsageFooter
         ? turnUsage
-          ? { turnUsage }
+          ? {
+              turnUsage,
+              modelCallUsage: modelCallUsage?.map((call) => ({ ...call }))
+            }
           : { turnUsageUnavailable: true as const }
         : {}),
       updatedAt: now
@@ -271,14 +282,21 @@ export const projectFinishedRun = (
   session: ChatSession,
   turnUsage?: AcpTurnTokenUsage,
   promptMessageId?: string,
-  contextWindowSample?: RunTerminalContextWindowSample
+  contextWindowSample?: RunTerminalContextWindowSample,
+  modelCallUsage?: readonly AcpModelCallUsage[]
 ): ChatSession => {
   const keepArtifactError = session.error?.startsWith(ARTIFACT_ERROR_PREFIX) ?? false
   const now = Math.max(Date.now(), session.updatedAt + 1)
   const terminalPromptMessageId = promptMessageId ?? session.activeRun?.promptMessageId
   const messages = appendContextWindowSample(
     session,
-    completeStreamingMessages(session.messages, terminalPromptMessageId, turnUsage, now),
+    completeStreamingMessages(
+      session.messages,
+      terminalPromptMessageId,
+      turnUsage,
+      modelCallUsage,
+      now
+    ),
     terminalPromptMessageId,
     contextWindowSample,
     now
@@ -308,6 +326,8 @@ export const projectFinishedRun = (
     status: keepArtifactError ? 'error' : planAwaitingApproval ? 'waiting-plan-approval' : 'idle',
     error: keepArtifactError ? session.error : undefined,
     errorReportable: keepArtifactError ? session.errorReportable : undefined,
+    resumeRecovery: undefined,
+    interrupted: undefined,
     messages,
     activities,
     activityGroups,
@@ -413,12 +433,18 @@ export const projectInterruptedRun = (
   recoveryCause: PersistedSessionResumeRecovery['cause'],
   error: string,
   promptMessageId = session.activeRun?.promptMessageId,
-  contextWindowSample?: RunTerminalContextWindowSample
+  contextWindowSample?: RunTerminalContextWindowSample,
+  turnUsage?: AcpTurnTokenUsage,
+  modelCallUsage?: readonly AcpModelCallUsage[]
 ): ChatSession => {
   const now = Math.max(Date.now(), session.updatedAt + 1)
+  const failedMessages = failStreamingMessages(session.messages, now)
   const messages = appendContextWindowSample(
     session,
-    failStreamingMessages(session.messages, now).map((message) =>
+    (turnUsage
+      ? completeStreamingMessages(failedMessages, promptMessageId, turnUsage, modelCallUsage, now)
+      : failedMessages
+    ).map((message) =>
       message.id === promptMessageId && message.role === 'user'
         ? { ...message, interrupted: true as const, updatedAt: now }
         : message

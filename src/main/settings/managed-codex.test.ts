@@ -18,6 +18,7 @@ import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  ACP_MODEL_CALL_USAGE_META_KEY,
   ACP_MODEL_TURN_COUNT_META_KEY,
   ACP_TURN_TOKEN_USAGE_META_KEY,
   toAcpTurnTokenUsage
@@ -1668,6 +1669,10 @@ describe('patchCodexAcpTurnUsageSource', () => {
     expect(response.usage).toEqual(usage(27, 19, 5, 3, 0))
     expect(response._meta?.['open-science/turn-usage']).toEqual(usage(45, 31, 8, 6, 0))
     expect(response._meta?.['open-science/model-turn-count']).toBe(2)
+    expect(response._meta?.[ACP_MODEL_CALL_USAGE_META_KEY]).toEqual([
+      usage(18, 12, 3, 3, 0),
+      usage(27, 19, 5, 3, 0)
+    ])
     expect(patchCodexAcpTurnUsageSource(patched)).toBe(patched)
   })
 
@@ -1724,7 +1729,8 @@ describe('patchCodexAcpTurnUsageSource', () => {
     expect(adapter.finishPrompt()._meta).toEqual({
       quota: { remaining: 42 },
       [ACP_TURN_TOKEN_USAGE_META_KEY]: usage(18, 12, 3, 3, 0),
-      [ACP_MODEL_TURN_COUNT_META_KEY]: 1
+      [ACP_MODEL_TURN_COUNT_META_KEY]: 1,
+      [ACP_MODEL_CALL_USAGE_META_KEY]: [usage(18, 12, 3, 3, 0)]
     })
   })
 
@@ -1836,7 +1842,8 @@ describe('patchCodexAcpTurnUsageSource', () => {
       '  ...(sessionState.promptTokenUsageObserved',
       '    ? {',
       `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage),`,
-      `        "${ACP_MODEL_TURN_COUNT_META_KEY}": sessionState.promptModelTurnCount`,
+      `        "${ACP_MODEL_TURN_COUNT_META_KEY}": sessionState.promptModelTurnCount,`,
+      `        "${ACP_MODEL_CALL_USAGE_META_KEY}": sessionState.promptModelCalls.map((usage) => this.buildPromptUsage(usage))`,
       '      }',
       '    : {})',
       '}'

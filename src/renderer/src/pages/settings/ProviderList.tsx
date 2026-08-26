@@ -36,6 +36,7 @@ import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 import { SettingsIconAction } from './SettingsLayout'
+import { localizeProviderResourceMessage } from './validation-message'
 
 type ProviderListProps = {
   providers: ProviderView[]
@@ -76,12 +77,14 @@ type ProviderListProps = {
 }
 
 // Concise, actionable reason for a failed connection test, shown on the unverified warning.
-// Gateway-supplied `message` text is interpolated verbatim — it comes from the provider, not from us.
+// Known application-generated resource errors are localized; gateway-supplied text stays verbatim.
 const describeValidationFailure = (failure: ProviderValidationFailure, t: TFunction): string => {
+  const message = failure.message ? localizeProviderResourceMessage(failure.message, t) : undefined
+
   switch (failure.category) {
     case 'auth':
-      return failure.message
-        ? t('Test failed: {{message}}', { message: failure.message })
+      return message
+        ? t('Test failed: {{message}}', { message })
         : t('Test failed: authentication rejected — check the API key.')
     case 'network':
       return t('Test failed: could not reach the endpoint — check the base URL/connection.')
@@ -93,21 +96,19 @@ const describeValidationFailure = (failure: ProviderValidationFailure, t: TFunct
       return t('Test failed: the connection timed out.')
     case 'incompatible':
       // The pairing, not the credential, is the problem — carry the specific route-mismatch reason.
-      return failure.message ?? t('Not compatible with the active agent framework.')
+      return message ?? t('Not compatible with the active agent framework.')
     case 'server-error':
       // Gateway or upstream service temporarily unavailable — surface the specific error when present.
-      if (!failure.message)
+      if (!message)
         return t('Test failed: the gateway or upstream service is temporarily unavailable.')
       return failure.status
         ? t('Test failed: {{message}} (HTTP {{status}})', {
-            message: failure.message,
+            message,
             status: failure.status
           })
-        : t('Test failed: {{message}}', { message: failure.message })
+        : t('Test failed: {{message}}', { message })
     default:
-      return failure.message
-        ? t('Test failed: {{message}}', { message: failure.message })
-        : t('Connection test failed.')
+      return message ? t('Test failed: {{message}}', { message }) : t('Connection test failed.')
   }
 }
 

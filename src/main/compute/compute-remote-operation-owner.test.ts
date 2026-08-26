@@ -106,6 +106,40 @@ const makeOwner = (
   )
 
 describe('ComputeRemoteOperationOwner.callCommand', () => {
+  it('binds request cancellation to connection acquisition and SSH execution', async () => {
+    const run = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    }))
+    const acquire = vi.fn(async () => ({
+      run,
+      upload: vi.fn(),
+      download: vi.fn()
+    }))
+    const { repo } = makeRepo()
+    const service = new ComputeRemoteOperationOwner({ acquire }, repo, makeApprovalBroker('once'))
+    const signal = new AbortController().signal
+
+    await service.callCommand(
+      'ssh:biowulf',
+      'echo hi',
+      'intent',
+      true,
+      undefined,
+      undefined,
+      signal
+    )
+
+    expect(acquire).toHaveBeenCalledWith('ssh:biowulf', {
+      intent: 'direct_command',
+      signal
+    })
+    expect(run).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ signal }))
+  })
+
   it('preserves a stable sanitized password-authentication error code', async () => {
     const runner: SshRunner = {
       run: vi.fn(async () => {
@@ -1000,6 +1034,46 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('binds request cancellation to connection acquisition and SCP transfer', async () => {
+    const download = vi.fn(async (_remotePath: string, localPath: string) => {
+      await writeFile(localPath, 'content')
+      return {
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        bytesWritten: 7,
+        exceeded: false
+      }
+    })
+    const acquire = vi.fn(async () => ({
+      run: vi.fn(),
+      upload: vi.fn(),
+      download
+    }))
+    const { repo } = makeRepo()
+    const service = new ComputeRemoteOperationOwner(
+      { acquire },
+      repo,
+      makeApprovalBroker('once'),
+      tmpDir
+    )
+    const signal = new AbortController().signal
+
+    await service.download(
+      'ssh:biowulf',
+      '/remote/results.csv',
+      { kind: 'session-cache' },
+      undefined,
+      signal
+    )
+
+    expect(acquire).toHaveBeenCalledWith('ssh:biowulf', {
+      intent: 'direct_download',
+      signal
+    })
+    expect(download).toHaveBeenCalledOnce()
   })
 
   it('downloads to session cache and returns LocalFile when approved', async () => {

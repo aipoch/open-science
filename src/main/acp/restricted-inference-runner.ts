@@ -22,7 +22,8 @@ type RestrictedInferenceErrorCode =
 class RestrictedInferenceError extends Error {
   constructor(
     readonly code: RestrictedInferenceErrorCode,
-    message: string
+    message: string,
+    readonly usage?: AcpTurnTokenUsage
   ) {
     super(message)
   }
@@ -218,7 +219,9 @@ class RestrictedInferenceRunner {
         isCodexSubscriptionProviderId(input.target.providerId) &&
         this.options.allowNativeCodexSubscription === true
       backend = await this.options.resolveTarget(input.target, {
-        systemPromptAppends: [input.systemPrompt],
+        // Install restricted instructions only in the disposable profile prepared below. OpenCode
+        // materializes resolver appends into the shared Main Agent config before this isolation step.
+        systemPromptAppends: [],
         includeSkillAndConnectorContext: false,
         ...(nativeCodexSubscriptionAllowed ? {} : { forceCodexNativeResponsesCompatibility: true })
       })
@@ -312,6 +315,21 @@ class RestrictedInferenceRunner {
         stopReason: response.stopReason,
         ...(turnUsage ? { usage: Object.freeze({ ...turnUsage }) } : {})
       })
+    } catch (error) {
+      if (turnUsage && error instanceof RestrictedInferenceError && !error.usage) {
+        throw new RestrictedInferenceError(
+          error.code,
+          error.message,
+          Object.freeze({ ...turnUsage })
+        )
+      }
+      if (turnUsage && error instanceof Error && Object.isExtensible(error)) {
+        Object.defineProperty(error, 'usage', {
+          value: Object.freeze({ ...turnUsage }),
+          enumerable: true
+        })
+      }
+      throw error
     } finally {
       input.signal?.removeEventListener('abort', forwardAbort)
       active.controller.signal.removeEventListener('abort', onAbort)

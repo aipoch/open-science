@@ -98,7 +98,7 @@ const ComposerMessageQueueTrigger = ({
       data-testid="composer-queue-trigger"
     >
       <ListOrdered className="size-3.5" strokeWidth={2} aria-hidden="true" />
-      {t('Queue ({{count}})', { count: items.length })}
+      {t('Queue ({{count}}) · Not saved', { count: items.length })}
       <ChevronDown
         className={cn(
           'size-3.5 transition-transform duration-150 ease-out motion-reduce:transition-none',

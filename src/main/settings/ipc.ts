@@ -46,6 +46,7 @@ import {
   type SetProjectFilesFilterRequest,
   type SetReasoningEffortRequest,
   type SetReviewerModelRequest,
+  type SetSessionDetailsModelRequest,
   type SetSubagentModelRequest,
   type SetVisionModelRequest,
   type SetSkillEnabledRequest,
@@ -72,6 +73,7 @@ import {
   readProjectFilesFilter,
   readReasoningEffort,
   readReviewerModel,
+  readSessionDetailsModel,
   readSubagentModel,
   readVisionModel
 } from './transport-validation'
@@ -180,6 +182,15 @@ const registerSettingsIpcHandlers = ({
     broadcastToRenderers('settings:changed', snapshot)
     return snapshot
   })
+  ipcMainHandle(
+    'settings:set-session-details-model',
+    async (_event, request: SetSessionDetailsModelRequest) => {
+      const configuration = readSessionDetailsModel(request)
+      const snapshot = await service.setSessionDetailsModel(configuration)
+      broadcastToRenderers('settings:changed', snapshot)
+      return snapshot
+    }
+  )
   ipcMainHandle('settings:set-vision-model', async (_event, request: SetVisionModelRequest) => {
     const configuration = readVisionModel(request)
     const snapshot = await service.setVisionModel(configuration)

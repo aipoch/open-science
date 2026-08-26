@@ -13,12 +13,17 @@ import type {
   SkillBundlePreviewResult
 } from '../../shared/settings'
 import type { UploadRepository } from '../uploads/repository'
+import { GITHUB_TOTAL_TIMEOUT_MS } from './github-import'
 import { SKILL_IMPORT_LIMITS } from './import-limits'
 import { isImportableSkillArchivePath } from './skill-archive-sniffer'
 
 type SkillImportApprovalInfo = Omit<ConversationSkillImportApprovalRequest, 'id'>
 
+const withGitHubFlowTimeout = (signal: AbortSignal): AbortSignal =>
+  AbortSignal.any([signal, AbortSignal.timeout(GITHUB_TOTAL_TIMEOUT_MS)])
+
 type SkillImportCancellationGuard = {
+  signal: AbortSignal
   isCancelled: () => boolean
 }
 
@@ -49,7 +54,7 @@ class SkillImportApprovalBroker {
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
   private readonly activeSessionTurns = new Map<
     string,
-    { turnToken: string; eligibleAttachmentUris: Set<string> }
+    { turnToken: string; eligibleAttachmentUris: Set<string>; controller: AbortController }
   >()
 
   constructor(private readonly options: SkillImportApprovalBrokerOptions) {
@@ -59,9 +64,11 @@ class SkillImportApprovalBroker {
   }
 
   beginSessionTurn(sessionId: string, turnToken: string): void {
+    this.activeSessionTurns.get(sessionId)?.controller.abort()
     this.activeSessionTurns.set(sessionId, {
       turnToken,
-      eligibleAttachmentUris: new Set()
+      eligibleAttachmentUris: new Set(),
+      controller: new AbortController()
     })
     // A new turn cannot inherit an unanswered dialog from an older turn of the same session.
     for (const [id, pending] of this.pending) {
@@ -75,7 +82,9 @@ class SkillImportApprovalBroker {
   }
 
   endSessionTurn(sessionId: string, turnToken: string): void {
-    if (this.activeSessionTurns.get(sessionId)?.turnToken !== turnToken) return
+    const turn = this.activeSessionTurns.get(sessionId)
+    if (turn?.turnToken !== turnToken) return
+    turn.controller.abort()
     this.activeSessionTurns.delete(sessionId)
     for (const [id, pending] of this.pending) {
       if (pending.sessionId === sessionId) this.settle({ id, cancelled: true }, 'cancelled')
@@ -87,10 +96,15 @@ class SkillImportApprovalBroker {
     turnToken: string,
     attachmentUri: string
   ): SkillImportCancellationGuard {
+    const turn = this.activeSessionTurns.get(sessionId)
     return {
+      signal: turn?.controller.signal ?? AbortSignal.abort(),
       isCancelled: () => {
-        const turn = this.activeSessionTurns.get(sessionId)
-        return turn?.turnToken !== turnToken || !turn.eligibleAttachmentUris.has(attachmentUri)
+        const activeTurn = this.activeSessionTurns.get(sessionId)
+        return (
+          activeTurn?.turnToken !== turnToken ||
+          !activeTurn.eligibleAttachmentUris.has(attachmentUri)
+        )
       }
     }
   }
@@ -98,6 +112,7 @@ class SkillImportApprovalBroker {
   createSessionCancellationGuard(sessionId: string): SkillImportCancellationGuard {
     const turn = this.activeSessionTurns.get(sessionId)
     return {
+      signal: turn?.controller.signal ?? AbortSignal.abort(),
       isCancelled: () => !turn || this.activeSessionTurns.get(sessionId) !== turn
     }
   }
@@ -132,6 +147,7 @@ class SkillImportApprovalBroker {
   }
 
   cancelSession(sessionId: string): void {
+    this.activeSessionTurns.get(sessionId)?.controller.abort()
     this.activeSessionTurns.delete(sessionId)
     for (const [id, pending] of this.pending) {
       if (pending.sessionId === sessionId) this.settle({ id, cancelled: true }, 'cancelled')
@@ -139,6 +155,7 @@ class SkillImportApprovalBroker {
   }
 
   cancelAll(): void {
+    for (const turn of this.activeSessionTurns.values()) turn.controller.abort()
     this.activeSessionTurns.clear()
     for (const id of this.pending.keys()) this.settle({ id, cancelled: true }, 'cancelled')
   }
@@ -184,8 +201,8 @@ type ConversationSkillImporterOptions = {
       error?: string
     }>
   >
-  scanGitHub?: (url: string) => Promise<ScannedSkillView[]>
-  importGitHub?: (url: string) => Promise<ImportSkillResult>
+  scanGitHub?: (url: string, signal: AbortSignal) => Promise<ScannedSkillView[]>
+  importGitHub?: (url: string, signal: AbortSignal) => Promise<ImportSkillResult>
   createSessionCancellationGuard?: (sessionId: string) => SkillImportCancellationGuard
   requestApproval: (
     request: SkillImportApprovalInfo,
@@ -394,7 +411,14 @@ class ConversationSkillImporter {
 
     const cancellation = createCancellation(request.sessionId)
     if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
-    const scanned = await scanGitHub(request.githubUrl)
+    const scanSignal = withGitHubFlowTimeout(cancellation.signal)
+    let scanned: ScannedSkillView[]
+    try {
+      scanned = await scanGitHub(request.githubUrl, scanSignal)
+    } catch (error) {
+      if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
+      throw error
+    }
     if (scanned.length === 0) {
       throw new Error('No importable Skills were found in that GitHub repo.')
     }
@@ -428,13 +452,16 @@ class ConversationSkillImporter {
     const candidates = new Map(scanned.map((candidate) => [candidate.path || '.', candidate]))
     const skills: ConversationSkillImportResult['skills'] = []
     const errors: NonNullable<ConversationSkillImportResult['errors']> = []
+    const importSignal = withGitHubFlowTimeout(cancellation.signal)
     for (const item of items) {
       if (cancellation.isCancelled()) break
       const candidate = candidates.get(item.subPath)!
       try {
-        const outcome = await importGitHub(candidate.url)
+        const outcome = await importGitHub(candidate.url, importSignal)
         skills.push({ id: outcome.id, name: candidate.name, status: outcome.status })
       } catch (error) {
+        if (cancellation.isCancelled()) break
+        if (importSignal.aborted) throw importSignal.reason
         errors.push({
           name: candidate.name,
           error: error instanceof Error ? error.message : 'Import failed.'
@@ -445,6 +472,9 @@ class ConversationSkillImporter {
     const changed = skills.some(
       (skill) => skill.status === 'imported' || skill.status === 'updated'
     )
+    if (cancellation.isCancelled() && skills.length === 0 && errors.length === 0) {
+      return { status: 'cancelled', skills: [] }
+    }
     if (changed) this.options.onSkillsChanged?.()
     return {
       status: errors.length > 0 ? 'partial' : changed ? 'imported' : 'unchanged',

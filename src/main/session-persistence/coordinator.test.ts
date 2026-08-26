@@ -1031,6 +1031,174 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.updatedAt).toBe(previousUpdatedAt)
   })
 
+  it('preserves Main-owned Session details and usage across a stale renderer save', async () => {
+    let durable = createSession({
+      title: 'Generated title',
+      description: 'Generated description',
+      sessionDetailsSource: 'generated',
+      sessionDetailsGeneration: {
+        status: 'succeeded',
+        sourceMessageId: 'message-1',
+        requestId: 'details-1',
+        queuedAt: 10,
+        startedAt: 11,
+        frameworkId: 'opencode',
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'low',
+        completedAt: 12,
+        usage: { inputTokens: 20, cacheTokens: 3, outputTokens: 8 }
+      }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const saved = await coordinator.saveSession(
+      createSession({
+        title: 'Stale fallback',
+        description: 'Stale fallback description',
+        sessionDetailsSource: 'fallback',
+        sessionDetailsGeneration: {
+          status: 'queued',
+          sourceMessageId: 'message-1',
+          requestId: 'details-1',
+          queuedAt: 10
+        }
+      })
+    )
+
+    expect(saved).toMatchObject({
+      title: 'Generated title',
+      description: 'Generated description',
+      sessionDetailsSource: 'generated',
+      sessionDetailsGeneration: {
+        status: 'succeeded',
+        usage: { inputTokens: 20, cacheTokens: 3, outputTokens: 8 }
+      }
+    })
+  })
+
+  it('commits a dedicated Session-details mutation against current durable revision', async () => {
+    const durable = createSession({ revision: 5, title: 'Fallback' })
+    const saveSession = vi.fn(async (session: PersistedChatSession, expectedRevision?: number) => ({
+      ...session,
+      revision: (expectedRevision ?? 0) + 1
+    }))
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.mutateSessionDetailsAuthority('project-1', 'session-1', (session) => ({
+        ...session,
+        title: 'Manual',
+        description: 'Edited',
+        sessionDetailsSource: 'manual'
+      }))
+    ).resolves.toMatchObject({ revision: 6, title: 'Manual', description: 'Edited' })
+    expect(saveSession).toHaveBeenCalledWith(expect.objectContaining({ title: 'Manual' }), 5)
+  })
+
+  it('preserves a running Session while committing Session-details authority before prompt admission', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-live-session-details-'))
+    const repository = new SessionRepository(root, { hasActiveRuntimePrompt: () => false })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const prompt: PersistedChatMessage = {
+      id: 'prompt-1',
+      role: 'user',
+      content: 'Investigate the interrupted banner',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+
+    try {
+      const running = await repository.saveSession(
+        createSession({
+          status: 'running',
+          activeRun: { promptMessageId: prompt.id, startedAt: 3 },
+          messages: [prompt],
+          sessionDetailsGenerationEligible: true
+        })
+      )
+
+      const mutated = await coordinator.mutateSessionDetailsAuthority(
+        running.projectId,
+        running.id,
+        (current) => ({
+          ...current,
+          title: 'Interrupted banner investigation',
+          description: 'Investigate why an active Session shows an interrupted banner.',
+          sessionDetailsSource: 'fallback'
+        })
+      )
+
+      expect(mutated).toMatchObject({
+        status: 'running',
+        activeRun: { promptMessageId: prompt.id, startedAt: 3 }
+      })
+      expect(mutated?.error).toBeUndefined()
+      expect(mutated?.resumeRecovery).toBeUndefined()
+      expect(mutated?.messages).toEqual([prompt])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves a running Session across an unrelated Main-owned policy mutation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-live-policy-mutation-'))
+    const repository = new SessionRepository(root, { hasActiveRuntimePrompt: () => false })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const prompt: PersistedChatMessage = {
+      id: 'prompt-1',
+      role: 'user',
+      content: 'Complete the task',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+
+    try {
+      await repository.saveSession(
+        createSession({
+          status: 'running',
+          activeRun: { promptMessageId: prompt.id, startedAt: 3 },
+          sessionDetailsGenerationEligible: true,
+          messages: [prompt]
+        })
+      )
+
+      const mutated = await coordinator.setSessionDelegationPolicy('project-1', 'session-1', 'deny')
+
+      expect(mutated).toMatchObject({
+        status: 'running',
+        activeRun: { promptMessageId: prompt.id, startedAt: 3 },
+        sessionDetailsGenerationEligible: true,
+        delegationPolicy: 'deny'
+      })
+      expect(mutated.error).toBeUndefined()
+      expect(mutated.resumeRecovery).toBeUndefined()
+      expect(mutated.messages).toEqual([prompt])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('does not turn an unchanged runtime-context merge into Session activity', async () => {
     const activityAt = Date.now() - 24 * 60 * 60 * 1_000
     let durable = createSession({
@@ -1701,6 +1869,54 @@ describe('SessionPersistenceCoordinator', () => {
         selectedComputeHosts: []
       })
     )
+  })
+
+  it('preserves startup interruption recovery while pruning missing Compute Hosts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-startup-compute-prune-'))
+    const repository = new SessionRepository(root)
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const prompt: PersistedChatMessage = {
+      id: 'prompt-1',
+      role: 'user',
+      content: 'Complete the task',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    try {
+      await repository.saveSession(
+        createSession({
+          status: 'running',
+          activeRun: { promptMessageId: prompt.id, startedAt: 3 },
+          enabledComputeHosts: ['ssh:missing'],
+          selectedComputeHosts: ['ssh:missing'],
+          messages: [prompt]
+        })
+      )
+
+      const result = await coordinator.pruneSessionEnabledComputeHosts([])
+
+      expect(result.sessions[0]).toMatchObject({
+        status: 'error',
+        error: 'Session was interrupted before the app closed.',
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: prompt.id
+        },
+        enabledComputeHosts: [],
+        selectedComputeHosts: []
+      })
+      expect(result.sessions[0].activeRun).toBeUndefined()
+      expect(result.sessions[0].messages[0]).toMatchObject({ interrupted: true })
+      await expect(repository.loadSession('project-1', 'session-1')).resolves.toMatchObject({
+        status: 'error',
+        error: 'Session was interrupted before the app closed.'
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('restores every attempted Session when durable Compute Host pruning fails partway', async () => {

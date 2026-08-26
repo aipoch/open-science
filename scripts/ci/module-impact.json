@@ -124,6 +124,7 @@
         "src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts",
         "src/renderer/src/pages/workspace/use-side-chat-controller.ts",
         "src/renderer/src/pages/workspace/workspace-session-controller.ts",
+        "src/renderer/src/pages/workspace/workspace-session-details-controller.ts",
         "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.ts",
         "src/renderer/src/pages/workspace/composer-attachment-intake.ts",
         "src/renderer/src/pages/workspace/composer-upload-transfer.ts",
@@ -221,6 +222,9 @@
     },
     "compute_service": {
       "ownerPaths": [
+        "src/main/compute/approval-session-lifecycle.ts",
+        "src/main/compute/agent-compute-service.ts",
+        "src/main/compute/compute-approval-broker.ts",
         "src/main/compute/compute-host-profile-owner.ts",
         "src/main/compute/compute-job-lifecycle.ts",
         "src/main/compute/job-deletion-owner.ts",
@@ -248,6 +252,10 @@
       "consumerModules": [],
       "testFiles": {
         "owner": [
+          "src/main/compute/approval-session-lifecycle.test.ts",
+          "src/main/compute/agent-compute-service.test.ts",
+          "src/main/compute/agent-no-list-jobs.test.ts",
+          "src/main/compute/compute-approval-broker.test.ts",
           "src/main/compute/compute-job-lifecycle.test.ts",
           "src/main/compute/job-deletion-owner.test.ts",
           "src/main/compute/compute-service.architecture.test.ts",
@@ -384,10 +392,12 @@
     },
     "settings_provider_accounts": {
       "ownerPaths": [
+        "src/main/settings/bounded-response.ts",
         "src/main/settings/provider-accounts.ts",
         "src/main/settings/provider-auth-lifecycle.ts",
         "src/main/settings/provider-draft-projection.ts",
         "src/main/settings/provider-model-catalog-owner.ts",
+        "src/main/settings/provider-resource-limits.ts",
         "src/main/settings/provider-runtime-projection.ts",
         "src/main/settings/xai-oauth.ts",
         "src/main/settings/xai-provider-account-owner.ts"
@@ -508,6 +518,7 @@
     "settings_service_facade": {
       "ownerPaths": [
         "src/main/settings/service.ts",
+        "src/main/settings/network-proxy-settings-owner.ts",
         "src/main/settings/reviewer-model-owner.ts",
         "src/main/settings/subagent-model-owner.ts",
         "src/main/settings/vision-model-owner.ts"
@@ -709,6 +720,7 @@
         "src/main/session-persistence/message-delivery-owner.ts",
         "src/main/session-persistence/reconciliation-owner.ts",
         "src/main/session-persistence/relay-projection.ts",
+        "src/main/session-persistence/session-details-authority.ts",
         "src/main/session-persistence/side-chat-owner.ts",
         "src/main/session-persistence/state-owner.ts"
       ],

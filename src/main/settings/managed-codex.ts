@@ -22,7 +22,11 @@ import { pipeline } from 'node:stream/promises'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
-import { ACP_MODEL_TURN_COUNT_META_KEY, ACP_TURN_TOKEN_USAGE_META_KEY } from '../../shared/acp'
+import {
+  ACP_MODEL_CALL_USAGE_META_KEY,
+  ACP_MODEL_TURN_COUNT_META_KEY,
+  ACP_TURN_TOKEN_USAGE_META_KEY
+} from '../../shared/acp'
 import { MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
 import {
   DEFAULT_REGISTRIES,
@@ -245,7 +249,7 @@ const CODEX_ACP_TURN_USAGE_UPDATE_WITHOUT_COUNT_REPLACEMENT = [
   '      }',
   '    }'
 ].join('\n')
-const CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT =
+const CODEX_ACP_TURN_USAGE_UPDATE_WITH_COUNT_REPLACEMENT =
   CODEX_ACP_TURN_USAGE_UPDATE_WITHOUT_COUNT_REPLACEMENT.replace(
     '    const promptTokenUsage = this.sessionState.promptTokenUsage;',
     [
@@ -281,7 +285,58 @@ const CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT =
         '        this.sessionState.promptModelTurnCount = nextPromptModelTurnCount;'
       ].join('\n')
     )
+const CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT =
+  CODEX_ACP_TURN_USAGE_UPDATE_WITH_COUNT_REPLACEMENT.replace(
+    '    const promptModelTurnCount = this.sessionState.promptModelTurnCount;',
+    [
+      '    const promptModelTurnCount = this.sessionState.promptModelTurnCount;',
+      '    const promptModelCalls = this.sessionState.promptModelCalls;'
+    ].join('\n')
+  )
+    .replace(
+      '      Number.isSafeInteger(promptModelTurnCount)\n    ) {',
+      '      Number.isSafeInteger(promptModelTurnCount) &&\n      Array.isArray(promptModelCalls)\n    ) {'
+    )
+    .replace(
+      '      const nextPromptModelTurnCount = promptModelTurnCount + (observedModelTurn ? 1 : 0);',
+      [
+        '      const nextPromptModelTurnCount = promptModelTurnCount + (observedModelTurn ? 1 : 0);',
+        '      const nextPromptModelCalls = observedModelTurn',
+        '        ? [...promptModelCalls, increment]',
+        '        : promptModelCalls;'
+      ].join('\n')
+    )
+    .replace(
+      '        Number.isSafeInteger(nextPromptModelTurnCount)\n      ) {',
+      '        Number.isSafeInteger(nextPromptModelTurnCount) &&\n        nextPromptModelCalls.length === nextPromptModelTurnCount\n      ) {'
+    )
+    .replace(
+      '        this.sessionState.promptModelTurnCount = nextPromptModelTurnCount;',
+      [
+        '        this.sessionState.promptModelTurnCount = nextPromptModelTurnCount;',
+        '        this.sessionState.promptModelCalls = nextPromptModelCalls;'
+      ].join('\n')
+    )
 const CODEX_ACP_TURN_USAGE_UPDATE_LEGACY_WITH_COUNT_REPLACEMENT =
+  CODEX_ACP_TURN_USAGE_UPDATE_WITH_COUNT_REPLACEMENT.replace(
+    [
+      '    const normalizeTokenUsage = (usage) =>',
+      '      usage == null',
+      '        ? usage',
+      '        : { ...usage, cachedInputTokens: usage.cachedInputTokens ?? 0 };',
+      '    const previousTotalTokenUsage = normalizeTokenUsage(this.sessionState.totalTokenUsage);'
+    ].join('\n'),
+    '    const previousTotalTokenUsage = this.sessionState.totalTokenUsage;'
+  )
+    .replace(
+      '    const currentTotalTokenUsage = normalizeTokenUsage(this.sessionState.totalTokenUsage);',
+      '    const currentTotalTokenUsage = this.sessionState.totalTokenUsage;'
+    )
+    .replace(
+      '    const lastTokenUsage = normalizeTokenUsage(this.sessionState.lastTokenUsage);',
+      '    const lastTokenUsage = this.sessionState.lastTokenUsage;'
+    )
+const CODEX_ACP_TURN_USAGE_UPDATE_LEGACY_WITH_CALLS_REPLACEMENT =
   CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT.replace(
     [
       '    const normalizeTokenUsage = (usage) =>',
@@ -316,9 +371,13 @@ const CODEX_ACP_TURN_USAGE_START_WITHOUT_COUNT_REPLACEMENT = [
   '    };',
   '    sessionState.promptTokenUsageObserved = false;'
 ].join('\n')
-const CODEX_ACP_TURN_USAGE_START_REPLACEMENT = [
+const CODEX_ACP_TURN_USAGE_START_WITH_COUNT_REPLACEMENT = [
   CODEX_ACP_TURN_USAGE_START_WITHOUT_COUNT_REPLACEMENT,
   '    sessionState.promptModelTurnCount = 0;'
+].join('\n')
+const CODEX_ACP_TURN_USAGE_START_REPLACEMENT = [
+  CODEX_ACP_TURN_USAGE_START_WITH_COUNT_REPLACEMENT,
+  '    sessionState.promptModelCalls = [];'
 ].join('\n')
 
 const CODEX_ACP_TURN_USAGE_RESPONSE_SOURCE =
@@ -364,12 +423,20 @@ const CODEX_ACP_TURN_USAGE_META_WITHOUT_COUNT_REPLACEMENT = [
   '    : {})',
   '}'
 ].join('\n')
-const CODEX_ACP_TURN_USAGE_META_REPLACEMENT =
+const CODEX_ACP_TURN_USAGE_META_WITH_COUNT_REPLACEMENT =
   CODEX_ACP_TURN_USAGE_META_WITHOUT_COUNT_REPLACEMENT.replace(
     `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage)`,
     [
       `        "${ACP_TURN_TOKEN_USAGE_META_KEY}": this.buildPromptUsage(sessionState.promptTokenUsage),`,
       `        "${ACP_MODEL_TURN_COUNT_META_KEY}": sessionState.promptModelTurnCount`
+    ].join('\n')
+  )
+const CODEX_ACP_TURN_USAGE_META_REPLACEMENT =
+  CODEX_ACP_TURN_USAGE_META_WITH_COUNT_REPLACEMENT.replace(
+    `        "${ACP_MODEL_TURN_COUNT_META_KEY}": sessionState.promptModelTurnCount`,
+    [
+      `        "${ACP_MODEL_TURN_COUNT_META_KEY}": sessionState.promptModelTurnCount,`,
+      `        "${ACP_MODEL_CALL_USAGE_META_KEY}": sessionState.promptModelCalls.map((usage) => this.buildPromptUsage(usage))`
     ].join('\n')
   )
 const CODEX_ACP_TURN_USAGE_FINISH_SOURCE = '      activePrompt.complete();'
@@ -378,12 +445,20 @@ const CODEX_ACP_TURN_USAGE_FINISH_WITHOUT_COUNT_REPLACEMENT = [
   '      sessionState.promptTokenUsageObserved = void 0;',
   CODEX_ACP_TURN_USAGE_FINISH_SOURCE
 ].join('\n')
-const CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT = [
+const CODEX_ACP_TURN_USAGE_FINISH_WITH_COUNT_REPLACEMENT = [
   '      sessionState.promptTokenUsage = void 0;',
   '      sessionState.promptTokenUsageObserved = void 0;',
   '      sessionState.promptModelTurnCount = void 0;',
   CODEX_ACP_TURN_USAGE_FINISH_SOURCE
 ].join('\n')
+const CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT =
+  CODEX_ACP_TURN_USAGE_FINISH_WITH_COUNT_REPLACEMENT.replace(
+    '      sessionState.promptModelTurnCount = void 0;',
+    [
+      '      sessionState.promptModelTurnCount = void 0;',
+      '      sessionState.promptModelCalls = void 0;'
+    ].join('\n')
+  )
 
 const CODEX_ACP_SKILL_INPUT_SOURCE = [
   'function buildPromptItems(prompt) {',
@@ -552,11 +627,24 @@ export const patchCodexAcpTurnUsageSource = (source: string): string => {
 
   const sourceWithCurrentStart = source.includes(CODEX_ACP_TURN_USAGE_START_REPLACEMENT)
     ? source
-    : source.replace(
-        CODEX_ACP_TURN_USAGE_START_WITHOUT_COUNT_REPLACEMENT,
-        CODEX_ACP_TURN_USAGE_START_REPLACEMENT
-      )
+    : source
+        .replace(
+          CODEX_ACP_TURN_USAGE_START_WITH_COUNT_REPLACEMENT,
+          CODEX_ACP_TURN_USAGE_START_REPLACEMENT
+        )
+        .replace(
+          CODEX_ACP_TURN_USAGE_START_WITHOUT_COUNT_REPLACEMENT,
+          CODEX_ACP_TURN_USAGE_START_REPLACEMENT
+        )
   const migratedSource = sourceWithCurrentStart
+    .replace(
+      CODEX_ACP_TURN_USAGE_UPDATE_LEGACY_WITH_CALLS_REPLACEMENT,
+      CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT
+    )
+    .replace(
+      CODEX_ACP_TURN_USAGE_UPDATE_WITH_COUNT_REPLACEMENT,
+      CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT
+    )
     .replace(
       CODEX_ACP_TURN_USAGE_UPDATE_WITHOUT_COUNT_REPLACEMENT,
       CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT
@@ -566,8 +654,16 @@ export const patchCodexAcpTurnUsageSource = (source: string): string => {
       CODEX_ACP_TURN_USAGE_UPDATE_REPLACEMENT
     )
     .replaceAll(
+      CODEX_ACP_TURN_USAGE_META_WITH_COUNT_REPLACEMENT,
+      CODEX_ACP_TURN_USAGE_META_REPLACEMENT
+    )
+    .replaceAll(
       CODEX_ACP_TURN_USAGE_META_WITHOUT_COUNT_REPLACEMENT,
       CODEX_ACP_TURN_USAGE_META_REPLACEMENT
+    )
+    .replace(
+      CODEX_ACP_TURN_USAGE_FINISH_WITH_COUNT_REPLACEMENT,
+      CODEX_ACP_TURN_USAGE_FINISH_REPLACEMENT
     )
     .replace(
       CODEX_ACP_TURN_USAGE_FINISH_WITHOUT_COUNT_REPLACEMENT,

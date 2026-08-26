@@ -184,6 +184,51 @@ describe('AnthropicProviderBridge', () => {
     expect(upstreamHeaders?.get('x-request-id')).toBe('request-1')
   })
 
+  it('logs a redacted upstream connection failure after the loopback request arrives', async () => {
+    const cause = Object.assign(new Error('connect ECONNREFUSED 203.0.113.1:443'), {
+      code: 'ECONNREFUSED'
+    })
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('fetch failed', { cause })
+    }) as typeof fetch
+    const diagnostics = { info: vi.fn(), error: vi.fn() }
+    const target = {
+      id: 'provider/model-a',
+      baseUrl: 'https://user:provider-secret@provider.example.test/gateway?api_key=query-secret',
+      key: 'key-a',
+      model: 'model-a'
+    }
+    const bridge = new AnthropicProviderBridge([target], target.id, fetchImpl, diagnostics)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+
+    const response = await fetch(`${connection.baseUrl}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(502)
+    await expect(response.json()).resolves.toEqual({
+      error: { type: 'api_error', message: 'fetch failed' }
+    })
+    expect(diagnostics.error).toHaveBeenCalledWith(
+      'anthropic provider request failed',
+      expect.objectContaining({
+        targetId: target.id,
+        upstreamOrigin: 'https://provider.example.test',
+        error: 'fetch failed',
+        cause: expect.objectContaining({ code: 'ECONNREFUSED' })
+      })
+    )
+    expect(JSON.stringify(diagnostics.error.mock.calls)).not.toContain('provider-secret')
+    expect(JSON.stringify(diagnostics.error.mock.calls)).not.toContain('query-secret')
+    expect(JSON.stringify(diagnostics.error.mock.calls)).not.toContain('key-a')
+  })
+
   it('replays an identical deterministic provider error without a second upstream request', async () => {
     const fetchImpl = vi.fn(async () =>
       Response.json(

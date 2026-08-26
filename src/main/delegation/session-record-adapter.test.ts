@@ -1262,12 +1262,26 @@ describe('Session delegated-work adapter', () => {
         }
       }
     })
-    control.complete('Evidence confirmed.', {
-      inputTokens: 100,
-      cacheTokens: 20,
-      outputTokens: 30,
-      turnCount: 1
-    })
+    control.complete(
+      'Evidence confirmed.',
+      {
+        inputTokens: 100,
+        cacheTokens: 20,
+        outputTokens: 30,
+        turnCount: 1
+      },
+      [
+        {
+          id: 'agent-message:model-call:0',
+          index: 0,
+          inputTokens: 100,
+          cacheTokens: 20,
+          outputTokens: 30,
+          contextUsedTokens: 120,
+          contextWindowSize: 200_000
+        }
+      ]
+    )
     await pending
 
     const durable = await readSession()
@@ -1284,6 +1298,17 @@ describe('Session delegated-work adapter', () => {
         outputTokens: 30,
         turnCount: 1
       },
+      modelCallUsage: [
+        {
+          id: 'agent-message:model-call:0',
+          index: 0,
+          inputTokens: 100,
+          cacheTokens: 20,
+          outputTokens: 30,
+          contextUsedTokens: 120,
+          contextWindowSize: 200_000
+        }
+      ],
       completedAt: 14,
       updatedAt: 14
     })

@@ -23,7 +23,7 @@ import { migrationSqlExecutor } from './migration-sql-executor'
 import {
   MEMORY_AUXILIARY_SCHEMA_OBJECTS,
   MEMORY_AUXILIARY_TABLE_NAMES
-} from './migrations/0015-agent-memory'
+} from './migrations/0016-agent-memory'
 
 // schema-locality: begin frozen-0001-repairs
 // Frozen legacy repair routes into the generated 0001 target. New schema changes must add a

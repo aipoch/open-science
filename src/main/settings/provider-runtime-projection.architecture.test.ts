@@ -120,10 +120,12 @@ describe('Provider runtime projection ownership', () => {
       modules: Record<string, { ownerPaths: string[]; testFiles: { owner: string[] } }>
     }
     expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
+      'src/main/settings/bounded-response.ts',
       'src/main/settings/provider-accounts.ts',
       'src/main/settings/provider-auth-lifecycle.ts',
       'src/main/settings/provider-draft-projection.ts',
       'src/main/settings/provider-model-catalog-owner.ts',
+      'src/main/settings/provider-resource-limits.ts',
       'src/main/settings/provider-runtime-projection.ts',
       'src/main/settings/xai-oauth.ts',
       'src/main/settings/xai-provider-account-owner.ts'

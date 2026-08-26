@@ -9,7 +9,7 @@ import { ABOUT_YOU_MEMORY_CATEGORY_ID, MEMORY_SETTINGS_ID } from '../../shared/m
 import { createProjectDbClient } from '../projects/prisma-client'
 import { verifyCurrentRuntimeSchema } from './legacy-baseline-adapter'
 import { migrateApplicationDatabase } from './migration-service'
-import { MEMORY_AUXILIARY_SCHEMA_OBJECTS } from './migrations/0015-agent-memory'
+import { MEMORY_AUXILIARY_SCHEMA_OBJECTS } from './migrations/0016-agent-memory'
 
 describe('agent memory migration', () => {
   let storageRoot = ''
@@ -206,12 +206,12 @@ describe('agent memory migration', () => {
   it('replays an unledgered partial memory migration and restores missing triggers', async () => {
     await client.$executeRawUnsafe('DROP TRIGGER "MemoryEntry_fts_update"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" = '0015_agent_memory'`
+      `DELETE FROM "_open_science_migrations" WHERE "id" = '0016_agent_memory'`
     )
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      applied: ['0015_agent_memory'],
-      to: '0015_agent_memory'
+      applied: ['0016_agent_memory'],
+      to: '0016_agent_memory'
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })

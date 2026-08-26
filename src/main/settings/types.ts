@@ -10,6 +10,7 @@ import type {
   ProviderValidationFailure,
   ReasoningEffort,
   ReviewerModelConfiguration,
+  SessionDetailsModelConfiguration,
   SubagentModelConfiguration,
   VisionModelConfiguration
 } from '../../shared/settings'
@@ -176,6 +177,8 @@ export type StoredSettings = {
   subagentModel?: SubagentModelConfiguration
   // Global Reviewer model routing. Absence in older documents means follow the Active model.
   reviewerModel?: ReviewerModelConfiguration
+  // Automatic Session title/description generation. Absence means inherit + Low effort.
+  sessionDetailsModel?: SessionDetailsModelConfiguration
   // Optional visual relay target. Absence in older documents and new installs means disabled.
   visionModel?: VisionModelConfiguration
   // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.

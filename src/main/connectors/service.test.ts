@@ -61,6 +61,49 @@ describe('ConnectorService', () => {
     const out = await svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] }, internal)
     expect(out).toEqual({ n_requested: 1, duplicates: [], records: [{ CID: 1 }], not_found: [] })
   })
+  it('preserves bundled handler support for a single id when the schema recommends a list', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({
+        status: 'ok',
+        records: [{ 'requested-id': 'PMC9046468', pmcid: 'PMC9046468', pmid: 34713412 }]
+      })
+    )
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => ({ enabledIds: ['pubmed'], autoAllowIds: [] }),
+      resolveApiKey: () => undefined
+    })
+
+    const out = (await svc.call(
+      'pubmed',
+      'convert_article_ids',
+      { ids: 'PMC9046468', id_type: 'pmcid' },
+      internal
+    )) as { records: Array<Record<string, unknown>> }
+
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('ids=PMC9046468')
+    expect(out.records[0]).toMatchObject({
+      pmcid: 'PMC9046468',
+      pmid: '34713412',
+      'requested-id': 'PMC9046468'
+    })
+  })
+  it('rejects bundled tool arguments that do not match the registered JSON Schema', async () => {
+    const engine = {
+      call: vi.fn().mockResolvedValue({ accepted: true })
+    } as unknown as ParserEngine
+    const svc = new ConnectorService({
+      engine,
+      getConnectors: () => ({ enabledIds: ['chemistry'], autoAllowIds: [] }),
+      resolveApiKey: () => undefined
+    })
+
+    await expect(
+      svc.call('chemistry', 'pubchem_get_compounds', { cids: '2244' }, internal)
+    ).rejects.toThrow(/invalid tool arguments.*cids.*array/i)
+    expect(engine.call).not.toHaveBeenCalled()
+  })
   it('routes a bundled tool with a registered local handler through it, not the engine', async () => {
     const localHandler = vi.fn().mockResolvedValue({ ok: true })
     const engine = { call: vi.fn() } as unknown as ParserEngine
@@ -82,6 +125,19 @@ describe('ConnectorService', () => {
     )
     expect(out).toEqual({ ok: true })
     expect(engine.call).not.toHaveBeenCalled()
+  })
+  it('validates bundled tool arguments before dispatching to a local handler', async () => {
+    const localHandler = vi.fn().mockResolvedValue({ ok: true })
+    const svc = new ConnectorService({
+      getConnectors: () => ({ enabledIds: ['molecule'], autoAllowIds: [] }),
+      resolveApiKey: () => undefined,
+      localToolHandlers: { 'molecule/preview_molecule': localHandler }
+    })
+
+    await expect(
+      svc.call('molecule', 'preview_molecule', { smiles: 42 }, internal)
+    ).rejects.toThrow(/invalid tool arguments.*smiles.*string/i)
+    expect(localHandler).not.toHaveBeenCalled()
   })
   it('passes the caller signal to a bundled local handler', async () => {
     const localHandler = vi.fn().mockResolvedValue({ ok: true })

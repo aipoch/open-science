@@ -22,6 +22,7 @@ import type {
   SessionKey
 } from '../delegation/session-records'
 import { saveSessionWithRevision } from './save-session'
+import { loadSessionMutationAuthority } from './repository'
 import { SessionRuntimeContextRevisionConflictError } from './state-owner'
 
 type DelegatedWorkSessionRepository = {
@@ -143,7 +144,7 @@ class SessionDelegatedWorkStore {
     sessionId: string,
     operation: 'read' | 'patch'
   ): Promise<PersistedChatSession> {
-    const loaded = await this.options.repository.loadSessionWithDiagnostics(projectId, sessionId)
+    const loaded = await loadSessionMutationAuthority(this.options.repository, projectId, sessionId)
     if (loaded.status === 'unreadable') {
       throw new Error(
         `Cannot ${operation} Session runtime context because its durable JSON is unreadable.`

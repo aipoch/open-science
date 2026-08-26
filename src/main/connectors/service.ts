@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from 'node:crypto'
 
 import { ParserEngine } from './engine'
-import { ALL_CONNECTOR_IDS, getDescriptor } from './registry'
+import { ALL_CONNECTOR_IDS, getDescriptor, validateToolArguments } from './registry'
 import {
   classifyCustomMcpFailure,
   isCustomMcpServerRouteSafe,
@@ -339,6 +339,8 @@ export class ConnectorService {
         'connector_unavailable',
         unknownConnectorToolMessage(connector, method)
       )
+
+    validateToolArguments(descriptor, args)
 
     const authorizedConnectors = access.bypassMainPolicy
       ? undefined

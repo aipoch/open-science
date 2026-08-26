@@ -24,6 +24,7 @@ import {
   type MainSaveSessionOptions
 } from './revision-conflict'
 import { mergeMainOwnedRelayProjection } from './relay-projection'
+import { loadSessionMutationAuthority as loadAuthority } from './repository'
 import { saveSessionWithRevision } from './save-session'
 
 type SessionMetadata = Readonly<Pick<PersistedChatSession, 'id' | 'projectId' | 'title'>>
@@ -275,7 +276,7 @@ class SessionPersistenceStateOwner {
     sessionId: string,
     messageId: string
   ): Promise<boolean> {
-    const loaded = await this.options.repository.loadSessionWithDiagnostics(projectId, sessionId)
+    const loaded = await loadAuthority(this.options.repository, projectId, sessionId)
     if (loaded.status !== 'found') {
       throw new Error(`Cannot read active Message Branch for a ${loaded.status} Session.`)
     }
@@ -290,7 +291,7 @@ class SessionPersistenceStateOwner {
     sessionId: string,
     operation: 'read' | 'patch'
   ): Promise<PersistedChatSession> {
-    const loaded = await this.options.repository.loadSessionWithDiagnostics(projectId, sessionId)
+    const loaded = await loadAuthority(this.options.repository, projectId, sessionId)
     if (loaded.status === 'unreadable') {
       throw new Error(
         `Cannot ${operation} Session runtime context because its durable JSON is unreadable.`
@@ -426,7 +427,7 @@ class SessionPersistenceStateOwner {
       throw new Error('Delegation policy must be allow or deny.')
     }
     this.options.assertMutable(projectId, sessionId, 'mutate')
-    const loaded = await this.options.repository.loadSessionWithDiagnostics(projectId, sessionId)
+    const loaded = await loadAuthority(this.options.repository, projectId, sessionId)
     if (loaded.status !== 'found') {
       throw new Error(`Cannot update delegation policy for a ${loaded.status} Session.`)
     }
@@ -446,7 +447,7 @@ class SessionPersistenceStateOwner {
     providerIdsOrMutation: Parameters<typeof sessionComputeHostAccessPolicy.resolveUpdate>[1]
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(projectId, sessionId, 'mutate')
-    const loaded = await this.options.repository.loadSessionWithDiagnostics(projectId, sessionId)
+    const loaded = await loadAuthority(this.options.repository, projectId, sessionId)
     if (loaded.status !== 'found') {
       throw new Error(`Cannot update enabled Compute Hosts for a ${loaded.status} Session.`)
     }
@@ -474,6 +475,9 @@ class SessionPersistenceStateOwner {
       rollbackRevision: number
     }> = []
     try {
+      // This startup reconciliation runs under the coordinator's global lock. Its catalog entries
+      // are intentionally restore-normalized; the CAS save preserves that projection while changing
+      // only Compute Host fields and still checks the durable revision through the repository.
       for (const session of sessions) {
         const access = sessionComputeHostAccessPolicy.prune(session, validProviderIds)
         if (!access) {
@@ -546,10 +550,8 @@ class SessionPersistenceStateOwner {
     options: MainSaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(session.projectId, session.id, 'save')
-    const authoritative = await this.options.repository.loadSessionWithDiagnostics(
-      session.projectId,
-      session.id
-    )
+    const { projectId, id: sessionId } = session
+    const authoritative = await loadAuthority(this.options.repository, projectId, sessionId)
     if (authoritative.status === 'unreadable') {
       throw new Error(
         'Cannot save Session projection because main-owned runtime context is unreadable.'
@@ -593,10 +595,26 @@ class SessionPersistenceStateOwner {
           rendererOwnedSession.status === 'waiting-plan-approval'
         ? (authority?.status ?? 'idle')
         : undefined
+    // Once Main has durable Session-details ownership, a stale whole-Session renderer save may
+    // continue the transcript but cannot roll back generated/manual copy or its attempt/usage
+    // record. New and legacy Sessions can still establish their initial fallback on the first save;
+    // all later edits use the dedicated SessionDetailsOwner transaction.
+    const mainOwnedSessionDetails =
+      authority &&
+      (authority.sessionDetailsSource !== undefined ||
+        authority.sessionDetailsGeneration !== undefined)
+        ? {
+            title: authority.title,
+            description: authority.description,
+            sessionDetailsSource: authority.sessionDetailsSource,
+            sessionDetailsGeneration: authority.sessionDetailsGeneration
+          }
+        : undefined
     const relayProjection = mergeMainOwnedRelayProjection(rendererOwnedSession, authority)
     const mergedSession: PersistedChatSession = {
       ...rendererOwnedSession,
       ...relayProjection,
+      ...mainOwnedSessionDetails,
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
       ...(authority && !specialistBindingOwnedByCaller
@@ -661,10 +679,8 @@ class SessionPersistenceStateOwner {
       const conflictRebaseFields = options.conflictRebaseFields ?? []
       if (conflictRebaseFields.length === 0) throw bindingValidation.error
 
-      const latest = await this.options.repository.loadSessionWithDiagnostics(
-        submittedSession.projectId,
-        submittedSession.id
-      )
+      const { projectId, id: sessionId } = submittedSession
+      const latest = await loadAuthority(this.options.repository, projectId, sessionId)
       if (latest.status !== 'found') throw bindingValidation.error
       const rebasedSession = rebaseSafeSessionFields(
         latest.session,

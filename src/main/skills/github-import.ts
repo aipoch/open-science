@@ -35,7 +35,7 @@ type ByteStream = {
 // arrayBuffer() read plus the post-read size guard.
 export type FetchLike = (
   url: string,
-  init?: { headers?: Record<string, string> }
+  init?: { headers?: Record<string, string>; signal?: AbortSignal }
 ) => Promise<{
   ok: boolean
   status: number
@@ -45,15 +45,54 @@ export type FetchLike = (
   body?: ByteStream | null
 }>
 
+export type GitHubFetchOptions = {
+  signal?: AbortSignal
+  requestTimeoutMs?: number
+  totalTimeoutMs?: number
+}
+
 const GITHUB_HEADERS = { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' }
+const GITHUB_REQUEST_TIMEOUT_MS = 30_000
+const GITHUB_TOTAL_TIMEOUT_MS = 5 * 60_000
 
 const TRUSTED_GITHUB_TOKEN_HOSTS = new Set(['api.github.com', 'raw.githubusercontent.com'])
 
+const combineSignals = (...signals: Array<AbortSignal | undefined>): AbortSignal => {
+  const active = signals.filter((signal): signal is AbortSignal => Boolean(signal))
+  return active.length === 1 ? active[0] : AbortSignal.any(active)
+}
+
+// Gives every GitHub operation one overall deadline and every individual request its own deadline.
+// The request signal stays alive after headers arrive, so stalled response-body reads are aborted too.
+const createGitHubFlowFetch = (
+  fetchImpl: FetchLike,
+  options: GitHubFetchOptions = {}
+): FetchLike => {
+  const flowSignal = combineSignals(
+    options.signal,
+    AbortSignal.timeout(options.totalTimeoutMs ?? GITHUB_TOTAL_TIMEOUT_MS)
+  )
+  return (url, init) =>
+    fetchImpl(url, {
+      ...init,
+      signal: combineSignals(
+        init?.signal,
+        flowSignal,
+        AbortSignal.timeout(options.requestTimeoutMs ?? GITHUB_REQUEST_TIMEOUT_MS)
+      )
+    })
+}
+
 // Adds a token only for exact HTTPS GitHub hosts used by this module. GitHub-controlled download
 // metadata can never redirect the credential to an arbitrary host.
-const createAuthenticatedGitHubFetch = (fetchImpl: FetchLike, token?: string): FetchLike => {
+const createAuthenticatedGitHubFetch = (
+  fetchImpl: FetchLike,
+  token?: string,
+  options?: GitHubFetchOptions
+): FetchLike => {
+  const request = options ? createGitHubFlowFetch(fetchImpl, options) : fetchImpl
   const trimmed = token?.trim()
-  if (!trimmed) return fetchImpl
+  if (!trimmed) return request
 
   return (url, init) => {
     let trusted = false
@@ -64,7 +103,7 @@ const createAuthenticatedGitHubFetch = (fetchImpl: FetchLike, token?: string): F
       trusted = false
     }
 
-    return fetchImpl(url, {
+    return request(url, {
       ...init,
       headers: {
         ...(init?.headers ?? {}),
@@ -183,8 +222,10 @@ export type FetchedSkillPreview = { skillMd: Buffer; files: string[] }
 // and request count share the import caps, while the rendered body uses the smaller IPC preview cap.
 const fetchSkillPreview = async (
   location: GitHubSkillLocation,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  options: GitHubFetchOptions = {}
 ): Promise<FetchedSkillPreview> => {
+  const flowFetch = createGitHubFlowFetch(fetchImpl, options)
   const rootPrefix = location.path ? `${location.path}/` : ''
   const files: string[] = []
   let skillMd: Buffer | undefined
@@ -195,7 +236,7 @@ const fetchSkillPreview = async (
     if (requests > SKILL_IMPORT_LIMITS.maxRequests) {
       throw new Error(`Skill preview exceeded ${SKILL_IMPORT_LIMITS.maxRequests} requests.`)
     }
-    return fetchImpl(url, init)
+    return flowFetch(url, init)
   }
 
   const walk = async (path: string, depth: number): Promise<void> => {
@@ -251,8 +292,10 @@ const fetchSkillPreview = async (
 // Recursively downloads every file under a skill directory via the public GitHub contents API.
 const fetchSkillFiles = async (
   location: GitHubSkillLocation,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  options: GitHubFetchOptions = {}
 ): Promise<FetchedSkillFile[]> => {
+  const flowFetch = createGitHubFlowFetch(fetchImpl, options)
   const rootPrefix = location.path ? `${location.path}/` : ''
 
   // Bound the recursive download so a huge (or maliciously deep) repository can't freeze or exhaust
@@ -269,7 +312,7 @@ const fetchSkillFiles = async (
     if (requests > SKILL_IMPORT_LIMITS.maxRequests) {
       throw new Error(`Skill import exceeded ${SKILL_IMPORT_LIMITS.maxRequests} requests.`)
     }
-    return fetchImpl(url, init)
+    return flowFetch(url, init)
   }
 
   const walk = async (path: string, depth: number): Promise<FetchedSkillFile[]> => {
@@ -366,7 +409,8 @@ const parseGitHubRepo = (input: string): GitHubRepoRef | null => {
 
 const searchGitHubSkillRepositories = async (
   input: string,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  options: GitHubFetchOptions = {}
 ): Promise<GitHubRepositorySearchView[]> => {
   const keywords = input.trim()
   const searchTerms = `${keywords} SKILL.md`
@@ -374,7 +418,7 @@ const searchGitHubSkillRepositories = async (
     throw new Error(GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE)
   }
   const query = `${searchTerms} in:name,description,topics,readme`
-  const response = await fetchImpl(
+  const response = await createGitHubFlowFetch(fetchImpl, options)(
     `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&per_page=10`,
     { headers: GITHUB_HEADERS }
   )
@@ -420,18 +464,20 @@ const searchGitHubSkillRepositories = async (
 // each. Resolve branch/tag refs to a commit first so a later preview and import read the same snapshot.
 const scanRepoForSkills = async (
   repo: GitHubRepoRef,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  options: GitHubFetchOptions = {}
 ): Promise<ScannedSkill[]> => {
+  const flowFetch = createGitHubFlowFetch(fetchImpl, options)
   let ref = repo.ref
   if (!ref) {
-    const meta = await fetchImpl(`https://api.github.com/repos/${repo.owner}/${repo.repo}`, {
+    const meta = await flowFetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}`, {
       headers: GITHUB_HEADERS
     })
     if (!meta.ok) throw githubRequestError(meta)
     ref = ((await meta.json()) as { default_branch?: string }).default_branch ?? 'main'
   }
 
-  const commitResponse = await fetchImpl(
+  const commitResponse = await flowFetch(
     `https://api.github.com/repos/${repo.owner}/${repo.repo}/commits/${encodeURIComponent(ref)}`,
     { headers: GITHUB_HEADERS }
   )
@@ -439,7 +485,7 @@ const scanRepoForSkills = async (
   const commitSha = ((await commitResponse.json()) as { sha?: string }).sha
   if (!commitSha) throw new Error('GitHub did not return a commit SHA for that ref.')
 
-  const treeResponse = await fetchImpl(
+  const treeResponse = await flowFetch(
     `https://api.github.com/repos/${repo.owner}/${repo.repo}/git/trees/${encodeURIComponent(commitSha)}?recursive=1`,
     { headers: GITHUB_HEADERS }
   )
@@ -474,6 +520,7 @@ const scanRepoForSkills = async (
 }
 
 export {
+  GITHUB_TOTAL_TIMEOUT_MS,
   parseGitHubSkillUrl,
   parseGitHubRepo,
   createAuthenticatedGitHubFetch,

@@ -1,6 +1,8 @@
 import type { ConnectorCredentials, ToolContext, ToolDescriptor } from './types'
 
 const DEFAULT_TIMEOUT_MS = 30_000
+const DEFAULT_TOTAL_TIMEOUT_MS = 120_000
+const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 
 // Transient-failure retry policy shared by every connector call. Public bio APIs (PubChem PUG-REST,
 // GTEx, NCBI) routinely return 429/5xx or a brief timeout under load; a couple of backed-off retries
@@ -55,10 +57,20 @@ function redactUrl(url: string): string {
 class ConnectorRequestTimeoutError extends Error {
   override readonly name = 'ConnectorRequestTimeoutError'
 
-  constructor(url: string, timeoutMs: number, attempts: number) {
+  constructor(url: string, timeoutMs: number, attempts: number, kind: 'idle' | 'total' = 'idle') {
     super(
-      `Connector request timed out after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} of ${timeoutMs}ms for ${redactUrl(url)}`
+      kind === 'total'
+        ? `Connector request exceeded the ${timeoutMs}ms total deadline after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} for ${redactUrl(url)}`
+        : `Connector request timed out after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} of ${timeoutMs}ms for ${redactUrl(url)}`
     )
+  }
+}
+
+class ConnectorResponseTooLargeError extends Error {
+  override readonly name = 'ConnectorResponseTooLargeError'
+
+  constructor(url: string, maxResponseBytes: number) {
+    super(`Connector response exceeded the ${maxResponseBytes}-byte limit for ${redactUrl(url)}`)
   }
 }
 
@@ -66,17 +78,23 @@ class ConnectorRequestTimeoutError extends Error {
 export class ParserEngine {
   private readonly fetchImpl: typeof fetch
   private readonly timeoutMs: number
+  private readonly totalTimeoutMs: number
+  private readonly maxResponseBytes: number
   private readonly retries: number
   private readonly backoffMs: number
 
   constructor(opts?: {
     fetchImpl?: typeof fetch
     timeoutMs?: number
+    totalTimeoutMs?: number
+    maxResponseBytes?: number
     retries?: number
     retryBackoffMs?: number
   }) {
     this.fetchImpl = opts?.fetchImpl ?? fetch
     this.timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.totalTimeoutMs = opts?.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS
+    this.maxResponseBytes = opts?.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES
     this.retries = opts?.retries ?? DEFAULT_RETRIES
     this.backoffMs = opts?.retryBackoffMs ?? DEFAULT_BACKOFF_MS
   }
@@ -91,7 +109,12 @@ export class ParserEngine {
     for (const key of descriptor.required ?? []) {
       if (args[key] == null) throw new Error(`missing required arg: ${key}`)
     }
-    const ctx = this.makeContext(credentials, signal)
+    const ctx = this.makeContext(
+      credentials,
+      signal,
+      descriptor.totalTimeoutMs ?? this.totalTimeoutMs,
+      descriptor.maxResponseBytes ?? this.maxResponseBytes
+    )
     if (descriptor.run) {
       const result = await descriptor.run(ctx, args)
       signal?.throwIfAborted()
@@ -105,7 +128,12 @@ export class ParserEngine {
     return descriptor.parse(raw, args)
   }
 
-  private makeContext(credentials: ConnectorCredentials, signal?: AbortSignal): ToolContext {
+  private makeContext(
+    credentials: ConnectorCredentials,
+    signal: AbortSignal | undefined,
+    totalTimeoutMs: number,
+    maxResponseBytes: number
+  ): ToolContext {
     // Delay before the next attempt: honour a numeric Retry-After (seconds, capped), else exponential
     // backoff with jitter off the configured base.
     const nextDelay = (attempt: number, retryAfter: string | null): number => {
@@ -121,15 +149,17 @@ export class ParserEngine {
     ): Promise<{ response: Response; bodyText?: string }> => {
       for (let attempt = 0; ; attempt++) {
         const controller = new AbortController()
-        let timer: ReturnType<typeof setTimeout> | undefined
-        let timedOut = false
-        const armTimeout = (): void => {
-          if (timer) clearTimeout(timer)
-          timer = setTimeout(() => {
-            timedOut = true
-            controller.abort()
-          }, this.timeoutMs)
+        let idleTimer: ReturnType<typeof setTimeout> | undefined
+        let timedOut: 'idle' | 'total' | undefined
+        const abortForTimeout = (kind: 'idle' | 'total'): void => {
+          timedOut ??= kind
+          controller.abort()
         }
+        const armTimeout = (): void => {
+          if (idleTimer) clearTimeout(idleTimer)
+          idleTimer = setTimeout(() => abortForTimeout('idle'), this.timeoutMs)
+        }
+        const totalTimer = setTimeout(() => abortForTimeout('total'), totalTimeoutMs)
         const requestSignal = signal
           ? AbortSignal.any([controller.signal, signal])
           : controller.signal
@@ -148,12 +178,19 @@ export class ParserEngine {
             const reader = res.body.getReader()
             const decoder = new TextDecoder()
             const chunks: string[] = []
+            let responseBytes = 0
             try {
               armTimeout()
               for (;;) {
                 const chunk = await reader.read()
                 if (chunk.done) break
                 if (chunk.value.byteLength === 0) continue
+                responseBytes += chunk.value.byteLength
+                if (responseBytes > maxResponseBytes) {
+                  const error = new ConnectorResponseTooLargeError(url, maxResponseBytes)
+                  controller.abort(error)
+                  throw error
+                }
                 chunks.push(decoder.decode(chunk.value, { stream: true }))
                 armTimeout()
               }
@@ -167,17 +204,24 @@ export class ParserEngine {
           caught = true
           failure = err
         } finally {
-          if (timer) clearTimeout(timer)
+          if (idleTimer) clearTimeout(idleTimer)
+          if (totalTimer) clearTimeout(totalTimer)
         }
         if (caught) {
           if (signal?.aborted) throw failure
+          if (failure instanceof ConnectorResponseTooLargeError) throw failure
           // Network failure or timeout abort — retry a bounded number of times, then give up.
           if (attempt < this.retries) {
             await sleep(nextDelay(attempt, null), signal)
             continue
           }
           if (timedOut) {
-            throw new ConnectorRequestTimeoutError(url, this.timeoutMs, attempt + 1)
+            throw new ConnectorRequestTimeoutError(
+              url,
+              timedOut === 'total' ? totalTimeoutMs : this.timeoutMs,
+              attempt + 1,
+              timedOut
+            )
           }
           throw failure
         }

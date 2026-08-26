@@ -210,6 +210,25 @@ describe('AcpElicitationOwner', () => {
     expect(onProjection).not.toHaveBeenCalled()
   })
 
+  it('does not rehydrate a detached choice with duplicate field identities', () => {
+    const owner = new AcpElicitationOwner({ onProjection: vi.fn() })
+
+    expect(
+      owner.restoreDetached({
+        requestId: 'choice-1',
+        sessionId: 'app-session-1',
+        toolCallId: 'tool-choice-1',
+        message: 'Choose an approach',
+        fields: [
+          { id: 'answer', label: 'First answer', kind: 'text' },
+          { id: 'answer', label: 'Second answer', kind: 'text' }
+        ],
+        durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+      })
+    ).toBeUndefined()
+    expect(owner.getPendingRequests()).toEqual([])
+  })
+
   it('parks a form request and resumes it with validated typed content', async () => {
     const onProjection = vi.fn()
     const owner = new AcpElicitationOwner({
@@ -300,6 +319,55 @@ describe('AcpElicitationOwner', () => {
         ]
       })
     )
+  })
+
+  it('does not expose schema defaults that Main would reject as submitted values', () => {
+    let sequence = 0
+    const owner = new AcpElicitationOwner({
+      createRequestId: () => `elicitation-${++sequence}`,
+      onProjection: vi.fn()
+    })
+    const properties: ElicitationSchema['properties'][] = [
+      {
+        value: {
+          type: 'string',
+          enum: ['minimal', 'expanded'],
+          default: 'unsupported'
+        }
+      },
+      { value: { type: 'integer', minimum: 1, maximum: 3, default: 1.5 } },
+      { value: { type: 'number', minimum: 1, maximum: 3, default: 4 } },
+      { value: { type: 'string', format: 'email', default: 'not-an-email' } },
+      {
+        value: {
+          type: 'array',
+          items: { type: 'string', enum: ['alpha', 'beta'] },
+          default: ['unsupported']
+        }
+      }
+    ]
+
+    for (const property of properties) {
+      void owner.request(
+        {
+          mode: 'form',
+          sessionId: 'agent-session-1',
+          toolCallId: `tool-ask-${sequence + 1}`,
+          message: 'Choose a value',
+          requestedSchema: { type: 'object', properties: property }
+        },
+        { sessionId: 'app-session-1' }
+      )
+    }
+
+    expect(owner.getPendingRequests().map((request) => request.fields[0].defaultValue)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined
+    ])
+    owner.dispose()
   })
 
   it('cancels only requests owned by the selected session', async () => {

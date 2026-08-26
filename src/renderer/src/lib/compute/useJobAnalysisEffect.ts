@@ -41,6 +41,7 @@ export const useJobAnalysisEffect = ({
     if (!enabled) return
 
     let isActive = true
+    let pendingScanRetry: ReturnType<typeof setTimeout> | undefined
     const turnEndUnsubscribes = new Set<() => void>()
     const trigger = createJobAnalysisTrigger({
       isSessionInFlight: (sessionId) => {
@@ -59,8 +60,14 @@ export const useJobAnalysisEffect = ({
         if (!isActive) return
         if (typeof window.api?.compute?.jobsMarkConsumed === 'function') {
           await window.api.compute.jobsMarkConsumed(sessionId, jobIds)
-          // Refresh the in-memory job store so CompletedJobCard re-renders with consumed state.
-          void useSessionJobStore.getState().hydrate(sessionId)
+          const consumedAt = Date.now()
+          const jobStore = useSessionJobStore.getState()
+          for (const jobId of jobIds) {
+            const job = jobStore.jobsById.get(jobId)
+            if (job?.session_id === sessionId) {
+              jobStore.applyUpdate({ ...job, notification_consumed_at: consumedAt })
+            }
+          }
         }
       },
       onTurnEnd: (sessionId, callback) => {
@@ -93,14 +100,28 @@ export const useJobAnalysisEffect = ({
       }
     }
 
-    const scanPendingJobs = (sessionId: string | undefined): void => {
+    const scanPendingJobs = (sessionId: string | undefined, retryDelay = 1_000): void => {
       if (!sessionId) return
       if (typeof window.api?.compute?.jobsPendingNotification !== 'function') return
+      if (useSessionJobStore.getState().hydratedSessionId !== sessionId) return
+      clearTimeout(pendingScanRetry)
+      pendingScanRetry = undefined
 
-      void window.api.compute.jobsPendingNotification(sessionId).then((jobs) => {
-        if (!isActive) return
-        for (const job of jobs) trigger.onJobDone(job)
-      })
+      void window.api.compute
+        .jobsPendingNotification(sessionId)
+        .then((jobs) => {
+          if (!isActive) return
+          const jobStore = useSessionJobStore.getState()
+          for (const job of jobs) jobStore.applyUpdate(job)
+        })
+        .catch((error) => {
+          if (!isActive || useSessionJobStore.getState().hydratedSessionId !== sessionId) return
+          console.warn('[compute] analysis-turn:pending-scan-failed', error)
+          pendingScanRetry = setTimeout(() => {
+            pendingScanRetry = undefined
+            scanPendingJobs(sessionId, Math.min(retryDelay * 2, 30_000))
+          }, retryDelay)
+        })
     }
 
     const initialState = useSessionJobStore.getState()
@@ -116,6 +137,7 @@ export const useJobAnalysisEffect = ({
 
     return () => {
       isActive = false
+      clearTimeout(pendingScanRetry)
       unsubscribeJobs()
       for (const unsubscribe of turnEndUnsubscribes) unsubscribe()
       turnEndUnsubscribes.clear()

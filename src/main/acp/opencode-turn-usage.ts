@@ -1,4 +1,5 @@
 import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 import type { ResolvedAgentBackend } from '../agent-framework'
 
 export type OpenCodeUsageSnapshot = {
@@ -89,6 +90,7 @@ export const fetchOpenCodeUsageSnapshot = async (
 export type OpenCodeTurnUsageDiff = Readonly<{
   turnUsage: AcpTurnTokenUsage
   lastModelStepUsage: AcpModelStepTokenUsage
+  modelCalls: ReadonlyArray<AcpProviderModelCallUsage & { sourceInvocationId: string }>
 }>
 
 export const diffOpenCodeTurnUsage = (
@@ -108,6 +110,7 @@ export const diffOpenCodeTurnUsage = (
   let cachedWriteTokens = 0
   let hasCacheBreakdown = true
   let outputTokens = 0
+  const modelCalls: Array<AcpProviderModelCallUsage & { sourceInvocationId: string }> = []
   for (const messageId of newMessageIds) {
     const usage = after.usageByMessageId.get(messageId)
     // Never publish a partial sum when OpenCode changes or omits one new assistant record.
@@ -130,6 +133,16 @@ export const diffOpenCodeTurnUsage = (
     ) {
       return undefined
     }
+    const contextUsedTokens =
+      usage.cachedReadTokens === undefined ? undefined : usage.inputTokens + usage.cachedReadTokens
+    if (contextUsedTokens !== undefined && !Number.isSafeInteger(contextUsedTokens)) {
+      return undefined
+    }
+    modelCalls.push({
+      sourceInvocationId: messageId,
+      ...usage,
+      ...(contextUsedTokens === undefined ? {} : { contextUsedTokens })
+    })
   }
 
   const lastModelStepUsage = after.usageByMessageId.get(newMessageIds.at(-1)!)
@@ -143,7 +156,8 @@ export const diffOpenCodeTurnUsage = (
       outputTokens,
       turnCount: newMessageIds.length
     },
-    lastModelStepUsage: { ...lastModelStepUsage }
+    lastModelStepUsage: { ...lastModelStepUsage },
+    modelCalls
   }
 }
 

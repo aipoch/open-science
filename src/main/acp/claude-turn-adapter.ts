@@ -1,6 +1,10 @@
 import { toAcpTurnTokenUsage } from '../../shared/acp'
-import type { AcpModelStepTokenUsage } from '../../shared/acp'
-import type { AcpProviderTurnAdapter, AcpProviderTurnResult } from './provider-turn-adapter'
+import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp'
+import type {
+  AcpProviderModelCallUsage,
+  AcpProviderTurnAdapter,
+  AcpProviderTurnResult
+} from './provider-turn-adapter'
 
 // Unknown future origins stay eligible so a new user-driven lane does not silently under-report
 // model turns before Open Science knows its name.
@@ -14,7 +18,7 @@ const CLAUDE_AUTONOMOUS_RESULT_ORIGINS = new Set([
 
 const toClaudeModelStepUsage = (
   message: Record<string, unknown>
-): AcpModelStepTokenUsage | undefined => {
+): AcpProviderModelCallUsage | undefined => {
   if (
     message.parent_tool_use_id !== null ||
     typeof message.message !== 'object' ||
@@ -28,12 +32,56 @@ const toClaudeModelStepUsage = (
     return undefined
   }
   const usage = inner.usage as Record<string, unknown>
-  return toAcpTurnTokenUsage({
+  const modelUsage = toAcpTurnTokenUsage({
     inputTokens: usage.input_tokens,
     cachedReadTokens: usage.cache_read_input_tokens ?? 0,
     cachedWriteTokens: usage.cache_creation_input_tokens ?? 0,
     outputTokens: usage.output_tokens
   })
+  if (!modelUsage) return undefined
+  return {
+    ...modelUsage,
+    ...(typeof inner.id === 'string' && inner.id.length > 0 ? { sourceInvocationId: inner.id } : {})
+  }
+}
+
+const hasExactClaudeCallCoverage = (
+  calls: readonly AcpProviderModelCallUsage[],
+  count: number,
+  turnUsage: AcpTurnTokenUsage | undefined
+): boolean => {
+  if (!turnUsage || calls.length !== count) return false
+  const totals = calls.reduce<{
+    inputTokens: number
+    cacheTokens: number
+    cachedReadTokens: number
+    cachedWriteTokens: number
+    outputTokens: number
+  }>(
+    (sum, call) => ({
+      inputTokens: sum.inputTokens + call.inputTokens,
+      cacheTokens: sum.cacheTokens + call.cacheTokens,
+      cachedReadTokens: sum.cachedReadTokens + (call.cachedReadTokens ?? 0),
+      cachedWriteTokens: sum.cachedWriteTokens + (call.cachedWriteTokens ?? 0),
+      outputTokens: sum.outputTokens + call.outputTokens
+    }),
+    {
+      inputTokens: 0,
+      cacheTokens: 0,
+      cachedReadTokens: 0,
+      cachedWriteTokens: 0,
+      outputTokens: 0
+    }
+  )
+  return (
+    totals.inputTokens === turnUsage.inputTokens &&
+    totals.cacheTokens === turnUsage.cacheTokens &&
+    totals.outputTokens === turnUsage.outputTokens &&
+    (turnUsage.cachedReadTokens === undefined ||
+      totals.cachedReadTokens === turnUsage.cachedReadTokens) &&
+    (turnUsage.cachedWriteTokens === undefined ||
+      totals.cachedWriteTokens === turnUsage.cachedWriteTokens)
+  )
 }
 
 // ARD-24 owns Runtime probe selection and lifecycle wiring; this leaf only provides the
@@ -42,11 +90,13 @@ export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
   begin: ({ providerSessionId }) => {
     let modelTurnCount = 0
     let lastModelStepUsage: AcpModelStepTokenUsage | undefined
+    let modelCalls: AcpProviderModelCallUsage[] = []
     let closed = false
     const close = (): void => {
       closed = true
       modelTurnCount = 0
       lastModelStepUsage = undefined
+      modelCalls = []
     }
 
     return {
@@ -65,7 +115,11 @@ export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
 
         const message = params.message as Record<string, unknown>
         if (message.type === 'assistant') {
-          lastModelStepUsage = toClaudeModelStepUsage(message) ?? lastModelStepUsage
+          const modelCall = toClaudeModelStepUsage(message)
+          if (modelCall) {
+            lastModelStepUsage = modelCall
+            modelCalls.push(modelCall)
+          }
           return
         }
         if (message.type !== 'result') return
@@ -83,12 +137,16 @@ export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
         if (closed) return {}
         const finalModelTurnCount = modelTurnCount
         const finalLastModelStepUsage = lastModelStepUsage
+        const finalModelCalls = modelCalls
         close()
         const turnUsage = toAcpTurnTokenUsage(response.usage)
         const result: AcpProviderTurnResult = {
           ...(turnUsage ? { turnUsage } : {}),
           ...(finalModelTurnCount > 0 ? { modelTurnCount: finalModelTurnCount } : {}),
-          ...(finalLastModelStepUsage ? { lastModelStepUsage: finalLastModelStepUsage } : {})
+          ...(finalLastModelStepUsage ? { lastModelStepUsage: finalLastModelStepUsage } : {}),
+          ...(hasExactClaudeCallCoverage(finalModelCalls, finalModelTurnCount, turnUsage)
+            ? { modelCalls: finalModelCalls }
+            : {})
         }
         return result
       },

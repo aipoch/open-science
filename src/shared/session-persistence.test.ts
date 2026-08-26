@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
+import { MAX_ELICITATION_OPTIONS_PER_FIELD } from './elicitation'
 
 import {
   SESSION_FILE_VERSION,
@@ -16,6 +17,7 @@ import {
   sanitizeMessageImages,
   sanitizeSessionRuntimeContext,
   sanitizeToolActivity,
+  type PersistedChatMessage,
   type PersistedChatSession,
   type PersistedSideChat,
   type PersistedToolActivity,
@@ -254,6 +256,45 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
 })
 
 describe('conversation graph materialization diagnostics', () => {
+  it('preserves a conversation written by a not-yet-known Agent framework', () => {
+    const messages: PersistedChatMessage[] = [
+      {
+        id: 'message-1',
+        role: 'user',
+        content: 'Persist me',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    const conversationGraph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    conversationGraph.runtimeSegments[0].frameworkId = 'future-acp'
+
+    const decoded = decodeSessionFile({
+      version: SESSION_FILE_VERSION,
+      session: {
+        ...createSessionWithActivity(undefined),
+        messages,
+        conversationGraph
+      }
+    })
+
+    expect(decoded).toMatchObject({
+      status: 'ok',
+      session: {
+        conversationGraph: {
+          runtimeSegments: [{ frameworkId: 'future-acp' }]
+        }
+      }
+    })
+  })
+
   it('writes a canonical graph while retaining flat messages as the active projection', () => {
     const session: PersistedChatSession = {
       id: 'session-1',
@@ -1129,8 +1170,97 @@ describe('turn token usage persistence', () => {
             outputTokens: 90,
             turnCount: 3
           },
+          modelCallUsage: [
+            {
+              id: 'call-1',
+              index: 0,
+              sourceInvocationId: 'provider-call-1',
+              inputTokens: 4_000,
+              cacheTokens: 200,
+              outputTokens: 30,
+              contextUsedTokens: 4_200,
+              contextWindowSize: 128_000
+            },
+            {
+              id: 'call-2',
+              index: 1,
+              inputTokens: 4_100,
+              cacheTokens: 220,
+              outputTokens: 30,
+              contextUsedTokens: 4_320,
+              contextWindowSize: 128_000
+            },
+            {
+              id: 'call-3',
+              index: 2,
+              inputTokens: 4_245,
+              cacheTokens: 258,
+              outputTokens: 30,
+              contextUsedTokens: 4_503,
+              contextWindowSize: 128_000
+            }
+          ],
           createdAt: 1,
           updatedAt: 1
+        },
+        {
+          id: 'message-invalid-call-window',
+          role: 'agent',
+          content: 'Done with malformed call metadata',
+          status: 'complete',
+          eventIds: [],
+          turnUsage: { inputTokens: 4, cacheTokens: 2, outputTokens: 3, turnCount: 1 },
+          modelCallUsage: [
+            {
+              id: 'call-invalid-window',
+              index: 0,
+              inputTokens: 4,
+              cacheTokens: 2,
+              outputTokens: 3,
+              contextUsedTokens: 6,
+              contextWindowSize: 0
+            }
+          ],
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'message-duplicate-call-id-a',
+          role: 'agent',
+          content: 'Done with duplicate call identity',
+          status: 'complete',
+          eventIds: [],
+          turnUsage: { inputTokens: 1, cacheTokens: 0, outputTokens: 1, turnCount: 1 },
+          modelCallUsage: [
+            {
+              id: 'duplicate-call',
+              index: 0,
+              inputTokens: 1,
+              cacheTokens: 0,
+              outputTokens: 1
+            }
+          ],
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'message-duplicate-call-id-b',
+          role: 'agent',
+          content: 'Also done with duplicate call identity',
+          status: 'complete',
+          eventIds: [],
+          turnUsage: { inputTokens: 2, cacheTokens: 0, outputTokens: 1, turnCount: 1 },
+          modelCallUsage: [
+            {
+              id: 'duplicate-call',
+              index: 0,
+              inputTokens: 2,
+              cacheTokens: 0,
+              outputTokens: 1
+            }
+          ],
+          createdAt: 2,
+          updatedAt: 2
         },
         {
           id: 'message-invalid',
@@ -1166,9 +1296,51 @@ describe('turn token usage persistence', () => {
       outputTokens: 90,
       turnCount: 3
     })
-    expect(restored?.messages[1].turnUsage).toBeUndefined()
-    expect(restored?.messages[1].turnUsageUnavailable).toBe(true)
-    expect(restored?.messages[2].turnUsageUnavailable).toBeUndefined()
+    expect(restored?.messages[0].modelCallUsage).toEqual([
+      {
+        id: 'call-1',
+        index: 0,
+        sourceInvocationId: 'provider-call-1',
+        inputTokens: 4_000,
+        cacheTokens: 200,
+        outputTokens: 30,
+        contextUsedTokens: 4_200,
+        contextWindowSize: 128_000
+      },
+      {
+        id: 'call-2',
+        index: 1,
+        inputTokens: 4_100,
+        cacheTokens: 220,
+        outputTokens: 30,
+        contextUsedTokens: 4_320,
+        contextWindowSize: 128_000
+      },
+      {
+        id: 'call-3',
+        index: 2,
+        inputTokens: 4_245,
+        cacheTokens: 258,
+        outputTokens: 30,
+        contextUsedTokens: 4_503,
+        contextWindowSize: 128_000
+      }
+    ])
+    expect(restored?.messages[1].modelCallUsage).toEqual([
+      {
+        id: 'call-invalid-window',
+        index: 0,
+        inputTokens: 4,
+        cacheTokens: 2,
+        outputTokens: 3,
+        contextUsedTokens: 6
+      }
+    ])
+    expect(restored?.messages[2].modelCallUsage).toBeUndefined()
+    expect(restored?.messages[3].modelCallUsage).toBeUndefined()
+    expect(restored?.messages[4].turnUsage).toBeUndefined()
+    expect(restored?.messages[4].turnUsageUnavailable).toBe(true)
+    expect(restored?.messages[5].turnUsageUnavailable).toBeUndefined()
   })
 })
 
@@ -1349,6 +1521,120 @@ describe('sanitizeToolActivity', () => {
       state: 'answered',
       answers: [{ fieldId: 'question_0', value: 'minimal' }],
       respondedAt: 42
+    })
+  })
+
+  it.each([
+    [
+      'duplicate field identities',
+      [
+        { id: 'answer', label: 'First answer', kind: 'text' },
+        { id: 'answer', label: 'Second answer', kind: 'text' }
+      ]
+    ],
+    [
+      'contradictory field constraints',
+      [{ id: 'answer', label: 'Answer', kind: 'text', minLength: 2, maxLength: 1 }]
+    ]
+  ])('drops a persisted elicitation with %s', (_label, fields) => {
+    const activity = sanitizeToolActivity({
+      id: 'tool-invalid-elicitation',
+      status: 'in_progress',
+      elicitation: {
+        message: 'Provide an answer',
+        fields,
+        state: 'pending'
+      }
+    })
+
+    expect(activity).not.toHaveProperty('elicitation')
+  })
+
+  it('rejects an oversized option list before reading its entries', () => {
+    const options = new Array(MAX_ELICITATION_OPTIONS_PER_FIELD + 1)
+    Object.defineProperty(options, 0, {
+      get: () => {
+        throw new Error('oversized options should be rejected before entry access')
+      }
+    })
+
+    expect(() =>
+      sanitizeToolActivity({
+        id: 'tool-oversized-options',
+        status: 'in_progress',
+        elicitation: {
+          message: 'Choose an option',
+          fields: [{ id: 'answer', label: 'Answer', kind: 'single-select', options }],
+          state: 'pending'
+        }
+      })
+    ).not.toThrow()
+  })
+
+  it('removes an invalid persisted default without discarding the elicitation', () => {
+    const activity = sanitizeToolActivity({
+      id: 'tool-invalid-default',
+      status: 'in_progress',
+      elicitation: {
+        message: 'Choose the number of attempts',
+        fields: [
+          {
+            id: 'attempts',
+            label: 'Attempts',
+            kind: 'integer',
+            minimum: 1,
+            maximum: 3,
+            defaultValue: '2'
+          }
+        ],
+        state: 'pending'
+      }
+    })
+
+    expect(activity?.elicitation?.fields).toEqual([
+      {
+        id: 'attempts',
+        label: 'Attempts',
+        kind: 'integer',
+        minimum: 1,
+        maximum: 3
+      }
+    ])
+  })
+
+  it('preserves the authorization origin in durable elicitation provenance', () => {
+    const activity = sanitizeToolActivity({
+      id: 'tool-durable-choice',
+      status: 'in_progress',
+      elicitation: {
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'approach',
+            label: 'Approach',
+            kind: 'single-select',
+            options: [
+              { value: 'minimal', label: 'Minimal' },
+              { value: 'expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        state: 'pending',
+        durable: {
+          kind: 'agent-user-choice',
+          requestId: 'choice-1',
+          promptMessageId: 'synthetic-continuation',
+          provenanceContext: {
+            promptMessageId: 'synthetic-continuation',
+            originMessageId: 'authorizing-user-message'
+          }
+        }
+      }
+    })
+
+    expect(activity?.elicitation?.durable?.provenanceContext).toEqual({
+      promptMessageId: 'synthetic-continuation',
+      originMessageId: 'authorizing-user-message'
     })
   })
 
@@ -2212,6 +2498,11 @@ describe('normalizeSessionFile with activities', () => {
       cause: 'app-restart',
       promptMessageId: 'prompt-1'
     })
+    expect(restored).toMatchObject({
+      status: 'error',
+      error: 'Session was interrupted before the app closed.'
+    })
+    expect(restored?.activeRun).toBeUndefined()
   })
 
   it('hoists legacy Side chat relays without changing the Session envelope version', () => {
@@ -2710,6 +3001,231 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.conversationGraph?.messages).toEqual([
       expect.objectContaining({ id: 'prompt-1', interrupted: true })
     ])
+    expect(restored?.resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId: 'prompt-1'
+    })
+  })
+
+  it('discards stale app-restart recovery after the prompt has a successful completed response', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Completed session',
+      cwd: '/workspace',
+      status: 'idle',
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: 'prompt-1'
+      },
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Complete the task',
+          status: 'complete',
+          interrupted: true,
+          eventIds: [],
+          createdAt: 5,
+          updatedAt: 5
+        },
+        {
+          id: 'response-1',
+          role: 'agent',
+          content: 'Task completed.',
+          status: 'complete',
+          responseToMessageId: 'prompt-1',
+          eventIds: [],
+          createdAt: 6,
+          completedAt: 7,
+          updatedAt: 7
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 7
+    })
+
+    expect(restored).toMatchObject({ status: 'idle' })
+    expect(restored?.resumeRecovery).toBeUndefined()
+    expect(restored?.error).toBeUndefined()
+    expect(restored?.messages[0]).toMatchObject({ id: 'prompt-1', interrupted: true })
+  })
+
+  it('discards stale recovery when the canonical active Branch has a completed response', () => {
+    const messages: PersistedChatMessage[] = [
+      {
+        id: 'prompt-1',
+        role: 'user',
+        content: 'Complete the task',
+        status: 'complete',
+        interrupted: true,
+        eventIds: [],
+        createdAt: 5,
+        updatedAt: 5
+      },
+      {
+        id: 'response-1',
+        role: 'agent',
+        content: 'Task completed.',
+        status: 'complete',
+        responseToMessageId: 'prompt-1',
+        eventIds: [],
+        createdAt: 6,
+        completedAt: 7,
+        updatedAt: 7
+      }
+    ]
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Completed session',
+      cwd: '/workspace',
+      status: 'idle',
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: 'prompt-1'
+      },
+      messages,
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages,
+        createdAt: 1,
+        updatedAt: 7
+      }),
+      createdAt: 1,
+      updatedAt: 7
+    })
+
+    expect(restored?.resumeRecovery).toBeUndefined()
+  })
+
+  it('keeps recovery when a completed response exists only on an abandoned Branch', () => {
+    const prompt: PersistedChatMessage = {
+      id: 'prompt-1',
+      role: 'user',
+      content: 'Complete the task',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 5,
+      updatedAt: 5
+    }
+    const abandonedResponse: PersistedChatMessage = {
+      id: 'response-abandoned',
+      role: 'agent',
+      content: 'Abandoned response',
+      status: 'complete',
+      responseToMessageId: prompt.id,
+      eventIds: [],
+      createdAt: 6,
+      completedAt: 7,
+      updatedAt: 7
+    }
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [prompt],
+      createdAt: 1,
+      updatedAt: 7
+    })
+    const abandonedBranchId = 'message-branch-abandoned'
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Interrupted active branch',
+      cwd: '/workspace',
+      status: 'idle',
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: prompt.id
+      },
+      messages: [prompt, abandonedResponse],
+      conversationGraph: {
+        ...graph,
+        branches: [
+          ...graph.branches,
+          {
+            id: abandonedBranchId,
+            agentFrameId: graph.rootFrameId,
+            parentBranchId: graph.branches[0].id,
+            headMessageId: abandonedResponse.id,
+            createdAt: 6,
+            updatedAt: 7
+          }
+        ],
+        messages: [
+          ...graph.messages,
+          {
+            ...abandonedResponse,
+            agentFrameId: graph.rootFrameId,
+            introducedOnBranchId: abandonedBranchId
+          }
+        ]
+      },
+      createdAt: 1,
+      updatedAt: 7
+    })
+
+    expect(restored?.messages.map(({ id }) => id)).toEqual([prompt.id])
+    expect(restored?.resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId: prompt.id
+    })
+    expect(restored?.messages[0]).toMatchObject({ id: prompt.id, interrupted: true })
+  })
+
+  it('keeps app-restart recovery when the prompt only has a failed response', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Failed session',
+      cwd: '/workspace',
+      status: 'idle',
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: 'prompt-1'
+      },
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Complete the task',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 5,
+          updatedAt: 5
+        },
+        {
+          id: 'response-0',
+          role: 'agent',
+          content: 'Earlier completed response',
+          status: 'complete',
+          responseToMessageId: 'prompt-1',
+          eventIds: [],
+          createdAt: 6,
+          completedAt: 6,
+          updatedAt: 6
+        },
+        {
+          id: 'response-1',
+          role: 'agent',
+          content: 'Failed response',
+          status: 'error',
+          responseToMessageId: 'prompt-1',
+          eventIds: [],
+          createdAt: 7,
+          failedAt: 7,
+          updatedAt: 7
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 7
+    })
+
     expect(restored?.resumeRecovery).toEqual({
       kind: 'resume-required',
       cause: 'app-restart',
@@ -3255,5 +3771,244 @@ describe('normalizeSessionFile with activities', () => {
     expect(reportableFailure?.errorReportable).toBeUndefined()
     expect(legacy?.errorReportable).toBeUndefined()
     expect(noError?.errorReportable).toBeUndefined()
+  })
+
+  it('round-trips valid Session details and a bounded generation attempt', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Analyze the observations',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      description: 'A concise description.',
+      sessionDetailsSource: 'generated',
+      sessionDetailsGeneration: {
+        status: 'succeeded',
+        sourceMessageId: 'message-1',
+        requestId: 'request-1',
+        queuedAt: 10,
+        startedAt: 11,
+        completedAt: 12,
+        frameworkId: 'codex',
+        providerId: 'provider-1',
+        model: 'gpt-test',
+        reasoningEffort: 'low',
+        usage: { inputTokens: 3, cacheTokens: 2, outputTokens: 1 }
+      }
+    })
+
+    expect(restored).toMatchObject({
+      description: 'A concise description.',
+      sessionDetailsSource: 'generated',
+      sessionDetailsGeneration: {
+        status: 'succeeded',
+        sourceMessageId: 'message-1',
+        usage: { inputTokens: 3, cacheTokens: 2, outputTokens: 1 }
+      }
+    })
+    expect(restored?.conversationGraph).toBeDefined()
+  })
+
+  it('keeps a legacy Session without a description empty instead of deriving from its message', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Do not reuse this as a description',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.description).toBeUndefined()
+  })
+
+  it.each(['queued', 'running'] as const)(
+    'drops a %s record when flat messages match but the active graph source differs',
+    (status) => {
+      const flatMessage = {
+        id: 'flat-source',
+        role: 'user' as const,
+        content: 'Abandoned Branch prompt',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const activeMessage = {
+        ...flatMessage,
+        id: 'active-source',
+        content: 'Active Branch prompt'
+      }
+      const restored = normalizeSessionFile({
+        ...createSessionWithActivity(undefined),
+        messages: [flatMessage],
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'session-1',
+          messages: [activeMessage],
+          frameworkId: 'codex',
+          createdAt: 1,
+          updatedAt: 1
+        }),
+        sessionDetailsGenerationEligible: true,
+        sessionDetailsGeneration: {
+          status,
+          sourceMessageId: 'flat-source',
+          requestId: `request-${status}`,
+          queuedAt: 10,
+          ...(status === 'running'
+            ? {
+                startedAt: 11,
+                frameworkId: 'codex',
+                model: 'model-1',
+                reasoningEffort: 'low'
+              }
+            : {})
+        }
+      })
+
+      expect(restored?.messages[0]?.id).toBe('active-source')
+      expect(restored?.sessionDetailsGeneration).toBeUndefined()
+      expect(restored?.sessionDetailsGenerationEligible).toBeUndefined()
+    }
+  )
+
+  it('preserves a generation record bound to the active graph first qualifying message', () => {
+    const activeMessage = {
+      id: 'active-source',
+      role: 'user' as const,
+      content: 'Active Branch prompt',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [{ ...activeMessage, id: 'compatibility-flat-source' }],
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [activeMessage],
+        frameworkId: 'codex',
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      sessionDetailsGeneration: {
+        status: 'queued',
+        sourceMessageId: 'active-source',
+        requestId: 'request-active',
+        queuedAt: 10
+      }
+    })
+
+    expect(restored?.messages[0]?.id).toBe('active-source')
+    expect(restored?.sessionDetailsGeneration).toMatchObject({
+      status: 'queued',
+      sourceMessageId: 'active-source'
+    })
+  })
+
+  it('drops generation authority and eligibility from a Branch Session', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      branchSource: { sessionId: 'parent-session', headMessageId: 'message-1' },
+      sessionDetailsGenerationEligible: true,
+      sessionDetailsGeneration: {
+        status: 'queued',
+        sourceMessageId: 'message-1',
+        requestId: 'request-1',
+        queuedAt: 10
+      }
+    })
+
+    expect(restored?.branchSource).toBeDefined()
+    expect(restored?.sessionDetailsGeneration).toBeUndefined()
+    expect(restored?.sessionDetailsGenerationEligible).toBeUndefined()
+  })
+
+  it('drops a non-Branch generation record that is not bound to the first qualifying message', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'First qualifying message',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      sessionDetailsGenerationEligible: true,
+      sessionDetailsGeneration: {
+        status: 'queued',
+        sourceMessageId: 'not-the-first-message',
+        requestId: 'request-mismatch',
+        queuedAt: 10
+      }
+    })
+
+    expect(restored?.branchSource).toBeUndefined()
+    expect(restored?.sessionDetailsGeneration).toBeUndefined()
+    expect(restored?.sessionDetailsGenerationEligible).toBeUndefined()
+  })
+
+  it.each([
+    {
+      status: 'queued',
+      sourceMessageId: 'message-1',
+      requestId: 'request-1',
+      queuedAt: 10,
+      model: 'forbidden-before-admission'
+    },
+    {
+      status: 'running',
+      sourceMessageId: 'message-1',
+      requestId: 'request-1',
+      queuedAt: 10,
+      startedAt: 11,
+      frameworkId: 'codex',
+      model: 'gpt-test'
+    },
+    {
+      status: 'succeeded',
+      sourceMessageId: 'message-1',
+      requestId: 'request-1',
+      queuedAt: 10,
+      startedAt: 11,
+      completedAt: 12,
+      frameworkId: 'codex',
+      model: 'gpt-test',
+      reasoningEffort: 'low',
+      usage: { inputTokens: -1, cacheTokens: 0, outputTokens: 1 }
+    },
+    {
+      status: 'disabled',
+      sourceMessageId: 'message-1',
+      requestId: 'request-1',
+      queuedAt: 10,
+      completedAt: 12,
+      usageUnavailable: true
+    }
+  ])('discards malformed generation state %# instead of partially trusting it', (attempt) => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      sessionDetailsGeneration: attempt
+    })
+
+    expect(restored?.sessionDetailsGeneration).toBeUndefined()
   })
 })

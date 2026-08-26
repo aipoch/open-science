@@ -312,6 +312,74 @@ describe('mcpCall RPC', () => {
 })
 
 describe('computeCall RPC', () => {
+  it.each([
+    {
+      operation: 'call_command',
+      params: { op: 'call_command', provider_id: 'ssh:cluster', cmd: 'true', intent: 'test' },
+      serviceMethod: 'callCommand',
+      signalIndex: 6
+    },
+    {
+      operation: 'download',
+      params: { op: 'download', provider_id: 'ssh:cluster', remote_path: '/tmp/result.csv' },
+      serviceMethod: 'download',
+      signalIndex: 4
+    },
+    {
+      operation: 'submit_job',
+      params: {
+        op: 'submit_job',
+        provider_id: 'ssh:cluster',
+        intent: 'test',
+        command: 'true'
+      },
+      serviceMethod: 'submitJob',
+      signalIndex: 5
+    }
+  ] as const)(
+    'aborts a pending $operation when the RPC client disconnects',
+    async ({ params, serviceMethod, signalIndex }) => {
+      let observedSignal: AbortSignal | undefined
+      let markCallStarted!: () => void
+      let releaseCall!: (value: Record<string, never>) => void
+      const callStarted = new Promise<void>((resolve) => {
+        markCallStarted = resolve
+      })
+      const callPending = new Promise<Record<string, never>>((resolve) => {
+        releaseCall = resolve
+      })
+      const fakeCompute = {
+        [serviceMethod]: async (...args: unknown[]) => {
+          observedSignal = args[signalIndex] as AbortSignal | undefined
+          markCallStarted()
+          return callPending
+        }
+      }
+      server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+        transport: 'tcp',
+        computeService: fakeCompute as never
+      })
+      const { endpoint, token } = await sessionConnection(server)
+      const disconnect = new AbortController()
+      const request = fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ method: 'computeCall', params }),
+        signal: disconnect.signal
+      })
+
+      await callStarted
+      disconnect.abort()
+      try {
+        await expect(request).rejects.toThrow()
+        expect(observedSignal).toBeInstanceOf(AbortSignal)
+        await vi.waitFor(() => expect(observedSignal?.aborted).toBe(true))
+      } finally {
+        releaseCall({})
+      }
+    }
+  )
+
   it('uses the Session admission facade for discovery and guessed provider calls', async () => {
     const callCommand = vi.fn(async () => ({}))
     const raw = {
@@ -967,7 +1035,8 @@ describe('computeCall RPC', () => {
         harvestConfig: JSON.stringify({ mode: 'manifest' }),
         timeoutSeconds: 600,
         workspaceCwd: 'workspace/project'
-      }
+      },
+      expect.any(AbortSignal)
     ])
   })
 

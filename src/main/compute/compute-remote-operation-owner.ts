@@ -172,7 +172,8 @@ export class ComputeRemoteOperationOwner {
     intent: string,
     loginShell = true,
     timeoutSeconds?: number,
-    context?: { sessionId: string; projectId: string }
+    context?: { sessionId: string; projectId: string },
+    signal?: AbortSignal
   ): Promise<ExecResult> {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
@@ -191,13 +192,17 @@ export class ComputeRemoteOperationOwner {
       command_full: cmd
     }
     const decision = context
-      ? await this.approvalBroker.requestWithContext(approvalInfo, {
-          sessionId: context.sessionId,
-          projectId: context.projectId,
-          operation: 'call_command',
-          ownerId: host.id
-        })
-      : await this.approvalBroker.request(approvalInfo)
+      ? await this.approvalBroker.requestWithContext(
+          approvalInfo,
+          {
+            sessionId: context.sessionId,
+            projectId: context.projectId,
+            operation: 'call_command',
+            ownerId: host.id
+          },
+          signal
+        )
+      : await this.approvalBroker.request(approvalInfo, undefined, signal)
 
     if (decision === 'deny') {
       const error = new Error(
@@ -213,7 +218,10 @@ export class ComputeRemoteOperationOwner {
 
     let connection
     try {
-      connection = await this.connectionBroker.acquire(providerId, { intent: 'direct_command' })
+      connection = await this.connectionBroker.acquire(providerId, {
+        intent: 'direct_command',
+        ...(signal ? { signal } : {})
+      })
     } catch (error) {
       throw computeCallConnectionError(error)
     }
@@ -231,7 +239,8 @@ export class ComputeRemoteOperationOwner {
       runResult = await connection.run(wrappedCommand, {
         timeoutMs,
         loginShell,
-        maxOutputBytes: CALL_COMMAND_MAX_OUTPUT_BYTES
+        maxOutputBytes: CALL_COMMAND_MAX_OUTPUT_BYTES,
+        ...(signal ? { signal } : {})
       })
     } catch (error) {
       throw computeCallConnectionError(error)
@@ -274,7 +283,8 @@ export class ComputeRemoteOperationOwner {
     providerId: string,
     remotePath: string,
     dest: DownloadDest,
-    context?: { sessionId: string; projectId: string }
+    context?: { sessionId: string; projectId: string },
+    signal?: AbortSignal
   ): Promise<LocalFile> {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
@@ -293,7 +303,10 @@ export class ComputeRemoteOperationOwner {
 
     let connection
     try {
-      connection = await this.connectionBroker.acquire(providerId, { intent: 'direct_download' })
+      connection = await this.connectionBroker.acquire(providerId, {
+        intent: 'direct_download',
+        ...(signal ? { signal } : {})
+      })
     } catch (error) {
       throw remoteConnectionError(error)
     }
@@ -317,13 +330,17 @@ export class ComputeRemoteOperationOwner {
       remote_path: remotePath
     }
     const decision = context
-      ? await this.approvalBroker.requestWithContext(approvalInfo, {
-          sessionId: context.sessionId,
-          projectId: context.projectId,
-          operation: 'download',
-          ownerId: host.id
-        })
-      : await this.approvalBroker.request(approvalInfo)
+      ? await this.approvalBroker.requestWithContext(
+          approvalInfo,
+          {
+            sessionId: context.sessionId,
+            projectId: context.projectId,
+            operation: 'download',
+            ownerId: host.id
+          },
+          signal
+        )
+      : await this.approvalBroker.request(approvalInfo, undefined, signal)
 
     if (decision === 'deny') {
       const error = new Error(

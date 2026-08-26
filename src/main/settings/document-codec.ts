@@ -4,12 +4,14 @@ import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   SETTINGS_FILE_VERSION,
   codexSubscriptionProviderIdentity,
+  DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
   isAppIconVariant,
   isClaudeSubscriptionProvider,
   isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider,
   isCodexSubscriptionProviderId,
   isReasoningEffort,
+  type SessionDetailsModelConfiguration,
   type SubagentModelConfiguration,
   type VisionModelConfiguration
 } from '../../shared/settings'
@@ -101,6 +103,32 @@ const sanitizeSubagentModel = (value: unknown): SubagentModelConfiguration => {
     }
   }
   return { mode: 'inherit' }
+}
+
+const sanitizeSessionDetailsModel = (value: unknown): SessionDetailsModelConfiguration => {
+  if (!isRecord(value)) return DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION
+  if (
+    value.mode === 'inherit' &&
+    Object.keys(value).length === 2 &&
+    isReasoningEffort(value.reasoningEffort)
+  ) {
+    return { mode: 'inherit', reasoningEffort: value.reasoningEffort }
+  }
+  if (value.mode === 'disabled' && Object.keys(value).length === 1) return { mode: 'disabled' }
+  if (value.mode === 'fixed') {
+    const providerId = asString(value.providerId)
+    const model = asString(value.model)
+    const reasoningEffort = asString(value.reasoningEffort)
+    if (
+      Object.keys(value).length === 4 &&
+      providerId &&
+      model &&
+      isReasoningEffort(reasoningEffort)
+    ) {
+      return { mode: 'fixed', providerId, model, reasoningEffort }
+    }
+  }
+  return DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION
 }
 
 const sanitizeVisionModel = (value: unknown): VisionModelConfiguration | undefined => {
@@ -219,6 +247,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     providers,
     subagentModel: sanitizeSubagentModel(value.subagentModel),
     reviewerModel: sanitizeSubagentModel(value.reviewerModel),
+    sessionDetailsModel: sanitizeSessionDetailsModel(value.sessionDetailsModel),
     ...(visionModel ? { visionModel } : {})
   }
   const claudeSubscriptionProviderId = asString(value.claudeSubscriptionProviderId)
@@ -355,4 +384,4 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   return settings
 }
 
-export { sanitizeSettings, sanitizeSubagentModel }
+export { sanitizeSessionDetailsModel, sanitizeSettings, sanitizeSubagentModel }

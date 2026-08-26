@@ -443,8 +443,9 @@ export const ComposerEditor = ({
   const [activeMentionOptionId, setActiveMentionOptionId] = useState<string | undefined>()
   const restoreHistoryCaretRef = useRef(false)
   const handledCaretRequestRef = useRef<number | undefined>(undefined)
-  // Tracks IME composition so Enter never submits mid-composition.
+  // Tracks IME composition synchronously for handlers and reactively for placeholder visibility.
   const composingRef = useRef(false)
+  const [isComposing, setIsComposing] = useState(false)
 
   // At most one skill per message: once a chip exists, suppress the trigger so a further `/` does nothing.
   const hasSkill = doc.nodes.some((node) => node.type === 'skill')
@@ -452,7 +453,7 @@ export const ComposerEditor = ({
     (node) => node.type !== 'pasted-text' && (node.type !== 'text' || node.text !== '')
   )
   const hasPastedText = doc.nodes.some((node) => node.type === 'pasted-text')
-  const showInlinePlaceholder = hasPastedText && !hasVisibleContent
+  const showInlinePlaceholder = hasPastedText && !hasVisibleContent && !isComposing
 
   // The hook guards a null current internally; widen the element type for its generic ref option.
   const mention = useMentionTrigger({
@@ -836,9 +837,11 @@ export const ComposerEditor = ({
           const root = editorRef.current
           undoCaretRef.current = root ? currentCaretPosition(root) : undefined
           composingRef.current = true
+          setIsComposing(true)
         }}
         onCompositionEnd={() => {
           composingRef.current = false
+          setIsComposing(false)
           emitDocFromDom()
         }}
       />
@@ -848,7 +851,7 @@ export const ComposerEditor = ({
       <span id={historyStatusId} role="status" aria-live="polite" className="sr-only">
         {historyStatus}
       </span>
-      {!hasVisibleContent && !hasPastedText ? (
+      {!isComposing && !hasVisibleContent && !hasPastedText ? (
         <div aria-hidden="true" className={composerPlaceholderClassName}>
           {placeholder}
         </div>

@@ -67,7 +67,7 @@ type RuntimeHarnessOptions = Readonly<{
   events?: AcpRuntimeEvent[]
   permissionRequest?: true
   onRuntime?: () => void
-  onCreateSession?: () => Promise<void>
+  onCreateSession?: (backend: ResolvedAgentBackend) => Promise<void>
   onPrompt?: () => Promise<void>
 }>
 
@@ -79,7 +79,7 @@ const runtimeHarness = (
   return {
     createSession: vi.fn(async () => {
       resolvedBackend = await (options.resolveBackend as () => Promise<ResolvedAgentBackend>)()
-      await input.onCreateSession?.()
+      await input.onCreateSession?.(resolvedBackend)
       return { sessionId: 'provider-session-1' } as never
     }),
     sendPrompt: vi.fn(async () => {
@@ -296,10 +296,91 @@ describe('RestrictedInferenceRunner', () => {
       frameworkId: 'codex'
     })
     expect(resolveTarget).toHaveBeenCalledWith(target('codex', CODEX_SHARED_PROVIDER_ID), {
-      systemPromptAppends: ['Do not use tools.'],
+      systemPromptAppends: [],
       includeSkillAndConnectorContext: false
     })
   })
+
+  it('keeps restricted instructions out of the shared OpenCode config used by the first conversation', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-inference-'))
+    const sharedInstructionsDir = join(temporaryRoot, 'shared-opencode', 'instructions')
+    const sharedInstructionsPath = join(sharedInstructionsDir, 'open-science.md')
+    const mainInstructions = 'Answer the user request normally.'
+    await mkdir(sharedInstructionsDir, { recursive: true })
+    await writeFile(sharedInstructionsPath, mainInstructions)
+
+    const runner = new RestrictedInferenceRunner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      profileNamespace: 'test-inference',
+      resolveTarget: async (_target, context) => {
+        if (context.systemPromptAppends.length > 0) {
+          await writeFile(sharedInstructionsPath, context.systemPromptAppends.join('\n\n'))
+        }
+        return backend(opencodeFramework, { modelRoute: 'opencode-openai' })
+      },
+      createRuntime: (options) =>
+        runtimeHarness(options, {
+          events: [
+            event({
+              role: 'assistant',
+              text: '{"title":"Plot sine wave","description":"Plot a sine function."}'
+            })
+          ]
+        })
+    })
+
+    await expect(
+      runner.run(
+        runInput({
+          target: target('opencode'),
+          systemPrompt: 'Return Session metadata only.'
+        })
+      )
+    ).resolves.toMatchObject({ frameworkId: 'opencode' })
+    await expect(readFile(sharedInstructionsPath, 'utf8')).resolves.toBe(mainInstructions)
+  })
+
+  it.each([
+    ['Claude Code', backend(claudeCodeFramework), target('claude-code')],
+    ['OpenCode', backend(opencodeFramework), target('opencode')],
+    [
+      'Codex Responses',
+      backend(codexFramework, {
+        modelRoute: 'codex-responses',
+        responsesBridgeLease: codexToolLessBridgeLease()
+      }),
+      target('codex')
+    ],
+    [
+      'Codex Bridge',
+      backend(codexFramework, {
+        modelRoute: 'codex-bridge',
+        responsesBridgeLease: codexToolLessBridgeLease()
+      }),
+      target('codex')
+    ]
+  ] as const)(
+    'installs restricted instructions after resolving the %s backend',
+    async (_name, resolved, runTarget) => {
+      const onCreateSession = vi.fn(async (prepared: ResolvedAgentBackend) => {
+        expect(prepared.systemPromptAppends).toEqual(['Do not use tools.'])
+      })
+      const { runner, resolveTarget } = await makeRunner(resolved, {
+        events: [event({ role: 'assistant', text: 'PONG' })],
+        onCreateSession
+      })
+
+      await expect(runner.run(runInput({ target: runTarget }))).resolves.toMatchObject({
+        text: 'PONG'
+      })
+      expect(resolveTarget).toHaveBeenCalledWith(
+        runTarget,
+        expect.objectContaining({ systemPromptAppends: [] })
+      )
+      expect(onCreateSession).toHaveBeenCalledOnce()
+    }
+  )
 
   it('collects text and provider-neutral usage while verifying the Codex tool-less scope', async () => {
     const usage: AcpTurnTokenUsage = {
@@ -341,7 +422,7 @@ describe('RestrictedInferenceRunner', () => {
       usage
     })
     expect(resolveTarget).toHaveBeenCalledWith(target('codex'), {
-      systemPromptAppends: ['Do not use tools.'],
+      systemPromptAppends: [],
       includeSkillAndConnectorContext: false,
       forceCodexNativeResponsesCompatibility: true
     })
@@ -437,6 +518,22 @@ describe('RestrictedInferenceRunner', () => {
       await rm(temporaryRoot!, { recursive: true, force: true })
       temporaryRoot = undefined
     }
+  })
+
+  it('preserves provider usage reported before a restricted-inference failure', async () => {
+    const usage: AcpTurnTokenUsage = {
+      inputTokens: 12,
+      cacheTokens: 3,
+      outputTokens: 4
+    }
+    const { runner } = await makeRunner(backend(claudeCodeFramework), {
+      events: [event({ kind: 'tool' }), event({ kind: 'stop', text: 'end_turn', turnUsage: usage })]
+    })
+
+    await expect(runner.run(runInput())).rejects.toMatchObject({
+      code: 'tool-violation',
+      usage
+    })
   })
 
   it.each([

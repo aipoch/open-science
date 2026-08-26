@@ -512,11 +512,11 @@ describe('AgentRuntimeManager', () => {
       installManagedCodexImpl
     })
 
-    const results = await Promise.all([
-      manager.installClaude({ source: 'managed' }, onEvent),
-      manager.installOpencode({ source: 'managed' }, onEvent),
-      manager.installCodex({ source: 'managed' }, onEvent)
-    ])
+    const results = [
+      await manager.installClaude({ source: 'managed' }, onEvent),
+      await manager.installOpencode({ source: 'managed' }, onEvent),
+      await manager.installCodex({ source: 'managed' }, onEvent)
+    ]
 
     expect(results.map((result) => result.installId)).toEqual([
       'install-123-11',
@@ -536,6 +536,43 @@ describe('AgentRuntimeManager', () => {
       'install-opencode-123-12',
       'install-codex-123-13'
     ])
+  })
+
+  it('rejects a second managed runtime install until the active install finishes', async () => {
+    const installStarted = Promise.withResolvers<void>()
+    const releaseInstall = Promise.withResolvers<void>()
+    const installManagedClaudeImpl: NonNullable<ManagerOptions['installManagedClaudeImpl']> = vi.fn(
+      async ({ installId }) => {
+        installStarted.resolve()
+        await releaseInstall.promise
+        return { result: { installId, ok: false, error: 'first install stopped' } }
+      }
+    )
+    const installManagedOpencodeImpl: NonNullable<ManagerOptions['installManagedOpencodeImpl']> =
+      vi.fn(async ({ installId }) => ({
+        result: { installId, ok: false, error: 'second installer was invoked' }
+      }))
+    manager = createManager({ installManagedClaudeImpl, installManagedOpencodeImpl })
+
+    const firstInstall = manager.installClaude({ source: 'managed' }, vi.fn())
+    await installStarted.promise
+
+    try {
+      await expect(manager.installOpencode({ source: 'managed' }, vi.fn())).resolves.toMatchObject({
+        ok: false,
+        error: 'Another install is already in progress.'
+      })
+      expect(installManagedOpencodeImpl).not.toHaveBeenCalled()
+    } finally {
+      releaseInstall.resolve()
+      await firstInstall
+    }
+
+    await expect(manager.installOpencode({ source: 'managed' }, vi.fn())).resolves.toMatchObject({
+      ok: false,
+      error: 'second installer was invoked'
+    })
+    expect(installManagedOpencodeImpl).toHaveBeenCalledOnce()
   })
 
   it('updates only the managed adapter when Codex CLI is user-owned', async () => {

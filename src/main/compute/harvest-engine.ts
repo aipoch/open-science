@@ -218,6 +218,7 @@ export type HarvestDeps = {
   hostRepository: Pick<ComputeHostRepository, 'get'>
   jobRepository: Pick<ComputeJobRepository, 'update'>
   storageRoot: string
+  signal?: AbortSignal
   /** Override free-space discovery for deterministic tests. */
   getFreeDiskBytesFn?: (path: string) => Promise<number>
   /**
@@ -267,10 +268,12 @@ const buildLeftOnRemoteUri = (
  * previous harvest (re-downloads files, re-writes DB fields).
  */
 export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<void> => {
+  deps.signal?.throwIfAborted()
   // Serialize before acquiring the data-root writer lease so queued harvests do not unnecessarily
   // delay a storage migration. The active harvest keeps its lease through every download.
   return await withHarvestBudgetLock(async () =>
     withDataRootWrite(async () => {
+      deps.signal?.throwIfAborted()
       try {
         await harvestJobUnchecked(job, deps)
       } catch (error) {
@@ -292,6 +295,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
   // Ensure harvest directory structure exists (idempotent).
   await mkdir(featuredDir, { recursive: true })
   await mkdir(hiddenDir, { recursive: true })
+  deps.signal?.throwIfAborted()
 
   // finalize writes harvestedAt + harvestError + leftOnRemote + notifiedAt in a single atomic
   // update (fix: was two separate writes causing notification loss on restart between them).
@@ -373,10 +377,13 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
   try {
     host = await hostRepository.get(job.provider_id)
   } catch (err) {
+    if (deps.signal?.aborted) throw err
     const msg = err instanceof Error ? err.message : String(err)
     await finalizeAndReturn(`host lookup failed: ${msg}`, '[]')
     return
   }
+
+  deps.signal?.throwIfAborted()
 
   if (!host) {
     await finalizeAndReturn(`host not found: ${job.provider_id}`, '[]')
@@ -385,7 +392,8 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
 
   // ── 2. Acquire one Host/revision-scoped connection lease ────────────────────
   const connection: ComputeConnectionLease = await connectionBroker.acquire(job.provider_id, {
-    intent: 'job_harvest'
+    intent: 'job_harvest',
+    signal: deps.signal
   })
 
   const remoteWorkdir = job.remote_workdir ?? `~/.openscience/jobs/${job.job_id}`
@@ -395,10 +403,13 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
   try {
     remoteFiles = await enumerateRemoteFiles(connection, remoteWorkdir)
   } catch (err) {
+    if (deps.signal?.aborted) throw err
     if (err instanceof ComputeConnectionError) throw err
     await finalizeAndReturn('Remote file enumeration failed.', '[]')
     return
   }
+
+  deps.signal?.throwIfAborted()
 
   // ── 4. Classify files ───────────────────────────────────────────────────────
   let outputs: OutputDeclaration[] = []
@@ -440,6 +451,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
       throw new Error('free-space query returned an invalid value')
     }
   } catch (err) {
+    if (deps.signal?.aborted) throw err
     const msg = err instanceof Error ? err.message : String(err)
     await finalizeAndReturn(`free-space check failed: ${msg}`, '[]')
     return
@@ -471,6 +483,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
   }
 
   const safeDownload = async (relativePath: string, localPath: string): Promise<boolean> => {
+    deps.signal?.throwIfAborted()
     const expectedBytes = remoteSizeByPath.get(relativePath) ?? 0
     let currentFreeBytes: number
     try {
@@ -504,11 +517,13 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
         temporaryPath,
         maxBytes
       )
+      deps.signal?.throwIfAborted()
       await rename(temporaryPath, localPath)
       remainingBudgetBytes = Math.max(0, remainingBudgetBytes - bytesWritten)
       return true
     } catch (error) {
       await unlink(temporaryPath).catch(() => undefined)
+      if (deps.signal?.aborted) throw error
       if (error instanceof ComputeConnectionError) throw error
       const candidate = error as HarvestDownloadLimitError
       if (candidate.limitExceeded) {
@@ -526,6 +541,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
 
   // Download featured files.
   for (const relativePath of classification.featured) {
+    deps.signal?.throwIfAborted()
     const localPath = join(featuredDir, relativePath)
     await mkdir(dirname(localPath), { recursive: true })
     await safeDownload(relativePath, localPath)
@@ -533,6 +549,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
 
   // Download hidden files.
   for (const relativePath of classification.hidden) {
+    deps.signal?.throwIfAborted()
     const localPath = join(hiddenDir, relativePath)
     await mkdir(dirname(localPath), { recursive: true })
     await safeDownload(relativePath, localPath)
@@ -541,6 +558,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
   // ── 6. Build left_on_remote JSON and finalize ────────────────────────────────
   // Download full logs last; bounded tails remain available when the budget excludes them.
   for (const relativePath of classification.logs) {
+    deps.signal?.throwIfAborted()
     await safeDownload(relativePath, join(harvestDir, relativePath))
   }
 
@@ -555,6 +573,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
       ? `harvest_failed: ${errors.slice(0, 3).join('; ')}${errors.length > 3 ? ` (and ${errors.length - 3} more)` : ''}`
       : null
 
+  deps.signal?.throwIfAborted()
   const updatedJob = await finalize(harvestError, JSON.stringify(leftOnRemote))
   // Broadcast notification for the successful harvest path (early-exit paths use finalizeAndReturn).
   if (deps.broadcast) {

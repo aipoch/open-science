@@ -91,8 +91,8 @@ vi.mock('./PreviewPanel', () => ({
   PreviewPanel: (): React.JSX.Element => <div data-testid="preview-panel" />
 }))
 
-vi.mock('./RenameSessionDialog', () => ({
-  RenameSessionDialog: (): React.JSX.Element => <div />
+vi.mock('./EditSessionDialog', () => ({
+  EditSessionDialog: (): React.JSX.Element => <div />
 }))
 
 vi.mock('./DeleteSessionDialog', () => ({

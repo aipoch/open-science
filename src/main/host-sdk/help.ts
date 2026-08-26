@@ -234,7 +234,7 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   },
   constraints: [
     'Main/root only; no nested delegation.',
-    'Non-empty batches are admitted atomically.',
+    'Batches of 1–4 children are admitted atomically.',
     'Use host.agents.list() for profiles; omission inherits.',
     'Timeout observes; it does not stop children.',
     'Async follow-up: host.children() recovers; host.collect(selectors) observes; host.stopChild(frameIds) cancels.'

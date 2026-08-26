@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import { describe, expect, it, vi, type MockedFunction } from 'vitest'
@@ -20,7 +22,15 @@ const sha = (buf: Buffer): string => createHash('sha256').update(buf).digest('he
 // (simulates a server that does not support Range requests).
 const fakeFetch = (
   body: Buffer,
-  opts: { cutAfter?: number; status?: number } = {}
+  opts: {
+    cutAfter?: number
+    status?: number
+    etag?: string | null
+    lastModified?: string
+    contentRangeStart?: number
+    contentRangeEnd?: number
+    contentRangeTotal?: number
+  } = {}
 ): MockedFunction<typeof fetch> =>
   vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
     const headers = (init?.headers ?? {}) as Record<string, string>
@@ -36,7 +46,18 @@ const fakeFetch = (
       ok: status < 400,
       status,
       headers: {
-        get: (h: string) => (h.toLowerCase() === 'content-length' ? String(slice.length) : null)
+        get: (h: string) => {
+          const name = h.toLowerCase()
+          if (name === 'content-length') return String(slice.length)
+          if (name === 'etag') return opts.etag === undefined ? '"file-v1"' : opts.etag
+          if (name === 'last-modified') return opts.lastModified ?? null
+          if (name === 'content-range' && status === 206) {
+            const responseStart = opts.contentRangeStart ?? start
+            const responseEnd = opts.contentRangeEnd ?? responseStart + slice.length - 1
+            return `bytes ${responseStart}-${responseEnd}/${opts.contentRangeTotal ?? body.length}`
+          }
+          return null
+        }
       },
       body: Readable.toWeb(stream)
     } as unknown as Response
@@ -50,6 +71,8 @@ const memFs = (): {
   rmImpl: (path: string) => Promise<void>
   renameImpl: (from: string, to: string) => Promise<void>
   openReadStreamImpl: (path: string) => import('node:fs').ReadStream
+  readTextImpl: (path: string) => Promise<string>
+  writeTextImpl: (path: string, text: string) => Promise<void>
 } => {
   const files = new Map<string, Buffer>()
   return {
@@ -73,7 +96,17 @@ const memFs = (): {
       files.delete(from)
     },
     openReadStreamImpl: (path: string) =>
-      Readable.from([files.get(path) ?? Buffer.alloc(0)]) as unknown as import('node:fs').ReadStream
+      Readable.from([
+        files.get(path) ?? Buffer.alloc(0)
+      ]) as unknown as import('node:fs').ReadStream,
+    readTextImpl: async (path: string) => {
+      const value = files.get(path)
+      if (!value) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      return value.toString('utf8')
+    },
+    writeTextImpl: async (path: string, text: string) => {
+      files.set(path, Buffer.from(text))
+    }
   }
 }
 
@@ -88,9 +121,65 @@ describe('resilientDownload', () => {
     expect(out).toBe(OUT_PATH)
     expect(fs.files.get(OUT_PATH)?.toString()).toBe('hello world payload')
     expect(fs.files.has(`${OUT_PATH}.part`)).toBe(false)
+    expect(fs.files.has(`${OUT_PATH}.part.meta`)).toBe(false)
   })
 
-  it('resumes with a Range request after a mid-stream cut', async () => {
+  it('rejects a response declared larger than expectedSize before writing', async () => {
+    const body = Buffer.from('too-large-payload')
+    const fs = memFs()
+
+    await expect(
+      resilientDownload('https://cdn/file', OUT_PATH, {
+        expectedSize: 4,
+        maxRetries: 0,
+        deps: {
+          fetchImpl: fakeFetch(body) as unknown as typeof fetch,
+          ...fs,
+          sleep: async () => {}
+        }
+      })
+    ).rejects.toThrow(/expected size/i)
+
+    expect(fs.files.has(`${OUT_PATH}.part`)).toBe(false)
+    expect(fs.files.has(OUT_PATH)).toBe(false)
+  })
+
+  it('does not write a body chunk that would exceed expectedSize', async () => {
+    const body = Buffer.from('too-large-payload')
+    const fs = memFs()
+    let written = 0
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body: Readable.toWeb(Readable.from([body]))
+    }))
+    const createWriteStreamImpl = (): import('node:fs').WriteStream =>
+      new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          written += chunk.length
+          callback()
+        }
+      }) as unknown as import('node:fs').WriteStream
+
+    await expect(
+      resilientDownload('https://cdn/file', OUT_PATH, {
+        expectedSize: 4,
+        maxRetries: 0,
+        deps: {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          ...fs,
+          createWriteStreamImpl,
+          sleep: async () => {}
+        }
+      })
+    ).rejects.toThrow(/expected size/i)
+
+    expect(written).toBe(0)
+    expect(fs.files.has(OUT_PATH)).toBe(false)
+  })
+
+  it('binds a Range retry to the first response ETag', async () => {
     const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
     const fs = memFs()
     // Count .part reads to prove the hoisted hash is not re-read from disk on the Range resume.
@@ -117,19 +206,370 @@ describe('resilientDownload', () => {
     expect(fs.files.get(OUT_PATH)?.toString()).toBe(body.toString())
     const secondInit = rest.mock.calls[0][1] as { headers: Record<string, string> }
     expect(secondInit.headers['Range']).toBe('bytes=10-')
+    expect(secondInit.headers['If-Range']).toBe('"file-v1"')
     // The 10 already-downloaded bytes stay in the hoisted hash — no .part re-read on resume.
     expect(openReadSpy).not.toHaveBeenCalled()
   })
 
-  it('restarts from zero when server ignores Range (200 on resume)', async () => {
+  it('falls back to Last-Modified when a strong ETag is unavailable', async () => {
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const fs = memFs()
+    const lastModified = 'Wed, 26 Aug 2026 07:00:00 GMT'
+    const first = fakeFetch(body, { cutAfter: 10, etag: null, lastModified })
+    const rest = fakeFetch(body, { etag: null, lastModified })
+    let call = 0
+    const fetchImpl = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      call++
+      return call === 1 ? first(input, init) : rest(input, init)
+    })
+
+    await resilientDownload('https://cdn/file', OUT_PATH, {
+      expectedSha256: sha(body),
+      deps: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        ...fs,
+        sleep: async () => {},
+        now: () => 0
+      }
+    })
+
+    const secondInit = rest.mock.calls[0][1] as { headers: Record<string, string> }
+    expect(secondInit.headers['Range']).toBe('bytes=10-')
+    expect(secondInit.headers['If-Range']).toBe(lastModified)
+  })
+
+  it('retains the response validator for a later downloader call', async () => {
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const root = await mkdtemp(join(tmpdir(), 'resilient-download-'))
+    const outPath = join(root, 'out.bin')
+
+    try {
+      await expect(
+        resilientDownload('https://cdn/file', outPath, {
+          expectedSha256: sha(body),
+          expectedSize: body.length,
+          maxRetries: 0,
+          deps: {
+            fetchImpl: fakeFetch(body, { cutAfter: 10 }) as unknown as typeof fetch,
+            sleep: async () => {},
+            now: () => 0
+          }
+        })
+      ).rejects.toThrow(/short read/i)
+
+      const rest = fakeFetch(body)
+      await resilientDownload('https://cdn/file', outPath, {
+        expectedSha256: sha(body),
+        expectedSize: body.length,
+        deps: {
+          fetchImpl: rest as unknown as typeof fetch,
+          sleep: async () => {},
+          now: () => 0
+        }
+      })
+
+      const resumeInit = rest.mock.calls[0][1] as { headers: Record<string, string> }
+      expect(resumeInit.headers['Range']).toBe('bytes=10-')
+      expect(resumeInit.headers['If-Range']).toBe('"file-v1"')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not follow a pre-existing symlink when persisting validator metadata', async () => {
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const fs = memFs()
+    const metadataPath = `${OUT_PATH}.part.meta`
+    const symlinkTarget = join('downloads', 'do-not-overwrite.txt')
+    fs.files.set(symlinkTarget, Buffer.from('keep-me'))
+    const writeTextImpl = async (path: string, text: string): Promise<void> => {
+      // Model writeFile following a symlink at the final sidecar path. Renaming a new file over that
+      // path replaces the link itself and therefore uses the regular memFs implementation instead.
+      if (path === metadataPath) {
+        fs.files.set(symlinkTarget, Buffer.from(text))
+        return
+      }
+      await fs.writeTextImpl(path, text)
+    }
+
+    await expect(
+      resilientDownload('https://cdn/file', OUT_PATH, {
+        expectedSize: body.length,
+        maxRetries: 0,
+        deps: {
+          fetchImpl: fakeFetch(body, { cutAfter: 8 }) as unknown as typeof fetch,
+          ...fs,
+          writeTextImpl,
+          sleep: async () => {},
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/short read/i)
+
+    expect(fs.files.get(symlinkTarget)?.toString()).toBe('keep-me')
+  })
+
+  it('discards a historical partial that has no validator metadata', async () => {
     const body = Buffer.from('0123456789')
     const fs = memFs()
-    fs.files.set(`${OUT_PATH}.part`, Buffer.from('GARBAGE'))
-    const out = await resilientDownload('https://cdn/file', OUT_PATH, {
-      expectedSha256: sha(body),
-      deps: { fetchImpl: fakeFetch(body, { status: 200 }), ...fs, sleep: async () => {} }
+    fs.files.set(`${OUT_PATH}.part`, Buffer.from('STALE'))
+    const fetchImpl = fakeFetch(body)
+
+    await resilientDownload('https://cdn/file', OUT_PATH, {
+      expectedSize: body.length,
+      deps: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        ...fs,
+        sleep: async () => {},
+        now: () => 0
+      }
     })
-    expect(fs.files.get(OUT_PATH)?.toString()).toBe('0123456789')
+
+    const init = fetchImpl.mock.calls[0][1] as { headers: Record<string, string> }
+    expect(init.headers['Range']).toBeUndefined()
+    expect(fs.files.get(OUT_PATH)?.equals(body)).toBe(true)
+  })
+
+  it('does not let orphaned validator metadata authorize a later partial', async () => {
+    const url = 'https://cdn/file'
+    const firstBody = Buffer.from('version-two-contents')
+    const laterBody = Buffer.from('version-one-contents')
+    const fs = memFs()
+    fs.files.set(
+      `${OUT_PATH}.part.meta`,
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          urlSha256: sha(Buffer.from(url)),
+          validator: { kind: 'etag', value: '"version-one"' },
+          expectedSize: firstBody.length
+        })
+      )
+    )
+
+    await expect(
+      resilientDownload(url, OUT_PATH, {
+        expectedSize: firstBody.length,
+        maxRetries: 0,
+        deps: {
+          fetchImpl: fakeFetch(firstBody, { cutAfter: 8, etag: null }) as unknown as typeof fetch,
+          ...fs,
+          sleep: async () => {},
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/short read/i)
+
+    const laterFetch = fakeFetch(laterBody, { etag: '"version-one"' })
+    await resilientDownload(url, OUT_PATH, {
+      expectedSize: laterBody.length,
+      deps: {
+        fetchImpl: laterFetch as unknown as typeof fetch,
+        ...fs,
+        sleep: async () => {},
+        now: () => 0
+      }
+    })
+
+    const retryInit = laterFetch.mock.calls[0][1] as { headers: Record<string, string> }
+    expect(retryInit.headers['Range']).toBeUndefined()
+    expect(fs.files.get(OUT_PATH)?.equals(laterBody)).toBe(true)
+  })
+
+  it('restarts from zero rather than resuming without a usable validator', async () => {
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const fs = memFs()
+    const first = fakeFetch(body, { cutAfter: 10, etag: 'W/"file-v1"' })
+    const rest = fakeFetch(body, { etag: 'W/"file-v1"' })
+    let call = 0
+    const fetchImpl = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      call++
+      return call === 1 ? first(input, init) : rest(input, init)
+    })
+
+    await resilientDownload('https://cdn/file', OUT_PATH, {
+      expectedSha256: sha(body),
+      deps: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        ...fs,
+        sleep: async () => {},
+        now: () => 0
+      }
+    })
+
+    const retryInit = rest.mock.calls[0][1] as { headers: Record<string, string> }
+    expect(retryInit.headers['Range']).toBeUndefined()
+    expect(retryInit.headers['If-Range']).toBeUndefined()
+    expect(fs.files.get(OUT_PATH)?.equals(body)).toBe(true)
+  })
+
+  it('surfaces an unresumable partial cleanup failure without retrying it', async () => {
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const fs = memFs()
+    const fetchImpl = fakeFetch(body, { cutAfter: 8, etag: null })
+    const sleep = vi.fn(async () => undefined)
+    const removePart = vi.fn()
+    const rmImpl = async (path: string): Promise<void> => {
+      if (path === `${OUT_PATH}.part`) {
+        removePart(path)
+        throw new Error('EACCES: cannot delete unresumable partial')
+      }
+      await fs.rmImpl(path)
+    }
+
+    await expect(
+      resilientDownload('https://cdn/file', OUT_PATH, {
+        expectedSize: body.length,
+        maxRetries: 2,
+        deps: {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          ...fs,
+          rmImpl,
+          sleep,
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/EACCES/)
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(removePart).toHaveBeenCalledTimes(1)
+    expect(sleep).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a 206 whose Content-Range start differs from the local offset', async () => {
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const fs = memFs()
+    const first = fakeFetch(body, { cutAfter: 10 })
+    const invalidResume = fakeFetch(body, { contentRangeStart: 0 })
+    let call = 0
+    const fetchImpl = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      call++
+      return call === 1 ? first(input, init) : invalidResume(input, init)
+    })
+
+    await expect(
+      resilientDownload('https://cdn/file', OUT_PATH, {
+        expectedSha256: sha(body),
+        expectedSize: body.length,
+        deps: {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          ...fs,
+          sleep: async () => {},
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/Content-Range/i)
+
+    expect(fs.files.has(OUT_PATH)).toBe(false)
+  })
+
+  it('rejects a Content-Range total larger than expectedSize', async () => {
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const fs = memFs()
+    const first = fakeFetch(body, { cutAfter: 10 })
+    const oversizedRange = fakeFetch(body, { contentRangeTotal: 100 })
+    let call = 0
+    const fetchImpl = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      call++
+      return call === 1 ? first(input, init) : oversizedRange(input, init)
+    })
+
+    await expect(
+      resilientDownload('https://cdn/file', OUT_PATH, {
+        expectedSha256: sha(body),
+        expectedSize: body.length,
+        deps: {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          ...fs,
+          sleep: async () => {},
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/Content-Range|expected size/i)
+
+    expect(fs.files.has(OUT_PATH)).toBe(false)
+  })
+
+  it('rejects a Content-Range length inconsistent with Content-Length', async () => {
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const fs = memFs()
+    const first = fakeFetch(body, { cutAfter: 10 })
+    const inconsistentRange = fakeFetch(body, { contentRangeEnd: 20 })
+    let call = 0
+    const fetchImpl = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      call++
+      return call === 1 ? first(input, init) : inconsistentRange(input, init)
+    })
+
+    await expect(
+      resilientDownload('https://cdn/file', OUT_PATH, {
+        expectedSha256: sha(body),
+        expectedSize: body.length,
+        deps: {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          ...fs,
+          sleep: async () => {},
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/Content-Range|Content-Length/i)
+
+    expect(fs.files.has(OUT_PATH)).toBe(false)
+  })
+
+  it('rejects a 206 carrying a different ETag than the bound partial', async () => {
+    const firstBody = Buffer.from('0123456789abcdefghij')
+    const changedBody = Buffer.from('ABCDEFGHIJ0123456789')
+    const fs = memFs()
+    const first = fakeFetch(firstBody, { cutAfter: 10, etag: '"file-v1"' })
+    const changedResume = fakeFetch(changedBody, { etag: '"file-v2"' })
+    let call = 0
+    const fetchImpl = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      call++
+      return call === 1 ? first(input, init) : changedResume(input, init)
+    })
+
+    await expect(
+      resilientDownload('https://cdn/file', OUT_PATH, {
+        expectedSize: firstBody.length,
+        deps: {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          ...fs,
+          sleep: async () => {},
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/validator|ETag/i)
+
+    expect(fs.files.has(OUT_PATH)).toBe(false)
+  })
+
+  it('restarts from zero when If-Range detects a changed representation', async () => {
+    const firstBody = Buffer.from('0123456789')
+    const currentBody = Buffer.from('abcdefghij')
+    const fs = memFs()
+    const first = fakeFetch(firstBody, { cutAfter: 4, etag: '"file-v1"' })
+    const changed = fakeFetch(currentBody, { status: 200, etag: '"file-v2"' })
+    let call = 0
+    const fetchImpl = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      call++
+      return call === 1 ? first(input, init) : changed(input, init)
+    })
+
+    const out = await resilientDownload('https://cdn/file', OUT_PATH, {
+      expectedSize: currentBody.length,
+      deps: {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        ...fs,
+        sleep: async () => {},
+        now: () => 0
+      }
+    })
+
+    const retryInit = changed.mock.calls[0][1] as { headers: Record<string, string> }
+    expect(retryInit.headers['Range']).toBe('bytes=4-')
+    expect(retryInit.headers['If-Range']).toBe('"file-v1"')
+    expect(fs.files.get(OUT_PATH)?.equals(currentBody)).toBe(true)
     expect(out).toBe(OUT_PATH)
   })
 

@@ -54,7 +54,7 @@
     "build:linux": "npm run build:web && electron-vite build && electron-builder --linux",
     "build:win": "npm run build:web && electron-vite build && electron-builder --win",
     "stage-default-envs": "node scripts/stage-default-envs.mjs",
-    "predev": "node scripts/dev-app-branding.cjs"
+    "predev": "node scripts/check-prisma-client.mjs && node scripts/dev-app-branding.cjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",

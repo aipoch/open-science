@@ -22,6 +22,14 @@ export type AcpProviderTurnFinalizationInput = Readonly<{
   response: Readonly<PromptResponse>
 }>
 
+export type AcpProviderModelCallUsage = Readonly<
+  AcpModelStepTokenUsage & {
+    sourceInvocationId?: string
+    contextUsedTokens?: number
+    contextWindowSize?: number
+  }
+>
+
 /**
  * Best-effort provider facts for a completed turn.
  *
@@ -38,6 +46,7 @@ export type AcpProviderTurnFinalizationInput = Readonly<{
 export type AcpProviderTurnResult = Readonly<{
   turnUsage?: Readonly<Omit<AcpTurnTokenUsage, 'turnCount'>>
   modelTurnCount?: number
+  modelCalls?: ReadonlyArray<AcpProviderModelCallUsage>
   contextUsedTokens?: number
   lastModelStepUsage?: Readonly<AcpModelStepTokenUsage>
 }>

@@ -736,7 +736,18 @@ describe('TaskRunner', () => {
             level: 'info',
             sessionId: 'session-1',
             text: 'end_turn',
-            turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+            turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 1 },
+            modelCallUsage: [
+              {
+                id: 'assistant-message-1:model-call:0',
+                index: 0,
+                inputTokens: 31,
+                cacheTokens: 15,
+                outputTokens: 14,
+                contextUsedTokens: 46,
+                contextWindowSize: 128_000
+              }
+            ]
           })
         }
       },
@@ -790,7 +801,18 @@ describe('TaskRunner', () => {
           id: 'assistant-message-1',
           role: 'agent',
           content: 'Research complete.',
-          turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+          turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 1 },
+          modelCallUsage: [
+            {
+              id: 'assistant-message-1:model-call:0',
+              index: 0,
+              inputTokens: 31,
+              cacheTokens: 15,
+              outputTokens: 14,
+              contextUsedTokens: 46,
+              contextWindowSize: 128_000
+            }
+          ]
         }
       ]
     })

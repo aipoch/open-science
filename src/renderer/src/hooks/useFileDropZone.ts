@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 type FileDropZoneProps = {
   onDragEnter: (event: React.DragEvent<HTMLElement>) => void
@@ -26,6 +26,14 @@ const useFileDropZone = ({ enabled, onFiles }: UseFileDropZoneOptions): UseFileD
   const [isDragging, setIsDragging] = useState(false)
   // Counter offsets dragenter/dragleave pairs from child elements so the overlay never flickers.
   const dragDepthRef = useRef(0)
+
+  useEffect(() => {
+    if (enabled) return
+    dragDepthRef.current = 0
+    // Disabling invalidates the browser drag session, including unbalanced child drag events.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsDragging(false)
+  }, [enabled])
 
   const handleDragEnter = useCallback(
     (event: React.DragEvent<HTMLElement>): void => {

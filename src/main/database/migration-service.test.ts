@@ -20,7 +20,7 @@ import {
 } from './migration-service'
 
 const futureTestMigration = (): MigrationManifestEntry => {
-  const id = '0016_test_suffix'
+  const id = '0017_test_suffix'
   const statements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
   const verifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
   return {
@@ -262,10 +262,11 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory'
+        '0015_session_model_call_usage',
+        '0016_agent_memory'
       ],
       from: null,
-      to: '0015_agent_memory'
+      to: '0016_agent_memory'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -278,8 +279,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0015_agent_memory',
-      to: '0015_agent_memory'
+      from: '0016_agent_memory',
+      to: '0016_agent_memory'
     })
   })
 
@@ -328,7 +329,7 @@ describe('application database migrations', () => {
     }
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "deletedAt"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0013_session_projection', '0014_review_query_indexes', '0015_agent_memory')`
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0013_session_projection', '0014_review_query_indexes', '0016_agent_memory')`
     )
     await client.$executeRawUnsafe(
       `INSERT INTO "_open_science_migrations" ("id", "checksum") VALUES (?, ?)`,
@@ -349,10 +350,44 @@ describe('application database migrations', () => {
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
         SELECT "id" FROM "_open_science_migrations"
-        WHERE "id" IN ('0013_agent_memory', '0013_session_projection', '0014_review_query_indexes', '0015_agent_memory')
+        WHERE "id" IN ('0013_agent_memory', '0013_session_projection', '0014_review_query_indexes', '0016_agent_memory')
         ORDER BY "id"
       `
     ).resolves.toEqual([{ id: '0013_agent_memory' }])
+  })
+
+  it('keeps historical aggregate-only turn usage when adding exact model-call storage', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-model-call-usage-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.$executeRawUnsafe('DROP TABLE "SessionModelCallUsage"')
+    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "cachedReadTokens"')
+    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "cachedWriteTokens"')
+    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "modelCallCount"')
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_agent_memory')`
+    )
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    await client.$executeRawUnsafe(`INSERT INTO "Session" (
+      "id", "number", "projectId", "title", "status", "presentedStatus", "createdAtMs", "updatedAtMs"
+    ) VALUES ('session-1', 1, 'project-1', 'Session', 'idle', 'idle', 1, 2)`)
+    await client.$executeRawUnsafe(`INSERT INTO "SessionTurnUsage" (
+      "sessionId", "messageId", "completedAtMs", "inputTokens", "cacheTokens", "outputTokens", "isRootFrame"
+    ) VALUES ('session-1', 'message-1', 2, 10, 4, 3, true)`)
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      applied: ['0015_session_model_call_usage', '0016_agent_memory']
+    })
+    await expect(
+      client.sessionTurnUsage.findUnique({
+        where: { sessionId_messageId: { sessionId: 'session-1', messageId: 'message-1' } }
+      })
+    ).resolves.toMatchObject({
+      cachedReadTokens: null,
+      cachedWriteTokens: null,
+      modelCallCount: null
+    })
+    await expect(client.sessionModelCallUsage.count()).resolves.toBe(0)
   })
 
   it('upgrades a pre-ledger ComputeJob table while preserving historical rows', async () => {
@@ -409,7 +444,8 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory'
+        '0015_session_model_call_usage',
+        '0016_agent_memory'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -454,7 +490,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0015_agent_memory'
+      to: '0016_agent_memory'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -476,7 +512,7 @@ describe('application database migrations', () => {
     await client.$executeRawUnsafe('DROP INDEX "ComputeJob_status_idx"')
     await removeComputePasswordAuthSchema(client)
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
-      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_agent_memory')`)
+      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_agent_memory')`)
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: [
@@ -489,10 +525,11 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory'
+        '0015_session_model_call_usage',
+        '0016_agent_memory'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0015_agent_memory'
+      to: '0016_agent_memory'
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })
@@ -558,10 +595,11 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory'
+        '0015_session_model_call_usage',
+        '0016_agent_memory'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0015_agent_memory'
+      to: '0016_agent_memory'
     })
     await expect(
       client.$queryRaw<
@@ -680,7 +718,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0015_agent_memory'
+      migrationId: '0016_agent_memory'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -696,9 +734,9 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0016_test_suffix'],
-      from: '0015_agent_memory',
-      to: '0016_test_suffix'
+      applied: ['0017_test_suffix'],
+      from: '0016_agent_memory',
+      to: '0017_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
@@ -719,8 +757,9 @@ describe('application database migrations', () => {
       { id: '0012_tag_ordering' },
       { id: '0013_session_projection' },
       { id: '0014_review_query_indexes' },
-      { id: '0015_agent_memory' },
-      { id: '0016_test_suffix' }
+      { id: '0015_session_model_call_usage' },
+      { id: '0016_agent_memory' },
+      { id: '0017_test_suffix' }
     ])
   })
 
@@ -787,10 +826,11 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory'
+        '0015_session_model_call_usage',
+        '0016_agent_memory'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0015_agent_memory'
+      to: '0016_agent_memory'
     })
     expect(backupEvents).toEqual([
       {
@@ -859,8 +899,13 @@ describe('application database migrations', () => {
         reused: false
       },
       {
-        migrationId: '0015_agent_memory',
-        path: `${databasePath}.before-0015_agent_memory.backup`,
+        migrationId: '0015_session_model_call_usage',
+        path: `${databasePath}.before-0015_session_model_call_usage.backup`,
+        reused: false
+      },
+      {
+        migrationId: '0016_agent_memory',
+        path: `${databasePath}.before-0016_agent_memory.backup`,
         reused: false
       }
     ])
@@ -878,8 +923,11 @@ describe('application database migrations', () => {
     })
     await expect(
       access(`${databasePath}.before-0014_review_query_indexes.backup`)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(`${databasePath}.before-0015_session_model_call_usage.backup`)
     ).resolves.toBeUndefined()
-    await expect(access(`${databasePath}.before-0015_agent_memory.backup`)).resolves.toBeUndefined()
+    await expect(access(`${databasePath}.before-0016_agent_memory.backup`)).resolves.toBeUndefined()
     await expect(
       client.$queryRaw<Array<{ agentContext: string; name: string }>>`
         SELECT "agentContext", "name" FROM "Project" WHERE "id" = 'project-1'
@@ -909,7 +957,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0016_test_suffix'
+      migrationId: '0017_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -936,7 +984,8 @@ describe('application database migrations', () => {
       { id: '0012_tag_ordering' },
       { id: '0013_session_projection' },
       { id: '0014_review_query_indexes' },
-      { id: '0015_agent_memory' }
+      { id: '0015_session_model_call_usage' },
+      { id: '0016_agent_memory' }
     ])
   })
 
@@ -1001,7 +1050,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0016_test_suffix'
+      migrationId: '0017_test_suffix'
     })
   })
 
@@ -1041,10 +1090,11 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory',
-        '0016_test_suffix'
+        '0015_session_model_call_usage',
+        '0016_agent_memory',
+        '0017_test_suffix'
       ],
-      to: '0016_test_suffix'
+      to: '0017_test_suffix'
     })
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
@@ -1164,7 +1214,7 @@ describe('application database migrations', () => {
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
 
     await expect(
-      migrateApplicationDatabaseWithManifest(client, MIGRATION_MANIFEST.slice(0, -6))
+      migrateApplicationDatabaseWithManifest(client, MIGRATION_MANIFEST.slice(0, -7))
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
       migrationId: '0001_runtime_schema_baseline'
@@ -1275,7 +1325,8 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory'
+        '0015_session_model_call_usage',
+        '0016_agent_memory'
       ]
     })
     await expect(
@@ -1387,7 +1438,8 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory'
+        '0015_session_model_call_usage',
+        '0016_agent_memory'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1451,7 +1503,8 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory'
+        '0015_session_model_call_usage',
+        '0016_agent_memory'
       ]
     })
     await expect(
@@ -1518,7 +1571,8 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory'
+        '0015_session_model_call_usage',
+        '0016_agent_memory'
       ]
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
@@ -1619,7 +1673,8 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory'
+        '0015_session_model_call_usage',
+        '0016_agent_memory'
       ]
     })
     await expect(
@@ -1639,7 +1694,8 @@ describe('application database migrations', () => {
     const tagOrderingBackupPath = `${databasePath}.before-0012_tag_ordering.backup`
     const sessionProjectionBackupPath = `${databasePath}.before-0013_session_projection.backup`
     const reviewQueryIndexesBackupPath = `${databasePath}.before-0014_review_query_indexes.backup`
-    const agentMemoryBackupPath = `${databasePath}.before-0015_agent_memory.backup`
+    const modelCallUsageBackupPath = `${databasePath}.before-0015_session_model_call_usage.backup`
+    const agentMemoryBackupPath = `${databasePath}.before-0016_agent_memory.backup`
     const backupEvents: unknown[] = []
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -1680,7 +1736,8 @@ describe('application database migrations', () => {
         '0012_tag_ordering',
         '0013_session_projection',
         '0014_review_query_indexes',
-        '0015_agent_memory'
+        '0015_session_model_call_usage',
+        '0016_agent_memory'
       ]
     })
     expect(backupEvents).toEqual([
@@ -1755,7 +1812,12 @@ describe('application database migrations', () => {
         reused: false
       },
       {
-        migrationId: '0015_agent_memory',
+        migrationId: '0015_session_model_call_usage',
+        path: modelCallUsageBackupPath,
+        reused: false
+      },
+      {
+        migrationId: '0016_agent_memory',
         path: agentMemoryBackupPath,
         reused: false
       }
@@ -1765,8 +1827,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0014_review_query_indexes.backup',
-      'open-science.db.before-0015_agent_memory.backup'
+      'open-science.db.before-0015_session_model_call_usage.backup',
+      'open-science.db.before-0016_agent_memory.backup'
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(agentContextBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -1775,12 +1837,13 @@ describe('application database migrations', () => {
     await expect(access(crossResourceTagsBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(tagOrderingBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(sessionProjectionBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(reviewQueryIndexesBackupPath)).resolves.toBeUndefined()
+    await expect(access(reviewQueryIndexesBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(modelCallUsageBackupPath)).resolves.toBeUndefined()
     await expect(access(agentMemoryBackupPath)).resolves.toBeUndefined()
     await expect(client.project.count()).resolves.toBe(1)
 
     const backupClient = new PrismaClient({
-      datasources: { db: { url: `file:${reviewQueryIndexesBackupPath.replaceAll('\\', '/')}` } }
+      datasources: { db: { url: `file:${modelCallUsageBackupPath.replaceAll('\\', '/')}` } }
     })
     try {
       await expect(
@@ -1792,7 +1855,7 @@ describe('application database migrations', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0013_session_projection' }])
+      ).resolves.toEqual([{ id: '0014_review_query_indexes' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -2212,8 +2275,13 @@ describe('application database migrations', () => {
         reused: false
       }),
       expect.objectContaining({
-        migrationId: '0015_agent_memory',
-        path: `${databasePath}.before-0015_agent_memory.backup`,
+        migrationId: '0015_session_model_call_usage',
+        path: `${databasePath}.before-0015_session_model_call_usage.backup`,
+        reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0016_agent_memory',
+        path: `${databasePath}.before-0016_agent_memory.backup`,
         reused: false
       })
     ])
@@ -2269,8 +2337,12 @@ describe('application database migrations', () => {
         path: `${databasePath}.before-0014_review_query_indexes.backup`
       },
       {
-        migrationId: '0015_agent_memory',
-        path: `${databasePath}.before-0015_agent_memory.backup`
+        migrationId: '0015_session_model_call_usage',
+        path: `${databasePath}.before-0015_session_model_call_usage.backup`
+      },
+      {
+        migrationId: '0016_agent_memory',
+        path: `${databasePath}.before-0016_agent_memory.backup`
       }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -2304,11 +2376,11 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0014_review_query_indexes.backup',
-      'open-science.db.before-0015_agent_memory.backup',
+      'open-science.db.before-0015_session_model_call_usage.backup',
+      'open-science.db.before-0016_agent_memory.backup',
       unknownBackupName
     ])
-    expect(retired).toHaveLength(13)
+    expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
     expect(retired).toEqual(
       expect.arrayContaining(
         MIGRATION_MANIFEST.slice(0, -2).map((migration) =>

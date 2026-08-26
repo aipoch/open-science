@@ -16,6 +16,11 @@ const IDCONV_BATCH = 200
 // How many ids are OR-ed together in one Europe PMC availability query.
 const SEARCH_BATCH = 8
 
+const STRING_OR_STRING_ARRAY = {
+  type: ['string', 'array'],
+  items: { type: 'string' }
+}
+
 // MCP sort enum -> esearch sort value.
 const SORT_MAP: Record<string, string> = {
   relevance: 'relevance',
@@ -577,9 +582,8 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
       type: 'object',
       properties: {
         pmids: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'One or more PubMed IDs, e.g. ["35486828", "33264437"].'
+          ...STRING_OR_STRING_ARRAY,
+          description: 'One PubMed ID or a list.'
         }
       },
       required: ['pmids']
@@ -609,7 +613,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
     input: {
       type: 'object',
       properties: {
-        pmids: { type: 'array', items: { type: 'string' } },
+        pmids: { ...STRING_OR_STRING_ARRAY },
         link_type: {
           type: 'string',
           enum: [
@@ -759,7 +763,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
     input: {
       type: 'object',
       properties: {
-        ids: { type: 'array', items: { type: 'string' } },
+        ids: { ...STRING_OR_STRING_ARRAY },
         id_type: { type: 'string', enum: ['pmid', 'pmcid', 'doi'], default: 'pmid' }
       },
       required: ['ids']
@@ -813,9 +817,8 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
       type: 'object',
       properties: {
         pmc_ids: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'PMC ids, e.g. ["PMC9046468"] or ["9046468"]. Max 20 per call.'
+          ...STRING_OR_STRING_ARRAY,
+          description: 'One PMC ID or a list (max 20).'
         }
       },
       required: ['pmc_ids']
@@ -913,7 +916,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
       'Report copyright and license status per PMID by combining PubMed CopyrightInformation, the PMC ID Converter (PMID -> PMCID/DOI), and the PMC <permissions> block (license type, ALI license URL, copyright statement/year). Use to check open-access reuse rights before reproducing content.',
     input: {
       type: 'object',
-      properties: { pmids: { type: 'array', items: { type: 'string' } } },
+      properties: { pmids: { ...STRING_OR_STRING_ARRAY } },
       required: ['pmids']
     },
     required: ['pmids'],

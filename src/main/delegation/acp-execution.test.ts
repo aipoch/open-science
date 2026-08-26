@@ -364,7 +364,7 @@ describe('ACP delegate execution production adapter', () => {
       'Focus on table 2.'
     ])
   })
-  it('acknowledges a queued continuation and publishes one Attempt stop with aggregate usage', async () => {
+  it('publishes the current Turn stop while retaining aggregate Attempt usage', async () => {
     const firstPrompt = deferred<PromptResponse>()
     const secondPrompt = deferred<PromptResponse>()
     const secondStarted = deferred<void>()
@@ -417,8 +417,8 @@ describe('ACP delegate execution production adapter', () => {
           promptMessageId: 'prompt-message-boundary',
           messageBranchId: 'branch-message-boundary',
           runtimeSegmentId: 'segment-message-boundary',
-          complete: async (_response, usage) => {
-            completedTurns.push(['first', usage])
+          complete: async (_response, usage, _unavailable, modelCalls) => {
+            completedTurns.push(['first', usage, modelCalls])
           }
         }
       },
@@ -434,8 +434,8 @@ describe('ACP delegate execution production adapter', () => {
         promptMessageId: 'prompt-message-second',
         messageBranchId: 'branch-message-boundary',
         runtimeSegmentId: 'segment-message-second',
-        complete: async (_response, usage) => {
-          completedTurns.push(['second', usage])
+        complete: async (_response, usage, _unavailable, modelCalls) => {
+          completedTurns.push(['second', usage, modelCalls])
         }
       })
       .then(() => {
@@ -450,7 +450,16 @@ describe('ACP delegate execution production adapter', () => {
       kind: 'stop',
       level: 'info',
       sessionId: 'provider-message-boundary',
-      turnUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3, turnCount: 1 }
+      turnUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3, turnCount: 1 },
+      modelCallUsage: [
+        {
+          id: 'prompt-message-boundary:model-call:0',
+          index: 0,
+          inputTokens: 10,
+          cacheTokens: 2,
+          outputTokens: 3
+        }
+      ]
     })
     expect(events).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: 'runtime' })])
@@ -469,7 +478,16 @@ describe('ACP delegate execution production adapter', () => {
       kind: 'stop',
       level: 'info',
       sessionId: 'provider-message-boundary',
-      turnUsage: { inputTokens: 20, cacheTokens: 4, outputTokens: 5, turnCount: 1 }
+      turnUsage: { inputTokens: 20, cacheTokens: 4, outputTokens: 5, turnCount: 1 },
+      modelCallUsage: [
+        {
+          id: 'prompt-message-second:model-call:0',
+          index: 0,
+          inputTokens: 20,
+          cacheTokens: 4,
+          outputTokens: 5
+        }
+      ]
     })
     callbacks.onEvent({
       id: 'first-provider-stop',
@@ -483,11 +501,51 @@ describe('ACP delegate execution production adapter', () => {
     secondPrompt.resolve({ stopReason: 'end_turn' })
     await expect(running.completion).resolves.toMatchObject({
       status: 'completed',
-      turnUsage: { inputTokens: 30, cacheTokens: 6, outputTokens: 8, turnCount: 2 }
+      turnUsage: { inputTokens: 30, cacheTokens: 6, outputTokens: 8, turnCount: 2 },
+      modelCallUsage: [
+        {
+          id: 'prompt-message-boundary:model-call:0',
+          index: 0,
+          inputTokens: 10,
+          cacheTokens: 2,
+          outputTokens: 3
+        },
+        {
+          id: 'prompt-message-second:model-call:0',
+          index: 1,
+          inputTokens: 20,
+          cacheTokens: 4,
+          outputTokens: 5
+        }
+      ]
     })
     expect(completedTurns).toEqual([
-      ['first', { inputTokens: 10, cacheTokens: 2, outputTokens: 3, turnCount: 1 }],
-      ['second', { inputTokens: 20, cacheTokens: 4, outputTokens: 5, turnCount: 1 }]
+      [
+        'first',
+        { inputTokens: 10, cacheTokens: 2, outputTokens: 3, turnCount: 1 },
+        [
+          {
+            id: 'prompt-message-boundary:model-call:0',
+            index: 0,
+            inputTokens: 10,
+            cacheTokens: 2,
+            outputTokens: 3
+          }
+        ]
+      ],
+      [
+        'second',
+        { inputTokens: 20, cacheTokens: 4, outputTokens: 5, turnCount: 1 },
+        [
+          {
+            id: 'prompt-message-second:model-call:0',
+            index: 0,
+            inputTokens: 20,
+            cacheTokens: 4,
+            outputTokens: 5
+          }
+        ]
+      ]
     ])
     expect(events).toEqual([
       {
@@ -506,7 +564,16 @@ describe('ACP delegate execution production adapter', () => {
             timestamp: 20,
             kind: 'stop',
             level: 'info',
-            turnUsage: { inputTokens: 30, cacheTokens: 6, outputTokens: 8, turnCount: 2 }
+            turnUsage: { inputTokens: 20, cacheTokens: 4, outputTokens: 5, turnCount: 1 },
+            modelCallUsage: [
+              {
+                id: 'prompt-message-second:model-call:0',
+                index: 0,
+                inputTokens: 20,
+                cacheTokens: 4,
+                outputTokens: 5
+              }
+            ]
           }
         }
       }
@@ -758,7 +825,18 @@ describe('ACP delegate execution production adapter', () => {
         cacheTokens: 20,
         outputTokens: 30,
         turnCount: 1
-      }
+      },
+      modelCallUsage: [
+        {
+          id: 'prompt-rich-events:model-call:0',
+          index: 0,
+          inputTokens: 100,
+          cacheTokens: 20,
+          outputTokens: 30,
+          contextUsedTokens: 120,
+          contextWindowSize: 200_000
+        }
+      ]
     })
     controls.get('rich-events')?.complete()
     await expect(running.completion).resolves.toMatchObject({
@@ -768,7 +846,18 @@ describe('ACP delegate execution production adapter', () => {
         cacheTokens: 20,
         outputTokens: 30,
         turnCount: 1
-      }
+      },
+      modelCallUsage: [
+        {
+          id: 'prompt-rich-events:model-call:0',
+          index: 0,
+          inputTokens: 100,
+          cacheTokens: 20,
+          outputTokens: 30,
+          contextUsedTokens: 120,
+          contextWindowSize: 200_000
+        }
+      ]
     })
 
     expect(events).toEqual([
@@ -816,7 +905,18 @@ describe('ACP delegate execution production adapter', () => {
               cacheTokens: 20,
               outputTokens: 30,
               turnCount: 1
-            }
+            },
+            modelCallUsage: [
+              {
+                id: 'prompt-rich-events:model-call:0',
+                index: 0,
+                inputTokens: 100,
+                cacheTokens: 20,
+                outputTokens: 30,
+                contextUsedTokens: 120,
+                contextWindowSize: 200_000
+              }
+            ]
           }
         }
       }
