@@ -178,7 +178,8 @@ describe('AgentMarkdown renderer recovery', () => {
     })
     expect(streamdownHarness.plugins?.code).toEqual({ name: 'shiki' })
 
-    const listMermaid = '1. Diagram:\n\n    ```mermaid\n    graph TD\n      A --> B\n    ```'
+    const listMermaid =
+      '- Outer item\n    - Inner item\n      ```mermaid\n      graph TD\n        A --> B\n      ```'
     await act(async () => {
       root.render(<AgentMarkdown content={listMermaid} />)
     })

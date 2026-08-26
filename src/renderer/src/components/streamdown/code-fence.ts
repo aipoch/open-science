@@ -45,7 +45,7 @@ const getMarkdownPluginNeeds = (markdown: string): MarkdownPluginNeeds => {
   let fenceBlockquoteDepth = 0
   let fenceListIndent = 0
   let listBlockquoteDepth = 0
-  let listContentIndent = 0
+  const listContentIndents: number[] = []
 
   for (const rawLine of markdown.split('\n')) {
     const wasOpen = tracker.isOpen()
@@ -61,26 +61,29 @@ const getMarkdownPluginNeeds = (markdown: string): MarkdownPluginNeeds => {
     if (wasOpen && fenceListIndent > 0) {
       const indentation = line.match(LEADING_WHITESPACE)?.[0].length ?? 0
       if (indentation >= fenceListIndent) line = line.slice(fenceListIndent)
-    } else if (!wasOpen) {
-      const listMarker = line.match(LIST_MARKER)?.[0]
-      if (listMarker) {
-        listContentIndent = listMarker.length
-        listBlockquoteDepth = blockquoteDepth
-        line = line.slice(listContentIndent)
-      } else if (line.trim() && listContentIndent > 0) {
+    } else if (!wasOpen && line.trim()) {
+      if (blockquoteDepth !== listBlockquoteDepth) listContentIndents.length = 0
+
+      if (listContentIndents.length > 0) {
         const indentation = line.match(LEADING_WHITESPACE)?.[0].length ?? 0
-        if (blockquoteDepth === listBlockquoteDepth && indentation >= listContentIndent) {
-          line = line.slice(listContentIndent)
-        } else {
-          listContentIndent = 0
-        }
+        while ((listContentIndents.at(-1) ?? 0) > indentation) listContentIndents.pop()
+        line = line.slice(listContentIndents.at(-1) ?? 0)
+      }
+
+      let listIndent = listContentIndents.at(-1) ?? 0
+      for (let listMarker = line.match(LIST_MARKER)?.[0]; listMarker;) {
+        listIndent += listMarker.length
+        listContentIndents.push(listIndent)
+        listBlockquoteDepth = blockquoteDepth
+        line = line.slice(listMarker.length)
+        listMarker = line.match(LIST_MARKER)?.[0]
       }
     }
 
     const isOpen = tracker.feed(line)
     if (!wasOpen && isOpen) {
       fenceBlockquoteDepth = blockquoteDepth
-      fenceListIndent = listContentIndent
+      fenceListIndent = listContentIndents.at(-1) ?? 0
     } else if (wasOpen && !isOpen) {
       fenceListIndent = 0
     }
