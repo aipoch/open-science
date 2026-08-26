@@ -3401,6 +3401,8 @@
     "Memory is off. Agents will not save or recall notes, but you can still edit them.": "记忆已关闭。智能体不会保存或召回笔记，但你仍可编辑它们。",
     "Memory could not be loaded.": "无法加载记忆。",
     "Memory categories": "记忆分类",
+    "Search memory": "搜索记忆",
+    "Save memory": "保存记忆",
     "About you": "关于你",
     "New category": "新建分类",
     "Category actions": "分类操作",

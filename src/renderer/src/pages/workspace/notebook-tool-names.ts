@@ -16,6 +16,11 @@ const NOTEBOOK_CONTROL_TOOL_SUFFIXES = [
   'manage_packages',
   'manage_environments'
 ] as const
+const NOTEBOOK_MEMORY_TOOL_SUFFIXES = [
+  'list_memory_categories',
+  'search_memories',
+  'remember_memory'
+] as const
 
 // The notebook MCP server segment, hyphenated. The responses bridge sanitizes it to
 // open_science_notebook; we normalize `_`→`-` before the exact comparison so both forms match.
@@ -63,11 +68,54 @@ const matchNotebookTool = (
   return undefined
 }
 
+// Memory call styling hides the provider identity, so it uses a stricter whole-name allowlist than
+// legacy run/control matching. Unknown or mixed identities must retain the generic tool display.
+const matchExactNotebookTool = (
+  toolName: string | undefined | null,
+  suffixes: readonly string[]
+): string | undefined => {
+  const name = toolName ?? ''
+  const serverNames = [NOTEBOOK_SERVER_SEGMENT, 'open_science_notebook'] as const
+
+  for (const suffix of suffixes) {
+    for (const server of serverNames) {
+      if (
+        name === `mcp__${server}__${suffix}` ||
+        name === `${server}.${suffix}` ||
+        name === `mcp.${server}.${suffix}` ||
+        name === `${server}/${suffix}` ||
+        name === `${server}_${suffix}`
+      ) {
+        return suffix
+      }
+    }
+  }
+  return undefined
+}
+
 const matchNotebookRunTool = (toolName: string | undefined | null): string | undefined =>
   matchNotebookTool(toolName, NOTEBOOK_RUN_TOOL_SUFFIXES)
 
 const matchNotebookControlTool = (toolName: string | undefined | null): string | undefined =>
   matchNotebookTool(toolName, NOTEBOOK_CONTROL_TOOL_SUFFIXES)
+
+const matchNotebookMemoryTool = (toolName: string | undefined | null): string | undefined =>
+  matchExactNotebookTool(toolName, NOTEBOOK_MEMORY_TOOL_SUFFIXES)
+
+const getNotebookMemoryToolDisplayName = (
+  toolName: string | undefined | null
+): string | undefined => {
+  switch (matchNotebookMemoryTool(toolName)) {
+    case 'list_memory_categories':
+      return 'Memory categories'
+    case 'search_memories':
+      return 'Search memory'
+    case 'remember_memory':
+      return 'Save memory'
+    default:
+      return undefined
+  }
+}
 
 const isNotebookManagePackagesToolName = (toolName: string | undefined | null): boolean =>
   matchNotebookControlTool(toolName) === 'manage_packages'
@@ -145,8 +193,11 @@ const detectCellLanguage = (code: string): string => {
 export {
   NOTEBOOK_RUN_TOOL_SUFFIXES,
   NOTEBOOK_CONTROL_TOOL_SUFFIXES,
+  NOTEBOOK_MEMORY_TOOL_SUFFIXES,
   NOTEBOOK_SERVER_SEGMENT,
+  getNotebookMemoryToolDisplayName,
   matchNotebookControlTool,
+  matchNotebookMemoryTool,
   isNotebookManagePackagesToolName,
   matchNotebookRunTool,
   isNotebookExecuteToolName,

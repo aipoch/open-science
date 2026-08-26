@@ -2,9 +2,12 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 
 import { formatByteSize } from '@/lib/utils'
 import type { ToolActivity } from '@/stores/session-store'
+import { memoryAgentResultSchema } from '../../../../shared/memory'
 import type { NotebookRunStatus } from '../../../../shared/notebook'
 import {
+  getNotebookMemoryToolDisplayName,
   isNotebookManagePackagesToolName,
+  matchNotebookMemoryTool,
   resolveNotebookLanguage,
   resolveNotebookRunToolName
 } from './notebook-tool-names'
@@ -595,6 +598,84 @@ const getNotebookInput = (activity: ToolActivity): Record<string, unknown> => {
   return isRecord(activity.rawInput.arguments) ? activity.rawInput.arguments : activity.rawInput
 }
 
+const getMemoryToolSuffix = (activity: ToolActivity): string | undefined =>
+  matchNotebookMemoryTool(activity.providerToolName) ?? matchNotebookMemoryTool(activity.title)
+
+const getMemoryToolDisplayName = (activity: ToolActivity): string | undefined =>
+  getNotebookMemoryToolDisplayName(activity.providerToolName) ??
+  getNotebookMemoryToolDisplayName(activity.title)
+
+// Memory results can arrive directly, stringified, or wrapped by a known ACP/MCP result envelope.
+// Validate the complete receipt before surfacing any field from provider-controlled output.
+const parseMemoryResult = (value: unknown, depth = 0): Record<string, unknown> | undefined => {
+  if (depth > 5) return undefined
+
+  if (typeof value === 'string') {
+    try {
+      return parseMemoryResult(JSON.parse(value) as unknown, depth + 1)
+    } catch {
+      return undefined
+    }
+  }
+
+  if (!isRecord(value)) return undefined
+  const parsed = memoryAgentResultSchema.safeParse(value)
+
+  if (parsed.success) return parsed.data
+
+  for (const key of ['structuredContent', 'result'] as const) {
+    const nestedResult = parseMemoryResult(value[key], depth + 1)
+
+    if (nestedResult) return nestedResult
+  }
+
+  if (Array.isArray(value.content)) {
+    for (const block of value.content) {
+      if (!isRecord(block) || block.type !== 'text' || typeof block.text !== 'string') continue
+
+      const nestedResult = parseMemoryResult(block.text, depth + 1)
+
+      if (nestedResult) return nestedResult
+    }
+  }
+
+  return undefined
+}
+
+const getSavedMemoryCategoryName = (activity: ToolActivity): string | undefined => {
+  for (const text of collectToolTexts(activity)) {
+    const categoryName = getRecordString(parseMemoryResult(text), 'categoryName')
+
+    if (categoryName) return categoryName
+  }
+
+  return getRecordString(parseMemoryResult(activity.rawOutput), 'categoryName')
+}
+
+// Keeps the familiar expandable Input/Output panel while replacing transport identities with the
+// action and the one useful context value already shown by comparable tool rows.
+const buildMemoryDetails = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): ToolActivityDetails | undefined => {
+  const displayName = getMemoryToolDisplayName(activity)
+  const suffix = getMemoryToolSuffix(activity)
+
+  if (!displayName || !suffix) return undefined
+
+  const details = buildGenericDetails(activity)
+
+  if (!details) return undefined
+
+  const input = getNotebookInput(activity)
+  const query = suffix === 'search_memories' ? getRecordString(input, 'query') : undefined
+  const savedCategory =
+    suffix === 'remember_memory' ? getSavedMemoryCategoryName(activity) : undefined
+  const subtitle = savedCategory === 'About you' ? t('About you') : (savedCategory ?? query)
+
+  return { ...details, displayName, subtitle }
+}
+
 const isNotebookKernelRunActivity = (activity: ToolActivity): boolean =>
   getNotebookRunToolName(activity) !== undefined
 
@@ -1105,6 +1186,10 @@ const buildToolActivityDetails = (
   // Package installs show which packages / installer and a cleaned log, not the raw result JSON.
   if (isManagePackagesActivity(activity)) {
     return buildManagePackagesDetails(activity, t) ?? buildGenericDetails(activity)
+  }
+  // Memory calls use concise actions and context instead of exposing their transport identities.
+  if (getMemoryToolSuffix(activity)) {
+    return buildMemoryDetails(activity, t) ?? buildGenericDetails(activity)
   }
   // Notebook runs (python/r cells, repl, bash) show their code and output, not the run-summary JSON.
   if (isNotebookKernelRunActivity(activity)) {

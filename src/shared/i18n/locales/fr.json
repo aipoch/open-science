@@ -3691,6 +3691,8 @@
     "Memory is off. Agents will not save or recall notes, but you can still edit them.": "La mémoire est désactivée. Les agents n’enregistreront ni ne rappelleront les notes, mais vous pouvez toujours les modifier.",
     "Memory could not be loaded.": "La mémoire n’a pas pu être chargée.",
     "Memory categories": "Catégories de mémoire",
+    "Search memory": "Rechercher dans la mémoire",
+    "Save memory": "Enregistrer dans la mémoire",
     "About you": "À votre sujet",
     "New category": "Nouvelle catégorie",
     "Category actions": "Actions de la catégorie",

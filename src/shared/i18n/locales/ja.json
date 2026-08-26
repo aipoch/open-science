@@ -3401,6 +3401,8 @@
     "Memory is off. Agents will not save or recall notes, but you can still edit them.": "メモリはオフです。エージェントはメモを保存または呼び出しませんが、編集はできます。",
     "Memory could not be loaded.": "メモリを読み込めませんでした。",
     "Memory categories": "メモリカテゴリ",
+    "Search memory": "メモリを検索",
+    "Save memory": "メモリに保存",
     "About you": "あなたについて",
     "New category": "新しいカテゴリ",
     "Category actions": "カテゴリの操作",

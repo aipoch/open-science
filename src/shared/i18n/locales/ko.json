@@ -3399,6 +3399,8 @@
     "Memory is off. Agents will not save or recall notes, but you can still edit them.": "메모리가 꺼져 있습니다. 에이전트는 노트를 저장하거나 불러오지 않지만 사용자는 계속 편집할 수 있습니다.",
     "Memory could not be loaded.": "메모리를 불러오지 못했습니다.",
     "Memory categories": "메모리 카테고리",
+    "Search memory": "메모리 검색",
+    "Save memory": "메모리에 저장",
     "About you": "사용자 정보",
     "New category": "새 카테고리",
     "Category actions": "카테고리 작업",

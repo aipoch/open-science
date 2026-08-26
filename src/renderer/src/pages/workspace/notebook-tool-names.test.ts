@@ -4,6 +4,7 @@ import {
   isNotebookExecuteToolName,
   isNotebookManagePackagesToolName,
   matchNotebookControlTool,
+  matchNotebookMemoryTool,
   matchNotebookRunTool
 } from './notebook-tool-names'
 
@@ -90,6 +91,46 @@ describe('isNotebookExecuteToolName', () => {
     )
     expect(isNotebookManagePackagesToolName('mcp__acme-db__manage_packages')).toBe(false)
     expect(isNotebookManagePackagesToolName('manage_packages')).toBe(false)
+  })
+
+  it('matches memory tools only for the canonical notebook server', () => {
+    expect(matchNotebookMemoryTool('mcp__open-science-notebook__list_memory_categories')).toBe(
+      'list_memory_categories'
+    )
+    expect(matchNotebookMemoryTool('mcp__open_science_notebook__search_memories')).toBe(
+      'search_memories'
+    )
+    expect(matchNotebookMemoryTool('mcp.open-science-notebook.remember_memory')).toBe(
+      'remember_memory'
+    )
+    expect(
+      matchNotebookMemoryTool('mcp__open-science-notebook-staging__remember_memory')
+    ).toBeUndefined()
+    expect(matchNotebookMemoryTool('mcp__acme-db__remember_memory')).toBeUndefined()
+  })
+
+  it.each([
+    ['open-science-notebook/list_memory_categories', 'list_memory_categories'],
+    ['open_science_notebook/list_memory_categories', 'list_memory_categories'],
+    ['open-science-notebook_search_memories', 'search_memories'],
+    ['open_science_notebook_search_memories', 'search_memories'],
+    ['open-science-notebook_remember_memory', 'remember_memory'],
+    ['open_science_notebook_remember_memory', 'remember_memory']
+  ] as const)('matches the supported slash and opencode memory identity %s', (name, suffix) => {
+    expect(matchNotebookMemoryTool(name)).toBe(suffix)
+  })
+
+  it.each([
+    'bogus.open-science-notebook.remember_memory',
+    'proxy/open-science-notebook/remember_memory',
+    'mcp__bogus__open-science-notebook__remember_memory',
+    'mcp__open-science-notebook.remember_memory',
+    'mcp__open-science-notebook__REMEMBER_MEMORY',
+    ' mcp__open-science-notebook__remember_memory',
+    'mcp__open-science-notebook__remember_memory\t',
+    '\nmcp__open-science-notebook__remember_memory\n'
+  ])('rejects the unsupported prefixed or mixed memory identity %s', (name) => {
+    expect(matchNotebookMemoryTool(name)).toBeUndefined()
   })
 
   it('rejects empty or missing names', () => {

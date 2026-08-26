@@ -192,6 +192,136 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[1]).toMatchObject({ label: 'Output', text: '5 rows returned' })
   })
 
+  it('renders memory category reads with a friendly name instead of the raw MCP identity', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__list_memory_categories',
+      toolKind: 'other',
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify([
+              {
+                id: 'memory-category-about-you',
+                name: 'About you',
+                guidance: 'Stable facts about the user.',
+                autoRecall: true,
+                entryCount: 2
+              }
+            ])
+          }
+        }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Memory categories')
+    expect(details?.displayName).not.toContain('mcp__')
+    expect(details?.sections[0]).toMatchObject({ label: 'Output' })
+  })
+
+  it('summarizes memory searches by query across the Codex MCP envelope', () => {
+    const activity = createActivity({
+      title: 'mcp.open-science-notebook.search_memories',
+      toolKind: 'execute',
+      rawInput: {
+        server: 'open-science-notebook',
+        tool: 'search_memories',
+        arguments: { query: 'microscopy preferences', limit: 5 }
+      },
+      rawOutput: []
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Search memory')
+    expect(details?.subtitle).toBe('microscopy preferences')
+  })
+
+  it('summarizes saved memory by the category returned through an MCP result envelope', () => {
+    const activity = createActivity({
+      title: 'mcp.open-science-notebook.remember_memory',
+      toolKind: 'other',
+      rawInput: {
+        server: 'open-science-notebook',
+        tool: 'remember_memory',
+        arguments: {
+          categoryId: 'memory-category-about-you',
+          content: 'Prefers concise status updates.'
+        }
+      },
+      rawOutput: {
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                id: 'memory-entry-1',
+                categoryId: 'memory-category-about-you',
+                categoryName: 'About you',
+                content: 'Prefers concise status updates.',
+                revision: 1,
+                provenance: { origin: 'agent' },
+                updatedAt: 1710000000000
+              })
+            }
+          ]
+        }
+      }
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Save memory')
+    expect(details?.subtitle).toBe('About you')
+    expect(details?.sections).toHaveLength(2)
+  })
+
+  it.each([
+    { content: JSON.stringify({ categoryName: 'Private payload label' }) },
+    {
+      result: { content: [{ type: 'text', text: JSON.stringify({ categoryName: 'Incomplete' }) }] }
+    }
+  ])('does not summarize an invalid saved-memory receipt', (rawOutput) => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__remember_memory',
+      toolKind: 'other',
+      rawInput: {
+        categoryId: 'memory-category-about-you',
+        content: 'Prefers concise status updates.'
+      },
+      rawOutput
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Save memory')
+    expect(details?.subtitle).toBeUndefined()
+    expect(details?.sections).toHaveLength(2)
+  })
+
+  it.each([
+    'proxy/open-science-notebook/remember_memory',
+    'mcp__open-science-notebook__REMEMBER_MEMORY'
+  ])('keeps the generic fallback for the unsupported memory identity %s', (providerToolName) => {
+    const activity = createActivity({
+      providerToolName,
+      toolKind: 'other',
+      rawOutput: {
+        id: 'memory-entry-1',
+        categoryId: 'memory-category-about-you',
+        categoryName: 'About you',
+        content: 'Prefers concise status updates.',
+        revision: 1,
+        provenance: { origin: 'agent' },
+        updatedAt: 1710000000000
+      }
+    })
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe(providerToolName)
+    expect(details?.subtitle).toBeUndefined()
+    expect(details?.sections).toHaveLength(1)
+  })
+
   it('renders a notebook cell as Python code plus output, not the raw run summary', () => {
     const runSummary = {
       runId: 'notebook-run-1',

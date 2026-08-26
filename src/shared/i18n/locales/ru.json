@@ -3811,6 +3811,8 @@
     "Memory is off. Agents will not save or recall notes, but you can still edit them.": "Память отключена. Агенты не будут сохранять или извлекать заметки, но вы по-прежнему можете их редактировать.",
     "Memory could not be loaded.": "Не удалось загрузить память.",
     "Memory categories": "Категории памяти",
+    "Search memory": "Поиск в памяти",
+    "Save memory": "Сохранить в памяти",
     "About you": "О вас",
     "New category": "Новая категория",
     "Category actions": "Действия с категорией",
