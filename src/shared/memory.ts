@@ -13,10 +13,16 @@ export const MEMORY_AGENT_SEARCH_LIMIT = 20
 export const MEMORY_SEARCH_CANDIDATE_LIMIT = 200
 export const MEMORY_SEARCH_TERM_LIMIT = 24
 export const MEMORY_AUTO_RECALL_CONTENT_LIMIT = 6_000
+export const MEMORY_ANALYSIS_SUBJECT_MAX_LENGTH = 128
+export const MEMORY_ANALYSIS_REASON_MAX_LENGTH = 1_000
 
 const memoryEntryViewSchema = z
   .object({
     id: z.string().min(1),
+    categoryId: z.string().min(1).nullable(),
+    categoryName: z.string().min(1).nullable(),
+    projectId: z.string().min(1).nullable(),
+    projectName: z.string().min(1).nullable(),
     content: z.string().min(1).max(MEMORY_ENTRY_MAX_LENGTH),
     origin: z.enum(['user', 'agent']),
     revision: z.number().int().positive(),
@@ -53,11 +59,20 @@ export const memoryCategoryViewSchema = z.union([
   aboutYouMemoryCategoryViewSchema,
   customMemoryCategoryViewSchema
 ])
+export const memoryProjectViewSchema = z
+  .object({
+    projectId: z.string().min(1),
+    name: z.string().min(1),
+    archived: z.boolean(),
+    entries: z.array(memoryEntryViewSchema)
+  })
+  .strict()
 export const memorySnapshotSchema = z
   .object({
     revision: z.number().int().nonnegative(),
     enabled: z.boolean(),
-    categories: z.array(memoryCategoryViewSchema)
+    categories: z.array(memoryCategoryViewSchema),
+    projects: z.array(memoryProjectViewSchema)
   })
   .strict()
 
@@ -76,10 +91,19 @@ export const deleteMemoryCategoryRequestSchema = z
   .strict()
 export const createMemoryEntryRequestSchema = z
   .object({
-    categoryId: z.string().min(1),
+    categoryId: z.string().min(1).nullable().optional(),
+    projectId: z.string().min(1).optional(),
     content: z.string().trim().min(1).max(MEMORY_ENTRY_MAX_LENGTH)
   })
   .strict()
+  .superRefine((request, context) => {
+    if (!request.categoryId && !request.projectId) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A category or project is required.'
+      })
+    }
+  })
 export const updateMemoryEntryRequestSchema = z
   .object({
     id: z.string().min(1),
@@ -102,7 +126,39 @@ export const memoryAgentSearchRequestSchema = z
     limit: z.number().int().min(1).max(MEMORY_AGENT_SEARCH_LIMIT).default(10)
   })
   .strict()
-export const memoryAgentRememberRequestSchema = createMemoryEntryRequestSchema
+const memoryAgentAnalysisSchema = z
+  .object({
+    scope: z.literal('project'),
+    durability: z.literal('cross-session'),
+    evidence: z.enum(['user-stated', 'project-observed']),
+    subject: z.string().trim().min(1).max(MEMORY_ANALYSIS_SUBJECT_MAX_LENGTH),
+    reason: z.string().trim().min(1).max(MEMORY_ANALYSIS_REASON_MAX_LENGTH),
+    categoryReason: z.string().trim().min(1).max(MEMORY_ANALYSIS_REASON_MAX_LENGTH).optional()
+  })
+  .strict()
+export const memoryAgentRememberRequestSchema = z
+  .object({
+    content: z.string().trim().min(1).max(MEMORY_ENTRY_MAX_LENGTH),
+    categoryId: z.string().min(1).optional(),
+    analysis: memoryAgentAnalysisSchema
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (request.categoryId && !request.analysis.categoryReason) {
+      context.addIssue({
+        code: 'custom',
+        path: ['analysis', 'categoryReason'],
+        message: 'A category reason is required when a category is selected.'
+      })
+    }
+    if (!request.categoryId && request.analysis.categoryReason) {
+      context.addIssue({
+        code: 'custom',
+        path: ['analysis', 'categoryReason'],
+        message: 'A category reason requires a selected category.'
+      })
+    }
+  })
 const memoryAgentProvenanceSchema = z.discriminatedUnion('origin', [
   z.object({ origin: z.literal('user') }).strict(),
   z.object({ origin: z.literal('agent'), agentId: z.string().min(1).optional() }).strict()
@@ -110,17 +166,37 @@ const memoryAgentProvenanceSchema = z.discriminatedUnion('origin', [
 export const memoryAgentResultSchema = z
   .object({
     id: z.string().min(1),
-    categoryId: z.string().min(1),
-    categoryName: z.string().min(1),
+    categoryId: z.string().min(1).nullable(),
+    categoryName: z.string().min(1).nullable(),
+    scope: z.enum(['global', 'project']),
     content: z.string().min(1).max(MEMORY_ENTRY_MAX_LENGTH),
     revision: z.number().int().positive(),
     provenance: memoryAgentProvenanceSchema,
     updatedAt: z.number().finite()
   })
   .strict()
+const memoryAgentRememberSuccessSchema = z
+  .object({
+    status: z.enum(['created', 'existing']),
+    memory: memoryAgentResultSchema
+  })
+  .strict()
+const memoryAgentRememberRejectedSchema = z
+  .object({
+    status: z.literal('rejected'),
+    retryable: z.literal(false),
+    code: z.string().min(1).max(64),
+    reason: z.string().min(1).max(MEMORY_ANALYSIS_REASON_MAX_LENGTH)
+  })
+  .strict()
+export const memoryAgentRememberResultSchema = z.discriminatedUnion('status', [
+  memoryAgentRememberSuccessSchema,
+  memoryAgentRememberRejectedSchema
+])
 
 export type MemoryEntryView = z.infer<typeof memoryEntryViewSchema>
 export type MemoryCategoryView = z.infer<typeof memoryCategoryViewSchema>
+export type MemoryProjectView = z.infer<typeof memoryProjectViewSchema>
 export type MemorySnapshot = z.infer<typeof memorySnapshotSchema>
 export type CreateMemoryCategoryRequest = z.infer<typeof createMemoryCategoryRequestSchema>
 export type UpdateMemoryCategoryRequest = z.infer<typeof updateMemoryCategoryRequestSchema>
@@ -132,8 +208,14 @@ export type SetMemoryEnabledRequest = z.infer<typeof setMemoryEnabledRequestSche
 export type MemoryAgentSearchRequest = z.infer<typeof memoryAgentSearchRequestSchema>
 export type MemoryAgentRememberRequest = z.infer<typeof memoryAgentRememberRequestSchema>
 export type MemoryAgentResult = z.infer<typeof memoryAgentResultSchema>
+export type MemoryAgentRememberResult = z.infer<typeof memoryAgentRememberResultSchema>
 export type MemoryChangedEvent = Readonly<{ revision: number }>
-export type MemoryAgentContext = Readonly<{ sessionId: string; agentId?: string }>
+export type MemoryAgentContext = Readonly<{
+  projectId: string
+  sessionId: string
+  agentId?: string
+  turnId?: string
+}>
 
 const snapshotResult = validationCodec(memorySnapshotSchema)
 export const memoryApplicationCommandContracts = Object.freeze({

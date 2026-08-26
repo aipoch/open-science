@@ -673,13 +673,17 @@ describe('WorkspaceToolDetailsRow', () => {
         content: 'Prefers concise status updates.'
       },
       rawOutput: {
-        id: 'memory-entry-1',
-        categoryId: 'memory-category-about-you',
-        categoryName: 'About you',
-        content: 'Prefers concise status updates.',
-        revision: 1,
-        provenance: { origin: 'agent' },
-        updatedAt: 1710000000000
+        status: 'created',
+        memory: {
+          id: 'memory-entry-1',
+          categoryId: 'memory-category-about-you',
+          categoryName: 'About you',
+          scope: 'project',
+          content: 'Prefers concise status updates.',
+          revision: 1,
+          provenance: { origin: 'agent' },
+          updatedAt: 1710000000000
+        }
       }
     })
     await act(async () => {

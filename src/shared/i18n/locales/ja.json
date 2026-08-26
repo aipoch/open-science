@@ -3414,6 +3414,12 @@
     "This category and all {{count}} notes in it will be deleted from current app data. Restoring a database backup may restore older memory._other": "このカテゴリとその中の {{count}} 件のメモが現在のアプリデータから削除されます。データベースのバックアップを復元すると、以前のメモリも復元される場合があります。",
     "Edit category": "カテゴリを編集",
     "Create": "作成",
+    "Uncategorized": "未分類",
+    "Project memory": "プロジェクトメモリ",
+    "Archived project memories.": "アーカイブ済みプロジェクトのメモリ。",
+    "Project memories.": "プロジェクトメモリ。",
+    "Open project": "プロジェクトを開く",
+    "auto": "auto",
     "On": "オン"
   }
 }

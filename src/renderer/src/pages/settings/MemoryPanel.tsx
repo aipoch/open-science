@@ -1,9 +1,11 @@
 import { AlertDialog } from 'radix-ui'
 import {
   AlertTriangle,
+  ArrowUpRight,
   Bell,
   Check,
   Copy,
+  Folder,
   Info,
   MoreVertical,
   Pencil,
@@ -16,6 +18,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
+  ABOUT_YOU_MEMORY_CATEGORY_ID,
   MEMORY_CATEGORY_GUIDANCE_MAX_LENGTH,
   MEMORY_CATEGORY_NAME_MAX_LENGTH,
   MEMORY_CUSTOM_CATEGORY_LIMIT,
@@ -56,6 +59,7 @@ export type MemoryView =
 type MemoryPanelProps = {
   view: MemoryView
   onNavigate(view: MemoryView): void
+  onOpenProject?(projectId: string): void
 }
 
 type CustomMemoryCategoryView = Extract<MemoryCategoryView, { name: string }>
@@ -364,15 +368,25 @@ const NoteEditor = ({
 
 const EntryRow = ({
   entry,
+  viewKind,
   onRequestDelete
 }: {
   entry: MemoryEntryView
+  viewKind: 'category' | 'project'
   onRequestDelete(entry: MemoryEntryView): void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const updateEntry = useMemoryStore((state) => state.updateEntry)
   const [editing, setEditing] = useState(false)
   const [copied, setCopied] = useState(false)
+  const entryCategoryName =
+    entry.categoryId === ABOUT_YOU_MEMORY_CATEGORY_ID ? t('About you') : entry.categoryName
+  const categoryLabel =
+    viewKind === 'project'
+      ? (entryCategoryName ?? (entry.origin === 'agent' ? t('Uncategorized') : null))
+      : null
+  const projectLabel = viewKind === 'category' ? entry.projectName : null
+  const showMetadata = entry.origin === 'agent' || categoryLabel || projectLabel
 
   if (editing) {
     return (
@@ -388,89 +402,127 @@ const EntryRow = ({
   }
 
   return (
-    <div
-      data-slot="memory-entry"
-      className="group mx-1 flex min-h-11 items-start gap-2 rounded-lg px-3 py-2.5 hover:bg-muted/60"
-    >
-      <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-5">
-        {entry.content}
-      </p>
-      <div className="flex shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground hover:text-foreground"
-              aria-label={t('Copy note')}
-              onClick={() => {
-                void navigator.clipboard?.writeText(entry.content)
-                setCopied(true)
-                window.setTimeout(() => setCopied(false), 1_200)
-              }}
-            >
-              {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{copied ? t('Copied') : t('Copy note')}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground hover:text-foreground"
-              aria-label={t('Edit note')}
-              onClick={() => setEditing(true)}
-            >
-              <Pencil aria-hidden="true" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('Edit note')}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="text-destructive hover:text-destructive"
-              aria-label={t('Delete note')}
-              onClick={() => onRequestDelete(entry)}
-            >
-              <Trash2 aria-hidden="true" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('Delete note')}</TooltipContent>
-        </Tooltip>
+    <div data-slot="memory-entry" className="group mx-1 rounded-lg px-3 py-2.5 hover:bg-muted/60">
+      <div className="flex min-h-6 items-start gap-2">
+        <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-5">
+          {entry.content}
+        </p>
+        <div className="flex shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-muted-foreground hover:text-foreground"
+                aria-label={t('Copy note')}
+                onClick={() => {
+                  void navigator.clipboard?.writeText(entry.content)
+                  setCopied(true)
+                  window.setTimeout(() => setCopied(false), 1_200)
+                }}
+              >
+                {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{copied ? t('Copied') : t('Copy note')}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-muted-foreground hover:text-foreground"
+                aria-label={t('Edit note')}
+                onClick={() => setEditing(true)}
+              >
+                <Pencil aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Edit note')}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-destructive hover:text-destructive"
+                aria-label={t('Delete note')}
+                onClick={() => onRequestDelete(entry)}
+              >
+                <Trash2 aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Delete note')}</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
+      {showMetadata ? (
+        <div
+          data-slot="memory-entry-metadata"
+          className="mt-1 flex min-h-5 flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
+        >
+          {entry.origin === 'agent' ? <span>{t('auto')}</span> : null}
+          {entry.origin === 'agent' && (categoryLabel || projectLabel) ? (
+            <span aria-hidden="true">·</span>
+          ) : null}
+          {categoryLabel ? (
+            <span className="max-w-52 truncate rounded-md bg-muted px-1.5 py-0.5 text-foreground/80">
+              {categoryLabel}
+            </span>
+          ) : null}
+          {projectLabel ? (
+            <span className="flex max-w-52 items-center gap-1 truncate rounded-md bg-muted px-1.5 py-0.5 text-foreground/80">
+              <Folder className="size-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">{projectLabel}</span>
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }
 
-const MemoryList = ({ onNavigate }: Pick<MemoryPanelProps, 'onNavigate'>): React.JSX.Element => {
+const MemoryList = ({
+  onNavigate,
+  onOpenProject
+}: Pick<MemoryPanelProps, 'onNavigate' | 'onOpenProject'>): React.JSX.Element => {
   const { t } = useTranslation()
   const enabled = useMemoryStore((state) => state.enabled)
   const categories = useMemoryStore((state) => state.categories)
+  const projects = useMemoryStore((state) => state.projects)
   const selectedCategoryId = useMemoryStore((state) => state.selectedCategoryId)
+  const selectedProjectId = useMemoryStore((state) => state.selectedProjectId)
   const error = useMemoryStore((state) => state.error)
   const selectCategory = useMemoryStore((state) => state.selectCategory)
+  const selectProject = useMemoryStore((state) => state.selectProject)
   const setEnabled = useMemoryStore((state) => state.setEnabled)
   const updateCategory = useMemoryStore((state) => state.updateCategory)
   const deleteCategory = useMemoryStore((state) => state.deleteCategory)
   const createEntry = useMemoryStore((state) => state.createEntry)
   const deleteEntry = useMemoryStore((state) => state.deleteEntry)
   const clearAll = useMemoryStore((state) => state.clearAll)
-  const selected = categories.find(({ id }) => id === selectedCategoryId) ?? categories[0]
+  const selectedCategory = selectedProjectId
+    ? undefined
+    : (categories.find(({ id }) => id === selectedCategoryId) ?? categories[0])
+  const selectedProject = projects.find(({ projectId }) => projectId === selectedProjectId)
   const customCount = categories.filter((category) => !isAboutYou(category)).length
-  const [addingCategoryId, setAddingCategoryId] = useState<string>()
+  const [addingTarget, setAddingTarget] = useState<string>()
   const [confirmClear, setConfirmClear] = useState(false)
   const [pendingDeleteCategory, setPendingDeleteCategory] = useState<CustomMemoryCategoryView>()
   const [pendingDeleteEntry, setPendingDeleteEntry] = useState<MemoryEntryView>()
-  const totalEntries = categories.reduce((count, category) => count + category.entries.length, 0)
-  const adding = selected?.id === addingCategoryId
+  const hasEntries =
+    categories.some((category) => category.entries.length > 0) ||
+    projects.some((project) => project.entries.length > 0)
+  const selectedEntries = selectedProject?.entries ?? selectedCategory?.entries ?? []
+  const selectedTarget = selectedProject
+    ? `project:${selectedProject.projectId}`
+    : selectedCategory
+      ? `category:${selectedCategory.id}`
+      : undefined
+  const adding = selectedTarget === addingTarget
 
   return (
     <TooltipProvider delayDuration={250}>
@@ -488,7 +540,7 @@ const MemoryList = ({ onNavigate }: Pick<MemoryPanelProps, 'onNavigate'>): React
             type="button"
             variant="ghost"
             size="sm"
-            disabled={totalEntries === 0 && customCount === 0}
+            disabled={!hasEntries && customCount === 0}
             className="text-muted-foreground"
             onClick={() => setConfirmClear(true)}
           >
@@ -530,10 +582,10 @@ const MemoryList = ({ onNavigate }: Pick<MemoryPanelProps, 'onNavigate'>): React
                   <button
                     key={category.id}
                     type="button"
-                    aria-current={category.id === selected?.id ? 'page' : undefined}
+                    aria-current={category.id === selectedCategory?.id ? 'page' : undefined}
                     className={cn(
                       'flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted',
-                      category.id === selected?.id && 'bg-muted font-medium'
+                      category.id === selectedCategory?.id && 'bg-muted font-medium'
                     )}
                     onClick={() => selectCategory(category.id)}
                   >
@@ -557,18 +609,66 @@ const MemoryList = ({ onNavigate }: Pick<MemoryPanelProps, 'onNavigate'>): React
                 {t('New category')}
               </button>
             </nav>
+            {projects.length > 0 ? (
+              <nav aria-label={t('Project memory')} className="mt-4 space-y-1">
+                {projects.map((project) => (
+                  <button
+                    key={project.projectId}
+                    type="button"
+                    aria-current={
+                      project.projectId === selectedProject?.projectId ? 'page' : undefined
+                    }
+                    className={cn(
+                      'flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted',
+                      project.projectId === selectedProject?.projectId && 'bg-muted font-medium'
+                    )}
+                    onClick={() => selectProject(project.projectId)}
+                  >
+                    <Folder className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {project.entries.length}
+                    </span>
+                  </button>
+                ))}
+              </nav>
+            ) : null}
           </aside>
 
           <section className="flex min-h-0 min-w-0 flex-col bg-card">
-            {selected ? (
+            {selectedCategory || selectedProject ? (
               <>
                 <div className="flex min-h-13 items-center justify-between gap-3 border-b border-border px-4 py-2">
                   <div className="min-w-0">
                     <h3 className="truncate text-sm font-semibold">
-                      {categoryName(selected, t('About you'))}
+                      {selectedProject
+                        ? selectedProject.name
+                        : categoryName(selectedCategory!, t('About you'))}
                     </h3>
-                    {!isAboutYou(selected) && selected.guidance ? (
-                      <p className="truncate text-xs text-muted-foreground">{selected.guidance}</p>
+                    {selectedProject ? (
+                      <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                        <span className="truncate">
+                          {selectedProject.archived
+                            ? t('Archived project memories.')
+                            : t('Project memories.')}
+                        </span>
+                        {!selectedProject.archived && onOpenProject ? (
+                          <button
+                            type="button"
+                            className="inline-flex shrink-0 items-center gap-0.5 font-medium text-primary hover:underline"
+                            onClick={() => onOpenProject(selectedProject.projectId)}
+                          >
+                            {t('Open project')}
+                            <ArrowUpRight className="size-3" aria-hidden="true" />
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : selectedCategory &&
+                      !isAboutYou(selectedCategory) &&
+                      selectedCategory.guidance ? (
+                      <p className="truncate text-xs text-muted-foreground">
+                        {selectedCategory.guidance}
+                      </p>
                     ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
@@ -576,12 +676,12 @@ const MemoryList = ({ onNavigate }: Pick<MemoryPanelProps, 'onNavigate'>): React
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => setAddingCategoryId(selected.id)}
+                      onClick={() => setAddingTarget(selectedTarget)}
                     >
                       <Plus aria-hidden="true" />
                       {t('Add')}
                     </Button>
-                    {!isAboutYou(selected) ? (
+                    {selectedCategory && !isAboutYou(selectedCategory) ? (
                       <DropdownMenu>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -605,19 +705,21 @@ const MemoryList = ({ onNavigate }: Pick<MemoryPanelProps, 'onNavigate'>): React
                         </Tooltip>
                         <DropdownMenuContent align="end" className="min-w-44">
                           <DropdownMenuItem
-                            onSelect={() => onNavigate({ kind: 'edit', categoryId: selected.id })}
+                            onSelect={() =>
+                              onNavigate({ kind: 'edit', categoryId: selectedCategory.id })
+                            }
                           >
                             <Pencil className="mr-2 size-4" aria-hidden="true" />
                             {t('Edit')}
                           </DropdownMenuItem>
                           <DropdownMenuCheckboxItem
-                            checked={selected.autoRecall}
+                            checked={selectedCategory.autoRecall}
                             onCheckedChange={(checked) => {
                               void updateCategory({
-                                id: selected.id,
-                                expectedRevision: selected.revision,
-                                name: selected.name,
-                                guidance: selected.guidance,
+                                id: selectedCategory.id,
+                                expectedRevision: selectedCategory.revision,
+                                name: selectedCategory.name,
+                                guidance: selectedCategory.guidance,
                                 autoRecall: checked === true
                               }).catch(() => undefined)
                             }}
@@ -627,7 +729,7 @@ const MemoryList = ({ onNavigate }: Pick<MemoryPanelProps, 'onNavigate'>): React
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive data-[highlighted]:text-destructive"
-                            onSelect={() => setPendingDeleteCategory(selected)}
+                            onSelect={() => setPendingDeleteCategory(selectedCategory)}
                           >
                             <Trash2 className="mr-2 size-4" aria-hidden="true" />
                             {t('Delete category')}
@@ -640,18 +742,27 @@ const MemoryList = ({ onNavigate }: Pick<MemoryPanelProps, 'onNavigate'>): React
                 {adding ? (
                   <NoteEditor
                     placeholder={t('Add a note…')}
-                    onCancel={() => setAddingCategoryId(undefined)}
-                    onSave={(content) => createEntry({ categoryId: selected.id, content })}
+                    onCancel={() => setAddingTarget(undefined)}
+                    onSave={(content) =>
+                      selectedProject
+                        ? createEntry({
+                            projectId: selectedProject.projectId,
+                            categoryId: null,
+                            content
+                          })
+                        : createEntry({ categoryId: selectedCategory!.id, content })
+                    }
                   />
                 ) : null}
                 <div data-slot="memory-entry-list" className="min-h-0 flex-1 overflow-y-auto py-1">
-                  {selected.entries.length === 0 && !adding ? (
+                  {selectedEntries.length === 0 && !adding ? (
                     <p className="px-4 py-4 text-sm text-muted-foreground">{t('No notes yet.')}</p>
                   ) : (
-                    selected.entries.map((entry) => (
+                    selectedEntries.map((entry) => (
                       <EntryRow
                         key={entry.id}
                         entry={entry}
+                        viewKind={selectedProject ? 'project' : 'category'}
                         onRequestDelete={setPendingDeleteEntry}
                       />
                     ))
@@ -719,7 +830,7 @@ const MemoryList = ({ onNavigate }: Pick<MemoryPanelProps, 'onNavigate'>): React
   )
 }
 
-const MemoryPanel = ({ view, onNavigate }: MemoryPanelProps): React.JSX.Element => {
+const MemoryPanel = ({ view, onNavigate, onOpenProject }: MemoryPanelProps): React.JSX.Element => {
   const categories = useMemoryStore((state) => state.categories)
   const status = useMemoryStore((state) => state.status)
   const customCategories = categories.filter(
@@ -735,7 +846,9 @@ const MemoryPanel = ({ view, onNavigate }: MemoryPanelProps): React.JSX.Element 
     if (missingEditTarget && status === 'ready') onNavigate({ kind: 'list' })
   }, [missingEditTarget, onNavigate, status])
 
-  if (missingEditTarget) return <MemoryList onNavigate={onNavigate} />
+  if (missingEditTarget) {
+    return <MemoryList onNavigate={onNavigate} onOpenProject={onOpenProject} />
+  }
 
   if (view.kind !== 'list') {
     return (
@@ -746,7 +859,7 @@ const MemoryPanel = ({ view, onNavigate }: MemoryPanelProps): React.JSX.Element 
       />
     )
   }
-  return <MemoryList onNavigate={onNavigate} />
+  return <MemoryList onNavigate={onNavigate} onOpenProject={onOpenProject} />
 }
 
 export { MemoryPanel }

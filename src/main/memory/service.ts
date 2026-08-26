@@ -9,6 +9,7 @@ import {
   type DeleteMemoryEntryRequest,
   type MemoryAgentContext,
   type MemoryAgentRememberRequest,
+  type MemoryAgentRememberResult,
   type MemoryAgentResult,
   type MemoryAgentSearchRequest,
   type MemorySnapshot,
@@ -59,13 +60,64 @@ const escapeUntrustedJson = (value: unknown): string =>
     .replaceAll('>', '\\u003e')
     .replaceAll('&', '\\u0026')
 
+type MemoryAnalysisRejection = Extract<MemoryAgentRememberResult, { status: 'rejected' }>
+
+const sensitiveMemoryPatterns = [
+  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/iu,
+  /\b(?:api[_ -]?key|access[_ -]?token|password|secret)\s*[:=]\s*\S+/iu,
+  /(?:密码|口令|密钥|令牌)\s*[:：=]\s*\S+/u
+]
+const promptInjectionPatterns = [
+  /\b(?:ignore|disregard|override)\b.{0,40}\b(?:previous|prior|system|developer)\b.{0,30}\binstructions?\b/iu,
+  /(?:忽略|无视|覆盖).{0,20}(?:之前|此前|系统|开发者).{0,20}(?:指令|提示)/u
+]
+const transientAnalysisPatterns = [
+  /\b(?:temporary|transient|ephemeral|one[- ]off|throwaway)\b/iu,
+  /\b(?:only )?(?:for|during)\s+(?:this|the current)\s+(?:turn|message|response|session|conversation)\b/iu,
+  /(?:临时|暂时|一次性|仅限本次|只在本次)/u
+]
+
+// The Agent supplies the semantic classification; the host enforces high-confidence safety and
+// durability contradictions before SQLite sees the record. Ambiguous domain facts remain allowed.
+const validateAgentMemoryAnalysis = (
+  request: MemoryAgentRememberRequest
+): MemoryAnalysisRejection | undefined => {
+  if (sensitiveMemoryPatterns.some((pattern) => pattern.test(request.content))) {
+    return {
+      status: 'rejected',
+      retryable: false,
+      code: 'sensitive_content',
+      reason: 'Memory cannot save credentials or secrets.'
+    }
+  }
+  if (promptInjectionPatterns.some((pattern) => pattern.test(request.content))) {
+    return {
+      status: 'rejected',
+      retryable: false,
+      code: 'instructional_content',
+      reason: 'Memory cannot save prompt-injection instructions.'
+    }
+  }
+  if (transientAnalysisPatterns.some((pattern) => pattern.test(request.analysis.reason))) {
+    return {
+      status: 'rejected',
+      retryable: false,
+      code: 'invalid_analysis',
+      reason: 'The analysis does not describe durable cross-session knowledge.'
+    }
+  }
+  return undefined
+}
+
 const toAgentResult = (row: MemorySearchCandidate): MemoryAgentResult => ({
   id: row.id,
   categoryId: row.categoryId,
-  categoryName:
-    row.category.systemKey === ABOUT_YOU_MEMORY_CATEGORY_SYSTEM_KEY
+  categoryName: row.category
+    ? row.category.systemKey === ABOUT_YOU_MEMORY_CATEGORY_SYSTEM_KEY
       ? 'About you'
-      : (row.category.name ?? 'Memory'),
+      : (row.category.name ?? 'Memory')
+    : null,
+  scope: row.projectId ? 'project' : 'global',
   content: row.content,
   revision: row.revision,
   provenance:
@@ -80,6 +132,10 @@ const toAgentResult = (row: MemorySearchCandidate): MemoryAgentResult => ({
 
 class MemoryService {
   private operationQueue: Promise<void> = Promise.resolve()
+  private readonly rejectedWrites = new Map<
+    string,
+    Extract<MemoryAgentRememberResult, { status: 'rejected' }>
+  >()
 
   constructor(
     private readonly repository: MemoryRepository,
@@ -102,6 +158,19 @@ class MemoryService {
       this.events.publish('memory:changed', { revision: snapshot.revision })
       return snapshot
     })
+  }
+
+  private cacheRejection(
+    rejectionKey: string | undefined,
+    rejection: MemoryAnalysisRejection
+  ): MemoryAnalysisRejection {
+    if (!rejectionKey) return rejection
+    if (this.rejectedWrites.size >= 256) {
+      const oldestKey = this.rejectedWrites.keys().next().value
+      if (oldestKey) this.rejectedWrites.delete(oldestKey)
+    }
+    this.rejectedWrites.set(rejectionKey, rejection)
+    return rejection
   }
 
   snapshot(): Promise<MemorySnapshot> {
@@ -129,7 +198,7 @@ class MemoryService {
   }
 
   createEntry(request: CreateMemoryEntryRequest): Promise<MemorySnapshot> {
-    return this.mutate(() => this.repository.createEntry(request.categoryId, request.content))
+    return this.mutate(() => this.repository.createEntry(request))
   }
 
   updateEntry(request: UpdateMemoryEntryRequest): Promise<MemorySnapshot> {
@@ -148,7 +217,9 @@ class MemoryService {
     if (!(await this.repository.isEnabled())) throw new Error('Memory is turned off.')
   }
 
-  async listCategoriesForAgent(): Promise<
+  async listCategoriesForAgent(
+    context: MemoryAgentContext
+  ): Promise<
     Array<{ id: string; name: string; guidance: string; autoRecall: boolean; entryCount: number }>
   > {
     return this.enqueue(async () => {
@@ -161,7 +232,9 @@ class MemoryService {
             name: 'About you',
             guidance: 'Stable facts about the user.',
             autoRecall: true,
-            entryCount: category.entries.length
+            entryCount: category.entries.filter(
+              (entry) => entry.projectId === null || entry.projectId === context.projectId
+            ).length
           }
         }
         return {
@@ -169,39 +242,69 @@ class MemoryService {
           name: category.name,
           guidance: category.guidance,
           autoRecall: category.autoRecall,
-          entryCount: category.entries.length
+          entryCount: category.entries.filter(
+            (entry) => entry.projectId === null || entry.projectId === context.projectId
+          ).length
         }
       })
     })
   }
 
-  async searchForAgent(request: MemoryAgentSearchRequest): Promise<MemoryAgentResult[]> {
+  async searchForAgent(
+    request: MemoryAgentSearchRequest,
+    context: MemoryAgentContext
+  ): Promise<MemoryAgentResult[]> {
     return this.enqueue(async () => {
       await this.requireEnabled()
-      return this.search(request.query, request.limit, request.categoryIds, false)
+      return this.search(
+        request.query,
+        request.limit,
+        request.categoryIds,
+        false,
+        context.projectId
+      )
     })
   }
 
   async rememberForAgent(
     request: MemoryAgentRememberRequest,
     context: MemoryAgentContext
-  ): Promise<MemoryAgentResult> {
+  ): Promise<MemoryAgentRememberResult> {
     return this.enqueue(async () => {
       await this.requireEnabled()
+      const rejectionKey = context.turnId
+        ? `${context.sessionId}\u0000${context.turnId}\u0000${normalizeSearchText(request.content)}`
+        : undefined
+      const previousRejection = rejectionKey ? this.rejectedWrites.get(rejectionKey) : undefined
+      if (previousRejection) return previousRejection
+      const analysisRejection = validateAgentMemoryAnalysis(request)
+      if (analysisRejection) return this.cacheRejection(rejectionKey, analysisRejection)
       const saved = await this.repository.rememberEntry(
         request.categoryId,
         request.content,
         context
       )
-      if (saved.changed) {
+      if (saved.status === 'rejected') {
+        const rejection = {
+          status: 'rejected' as const,
+          retryable: false as const,
+          code: saved.code,
+          reason: saved.reason
+        }
+        return this.cacheRejection(rejectionKey, rejection)
+      }
+      if (saved.status === 'created') {
         const snapshot = await this.repository.snapshot()
         this.events.publish('memory:changed', { revision: snapshot.revision })
       }
-      return toAgentResult(saved.candidate)
+      return { status: saved.status, memory: toAgentResult(saved.candidate) }
     })
   }
 
-  async recallForPrompt(requestText: string): Promise<string | undefined> {
+  async recallForPrompt(
+    requestText: string,
+    context: Pick<MemoryAgentContext, 'projectId'>
+  ): Promise<string | undefined> {
     return this.enqueue(async () => {
       if (!(await this.repository.isEnabled()) || !requestText.trim()) return undefined
       const seenContent = new Set<string>()
@@ -215,9 +318,19 @@ class MemoryService {
           matches.push(candidate)
         }
       }
-      appendDistinct(await this.search(requestText, MEMORY_SEARCH_CANDIDATE_LIMIT, undefined, true))
+      appendDistinct(
+        await this.search(
+          requestText,
+          MEMORY_SEARCH_CANDIDATE_LIMIT,
+          undefined,
+          true,
+          context.projectId
+        )
+      )
       if (matches.length < 5) {
-        appendDistinct((await this.repository.recentAutoRecallCandidates()).map(toAgentResult))
+        appendDistinct(
+          (await this.repository.recentAutoRecallCandidates(context.projectId)).map(toAgentResult)
+        )
       }
       if (matches.length === 0) return undefined
       let remaining = MEMORY_AUTO_RECALL_CONTENT_LIMIT
@@ -238,10 +351,13 @@ class MemoryService {
     query: string,
     limit: number,
     categoryIds: readonly string[] | undefined,
-    autoRecallOnly: boolean
+    autoRecallOnly: boolean,
+    projectId: string
   ): Promise<MemoryAgentResult[]> {
     const terms = searchTerms(query)
-    return (await this.repository.searchCandidates({ categoryIds, autoRecallOnly, terms }))
+    return (
+      await this.repository.searchCandidates({ projectId, categoryIds, autoRecallOnly, terms })
+    )
       .slice(0, limit)
       .map(toAgentResult)
   }

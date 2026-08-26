@@ -50,6 +50,7 @@ import { cn } from '@/lib/utils'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { preloadComputeHosts, useComputeStore } from '@/stores/compute-store'
 import { useMemoryStore } from '@/stores/memory-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
@@ -1324,7 +1325,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       }}
                     />
                   ) : activePanel === 'memory' ? (
-                    <MemoryPanel view={memoryView} onNavigate={navigateMemory} />
+                    <MemoryPanel
+                      view={memoryView}
+                      onNavigate={navigateMemory}
+                      onOpenProject={(projectId) => {
+                        useNavigationStore.getState().openProject(projectId, 'user')
+                        onClose()
+                      }}
+                    />
                   ) : activePanel === 'connectors' ? (
                     connectorsView.kind === 'detail' ? (
                       <div>

@@ -58,7 +58,10 @@ type AcpPromptPreparationOwnerOptions = Readonly<{
     paths: string[]
   ) => Promise<() => void>
   memory?: {
-    recallForPrompt(requestText: string): Promise<string | undefined>
+    recallForPrompt(
+      requestText: string,
+      context: { projectId: string }
+    ): Promise<string | undefined>
   }
   isMemoryEnabledForSession?: (sessionId: string) => boolean
   notebook?: Readonly<{
@@ -197,13 +200,15 @@ class AcpPromptPreparationOwner {
         : input.request.memoryEnabled !== false
       const recalledMemory = !memoryEnabled
         ? undefined
-        : await this.options.memory?.recallForPrompt(input.request.text).catch((error: unknown) => {
-            log.warn('memory auto-recall failed; continuing without recalled records', {
-              sessionId: input.request.sessionId,
-              ...errorLogFields(error)
+        : await this.options.memory
+            ?.recallForPrompt(input.request.text, { projectId: input.projectId })
+            .catch((error: unknown) => {
+              log.warn('memory auto-recall failed; continuing without recalled records', {
+                sessionId: input.request.sessionId,
+                ...errorLogFields(error)
+              })
+              return undefined
             })
-            return undefined
-          })
       if (await cancelled()) return cancelPrepared()
       const promptText = [
         input.protectedContext,

@@ -198,6 +198,10 @@ describe('MemoryPanel', () => {
           entries: [
             {
               id: 'entry-a',
+              categoryId: 'memory-category-about-you',
+              categoryName: 'About you',
+              projectId: null,
+              projectName: null,
               content: 'Keep this until confirmed',
               origin: 'user',
               revision: 1,
@@ -234,6 +238,10 @@ describe('MemoryPanel', () => {
           entries: [
             {
               id: 'entry-a',
+              categoryId: 'memory-category-about-you',
+              categoryName: 'About you',
+              projectId: null,
+              projectName: null,
               content: 'Keep this after closing',
               origin: 'user',
               revision: 1,
@@ -301,6 +309,10 @@ describe('MemoryPanel', () => {
           entries: [
             {
               id: 'entry-a',
+              categoryId: 'memory-category-about-you',
+              categoryName: 'About you',
+              projectId: null,
+              projectName: null,
               content: 'First note',
               origin: 'user',
               revision: 1,
@@ -309,6 +321,10 @@ describe('MemoryPanel', () => {
             },
             {
               id: 'entry-b',
+              categoryId: 'memory-category-about-you',
+              categoryName: 'About you',
+              projectId: null,
+              projectName: null,
               content: 'Second note',
               origin: 'user',
               revision: 1,
@@ -335,6 +351,10 @@ describe('MemoryPanel', () => {
           entries: [
             {
               id: 'entry-a',
+              categoryId: 'memory-category-about-you',
+              categoryName: 'About you',
+              projectId: null,
+              projectName: null,
               content: 'A note',
               origin: 'user',
               revision: 1,
@@ -373,5 +393,99 @@ describe('MemoryPanel', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
     expect(container.querySelector('input[name="memory-category-name"]')).toBeNull()
     expect(document.body.textContent).toContain('About you')
+  })
+
+  it('renders a derived project container with compact provenance and opens that project', async () => {
+    const onOpenProject = vi.fn()
+    useMemoryStore.setState({
+      projects: [
+        {
+          projectId: 'project-a',
+          name: 'Project A',
+          archived: false,
+          entries: [
+            {
+              id: 'entry-project',
+              categoryId: 'category-a',
+              categoryName: 'Research findings',
+              projectId: 'project-a',
+              projectName: 'Project A',
+              content: 'The assay requires a 15 minute incubation.',
+              origin: 'agent',
+              revision: 1,
+              createdAt: 4,
+              updatedAt: 4
+            }
+          ]
+        }
+      ]
+    })
+    await act(async () =>
+      root.render(
+        <MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenProject={onOpenProject} />
+      )
+    )
+
+    fireEvent.click(
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
+        button.textContent?.includes('Project A')
+      )!
+    )
+
+    const entry = container.querySelector('[data-slot="memory-entry"]')
+    expect(entry?.textContent).toContain('auto')
+    expect(entry?.textContent).toContain('Research findings')
+    fireEvent.click(
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Open project'
+      )!
+    )
+    expect(onOpenProject).toHaveBeenCalledWith('project-a')
+  })
+
+  it('creates a manual note inside the selected project without a global category', async () => {
+    const createEntry = vi.fn().mockResolvedValue(undefined)
+    useMemoryStore.setState({
+      projects: [
+        {
+          projectId: 'project-a',
+          name: 'Project A',
+          archived: false,
+          entries: []
+        }
+      ],
+      createEntry
+    })
+    await act(async () =>
+      root.render(
+        <MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenProject={vi.fn()} />
+      )
+    )
+    fireEvent.click(
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
+        button.textContent?.includes('Project A')
+      )!
+    )
+    fireEvent.click(
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Add'
+      )!
+    )
+    fireEvent.change(container.querySelector('textarea')!, {
+      target: { value: 'Manually recorded project fact' }
+    })
+    await act(async () => {
+      fireEvent.click(
+        Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent?.trim() === 'Save'
+        )!
+      )
+    })
+
+    expect(createEntry).toHaveBeenCalledWith({
+      projectId: 'project-a',
+      categoryId: null,
+      content: 'Manually recorded project fact'
+    })
   })
 })

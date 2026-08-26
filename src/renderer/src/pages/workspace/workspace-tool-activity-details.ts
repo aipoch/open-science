@@ -2,7 +2,7 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 
 import { formatByteSize } from '@/lib/utils'
 import type { ToolActivity } from '@/stores/session-store'
-import { memoryAgentResultSchema } from '../../../../shared/memory'
+import { memoryAgentRememberResultSchema, memoryAgentResultSchema } from '../../../../shared/memory'
 import type { NotebookRunStatus } from '../../../../shared/notebook'
 import {
   getNotebookMemoryToolDisplayName,
@@ -622,8 +622,12 @@ const parseMemoryResult = (value: unknown, depth = 0): Record<string, unknown> |
   const parsed = memoryAgentResultSchema.safeParse(value)
 
   if (parsed.success) return parsed.data
+  const rememberResult = memoryAgentRememberResultSchema.safeParse(value)
+  if (rememberResult.success && rememberResult.data.status !== 'rejected') {
+    return rememberResult.data.memory
+  }
 
-  for (const key of ['structuredContent', 'result'] as const) {
+  for (const key of ['structuredContent', 'result', 'memory'] as const) {
     const nestedResult = parseMemoryResult(value[key], depth + 1)
 
     if (nestedResult) return nestedResult

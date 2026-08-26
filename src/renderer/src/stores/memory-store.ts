@@ -14,7 +14,9 @@ type MemoryStore = MemorySnapshot & {
   status: 'idle' | 'loading' | 'ready' | 'error'
   error?: string
   selectedCategoryId?: string
+  selectedProjectId?: string
   selectCategory(id: string): void
+  selectProject(id: string): void
   load(): Promise<void>
   setEnabled(enabled: boolean): Promise<void>
   createCategory(request: CreateMemoryCategoryRequest): Promise<string>
@@ -30,35 +32,49 @@ type MemoryStore = MemorySnapshot & {
 const EMPTY_SNAPSHOT: MemorySnapshot = {
   revision: 0,
   enabled: false,
-  categories: []
+  categories: [],
+  projects: []
 }
 
 export const createInitialMemoryState = (): MemorySnapshot & {
   status: MemoryStore['status']
   error?: string
   selectedCategoryId?: string
+  selectedProjectId?: string
 } => ({ ...EMPTY_SNAPSHOT, status: 'idle' })
 
 let loadSequence = 0
 
 const stateFromSnapshot = (
   snapshot: MemorySnapshot,
-  selectedCategoryId?: string
-): Pick<MemoryStore, keyof MemorySnapshot | 'status' | 'selectedCategoryId' | 'error'> => ({
-  ...snapshot,
-  status: 'ready',
-  error: undefined,
-  selectedCategoryId: snapshot.categories.some(({ id }) => id === selectedCategoryId)
-    ? selectedCategoryId
-    : snapshot.categories[0]?.id
-})
+  selectedCategoryId?: string,
+  selectedProjectId?: string
+): Pick<
+  MemoryStore,
+  keyof MemorySnapshot | 'status' | 'selectedCategoryId' | 'selectedProjectId' | 'error'
+> => {
+  const projectExists = snapshot.projects.some(({ projectId }) => projectId === selectedProjectId)
+  const categoryExists = snapshot.categories.some(({ id }) => id === selectedCategoryId)
+
+  return {
+    ...snapshot,
+    status: 'ready',
+    error: undefined,
+    selectedCategoryId: projectExists
+      ? undefined
+      : categoryExists
+        ? selectedCategoryId
+        : snapshot.categories[0]?.id,
+    selectedProjectId: projectExists ? selectedProjectId : undefined
+  }
+}
 
 export const useMemoryStore = create<MemoryStore>((set, get) => {
   const applyMutation = async (operation: () => Promise<MemorySnapshot>): Promise<void> => {
     try {
       const snapshot = await operation()
       loadSequence += 1
-      set(stateFromSnapshot(snapshot, get().selectedCategoryId))
+      set(stateFromSnapshot(snapshot, get().selectedCategoryId, get().selectedProjectId))
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'memory' })
       throw error
@@ -67,7 +83,9 @@ export const useMemoryStore = create<MemoryStore>((set, get) => {
 
   return {
     ...createInitialMemoryState(),
-    selectCategory: (selectedCategoryId) => set({ selectedCategoryId }),
+    selectCategory: (selectedCategoryId) =>
+      set({ selectedCategoryId, selectedProjectId: undefined }),
+    selectProject: (selectedProjectId) => set({ selectedCategoryId: undefined, selectedProjectId }),
     load: async () => {
       if (!window.api?.memory) {
         set({ ...EMPTY_SNAPSHOT, status: 'error', error: 'load' })
@@ -82,7 +100,7 @@ export const useMemoryStore = create<MemoryStore>((set, get) => {
           set({ status: 'ready' })
           return
         }
-        set(stateFromSnapshot(snapshot, get().selectedCategoryId))
+        set(stateFromSnapshot(snapshot, get().selectedCategoryId, get().selectedProjectId))
       } catch {
         if (sequence !== loadSequence) return
         set({ status: 'error', error: 'load' })
@@ -98,7 +116,7 @@ export const useMemoryStore = create<MemoryStore>((set, get) => {
         return snapshot
       })
       if (!createdId) throw new Error('Created memory category is missing.')
-      set({ selectedCategoryId: createdId })
+      set({ selectedCategoryId: createdId, selectedProjectId: undefined })
       return createdId
     },
     updateCategory: (request) => applyMutation(() => window.api.memory.updateCategory(request)),

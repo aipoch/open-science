@@ -88,6 +88,32 @@ const optionalOwner = (name: ProjectOwnerFieldName): ProjectOwnerField => ({
 
 const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
+    id: 'project-memory',
+    medium: 'sqlite',
+    resources: ['MemoryEntry'],
+    prismaModels: [
+      {
+        name: 'MemoryEntry',
+        ownerFields: [optionalOwner('projectId'), optionalOwner('sourceSessionId')],
+        relationContracts: [
+          {
+            field: 'project',
+            target: 'Project',
+            fromFields: ['projectId'],
+            onDelete: 'Cascade'
+          }
+        ]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'ProjectRepository.delete',
+      note: 'Project memories are removed before the Project metadata row is retained as history.'
+    }
+  },
+  {
     id: 'permission-grants',
     medium: 'sqlite',
     resources: ['PermissionGrant'],

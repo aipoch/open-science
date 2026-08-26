@@ -3414,6 +3414,12 @@
     "This category and all {{count}} notes in it will be deleted from current app data. Restoring a database backup may restore older memory._other": "此分类及其中的全部 {{count}} 条笔记将从当前应用数据中删除。恢复数据库备份时，旧记忆可能会被恢复。",
     "Edit category": "编辑分类",
     "Create": "创建",
+    "Uncategorized": "未分类",
+    "Project memory": "项目记忆",
+    "Archived project memories.": "已归档项目的记忆。",
+    "Project memories.": "项目记忆。",
+    "Open project": "打开项目",
+    "auto": "auto",
     "On": "开"
   }
 }

@@ -210,6 +210,7 @@ describe('Project-owned data catalog architecture', () => {
 
   it('locks the curated SQL, filesystem, and runtime ownership inventory', () => {
     expect(PROJECT_OWNED_DATA_CATALOG.map((entry) => entry.id)).toEqual([
+      'project-memory',
       'permission-grants',
       'project-preview-state',
       'vision-evidence',

@@ -96,7 +96,8 @@ const categoryRevisionExpression = `"revision" >= 1`
 const entryContentExpression = `length(trim("content")) BETWEEN 1 AND 4000`
 const entryContentKeyExpression = `length("contentKey") BETWEEN 1 AND 4000`
 const entryOriginExpression = `"origin" IN ('user', 'agent')`
-const entrySourceExpression = `("origin" = 'user' AND "sourceSessionId" IS NULL AND "sourceAgentId" IS NULL) OR ("origin" = 'agent' AND "sourceSessionId" IS NOT NULL)`
+const entryScopeExpression = `"categoryId" IS NOT NULL OR "projectId" IS NOT NULL`
+const entrySourceExpression = `("origin" = 'user' AND "sourceSessionId" IS NULL AND "sourceAgentId" IS NULL) OR ("origin" = 'agent' AND "sourceSessionId" IS NOT NULL AND "projectId" IS NOT NULL)`
 const entryRevisionExpression = `"revision" >= 1`
 
 const agentMemoryMigration = {
@@ -131,7 +132,8 @@ const agentMemoryMigration = {
     )`,
     `CREATE TABLE IF NOT EXISTS "MemoryEntry" (
       "id" TEXT NOT NULL PRIMARY KEY,
-      "categoryId" TEXT NOT NULL,
+      "categoryId" TEXT,
+      "projectId" TEXT,
       "content" TEXT NOT NULL,
       "contentKey" TEXT NOT NULL,
       "origin" TEXT NOT NULL,
@@ -141,15 +143,19 @@ const agentMemoryMigration = {
       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" DATETIME NOT NULL,
       CONSTRAINT "MemoryEntry_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "MemoryCategory" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT "MemoryEntry_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
       CONSTRAINT "MemoryEntry_content_check" CHECK (${entryContentExpression}),
       CONSTRAINT "MemoryEntry_contentKey_check" CHECK (${entryContentKeyExpression}),
       CONSTRAINT "MemoryEntry_origin_check" CHECK (${entryOriginExpression}),
+      CONSTRAINT "MemoryEntry_scope_check" CHECK (${entryScopeExpression}),
       CONSTRAINT "MemoryEntry_source_check" CHECK (${entrySourceExpression}),
       CONSTRAINT "MemoryEntry_revision_check" CHECK (${entryRevisionExpression})
     )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryCategory_systemKey_key" ON "MemoryCategory"("systemKey")`,
     `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryCategory_nameKey_key" ON "MemoryCategory"("nameKey")`,
     `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt")`,
+    `CREATE INDEX IF NOT EXISTS "MemoryEntry_projectId_updatedAt_idx" ON "MemoryEntry"("projectId", "updatedAt")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey")`,
     MEMORY_ENTRY_FTS_DDL,
     ...MEMORY_ENTRY_FTS_TRIGGER_DDLS,
     ...MEMORY_CATEGORY_TRIGGER_DDLS,
@@ -189,6 +195,16 @@ const agentMemoryMigration = {
       onUpdate: 'CASCADE'
     },
     {
+      kind: 'foreign-key-exists',
+      version: 2,
+      table: 'MemoryEntry',
+      column: 'projectId',
+      referencedTable: 'Project',
+      referencedColumn: 'id',
+      onDelete: 'CASCADE',
+      onUpdate: 'CASCADE'
+    },
+    {
       kind: 'check-constraints-exist',
       version: 1,
       tables: [
@@ -217,6 +233,7 @@ const agentMemoryMigration = {
             { name: 'MemoryEntry_content_check', expression: entryContentExpression },
             { name: 'MemoryEntry_contentKey_check', expression: entryContentKeyExpression },
             { name: 'MemoryEntry_origin_check', expression: entryOriginExpression },
+            { name: 'MemoryEntry_scope_check', expression: entryScopeExpression },
             { name: 'MemoryEntry_source_check', expression: entrySourceExpression },
             { name: 'MemoryEntry_revision_check', expression: entryRevisionExpression }
           ]
@@ -238,6 +255,14 @@ const agentMemoryMigration = {
         {
           name: 'MemoryEntry_categoryId_updatedAt_idx',
           sql: `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt")`
+        },
+        {
+          name: 'MemoryEntry_projectId_updatedAt_idx',
+          sql: `CREATE INDEX IF NOT EXISTS "MemoryEntry_projectId_updatedAt_idx" ON "MemoryEntry"("projectId", "updatedAt")`
+        },
+        {
+          name: 'MemoryEntry_projectId_contentKey_key',
+          sql: `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey")`
         }
       ]
     }

@@ -612,7 +612,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 );`,
   `CREATE TABLE IF NOT EXISTS "MemoryEntry" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "categoryId" TEXT NOT NULL,
+    "categoryId" TEXT,
+    "projectId" TEXT,
     "content" TEXT NOT NULL,
     "contentKey" TEXT NOT NULL,
     "origin" TEXT NOT NULL,
@@ -622,10 +623,12 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "MemoryEntry_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "MemoryCategory" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "MemoryEntry_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "MemoryEntry_content_check" CHECK (length(trim("content")) BETWEEN 1 AND 4000),
     CONSTRAINT "MemoryEntry_contentKey_check" CHECK (length("contentKey") BETWEEN 1 AND 4000),
     CONSTRAINT "MemoryEntry_origin_check" CHECK ("origin" IN ('user', 'agent')),
-    CONSTRAINT "MemoryEntry_source_check" CHECK (("origin" = 'user' AND "sourceSessionId" IS NULL AND "sourceAgentId" IS NULL) OR ("origin" = 'agent' AND "sourceSessionId" IS NOT NULL)),
+    CONSTRAINT "MemoryEntry_scope_check" CHECK ("categoryId" IS NOT NULL OR "projectId" IS NOT NULL),
+    CONSTRAINT "MemoryEntry_source_check" CHECK (("origin" = 'user' AND "sourceSessionId" IS NULL AND "sourceAgentId" IS NULL) OR ("origin" = 'agent' AND "sourceSessionId" IS NOT NULL AND "projectId" IS NOT NULL)),
     CONSTRAINT "MemoryEntry_revision_check" CHECK ("revision" >= 1)
 );`
 ] as const
@@ -700,7 +703,9 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "TagAssignment_resourceType_resourceId_idx" ON "TagAssignment"("resourceType", "resourceId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryCategory_systemKey_key" ON "MemoryCategory"("systemKey");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryCategory_nameKey_key" ON "MemoryCategory"("nameKey");`,
-  `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt");`
+  `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt");`,
+  `CREATE INDEX IF NOT EXISTS "MemoryEntry_projectId_updatedAt_idx" ON "MemoryEntry"("projectId", "updatedAt");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey");`
 ] as const
 
 const RUNTIME_SCHEMA_TARGET_SQL = [

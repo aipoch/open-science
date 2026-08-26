@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import * as memoryContracts from './memory'
 import {
   ABOUT_YOU_MEMORY_CATEGORY_ID,
   ABOUT_YOU_MEMORY_CATEGORY_SYSTEM_KEY,
@@ -35,6 +36,31 @@ describe('memory contracts', () => {
         entries: [
           {
             id: 'entry-1',
+            categoryId: 'category-1',
+            categoryName: 'Experiments',
+            projectId: 'project-1',
+            projectName: 'Microscopy',
+            content: 'The microscopy pipeline expects TIFF input.',
+            origin: 'agent' as const,
+            revision: 1,
+            createdAt: 3,
+            updatedAt: 3
+          }
+        ]
+      }
+    ],
+    projects: [
+      {
+        projectId: 'project-1',
+        name: 'Microscopy',
+        archived: false,
+        entries: [
+          {
+            id: 'entry-1',
+            categoryId: 'category-1',
+            categoryName: 'Experiments',
+            projectId: 'project-1',
+            projectName: 'Microscopy',
             content: 'The microscopy pipeline expects TIFF input.',
             origin: 'agent' as const,
             revision: 1,
@@ -73,6 +99,11 @@ describe('memory contracts', () => {
         { categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID, content: 'Uses metric units.' }
       ])
     ).toEqual([{ categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID, content: 'Uses metric units.' }])
+    expect(
+      memoryApplicationCommandContracts.createEntry.args.parse([
+        { projectId: 'project-1', categoryId: null, content: 'Use channel A.' }
+      ])
+    ).toEqual([{ projectId: 'project-1', categoryId: null, content: 'Use channel A.' }])
     expect(memoryApplicationCommandContracts.setEnabled.args.parse([{ enabled: false }])).toEqual([
       { enabled: false }
     ])
@@ -92,6 +123,33 @@ describe('memory contracts', () => {
       query: 'microscopy',
       limit: 4
     })
+    expect(
+      memoryAgentRememberRequestSchema.parse({
+        content: 'Use channel A for this project.',
+        categoryId: 'category-1',
+        analysis: {
+          scope: 'project',
+          durability: 'cross-session',
+          evidence: 'project-observed',
+          subject: 'Microscopy channel',
+          reason: 'Future sessions need the working channel.',
+          categoryReason: 'This is an experimental setup detail.'
+        }
+      })
+    ).toMatchObject({ analysis: { scope: 'project', durability: 'cross-session' } })
+    expect(() =>
+      memoryAgentRememberRequestSchema.parse({
+        content: 'Use channel A for this project.',
+        categoryId: 'category-1',
+        analysis: {
+          scope: 'project',
+          durability: 'cross-session',
+          evidence: 'project-observed',
+          subject: 'Microscopy channel',
+          reason: 'Future sessions need the working channel.'
+        }
+      })
+    ).toThrow()
   })
 
   it('validates revision and bounded provenance on Agent memory results', () => {
@@ -100,6 +158,7 @@ describe('memory contracts', () => {
         id: 'entry-1',
         categoryId: 'category-1',
         categoryName: 'Research',
+        scope: 'project',
         content: 'Use channel A.',
         revision: 2,
         provenance: { origin: 'agent', agentId: 'specialist-1' },
@@ -111,11 +170,30 @@ describe('memory contracts', () => {
         id: 'entry-1',
         categoryId: 'category-1',
         categoryName: 'Research',
+        scope: 'project',
         content: 'Use channel A.',
         revision: 2,
         provenance: { origin: 'agent', sessionId: 'private-session' },
         updatedAt: 3
       })
     ).toThrow()
+  })
+
+  it('defines structured created, existing, and non-retryable rejected remember results', () => {
+    const schema = (
+      memoryContracts as typeof memoryContracts & {
+        memoryAgentRememberResultSchema?: { parse(value: unknown): unknown }
+      }
+    ).memoryAgentRememberResultSchema
+
+    expect(schema).toBeDefined()
+    expect(
+      schema?.parse({
+        status: 'rejected',
+        retryable: false,
+        code: 'invalid_analysis',
+        reason: 'The note does not describe durable project knowledge.'
+      })
+    ).toMatchObject({ status: 'rejected', retryable: false })
   })
 })

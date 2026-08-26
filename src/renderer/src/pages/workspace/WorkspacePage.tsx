@@ -860,8 +860,6 @@ const WorkspacePage = ({
     void setPermissionProfile(activeSession.id, profile)
   }
 
-  // Persists the auto-review toggle for the active session; for a not-yet-created conversation it
-  // updates the draft state, which the Conversation submit transaction stamps onto the new session.
   const changeAutoReviewEnabled = (enabled: boolean): void => {
     if (!activeSession) {
       setNewConversationAutoReviewEnabled(enabled)
@@ -880,8 +878,6 @@ const WorkspacePage = ({
     })
   }
 
-  // Manually triggers a review of the last completed turn, bypassing autoReviewEnabled and the
-  // suppressAutoReviewOnceFor loop guard. Disabled logic is enforced by isRequestReviewDisabled.
   const requestManualReview = (): void => {
     if (!activeSession) return
 

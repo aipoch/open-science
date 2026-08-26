@@ -197,7 +197,10 @@ type AcpRuntimeOptions = {
   notebook?: AcpRuntimeNotebookOptions
   memory?: {
     isEnabled?(): Promise<boolean>
-    recallForPrompt(requestText: string): Promise<string | undefined>
+    recallForPrompt(
+      requestText: string,
+      context: { projectId: string }
+    ): Promise<string | undefined>
   }
   skillImport?: AcpRuntimeSkillImportOptions
   skills?: AcpTurnSkillHooks

@@ -2,7 +2,8 @@ import {
   Prisma,
   type MemoryCategory as PrismaMemoryCategory,
   type MemoryEntry as PrismaMemoryEntry,
-  type PrismaClient
+  type PrismaClient,
+  type Project as PrismaProject
 } from '@prisma/client'
 
 import {
@@ -15,11 +16,13 @@ import {
   MEMORY_SEARCH_CANDIDATE_LIMIT,
   MEMORY_SETTINGS_ID,
   type CreateMemoryCategoryRequest,
+  type CreateMemoryEntryRequest,
   type DeleteMemoryCategoryRequest,
   type DeleteMemoryEntryRequest,
   type MemoryAgentContext,
   type MemoryCategoryView,
   type MemoryEntryView,
+  type MemoryProjectView,
   type MemorySnapshot,
   type SetMemoryEnabledRequest,
   type UpdateMemoryCategoryRequest,
@@ -28,16 +31,22 @@ import {
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
 
 type MemoryClientProvider = () => Promise<PrismaClient>
-type MemoryCategoryWithEntries = PrismaMemoryCategory & { entries: PrismaMemoryEntry[] }
 type MemorySearchCandidate = PrismaMemoryEntry & {
-  category: Pick<PrismaMemoryCategory, 'id' | 'name' | 'systemKey'>
+  category: Pick<PrismaMemoryCategory, 'id' | 'name' | 'systemKey' | 'autoRecall'> | null
+  project: Pick<PrismaProject, 'id' | 'name' | 'archivedAt'> | null
 }
 type MemorySearchRow = Omit<PrismaMemoryEntry, 'createdAt' | 'updatedAt'> & {
   createdAt: Date | string
   updatedAt: Date | string
   categoryName: string | null
   categorySystemKey: string | null
+  categoryAutoRecall: boolean | bigint | number | null
+  projectName: string | null
+  projectArchivedAt: Date | string | null
 }
+type MemoryRememberRepositoryResult =
+  | { status: 'created' | 'existing'; candidate: MemorySearchCandidate }
+  | { status: 'rejected'; code: 'category_not_found' | 'project_not_found'; reason: string }
 
 const cleanMemoryCategoryName = (input: string): string =>
   input.normalize('NFKC').trim().replace(/\s+/gu, ' ')
@@ -75,8 +84,12 @@ const validateMemoryCategory = (
   return { name, nameKey, guidance }
 }
 
-const toEntryView = (row: PrismaMemoryEntry): MemoryEntryView => ({
+const toEntryView = (row: MemorySearchCandidate): MemoryEntryView => ({
   id: row.id,
+  categoryId: row.categoryId,
+  categoryName: row.category?.name ?? null,
+  projectId: row.projectId,
+  projectName: row.project?.name ?? null,
   content: row.content,
   origin: row.origin as 'user' | 'agent',
   revision: row.revision,
@@ -84,14 +97,17 @@ const toEntryView = (row: PrismaMemoryEntry): MemoryEntryView => ({
   updatedAt: row.updatedAt.getTime()
 })
 
-const toCategoryView = (row: MemoryCategoryWithEntries): MemoryCategoryView => {
+const toCategoryView = (
+  row: PrismaMemoryCategory,
+  entries: readonly MemorySearchCandidate[]
+): MemoryCategoryView => {
   const base = {
     id: row.id,
     autoRecall: row.autoRecall,
     revision: row.revision,
     createdAt: row.createdAt.getTime(),
     updatedAt: row.updatedAt.getTime(),
-    entries: row.entries.map(toEntryView)
+    entries: entries.map(toEntryView)
   }
   if (row.systemKey === ABOUT_YOU_MEMORY_CATEGORY_SYSTEM_KEY) {
     return {
@@ -136,17 +152,51 @@ class MemoryRepository {
   async snapshot(): Promise<MemorySnapshot> {
     const client = await this.getClient()
     await this.enableSecureDelete(client)
-    const [settings, categories] = await Promise.all([
+    const [settings, categories, entries] = await Promise.all([
       client.memorySettings.findUniqueOrThrow({ where: { id: MEMORY_SETTINGS_ID } }),
       client.memoryCategory.findMany({
-        include: { entries: { orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }] } },
         orderBy: [{ systemKey: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }]
+      }),
+      client.memoryEntry.findMany({
+        where: {
+          OR: [{ projectId: null }, { project: { deletedAt: null } }]
+        },
+        include: {
+          category: { select: { id: true, name: true, systemKey: true, autoRecall: true } },
+          project: { select: { id: true, name: true, archivedAt: true } }
+        },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }]
       })
     ])
+    const entriesByCategory = new Map<string, MemorySearchCandidate[]>()
+    const projectsById = new Map<string, MemoryProjectView>()
+    for (const entry of entries) {
+      if (entry.categoryId) {
+        const categoryEntries = entriesByCategory.get(entry.categoryId) ?? []
+        categoryEntries.push(entry)
+        entriesByCategory.set(entry.categoryId, categoryEntries)
+      }
+      if (entry.project) {
+        const existing = projectsById.get(entry.project.id)
+        if (existing) {
+          existing.entries.push(toEntryView(entry))
+        } else {
+          projectsById.set(entry.project.id, {
+            projectId: entry.project.id,
+            name: entry.project.name,
+            archived: entry.project.archivedAt !== null,
+            entries: [toEntryView(entry)]
+          })
+        }
+      }
+    }
     return {
       revision: settings.revision,
       enabled: settings.enabled,
-      categories: categories.map(toCategoryView)
+      categories: categories.map((category) =>
+        toCategoryView(category, entriesByCategory.get(category.id) ?? [])
+      ),
+      projects: [...projectsById.values()]
     }
   }
 
@@ -224,14 +274,25 @@ class MemoryRepository {
     })
   }
 
-  createEntry(categoryId: string, contentInput: string): Promise<void> {
-    const { content, contentKey } = validateMemoryContent(contentInput)
+  createEntry(request: CreateMemoryEntryRequest): Promise<void> {
+    const { content, contentKey } = validateMemoryContent(request.content)
     return this.mutate(async (client) => {
-      const category = await client.memoryCategory.findUnique({ where: { id: categoryId } })
-      if (!category) throw new Error('Memory category not found.')
+      if (request.categoryId) {
+        const category = await client.memoryCategory.findUnique({
+          where: { id: request.categoryId }
+        })
+        if (!category) throw new Error('Memory category not found.')
+      }
+      if (request.projectId) {
+        const project = await client.project.findFirst({
+          where: { id: request.projectId, deletedAt: null }
+        })
+        if (!project) throw new Error('Project not found.')
+      }
       await client.memoryEntry.create({
         data: {
-          categoryId,
+          categoryId: request.categoryId ?? null,
+          projectId: request.projectId ?? null,
           content,
           contentKey,
           origin: 'user'
@@ -241,10 +302,10 @@ class MemoryRepository {
   }
 
   async rememberEntry(
-    categoryId: string,
+    categoryId: string | undefined,
     contentInput: string,
     context: MemoryAgentContext
-  ): Promise<{ candidate: MemorySearchCandidate; changed: boolean }> {
+  ): Promise<MemoryRememberRepositoryResult> {
     const { content, contentKey } = validateMemoryContent(contentInput)
     const client = await this.getClient()
     return client.$transaction(async (transaction) => {
@@ -253,30 +314,54 @@ class MemoryRepository {
         where: { id: MEMORY_SETTINGS_ID }
       })
       if (!settings.enabled) throw new Error('Memory is turned off.')
-      const category = await transaction.memoryCategory.findUnique({ where: { id: categoryId } })
-      if (!category) throw new Error('Memory category not found.')
-      const existing = await transaction.memoryEntry.findFirst({
-        where: { categoryId, contentKey },
-        include: { category: { select: { id: true, name: true, systemKey: true } } },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
+      const project = await transaction.project.findFirst({
+        where: { id: context.projectId, deletedAt: null }
       })
-      if (existing) return { candidate: existing, changed: false }
+      if (!project) {
+        return {
+          status: 'rejected',
+          code: 'project_not_found',
+          reason: 'The current project no longer exists.'
+        }
+      }
+      if (categoryId) {
+        const category = await transaction.memoryCategory.findUnique({ where: { id: categoryId } })
+        if (!category) {
+          return {
+            status: 'rejected',
+            code: 'category_not_found',
+            reason: 'The selected memory category no longer exists.'
+          }
+        }
+      }
+      const include = {
+        category: { select: { id: true, name: true, systemKey: true, autoRecall: true } },
+        project: { select: { id: true, name: true, archivedAt: true } }
+      } as const
+      const existing = await transaction.memoryEntry.findUnique({
+        where: {
+          projectId_contentKey: { projectId: context.projectId, contentKey }
+        },
+        include
+      })
+      if (existing) return { status: 'existing', candidate: existing }
       const candidate = await transaction.memoryEntry.create({
         data: {
-          categoryId,
+          categoryId: categoryId ?? null,
+          projectId: context.projectId,
           content,
           contentKey,
           origin: 'agent',
           sourceSessionId: context.sessionId,
           sourceAgentId: context.agentId
         },
-        include: { category: { select: { id: true, name: true, systemKey: true } } }
+        include
       })
       await transaction.memorySettings.update({
         where: { id: MEMORY_SETTINGS_ID },
         data: { revision: { increment: 1 } }
       })
-      return { candidate, changed: true }
+      return { status: 'created', candidate }
     })
   }
 
@@ -307,18 +392,29 @@ class MemoryRepository {
     })
   }
 
-  async recentAutoRecallCandidates(): Promise<MemorySearchCandidate[]> {
+  async recentAutoRecallCandidates(projectId: string): Promise<MemorySearchCandidate[]> {
     const client = await this.getClient()
     await this.enableSecureDelete(client)
     return client.memoryEntry.findMany({
-      where: { category: { autoRecall: true } },
-      include: { category: { select: { id: true, name: true, systemKey: true } } },
-      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+      where: {
+        AND: [
+          { OR: [{ projectId: null }, { projectId }] },
+          {
+            OR: [{ projectId, categoryId: null }, { category: { autoRecall: true } }]
+          }
+        ]
+      },
+      include: {
+        category: { select: { id: true, name: true, systemKey: true, autoRecall: true } },
+        project: { select: { id: true, name: true, archivedAt: true } }
+      },
+      orderBy: [{ projectId: 'desc' }, { updatedAt: 'desc' }, { id: 'asc' }],
       take: MEMORY_SEARCH_CANDIDATE_LIMIT
     })
   }
 
   async searchCandidates(input: {
+    projectId: string
     categoryIds?: readonly string[]
     autoRecallOnly: boolean
     terms: readonly string[]
@@ -336,15 +432,34 @@ class MemoryRepository {
       client.memoryEntry.findMany({
         where: {
           categoryId: input.categoryIds ? { in: [...input.categoryIds] } : undefined,
-          category: input.autoRecallOnly ? { autoRecall: true } : undefined,
-          OR: terms.map((term) => ({ contentKey: { contains: term } })),
+          AND: [
+            { OR: [{ projectId: null }, { projectId: input.projectId }] },
+            ...(input.autoRecallOnly
+              ? [
+                  {
+                    OR: [
+                      { projectId: input.projectId, categoryId: null },
+                      { category: { autoRecall: true } }
+                    ]
+                  }
+                ]
+              : []),
+            { OR: terms.map((term) => ({ contentKey: { contains: term } })) }
+          ],
           NOT:
             excludeTerms.length > 0
               ? { OR: excludeTerms.map((term) => ({ contentKey: { contains: term } })) }
               : undefined
         },
-        include: { category: { select: { id: true, name: true, systemKey: true } } },
-        orderBy: [{ updatedAt: 'desc' as const }, { id: 'asc' as const }],
+        include: {
+          category: { select: { id: true, name: true, systemKey: true, autoRecall: true } },
+          project: { select: { id: true, name: true, archivedAt: true } }
+        },
+        orderBy: [
+          { projectId: 'desc' as const },
+          { updatedAt: 'desc' as const },
+          { id: 'asc' as const }
+        ],
         take
       })
     if (indexedTerms.length === 0) {
@@ -364,24 +479,35 @@ class MemoryRepository {
       where.push(`e."categoryId" IN (${input.categoryIds.map(() => '?').join(', ')})`)
       values.push(...input.categoryIds)
     }
-    if (input.autoRecallOnly) where.push('c."autoRecall" = true')
+    where.push('(e."projectId" IS NULL OR e."projectId" = ?)')
+    values.push(input.projectId)
+    if (input.autoRecallOnly) {
+      where.push('((e."projectId" = ? AND e."categoryId" IS NULL) OR c."autoRecall" = true)')
+      values.push(input.projectId)
+    }
+    values.push(input.projectId)
     values.push(indexedCandidateLimit)
     const rows = await migrationSqlExecutor.query<MemorySearchRow[]>(
       client,
-      `SELECT e."id", e."categoryId", e."content", e."contentKey", e."origin",
+      `SELECT e."id", e."categoryId", e."projectId", e."content", e."contentKey", e."origin",
               e."sourceSessionId", e."sourceAgentId", e."revision", e."createdAt", e."updatedAt",
-              c."name" AS "categoryName", c."systemKey" AS "categorySystemKey"
+              c."name" AS "categoryName", c."systemKey" AS "categorySystemKey",
+              c."autoRecall" AS "categoryAutoRecall", p."name" AS "projectName",
+              p."archivedAt" AS "projectArchivedAt"
        FROM "MemoryEntryFts"
        JOIN "MemoryEntry" e ON e."rowid" = "MemoryEntryFts"."rowid"
-       JOIN "MemoryCategory" c ON c."id" = e."categoryId"
+       LEFT JOIN "MemoryCategory" c ON c."id" = e."categoryId"
+       LEFT JOIN "Project" p ON p."id" = e."projectId"
        WHERE ${where.join(' AND ')}
-       ORDER BY bm25("MemoryEntryFts"), e."updatedAt" DESC, e."id" ASC
+       ORDER BY bm25("MemoryEntryFts"), CASE WHEN e."projectId" = ? THEN 0 ELSE 1 END,
+                e."updatedAt" DESC, e."id" ASC
        LIMIT ?`,
       ...values
     )
     const indexedCandidates = rows.map((row) => ({
       id: row.id,
       categoryId: row.categoryId,
+      projectId: row.projectId,
       content: row.content,
       contentKey: row.contentKey,
       origin: row.origin,
@@ -390,11 +516,25 @@ class MemoryRepository {
       revision: Number(row.revision),
       createdAt: row.createdAt instanceof Date ? row.createdAt : new Date(row.createdAt),
       updatedAt: row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt),
-      category: {
-        id: row.categoryId,
-        name: row.categoryName,
-        systemKey: row.categorySystemKey
-      }
+      category: row.categoryId
+        ? {
+            id: row.categoryId,
+            name: row.categoryName,
+            systemKey: row.categorySystemKey,
+            autoRecall: Boolean(row.categoryAutoRecall)
+          }
+        : null,
+      project: row.projectId
+        ? {
+            id: row.projectId,
+            name: row.projectName ?? row.projectId,
+            archivedAt: row.projectArchivedAt
+              ? row.projectArchivedAt instanceof Date
+                ? row.projectArchivedAt
+                : new Date(row.projectArchivedAt)
+              : null
+          }
+        : null
     }))
     if (shortTerms.length === 0) return indexedCandidates
     const seen = new Set(indexedCandidates.map(({ id }) => id))

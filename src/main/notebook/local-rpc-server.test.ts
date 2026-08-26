@@ -88,6 +88,7 @@ describe('notebook local RPC server', () => {
       id: 'entry-1',
       categoryId: 'category-1',
       categoryName: 'Research',
+      scope: 'project' as const,
       content: 'trusted result',
       revision: 1,
       provenance: { origin: 'agent' as const, agentId: 'specialist-1' },
@@ -99,7 +100,10 @@ describe('notebook local RPC server', () => {
       memoryService: {
         listCategoriesForAgent: vi.fn(async () => []),
         searchForAgent: memorySearch,
-        rememberForAgent: vi.fn(async () => ({ ...memoryResult, content: 'saved' }))
+        rememberForAgent: vi.fn(async () => ({
+          status: 'created' as const,
+          memory: { ...memoryResult, content: 'saved' }
+        }))
       }
     })
     const control = await server.issueControlConnection(
@@ -118,16 +122,28 @@ describe('notebook local RPC server', () => {
         },
         body: JSON.stringify({
           method: 'memorySearch',
-          params: { query: 'microscopy', limit: 4, sessionId: 'forged' }
+          params: {
+            query: 'microscopy',
+            limit: 4,
+            projectId: 'forged-project',
+            sessionId: 'forged'
+          }
         })
       })
 
       expect(response.status).toBe(200)
-      expect(memorySearch).toHaveBeenCalledWith({
-        query: 'microscopy',
-        categoryIds: undefined,
-        limit: 4
-      })
+      expect(memorySearch).toHaveBeenCalledWith(
+        {
+          query: 'microscopy',
+          categoryIds: undefined,
+          limit: 4
+        },
+        {
+          projectId: 'project-1',
+          sessionId: 'trusted-session',
+          agentId: 'specialist-1'
+        }
+      )
     } finally {
       control.release()
       await server.close()
@@ -212,6 +228,12 @@ describe('notebook local RPC server', () => {
 
     try {
       await migrateApplicationDatabase(client)
+      await client.project.createMany({
+        data: [
+          { id: 'project-a', name: 'Project A' },
+          { id: 'project-b', name: 'Project B' }
+        ]
+      })
       const firstMemoryService = createMemoryService()
       await firstMemoryService.setEnabled({ enabled: true })
       const firstServer = new NotebookLocalRpcServer({} as never, {
@@ -237,6 +259,15 @@ describe('notebook local RPC server', () => {
             params: {
               categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
               content: 'Always report migration checks before delivery.',
+              analysis: {
+                scope: 'project',
+                durability: 'cross-session',
+                evidence: 'user-stated',
+                subject: 'Delivery checks',
+                reason: 'Future sessions in this project need the same delivery check.',
+                categoryReason: 'This is a stable user preference.'
+              },
+              projectId: 'forged-project',
               sessionId: 'forged-session',
               agentId: 'forged-agent'
             }
@@ -255,8 +286,15 @@ describe('notebook local RPC server', () => {
       const secondMemoryService = createMemoryService()
 
       await expect(
-        secondMemoryService.recallForPrompt('Continue with an unrelated task.')
+        secondMemoryService.recallForPrompt('Continue with an unrelated task.', {
+          projectId: 'project-a'
+        })
       ).resolves.toContain('Always report migration checks before delivery.')
+      await expect(
+        secondMemoryService.recallForPrompt('Continue with an unrelated task.', {
+          projectId: 'project-b'
+        })
+      ).resolves.toBeUndefined()
 
       const secondServer = new NotebookLocalRpcServer({} as never, {
         transport: 'tcp',
@@ -264,7 +302,7 @@ describe('notebook local RPC server', () => {
       })
       const secondControl = await secondServer.issueControlConnection(
         'session-b',
-        'project-b',
+        'project-a',
         'root-frame-session-b'
       )
       secondServer.registerSessionSpecialist('session-b', 'agent-b')
@@ -306,6 +344,7 @@ describe('notebook local RPC server', () => {
       id: 'entry-1',
       categoryId: 'category-1',
       categoryName: 'Research',
+      scope: 'project' as const,
       content: 'saved',
       revision: 1,
       provenance: { origin: 'agent' as const },
@@ -317,7 +356,7 @@ describe('notebook local RPC server', () => {
       memoryService: {
         listCategoriesForAgent: vi.fn(async () => []),
         searchForAgent: memorySearch,
-        rememberForAgent: vi.fn(async () => memoryResult)
+        rememberForAgent: vi.fn(async () => ({ status: 'created' as const, memory: memoryResult }))
       }
     })
     const control = await server.issueControlConnection(

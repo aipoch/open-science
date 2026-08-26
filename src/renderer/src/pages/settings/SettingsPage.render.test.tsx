@@ -12,6 +12,7 @@ import type { SpecialistProfileView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
@@ -259,7 +260,8 @@ const installApi = (): void => {
             updatedAt: 1,
             entries: []
           }
-        ]
+        ],
+        projects: []
       }),
       setEnabled: vi.fn(),
       createCategory: vi.fn(),
@@ -286,6 +288,7 @@ beforeEach(() => {
   installApi()
   useSettingsStore.setState(createInitialSettingsState())
   useProjectStore.setState(createInitialProjectState())
+  useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
   useSessionStore.setState(createInitialSessionState())
   useComputeStore.setState(createInitialComputeState())
   useMemoryStore.setState(createInitialMemoryState())
@@ -435,6 +438,10 @@ describe('SettingsPage layout', () => {
           entries: [
             {
               id: 'memory-entry-first',
+              categoryId: 'memory-category-about-you',
+              categoryName: null,
+              projectId: 'project-a',
+              projectName: 'Project A',
               content: 'First server memory',
               origin: 'agent',
               revision: 1,
@@ -443,7 +450,8 @@ describe('SettingsPage layout', () => {
             }
           ]
         }
-      ]
+      ],
+      projects: []
     })
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
@@ -465,6 +473,10 @@ describe('SettingsPage layout', () => {
           entries: [
             {
               id: 'memory-entry-latest',
+              categoryId: 'memory-category-about-you',
+              categoryName: null,
+              projectId: 'project-a',
+              projectName: 'Project A',
               content: 'Latest agent-created memory',
               origin: 'agent',
               revision: 1,
@@ -473,11 +485,85 @@ describe('SettingsPage layout', () => {
             }
           ]
         }
-      ]
+      ],
+      projects: []
     })
     await act(async () => navButton('Memory')?.click())
 
     await waitFor(() => expect(document.body.textContent).toContain('Latest agent-created memory'))
+  })
+
+  it('switches to a project from its Memory container and closes Settings', async () => {
+    const onClose = vi.fn()
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project-a',
+          name: 'Project A',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
+      isLoaded: true
+    })
+    vi.mocked(window.api.memory.snapshot).mockResolvedValue({
+      revision: 2,
+      enabled: true,
+      categories: [
+        {
+          id: 'memory-category-about-you',
+          systemKey: 'about-you',
+          autoRecall: true,
+          revision: 2,
+          createdAt: 1,
+          updatedAt: 2,
+          entries: []
+        }
+      ],
+      projects: [
+        {
+          projectId: 'project-a',
+          name: 'Project A',
+          archived: false,
+          entries: [
+            {
+              id: 'project-memory',
+              categoryId: null,
+              categoryName: null,
+              projectId: 'project-a',
+              projectName: 'Project A',
+              content: 'Project memory',
+              origin: 'agent',
+              revision: 1,
+              createdAt: 2,
+              updatedAt: 2
+            }
+          ]
+        }
+      ]
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+    await act(async () => navButton('Memory')?.click())
+    await waitFor(() => expect(document.body.textContent).toContain('Project A'))
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.includes('Project A'))
+        ?.click()
+    )
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Open project')
+        ?.click()
+    )
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: 'project-a'
+    })
+    expect(onClose).toHaveBeenCalledOnce()
   })
 
   it('opens a resource Tag through Settings history and returns to the catalog with Back', async () => {

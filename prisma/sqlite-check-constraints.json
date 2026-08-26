@@ -562,8 +562,13 @@
     },
     {
       "tableName": "MemoryEntry",
+      "name": "MemoryEntry_scope_check",
+      "expression": "\"categoryId\" IS NOT NULL OR \"projectId\" IS NOT NULL"
+    },
+    {
+      "tableName": "MemoryEntry",
       "name": "MemoryEntry_source_check",
-      "expression": "(\"origin\" = 'user' AND \"sourceSessionId\" IS NULL AND \"sourceAgentId\" IS NULL) OR (\"origin\" = 'agent' AND \"sourceSessionId\" IS NOT NULL)"
+      "expression": "(\"origin\" = 'user' AND \"sourceSessionId\" IS NULL AND \"sourceAgentId\" IS NULL) OR (\"origin\" = 'agent' AND \"sourceSessionId\" IS NOT NULL AND \"projectId\" IS NOT NULL)"
     },
     {
       "tableName": "MemoryEntry",

@@ -51,14 +51,18 @@ describe('agent memory migration', () => {
         WHERE "type" = 'index' AND "name" IN (
           'MemoryCategory_systemKey_key',
           'MemoryCategory_nameKey_key',
-          'MemoryEntry_categoryId_updatedAt_idx'
+          'MemoryEntry_categoryId_updatedAt_idx',
+          'MemoryEntry_projectId_updatedAt_idx',
+          'MemoryEntry_projectId_contentKey_key'
         )
         ORDER BY "name"
       `
     ).resolves.toEqual([
       { name: 'MemoryCategory_nameKey_key' },
       { name: 'MemoryCategory_systemKey_key' },
-      { name: 'MemoryEntry_categoryId_updatedAt_idx' }
+      { name: 'MemoryEntry_categoryId_updatedAt_idx' },
+      { name: 'MemoryEntry_projectId_contentKey_key' },
+      { name: 'MemoryEntry_projectId_updatedAt_idx' }
     ])
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -95,6 +99,71 @@ describe('agent memory migration', () => {
         ABOUT_YOU_MEMORY_CATEGORY_ID
       )
     ).rejects.toThrow()
+  })
+
+  it('supports categorized and uncategorized project memories with project isolation invariants', async () => {
+    await client.project.createMany({
+      data: [
+        { id: 'project-1', name: 'Project one' },
+        { id: 'project-2', name: 'Project two' }
+      ]
+    })
+    const category = await client.memoryCategory.create({
+      data: {
+        id: 'project-category',
+        name: 'Project facts',
+        nameKey: 'project facts',
+        guidance: '',
+        autoRecall: true
+      }
+    })
+    await client.$executeRawUnsafe(
+      `INSERT INTO "MemoryEntry" ("id", "categoryId", "projectId", "content", "contentKey", "origin", "sourceSessionId", "updatedAt")
+       VALUES ('project-memory-1', NULL, 'project-1', 'durable fact', 'durable fact', 'agent', 'session-1', CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "MemoryEntry" ("id", "categoryId", "projectId", "content", "contentKey", "origin", "sourceSessionId", "updatedAt")
+       VALUES ('project-memory-2', ?, 'project-2', 'durable fact', 'durable fact', 'agent', 'session-2', CURRENT_TIMESTAMP)`,
+      category.id
+    )
+
+    await expect(
+      client.$queryRawUnsafe<Array<{ id: string; categoryId: string | null; projectId: string }>>(
+        `SELECT "id", "categoryId", "projectId" FROM "MemoryEntry" ORDER BY "id"`
+      )
+    ).resolves.toEqual([
+      { id: 'project-memory-1', categoryId: null, projectId: 'project-1' },
+      {
+        id: 'project-memory-2',
+        categoryId: category.id,
+        projectId: 'project-2'
+      }
+    ])
+
+    await client.project.delete({ where: { id: 'project-1' } })
+    await expect(client.memoryEntry.count()).resolves.toBe(1)
+    await client.memoryCategory.delete({ where: { id: category.id } })
+    await expect(client.memoryEntry.count()).resolves.toBe(0)
+  })
+
+  it('enforces idempotent content identity within each project only', async () => {
+    await client.project.createMany({
+      data: [
+        { id: 'project-1', name: 'Project one' },
+        { id: 'project-2', name: 'Project two' }
+      ]
+    })
+    const insert = (id: string, projectId: string): Promise<number> =>
+      client.$executeRawUnsafe(
+        `INSERT INTO "MemoryEntry" ("id", "categoryId", "projectId", "content", "contentKey", "origin", "sourceSessionId", "updatedAt")
+         VALUES (?, NULL, ?, 'same fact', 'same fact', 'agent', 'session-1', CURRENT_TIMESTAMP)`,
+        id,
+        projectId
+      )
+
+    await expect(insert('entry-1', 'project-1')).resolves.toBe(1)
+    await expect(insert('entry-2', 'project-1')).rejects.toThrow()
+    await expect(insert('entry-3', 'project-2')).resolves.toBe(1)
   })
 
   it('enforces the custom category cap and immutable About you category in SQLite', async () => {

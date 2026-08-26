@@ -28,6 +28,7 @@ const createMockClient = (
   projectDeletionIntent: Record<string, ReturnType<typeof vi.fn>>
   projectPreviewState: { deleteMany: ReturnType<typeof vi.fn> }
   visionEvidence: { deleteMany: ReturnType<typeof vi.fn> }
+  memoryEntry: { deleteMany: ReturnType<typeof vi.fn> }
 } => {
   const project = {
     findMany: vi.fn(methods.findMany as never),
@@ -46,13 +47,16 @@ const createMockClient = (
   const executeRaw = vi.fn().mockResolvedValue(1)
   const projectPreviewState = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const visionEvidence = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const memoryEntry = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const client = {
     $executeRaw: executeRaw,
+    $queryRawUnsafe: vi.fn().mockResolvedValue([{ secure_delete: 1n }]),
     $transaction: vi.fn((operation: (transaction: unknown) => unknown) => operation(client)),
     project,
     projectDeletionIntent,
     projectPreviewState,
-    visionEvidence
+    visionEvidence,
+    memoryEntry
   } as unknown as ProjectClient
 
   return {
@@ -61,7 +65,8 @@ const createMockClient = (
     project,
     projectDeletionIntent,
     projectPreviewState,
-    visionEvidence
+    visionEvidence,
+    memoryEntry
   }
 }
 
@@ -196,7 +201,7 @@ describe('project repository', () => {
   })
 
   it('soft-deletes a project while removing active-only derived children', async () => {
-    const { client, project, projectPreviewState, visionEvidence } = createMockClient({
+    const { client, project, projectPreviewState, visionEvidence, memoryEntry } = createMockClient({
       findUnique: () => Promise.resolve(createRow()),
       updateMany: () => Promise.resolve({ count: 1 })
     })
@@ -208,6 +213,7 @@ describe('project repository', () => {
       where: { projectId: 'project-1' }
     })
     expect(visionEvidence.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
+    expect(memoryEntry.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
     expect(project.updateMany).toHaveBeenCalledWith({
       where: { id: 'project-1', deletedAt: null },
       data: {

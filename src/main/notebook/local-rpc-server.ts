@@ -1659,7 +1659,11 @@ class NotebookLocalRpcServer {
             ...(MEMORY_RPC_METHODS.has(method)
               ? {
                   sessionId: sessionBinding.sessionId,
-                  agentId: this.sessionSpecialists.get(sessionBinding.sessionId)
+                  projectId: sessionBinding.projectId,
+                  agentId: this.sessionSpecialists.get(sessionBinding.sessionId),
+                  turnId:
+                    sessionBinding.activeControlInvocation?.turnId ??
+                    this.artifactProvenanceContexts.get(sessionBinding.sessionId)?.promptMessageId
                 }
               : {})
           }
@@ -1803,8 +1807,17 @@ class NotebookLocalRpcServer {
       if (typeof params.sessionId !== 'string') {
         throw new Error('Memory RPC requires a trusted session binding.')
       }
+      if (typeof params.projectId !== 'string') {
+        throw new Error('Memory RPC requires a trusted project binding.')
+      }
+      const context: MemoryAgentContext = {
+        projectId: params.projectId,
+        sessionId: params.sessionId,
+        ...(typeof params.agentId === 'string' ? { agentId: params.agentId } : {}),
+        ...(typeof params.turnId === 'string' ? { turnId: params.turnId } : {})
+      }
       if (method === 'memoryListCategories') {
-        return this.memoryService.listCategoriesForAgent()
+        return this.memoryService.listCategoriesForAgent(context)
       }
       if (method === 'memorySearch') {
         return this.memoryService.searchForAgent(
@@ -1812,17 +1825,15 @@ class NotebookLocalRpcServer {
             query: params.query,
             categoryIds: params.categoryIds,
             limit: params.limit
-          })
+          }),
+          context
         )
-      }
-      const context: MemoryAgentContext = {
-        sessionId: params.sessionId,
-        ...(typeof params.agentId === 'string' ? { agentId: params.agentId } : {})
       }
       return this.memoryService.rememberForAgent(
         memoryAgentRememberRequestSchema.parse({
           categoryId: params.categoryId,
-          content: params.content
+          content: params.content,
+          analysis: params.analysis
         }),
         context
       )

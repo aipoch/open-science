@@ -3706,6 +3706,12 @@
     "This category and all {{count}} notes in it will be deleted from current app data. Restoring a database backup may restore older memory._other": "Cette catégorie et les {{count}} notes qu’elle contient seront supprimées des données actuelles de l’application. La restauration d’une sauvegarde de la base de données peut rétablir une ancienne mémoire.",
     "Edit category": "Modifier la catégorie",
     "Create": "Créer",
+    "Uncategorized": "Non classé",
+    "Project memory": "Mémoire du projet",
+    "Archived project memories.": "Mémoires du projet archivé.",
+    "Project memories.": "Mémoires du projet.",
+    "Open project": "Ouvrir le projet",
+    "auto": "auto",
     "On": "Activée"
   }
 }

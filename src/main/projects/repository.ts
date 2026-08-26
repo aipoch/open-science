@@ -1,4 +1,4 @@
-import type { PrismaClient, Project as PrismaProject } from '@prisma/client'
+import type { Prisma, PrismaClient, Project as PrismaProject } from '@prisma/client'
 
 import type {
   CreateProjectRequest,
@@ -6,17 +6,20 @@ import type {
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../../shared/projects'
+import { migrationSqlExecutor } from '../database/migration-sql-executor'
 
 // Only the project delegate is needed; typing to this subset keeps the repository unit-testable with a
 // lightweight mock instead of a real (engine-backed) PrismaClient.
 type ProjectClient = Pick<
   PrismaClient,
   | '$executeRaw'
+  | '$queryRawUnsafe'
   | '$transaction'
   | 'project'
   | 'projectDeletionIntent'
   | 'projectPreviewState'
   | 'visionEvidence'
+  | 'memoryEntry'
 >
 
 // Normalizes Prisma rows into the epoch-ms shape shared with the renderer.
@@ -199,8 +202,13 @@ class ProjectRepository {
   async delete(id: string): Promise<void> {
     const client = await this.getClient()
     await client.$transaction(async (transaction) => {
+      await migrationSqlExecutor.query(
+        transaction as unknown as Prisma.TransactionClient,
+        'PRAGMA secure_delete = ON'
+      )
       await transaction.projectPreviewState.deleteMany({ where: { projectId: id } })
       await transaction.visionEvidence.deleteMany({ where: { projectId: id } })
+      await transaction.memoryEntry.deleteMany({ where: { projectId: id } })
       const current = await transaction.project.findUnique({ where: { id } })
       if (!current || current.deletedAt !== null) return
       await transaction.project.updateMany({

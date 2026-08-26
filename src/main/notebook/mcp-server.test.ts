@@ -7,6 +7,7 @@ import { z } from 'zod'
 
 import { HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from '../host-sdk/help'
 import {
+  memoryAgentRememberResultSchema,
   memoryAgentRememberRequestSchema,
   memoryAgentSearchRequestSchema
 } from '../../shared/memory'
@@ -271,14 +272,82 @@ describe('notebook MCP server config', () => {
     expect(tools.search_memories?.method).toBe('memorySearch')
     expect(tools.remember_memory?.method).toBe('memoryRemember')
     expect(tools.remember_memory?.description).toContain('durable')
+    expect(tools.remember_memory?.description).toContain('current project')
+    expect(tools.remember_memory?.description).toContain('Do not retry')
     expect(tools.search_memories?.inputSchema).toBe(memoryAgentSearchRequestSchema.shape)
     expect(tools.remember_memory?.inputSchema).toBe(memoryAgentRememberRequestSchema.shape)
+    expect(tools.remember_memory?.outputSchema).toBe(memoryAgentRememberResultSchema)
     expect(tools.list_memory_categories?.mapResult).toBeUndefined()
     expect(tools.search_memories?.mapResult).toBeUndefined()
     expect(tools.remember_memory?.mapResult).toBeUndefined()
     expect(NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)).not.toEqual(
       expect.arrayContaining(['update_memory', 'forget_memory', 'set_memory_enabled'])
     )
+  })
+
+  it('returns rejected memory writes as structured non-retryable MCP errors', async () => {
+    const environment = {
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      memoryTools: true
+    }
+    const server = createNotebookMcpServer(environment)
+    const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await server.connect(serverTransport)
+    await client.connect(clientTransport)
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            result: {
+              status: 'rejected',
+              retryable: false,
+              code: 'invalid_analysis',
+              reason: 'The note does not describe durable project knowledge.'
+            }
+          })
+        }) as Response
+    ) as typeof fetch
+
+    try {
+      const result = await client.callTool({
+        name: 'remember_memory',
+        arguments: {
+          content: 'Temporary output',
+          analysis: {
+            scope: 'project',
+            durability: 'cross-session',
+            evidence: 'project-observed',
+            subject: 'Temporary output',
+            reason: 'This should be rejected by the service.'
+          }
+        }
+      })
+
+      expect(result.isError).toBe(true)
+      expect(result.structuredContent).toEqual({
+        status: 'rejected',
+        retryable: false,
+        code: 'invalid_analysis',
+        reason: 'The note does not describe durable project knowledge.'
+      })
+      expect(result.content).toEqual([
+        expect.objectContaining({
+          type: 'text',
+          text: expect.stringContaining('The note does not describe durable project knowledge.')
+        })
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+      await client.close()
+      await server.close()
+    }
   })
 
   it('exposes manage_environments and explains named environments are separate namespaces', () => {

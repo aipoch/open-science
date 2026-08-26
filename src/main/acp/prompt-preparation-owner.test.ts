@@ -228,8 +228,12 @@ describe('AcpPromptPreparationOwner', () => {
     second.close()
 
     expect(recallForPrompt).toHaveBeenCalledTimes(2)
-    expect(recallForPrompt).toHaveBeenNthCalledWith(1, 'Analyze the result.')
-    expect(recallForPrompt).toHaveBeenNthCalledWith(2, 'Analyze the result.')
+    expect(recallForPrompt).toHaveBeenNthCalledWith(1, 'Analyze the result.', {
+      projectId: 'project-1'
+    })
+    expect(recallForPrompt).toHaveBeenNthCalledWith(2, 'Analyze the result.', {
+      projectId: 'project-1'
+    })
     const preparedTexts = (
       fixture.promptContent.prepare.mock.calls as unknown as Array<[{ text: string }]>
     ).map(([input]) => input.text)

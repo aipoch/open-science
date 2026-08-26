@@ -16,7 +16,8 @@ const snapshot = (revision = 1): MemorySnapshot => ({
       updatedAt: 1,
       entries: []
     }
-  ]
+  ],
+  projects: []
 })
 
 const setMemoryApi = (api: Partial<Window['api']['memory']>): void => {
@@ -76,5 +77,35 @@ describe('memory store', () => {
     expect(read).not.toHaveBeenCalled()
     listener?.({ revision: 3 })
     await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+  })
+
+  it('preserves a selected project container across snapshots and falls back when it disappears', async () => {
+    const withProject: MemorySnapshot = {
+      ...snapshot(2),
+      projects: [
+        {
+          projectId: 'project-a',
+          name: 'Project A',
+          archived: false,
+          entries: []
+        }
+      ]
+    }
+    setMemoryApi({ snapshot: vi.fn().mockResolvedValue(withProject) })
+
+    await useMemoryStore.getState().load()
+    useMemoryStore.getState().selectProject('project-a')
+    expect(useMemoryStore.getState()).toMatchObject({
+      selectedCategoryId: undefined,
+      selectedProjectId: 'project-a'
+    })
+
+    setMemoryApi({ snapshot: vi.fn().mockResolvedValue({ ...snapshot(3), projects: [] }) })
+    await useMemoryStore.getState().load()
+
+    expect(useMemoryStore.getState()).toMatchObject({
+      selectedCategoryId: 'memory-category-about-you',
+      selectedProjectId: undefined
+    })
   })
 })

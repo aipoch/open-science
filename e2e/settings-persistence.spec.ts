@@ -139,6 +139,63 @@ test('persists editable memory across an application restart', async ({ app }) =
   await expect(settings.getByText('Prefers reproducible and concise experiments.')).toBeVisible()
 })
 
+test('shows project-scoped memory and opens its project from Settings', async ({
+  app
+}, testInfo) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(async () => {
+    await window.api.locale.setPreference({ preference: 'en' })
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+
+  const projectName = 'Memory project scope'
+  await page.getByRole('button', { name: 'New project' }).click()
+  const createProject = page.getByRole('dialog', { name: 'New project' })
+  await createProject.getByLabel('Name').fill(projectName)
+  await createProject.getByRole('button', { name: 'Create project' }).click()
+
+  await page.evaluate(async () => {
+    const project = (await window.api.projects.list()).find(
+      (candidate) => candidate.name === 'Memory project scope'
+    )
+    if (!project) throw new Error('Project was not created.')
+    const categorySnapshot = await window.api.memory.createCategory({
+      name: 'Research protocol',
+      guidance: 'Save durable protocol decisions.',
+      autoRecall: true
+    })
+    const category = categorySnapshot.categories.find(
+      (candidate) => 'name' in candidate && candidate.name === 'Research protocol'
+    )
+    if (!category) throw new Error('Memory category was not created.')
+    await window.api.memory.createEntry({
+      categoryId: category.id,
+      projectId: project.id,
+      content: 'Use a 15 minute incubation.'
+    })
+  })
+
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings
+    .getByRole('navigation', { name: 'Settings' })
+    .getByRole('button', { name: 'Memory', exact: true })
+    .click()
+  await settings.getByRole('button', { name: projectName, exact: false }).click()
+
+  const entry = settings
+    .locator('[data-slot="memory-entry"]')
+    .filter({ hasText: 'Use a 15 minute incubation.' })
+  await expect(entry).toContainText('Research protocol')
+  await expect(entry.locator('[data-slot="memory-entry-metadata"]')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('memory-project-scope.png') })
+
+  await settings.getByRole('button', { name: 'Open project' }).click()
+  await expect(settings).toBeHidden()
+  await expect(page.getByText(projectName, { exact: true }).first()).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Ask anything' })).toBeVisible()
+})
+
 test('injects recent auto-recall memory after reopen into an unrelated Agent turn', async ({
   app
 }) => {
