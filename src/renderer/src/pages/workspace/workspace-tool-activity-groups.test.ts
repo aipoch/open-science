@@ -267,6 +267,24 @@ describe('formatActivityGroupTitle', () => {
     )
   })
 
+  it('summarizes a group of load_skill calls as loaded skills', () => {
+    const loadSkill = (id: string, skill: string): ToolActivity =>
+      createActivity({
+        id,
+        providerToolName: 'mcp__skills__load_skill',
+        title: 'mcp__skills__load_skill',
+        rawInput: { skill }
+      })
+
+    expect(
+      formatActivityGroupTitle([
+        loadSkill('skill-1', 'mcp-pubmed'),
+        loadSkill('skill-2', 'literature-review'),
+        loadSkill('skill-3', 'data-cleaning')
+      ])
+    ).toBe('Loaded 3 skills')
+  })
+
   it('drops the synthetic ToolSearch wrapper once concrete searches exist', () => {
     const title = formatActivityGroupTitle([toolSearchWrapper(), inferredSearchRow()])
 
@@ -293,6 +311,8 @@ describe('formatActivityGroupTitle', () => {
       // OpenCode flattens the server/tool boundary to a single underscore.
       [{ providerToolName: 'open-science-notebook_notebook_execute' }, 'Completed a Notebook run'],
       [{ providerToolName: 'skill' }, 'Loaded a skill'],
+      [{ providerToolName: 'mcp__skills__load_skill' }, 'Loaded a skill'],
+      [{ providerToolName: 'mcp.skills.load_skill' }, 'Loaded a skill'],
       [{ providerToolName: 'save_artifacts' }, 'Saved a file'],
       [{ providerToolName: 'manage_packages' }, 'Managed an environment'],
       [{ providerToolName: 'request_network_access' }, 'Made a call'],
@@ -464,6 +484,28 @@ describe('formatStepCount', () => {
         })
       ])
     ).toBe('1 step')
+  })
+
+  it('counts skills instead of steps when every activity is a Skill load', () => {
+    const loadSkill = (id: string): ToolActivity =>
+      createActivity({
+        id,
+        providerToolName: 'mcp__skills__load_skill',
+        title: 'mcp__skills__load_skill',
+        rawInput: { skill: id }
+      })
+
+    expect(formatStepCount([loadSkill('skill-1')])).toBe('1 skill')
+    expect(formatStepCount([loadSkill('skill-1'), loadSkill('skill-2')])).toBe('2 skills')
+  })
+
+  it('keeps the step count for a mixed group containing Skill loads', () => {
+    expect(
+      formatStepCount([
+        createActivity({ id: 'skill-1', providerToolName: 'mcp__skills__load_skill' }),
+        createActivity({ id: 'read-1', toolKind: 'read' })
+      ])
+    ).toBe('2 steps')
   })
 })
 

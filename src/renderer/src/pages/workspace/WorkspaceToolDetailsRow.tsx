@@ -57,6 +57,7 @@ const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
   'Request',
   'Result',
   'Shell',
+  'Skill',
   'Tool search',
   'Tools found',
   'Web Fetch',
