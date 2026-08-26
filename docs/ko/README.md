@@ -3,7 +3,7 @@
 [![다운로드](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![버전](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
 [![라이선스](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
-[![웹사이트](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/)
+[![웹사이트](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
 
 <p align="center">
@@ -19,7 +19,7 @@
 
 > 이 문서는 영어 `README.md`의 번역본입니다. 내용이 다르면 [영문 원본](../../README.md)을 기준으로 합니다.
 
-Open Science는 과학자와 연구자를 위한 오픈 소스이자 로컬 우선이며 모델에 구애받지 않는 AI 연구 워크벤치입니다. 과학 AI 에이전트, Python 및 R 실행, 과학 데이터 커넥터, macOS·Windows·Linux 크로스 플랫폼 지원을 통해 재현 가능하고 검토 가능한 연구를 수행합니다. 하나의 워크스페이스에서 프로젝트를 만들고 연구 목표를 자연어로 설명하면, 에이전트가 파일을 읽고 웹을 검색하며 코드를 실행하고 과학 데이터 소스를 조회하여 추적 가능한 출처가 포함된 보고서, 표, 그림을 생성합니다.
+Open Science는 [AIPOCH](https://aipoch.com/open-science)가 과학자와 연구자를 위해 개발한 오픈 소스, 로컬 우선, 모델 독립형 AI 연구 워크벤치입니다. 과학 AI 에이전트, Python 및 R 실행, 과학 데이터 커넥터, macOS·Windows·Linux 크로스 플랫폼 지원을 통해 재현 가능하고 검토 가능한 연구를 수행합니다. 하나의 워크스페이스에서 프로젝트를 만들고 연구 목표를 자연어로 설명하면, 에이전트가 파일을 읽고 웹을 검색하며 코드를 실행하고 과학 데이터 소스를 조회하여 추적 가능한 출처가 포함된 보고서, 표, 그림을 생성합니다.
 
 Open Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
@@ -312,7 +312,7 @@ Remote.It 페어링을 통해 휴대전화나 태블릿에서 동일한 localhos
 
 <img width="1920" height="1140" alt="오픈 과학 AI 워크플로를 위한 데스크톱 오케스트레이션 계층으로서 AIPOCH 생태계에 속하는 Open Science" src="https://github.com/user-attachments/assets/0ab847b1-1b7d-43f4-8c11-480a578e6c7d" />
 
-[AIPOCH](https://aipoch.com/open-science)([GitHub 조직](https://github.com/aipoch))는 Open Science를 오픈 과학 AI 워크플로의 데스크톱 오케스트레이션 계층으로 개발합니다.
+[AIPOCH](https://aipoch.com/)([GitHub 조직](https://github.com/aipoch))는 [Open Science](https://aipoch.com/open-science)를 오픈 과학 AI 워크플로의 데스크톱 오케스트레이션 계층으로 개발합니다.
 
 - [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills)는 500개 이상의 파일 기반 의료 및 과학 연구 스킬을 제공하는 더 큰 컬렉션입니다. 모든 스킬을 검토하고 가져와 GitHub에서 Open Science와 함께 사용할 수 있습니다.
 - Open Science는 프로젝트/세션 워크스페이스, 에이전트 런타임, 실행, 아티팩트, 미리보기, 권한, 커넥터를 제공하여 이러한 지침을 대화형 워크플로로 바꿉니다.
@@ -406,7 +406,7 @@ Open Science는 GitHub, Discord, X 및 AIPOCH 웹사이트를 통해 버그 신�
 | [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 설계 질문, 로드맵 제안, 긴 기술 토론       |
 | [Discord](https://discord.gg/zxQAYjReRv)                                 | 커뮤니티 지원, 기여자 조율, 비공식 토론    |
 | [X / @aipoch_ai](https://x.com/aipoch_ai)                                | 릴리스 발표 및 공개 개발 업데이트          |
-| [웹사이트](https://aipoch.com/)                                          | 제품 개요, 다운로드 및 AIPOCH 생태계       |
+| [Open Science 공식 웹사이트](https://aipoch.com/open-science)            | 공식 제품 개요 및 다운로드                 |
 
 공개 이슈를 만들기 전에 로그와 스크린샷에서 API Key, 토큰, 비공개 파일 경로, 미공개 데이터, 환자 식별자 및 기타 민감한 정보를 제거하세요. 개발 워크플로는 [기여 가이드](CONTRIBUTING.md)를 참고하세요.
 

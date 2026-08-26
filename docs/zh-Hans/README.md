@@ -3,7 +3,7 @@
 [![下载](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![版本](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
 [![许可证](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
-[![网站](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/)
+[![网站](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
 
 <p align="center">
@@ -19,7 +19,7 @@
 
 > 本文档是英文 `README.md` 的翻译。如内容存在差异，请以[英文原文](../../README.md)为准。
 
-Open Science 是面向科学家和研究人员的开源、本地优先且模型无关的 AI 研究工作台。它通过科学 AI 智能体、Python 和 R 执行、科学数据连接器以及对 macOS、Windows 和 Linux 的跨平台支持，实现可复现、可检查的研究。在同一个工作区中，新建项目，用自然语言描述研究目标，然后让智能体读取文件、搜索网页、运行代码、查询科学数据源，并生成带有可追溯来源的报告、表格和图表。
+Open Science 是由 [AIPOCH](https://aipoch.com/open-science) 为科学家和研究人员开发的开源、本地优先且模型无关的 AI 研究工作台。它通过科学 AI 智能体、Python 和 R 执行、科学数据连接器以及对 macOS、Windows 和 Linux 的跨平台支持，实现可复现、可检查的研究。在同一个工作区中，新建项目，用自然语言描述研究目标，然后让智能体读取文件、搜索网页、运行代码、查询科学数据源，并生成带有可追溯来源的报告、表格和图表。
 
 Open Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
@@ -312,7 +312,7 @@ npm run dev:web
 
 <img width="1920" height="1140" alt="Open Science 作为开放科学 AI 工作流桌面编排层融入 AIPOCH 生态系统的方式" src="https://github.com/user-attachments/assets/0ab847b1-1b7d-43f4-8c11-480a578e6c7d" />
 
-[AIPOCH](https://aipoch.com/open-science)（[GitHub 组织](https://github.com/aipoch)）将 Open Science 构建为开放科学 AI 工作流的桌面编排层。
+[AIPOCH](https://aipoch.com/)（[GitHub 组织](https://github.com/aipoch)）将 [Open Science](https://aipoch.com/open-science) 打造为开放科学 AI 工作流的桌面编排层。
 
 - [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills) 是包含 500 多个文件型医学和科学研究技能的更大集合；所有技能都可以检查、导入，并从 GitHub 与 Open Science 搭配使用。
 - Open Science 提供项目/会话工作区、智能体运行时、执行、产物、预览、权限和连接器，将这些指令转变为交互式工作流。
@@ -400,13 +400,13 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 Open Science 通过 GitHub、Discord、X 和 AIPOCH 网站接收缺陷报告、功能建议、设计讨论、社区问题和项目贡献。请选择最符合你目标的渠道，并在公开分享项目详情前查看相关贡献指南与公开发布安全提醒。
 
-| 渠道                                                                     | 用途                                     |
-| ------------------------------------------------------------------------ | ---------------------------------------- |
-| [GitHub Issues](https://github.com/aipoch/open-science/issues)           | 缺陷、可复现故障和具体功能建议           |
-| [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 设计问题、路线图提议和较长技术讨论       |
-| [Discord](https://discord.gg/zxQAYjReRv)                                 | 社区帮助、贡献者协调和非正式讨论         |
-| [X / @aipoch_ai](https://x.com/aipoch_ai)                                | 版本公告和公开构建动态                   |
-| [网站](https://aipoch.com/)                                              | 产品概览、下载和 AIPOCH 生态系统其他内容 |
+| 渠道                                                                     | 用途                               |
+| ------------------------------------------------------------------------ | ---------------------------------- |
+| [GitHub Issues](https://github.com/aipoch/open-science/issues)           | 缺陷、可复现故障和具体功能建议     |
+| [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 设计问题、路线图提议和较长技术讨论 |
+| [Discord](https://discord.gg/zxQAYjReRv)                                 | 社区帮助、贡献者协调和非正式讨论   |
+| [X / @aipoch_ai](https://x.com/aipoch_ai)                                | 版本公告和公开构建动态             |
+| [Open Science 官网](https://aipoch.com/open-science)                     | 官方产品概览与下载                 |
 
 提交公开问题前，从日志和截图中移除 API Key、令牌、私有文件路径、未公开数据、患者标识符和其他敏感材料。开发工作流请参阅[贡献指南](CONTRIBUTING.md)。
 
