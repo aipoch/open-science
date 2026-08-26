@@ -129,7 +129,7 @@ ci/ai-pr-review
 - 遵循周边代码的风格，包括命名、结构和惯用写法。
 - 格式化由 Prettier 处理。`npm run format` 是可选命令；提交前检查其变更，因为它会重写整个仓库中的文件。
 - ESLint 强制执行代码检查；运行 `npm run lint`。
-- 使用 `react-i18next` 的 `t()` 翻译函数包装用户可见字符串。将对应翻译添加到 `src/shared/i18n/locales/es.json`（西班牙语）、`src/shared/i18n/locales/fr.json`（法语）、`src/shared/i18n/locales/ja.json`（日语）、`src/shared/i18n/locales/ko.json`（韩语）、`src/shared/i18n/locales/ru.json`（俄语）、`src/shared/i18n/locales/zh-Hans.json`（简体中文）和 `src/shared/i18n/locales/zh-Hant.json`（繁体中文）的 `renderer` 命名空间中。使用英文文本作为翻译键。代码注释和文档保持英文。
+- 使用 `react-i18next` 的 `t()` 翻译函数包装用户可见字符串。将对应翻译添加到 `src/shared/i18n/locales/de.json`（德语）、`src/shared/i18n/locales/es.json`（西班牙语）、`src/shared/i18n/locales/fr.json`（法语）、`src/shared/i18n/locales/ja.json`（日语）、`src/shared/i18n/locales/ko.json`（韩语）、`src/shared/i18n/locales/ru.json`（俄语）、`src/shared/i18n/locales/zh-Hans.json`（简体中文）和 `src/shared/i18n/locales/zh-Hant.json`（繁体中文）的 `renderer` 命名空间中。使用英文文本作为翻译键。代码注释和文档保持英文。
 
 ## 验证策略
 
