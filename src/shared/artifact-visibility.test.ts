@@ -491,7 +491,7 @@ describe('root Artifact visibility projection', () => {
     })
   })
 
-  it('rejects an owner that is not reachable with its prompt on one historical child branch', () => {
+  it('fails closed when an Artifact owner path crosses sibling child Branches', () => {
     const durable = session()
     const graph = durable.conversationGraph!
     const owner = graph.messages.find(({ id }) => id === 'child-answer-2')!
@@ -505,11 +505,9 @@ describe('root Artifact visibility projection', () => {
       createdAt: 8,
       updatedAt: 8
     })
-    expect(projectRootArtifactVisibility(durable, 'root-main')).toMatchObject({
-      placements: [expect.objectContaining({ artifactVersionId: 'version-1' })],
-      diagnostics: expect.arrayContaining([
-        expect.objectContaining({ code: 'owner-without-child-prompt', messageId: 'child-answer-2' })
-      ])
+    expect(projectRootArtifactVisibility(durable, 'root-main')).toEqual({
+      placements: [],
+      diagnostics: [{ code: 'invalid-conversation-graph' }]
     })
   })
 

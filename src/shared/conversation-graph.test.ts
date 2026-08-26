@@ -11,7 +11,8 @@ import {
   resolveActiveConversationActivities,
   resolveActiveConversationMessages,
   synchronizeActiveConversationActivities,
-  synchronizeActiveConversationMessages
+  synchronizeActiveConversationMessages,
+  validateConversationGraph
 } from './conversation-graph'
 
 const message = (
@@ -28,6 +29,43 @@ const message = (
   createdAt: at,
   updatedAt: at
 })
+
+const graphWithActivityGroup = (): ReturnType<typeof synchronizeActiveConversationActivities> =>
+  synchronizeActiveConversationActivities(
+    createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [message('u1', 'user', 'question', 1)],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 1
+    }),
+    [
+      {
+        id: 'activity-1',
+        kind: 'tool',
+        title: 'Inspect context',
+        activityGroupId: 'group-1',
+        promptMessageId: 'u1',
+        status: 'completed',
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ],
+    [
+      {
+        id: 'group-1',
+        title: 'Inspection',
+        sortIndex: 1,
+        activityIds: ['activity-1'],
+        promptMessageId: 'u1',
+        createdAt: 2,
+        updatedAt: 2,
+        completedAt: 2
+      }
+    ]
+  )
 
 describe('conversation graph', () => {
   it('forks an edited user Message without deleting the original downstream path', () => {
@@ -425,6 +463,369 @@ describe('conversation graph', () => {
     invalidSegment.messages[0].runtimeSegmentId = 'missing-runtime-segment'
     expect(() => activateConversationBranch(invalidSegment, invalidSegment.branches[0].id)).toThrow(
       /Message Runtime Segment is invalid/
+    )
+  })
+
+  it('rejects a Branch path containing a Message introduced on a sibling Branch', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [
+        message('u1', 'user', 'original question', 1),
+        message('a1', 'agent', 'original answer', 2)
+      ],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const originalBranchId = graph.branches[0].id
+    const firstSibling = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(graph, 'u1', 'branch-a', 3),
+      [
+        message('u2', 'user', 'first revision', 3),
+        message('a2', 'agent', 'first revised answer', 4)
+      ],
+      4
+    )
+    const secondSibling = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(
+        activateConversationBranch(firstSibling, originalBranchId),
+        'u1',
+        'branch-b',
+        5
+      ),
+      [
+        message('u3', 'user', 'second revision', 5),
+        message('a3', 'agent', 'second revised answer', 6)
+      ],
+      6
+    )
+    const crossWired = structuredClone(secondSibling)
+    crossWired.branches.find(({ id }) => id === 'branch-b')!.headMessageId = 'a2'
+
+    expect(() => validateConversationGraph(crossWired)).toThrow(
+      /Message introduction Branch is not on the containing Branch path/
+    )
+  })
+
+  it('rejects an unreachable Message cycle', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [message('u1', 'user', 'question', 1)],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const { agentFrameId, introducedOnBranchId, runtimeSegmentId } = graph.messages[0]
+    graph.messages.push(
+      {
+        ...message('orphan-1', 'agent', 'orphan one', 2),
+        agentFrameId,
+        introducedOnBranchId,
+        parentMessageId: 'orphan-2',
+        runtimeSegmentId
+      },
+      {
+        ...message('orphan-2', 'agent', 'orphan two', 3),
+        agentFrameId,
+        introducedOnBranchId,
+        parentMessageId: 'orphan-1',
+        runtimeSegmentId
+      }
+    )
+
+    expect(() => validateConversationGraph(graph)).toThrow(
+      /Conversation message graph contains a cycle/
+    )
+  })
+
+  it('rejects an acyclic Message that is unreachable from every Branch head', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [message('u1', 'user', 'question', 1)],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const { agentFrameId, introducedOnBranchId, runtimeSegmentId } = graph.messages[0]
+    graph.messages.push({
+      ...message('orphan', 'agent', 'orphan', 2),
+      agentFrameId,
+      introducedOnBranchId,
+      runtimeSegmentId
+    })
+
+    expect(() => validateConversationGraph(graph)).toThrow(
+      /Conversation Message is not reachable from any Branch/
+    )
+  })
+
+  it('rejects duplicate Activity Group ids', () => {
+    const graph = graphWithActivityGroup()
+    graph.activityGroups.push(structuredClone(graph.activityGroups[0]))
+
+    expect(() => validateConversationGraph(graph)).toThrow(
+      /Conversation graph contains duplicate Activity Group ids/
+    )
+  })
+
+  it.each([
+    {
+      relationship: 'Activity Frame',
+      mutate: (graph) => {
+        graph.activities[0].agentFrameId = 'missing-frame'
+      },
+      error: /Activity Branch is invalid/
+    },
+    {
+      relationship: 'Activity Branch',
+      mutate: (graph) => {
+        graph.activities[0].messageBranchId = 'missing-branch'
+      },
+      error: /Activity Branch is invalid/
+    },
+    {
+      relationship: 'Activity Prompt',
+      mutate: (graph) => {
+        graph.activities[0].promptMessageId = 'missing-prompt'
+      },
+      error: /Activity Prompt Message is invalid/
+    },
+    {
+      relationship: 'Activity Runtime Segment',
+      mutate: (graph) => {
+        graph.activities[0].runtimeSegmentId = 'missing-runtime'
+      },
+      error: /Activity Runtime Segment is invalid/
+    },
+    {
+      relationship: 'Activity Group reference',
+      mutate: (graph) => {
+        graph.activities[0].activityGroupId = 'missing-group'
+      },
+      error: /Activity Group membership is invalid/
+    },
+    {
+      relationship: 'Activity Group Frame',
+      mutate: (graph) => {
+        graph.activityGroups[0].agentFrameId = 'missing-frame'
+      },
+      error: /Activity Group Branch is invalid/
+    },
+    {
+      relationship: 'Activity Group Branch',
+      mutate: (graph) => {
+        graph.activityGroups[0].messageBranchId = 'missing-branch'
+      },
+      error: /Activity Group Branch is invalid/
+    },
+    {
+      relationship: 'Activity Group Prompt',
+      mutate: (graph) => {
+        graph.activityGroups[0].promptMessageId = 'missing-prompt'
+      },
+      error: /Activity Group Prompt Message is invalid/
+    },
+    {
+      relationship: 'Activity Group member',
+      mutate: (graph) => {
+        graph.activityGroups[0].activityIds = ['missing-activity']
+      },
+      error: /Activity Group member is invalid/
+    },
+    {
+      relationship: 'Activity-to-Group reciprocity',
+      mutate: (graph) => {
+        graph.activityGroups[0].activityIds = []
+      },
+      error: /Activity Group membership is invalid/
+    },
+    {
+      relationship: 'Group-to-Activity reciprocity',
+      mutate: (graph) => {
+        delete graph.activities[0].activityGroupId
+      },
+      error: /Activity Group member is invalid/
+    }
+  ] satisfies Array<{
+    relationship: string
+    mutate: (graph: ReturnType<typeof graphWithActivityGroup>) => void
+    error: RegExp
+  }>)('rejects an invalid $relationship relationship', ({ mutate, error }) => {
+    const graph = graphWithActivityGroup()
+    mutate(graph)
+
+    expect(() => validateConversationGraph(graph)).toThrow(error)
+  })
+
+  it.each([
+    {
+      invariant: 'kind',
+      mutate: (graph: ReturnType<typeof graphWithActivityGroup>) => {
+        graph.frames[0].kind = 'delegate'
+      }
+    },
+    {
+      invariant: 'origin binding state',
+      mutate: (graph: ReturnType<typeof graphWithActivityGroup>) => {
+        graph.frames[0].originBindingState = 'validated'
+      }
+    },
+    {
+      invariant: 'origin Message',
+      mutate: (graph: ReturnType<typeof graphWithActivityGroup>) => {
+        graph.frames[0].originMessageId = 'u1'
+      }
+    },
+    {
+      invariant: 'parent Frame',
+      mutate: (graph: ReturnType<typeof graphWithActivityGroup>) => {
+        graph.frames[0].parentFrameId = 'missing-frame'
+      }
+    }
+  ])('rejects an invalid root Frame $invariant', ({ mutate }) => {
+    const graph = graphWithActivityGroup()
+    mutate(graph)
+
+    expect(() => validateConversationGraph(graph)).toThrow(/Conversation root Frame is invalid/)
+  })
+
+  it('rejects root-only state on a child Agent Frame', () => {
+    const graph = graphWithActivityGroup()
+    graph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      createdAt: 3,
+      updatedAt: 3
+    })
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'u1',
+      originBindingState: 'root',
+      kind: 'root',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 3,
+      completedAt: 3
+    })
+
+    expect(() => validateConversationGraph(graph)).toThrow(/Non-root Agent Frame is invalid/)
+  })
+
+  it('rejects an Activity fork that is not on the Branch path', () => {
+    const graph = synchronizeActiveConversationActivities(
+      createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [
+          message('u1', 'user', 'first question', 1),
+          message('a1', 'agent', 'first answer', 2),
+          message('u2', 'user', 'second question', 3),
+          message('a2', 'agent', 'second answer', 4)
+        ],
+        frameworkId: 'claude-code',
+        createdAt: 1,
+        updatedAt: 4
+      }),
+      [
+        {
+          id: 'activity-1',
+          kind: 'tool',
+          title: 'First activity',
+          promptMessageId: 'u1',
+          status: 'completed',
+          sortIndex: 1,
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'activity-2',
+          kind: 'tool',
+          title: 'Later activity',
+          promptMessageId: 'u2',
+          status: 'completed',
+          sortIndex: 2,
+          eventIds: [],
+          createdAt: 4,
+          updatedAt: 4
+        }
+      ],
+      []
+    )
+    const forked = forkConversationAfterActivity(graph, 'a1', 'activity-1', 'branch-revised', 5)
+    forked.branches.find(({ id }) => id === 'branch-revised')!.forkActivityId = 'activity-2'
+
+    expect(() => validateConversationGraph(forked)).toThrow(
+      /Message Branch Activity fork is not on its path/
+    )
+  })
+
+  it('keeps graph validation within a linear id-read budget', () => {
+    const messageCount = 200
+    const branchCount = 200
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-scale',
+      messages: Array.from({ length: messageCount }, (_, index) =>
+        message(`message-${index}`, index === 0 ? 'user' : 'agent', `message ${index}`, index + 1)
+      ),
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: messageCount
+    })
+    const rootBranch = graph.branches[0]
+    let parentBranch = rootBranch
+    for (let index = 1; index < branchCount; index += 1) {
+      const branch = {
+        id: `branch-${index}`,
+        agentFrameId: graph.rootFrameId,
+        parentBranchId: parentBranch.id,
+        forkMessageId: rootBranch.headMessageId,
+        headMessageId: rootBranch.headMessageId,
+        createdAt: messageCount + index,
+        updatedAt: messageCount + index
+      }
+      graph.branches.push(branch)
+      parentBranch = branch
+    }
+    const frameCount = 200
+    let parentFrameId = graph.rootFrameId
+    for (let index = 1; index < frameCount; index += 1) {
+      const frameId = `frame-${index}`
+      const branchId = `frame-branch-${index}`
+      graph.branches.push({
+        id: branchId,
+        agentFrameId: frameId,
+        createdAt: messageCount + branchCount + index,
+        updatedAt: messageCount + branchCount + index
+      })
+      graph.frames.push({
+        id: frameId,
+        parentFrameId,
+        originBindingState: 'legacy-unavailable',
+        kind: 'compatibility',
+        status: 'completed',
+        activeBranchId: branchId,
+        createdAt: messageCount + branchCount + index,
+        completedAt: messageCount + branchCount + index
+      })
+      parentFrameId = frameId
+    }
+    let idReads = 0
+    for (const item of [...graph.messages, ...graph.branches, ...graph.frames]) {
+      const id = item.id
+      Object.defineProperty(item, 'id', {
+        enumerable: true,
+        get: () => {
+          idReads += 1
+          return id
+        }
+      })
+    }
+
+    validateConversationGraph(graph)
+
+    expect(idReads).toBeLessThan(
+      (graph.messages.length + graph.branches.length + graph.frames.length) * 20
     )
   })
 
