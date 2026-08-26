@@ -110,6 +110,7 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
   upsertAndActivateItem: (item: PreviewItem) => void
   activateItem: (itemId: string) => void
   removeItem: (itemId: string) => void
+  removeOtherItems: (keepItemId: string) => void
   removeSessionItems: (sessionId: string) => void
   setToolItemExpanded: (itemId: string | null) => void
   openFileDialog: (item: PreviewFileItem) => void
@@ -475,6 +476,29 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
         panelState: items.length > 0 ? state.panelState : 'collapsed',
         expandedToolItemId: state.expandedToolItemId === itemId ? null : state.expandedToolItemId,
         fileDialogItem: itemId === PROJECT_FILES_PREVIEW_ID ? undefined : state.fileDialogItem
+      }
+    })
+  },
+
+  // Closes every preview tab except the kept one, which becomes the active tab. Owned here (not
+  // composed from removeItem by callers) so expanded-surface and file-dialog teardown rules stay
+  // in one place.
+  removeOtherItems: (keepItemId) => {
+    set((state) => {
+      if (!state.items.some((item) => item.id === keepItemId)) return state
+
+      const keepsProjectFilesTab = keepItemId === PROJECT_FILES_PREVIEW_ID
+      const removesProjectFilesTab =
+        !keepsProjectFilesTab && state.items.some((item) => item.id === PROJECT_FILES_PREVIEW_ID)
+      const items = state.items.filter((item) => item.id === keepItemId)
+
+      return {
+        items,
+        activeItemId: keepItemId,
+        expandedToolItemId: items.some((item) => item.id === state.expandedToolItemId)
+          ? state.expandedToolItemId
+          : null,
+        fileDialogItem: removesProjectFilesTab ? undefined : state.fileDialogItem
       }
     })
   },
