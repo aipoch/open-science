@@ -1,6 +1,8 @@
 // Shared markdown code-fence tracking used by the streaming renderers (normalization boundary
 // and the deferred-highlight block) so fence open/close rules live in exactly one place.
 const FENCE_LINE = /^[ \t]{0,3}(`{3,}|~{3,})/
+const BLOCKQUOTE_PREFIX = /^\s{0,3}>\s?/u
+const LIST_MARKER = /^\s{0,3}(?:[-+*]|\d+[.)])\s+/u
 
 type MarkdownPluginNeeds = {
   code: boolean
@@ -39,10 +41,22 @@ const createCodeFenceTracker = (): {
 const getMarkdownPluginNeeds = (markdown: string): MarkdownPluginNeeds => {
   const tracker = createCodeFenceTracker()
   let code = false
+  let fenceBlockquoteDepth = 0
 
-  for (const line of markdown.split('\n')) {
+  for (const rawLine of markdown.split('\n')) {
     const wasOpen = tracker.isOpen()
+    let line = rawLine
+    let blockquoteDepth = 0
+    while (blockquoteDepth < (wasOpen ? fenceBlockquoteDepth : Number.POSITIVE_INFINITY)) {
+      const prefix = line.match(BLOCKQUOTE_PREFIX)?.[0]
+      if (!prefix) break
+      line = line.slice(prefix.length)
+      blockquoteDepth += 1
+    }
+    if (!wasOpen) line = line.replace(LIST_MARKER, '')
+
     const isOpen = tracker.feed(line)
+    if (!wasOpen && isOpen) fenceBlockquoteDepth = blockquoteDepth
     if (wasOpen || !isOpen) continue
 
     code = true

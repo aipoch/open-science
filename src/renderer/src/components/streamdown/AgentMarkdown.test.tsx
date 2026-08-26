@@ -150,6 +150,25 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(content)
   })
 
+  it('loads plugins for code and Mermaid fences nested in Markdown containers', async () => {
+    streamdownHarness.shouldThrow = false
+
+    const listCode = '- ```ts\n  const value = 1\n  ```'
+    await act(async () => {
+      root.render(<AgentMarkdown content={listCode} />)
+    })
+    expect(streamdownHarness.plugins?.code).toEqual({ name: 'shiki' })
+
+    const quotedMermaid = '> ```mermaid\n> graph TD\n>   A --> B\n> ```'
+    await act(async () => {
+      root.render(<AgentMarkdown content={quotedMermaid} />)
+    })
+    expect(streamdownHarness.plugins?.mermaid).toEqual({ name: 'mermaid' })
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(
+      quotedMermaid
+    )
+  })
+
   it('keeps the original message and sibling UI visible when rich Markdown rendering fails', async () => {
     await act(async () => {
       root.render(
