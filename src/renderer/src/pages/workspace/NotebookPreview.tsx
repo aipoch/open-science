@@ -948,8 +948,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
               </tr>
             </thead>
             <tbody>
-              {visibleNamespaceVariables.map((variable) => (
-                <tr key={variable.name} className="border-b border-border-100/70 align-top">
+              {visibleNamespaceVariables.map((variable, index) => (
+                <tr
+                  key={`${index}:${variable.name}`}
+                  className="border-b border-border-100/70 align-top"
+                >
                   <td className="break-all px-3 py-2 font-mono text-text-100">{variable.name}</td>
                   <td className="break-all px-3 py-2 font-mono text-text-200">{variable.type}</td>
                   <td className="break-words px-3 py-2 text-text-300">
