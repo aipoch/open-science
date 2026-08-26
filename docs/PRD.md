@@ -95,8 +95,9 @@ agents, system services, scheduled tasks, command launchers, shared caches, and 
 service records. A child process that is stopped with its owning runtime is not durable, but its
 owner must still dispose it through the normal runtime lifecycle.
 
-Every new durable external component must ship with one owning module and a complete lifecycle
-contract from its first release:
+Every new durable external component, and every new create, adopt, or remove path added to an
+existing component, must ship with one owning module and a complete lifecycle contract from its
+first release:
 
 - Record an exact immutable identifier, canonical path, or ownership receipt when creation succeeds.
   If creation and receipt persistence cannot be atomic, use a crash-recoverable journal that makes
@@ -113,14 +114,24 @@ contract from its first release:
 - Cover creation, stop-before-remove ordering, interrupted-cleanup retry, repeated removal, and
   preservation of unowned or shared resources on every supported platform where behavior differs.
 
-Current external effects use feature-local ownership evidence rather than a generic registry. The
-command-line launcher verifies its exact target and managed content marker before replacement or
-removal. Windows managed-runtime cache cleanup requires a provenance marker and trusted ownership.
-Remote access does not install its third-party agent, but it does persist the exact IDs of two
-provider-managed service records. Turning remote access off deliberately retains those records for
-reuse; a future complete-removal workflow must continue to operate on the recorded IDs rather than
-discovering candidates by scanning or name matching. Custom stdio Connector processes remain
-process-scoped and are closed by Connector deletion and application shutdown.
+Current external effects use feature-local ownership evidence rather than a generic registry. This
+inventory records both guarded paths and known legacy exceptions; it is not a claim that every
+existing cleanup path already satisfies the contract:
+
+- The command-line launcher verifies its exact target and managed content marker before replacement
+  or removal.
+- One Windows managed-runtime cache cleanup path validates a provenance marker and trusted
+  ownership. Legacy and reactive cleanup paths also remove the canonical cache location using path
+  and content heuristics; these are known exceptions. Work that changes those paths must decide how
+  to handle pre-marker caches and must not broaden destructive cleanup without proven ownership.
+- Remote access does not install its third-party agent and persists the exact IDs of the two
+  provider-managed service records it creates. When those saved IDs are absent, however, current
+  recovery can adopt records matched by the expected name and loopback endpoint; this is a known
+  exception. Work on recovery or complete removal must define compatibility for pre-ID settings and
+  move to recorded IDs or a crash-recoverable creation receipt before modifying or removing a
+  candidate. Turning remote access off deliberately retains the records for reuse.
+- Custom stdio Connector processes remain process-scoped and are closed by Connector deletion and
+  application shutdown.
 
 The Composer owns the desired model and reasoning-effort preference for its Session. On Session
 selection, the renderer validates that preference against the current provider inventory and ACP

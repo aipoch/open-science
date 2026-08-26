@@ -102,6 +102,7 @@ Three runtime process layers and a shared module live under `src/`:
 Before adding a resource that survives its creating process outside app-managed storage or in a
 third-party control plane, follow the
 [durable external component ownership contract](docs/PRD.md#durable-external-component-ownership).
+The same contract applies when adding a new create, adopt, or remove path to an existing component.
 The pull request must identify:
 
 - the module that owns the component and the exact identity or receipt recorded at creation;
@@ -113,7 +114,9 @@ The pull request must identify:
 - any persisted-format, historical-compatibility, or new-state impact.
 
 A future cleanup hook is not sufficient: do not ship creation until the owner can stop and remove
-the component safely.
+the component safely. If the PR changes a known legacy exception listed in the contract, it must
+either migrate that path to proven ownership or document the bounded exception and its historical
+compatibility plan; do not use an exception as precedent for new behavior.
 
 ### Database schema changes
 
