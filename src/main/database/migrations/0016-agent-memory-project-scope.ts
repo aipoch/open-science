@@ -100,8 +100,58 @@ const entryScopeExpression = `"categoryId" IS NOT NULL OR "projectId" IS NOT NUL
 const entrySourceExpression = `("origin" = 'user' AND "sourceSessionId" IS NULL AND "sourceAgentId" IS NULL) OR ("origin" = 'agent' AND "sourceSessionId" IS NOT NULL AND "projectId" IS NOT NULL)`
 const entryRevisionExpression = `"revision" >= 1`
 
-const agentMemoryMigration = {
-  id: '0016_agent_memory',
+const MEMORY_ENTRY_DDL = `CREATE TABLE IF NOT EXISTS "MemoryEntry" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "categoryId" TEXT,
+  "projectId" TEXT,
+  "content" TEXT NOT NULL,
+  "contentKey" TEXT NOT NULL,
+  "origin" TEXT NOT NULL,
+  "sourceSessionId" TEXT,
+  "sourceAgentId" TEXT,
+  "revision" INTEGER NOT NULL DEFAULT 1,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL,
+  CONSTRAINT "MemoryEntry_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "MemoryCategory" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "MemoryEntry_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "MemoryEntry_content_check" CHECK (${entryContentExpression}),
+  CONSTRAINT "MemoryEntry_contentKey_check" CHECK (${entryContentKeyExpression}),
+  CONSTRAINT "MemoryEntry_origin_check" CHECK (${entryOriginExpression}),
+  CONSTRAINT "MemoryEntry_scope_check" CHECK (${entryScopeExpression}),
+  CONSTRAINT "MemoryEntry_source_check" CHECK (${entrySourceExpression}),
+  CONSTRAINT "MemoryEntry_revision_check" CHECK (${entryRevisionExpression})
+)`
+
+const MEMORY_ENTRY_INDEX_DDLS = [
+  `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt")`,
+  `CREATE INDEX IF NOT EXISTS "MemoryEntry_projectId_updatedAt_idx" ON "MemoryEntry"("projectId", "updatedAt")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey")`
+] as const
+
+const PRE_RELEASE_MEMORY_ENTRY_REPLACEMENT_TABLE = '__open_science_pre_release_MemoryEntry'
+const PRE_RELEASE_MEMORY_ENTRY_REBUILD_DDLS = {
+  beforeCopy: [
+    `DROP TRIGGER IF EXISTS "MemoryEntry_fts_insert"`,
+    `DROP TRIGGER IF EXISTS "MemoryEntry_fts_delete"`,
+    `DROP TRIGGER IF EXISTS "MemoryEntry_fts_update"`,
+    `DROP TABLE IF EXISTS "MemoryEntryFts"`,
+    `DROP TABLE IF EXISTS "${PRE_RELEASE_MEMORY_ENTRY_REPLACEMENT_TABLE}"`,
+    MEMORY_ENTRY_DDL.replace(
+      'CREATE TABLE IF NOT EXISTS "MemoryEntry"',
+      `CREATE TABLE "${PRE_RELEASE_MEMORY_ENTRY_REPLACEMENT_TABLE}"`
+    )
+  ],
+  afterCopy: [
+    `DROP TABLE "MemoryEntry"`,
+    `ALTER TABLE "${PRE_RELEASE_MEMORY_ENTRY_REPLACEMENT_TABLE}" RENAME TO "MemoryEntry"`,
+    ...MEMORY_ENTRY_INDEX_DDLS,
+    MEMORY_ENTRY_FTS_DDL,
+    ...MEMORY_ENTRY_FTS_TRIGGER_DDLS
+  ]
+} as const
+
+const agentMemoryProjectScopeMigration = {
+  id: '0016_agent_memory_project_scope',
   statements: [
     `CREATE TABLE IF NOT EXISTS "MemorySettings" (
       "id" TEXT NOT NULL PRIMARY KEY,
@@ -130,32 +180,10 @@ const agentMemoryMigration = {
       CONSTRAINT "MemoryCategory_autoRecall_check" CHECK (${categoryAutoRecallExpression}),
       CONSTRAINT "MemoryCategory_revision_check" CHECK (${categoryRevisionExpression})
     )`,
-    `CREATE TABLE IF NOT EXISTS "MemoryEntry" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "categoryId" TEXT,
-      "projectId" TEXT,
-      "content" TEXT NOT NULL,
-      "contentKey" TEXT NOT NULL,
-      "origin" TEXT NOT NULL,
-      "sourceSessionId" TEXT,
-      "sourceAgentId" TEXT,
-      "revision" INTEGER NOT NULL DEFAULT 1,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL,
-      CONSTRAINT "MemoryEntry_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "MemoryCategory" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "MemoryEntry_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "MemoryEntry_content_check" CHECK (${entryContentExpression}),
-      CONSTRAINT "MemoryEntry_contentKey_check" CHECK (${entryContentKeyExpression}),
-      CONSTRAINT "MemoryEntry_origin_check" CHECK (${entryOriginExpression}),
-      CONSTRAINT "MemoryEntry_scope_check" CHECK (${entryScopeExpression}),
-      CONSTRAINT "MemoryEntry_source_check" CHECK (${entrySourceExpression}),
-      CONSTRAINT "MemoryEntry_revision_check" CHECK (${entryRevisionExpression})
-    )`,
+    MEMORY_ENTRY_DDL,
     `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryCategory_systemKey_key" ON "MemoryCategory"("systemKey")`,
     `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryCategory_nameKey_key" ON "MemoryCategory"("nameKey")`,
-    `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt")`,
-    `CREATE INDEX IF NOT EXISTS "MemoryEntry_projectId_updatedAt_idx" ON "MemoryEntry"("projectId", "updatedAt")`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey")`,
+    ...MEMORY_ENTRY_INDEX_DDLS,
     MEMORY_ENTRY_FTS_DDL,
     ...MEMORY_ENTRY_FTS_TRIGGER_DDLS,
     ...MEMORY_CATEGORY_TRIGGER_DDLS,
@@ -270,11 +298,15 @@ const agentMemoryMigration = {
 }
 
 export {
-  agentMemoryMigration,
+  agentMemoryProjectScopeMigration,
   MEMORY_AUXILIARY_SCHEMA_OBJECTS,
   MEMORY_AUXILIARY_TABLE_NAMES,
   MEMORY_CATEGORY_TRIGGER_DDLS,
+  MEMORY_ENTRY_DDL,
   MEMORY_ENTRY_FTS_DDL,
   MEMORY_ENTRY_FTS_TABLE,
-  MEMORY_ENTRY_FTS_TRIGGER_DDLS
+  MEMORY_ENTRY_FTS_TRIGGER_DDLS,
+  MEMORY_ENTRY_INDEX_DDLS,
+  PRE_RELEASE_MEMORY_ENTRY_REBUILD_DDLS,
+  PRE_RELEASE_MEMORY_ENTRY_REPLACEMENT_TABLE
 }

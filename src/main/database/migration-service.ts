@@ -15,6 +15,11 @@ import {
 } from './legacy-baseline-adapter'
 import { DatabaseValidationError } from './database-validation-error'
 import { migrationSqlExecutor } from './migration-sql-executor'
+import {
+  isSupportedPreReleaseAgentMemory,
+  PRE_RELEASE_AGENT_MEMORY_MIGRATION_ID,
+  upgradePreReleaseAgentMemorySchema
+} from './pre-release-agent-memory-adapter'
 import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
 import { projectAgentContextMigration } from './migrations/0002-project-agent-context'
 import { grantedLocalRootsMigration } from './migrations/0003-granted-local-roots'
@@ -31,10 +36,10 @@ import { sessionProjectionMigration } from './migrations/0013-session-projection
 import { reviewQueryIndexesMigration } from './migrations/0014-review-query-indexes'
 import { sessionModelCallUsageMigration } from './migrations/0015-session-model-call-usage'
 import {
-  agentMemoryMigration,
+  agentMemoryProjectScopeMigration,
   MEMORY_AUXILIARY_SCHEMA_OBJECTS,
   MEMORY_AUXILIARY_TABLE_NAMES
-} from './migrations/0016-agent-memory'
+} from './migrations/0016-agent-memory-project-scope'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -272,11 +277,11 @@ const SESSION_MODEL_CALL_USAGE_CHECKSUM = checksumMigrationPayload(
   sessionModelCallUsageMigration.verifiers,
   sessionModelCallUsageMigration.operations
 )
-const AGENT_MEMORY_CHECKSUM = checksumMigrationPayload(
-  agentMemoryMigration.id,
-  agentMemoryMigration.statements,
-  agentMemoryMigration.verifiers,
-  agentMemoryMigration.operations
+const AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM = checksumMigrationPayload(
+  agentMemoryProjectScopeMigration.id,
+  agentMemoryProjectScopeMigration.statements,
+  agentMemoryProjectScopeMigration.verifiers,
+  agentMemoryProjectScopeMigration.operations
 )
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
@@ -331,15 +336,16 @@ const CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints =
       Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
     ])
 )
-const AGENT_MEMORY_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
-  agentMemoryMigration.verifiers
-    .filter((verifier) => verifier.kind === 'check-constraints-exist')
-    .flatMap((verifier) => verifier.tables)
-    .map(({ table, constraints }) => [
-      table,
-      Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
-    ])
-)
+const AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints =
+  Object.fromEntries(
+    agentMemoryProjectScopeMigration.verifiers
+      .filter((verifier) => verifier.kind === 'check-constraints-exist')
+      .flatMap((verifier) => verifier.tables)
+      .map(({ table, constraints }) => [
+        table,
+        Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+      ])
+  )
 const mergeAllowedSuffixChecks = (
   ...contracts: readonly AllowedSuffixCheckConstraints[]
 ): AllowedSuffixCheckConstraints => {
@@ -443,8 +449,8 @@ const MIGRATION_MANIFEST = [
     backupRetention: 'retain'
   },
   {
-    ...agentMemoryMigration,
-    checksum: AGENT_MEMORY_CHECKSUM,
+    ...agentMemoryProjectScopeMigration,
+    checksum: AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -709,7 +715,7 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
     tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
     triggerNames: memoryTriggerNames
   })
-  await runMigrationVerifiers(client, agentMemoryMigration.verifiers)
+  await runMigrationVerifiers(client, agentMemoryProjectScopeMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -995,6 +1001,30 @@ const validateLedger = (
   return ledger.length
 }
 
+type PreReleaseAgentMemoryUpgrade = {
+  ledgerRow: LedgerRow
+  migration: MigrationManifestEntry
+}
+
+const findPreReleaseAgentMemoryUpgrade = (
+  ledger: readonly LedgerRow[],
+  manifest: readonly MigrationManifestEntry[]
+): PreReleaseAgentMemoryUpgrade | undefined => {
+  const migrationIndex = manifest.findIndex(
+    (candidate) =>
+      candidate.id === agentMemoryProjectScopeMigration.id &&
+      candidate.checksum === AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM
+  )
+  if (migrationIndex < 0 || ledger.length !== migrationIndex + 1) return undefined
+
+  const ledgerRow = ledger[migrationIndex]!
+  if (!isSupportedPreReleaseAgentMemory(ledgerRow.id, ledgerRow.checksum)) return undefined
+
+  // A recognized pre-release suffix never relaxes validation of the released ledger prefix.
+  validateLedger(ledger.slice(0, migrationIndex), manifest)
+  return { ledgerRow, migration: manifest[migrationIndex]! }
+}
+
 const readForeignKeyState = async (client: PrismaClient): Promise<number> => {
   const rows = await migrationSqlExecutor.query<SqliteForeignKeyStateRow[]>(
     client,
@@ -1095,6 +1125,37 @@ const insertLedgerRow = async (
     INSERT INTO "_open_science_migrations" ("id", "checksum")
     VALUES (${migration.id}, ${migration.checksum})
   `
+}
+
+const applyPreReleaseAgentMemoryUpgrade = async (
+  client: PrismaClient,
+  upgrade: PreReleaseAgentMemoryUpgrade
+): Promise<void> => {
+  try {
+    await client.$transaction(async (transaction) => {
+      const transactionClient = transaction as unknown as PrismaClient
+      await upgradePreReleaseAgentMemorySchema(transaction, upgrade.ledgerRow.checksum)
+      await verifyCurrentApplicationSchema(transactionClient)
+      const deleted = await transaction.$executeRaw`
+        DELETE FROM "_open_science_migrations"
+        WHERE "id" = ${PRE_RELEASE_AGENT_MEMORY_MIGRATION_ID}
+          AND "checksum" = ${upgrade.ledgerRow.checksum}
+      `
+      if (deleted !== 1) {
+        throw new DatabaseValidationError(
+          'Pre-release agent memory migration ledger changed during the upgrade.',
+          {
+            kind: 'pre-release-agent-memory-ledger-race',
+            expected: 1,
+            actual: deleted
+          }
+        )
+      }
+      await insertLedgerRow(transactionClient, upgrade.migration)
+    })
+  } catch (error) {
+    throw classifyDatabaseFailure(error, 'migration', upgrade.migration.id)
+  }
 }
 
 const hasOnlyDeferredPreviewStateForeignKeyViolations = async (
@@ -1264,7 +1325,6 @@ const migrateApplicationDatabaseWithManifest = async (
     throw classifyDatabaseFailure(error, 'open')
   }
   const from = ledger.at(-1)?.id ?? null
-  const appliedCount = validateLedger(ledger, manifest)
   const latest = manifest.at(-1)!
   const complete = async (result: SchemaMigrationResult): Promise<SchemaMigrationResult> => {
     try {
@@ -1284,21 +1344,22 @@ const migrateApplicationDatabaseWithManifest = async (
     }
     return result
   }
-  if (appliedCount === manifest.length) {
-    return complete({ adoptedLegacy: false, applied: [], from, to: latest.id })
-  }
 
-  let hadApplicationTablesAtStart: boolean
-  try {
-    hadApplicationTablesAtStart = await hasApplicationTables(client)
-  } catch (error) {
-    throw classifyDatabaseFailure(error, 'open')
+  let hadApplicationTablesAtStart: boolean | undefined
+  const readHadApplicationTablesAtStart = async (): Promise<boolean> => {
+    if (hadApplicationTablesAtStart !== undefined) return hadApplicationTablesAtStart
+    try {
+      hadApplicationTablesAtStart = await hasApplicationTables(client)
+      return hadApplicationTablesAtStart
+    } catch (error) {
+      throw classifyDatabaseFailure(error, 'open')
+    }
   }
 
   const backupBeforeMigration = async (migration: MigrationManifestEntry): Promise<void> => {
     if (migration.backupOnApply !== 'required') return
     const migrationId = migration.id
-    if (!hadApplicationTablesAtStart) return
+    if (!(await readHadApplicationTablesAtStart())) return
     let backup: DatabaseMigrationBackup
     try {
       const databasePath = options.databasePath ?? (await readMainDatabasePath(client))
@@ -1319,6 +1380,24 @@ const migrateApplicationDatabaseWithManifest = async (
       includeDeleteAfterSuccess: false
     })
   }
+
+  const applied: string[] = []
+  const preReleaseAgentMemoryUpgrade = findPreReleaseAgentMemoryUpgrade(ledger, manifest)
+  if (preReleaseAgentMemoryUpgrade) {
+    const migration = preReleaseAgentMemoryUpgrade.migration
+    options.onProgress?.({ phase: 'migrating', migrationId: migration.id })
+    await backupBeforeMigration(migration)
+    await applyPreReleaseAgentMemoryUpgrade(client, preReleaseAgentMemoryUpgrade)
+    applied.push(migration.id)
+    ledger = await readLedger(client)
+  }
+
+  const appliedCount = validateLedger(ledger, manifest)
+  if (appliedCount === manifest.length) {
+    return complete({ adoptedLegacy: false, applied, from, to: latest.id })
+  }
+
+  const hasExistingApplicationTables = await readHadApplicationTablesAtStart()
   const repairsPreviewStateForeignKeyViolations = manifest.some(
     (candidate) =>
       candidate.id === projectPreviewStateOwnerFkMigration.id &&
@@ -1353,12 +1432,12 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === crossResourceTagsMigration.id &&
       candidate.checksum === CROSS_RESOURCE_TAGS_CHECKSUM
   )
-  const adoptsAgentMemory = manifest.some(
+  const adoptsAgentMemoryProjectScope = manifest.some(
     (candidate) =>
-      candidate.id === agentMemoryMigration.id && candidate.checksum === AGENT_MEMORY_CHECKSUM
+      candidate.id === agentMemoryProjectScopeMigration.id &&
+      candidate.checksum === AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM
   )
-  const applied: string[] = []
-  const adoptedLegacy = appliedCount === 0 && hadApplicationTablesAtStart
+  const adoptedLegacy = appliedCount === 0 && hasExistingApplicationTables
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
     adoptsNotificationAttentionMetadata ? NOTIFICATION_ATTENTION_ALLOWED_SUFFIX_CHECKS : {},
@@ -1366,7 +1445,7 @@ const migrateApplicationDatabaseWithManifest = async (
     adoptsVisionEvidence ? VISION_EVIDENCE_ALLOWED_SUFFIX_CHECKS : {},
     adoptsComputePasswordAuth ? COMPUTE_PASSWORD_AUTH_ALLOWED_SUFFIX_CHECKS : {},
     adoptsCrossResourceTags ? CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS : {},
-    adoptsAgentMemory ? AGENT_MEMORY_ALLOWED_SUFFIX_CHECKS : {}
+    adoptsAgentMemoryProjectScope ? AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS : {}
   )
 
   let nextIndex = appliedCount
@@ -1410,7 +1489,7 @@ export {
   COMPUTE_PASSWORD_AUTH_CHECKSUM,
   TAG_ORDERING_CHECKSUM,
   REVIEW_QUERY_INDEXES_CHECKSUM,
-  AGENT_MEMORY_CHECKSUM,
+  AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

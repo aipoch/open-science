@@ -127,7 +127,7 @@ describe('application database (integration)', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_agent_memory'
+        '0016_agent_memory_project_scope'
       ]
     })
 
@@ -739,7 +739,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0016_agent_memory.backup`
+    const backupPath = `${databasePath}.before-0016_agent_memory_project_scope.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -1154,7 +1154,7 @@ describe('application database (integration)', () => {
         '0013_session_projection',
         '0014_review_query_indexes',
         '0015_session_model_call_usage',
-        '0016_agent_memory'
+        '0016_agent_memory_project_scope'
       ]
     })
 
