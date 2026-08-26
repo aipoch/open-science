@@ -736,6 +736,8 @@ const api: OpenScienceAPI = {
   notebook: {
     // Notebook commands stay behind typed IPC so renderer code never talks to local RPC directly.
     state: (request) => electronRendererContracts.invoke('notebook.state', request),
+    inspectNamespace: (request) =>
+      electronRendererContracts.invoke('notebook.inspectNamespace', request),
     readInputPreview: (request) =>
       electronRendererContracts.invoke('notebook.readInputPreview', request),
     getReference: (request) => electronRendererContracts.invoke('notebook.getReference', request),

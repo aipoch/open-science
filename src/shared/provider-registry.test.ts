@@ -46,6 +46,22 @@ describe('provider registry', () => {
     expect(OFFICIAL_VENDORS[anthropicIndex + 1]?.id).toBe('xai')
   })
 
+  it('places OpenCode Go and Zen immediately before OpenRouter with curated Chat catalogs', () => {
+    const openRouterIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'openrouter')
+
+    expect(
+      OFFICIAL_VENDORS.slice(openRouterIndex - 2, openRouterIndex + 1).map(({ id }) => id)
+    ).toEqual(['opencode-go', 'opencode', 'openrouter'])
+    expect(resolveVendorBaseUrl('opencode-go')).toBe('https://opencode.ai/zen/go/v1')
+    expect(resolveVendorBaseUrl('opencode')).toBe('https://opencode.ai/zen/v1')
+    expect(resolveVendorApiEndpoints('opencode-go')).toEqual(['openai'])
+    expect(resolveVendorApiEndpoints('opencode')).toEqual(['openai'])
+    expect(resolveVendorModelsUrl('opencode-go')).toBeUndefined()
+    expect(resolveVendorModelsUrl('opencode')).toBeUndefined()
+    expect(defaultVendorModel('opencode-go')).toBe('kimi-k2.7-code')
+    expect(defaultVendorModel('opencode')).toBe('kimi-k2.7-code')
+  })
+
   it('resolves a single-endpoint vendor base URL', () => {
     expect(resolveVendorBaseUrl('openai')).toBe('https://api.openai.com')
     expect(getOfficialVendor('openai')?.apiEndpoints).toEqual(['responses'])
@@ -97,6 +113,21 @@ describe('provider registry', () => {
     )
   })
 
+  it('offers GLM-4.5-Air through the official Zhipu provider', () => {
+    expect(getOfficialVendor('zhipu')?.models).toContainEqual({
+      id: 'glm-4.5-air',
+      contextWindow: 128_000
+    })
+  })
+
+  it('offers GLM-5.3 through the pay-as-you-go Zhipu provider', () => {
+    expect(getOfficialVendor('zhipu')?.models).toContainEqual({
+      id: 'glm-5.3',
+      contextWindow: 1_000_000,
+      reasoningEffort: 'low-high-max'
+    })
+  })
+
   it('routes the GLM Coding Plan through the /api/coding OpenAI path, per region', () => {
     expect(vendorHasRegions('glmcodingplan')).toBe(true)
     expect(resolveVendorApiEndpoints('glmcodingplan')).toEqual(['anthropic', 'openai'])
@@ -127,7 +158,7 @@ describe('provider registry', () => {
   it('exposes the first catalog entry as the default model', () => {
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
     expect(defaultVendorModel('xai')).toBe('grok-4.6')
-    expect(defaultVendorModel('zhipu')).toBe('glm-5.2')
+    expect(defaultVendorModel('zhipu')).toBe('glm-5.3')
   })
 
   it('resolves model-specific static reasoning effort profiles without network discovery', () => {

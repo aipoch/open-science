@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   KERNEL_FIGURES_DIR_ENV,
+  frameRNamespaceRequest,
   frameRRequest,
+  framePythonNamespaceRequest,
   framePythonRequest,
   parseLoopResponse
 } from './kernel-protocol'
@@ -105,11 +107,67 @@ describe('parseLoopResponse', () => {
     })
     expect(parseLoopResponse(line)?.figures).toEqual([{ mime: 'image/png', path: '/f.png' }])
   })
+
+  it('parses bounded namespace fields and locale-independent R text', () => {
+    const encode = (value: string): string => Buffer.from(value).toString('base64')
+    const response = parseLoopResponse(
+      JSON.stringify({
+        req_id: 'namespace-1',
+        namespace: {
+          variable_count: 2,
+          variables_truncated: true,
+          variables: [
+            {
+              name: 'x',
+              type: 'builtins.int',
+              size_bytes: 28,
+              shape: '1 item',
+              preview: '42'
+            },
+            {
+              name_base64: encode('图形'),
+              type_base64: encode('Figure'),
+              preview_base64: encode('活跃变量'),
+              preview_truncated: true,
+              is_private: true
+            }
+          ]
+        }
+      })
+    )
+
+    expect(response?.namespace).toEqual({
+      variableCount: 2,
+      variablesTruncated: true,
+      variables: [
+        {
+          name: 'x',
+          type: 'builtins.int',
+          sizeBytes: 28,
+          shape: '1 item',
+          preview: '42'
+        },
+        {
+          name: '图形',
+          type: 'Figure',
+          preview: '活跃变量',
+          previewTruncated: true,
+          private: true
+        }
+      ]
+    })
+  })
 })
 
 describe('framePythonRequest', () => {
   it('builds a stable-order JSON line terminated by newline', () => {
     expect(framePythonRequest('id', 'print(1)')).toBe('{"req_id":"id","code":"print(1)"}\n')
+  })
+
+  it('builds a distinct namespace operation without executable source', () => {
+    expect(framePythonNamespaceRequest('id', true)).toBe(
+      '{"req_id":"id","operation":"inspect_namespace","include_private":true}\n'
+    )
   })
 })
 
@@ -133,6 +191,13 @@ describe('frameRRequest', () => {
     expect(buf.subarray(0, header.length).toString('utf8')).toBe(header)
     expect(buf.subarray(header.length).toString('utf8')).toBe(code)
     expect(buf.length).toBe(header.length + byteLen)
+  })
+
+  it('marks namespace inspection in the R frame header', () => {
+    expect(frameRNamespaceRequest('id', false).toString('utf8')).toBe('id 0 inspect_namespace\n')
+    expect(frameRNamespaceRequest('id', true).toString('utf8')).toBe(
+      'id 7 inspect_namespace\nprivate'
+    )
   })
 })
 

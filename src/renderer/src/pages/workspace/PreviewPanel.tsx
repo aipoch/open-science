@@ -4,8 +4,16 @@ import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { ResizablePanel } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
+import { useNavigationStore } from '@/stores/navigation-store'
 import type {
   PreviewFileItem,
   PreviewItem,
@@ -16,6 +24,12 @@ import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { PreviewFileSurface } from './PreviewFileSurface'
+import {
+  getPreviewTabActionGroups,
+  runPreviewTabAction,
+  type PreviewTabAction,
+  type PreviewTabActionCommand
+} from './preview-tab-actions'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { SourceWebPreview } from './previews/SourceWebPreview'
 import { PreviewToolContent } from './previews/PreviewToolContent'
@@ -100,6 +114,7 @@ const PreviewTab = ({
   tabRef,
   onActivate,
   onClose,
+  onContextMenu,
   onKeyDown
 }: {
   tab: PreviewItem
@@ -108,6 +123,7 @@ const PreviewTab = ({
   tabRef: (element: HTMLButtonElement | null) => void
   onActivate: (id: string) => void
   onClose: (id: string) => void
+  onContextMenu: (event: React.MouseEvent<HTMLButtonElement>, id: string) => void
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -139,6 +155,7 @@ const PreviewTab = ({
           }
           onActivate(tab.id)
         }}
+        onContextMenu={(event) => onContextMenu(event, tab.id)}
         onKeyDown={onKeyDown}
         title={tabTitle}
       >
@@ -181,12 +198,14 @@ const PreviewTabBar = ({
   tabs,
   activeItemId,
   onActivate,
-  onClose
+  onClose,
+  onTabContextMenu
 }: {
   tabs: PreviewItem[]
   activeItemId: string | undefined
   onActivate: (id: string) => void
   onClose: (id: string) => void
+  onTabContextMenu: (event: React.MouseEvent<HTMLButtonElement>, id: string) => void
 }): React.JSX.Element => {
   const tabListRef = useHorizontalScrollFade<HTMLDivElement>()
   const tabContainerRefs = useRef<Array<HTMLDivElement | null>>([])
@@ -283,10 +302,88 @@ const PreviewTabBar = ({
           }}
           onActivate={onActivate}
           onClose={onClose}
+          onContextMenu={onTabContextMenu}
           onKeyDown={(event) => handleTabKeyDown(event, index)}
         />
       ))}
     </div>
+  )
+}
+
+// Right-click menu for one preview tab. The action list and its rules come from the
+// preview-tab-actions module; this component only renders groups and forwards picks. A hidden
+// zero-size trigger pinned at the pointer position anchors Radix's dropdown without a visible
+// trigger button.
+const PreviewTabContextMenu = ({
+  item,
+  tabCount,
+  pointer,
+  onSelect,
+  onClose
+}: {
+  item: PreviewItem
+  tabCount: number
+  pointer: { x: number; y: number }
+  onSelect: (command: PreviewTabActionCommand) => void
+  onClose: () => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const { shared, specific } = getPreviewTabActionGroups(item, { tabCount })
+
+  const renderItem = (action: PreviewTabAction): React.JSX.Element => {
+    const Icon = action.icon
+    return (
+      <DropdownMenuItem
+        key={action.command}
+        disabled={action.disabled}
+        data-command={action.command}
+        // Compact sizing: the menu sits inside the tab strip's visual rhythm, so it uses a fixed
+        // item height at the tab text scale instead of the standard form-menu sizing. Vertical
+        // spacing comes from the height alone — this file's workspace spacing guard forbids py-*
+        // utilities.
+        className={cn(
+          'min-h-0 h-6 gap-2 rounded-md px-2 py-0 text-[12px]',
+          action.danger &&
+            'text-danger-000 data-[highlighted]:bg-danger-000/10 data-[highlighted]:text-danger-000'
+        )}
+        onSelect={() => onSelect(action.command)}
+      >
+        <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+        {t(action.label)}
+      </DropdownMenuItem>
+    )
+  }
+
+  return (
+    <DropdownMenu
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
+      <DropdownMenuTrigger asChild>
+        <span
+          aria-hidden="true"
+          data-testid="preview-tab-context-anchor"
+          className="pointer-events-none fixed size-0"
+          style={{ left: pointer.x, top: pointer.y }}
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="min-w-[9.5rem] p-1"
+        data-testid="preview-tab-context-menu"
+        onCloseAutoFocus={(event) => {
+          // Focus returns to the tab that opened the menu instead of the hidden anchor.
+          event.preventDefault()
+          document.getElementById(getPreviewTabId(item.id))?.focus()
+        }}
+      >
+        {shared.map(renderItem)}
+        {specific.length > 0 ? <DropdownMenuSeparator /> : null}
+        {specific.map(renderItem)}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -533,7 +630,17 @@ const PreviewPanelSurface = ({
   const panelState = usePreviewWorkbenchStore((state) => state.panelState)
   const activateItem = usePreviewWorkbenchStore((state) => state.activateItem)
   const removeItem = usePreviewWorkbenchStore((state) => state.removeItem)
+  const removeOtherItems = usePreviewWorkbenchStore((state) => state.removeOtherItems)
+  const activeProjectId = useNavigationStore((state) => state.activeProjectId)
+  const [contextMenu, setContextMenu] = useState<{
+    itemId: string
+    x: number
+    y: number
+  } | null>(null)
   const activeItem = items.find((item) => item.id === activeItemId)
+  const contextMenuItem = contextMenu
+    ? (items.find((item) => item.id === contextMenu.itemId) ?? undefined)
+    : undefined
   // Remount replaced file previews and release their renderer-owned resources while collapsed.
   const activeContentKey =
     activeItem?.type === 'file'
@@ -546,6 +653,38 @@ const PreviewPanelSurface = ({
           activeItem.mtimeMs ?? null
         ])
       : (activeItem?.id ?? 'empty')
+
+  // Right-click only opens the menu; the tab is not activated, matching the pointer-first
+  // interaction of tab strips like the prototype's.
+  const handleTabContextMenu = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    itemId: string
+  ): void => {
+    event.preventDefault()
+    setContextMenu({ itemId, x: event.clientX, y: event.clientY })
+  }
+
+  const closeContextMenu = (): void => {
+    setContextMenu(null)
+  }
+
+  const handleContextMenuSelect = (command: PreviewTabActionCommand): void => {
+    const item = contextMenuItem
+    setContextMenu(null)
+    if (!item) return
+
+    // Capture the optional staging pipeline once so the narrowing survives into the closure.
+    const stageLocalPath = window.api.uploads?.stageLocalPath
+
+    runPreviewTabAction(command, item, {
+      closeTab: removeItem,
+      closeOtherTabs: removeOtherItems,
+      saveManagedFile: (request) => window.api.saveManagedFile(request),
+      copyText: (text) => navigator.clipboard.writeText(text),
+      stageLocalPath: stageLocalPath ? (request) => stageLocalPath(request) : undefined,
+      activeProjectId
+    })
+  }
 
   return (
     <aside
@@ -565,6 +704,7 @@ const PreviewPanelSurface = ({
             activeItemId={activeItemId}
             onActivate={activateItem}
             onClose={removeItem}
+            onTabContextMenu={handleTabContextMenu}
           />
         </div>
       ) : null}
@@ -628,6 +768,15 @@ const PreviewPanelSurface = ({
           )
         })}
       </div>
+      {contextMenu && contextMenuItem ? (
+        <PreviewTabContextMenu
+          item={contextMenuItem}
+          tabCount={items.length}
+          pointer={{ x: contextMenu.x, y: contextMenu.y }}
+          onSelect={handleContextMenuSelect}
+          onClose={closeContextMenu}
+        />
+      ) : null}
     </aside>
   )
 }

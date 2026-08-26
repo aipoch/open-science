@@ -456,6 +456,7 @@ describe('module test impact commands', () => {
       ['/npm/bin/npm-cli.js', 'test', '--', ...plan.testFiles],
       expect.objectContaining({ cwd: '/repo', stdio: 'inherit' })
     )
+    expect(spawn.mock.calls[0]?.[2]?.env).not.toHaveProperty('VITEST_CHANGED_COVERAGE_THRESHOLDS')
     write.mockRestore()
   })
 
@@ -475,6 +476,7 @@ describe('module test impact commands', () => {
     })
     const spawn = vi.fn(() => ({ status: 0 }))
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const environment = { npm_execpath: '/npm/bin/npm-cli.js' }
     const expectedPlan = createAffectedTestPlan(
       [{ path: 'src/main/artifacts/repository.ts', status: 'modified' }],
       { status: 'current', testFiles: [] }
@@ -485,7 +487,7 @@ describe('module test impact commands', () => {
         cwd: '/repo',
         execute,
         spawn,
-        environment: { npm_execpath: '/npm/bin/npm-cli.js' },
+        environment,
         nodeExecutable: '/node'
       })
     ).toBe(0)
@@ -500,9 +502,17 @@ describe('module test impact commands', () => {
         base,
         ...expectedPlan.testFiles
       ],
-      expect.objectContaining({ cwd: '/repo', stdio: 'inherit' })
+      expect.objectContaining({
+        cwd: '/repo',
+        env: {
+          npm_execpath: '/npm/bin/npm-cli.js',
+          VITEST_CHANGED_COVERAGE_THRESHOLDS: '1'
+        },
+        stdio: 'inherit'
+      })
     )
     expect(spawn.mock.calls[0]?.[1]).toContain('src/main/reviewer/ipc.test.ts')
+    expect(environment).toEqual({ npm_execpath: '/npm/bin/npm-cli.js' })
     write.mockRestore()
   })
 

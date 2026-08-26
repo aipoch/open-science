@@ -7,6 +7,7 @@ import type {
   ExportNotebookAllRequest,
   ExportNotebookKernelRequest,
   FinishNotebookCodeCellRequest,
+  NotebookNamespaceRequest,
   NotebookSessionRequest,
   NotebookSessionStateRequest,
   RunNotebookCellRequest
@@ -24,6 +25,9 @@ const lastNonEmptyLine = (value: string): string | undefined =>
 const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void => {
   ipcMainHandle('notebook:state', (_event, request: NotebookSessionStateRequest) =>
     handlers.state(request)
+  )
+  ipcMainHandle('notebook:inspect-namespace', (_event, request: NotebookNamespaceRequest) =>
+    handlers.inspectNamespace(request)
   )
   ipcMainHandle('notebook:reference', (_event, request: NotebookSessionRequest) =>
     handlers.reference(request)

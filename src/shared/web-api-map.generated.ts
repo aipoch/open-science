@@ -87,6 +87,7 @@ export const WEB_INVOKE_CHANNELS = {
   'notebook.exportIpynbAll': 'notebook:export-ipynb-all',
   'notebook.finishCodeCell': 'notebook:finish-code-cell',
   'notebook.getReference': 'notebook:reference',
+  'notebook.inspectNamespace': 'notebook:inspect-namespace',
   'notebook.readInputPreview': 'notebook:read-input-preview',
   'notebook.restart': 'notebook:restart',
   'notebook.runCell': 'notebook:run-cell',

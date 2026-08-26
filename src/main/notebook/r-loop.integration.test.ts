@@ -6,7 +6,12 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
-import { frameRRequest, parseLoopResponse, type KernelLoopResponse } from './kernel-protocol'
+import {
+  frameRNamespaceRequest,
+  frameRRequest,
+  parseLoopResponse,
+  type KernelLoopResponse
+} from './kernel-protocol'
 
 // Run with: RUN_KERNEL=1 OPEN_SCIENCE_TEST_R_ENV=/path/to/r/env/prefix \
 //   npx vitest run src/main/notebook/r-loop.integration.test.ts
@@ -34,6 +39,7 @@ const startLoop = (
 ): {
   child: ChildProcessWithoutNullStreams
   send: (code: string) => Promise<KernelLoopResponse>
+  inspect: (includePrivate?: boolean) => Promise<KernelLoopResponse>
   waitFor: (reqId: string) => Promise<KernelLoopResponse>
 } => {
   const child = spawn(rscript, [LOOP], { env: { ...process.env, ...env } })
@@ -77,7 +83,13 @@ const startLoop = (
     child.stdin.write(frameRRequest(reqId, code))
     return pending
   }
-  return { child, send, waitFor }
+  const inspect = (includePrivate = false): Promise<KernelLoopResponse> => {
+    const reqId = randomUUID()
+    const pending = waitFor(reqId)
+    child.stdin.write(frameRNamespaceRequest(reqId, includePrivate))
+    return pending
+  }
+  return { child, send, inspect, waitFor }
 }
 
 // Resolved lazily inside each `it` (not at describe-body scope) so a skipped describe.skip run
@@ -117,6 +129,102 @@ const installBlankPngMaterializationTrace = (
   ].join('\n')
 
 gate('r_loop.R', () => {
+  it('returns bounded binding metadata without evaluating any binding values', async () => {
+    const { child, send, inspect } = startLoop(rscriptBin(), {})
+    try {
+      await send(
+        "forced <- FALSE; x <- 41L; label <- '活跃变量'; .private <- 'hidden'; 1L -> run; 'user con' ->> con; " +
+          'items <- seq_len(100000L); blob <- raw(2000000L); huge_label <- strrep("活", 1000000L); ' +
+          'makeActiveBinding("active_value", function() stop("must not evaluate"), .GlobalEnv); ' +
+          'delayedAssign("lazy_value", stop("must not force"), assign.env = .GlobalEnv); ' +
+          'create_lazy <- base::delayedAssign; ' +
+          'create_lazy("indirect_lazy", stop("must not force"), assign.env = .GlobalEnv); ' +
+          'create_lazy("x", { forced <<- TRUE; 42L }, assign.env = .GlobalEnv); ' +
+          'assign("indirect_eager", 99L, envir = .GlobalEnv)'
+      )
+      const first = await inspect()
+      expect(first.namespace?.variables.map(({ name }) => name)).toEqual([
+        'active_value',
+        'blob',
+        'con',
+        'create_lazy',
+        'forced',
+        'huge_label',
+        'indirect_eager',
+        'indirect_lazy',
+        'items',
+        'label',
+        'lazy_value',
+        'run',
+        'x'
+      ])
+      expect(first.namespace?.variables.find(({ name }) => name === 'label')).toMatchObject({
+        type: 'binding',
+        preview: ''
+      })
+      expect(first.namespace?.variables.find(({ name }) => name === 'x')).toMatchObject({
+        type: 'binding',
+        preview: ''
+      })
+      expect(first.namespace?.variables.find(({ name }) => name === 'active_value')).toMatchObject({
+        type: 'active binding',
+        preview: ''
+      })
+      expect(first.namespace?.variables.find(({ name }) => name === 'lazy_value')).toMatchObject({
+        type: 'lazy binding',
+        preview: ''
+      })
+      expect(first.namespace?.variables.find(({ name }) => name === 'indirect_lazy')).toMatchObject(
+        {
+          type: 'binding',
+          preview: ''
+        }
+      )
+      expect(
+        first.namespace?.variables.find(({ name }) => name === 'indirect_eager')
+      ).toMatchObject({
+        type: 'binding',
+        preview: ''
+      })
+      expect(Buffer.byteLength(JSON.stringify(first), 'utf8')).toBeLessThan(256 * 1024)
+      expect((await send('forced')).stdout).toContain('FALSE')
+
+      await send(
+        'x <- 42L; rm(label); added <- list(ok = TRUE); lazy_value <- 7L; ' +
+          'indirect_lazy <- 9L; indirect_eager <- 100L'
+      )
+      const refreshed = await inspect(true)
+      expect(refreshed.namespace?.variables.map(({ name }) => name)).toEqual([
+        '.private',
+        'active_value',
+        'added',
+        'blob',
+        'con',
+        'create_lazy',
+        'forced',
+        'huge_label',
+        'indirect_eager',
+        'indirect_lazy',
+        'items',
+        'lazy_value',
+        'run',
+        'x'
+      ])
+      expect(refreshed.namespace?.variables.find(({ name }) => name === 'x')).toMatchObject({
+        type: 'binding',
+        preview: ''
+      })
+      expect(
+        refreshed.namespace?.variables.find(({ name }) => name === 'lazy_value')
+      ).toMatchObject({ type: 'binding', preview: '' })
+      expect(refreshed.namespace?.variables.find(({ name }) => name === '.private')).toMatchObject({
+        private: true
+      })
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
   it('auto-prints visible results, keeps state across requests, reports errors', async () => {
     const { child, send } = startLoop(rscriptBin(), {})
     try {
