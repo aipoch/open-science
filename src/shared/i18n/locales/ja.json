@@ -2458,7 +2458,6 @@
     "{{count}} steps_other": "{{count}} ステップ",
     "{{count}} subagents, {{running}} running_other": "{{count}} サブエージェント、{{running}} が実行中",
     "{{count}} subagents_other": "{{count}} サブエージェント",
-    "{{count}} turns_other": "{{count}}ターン",
     "{{count}} unread_other": "{{count}} 未読",
     "{{count}} waiting on you_other": "{{count}} 件が対応待ち",
     "{{count}} weeks ago_other": "{{count}} 週間前",

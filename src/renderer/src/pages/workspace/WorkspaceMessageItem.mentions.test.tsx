@@ -390,7 +390,7 @@ describe('WorkspaceMessageItem missing artifact badge', () => {
 })
 
 describe('WorkspaceMessageItem turn token usage', () => {
-  it('keeps completion metadata compact and reveals response token totals from Usage', async () => {
+  it('keeps completion metadata compact and reveals response token totals from Calls', async () => {
     await renderMessageItem(
       createMessage({
         role: 'agent',
@@ -416,7 +416,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(elapsedSegment?.textContent).toBe('Elapsed 2m 5s')
     expect(elapsedSegment?.classList.contains('whitespace-nowrap')).toBe(true)
     expect(separator).toBeNull()
-    expect(usage?.textContent).toBe('Usage')
+    expect(usage?.textContent).toBe('Calls')
     expect(usageTrigger?.getAttribute('aria-label')).toBe('Token usage for this response')
     expect(usageTrigger?.querySelector('[data-slot="turn-token-usage-icon"]')).not.toBeNull()
     expect(usageTrigger?.className).toContain('border-dashed')
@@ -433,10 +433,10 @@ describe('WorkspaceMessageItem turn token usage', () => {
     })
 
     const usagePopover = document.body.querySelector('[data-slot="turn-token-usage-popover"]')
-    expect(usagePopover?.textContent).toContain('Usage')
+    expect(usagePopover?.textContent).toContain('Calls')
     expect(
       usagePopover?.querySelector('[data-slot="turn-token-usage-turn-count"]')?.textContent
-    ).toBe('3 turns')
+    ).toBe('3 calls')
     expect(usagePopover?.textContent).toContain('Input12,345')
     expect(usagePopover?.textContent).toContain('Cache678')
     expect(usagePopover?.textContent).toContain('Output90')
@@ -612,7 +612,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(usagePopover?.textContent).toContain('Total160')
     expect(
       usagePopover?.querySelector('[data-slot="turn-token-usage-turn-count"]')?.textContent
-    ).toBe('1 turn')
+    ).toBe('1 call')
 
     const segments = Array.from(
       usagePopover?.querySelectorAll<HTMLElement>('[data-slot="turn-token-usage-segment"]') ?? []
@@ -625,7 +625,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(segments[3]?.className).toContain('bg-chart-2')
   })
 
-  it('keeps the Usage popover open while the pointer crosses into it, then closes it', async () => {
+  it('keeps the Calls popover open while the pointer crosses into it, then closes it', async () => {
     vi.useFakeTimers()
     await renderMessageItem(
       createMessage({
@@ -662,7 +662,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).toBeNull()
   })
 
-  it('closes the Usage popover with Escape or when keyboard focus leaves it', async () => {
+  it('closes the Calls popover with Escape or when keyboard focus leaves it', async () => {
     vi.useFakeTimers()
     await renderMessageItem(
       createMessage({
@@ -705,7 +705,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).toBeNull()
   })
 
-  it('clears a pending Usage close when the token summary unmounts', async () => {
+  it('clears a pending Calls close when the token summary unmounts', async () => {
     vi.useFakeTimers()
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
     const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
@@ -759,7 +759,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(footer?.querySelector('[data-slot="turn-token-usage"]')).toBeNull()
   })
 
-  it('keeps Usage available when a persisted completion time is out of range', async () => {
+  it('keeps Calls available when a persisted completion time is out of range', async () => {
     await renderMessageItem(
       createMessage({
         role: 'agent',
@@ -798,7 +798,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(footer?.querySelector('[data-slot="turn-token-usage"]')).not.toBeNull()
   })
 
-  it('keeps Usage beside completion when elapsed metadata is unavailable', async () => {
+  it('keeps Calls beside completion when elapsed metadata is unavailable', async () => {
     await renderMessageItem(
       createMessage({
         role: 'agent',
@@ -811,11 +811,11 @@ describe('WorkspaceMessageItem turn token usage', () => {
     const usage = container.querySelector('[data-slot="turn-token-usage"]')
     const usageTrigger = usage?.querySelector('button')
     expect(usageTrigger?.getAttribute('aria-label')).toBe('Token usage for this response')
-    expect(usage?.textContent).toBe('Usage')
+    expect(usage?.textContent).toBe('Calls')
     expect(container.textContent).not.toContain('Input 12,345')
   })
 
-  it('reveals unavailable totals from the Usage summary when the agent did not report them', async () => {
+  it('reveals unavailable totals from the Calls summary when the agent did not report them', async () => {
     await renderMessageItem(
       createMessage({
         role: 'agent',
@@ -830,7 +830,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(usageTrigger?.getAttribute('aria-label')).toBe(
       'Token usage unavailable for this response'
     )
-    expect(usage?.textContent).toBe('Usage')
+    expect(usage?.textContent).toBe('Calls')
     expect(document.body.textContent).not.toContain('Input—')
 
     await act(async () => {

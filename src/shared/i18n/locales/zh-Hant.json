@@ -2526,7 +2526,6 @@
     "{{count}} steps_other": "{{count}} 個步驟",
     "{{count}} subagents, {{running}} running_other": "{{count}} 個子智能體，{{running}} 個正在執行",
     "{{count}} subagents_other": "{{count}} 個子智能體",
-    "{{count}} turns_other": "{{count}} 輪",
     "{{count}} unread_other": "{{count}} 則未讀",
     "{{count}} waiting on you_other": "{{count}} 個等待你處理",
     "{{count}} weeks ago_other": "{{count}} 週前",

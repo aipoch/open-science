@@ -2845,7 +2845,7 @@ describe('Korean binding terminology', () => {
     ['{{count}} jobs_other', '작업 {{count}}개'],
     ['{{count}} repl_other', 'REPL {{count}}개'],
     ['{{count}} steps_other', '{{count}}단계'],
-    ['{{count}} turns_other', '{{count}}턴'],
+    ['{{count}} calls_other', '호출 {{count}}회'],
     [
       'Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._other',
       '이 편집된 프롬프트를 보내면 여기에서 새 브랜치가 시작됩니다. 현재 뒤따르는 {{count}}개 턴은 메시지 수정 컨트롤에서 계속 사용할 수 있습니다.'

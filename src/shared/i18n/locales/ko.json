@@ -2469,7 +2469,6 @@
     "{{count}} steps_other": "{{count}}단계",
     "{{count}} subagents, {{running}} running_other": "서브에이전트 {{count}}개, {{running}}개 실행 중",
     "{{count}} subagents_other": "서브에이전트 {{count}}개",
-    "{{count}} turns_other": "{{count}}턴",
     "{{count}} unread_other": "읽지 않음 {{count}}개",
     "{{count}} waiting on you_other": "처리 대기 {{count}}개",
     "{{count}} weeks ago_other": "{{count}}주 전",

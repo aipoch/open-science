@@ -279,7 +279,7 @@ describe('workspace page component boundaries', () => {
     expect(previewPanelSource).not.toContain('py-[10px]')
   })
 
-  it('registers the semantic chart tokens used by the response Usage breakdown', () => {
+  it('registers the semantic chart tokens used by the response Calls breakdown', () => {
     const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
     const messageItemSource = readFileSync(workspaceMessageItemPath, 'utf8')
 

@@ -94,7 +94,7 @@ const visibleCategories = (usage: AcpContextUsage): AcpContextUsageCategory[] =>
 type CallSegmentKey = 'input' | 'cache-read' | 'cache-write' | 'cache' | 'output'
 
 // Catalog keys stay unresolved at module scope so changing locale updates every render site.
-// Segment colors mirror the message Usage popover in WorkspaceMessageItem: Input is the deep
+// Segment colors mirror the message Calls popover in WorkspaceMessageItem: Input is the deep
 // blue chart-1, Cache read its light tint (cache is reused input), Cache write amber chart-3,
 // Output green chart-2 — the same metric keeps the same color app-wide.
 const callSegmentPresentation: Record<CallSegmentKey, { label: string; color: string }> = {

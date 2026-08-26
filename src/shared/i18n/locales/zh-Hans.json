@@ -2529,7 +2529,6 @@
     "{{count}} steps_other": "{{count}} 个步骤",
     "{{count}} subagents, {{running}} running_other": "{{count}} 个子智能体，{{running}} 个正在运行",
     "{{count}} subagents_other": "{{count}} 个子智能体",
-    "{{count}} turns_other": "{{count}} 轮",
     "{{count}} unread_other": "{{count}} 条未读",
     "{{count}} waiting on you_other": "{{count}} 个等待你处理",
     "{{count}} weeks ago_other": "{{count}} 周前",
