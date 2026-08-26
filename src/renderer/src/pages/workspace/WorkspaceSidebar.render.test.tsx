@@ -380,7 +380,7 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
-  it('renders full Session title and Description in the hover preview', async () => {
+  it('clamps long Session titles and Descriptions to three preview lines', async () => {
     const { SessionHoverPreviewCard } = await import('./SessionHoverPreview')
     const html = renderToStaticMarkup(
       <SessionHoverPreviewCard
@@ -397,6 +397,7 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).toContain('data-slot="session-hover-preview"')
     expect(html).toContain('Complete analysis title')
     expect(html).toContain('Compare both cohorts.')
+    expect(html.match(/line-clamp-3/g)).toHaveLength(2)
     expect(withoutDescription).toContain('Title only')
     expect(withoutDescription).not.toContain('<p class="mt-2')
     expect(loading).toContain('aria-busy="true"')

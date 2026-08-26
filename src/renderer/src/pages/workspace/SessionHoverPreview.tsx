@@ -187,11 +187,11 @@ const SessionHoverPreviewCard = ({
         className
       )}
     >
-      <p className="break-words text-[15px] font-semibold leading-5 tracking-[-0.01em] [text-wrap:pretty]">
+      <p className="line-clamp-3 break-words text-[15px] font-semibold leading-5 tracking-[-0.01em] [text-wrap:pretty]">
         {session.title}
       </p>
       {description ? (
-        <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-5 text-muted-foreground">
+        <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-5 text-muted-foreground">
           {description}
         </p>
       ) : descriptionLoading ? (
