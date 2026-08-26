@@ -1144,6 +1144,60 @@ describe('renderer session persistence bridge', () => {
     }
   })
 
+  it('flushes a fast alternating multi-Session stream without draining cadence timers', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    let flushing: Promise<void> | undefined
+    try {
+      const sessions = [
+        createPersistedSession({ id: 'session-1' }),
+        createPersistedSession({ id: 'session-2' })
+      ]
+      const writeLatest = vi.fn(async (session: PersistedChatSession) => session)
+      const persistence = createOrderedSessionPersistence(createApi())
+
+      for (let frame = 0; frame < 30; frame += 1) {
+        const session = sessions[frame % sessions.length]
+        void persistence.saveLatestSession(`session:${session.id}`, () => writeLatest(session))
+        await vi.advanceTimersByTimeAsync(33)
+      }
+
+      let flushed = false
+      flushing = persistence.flush().then(() => {
+        flushed = true
+      })
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(flushed).toBe(true)
+      expect(writeLatest.mock.calls.length).toBeLessThanOrEqual(5)
+    } finally {
+      await vi.runAllTimersAsync()
+      await flushing
+      vi.useRealTimers()
+    }
+  })
+
+  it('invalidates a delayed save when a new hydration generation starts', async () => {
+    const session = createPersistedSession({ revision: 1, title: 'Old local title' })
+    const authority = createPersistedSession({ revision: 2, title: 'Hydrated title' })
+    const persistence = createOrderedSessionPersistence(createApi())
+    persistence.seedAcknowledgedSessions([session])
+    await persistence.saveLatestSession('session:session-1', async () => session)
+
+    const staleWrite = vi.fn(async () => session)
+    const staleSave = persistence.saveLatestSession('session:session-1', staleWrite)
+    persistence.seedAcknowledgedSessions([authority])
+
+    await staleSave.catch(() => undefined)
+    await persistence.flush()
+
+    expect(staleWrite).not.toHaveBeenCalled()
+    expect(persistence.getAcknowledgedSession('session-1')).toMatchObject({
+      revision: 2,
+      title: 'Hydrated title'
+    })
+  })
+
   it('chains queued local saves from the last acknowledged durable revision', async () => {
     const firstSave = createDeferred<PersistedChatSession>()
     const saveSession = vi

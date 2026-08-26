@@ -510,6 +510,23 @@ const mergeSaveSessionOptions = (
 
 const LATEST_SESSION_SAVE_INTERVAL_MS = 500
 
+type PendingLatestSessionSave = {
+  target: string
+  task: LatestSessionSaveTask
+  options: SaveSessionOptions | undefined
+  generation: number
+  promise?: Promise<PersistedChatSession>
+  bypassCadence?: boolean
+  releaseCadence?: () => void
+}
+
+class SessionPersistenceGenerationChangedError extends Error {
+  constructor() {
+    super('Session persistence hydration generation changed.')
+    this.name = 'SessionPersistenceGenerationChangedError'
+  }
+}
+
 // Serializes every renderer-originated Session write through one ordering seam. Store snapshots at
 // the queue tail use latest-wins coalescing; explicit Session and Manifest writes remain barriers, so
 // Artifact finalization cannot be overtaken by an older store snapshot.
@@ -519,20 +536,12 @@ const createOrderedSessionPersistence = (
   let queue: Promise<unknown> = Promise.resolve()
   const acknowledgedRevisions = new Map<string, number>()
   const acknowledgedSessions = new Map<string, PersistedChatSession>()
-  let pendingLatest:
-    | {
-        target: string
-        task: LatestSessionSaveTask
-        options: SaveSessionOptions | undefined
-        bypassCadence?: boolean
-        releaseCadence?: () => void
-      }
-    | undefined
-  let pendingLatestPromise: Promise<PersistedChatSession> | undefined
+  const pendingLatestByTarget = new Map<string, PendingLatestSessionSave>()
+  let hydrationGeneration = 0
   let latestSessionSaveStartedAt = Number.NEGATIVE_INFINITY
 
   const waitForLatestSessionSaveCadence = async (
-    entry: NonNullable<typeof pendingLatest>
+    entry: PendingLatestSessionSave
   ): Promise<void> => {
     const waitMs = latestSessionSaveStartedAt + LATEST_SESSION_SAVE_INTERVAL_MS - performance.now()
     if (waitMs > 0 && !entry.bypassCadence) {
@@ -545,7 +554,7 @@ const createOrderedSessionPersistence = (
       })
     }
     entry.releaseCadence = undefined
-    latestSessionSaveStartedAt = performance.now()
+    if (entry.generation === hydrationGeneration) latestSessionSaveStartedAt = performance.now()
   }
 
   const acknowledgeSession = (session: PersistedChatSession): void => {
@@ -566,16 +575,15 @@ const createOrderedSessionPersistence = (
   }
 
   const releasePendingLatestCadence = (): void => {
-    if (pendingLatest) {
-      pendingLatest.bypassCadence = true
-      pendingLatest.releaseCadence?.()
+    for (const entry of pendingLatestByTarget.values()) {
+      entry.bypassCadence = true
+      entry.releaseCadence?.()
     }
   }
 
   const enqueue = <Result>(task: () => Promise<Result>): Promise<Result> => {
     releasePendingLatestCadence()
-    pendingLatest = undefined
-    pendingLatestPromise = undefined
+    pendingLatestByTarget.clear()
     const run = queue.then(task, task)
     queue = run.then(
       () => undefined,
@@ -605,28 +613,34 @@ const createOrderedSessionPersistence = (
     task: LatestSessionSaveTask,
     options?: SaveSessionOptions
   ): Promise<PersistedChatSession> => {
-    if (pendingLatest?.target === target && pendingLatestPromise) {
-      pendingLatest.task = task
-      pendingLatest.options = mergeSaveSessionOptions(pendingLatest.options, options)
-      return pendingLatestPromise
+    const pending = pendingLatestByTarget.get(target)
+    if (pending?.promise) {
+      pending.task = task
+      pending.options = mergeSaveSessionOptions(pending.options, options)
+      return pending.promise
     }
 
-    const entry = { target, task, options }
+    const entry: PendingLatestSessionSave = {
+      target,
+      task,
+      options,
+      generation: hydrationGeneration
+    }
     const runTask = async (): Promise<PersistedChatSession> => {
       // A fast IPC/disk round-trip otherwise defeats latest-wins coalescing and rewrites the entire
       // Session at the live presentation frame rate. Keep the entry replaceable while it waits.
       await waitForLatestSessionSaveCadence(entry)
-      if (pendingLatest === entry) {
-        pendingLatest = undefined
-        pendingLatestPromise = undefined
+      if (pendingLatestByTarget.get(target) === entry) pendingLatestByTarget.delete(target)
+      if (entry.generation !== hydrationGeneration) {
+        throw new SessionPersistenceGenerationChangedError()
       }
       const durable = await entry.task(entry.options)
       acknowledgeSession(durable)
       return durable
     }
     const run = queue.then(runTask, runTask)
-    pendingLatest = entry
-    pendingLatestPromise = run
+    entry.promise = run
+    pendingLatestByTarget.set(target, entry)
     queue = run.then(
       () => undefined,
       () => undefined
@@ -637,8 +651,11 @@ const createOrderedSessionPersistence = (
   return {
     saveLatestSession,
     seedAcknowledgedSessions: (sessions) => {
-      // A newly hydrated store starts a fresh live-save cadence. The ordered queue remains shared,
-      // but a save from the previous mount must not delay this mount's first observable write.
+      // A newly hydrated store invalidates delayed snapshots from the previous store generation.
+      // The shared queue still preserves barriers, but stale local state can no longer write later.
+      hydrationGeneration += 1
+      releasePendingLatestCadence()
+      pendingLatestByTarget.clear()
       latestSessionSaveStartedAt = Number.NEGATIVE_INFINITY
       for (const session of sessions) {
         acknowledgedRevisions.set(session.id, sessionRevision(session))
@@ -1341,6 +1358,7 @@ const createStoreSaver = (
           return result
         },
         (error: unknown) => {
+          if (error instanceof SessionPersistenceGenerationChangedError) return undefined
           observer.onFailure?.(target, error, failureContext)
           throw error
         }
