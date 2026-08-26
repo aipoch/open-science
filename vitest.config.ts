@@ -45,15 +45,10 @@ const VITEST_COVERAGE_EXCLUDE_PATTERNS = [
   'src/**/*types.ts',
   'src/renderer/src/main.tsx'
 ]
-// Full-suite shards collect partial coverage maps, and a project may legitimately be empty after
-// Vitest distributes the shared project list. Only the merged report may enforce thresholds.
-
-function shardCollectionEnabled(env: NodeJS.ProcessEnv): boolean {
-  return env.VITEST_DEFER_COVERAGE_THRESHOLDS === '1'
-}
+// Full-suite shards collect partial coverage maps. Only the merged report may enforce thresholds.
 
 function coverageThresholdsEnabled(env: NodeJS.ProcessEnv): boolean {
-  return !shardCollectionEnabled(env)
+  return env.VITEST_DEFER_COVERAGE_THRESHOLDS !== '1'
 }
 
 // Mirrors the renderer alias from electron.vite.config.ts so tests that mount real component
@@ -76,7 +71,6 @@ export default defineConfig({
     }
   },
   test: {
-    passWithNoTests: shardCollectionEnabled(process.env),
     server: {
       deps: {
         inline: ['@file-viewer/renderer-spreadsheet']
@@ -179,9 +173,4 @@ export default defineConfig({
   }
 })
 
-export {
-  coverageThresholdsEnabled,
-  shardCollectionEnabled,
-  VITEST_COVERAGE_EXCLUDE_PATTERNS,
-  VITEST_EXCLUDE_PATTERNS
-}
+export { coverageThresholdsEnabled, VITEST_COVERAGE_EXCLUDE_PATTERNS, VITEST_EXCLUDE_PATTERNS }
