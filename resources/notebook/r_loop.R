@@ -650,7 +650,10 @@ namespace_tracker <- base::local({
 
 inspect_namespace <- base::local({
   limit_text_raw <- function(value, limit) {
-    bytes <- charToRaw(if (is.character(value) && length(value) > 0L) value[[1L]] else "")
+    text <- if (is.character(value) && length(value) > 0L) value[[1L]] else ""
+    # At least one byte is required per character, so this bounds the temporary allocation before
+    # converting a potentially enormous string to raw bytes.
+    bytes <- charToRaw(substr(text, 1L, limit + 1L))
     truncated <- length(bytes) > limit
     if (truncated) {
       bytes <- bytes[seq_len(limit)]

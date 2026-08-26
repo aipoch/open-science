@@ -509,7 +509,7 @@ def _namespace_preview(value):
 
 def _inspect_namespace(include_private=False):
     names = sorted(
-        name for name in _globals
+        name for name in _globals if isinstance(name, str)
         if name not in _namespace_internal_names and (include_private or not name.startswith("_"))
     )
     variables = []
@@ -685,7 +685,7 @@ def main():
             else:
                 response = _run(request.get("code", ""))
             response["req_id"] = req_id
-            _protocol_out.write(json.dumps(response) + "\n")
+            _protocol_out.write(json.dumps(response, separators=(",", ":")) + "\n")
             _protocol_out.flush()
         except (KeyboardInterrupt, Exception):
             # A soft-timeout SIGINT (KeyboardInterrupt) can land during figure capture or the response
@@ -696,7 +696,7 @@ def main():
                         "output_truncated": False,
                         "environment": _capture_environment(), "req_id": req_id}
             try:
-                _protocol_out.write(json.dumps(fallback) + "\n")
+                _protocol_out.write(json.dumps(fallback, separators=(",", ":")) + "\n")
                 _protocol_out.flush()
             except Exception:
                 # The fallback write itself failed (e.g. the pipe is gone). Nothing more we can safely

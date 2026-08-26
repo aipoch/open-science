@@ -89,7 +89,7 @@ gate('python_loop.py', () => {
       await send(
         "x = 41; label = '活跃变量'; _private = 'hidden'; " +
           "items = list(range(10000)); blob = b'x' * 2000000; " +
-          "Explosive = type('Explosive', (), {'__repr__': lambda self: (_ for _ in ()).throw(RuntimeError('no repr'))}); explosive = Explosive(); mixed = [explosive]"
+          "Explosive = type('Explosive', (), {'__repr__': lambda self: (_ for _ in ()).throw(RuntimeError('no repr'))}); explosive = Explosive(); mixed = [explosive]; globals()[0] = 'non-string key'"
       )
       const first = await inspect()
       expect(first.namespace?.variables.map(({ name }) => name)).toEqual([
