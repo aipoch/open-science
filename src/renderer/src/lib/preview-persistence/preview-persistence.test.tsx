@@ -311,6 +311,52 @@ describe('preview persistence projections', () => {
       path: '/workspace/uploads/.pending/data.csv'
     })
   })
+
+  it('evicts the oldest Upload index after eight Projects', () => {
+    let oldestProjectMessageReads = 0
+    let oldestProject: { persisted: PersistedPreviewState; session: ChatSession } | undefined
+
+    for (let index = 0; index < 9; index += 1) {
+      const projectId = `indexed-project-${index}`
+      const sessionId = `indexed-session-${index}`
+      const upload = createUpload({ id: `indexed-upload-${index}`, sessionId })
+      const session = createSession(upload, { id: sessionId, projectId })
+      const messages = session.messages
+      if (index === 0) {
+        Object.defineProperty(session, 'messages', {
+          configurable: true,
+          get: () => {
+            oldestProjectMessageReads += 1
+            return messages
+          }
+        })
+      }
+      const persisted: PersistedPreviewState = {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        activeItemId: `upload:${upload.id}`,
+        items: [
+          {
+            id: `upload:${upload.id}`,
+            sessionId: '.pending',
+            title: upload.name,
+            source: 'upload',
+            path: `/workspace/uploads/.pending/${upload.name}`,
+            format: 'csv',
+            name: upload.name
+          }
+        ]
+      }
+
+      toRestoredSlice(persisted, [session])
+      if (index === 0) oldestProject = { persisted, session }
+    }
+
+    expect(oldestProject).toBeDefined()
+    toRestoredSlice(oldestProject!.persisted, [oldestProject!.session])
+
+    expect(oldestProjectMessageReads).toBe(2)
+  })
 })
 
 // Minimal wrapper so the effect-only hook can be mounted/rerendered/unmounted.

@@ -74,8 +74,27 @@ const previewValuesEqual = (left: unknown, right: unknown): boolean => {
 }
 
 // Session store updates replace changed Sessions. Keep a derived Project lookup so restores query
-// only the persisted Upload ids and rescan Messages only when a Session object changes.
+// only the persisted Upload ids and rescan Messages only when a Session object changes. Bound the
+// recent-Project cache so removed or long-inactive Projects cannot retain Session message graphs for
+// the renderer lifetime.
+const MAX_UPLOAD_PREVIEW_INDEX_PROJECTS = 8
 const uploadPreviewIndexes = new Map<string, ProjectUploadPreviewIndex>()
+
+const getUploadPreviewIndex = (projectId: string): ProjectUploadPreviewIndex => {
+  const cached = uploadPreviewIndexes.get(projectId)
+  const index = cached ?? { sessions: new Map(), uploads: new Map() }
+
+  // Map insertion order supplies a small LRU without another cache abstraction.
+  if (cached) uploadPreviewIndexes.delete(projectId)
+  uploadPreviewIndexes.set(projectId, index)
+  while (uploadPreviewIndexes.size > MAX_UPLOAD_PREVIEW_INDEX_PROJECTS) {
+    const oldestProjectId = uploadPreviewIndexes.keys().next().value
+    if (oldestProjectId === undefined) break
+    uploadPreviewIndexes.delete(oldestProjectId)
+  }
+
+  return index
+}
 
 const synchronizeUploadPreviewIndex = (
   sessions: ChatSession[]
@@ -83,10 +102,7 @@ const synchronizeUploadPreviewIndex = (
   const projectId = sessions[0]?.projectId
   if (!projectId) return new Map()
 
-  const index = uploadPreviewIndexes.get(projectId) ?? {
-    sessions: new Map(),
-    uploads: new Map()
-  }
+  const index = getUploadPreviewIndex(projectId)
   const currentSessionIds = new Set<string>()
 
   for (const session of sessions) {
@@ -117,7 +133,6 @@ const synchronizeUploadPreviewIndex = (
     index.sessions.delete(sessionId)
   }
 
-  uploadPreviewIndexes.set(projectId, index)
   return index.uploads
 }
 
