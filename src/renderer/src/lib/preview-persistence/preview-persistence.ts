@@ -22,10 +22,24 @@ import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 type PreviewStoreState = ReturnType<typeof usePreviewWorkbenchStore.getState>
 type PreviewSave = (request: SavePreviewStateRequest) => Promise<SavePreviewStateResult>
 type PreviewSaveInput = Omit<SavePreviewStateRequest, 'expectedRevision'>
+type FinalizedUploadPreview = {
+  sessionId: string
+  path: string
+  size: number
+  mimeType?: string
+}
+type ProjectUploadPreviewIndex = {
+  sessions: Map<string, { session: ChatSession; uploadIds: Set<string> }>
+  uploads: Map<string, FinalizedUploadPreview>
+}
 type PreviewSaveScheduler = {
   schedule: (request: PreviewSaveInput) => void
   getGeneration: (projectId: string) => number
-  acceptLoadedRevision: (projectId: string, generation: number, revision: number) => boolean
+  acceptLoadedSnapshot: (
+    projectId: string,
+    generation: number,
+    snapshot: PreviewStateSnapshot | null
+  ) => boolean
   hasFailure: (projectId: string) => boolean
   waitForIdle: (projectId: string) => Promise<void>
   flush: () => Promise<void>
@@ -57,6 +71,54 @@ const previewValuesEqual = (left: unknown, right: unknown): boolean => {
         Object.hasOwn(rightRecord, key) && previewValuesEqual(leftRecord[key], rightRecord[key])
     )
   )
+}
+
+// Session store updates replace changed Sessions. Keep a derived Project lookup so restores query
+// only the persisted Upload ids and rescan Messages only when a Session object changes.
+const uploadPreviewIndexes = new Map<string, ProjectUploadPreviewIndex>()
+
+const synchronizeUploadPreviewIndex = (
+  sessions: ChatSession[]
+): ReadonlyMap<string, FinalizedUploadPreview> => {
+  const projectId = sessions[0]?.projectId
+  if (!projectId) return new Map()
+
+  const index = uploadPreviewIndexes.get(projectId) ?? {
+    sessions: new Map(),
+    uploads: new Map()
+  }
+  const currentSessionIds = new Set<string>()
+
+  for (const session of sessions) {
+    if (session.projectId !== projectId) continue
+    currentSessionIds.add(session.id)
+    const cached = index.sessions.get(session.id)
+    if (cached?.session === session) continue
+
+    for (const uploadId of cached?.uploadIds ?? []) index.uploads.delete(uploadId)
+
+    const uploadIds = new Set<string>()
+    for (const message of session.messages) {
+      for (const upload of message.uploads ?? []) {
+        const previewId = `upload:${upload.id}`
+        uploadIds.add(previewId)
+        index.uploads.set(previewId, {
+          ...upload,
+          path: getUploadedAttachmentPath(upload, session.projectId)
+        })
+      }
+    }
+    index.sessions.set(session.id, { session, uploadIds })
+  }
+
+  for (const [sessionId, cached] of index.sessions) {
+    if (currentSessionIds.has(sessionId)) continue
+    for (const uploadId of cached.uploadIds) index.uploads.delete(uploadId)
+    index.sessions.delete(sessionId)
+  }
+
+  uploadPreviewIndexes.set(projectId, index)
+  return index.uploads
 }
 
 // Applies only the changes made after `base` to the authoritative state. This preserves remote tabs
@@ -108,6 +170,7 @@ const createPreviewSaveScheduler = (
     {
       pendingState: PersistedPreviewState | undefined
       pendingBaseState: PersistedPreviewState | undefined
+      inFlightState: PersistedPreviewState | undefined
       drain: Promise<void> | undefined
     }
   >()
@@ -120,6 +183,7 @@ const createPreviewSaveScheduler = (
   >()
   const revisions = new Map<string, number>()
   const generations = new Map<string, number>()
+  const acceptedStates = new Map<string, PersistedPreviewState>()
 
   const bumpGeneration = (projectId: string): void => {
     generations.set(projectId, (generations.get(projectId) ?? 0) + 1)
@@ -129,8 +193,19 @@ const createPreviewSaveScheduler = (
     const queue = queues.get(projectId) ?? {
       pendingState: undefined,
       pendingBaseState: undefined,
+      inFlightState: undefined,
       drain: undefined
     }
+    if (queue.pendingState && previewValuesEqual(queue.pendingState, state)) return
+    if (
+      !queue.pendingState &&
+      queue.inFlightState &&
+      previewValuesEqual(queue.inFlightState, state)
+    ) {
+      return
+    }
+    if (!queue.drain && previewValuesEqual(acceptedStates.get(projectId), state)) return
+
     queue.pendingState = state
     queue.pendingBaseState = undefined
     queues.set(projectId, queue)
@@ -145,6 +220,7 @@ const createPreviewSaveScheduler = (
           const nextBaseState = queue.pendingBaseState
           queue.pendingState = undefined
           queue.pendingBaseState = undefined
+          queue.inFlightState = nextState
 
           try {
             const result = await save({
@@ -159,6 +235,7 @@ const createPreviewSaveScheduler = (
               const localBaseState = queue.pendingState ? nextState : nextBaseState
               const revision = result.snapshot?.revision ?? 0
               revisions.set(projectId, revision)
+              acceptedStates.set(projectId, authoritativeState)
               bumpGeneration(projectId)
               failures.delete(projectId)
 
@@ -183,12 +260,15 @@ const createPreviewSaveScheduler = (
               break
             }
             revisions.set(projectId, Math.max(revisions.get(projectId) ?? 0, result.revision))
+            acceptedStates.set(projectId, nextState)
             bumpGeneration(projectId)
             failures.delete(projectId)
           } catch (error) {
             failures.set(projectId, { state: nextState, error })
             bumpGeneration(projectId)
             reportError(error)
+          } finally {
+            queue.inFlightState = undefined
           }
         }
       } finally {
@@ -229,10 +309,10 @@ const createPreviewSaveScheduler = (
     }
   }
 
-  const acceptLoadedRevision = (
+  const acceptLoadedSnapshot = (
     projectId: string,
     generation: number,
-    revision: number
+    snapshot: PreviewStateSnapshot | null
   ): boolean => {
     if (
       generation !== getGeneration(projectId) ||
@@ -242,11 +322,12 @@ const createPreviewSaveScheduler = (
       return false
     }
 
-    revisions.set(projectId, Math.max(revisions.get(projectId) ?? 0, revision))
+    revisions.set(projectId, Math.max(revisions.get(projectId) ?? 0, snapshot?.revision ?? 0))
+    acceptedStates.set(projectId, snapshot?.state ?? createEmptyPersistedPreviewState())
     return true
   }
 
-  return { schedule, getGeneration, acceptLoadedRevision, hasFailure, waitForIdle, flush }
+  return { schedule, getGeneration, acceptLoadedSnapshot, hasFailure, waitForIdle, flush }
 }
 
 // Projects the live store slice down to its durable subset: file previews plus the one Session-scoped
@@ -298,21 +379,7 @@ const toRestoredSlice = (
   sessions: ChatSession[] = []
 ): RestoredPreviewSlice => {
   // Hydrated sessions hold finalized upload paths while persisted tabs may still reference staging.
-  const uploadByPreviewId = new Map<
-    string,
-    { sessionId: string; path: string; size: number; mimeType?: string }
-  >()
-
-  for (const session of sessions) {
-    for (const message of session.messages) {
-      for (const upload of message.uploads ?? []) {
-        uploadByPreviewId.set(`upload:${upload.id}`, {
-          ...upload,
-          path: getUploadedAttachmentPath(upload, session.projectId)
-        })
-      }
-    }
-  }
+  const uploadByPreviewId = synchronizeUploadPreviewIndex(sessions)
 
   return {
     panelState: persisted.panelState,
@@ -427,13 +494,7 @@ export const usePreviewPersistence = (
       const snapshot = await window.api.preview.load({ projectId: activeProjectId })
       if (cancelled) return
 
-      if (
-        !previewSaveScheduler.acceptLoadedRevision(
-          activeProjectId,
-          loadGeneration,
-          snapshot?.revision ?? 0
-        )
-      ) {
+      if (!previewSaveScheduler.acceptLoadedSnapshot(activeProjectId, loadGeneration, snapshot)) {
         const currentStore = usePreviewWorkbenchStore.getState()
         if (currentStore.activeProjectId === activeProjectId) return
         if (previewSaveScheduler.hasFailure(activeProjectId)) {

@@ -276,6 +276,41 @@ describe('preview persistence projections', () => {
 
     expect(restored.items).toMatchObject([{ format: 'text' }, { format: 'json' }])
   })
+
+  it('updates and removes Upload index entries when a Session is replaced or deleted', () => {
+    const persisted: PersistedPreviewState = {
+      version: PREVIEW_STATE_VERSION,
+      panelState: 'open',
+      activeItemId: 'upload:upload-1',
+      items: [
+        {
+          id: 'upload:upload-1',
+          sessionId: '.pending',
+          title: 'data.csv',
+          source: 'upload',
+          path: '/workspace/uploads/.pending/data.csv',
+          format: 'csv',
+          name: 'data.csv'
+        }
+      ]
+    }
+    const originalSession = createSession(createUpload())
+    const replacementSession = createSession(
+      createUpload({ path: '/workspace/uploads/session-final/replaced.csv', size: 256 })
+    )
+
+    expect(toRestoredSlice(persisted, [originalSession]).items?.[0]).toMatchObject({
+      path: '/workspace/uploads/session-final/data.csv',
+      size: 128
+    })
+    expect(toRestoredSlice(persisted, [replacementSession]).items?.[0]).toMatchObject({
+      path: '/workspace/uploads/session-final/replaced.csv',
+      size: 256
+    })
+    expect(toRestoredSlice(persisted, []).items?.[0]).toMatchObject({
+      path: '/workspace/uploads/.pending/data.csv'
+    })
+  })
 })
 
 // Minimal wrapper so the effect-only hook can be mounted/rerendered/unmounted.
@@ -546,6 +581,91 @@ describe('usePreviewPersistence per-project save/restore', () => {
           selectedAgentFrameId: 'child-05'
         }
       }
+    })
+  })
+
+  it('does not save when a runtime-only tool tab changes without changing the durable projection', async () => {
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+      await flushPreviewPersistence()
+    })
+
+    const fileItem = createStoredFileItem()
+    const toolItem = createStoredToolItem()
+    act(() => {
+      usePreviewWorkbenchStore.setState({
+        panelState: 'open',
+        activeItemId: fileItem.id,
+        items: [fileItem, toolItem]
+      })
+    })
+    await flushPreviewPersistence()
+    save.mockClear()
+
+    act(() => {
+      usePreviewWorkbenchStore.setState({
+        items: [{ ...toolItem, title: 'Notebook runtime updated' }, fileItem]
+      })
+    })
+    await flushPreviewPersistence()
+
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('does not rescan unchanged hydrated Session messages when returning to a Project', async () => {
+    const finalizedUpload = createUpload()
+    const session = createSession(finalizedUpload)
+    const messages = session.messages
+    let messageReads = 0
+    Object.defineProperty(session, 'messages', {
+      configurable: true,
+      get: () => {
+        messageReads += 1
+        return messages
+      }
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [session]
+    })
+    const persistedUpload: PreviewStateSnapshot = {
+      revision: 7,
+      state: {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        activeItemId: 'upload:upload-1',
+        items: [
+          {
+            id: 'upload:upload-1',
+            sessionId: '.pending',
+            title: 'data.csv',
+            source: 'upload',
+            path: '/workspace/uploads/.pending/data.csv',
+            format: 'csv',
+            name: 'data.csv'
+          }
+        ]
+      }
+    }
+    load.mockImplementation(({ projectId }: { projectId: string }) =>
+      Promise.resolve(projectId === 'project-a' ? persistedUpload : null)
+    )
+
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-b" />)
+    })
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+
+    expect(messageReads).toBe(1)
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      id: 'upload:upload-1',
+      sessionId: 'session-final',
+      path: '/workspace/uploads/session-final/data.csv'
     })
   })
 
@@ -904,7 +1024,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
       revision: 5,
       state: toPersistedPreviewState({
         ...usePreviewWorkbenchStore.getState(),
-        panelState: 'open',
+        panelState: 'collapsed',
         items: [item]
       })
     })
@@ -919,7 +1039,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
     save.mockReturnValueOnce(pendingSave.promise)
     load.mockReturnValueOnce(pendingLoad.promise)
 
-    act(() => usePreviewWorkbenchStore.setState({ activeItemId: item.id }))
+    act(() => usePreviewWorkbenchStore.setState({ panelState: 'open' }))
     await act(async () => root.unmount())
     root = createRoot(container)
     await act(async () => {
@@ -992,7 +1112,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
     expect(durableState?.activeItemId).toBe(item.id)
   })
 
-  it('flushes the active project on unmount', async () => {
+  it('does not duplicate an accepted active-project snapshot on unmount', async () => {
     await act(async () => {
       root.render(<PersistenceHarness projectId="project-a" />)
     })
@@ -1016,27 +1136,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
       root.unmount()
     })
 
-    expect(save).toHaveBeenCalledTimes(1)
-    expect(save).toHaveBeenCalledWith({
-      projectId: 'project-a',
-      expectedRevision: expect.any(Number),
-      state: {
-        version: PREVIEW_STATE_VERSION,
-        panelState: 'open',
-        activeItemId: 'file:session-1:/workspace/project/report.md',
-        items: [
-          {
-            id: 'file:session-1:/workspace/project/report.md',
-            sessionId: 'session-1',
-            title: 'report.md',
-            source: 'artifact',
-            path: '/workspace/project/report.md',
-            format: 'markdown',
-            name: 'report.md'
-          }
-        ]
-      }
-    })
+    expect(save).not.toHaveBeenCalled()
     expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
   })
 })

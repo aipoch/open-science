@@ -7,6 +7,7 @@ import { useSessionStore } from '@/stores/session-store'
 
 import { planTestDocument, planTestProjection } from '../../session-plan/plan-test-fixtures'
 
+import { createManagedPreviewTestTransport } from '../managed-preview-test-support'
 import { PlanJsonPreview } from './PlanJsonPreview'
 
 const item = {
@@ -33,14 +34,28 @@ const mockFile = (content: string, options?: { truncated?: boolean }): void => {
 
 beforeEach(() => {
   readPreview.mockReset()
+  const transport = createManagedPreviewTestTransport({
+    read: (_source, request) => readPreview(request)
+  })
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { artifacts: { readPreview } }
+    value: {
+      previewResources: {
+        acquire: vi.fn(transport.acquire),
+        readRange: vi.fn(),
+        release: vi.fn(transport.release)
+      },
+      artifacts: { readPreview }
+    }
   })
+  vi.stubGlobal('fetch', vi.fn(transport.fetch))
   useSessionStore.setState({ sessions: [] })
 })
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 describe('Plan-aware JSON preview', () => {
   it('renders the Plan document view for a previewed Plan artifact', async () => {
