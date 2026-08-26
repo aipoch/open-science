@@ -555,40 +555,37 @@ describe('delegated-work Session records', () => {
       expectedRevision: 3,
       frameId: 'child-frame-1',
       attemptId: 'attempt-1',
-      event: {
-        kind: 'activity',
-        runtimeSegmentId: 'segment-1',
-        promptMessageId: 'child-prompt-1',
-        activity: {
-          id: 'activity-1',
-          kind: 'tool',
-          title: 'Search evidence',
-          activityGroupId: 'activity-group-1',
-          status: 'completed',
-          sortIndex: 0,
-          eventIds: ['event-1'],
-          createdAt: 20,
-          updatedAt: 21
+      event: [
+        {
+          kind: 'activity',
+          runtimeSegmentId: 'segment-1',
+          promptMessageId: 'child-prompt-1',
+          activity: {
+            id: 'activity-1',
+            kind: 'tool',
+            title: 'Search evidence',
+            activityGroupId: 'activity-group-1',
+            status: 'completed',
+            sortIndex: 0,
+            eventIds: ['event-1'],
+            createdAt: 20,
+            updatedAt: 21
+          }
+        },
+        {
+          kind: 'activity-group',
+          promptMessageId: 'child-prompt-1',
+          activityGroup: {
+            id: 'activity-group-1',
+            title: 'Research',
+            sortIndex: 0,
+            activityIds: ['activity-1'],
+            createdAt: 20,
+            updatedAt: 21,
+            completedAt: 21
+          }
         }
-      }
-    })
-    await coordinator.applyAgentEvent(key, {
-      expectedRevision: 4,
-      frameId: 'child-frame-1',
-      attemptId: 'attempt-1',
-      event: {
-        kind: 'activity-group',
-        promptMessageId: 'child-prompt-1',
-        activityGroup: {
-          id: 'activity-group-1',
-          title: 'Research',
-          sortIndex: 0,
-          activityIds: ['activity-1'],
-          createdAt: 20,
-          updatedAt: 21,
-          completedAt: 21
-        }
-      }
+      ]
     })
 
     await coordinator.saveSession({ ...initial, title: 'Renderer rename', updatedAt: 3 })
@@ -596,7 +593,7 @@ describe('delegated-work Session records', () => {
     const stored = durable()
     expect(stored.title).toBe('Renderer rename')
     expect(stored.runtimeContext).toMatchObject({
-      revision: 5,
+      revision: 4,
       delegatedWork: {
         records: [
           { agentFrameId: 'child-frame-1', attempts: [{ id: 'attempt-1' }] },

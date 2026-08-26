@@ -9,6 +9,7 @@ import type {
 import type {
   AttachDelegatedMessageArtifactsInput,
   AttemptAgentEventInput,
+  AttemptAgentEvent,
   ChildRecord,
   CompleteChildTurnInput,
   CreateChildrenInput,
@@ -320,82 +321,84 @@ class SessionDelegatedWorkPersistenceOwner implements DelegatedWorkRecordCommand
   }
 
   applyAgentEvent(key: SessionKey, input: AttemptAgentEventInput): Promise<void> {
+    const events: readonly AttemptAgentEvent[] = 'kind' in input.event ? [input.event] : input.event
     return this.store.mutate(key, input.expectedRevision, (graph, records) => {
       assertCurrentRunningAttempt(records, input.frameId, input.attemptId)
       const frame = graph.frames.find((candidate) => candidate.id === input.frameId)
       if (!frame) throw new Error(`Delegate Frame not found: ${input.frameId}`)
       const branch = graph.branches.find((candidate) => candidate.id === frame.activeBranchId)
       if (!branch) throw new Error(`Delegate Branch not found: ${frame.activeBranchId}`)
-      const event = input.event
-      if (event.kind === 'message') {
-        const segment = graph.runtimeSegments.find(
-          (candidate) =>
-            candidate.id === event.runtimeSegmentId && candidate.agentFrameId === input.frameId
-        )
-        if (!segment) throw new Error('Agent event Runtime Segment is outside the Attempt Frame.')
-        const nextMessage: PersistedConversationGraph['messages'][number] = {
-          ...event.message,
-          agentFrameId: input.frameId,
-          introducedOnBranchId: branch.id,
-          ...(branch.headMessageId ? { parentMessageId: branch.headMessageId } : {}),
-          ...(event.message.role === 'user' ? { revisionRootMessageId: event.message.id } : {}),
-          runtimeSegmentId: event.runtimeSegmentId
-        }
-        const existing = graph.messages.find((message) => message.id === event.message.id)
-        if (existing) {
-          if (JSON.stringify(existing) === JSON.stringify(nextMessage)) return
-          throw new Error(`Message already exists: ${event.message.id}`)
-        }
-        graph.messages.push(nextMessage)
-        branch.headMessageId = event.message.id
-        branch.updatedAt = Math.max(branch.updatedAt, event.message.updatedAt)
-      } else if (event.kind === 'activity') {
-        if (
-          !graph.messages.some(
-            (message) =>
-              message.id === event.promptMessageId && message.agentFrameId === input.frameId
-          ) ||
-          !graph.runtimeSegments.some(
-            (segment) =>
-              segment.id === event.runtimeSegmentId && segment.agentFrameId === input.frameId
+      for (const event of events) {
+        if (event.kind === 'message') {
+          const segment = graph.runtimeSegments.find(
+            (candidate) =>
+              candidate.id === event.runtimeSegmentId && candidate.agentFrameId === input.frameId
           )
-        ) {
-          throw new Error('Activity provenance is outside the Attempt Frame.')
+          if (!segment) throw new Error('Agent event Runtime Segment is outside the Attempt Frame.')
+          const nextMessage: PersistedConversationGraph['messages'][number] = {
+            ...event.message,
+            agentFrameId: input.frameId,
+            introducedOnBranchId: branch.id,
+            ...(branch.headMessageId ? { parentMessageId: branch.headMessageId } : {}),
+            ...(event.message.role === 'user' ? { revisionRootMessageId: event.message.id } : {}),
+            runtimeSegmentId: event.runtimeSegmentId
+          }
+          const existing = graph.messages.find((message) => message.id === event.message.id)
+          if (existing) {
+            if (JSON.stringify(existing) === JSON.stringify(nextMessage)) continue
+            throw new Error(`Message already exists: ${event.message.id}`)
+          }
+          graph.messages.push(nextMessage)
+          branch.headMessageId = event.message.id
+          branch.updatedAt = Math.max(branch.updatedAt, event.message.updatedAt)
+        } else if (event.kind === 'activity') {
+          if (
+            !graph.messages.some(
+              (message) =>
+                message.id === event.promptMessageId && message.agentFrameId === input.frameId
+            ) ||
+            !graph.runtimeSegments.some(
+              (segment) =>
+                segment.id === event.runtimeSegmentId && segment.agentFrameId === input.frameId
+            )
+          ) {
+            throw new Error('Activity provenance is outside the Attempt Frame.')
+          }
+          const nextActivity: PersistedConversationGraph['activities'][number] = {
+            ...event.activity,
+            agentFrameId: input.frameId,
+            messageBranchId: branch.id,
+            promptMessageId: event.promptMessageId,
+            runtimeSegmentId: event.runtimeSegmentId
+          }
+          const existing = graph.activities.find((activity) => activity.id === event.activity.id)
+          if (existing) {
+            if (JSON.stringify(existing) === JSON.stringify(nextActivity)) continue
+            throw new Error(`Activity already exists: ${event.activity.id}`)
+          }
+          graph.activities.push(nextActivity)
+        } else {
+          if (
+            !graph.messages.some(
+              (message) =>
+                message.id === event.promptMessageId && message.agentFrameId === input.frameId
+            )
+          ) {
+            throw new Error('Activity Group provenance is outside the Attempt Frame.')
+          }
+          const nextActivityGroup: PersistedConversationGraph['activityGroups'][number] = {
+            ...event.activityGroup,
+            agentFrameId: input.frameId,
+            messageBranchId: branch.id,
+            promptMessageId: event.promptMessageId
+          }
+          const existing = graph.activityGroups.find((group) => group.id === event.activityGroup.id)
+          if (existing) {
+            if (JSON.stringify(existing) === JSON.stringify(nextActivityGroup)) continue
+            throw new Error(`Activity Group already exists: ${event.activityGroup.id}`)
+          }
+          graph.activityGroups.push(nextActivityGroup)
         }
-        const nextActivity: PersistedConversationGraph['activities'][number] = {
-          ...event.activity,
-          agentFrameId: input.frameId,
-          messageBranchId: branch.id,
-          promptMessageId: event.promptMessageId,
-          runtimeSegmentId: event.runtimeSegmentId
-        }
-        const existing = graph.activities.find((activity) => activity.id === event.activity.id)
-        if (existing) {
-          if (JSON.stringify(existing) === JSON.stringify(nextActivity)) return
-          throw new Error(`Activity already exists: ${event.activity.id}`)
-        }
-        graph.activities.push(nextActivity)
-      } else {
-        if (
-          !graph.messages.some(
-            (message) =>
-              message.id === event.promptMessageId && message.agentFrameId === input.frameId
-          )
-        ) {
-          throw new Error('Activity Group provenance is outside the Attempt Frame.')
-        }
-        const nextActivityGroup: PersistedConversationGraph['activityGroups'][number] = {
-          ...event.activityGroup,
-          agentFrameId: input.frameId,
-          messageBranchId: branch.id,
-          promptMessageId: event.promptMessageId
-        }
-        const existing = graph.activityGroups.find((group) => group.id === event.activityGroup.id)
-        if (existing) {
-          if (JSON.stringify(existing) === JSON.stringify(nextActivityGroup)) return
-          throw new Error(`Activity Group already exists: ${event.activityGroup.id}`)
-        }
-        graph.activityGroups.push(nextActivityGroup)
       }
     })
   }

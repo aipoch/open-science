@@ -483,7 +483,8 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
     }
   }
   if (reachableMessages.size !== graph.messages.length) {
-    throw new Error('Conversation Message is not reachable from any Branch.')
+    const unreachable = graph.messages.find((message) => !reachableMessages.has(message.id))
+    throw new Error(`Conversation Message is not reachable from any Branch: ${unreachable?.id}`)
   }
 
   for (const group of graph.activityGroups) {
