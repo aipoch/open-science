@@ -355,6 +355,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       }
     ],
     models: [
+      { id: 'glm-5.3', contextWindow: 1_000_000, reasoningEffort: 'low-high-max' },
       { id: 'glm-5.2', contextWindow: 1_000_000, reasoningEffort: 'none-high-max' },
       { id: 'glm-5.1', contextWindow: 200_000 },
       { id: 'glm-5', contextWindow: 200_000 },

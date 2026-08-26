@@ -104,6 +104,14 @@ describe('provider registry', () => {
     })
   })
 
+  it('offers GLM-5.3 through the pay-as-you-go Zhipu provider', () => {
+    expect(getOfficialVendor('zhipu')?.models).toContainEqual({
+      id: 'glm-5.3',
+      contextWindow: 1_000_000,
+      reasoningEffort: 'low-high-max'
+    })
+  })
+
   it('routes the GLM Coding Plan through the /api/coding OpenAI path, per region', () => {
     expect(vendorHasRegions('glmcodingplan')).toBe(true)
     expect(resolveVendorApiEndpoints('glmcodingplan')).toEqual(['anthropic', 'openai'])
@@ -134,7 +142,7 @@ describe('provider registry', () => {
   it('exposes the first catalog entry as the default model', () => {
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
     expect(defaultVendorModel('xai')).toBe('grok-4.6')
-    expect(defaultVendorModel('zhipu')).toBe('glm-5.2')
+    expect(defaultVendorModel('zhipu')).toBe('glm-5.3')
   })
 
   it('resolves model-specific static reasoning effort profiles without network discovery', () => {
