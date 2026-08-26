@@ -12,7 +12,6 @@
     "cli_sdk",
     "i18n",
     "unit_macos",
-    "version_file_operator_contract",
     "windows_runtime",
     "windows_path",
     "build",
@@ -35,7 +34,6 @@
     "cli_sdk": "static",
     "i18n": "static",
     "unit_macos": "unit",
-    "version_file_operator_contract": "static",
     "windows_runtime": "windows_core",
     "windows_path": "windows_core",
     "build": "macos_e2e",
@@ -292,7 +290,7 @@
     },
     "version_file_operator": {
       "consumers": [],
-      "lanes": ["version_file_operator_contract", "windows_runtime", "build"]
+      "lanes": ["windows_runtime", "build"]
     },
     "renderer_view": {
       "consumers": ["e2e_functional", "e2e_accessibility", "e2e_visual", "i18n_catalog"],

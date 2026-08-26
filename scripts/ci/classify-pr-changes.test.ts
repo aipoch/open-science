@@ -367,8 +367,8 @@ describe('pull request change classification', () => {
       const plan = classifyChanges([{ path, status: 'modified' }])
 
       expect(plan.roots).toContain('version_file_operator')
-      expect(plan.lanes).toContain('version_file_operator_contract')
-      expect(plan.bundles).toEqual(expect.arrayContaining(['static', 'windows_core', 'macos_e2e']))
+      expect(plan.lanes).toEqual(expect.arrayContaining(['windows_runtime', 'build']))
+      expect(plan.bundles).toEqual(expect.arrayContaining(['windows_core', 'macos_e2e']))
       expect(plan.reasonChains).toContain(`${path} -> version_file_operator`)
     }
   )
