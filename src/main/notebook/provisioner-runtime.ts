@@ -224,7 +224,7 @@ export const runMicromamba = (
     let stderr = ''
     let timedOut = false
     let cancelled = false
-    let settled = false
+    const completion = { settled: false }
     let termination: Promise<boolean> | undefined
     const startedAt = Date.now()
     const appendTail = (current: string, chunk: unknown): string =>
@@ -240,10 +240,14 @@ export const runMicromamba = (
       clearTimeout(timeout)
       signal?.removeEventListener('abort', onAbort)
     }
-    const rejectUnconfirmed = (): void => {
-      if (settled) return
-      settled = true
+    const trySettle = (): boolean => {
+      if (completion.settled) return false
+      completion.settled = true
       cleanup()
+      return true
+    }
+    const rejectUnconfirmed = (): void => {
+      if (!trySettle()) return
       const reason = cancelled ? 'cancellation' : timedOut ? 'timeout' : 'PID recording failure'
       reject(
         new Error(
@@ -300,25 +304,21 @@ export const runMicromamba = (
     }
 
     child.once('error', async (error) => {
-      if (settled) return
+      if (completion.settled) return
       if (termination && !(await termination)) {
         rejectUnconfirmed()
         return
       }
-      if (settled) return
-      settled = true
-      cleanup()
+      if (!trySettle()) return
       reject(new Error(`micromamba failed to start (${argv.join(' ')}): ${error.message}`))
     })
     child.once('close', async (code, closeSignal) => {
-      if (settled) return
+      if (completion.settled) return
       if (termination && !(await termination)) {
         rejectUnconfirmed()
         return
       }
-      if (settled) return
-      settled = true
-      cleanup()
+      if (!trySettle()) return
       if (recordingError) {
         reject(recordingError)
         return

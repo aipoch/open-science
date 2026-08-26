@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { lstat, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
+import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {
   operationJournalPath,
   readOperationChild,
@@ -80,7 +81,7 @@ export class NotebookRecoveryCoordinator {
       if (!this.disposed) this.readiness = 'failed'
       throw error
     } finally {
-      if (this.recoveryInFlight === run) this.recoveryInFlight = undefined
+      if (isCurrentInFlight(this.recoveryInFlight, run)) this.recoveryInFlight = undefined
     }
   }
 

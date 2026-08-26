@@ -392,7 +392,7 @@ const readStatusAfterMutation = async (
   isReady: (status: Record<string, unknown>) => boolean = () => true
 ): Promise<Record<string, unknown>> => {
   let lastError: unknown
-  for (let attempt = 0; attempt <= REMOTE_IT_STATUS_RETRY_DELAYS_MS.length; attempt += 1) {
+  for (let attempt = 0; ; attempt += 1) {
     try {
       const status = await readStatus(binaryPath, run)
       if (isReady(status)) return status
@@ -400,9 +400,8 @@ const readStatusAfterMutation = async (
     } catch (error) {
       lastError = error
     }
-    const delayMs = REMOTE_IT_STATUS_RETRY_DELAYS_MS[attempt]
-    if (delayMs === undefined) break
-    await wait(delayMs)
+    if (attempt >= REMOTE_IT_STATUS_RETRY_DELAYS_MS.length) break
+    await wait(REMOTE_IT_STATUS_RETRY_DELAYS_MS[attempt])
   }
   const detail = commandError(lastError, 'Remote.It status is temporarily unavailable.').message
   throw new Error(

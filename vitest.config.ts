@@ -51,6 +51,54 @@ function coverageThresholdsEnabled(env: NodeJS.ProcessEnv): boolean {
   return env.VITEST_DEFER_COVERAGE_THRESHOLDS !== '1'
 }
 
+const FULL_COVERAGE_THRESHOLDS = {
+  lines: 90,
+  functions: 88,
+  branches: 79,
+  statements: 88
+} as const
+
+// `coverage.changed` limits the report to changed source files. Preserve its existing contract
+// instead of requiring every selective diff to match the whole repository's aggregate baseline.
+const CHANGED_SOURCE_COVERAGE_THRESHOLDS = {
+  lines: 66,
+  functions: 62,
+  branches: 57,
+  statements: 64
+} as const
+
+type CoverageThresholds = Record<
+  string,
+  number | { lines: number; functions: number; branches: number; statements: number }
+>
+
+function coverageThresholdsFor(env: NodeJS.ProcessEnv): CoverageThresholds | undefined {
+  if (!coverageThresholdsEnabled(env)) return undefined
+
+  const aggregate =
+    env.VITEST_CHANGED_COVERAGE_THRESHOLDS === '1'
+      ? CHANGED_SOURCE_COVERAGE_THRESHOLDS
+      : FULL_COVERAGE_THRESHOLDS
+
+  return {
+    ...aggregate,
+    // Keep the now-covered update wiring from being masked by the global aggregate.
+    'src/main/update/**': {
+      lines: 85,
+      functions: 75,
+      branches: 70,
+      statements: 80
+    },
+    // CSV is a user-facing renderer with bounded-data and fallback behavior worth protecting.
+    'src/renderer/src/pages/workspace/previews/renderers/CsvPreview.tsx': {
+      lines: 95,
+      functions: 95,
+      branches: 80,
+      statements: 95
+    }
+  }
+}
+
 // Mirrors the renderer alias from electron.vite.config.ts so tests that mount real component
 // trees (instead of mocking every aliased import) can resolve '@/...' without a build step.
 export default defineConfig({
@@ -144,33 +192,18 @@ export default defineConfig({
       include: ['src/**/*.{ts,tsx}'],
       // Exclude non-logic files so coverage reflects testable code, not wiring/types.
       exclude: VITEST_COVERAGE_EXCLUDE_PATTERNS,
-      // Baseline thresholds: fail CI when global coverage drops below these. Set ~5pts under the
-      // current measured baseline (lines 71 / statements 70 / functions 68 / branches 62) so the gate
-      // catches regressions while absorbing minor cross-environment variance. Raise over time.
-      thresholds: coverageThresholdsEnabled(process.env)
-        ? {
-            lines: 66,
-            functions: 62,
-            branches: 57,
-            statements: 64,
-            // Keep the now-covered update wiring from being masked by the global aggregate.
-            'src/main/update/**': {
-              lines: 85,
-              functions: 75,
-              branches: 70,
-              statements: 80
-            },
-            // CSV is a user-facing renderer with bounded-data and fallback behavior worth protecting.
-            'src/renderer/src/pages/workspace/previews/renderers/CsvPreview.tsx': {
-              lines: 95,
-              functions: 95,
-              branches: 80,
-              statements: 95
-            }
-          }
-        : undefined
+      // Keep the full-suite gate about one point below the measured main baseline. Selective
+      // changed-source runs retain their separately calibrated compatibility thresholds.
+      thresholds: coverageThresholdsFor(process.env)
     }
   }
 })
 
-export { coverageThresholdsEnabled, VITEST_COVERAGE_EXCLUDE_PATTERNS, VITEST_EXCLUDE_PATTERNS }
+export {
+  CHANGED_SOURCE_COVERAGE_THRESHOLDS,
+  coverageThresholdsEnabled,
+  coverageThresholdsFor,
+  FULL_COVERAGE_THRESHOLDS,
+  VITEST_COVERAGE_EXCLUDE_PATTERNS,
+  VITEST_EXCLUDE_PATTERNS
+}

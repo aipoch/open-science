@@ -591,6 +591,139 @@ describe('preview workbench store', () => {
     })
   })
 
+  it('closes every other tab and activates the kept one', () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+      id: 'file:session-1:/workspace/project/a.md',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'a.md',
+      path: '/workspace/project/a.md',
+      format: 'markdown',
+      name: 'a.md'
+    })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+      id: 'file:session-1:/workspace/project/b.md',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'b.md',
+      path: '/workspace/project/b.md',
+      format: 'markdown',
+      name: 'b.md'
+    })
+    usePreviewWorkbenchStore.getState().upsertItem({
+      id: 'tool:session-1:notebook',
+      sessionId: 'session-1',
+      type: 'tool',
+      toolKind: 'notebook',
+      title: 'Notebook'
+    })
+
+    usePreviewWorkbenchStore.getState().removeOtherItems('file:session-1:/workspace/project/b.md')
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      items: [expect.objectContaining({ id: 'file:session-1:/workspace/project/b.md' })],
+      activeItemId: 'file:session-1:/workspace/project/b.md',
+      panelState: 'open'
+    })
+  })
+
+  it('keeps all tabs when the active preview rejects close-others', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-a')
+    store.upsertAndActivateItem({
+      id: 'file-a',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'a.md',
+      path: '/workspace/project/a.md',
+      format: 'markdown',
+      name: 'a.md'
+    })
+    store.upsertItem({
+      id: 'file-b',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'b.md',
+      path: '/workspace/project/b.md',
+      format: 'markdown',
+      name: 'b.md'
+    })
+    previewLeaveGuards.register('workbench:project-a:file-a', () => false)
+
+    expect(store.removeOtherItems('file-b')).toBe(false)
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'file-a',
+      items: [expect.objectContaining({ id: 'file-a' }), expect.objectContaining({ id: 'file-b' })]
+    })
+  })
+
+  it('closing others clears the expanded surface only when its tab is closed', () => {
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectFilesPreviewItem())
+    usePreviewWorkbenchStore.getState().upsertItem({
+      id: 'file:session-1:/workspace/project/a.md',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'a.md',
+      path: '/workspace/project/a.md',
+      format: 'markdown',
+      name: 'a.md'
+    })
+    usePreviewWorkbenchStore.getState().setToolItemExpanded(PROJECT_FILES_PREVIEW_ID)
+    usePreviewWorkbenchStore.getState().openFileDialog({
+      id: 'artifact-1',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'result.png',
+      path: 'artifact-version:project-1/session-1/artifact-1/version-1',
+      format: 'image',
+      name: 'result.png'
+    })
+
+    // Keeping the Files tab preserves both the expanded surface and the file dialog.
+    usePreviewWorkbenchStore.getState().removeOtherItems(PROJECT_FILES_PREVIEW_ID)
+
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBe(PROJECT_FILES_PREVIEW_ID)
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({ id: 'artifact-1' })
+
+    // Reopen the closed tab, then keep the file tab instead: the Files-owned state must drop.
+    usePreviewWorkbenchStore.getState().upsertItem({
+      id: 'file:session-1:/workspace/project/a.md',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'a.md',
+      path: '/workspace/project/a.md',
+      format: 'markdown',
+      name: 'a.md'
+    })
+    usePreviewWorkbenchStore.getState().setToolItemExpanded(PROJECT_FILES_PREVIEW_ID)
+
+    usePreviewWorkbenchStore.getState().removeOtherItems('file:session-1:/workspace/project/a.md')
+
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
+  })
+
+  it('ignores close-others for a tab that is not open', () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+      id: 'file:session-1:/workspace/project/a.md',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'a.md',
+      path: '/workspace/project/a.md',
+      format: 'markdown',
+      name: 'a.md'
+    })
+
+    usePreviewWorkbenchStore.getState().removeOtherItems('missing-item')
+
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
+      'file:session-1:/workspace/project/a.md'
+    )
+  })
+
   it('tracks the expanded tool item and clears it when the tab is removed', () => {
     expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
 

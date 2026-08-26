@@ -125,7 +125,7 @@ type AttemptAgentEventInput = Readonly<{
   expectedRevision: number
   frameId: string
   attemptId: string
-  event: AttemptAgentEvent
+  event: AttemptAgentEvent | readonly AttemptAgentEvent[]
 }>
 
 type TransitionAttemptInput = Readonly<{

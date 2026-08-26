@@ -48,16 +48,15 @@ type ChunkAccumulator = {
 
 // Extracts a text chunk from an ACP update's content field (may be a { type:'text', text:string } block).
 const extractTextContent = (update: { content?: unknown }): string => {
-  const c = update.content
-  if (!c) return ''
-  if (typeof c === 'string') return c
+  const content = update.content
+  if (content == null) return ''
+  if (typeof content === 'string') return content
   if (
-    typeof c === 'object' &&
-    c !== null &&
-    'text' in c &&
-    typeof (c as { text: unknown }).text === 'string'
+    typeof content === 'object' &&
+    'text' in content &&
+    typeof (content as { text: unknown }).text === 'string'
   ) {
-    return (c as { text: string }).text
+    return (content as { text: string }).text
   }
   return ''
 }

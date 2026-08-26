@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { autoUpdater, CancellationToken } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
+import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import { isNewer, type UpdateApplyOptions, type UpdateStatus } from '../../shared/update'
 import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import type { Logger } from '../logger'
@@ -415,7 +416,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     try {
       return await lifecycle
     } finally {
-      if (this.checkLifecycle === lifecycle) this.checkLifecycle = undefined
+      if (isCurrentInFlight(this.checkLifecycle, lifecycle)) this.checkLifecycle = undefined
     }
   }
 

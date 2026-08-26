@@ -228,11 +228,11 @@ class AgentMarkdownErrorBoundary extends Component<
   }
 
   static getDerivedStateFromError(): Partial<AgentMarkdownErrorBoundaryState> {
-    return { failedContent: null, hasError: true }
+    return { hasError: true }
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    this.setState({ failedContent: this.props.content })
+    this.setState((_state, props) => ({ failedContent: props.content }))
     console.error('Failed to render rich Markdown; showing plain text fallback.', error, errorInfo)
   }
 

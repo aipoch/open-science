@@ -170,7 +170,24 @@ describe('Provenance Message snapshots', () => {
     if (!staleSession.conversationGraph) {
       throw new Error('Expected the Session conversation graph.')
     }
-    staleSession.conversationGraph.branches[0].headMessageId = 'prompt-1'
+    const staleBranch = staleSession.conversationGraph.branches[0]
+    const staleMessage = staleSession.conversationGraph.messages.find(
+      (message) => message.id === 'message-1'
+    )
+    if (!staleBranch || !staleMessage) {
+      throw new Error('Expected the Artifact Branch and owning Message.')
+    }
+    staleBranch.headMessageId = 'prompt-1'
+    staleSession.conversationGraph.branches.push({
+      id: 'stale-message-branch',
+      agentFrameId: staleBranch.agentFrameId,
+      parentBranchId: staleBranch.id,
+      forkMessageId: 'prompt-1',
+      headMessageId: staleMessage.id,
+      createdAt: 2,
+      updatedAt: 2
+    })
+    staleMessage.introducedOnBranchId = 'stale-message-branch'
     staleSession.messages = staleSession.messages.filter((message) => message.id === 'prompt-1')
     await expect(snapshots.validateFinalizedMessageBindings(staleSession)).rejects.toThrow(
       'Artifact-owning Message is outside its bound Branch.'

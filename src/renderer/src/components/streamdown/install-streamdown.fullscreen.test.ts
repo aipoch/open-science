@@ -179,6 +179,19 @@ describe('Mermaid fullscreen exit adapter', () => {
     expect(originalClose).toHaveBeenCalledTimes(1)
     expect(overlay.dataset.fullscreenState).toBeUndefined()
   })
+
+  it('cancels a pending close replay when the adapter is uninstalled', () => {
+    const { closeButton } = createMermaidFullscreen()
+    const originalClose = vi.fn()
+    closeButton.addEventListener('click', originalClose)
+
+    closeButton.click()
+    uninstall?.()
+    uninstall = undefined
+    vi.advanceTimersByTime(150)
+
+    expect(originalClose).not.toHaveBeenCalled()
+  })
 })
 
 describe('Table fullscreen exit adapter', () => {

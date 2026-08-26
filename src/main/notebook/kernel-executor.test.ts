@@ -253,6 +253,66 @@ afterEach(async () => {
 })
 
 gate('NotebookKernelExecutor (fake loop)', () => {
+  it('inspects only an already-live kernel and forwards the private-variable option', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-namespace-')
+    const executor = makeExecutor()
+    try {
+      await expect(
+        executor.inspectNamespace({
+          language: 'python',
+          environment: DEFAULT_PY_ENV
+        })
+      ).resolves.toEqual({ status: 'unavailable' })
+      expect(procFor(executor, 'python')).toBeUndefined()
+
+      await executor.execute({ ...baseRequest(cwdDir), code: 'activate' })
+      await expect(
+        executor.inspectNamespace({
+          language: 'python',
+          environment: DEFAULT_PY_ENV,
+          includePrivate: true
+        })
+      ).resolves.toEqual({
+        status: 'available',
+        variableCount: 2,
+        variablesTruncated: false,
+        variables: [
+          { name: 'answer', type: 'int', sizeBytes: 28, preview: '42' },
+          { name: '_private', type: 'str', preview: "'hidden'", private: true }
+        ]
+      })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('drops a kernel when namespace inspection exceeds its hard timeout', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-namespace-timeout-')
+    const previousHang = process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG
+    process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG = '1'
+    const onTerminated = vi.fn()
+    const executor = new NotebookKernelExecutor({
+      pythonBin: python3,
+      pythonLoopPath: FIXTURE,
+      platform: 'linux',
+      namespaceInspectionTimeoutMs: 25,
+      onTerminated
+    })
+    try {
+      await executor.execute({ ...baseRequest(cwdDir), code: 'activate' })
+
+      await expect(
+        executor.inspectNamespace({ language: 'python', environment: DEFAULT_PY_ENV })
+      ).rejects.toThrow('namespace inspection timed out after 25ms')
+      expect(procFor(executor, 'python')).toBeUndefined()
+      expect(onTerminated).toHaveBeenCalledWith('python', DEFAULT_PY_ENV)
+    } finally {
+      if (previousHang === undefined) delete process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG
+      else process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG = previousHang
+      await executor.shutdown()
+    }
+  })
+
   it('normalizes persisted working-file paths across operating systems', () => {
     expect(
       toPortableNotebookRelativePath(

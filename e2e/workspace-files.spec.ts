@@ -72,8 +72,8 @@ const reconstructedDiffText = async (
   })
 
 test('edits uploaded Markdown versions and keeps diff navigation coherent', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await createProject(page)
 
   await page.locator('input[type="file"][multiple]').setInputFiles({
@@ -191,8 +191,8 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent', asyn
 })
 
 test('shows structured text replacements with character-level highlights', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await createProject(page)
 
   await page.locator('input[type="file"][multiple]').setInputFiles({
@@ -231,8 +231,8 @@ test('shows structured text replacements with character-level highlights', async
 })
 
 test('loads managed image previews from Project files', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await createProject(page)
 
   await page.locator('input[type="file"][multiple]').setInputFiles({

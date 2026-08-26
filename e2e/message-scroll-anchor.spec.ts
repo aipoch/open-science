@@ -9,8 +9,8 @@ const PERMISSION_PROMPT = 'Request fixture permission.'
 const AGENT_REPLY = 'Deterministic reply: Summarize the deterministic fixture.'
 
 test('anchors a newly sent user message near the top of the viewport', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -51,8 +51,8 @@ test('anchors a newly sent user message near the top of the viewport', async ({ 
 test('keeps the prompt fixed while a blocking panel covers and leaves the transcript', async ({
   app
 }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })

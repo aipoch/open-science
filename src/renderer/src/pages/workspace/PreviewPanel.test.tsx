@@ -62,11 +62,19 @@ describe('PreviewPanel', () => {
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     window.api = {
-      saveManagedFile: vi.fn().mockResolvedValue({ saved: true })
+      saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      uploads: { stageLocalPath: vi.fn().mockResolvedValue({ id: 'attachment-1' }) }
     } as unknown as Window['api']
     container = document.createElement('div')
     document.body.appendChild(container)
   })
+
+  // Radix dropdown interactions under jsdom need pointer-capture stubs.
+  if (!Element.prototype.hasPointerCapture) {
+    Element.prototype.hasPointerCapture = (): boolean => false
+    Element.prototype.setPointerCapture = (): void => {}
+    Element.prototype.releasePointerCapture = (): void => {}
+  }
 
   afterEach(async () => {
     await act(async () => {
@@ -102,6 +110,31 @@ describe('PreviewPanel', () => {
       })
     )
     await renderPanel()
+  }
+
+  const openTabContextMenu = async (tabIndex: number): Promise<void> => {
+    const tab = container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[tabIndex]
+    if (!tab) throw new Error(`tab not found at index ${tabIndex}`)
+    await act(async () => {
+      tab.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 90 })
+      )
+    })
+  }
+
+  const menuCommands = (): string[] =>
+    Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).map(
+      (item) => item.dataset.command ?? ''
+    )
+
+  const clickMenuCommand = async (command: string): Promise<void> => {
+    const menuItem = document.body.querySelector<HTMLElement>(
+      `[role="menuitem"][data-command="${command}"]`
+    )
+    if (!menuItem) throw new Error(`menu item not found: ${command}`)
+    await act(async () => {
+      menuItem.click()
+    })
   }
 
   const mockTabScrollGeometry = ({
@@ -789,5 +822,135 @@ describe('PreviewPanel', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull()
     expect(container.querySelector('[role="tabpanel"]')).not.toBeNull()
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
+  })
+
+  it('opens a tab menu on right-click without activating the tab', async () => {
+    await renderTwoFileTabs()
+
+    await openTabContextMenu(1)
+
+    expect(document.body.querySelector('[data-testid="preview-tab-context-menu"]')).not.toBeNull()
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
+      'file-1.png'
+    )
+  })
+
+  it('shows managed-file actions for an artifact tab and shared-only for a tool tab', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+    usePreviewWorkbenchStore.getState().upsertItem(createToolItem({}))
+    await renderPanel()
+
+    await openTabContextMenu(0)
+    expect(menuCommands()).toEqual(['close', 'close-others', 'download'])
+    // Every entry renders its icon (×, ⊗, ↓) ahead of the label.
+    for (const menuItem of document.body.querySelectorAll('[role="menuitem"]')) {
+      expect(menuItem.querySelector('svg')).not.toBeNull()
+    }
+
+    await openTabContextMenu(1)
+    expect(menuCommands()).toEqual(['close', 'close-others'])
+    expect(
+      document.body.querySelector('[data-testid="preview-tab-context-menu"] [role="separator"]')
+    ).toBeNull()
+  })
+
+  it('offers local-file actions and disables close-others for a single tab', async () => {
+    usePreviewWorkbenchStore
+      .getState()
+      .upsertAndActivateItem(createFileItem({ source: 'local', id: 'local:/tmp/notes.md' }))
+    await renderPanel()
+
+    await openTabContextMenu(0)
+
+    expect(menuCommands()).toEqual([
+      'close',
+      'close-others',
+      'copy-path',
+      'download',
+      'save-as-artifact'
+    ])
+    expect(
+      document.body
+        .querySelector<HTMLElement>('[role="menuitem"][data-command="close-others"]')
+        ?.getAttribute('aria-disabled')
+    ).toBe('true')
+  })
+
+  it('closes the other tabs from the menu and focuses the kept tab', async () => {
+    await renderTwoFileTabs()
+
+    await openTabContextMenu(1)
+    await clickMenuCommand('close-others')
+
+    expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toEqual(['item-2'])
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-2')
+    expect(document.body.querySelector('[data-testid="preview-tab-context-menu"]')).toBeNull()
+  })
+
+  it('closes the right-clicked tab from the menu', async () => {
+    await renderTwoFileTabs()
+
+    await openTabContextMenu(0)
+    await clickMenuCommand('close')
+
+    expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toEqual(['item-2'])
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-2')
+  })
+
+  it('downloads a managed file from the menu', async () => {
+    await renderTwoFileTabs()
+
+    await openTabContextMenu(0)
+    await clickMenuCommand('download')
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(window.api.saveManagedFile).toHaveBeenCalledWith({
+      source: 'artifact',
+      path: '/workspace/file-1.png',
+      suggestedName: 'file-1.png'
+    })
+  })
+
+  it('copies a local file path and stages it as an artifact from the menu', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const stageLocalPath = vi.fn().mockResolvedValue({ id: 'attachment-1' })
+    Object.assign(navigator, { clipboard: { writeText } })
+    window.api = {
+      saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      uploads: { stageLocalPath }
+    } as unknown as Window['api']
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createFileItem({
+        source: 'local',
+        id: 'local:/tmp/notes.md',
+        path: '/tmp/notes.md',
+        name: 'notes.md'
+      })
+    )
+    usePreviewWorkbenchStore.getState().upsertItem(
+      createFileItem({
+        id: 'item-2',
+        title: 'other.png',
+        path: '/w/other.png',
+        name: 'other.png'
+      })
+    )
+    await renderPanel()
+
+    await openTabContextMenu(0)
+    await clickMenuCommand('copy-path')
+    expect(writeText).toHaveBeenCalledWith('/tmp/notes.md')
+
+    await openTabContextMenu(0)
+    await clickMenuCommand('save-as-artifact')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(stageLocalPath).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'notes.md', sourcePath: '/tmp/notes.md' })
+    )
   })
 })

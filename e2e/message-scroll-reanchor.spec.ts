@@ -13,8 +13,8 @@ const AGENT_REPLY = 'Deterministic reply: Summarize the deterministic fixture.'
 test('does not re-anchor a historical turn when the reply row replaces the loader', async ({
   app
 }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })

@@ -122,6 +122,7 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
   upsertAndActivateItem: (item: PreviewItem) => void
   activateItem: (itemId: string) => void
   removeItem: (itemId: string) => boolean
+  removeOtherItems: (keepItemId: string) => boolean
   removeSessionItems: (sessionId: string) => void
   setToolItemExpanded: (itemId: string | null) => void
   openFileDialog: (item: PreviewFileItem, skipGuard?: boolean) => boolean
@@ -549,6 +550,46 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       }
     })
     return removed
+  },
+
+  // Closes every preview tab except the kept one, which becomes the active tab. Owned here (not
+  // composed from removeItem by callers) so expanded-surface and file-dialog teardown rules stay
+  // in one place.
+  removeOtherItems: (keepItemId) => {
+    const state = get()
+    if (!state.items.some((item) => item.id === keepItemId)) return false
+
+    const workbenchScope =
+      state.activeItemId !== keepItemId ? activeWorkbenchGuardScope(state) : undefined
+    const removesProjectFilesTab =
+      keepItemId !== PROJECT_FILES_PREVIEW_ID &&
+      state.items.some((item) => item.id === PROJECT_FILES_PREVIEW_ID)
+    const dialogScope =
+      removesProjectFilesTab && state.fileDialogItem
+        ? dialogPreviewGuardScope(state.fileDialogItem.projectId, state.fileDialogItem.id)
+        : undefined
+    if (
+      !previewLeaveGuards.request(dialogScope, () => undefined) ||
+      !previewLeaveGuards.request(workbenchScope, () => undefined)
+    )
+      return false
+
+    set((state) => {
+      const keepsProjectFilesTab = keepItemId === PROJECT_FILES_PREVIEW_ID
+      const closesProjectFilesTab =
+        !keepsProjectFilesTab && state.items.some((item) => item.id === PROJECT_FILES_PREVIEW_ID)
+      const items = state.items.filter((item) => item.id === keepItemId)
+
+      return {
+        items,
+        activeItemId: keepItemId,
+        expandedToolItemId: items.some((item) => item.id === state.expandedToolItemId)
+          ? state.expandedToolItemId
+          : null,
+        fileDialogItem: closesProjectFilesTab ? undefined : state.fileDialogItem
+      }
+    })
+    return true
   },
 
   // Drops all preview tabs owned by a deleted session and keeps focus on a valid tab.

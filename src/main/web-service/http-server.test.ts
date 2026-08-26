@@ -1442,6 +1442,7 @@ describe('startWebHttpServer', () => {
       'notebook:execute',
       'notebook:finish-code-cell',
       'notebook:reference',
+      'notebook:inspect-namespace',
       'notebook:read-input-preview',
       'notebook:restart',
       'notebook:run-cell',

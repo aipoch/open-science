@@ -182,6 +182,7 @@ const SWITCH_RUNTIME_DOC = [
 // Control-plane REPL contract, embedded as the repl_execute description so the agent always sees it.
 const REPL_EXECUTE_DOC = [
   'Run JavaScript in the persistent control-plane REPL, separate from notebook_execute Python/R data kernels.',
+  "This is a CommonJS REPL: load Node modules with `require('node:fs')`, not dynamic `import()`.",
   'Use `await host.capabilities()` to feature-gate optional host namespaces; load the `self-awareness` Skill for its boolean contract and current capability map.',
   'Only this kernel can call temporary tool-less inference (`await host.llm(prompt)` or a bounded prompt batch), connectors (`await host.mcp(server, method, args)`), remote compute (`host.compute`; load its skill for the API), Specialist management (`host.agents`), and Skill authoring (`host.skills`).',
   HOST_SDK_DISCOVERY_GUIDANCE,
@@ -723,9 +724,14 @@ const compactStateRun = (
   const record = asRecord(value)
   if (!record) return value
   const text = asRecord(record.text)
-  const diagnosticOutput = ['traceback', 'stderr', 'stdout']
-    .map((field) => text?.[field])
-    .find((candidate) => typeof candidate === 'string' && candidate.length > 0)
+  const traceback = text?.traceback
+  const diagnosticOutput = [
+    record.kernelKind === 'repl' && typeof traceback === 'string'
+      ? compactReplTraceback(traceback)
+      : traceback,
+    text?.stderr,
+    text?.stdout
+  ].find((candidate) => typeof candidate === 'string' && candidate.length > 0)
   const displayOutput = Array.isArray(record.outputs)
     ? record.outputs
         .map((candidate) => {

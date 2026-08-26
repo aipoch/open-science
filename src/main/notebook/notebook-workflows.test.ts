@@ -19,6 +19,7 @@ const createRuntime = (
   overrides: Partial<NotebookCommandRuntime> = {}
 ): NotebookCommandRuntime => ({
   state: unavailable('state'),
+  inspectNamespace: unavailable('inspectNamespace'),
   getSessionReference: unavailable('getSessionReference'),
   beginCodeCell: unavailable('beginCodeCell'),
   appendCodeCell: unavailable('appendCodeCell'),
@@ -54,6 +55,9 @@ const runSummary = (runId: string): NotebookRunSummary => ({
 describe('Notebook command workflows', () => {
   it('removes application-owned turn context from renderer execution requests', async () => {
     const runtime = createRuntime({
+      inspectNamespace: vi
+        .fn<NotebookCommandRuntime['inspectNamespace']>()
+        .mockResolvedValue({ status: 'unavailable', reason: 'kernel-not-live' }),
       runCell: vi.fn<NotebookCommandRuntime['runCell']>().mockResolvedValue(runSummary('run-1')),
       execute: vi.fn<NotebookCommandRuntime['execute']>().mockResolvedValue(runSummary('run-2'))
     })
@@ -66,10 +70,19 @@ describe('Notebook command workflows', () => {
         runtimeSegmentId: 'forged-runtime',
         promptMessageId: 'forged-prompt'
       },
+      executionInvocationId: 'forged-invocation',
       registeredInputFiles: [],
       inputRunLeaseId: 'forged-lease'
     }
 
+    await workflows.inspectNamespace({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      language: 'python',
+      environment: 'default-python',
+      includePrivate: true,
+      ...trustedContext
+    })
     await workflows.runCell({
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
@@ -85,6 +98,13 @@ describe('Notebook command workflows', () => {
       ...trustedContext
     })
 
+    expect(runtime.inspectNamespace).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      language: 'python',
+      environment: 'default-python',
+      includePrivate: true
+    })
     expect(runtime.runCell).toHaveBeenCalledWith({
       sessionId: 'session-1',
       workspaceCwd: '/workspace',

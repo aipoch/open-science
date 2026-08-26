@@ -6,7 +6,7 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import { SessionRuntimeContextRevisionConflictError } from '../session-persistence/coordinator'
-import type { DelegatedWorkRecordCommands, SessionKey } from './session-records'
+import type { AttemptAgentEvent, DelegatedWorkRecordCommands, SessionKey } from './session-records'
 import type {
   AuthenticatedDelegateCaller,
   DelegatedWorkDurableRecords,
@@ -231,37 +231,33 @@ const createSessionDelegatedWorkRecords = (
       activities,
       activityGroups
     ) {
+      const events: AttemptAgentEvent[] = []
       for (const activity of activities) {
         if (!activity.promptMessageId) continue
-        await mutate((expectedRevision) =>
-          options.commands.applyAgentEvent(key, {
-            expectedRevision,
-            frameId,
-            attemptId,
-            event: {
-              kind: 'activity',
-              runtimeSegmentId,
-              promptMessageId: activity.promptMessageId!,
-              activity
-            }
-          })
-        )
+        events.push({
+          kind: 'activity',
+          runtimeSegmentId,
+          promptMessageId: activity.promptMessageId,
+          activity
+        })
       }
       for (const activityGroup of activityGroups) {
         if (!activityGroup.promptMessageId) continue
-        await mutate((expectedRevision) =>
-          options.commands.applyAgentEvent(key, {
-            expectedRevision,
-            frameId,
-            attemptId,
-            event: {
-              kind: 'activity-group',
-              promptMessageId: activityGroup.promptMessageId!,
-              activityGroup
-            }
-          })
-        )
+        events.push({
+          kind: 'activity-group',
+          promptMessageId: activityGroup.promptMessageId,
+          activityGroup
+        })
       }
+      if (events.length === 0) return
+      await mutate((expectedRevision) =>
+        options.commands.applyAgentEvent(key, {
+          expectedRevision,
+          frameId,
+          attemptId,
+          event: events
+        })
+      )
     },
     async terminalize(input) {
       if (input.status === 'completed') {

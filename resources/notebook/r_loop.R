@@ -578,6 +578,177 @@ diagnostic_limit_bytes <- min(16 * 1024, max(0, text_limit_bytes))
 figure_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_LIMIT_BYTES", 3.5 * 1024 * 1024))
 figure_count_limit <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_COUNT_LIMIT", 12))
 figure_total_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES", 8 * 1024 * 1024))
+namespace_variable_limit <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_VARIABLE_LIMIT", 500))
+namespace_response_limit_bytes <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_BYTES", 256 * 1024))
+
+namespace_state <- new.env(parent = emptyenv())
+namespace_state$internal_names <- character()
+namespace_state$lazy_names <- character()
+namespace_state$written_names <- character()
+
+# Base R intentionally does not expose whether an arbitrary environment binding is a promise.
+# Track direct delayedAssign() calls for a precise label and completed direct writes so user
+# shadows of bootstrap names remain visible. Inspection never reads a binding value.
+namespace_tracker <- base::local({
+  delayed_assign_call <- function(expr) {
+    if (!is.call(expr)) return(FALSE)
+    head <- expr[[1L]]
+    if (identical(head, as.name("delayedAssign"))) return(TRUE)
+    is.call(head) && length(head) == 3L &&
+      identical(head[[1L]], as.name("::")) &&
+      identical(head[[2L]], as.name("base")) &&
+      identical(head[[3L]], as.name("delayedAssign"))
+  }
+
+  delayed_names <- function(expr) {
+    found <- character()
+    visit <- function(node) {
+      if (!is.call(node)) return(invisible(NULL))
+      if (delayed_assign_call(node) && length(node) >= 2L &&
+          is.character(node[[2L]]) && length(node[[2L]]) == 1L) {
+        found <<- union(found, node[[2L]])
+      }
+      if (length(node) > 1L) {
+        for (index in seq.int(2L, length(node))) visit(node[[index]])
+      }
+      invisible(NULL)
+    }
+    visit(expr)
+    found
+  }
+
+  direct_written_names <- function(expr) {
+    if (!is.call(expr) || length(expr) < 2L) return(character())
+    head <- expr[[1L]]
+    head_name <- if (is.symbol(head)) as.character(head) else ""
+    if (head_name %in% c("<-", "=", "<<-") &&
+        is.symbol(expr[[2L]])) {
+      return(as.character(expr[[2L]]))
+    }
+    if (head_name %in% c("->", "->>") && length(expr) >= 3L &&
+        is.symbol(expr[[3L]])) {
+      return(as.character(expr[[3L]]))
+    }
+    is_assign <- identical(head, as.name("assign")) ||
+      (is.call(head) && length(head) == 3L &&
+       identical(head[[1L]], as.name("::")) &&
+       identical(head[[2L]], as.name("base")) &&
+       identical(head[[3L]], as.name("assign")))
+    if (!is_assign) return(character())
+    matched <- match.call(base::assign, expr, expand.dots = FALSE)
+    name <- matched$x
+    if (!is.character(name) || length(name) != 1L) return(character())
+    target <- matched$envir
+    position <- matched$pos
+    targets_global <- is.null(target) && is.null(position) ||
+      identical(target, as.name(".GlobalEnv")) ||
+      identical(target, quote(globalenv())) ||
+      identical(position, as.name(".GlobalEnv")) ||
+      identical(position, quote(globalenv())) ||
+      identical(position, 1L) || identical(position, 1)
+    if (targets_global) name else character()
+  }
+
+  list(
+    prepare = function(expr) {
+      lazy_names <- delayed_names(expr)
+      namespace_state$lazy_names <- union(namespace_state$lazy_names, lazy_names)
+      namespace_state$written_names <- setdiff(namespace_state$written_names, lazy_names)
+      invisible(NULL)
+    },
+    commit = function(expr) {
+      written_names <- direct_written_names(expr)
+      # Only clear names for a completed, direct top-level write. Nested control flow remains
+      # conservatively marked lazy because not all paths necessarily executed.
+      if (!delayed_assign_call(expr)) {
+        namespace_state$lazy_names <- setdiff(namespace_state$lazy_names, written_names)
+      }
+      namespace_state$written_names <- union(namespace_state$written_names, written_names)
+      current_names <- ls(envir = .GlobalEnv, all.names = TRUE)
+      namespace_state$lazy_names <- intersect(namespace_state$lazy_names, current_names)
+      namespace_state$written_names <- intersect(namespace_state$written_names, current_names)
+      invisible(NULL)
+    }
+  )
+}, envir = base::list2env(base::list(namespace_state = namespace_state), parent = base::baseenv()))
+
+inspect_namespace <- base::local({
+  limit_text_raw <- function(value, limit) {
+    text <- if (is.character(value) && length(value) > 0L) value[[1L]] else ""
+    # At least one byte is required per character, so this bounds the temporary allocation before
+    # converting a potentially enormous string to raw bytes.
+    bytes <- charToRaw(substr(text, 1L, limit + 1L))
+    truncated <- length(bytes) > limit
+    if (truncated) {
+      bytes <- bytes[seq_len(limit)]
+      while (length(bytes) > 0L && !validUTF8(rawToChar(bytes))) {
+        bytes <- bytes[-length(bytes)]
+      }
+    }
+    list(bytes = bytes, truncated = truncated)
+  }
+
+  encoded_text <- function(value, limit = 256L) {
+    jsonlite::base64_enc(limit_text_raw(value, limit)$bytes)
+  }
+
+  function(include_private = FALSE) {
+    names <- ls(envir = .GlobalEnv, all.names = TRUE)
+    active_names <- names[vapply(
+      names,
+      bindingIsActive,
+      logical(1),
+      env = .GlobalEnv
+    )]
+    shadowed_internal_names <- union(
+      union(namespace_state$written_names, namespace_state$lazy_names),
+      active_names
+    )
+    hidden_internal_names <- setdiff(
+      namespace_state$internal_names,
+      shadowed_internal_names
+    )
+    names <- sort(setdiff(names, hidden_internal_names))
+    if (!isTRUE(include_private)) names <- names[!startsWith(names, ".")]
+    variables <- list()
+    remaining <- max(0L, namespace_response_limit_bytes - 256L)
+    for (name in utils::head(names, namespace_variable_limit)) {
+      binding_type <- if (bindingIsActive(name, .GlobalEnv)) {
+        "active binding"
+      } else if (name %in% namespace_state$lazy_names) {
+        "lazy binding"
+      } else {
+        "binding"
+      }
+      entry <- list(
+        name_base64 = encoded_text(name, 1024L),
+        type_base64 = encoded_text(binding_type),
+        preview_base64 = encoded_text("")
+      )
+      if (startsWith(name, ".")) entry$is_private <- TRUE
+      encoded_size <- nchar(
+        jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null"),
+        type = "bytes"
+      ) + 1L
+      if (encoded_size > remaining) break
+      variables[[length(variables) + 1L]] <- entry
+      remaining <- remaining - encoded_size
+    }
+    list(
+      variable_count = length(names),
+      variables_truncated = length(variables) < length(names),
+      variables = variables
+    )
+  }
+}, envir = base::list2env(
+  base::list(
+    namespace_state = namespace_state,
+    namespace_variable_limit = namespace_variable_limit,
+    namespace_response_limit_bytes = namespace_response_limit_bytes
+  ),
+  parent = base::baseenv()
+))
+lockEnvironment(environment(inspect_namespace), bindings = TRUE)
 con <- file("stdin", "rb")
 
 emit <- function(obj) {
@@ -1193,7 +1364,9 @@ run <- base::local({
           idx <- 0L
           tryCatch({
             for (idx in seq_along(exprs)) {
+              namespace_tracker$prepare(exprs[[idx]])
               res <- withVisible(eval(exprs[[idx]], envir = globalenv()))
+              namespace_tracker$commit(exprs[[idx]])
               if (isTRUE(res$visible)) print(res$value)
               mark_recorded_plot()
             }
@@ -1277,11 +1450,17 @@ run <- base::local({
     figure_total_limit_bytes = figure_total_limit_bytes,
     capture_environment = capture_environment,
     assert_no_package_mutation = assert_no_package_mutation,
-    output_sink_policy_env = output_sink_policy_env
+    output_sink_policy_env = output_sink_policy_env,
+    namespace_tracker = namespace_tracker
   ),
   parent = base::baseenv()
 ))
 lockEnvironment(environment(run), bindings = TRUE)
+
+# Capture the loop's trusted startup names once. The inspector hides unchanged bootstrap names but
+# reveals confirmed user shadows, while the request loop keeps private references to trusted code.
+namespace_state$internal_names <- ls(envir = .GlobalEnv, all.names = TRUE)
+rm(namespace_state)
 
 # Request I/O and the read-path interrupt flag live outside .GlobalEnv. User cells eval in
 # globalenv() and may assign names such as interrupt_during_read or getwd; those assignments
@@ -1314,6 +1493,7 @@ base::local({
       parts <- strsplit(header, " ", fixed = TRUE)[[1]]
       req_id <- parts[1]
       n <- as.integer(parts[2])
+      operation <- if (length(parts) >= 3L) parts[3L] else "execute"
       if (is.na(n) || n < 0L) n <- 0L
       acc <- raw()
       body_empty <- 0L
@@ -1336,7 +1516,7 @@ base::local({
         acc <- c(acc, chunk)
       }
       code <- if (n > 0L) rawToChar(acc, multiple = FALSE) else ""
-      return(list(req_id = req_id, code = code))
+      return(list(req_id = req_id, code = code, operation = operation))
     }
   }
 
@@ -1387,7 +1567,11 @@ base::local({
           state$during_read <- FALSE
           interrupted_response(req$req_id)
         } else {
-          result <- run(req)
+          result <- if (identical(req$operation, "inspect_namespace")) {
+            list(namespace = inspect_namespace(identical(req$code, "private")))
+          } else {
+            run(req)
+          }
           result$req_id <- req$req_id
           result
         }
@@ -1401,6 +1585,7 @@ base::local({
     con = con,
     emit = emit,
     run = run,
+    inspect_namespace = inspect_namespace,
     capture_environment = capture_environment
   ),
   parent = base::baseenv()

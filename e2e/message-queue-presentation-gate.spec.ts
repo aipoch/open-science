@@ -14,8 +14,8 @@ const FOLLOW_UP = 'Follow-up after the reveal.'
 const AGENT_REPLY = 'Deterministic reply: Summarize the deterministic fixture.'
 
 test('holds the queued message until the previous reply finishes revealing', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })

@@ -132,6 +132,14 @@ const MAIN_OWNED_SESSION_FIELDS = new Set<keyof PersistedChatSession>([
   'specialistBindingPending'
 ])
 
+const MAIN_OWNED_SESSION_DETAILS_FIELDS = new Set<keyof PersistedChatSession>([
+  'title',
+  'description',
+  'sessionDetailsSource',
+  'sessionDetailsGenerationEligible',
+  'sessionDetailsGeneration'
+])
+
 const jsonValuesEqual = (left: unknown, right: unknown): boolean => {
   if (Object.is(left, right)) return true
   if (Array.isArray(left) || Array.isArray(right)) {
@@ -416,6 +424,8 @@ const rebaseSessionAfterRevisionConflict = (
   const mainOwnsStatus =
     latest.runtimeContext?.permission?.state === 'pending' ||
     latest.status === 'waiting-plan-approval'
+  const mainOwnsSessionDetails =
+    latest.sessionDetailsSource !== undefined || latest.sessionDetailsGeneration !== undefined
 
   for (const key of keys) {
     if (
@@ -426,6 +436,7 @@ const rebaseSessionAfterRevisionConflict = (
     }
     if (
       MAIN_OWNED_SESSION_FIELDS.has(key) ||
+      (mainOwnsSessionDetails && MAIN_OWNED_SESSION_DETAILS_FIELDS.has(key)) ||
       key === 'updatedAt' ||
       (key === 'status' && mainOwnsStatus)
     ) {
