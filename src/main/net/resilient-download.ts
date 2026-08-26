@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream, type WriteStream } from 'node:fs'
 import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
@@ -22,7 +22,7 @@ export type ResilientDownloadDeps = {
   renameImpl?: (from: string, to: string) => Promise<void>
   openReadStreamImpl?: (path: string) => NodeJS.ReadableStream
   readTextImpl?: (path: string) => Promise<string>
-  writeTextImpl?: (path: string, text: string) => Promise<void>
+  writeTextImpl?: (path: string, text: string, opts?: { flag?: string }) => Promise<void>
   sleep?: (ms: number) => Promise<void>
   now?: () => number
 }
@@ -157,7 +157,9 @@ export const resilientDownload = async (
   const renameFile = d.renameImpl ?? rename
   const openRead = d.openReadStreamImpl ?? ((p) => createReadStream(p))
   const readText = d.readTextImpl ?? ((p) => readFile(p, 'utf8'))
-  const writeText = d.writeTextImpl ?? ((p, text) => writeFile(p, text, 'utf8'))
+  const writeText =
+    d.writeTextImpl ??
+    ((p, text, writeOpts) => writeFile(p, text, { encoding: 'utf8', flag: writeOpts?.flag ?? 'w' }))
   const sleep = d.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)))
   const now = d.now ?? (() => Date.now())
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES
@@ -178,6 +180,18 @@ export const resilientDownload = async (
       await removeFile(path)
     } catch (error) {
       throw markTerminal(error)
+    }
+  }
+  const writeMetadataAtomically = async (text: string): Promise<void> => {
+    const tempPath = `${metadataPath}.${randomUUID()}.tmp`
+    try {
+      // `wx` refuses a pre-existing temp path (including a symlink). Renaming the completed regular
+      // file over metadataPath replaces that directory entry instead of following a symlink there.
+      await writeText(tempPath, text, { flag: 'wx' })
+      await renameFile(tempPath, metadataPath)
+    } catch (error) {
+      await removeFile(tempPath).catch(() => undefined)
+      throw error
     }
   }
 
@@ -386,7 +400,7 @@ export const resilientDownload = async (
           ...(opts.expectedSize === undefined ? {} : { expectedSize: opts.expectedSize })
         }
         try {
-          await writeText(metadataPath, `${JSON.stringify(metadata)}\n`)
+          await writeMetadataAtomically(`${JSON.stringify(metadata)}\n`)
         } catch (metadataError) {
           throw markTerminal(metadataError)
         }

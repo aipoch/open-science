@@ -276,6 +276,39 @@ describe('resilientDownload', () => {
     }
   })
 
+  it('does not follow a pre-existing symlink when persisting validator metadata', async () => {
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const fs = memFs()
+    const metadataPath = `${OUT_PATH}.part.meta`
+    const symlinkTarget = join('downloads', 'do-not-overwrite.txt')
+    fs.files.set(symlinkTarget, Buffer.from('keep-me'))
+    const writeTextImpl = async (path: string, text: string): Promise<void> => {
+      // Model writeFile following a symlink at the final sidecar path. Renaming a new file over that
+      // path replaces the link itself and therefore uses the regular memFs implementation instead.
+      if (path === metadataPath) {
+        fs.files.set(symlinkTarget, Buffer.from(text))
+        return
+      }
+      await fs.writeTextImpl(path, text)
+    }
+
+    await expect(
+      resilientDownload('https://cdn/file', OUT_PATH, {
+        expectedSize: body.length,
+        maxRetries: 0,
+        deps: {
+          fetchImpl: fakeFetch(body, { cutAfter: 8 }) as unknown as typeof fetch,
+          ...fs,
+          writeTextImpl,
+          sleep: async () => {},
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/short read/i)
+
+    expect(fs.files.get(symlinkTarget)?.toString()).toBe('keep-me')
+  })
+
   it('discards a historical partial that has no validator metadata', async () => {
     const body = Buffer.from('0123456789')
     const fs = memFs()
