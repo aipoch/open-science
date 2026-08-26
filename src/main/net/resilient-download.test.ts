@@ -370,6 +370,39 @@ describe('resilientDownload', () => {
     expect(fs.files.get(OUT_PATH)?.equals(body)).toBe(true)
   })
 
+  it('surfaces an unresumable partial cleanup failure without retrying it', async () => {
+    const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
+    const fs = memFs()
+    const fetchImpl = fakeFetch(body, { cutAfter: 8, etag: null })
+    const sleep = vi.fn(async () => undefined)
+    const removePart = vi.fn()
+    const rmImpl = async (path: string): Promise<void> => {
+      if (path === `${OUT_PATH}.part`) {
+        removePart(path)
+        throw new Error('EACCES: cannot delete unresumable partial')
+      }
+      await fs.rmImpl(path)
+    }
+
+    await expect(
+      resilientDownload('https://cdn/file', OUT_PATH, {
+        expectedSize: body.length,
+        maxRetries: 2,
+        deps: {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          ...fs,
+          rmImpl,
+          sleep,
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/EACCES/)
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(removePart).toHaveBeenCalledTimes(1)
+    expect(sleep).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects a 206 whose Content-Range start differs from the local offset', async () => {
     const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
     const fs = memFs()

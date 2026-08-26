@@ -173,6 +173,13 @@ export const resilientDownload = async (
       return 0
     }
   }
+  const removeForSafety = async (path: string): Promise<void> => {
+    try {
+      await removeFile(path)
+    } catch (error) {
+      throw markTerminal(error)
+    }
+  }
 
   // Re-feed the existing .part into the hash so a resumed download's digest covers the whole file.
   const seedHash = async (hash: ReturnType<typeof createHash>, bytes: number): Promise<void> => {
@@ -222,14 +229,14 @@ export const resilientDownload = async (
       ) {
         resumeValidator = metadata.validator
       } else {
-        await removeFile(partPath)
-        await removeFile(metadataPath).catch(() => undefined)
+        await removeForSafety(partPath)
+        await removeForSafety(metadataPath)
         initial = 0
       }
     } else {
       // A sidecar without its .part cannot describe any resumable bytes. Remove it now so a later
       // validator-less interrupted response cannot accidentally inherit the stale validator.
-      await removeFile(metadataPath).catch(() => undefined)
+      await removeForSafety(metadataPath)
     }
     await seedHash(hash, initial)
     hashSeededTo = initial
@@ -282,8 +289,8 @@ export const resilientDownload = async (
         // A same-process retry is not proof that the remote representation stayed unchanged. Without
         // a strong ETag or Last-Modified value there is no valid If-Range precondition, so retaining
         // these bytes would recreate the blind cross-version splice this helper is meant to prevent.
-        await removeFile(partPath)
-        await removeFile(metadataPath).catch(() => undefined)
+        await removeForSafety(partPath)
+        await removeForSafety(metadataPath)
         offset = 0
         hash = createHash('sha256')
         hashSeededTo = 0
@@ -351,8 +358,8 @@ export const resilientDownload = async (
       // Server returned 200 while we had a partial — it ignored Range, so discard and restart.
       const resuming = res.status === 206 && offset > 0
       if (!resuming && offset > 0) {
-        await removeFile(partPath)
-        await removeFile(metadataPath).catch(() => undefined)
+        await removeForSafety(partPath)
+        await removeForSafety(metadataPath)
         offset = 0
         // Reset the hoisted hash since we are restarting from byte 0.
         hash = createHash('sha256')
