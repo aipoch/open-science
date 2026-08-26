@@ -251,6 +251,8 @@ describe('WorkspaceSidebar accessible render', () => {
     vi.useFakeTimers()
     const { SessionHoverPreview, SessionHoverPreviewProvider } =
       await import('./SessionHoverPreview')
+    const firstPreviewRequest = vi.fn().mockResolvedValue(undefined)
+    const secondPreviewRequest = vi.fn().mockResolvedValue(undefined)
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
@@ -266,11 +268,13 @@ describe('WorkspaceSidebar accessible render', () => {
           <SessionHoverPreviewProvider>
             <SessionHoverPreview
               session={{ id: 'first', title: 'First Session', description: 'First Description' }}
+              onPreviewRequest={firstPreviewRequest}
             >
               <button type="button">First trigger</button>
             </SessionHoverPreview>
             <SessionHoverPreview
               session={{ id: 'second', title: 'Second Session', description: 'Second Description' }}
+              onPreviewRequest={secondPreviewRequest}
             >
               <button type="button">Second trigger</button>
             </SessionHoverPreview>
@@ -283,11 +287,13 @@ describe('WorkspaceSidebar accessible render', () => {
       await act(async () => pointerOver(first))
       await act(async () => vi.advanceTimersByTime(1_999))
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
+      expect(firstPreviewRequest).not.toHaveBeenCalled()
 
       await act(async () => vi.advanceTimersByTime(1))
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')?.textContent).toBe(
         'First SessionFirst Description'
       )
+      expect(firstPreviewRequest).toHaveBeenCalledOnce()
 
       const leave = new MouseEvent('pointerout', { bubbles: true, relatedTarget: second })
       Object.defineProperty(leave, 'pointerType', { value: 'mouse' })
@@ -296,6 +302,84 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')?.textContent).toBe(
         'Second SessionSecond Description'
       )
+      expect(secondPreviewRequest).toHaveBeenCalledOnce()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels a pending Session preview when its row is removed', async () => {
+    vi.useFakeTimers()
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview session={{ id: 'removed', title: 'Removed Session' }}>
+              <button type="button">Removed trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+
+      await act(async () => trigger.dispatchEvent(pointerOver))
+      await act(async () => vi.advanceTimersByTime(1_000))
+      await act(async () =>
+        root.render(<SessionHoverPreviewProvider>{null}</SessionHoverPreviewProvider>)
+      )
+      await act(async () => vi.advanceTimersByTime(1_000))
+
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+      vi.useRealTimers()
+    }
+  })
+
+  it('closes an active Session preview when its row is removed', async () => {
+    vi.useFakeTimers()
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview session={{ id: 'removed', title: 'Removed Session' }}>
+              <button type="button">Removed trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+
+      await act(async () => trigger.dispatchEvent(pointerOver))
+      await act(async () => vi.advanceTimersByTime(2_000))
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
+
+      await act(async () =>
+        root.render(<SessionHoverPreviewProvider>{null}</SessionHoverPreviewProvider>)
+      )
+
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
     } finally {
       act(() => root.unmount())
       container.remove()
@@ -350,12 +434,17 @@ describe('WorkspaceSidebar accessible render', () => {
     const withoutDescription = renderToStaticMarkup(
       <SessionHoverPreviewCard session={{ title: 'Title only', description: '   ' }} />
     )
+    const loading = renderToStaticMarkup(
+      <SessionHoverPreviewCard session={{ title: 'Loading details' }} descriptionLoading />
+    )
 
     expect(html).toContain('data-slot="session-hover-preview"')
     expect(html).toContain('Complete analysis title')
     expect(html).toContain('Compare both cohorts.')
     expect(withoutDescription).toContain('Title only')
     expect(withoutDescription).not.toContain('<p class="mt-2')
+    expect(loading).toContain('aria-busy="true"')
+    expect(loading).toContain('data-slot="session-hover-preview-description-loading"')
   })
 
   it('scrolls only an overflowing Session title and resets it on pointer leave', async () => {

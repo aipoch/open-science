@@ -38,7 +38,8 @@ import { projectPresentedSessionActionability } from './session-wait-reason'
 import {
   SessionHoverPreview,
   SessionHoverPreviewProvider,
-  SessionTitleMarquee
+  SessionTitleMarquee,
+  type SessionPreviewRequest
 } from './SessionHoverPreview'
 
 type WorkspaceSidebarProps = {
@@ -54,6 +55,7 @@ type WorkspaceSidebarProps = {
   isFilesOpen: boolean
   onOpenFiles: () => void
   onOpenSession: (sessionId: string) => void
+  onPreviewSession?: SessionPreviewRequest
   onRenameSession: (session: ChatSession) => void
   canDownloadArtifacts: boolean
   onDownloadArtifacts: (session: ChatSession) => void
@@ -219,6 +221,7 @@ const WorkspaceSidebarView = ({
   isFilesOpen,
   onOpenFiles,
   onOpenSession,
+  onPreviewSession,
   onRenameSession,
   canDownloadArtifacts,
   onDownloadArtifacts,
@@ -504,7 +507,10 @@ const WorkspaceSidebarView = ({
                           {mobileMode ? (
                             openSessionButton
                           ) : (
-                            <SessionHoverPreview session={session}>
+                            <SessionHoverPreview
+                              session={session}
+                              onPreviewRequest={onPreviewSession}
+                            >
                               {openSessionButton}
                             </SessionHoverPreview>
                           )}

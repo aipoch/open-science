@@ -26,6 +26,7 @@ type SessionPreviewContent = {
   description?: string
 }
 type SessionPreviewDetails = SessionPreviewContent & { id: string }
+type SessionPreviewRequest = (sessionId: string) => Promise<void> | void
 
 type SessionHoverPreviewContextValue = {
   activeSessionId: string | null
@@ -196,9 +197,11 @@ const SessionTitleMarquee = ({
 
 const SessionHoverPreviewCard = ({
   session,
+  descriptionLoading = false,
   className
 }: {
   session: SessionPreviewContent
+  descriptionLoading?: boolean
   className?: string
 }): React.JSX.Element => {
   const description = session.description?.trim()
@@ -206,6 +209,7 @@ const SessionHoverPreviewCard = ({
   return (
     <div
       data-slot="session-hover-preview"
+      aria-busy={descriptionLoading || undefined}
       className={cn(
         'w-80 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-dialog',
         'max-h-[min(24rem,calc(100vh-1rem))]',
@@ -219,6 +223,12 @@ const SessionHoverPreviewCard = ({
         <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-5 text-muted-foreground">
           {description}
         </p>
+      ) : descriptionLoading ? (
+        <span
+          data-slot="session-hover-preview-description-loading"
+          className="mt-2 block h-4 w-3/4 animate-pulse rounded bg-muted motion-reduce:animate-none"
+          aria-hidden="true"
+        />
       ) : null}
     </div>
   )
@@ -226,9 +236,11 @@ const SessionHoverPreviewCard = ({
 
 const SessionHoverPreview = ({
   session,
+  onPreviewRequest,
   children
 }: {
   session: SessionPreviewDetails
+  onPreviewRequest?: SessionPreviewRequest
   children: ReactElement
 }): React.JSX.Element => {
   const context = useContext(SessionHoverPreviewContext)
@@ -236,6 +248,28 @@ const SessionHoverPreview = ({
 
   const { activeSessionId, closeNow, keepOpen, requestOpen, scheduleClose } = context
   const open = activeSessionId === session.id
+  const onPreviewRequestRef = useRef(onPreviewRequest)
+  const [descriptionLoading, setDescriptionLoading] = useState(false)
+
+  useEffect(() => {
+    onPreviewRequestRef.current = onPreviewRequest
+  }, [onPreviewRequest])
+
+  useEffect(() => {
+    if (!open) return
+
+    const request = onPreviewRequestRef.current?.(session.id)
+    if (!request) {
+      void Promise.resolve().then(() => setDescriptionLoading(false))
+      return
+    }
+    void Promise.resolve().then(() => setDescriptionLoading(true))
+    void request.finally(() => {
+      setDescriptionLoading(false)
+    })
+  }, [open, session.id])
+
+  useEffect(() => () => closeNow(session.id), [closeNow, session.id])
 
   return (
     <Tooltip open={open}>
@@ -264,7 +298,10 @@ const SessionHoverPreview = ({
         onEscapeKeyDown={() => closeNow(session.id)}
         className="max-w-none overflow-visible bg-transparent p-0 text-inherit shadow-none motion-reduce:animate-none"
       >
-        <SessionHoverPreviewCard session={session} />
+        <SessionHoverPreviewCard
+          session={session}
+          descriptionLoading={open && descriptionLoading}
+        />
       </TooltipContent>
     </Tooltip>
   )
@@ -278,3 +315,4 @@ export {
   SessionHoverPreviewProvider,
   SessionTitleMarquee
 }
+export type { SessionPreviewRequest }
