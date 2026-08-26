@@ -28,9 +28,12 @@ const clickPermissionDecision = async (page: Page, decision: 'allow' | 'deny'): 
     .getByTestId(decision === 'allow' ? 'allow-primary' : 'deny-button')
   await expect(button).toBeEnabled()
   // Windows E2E can raise a session-persistence conflict toast over the sticky
-  // Allow/Deny row (`fixed bottom-3 right-3 z-50`). Retry reloads the Session
-  // and drops the permission prompt, so click through the overlay.
-  await button.click({ force: true })
+  // Allow/Deny row. A pointer click, even with force, still hits that overlay;
+  // Retry would reload the Session and drop the prompt. Activate the button
+  // through its DOM click handler instead.
+  await button.evaluate((element: HTMLButtonElement) => {
+    element.click()
+  })
 }
 
 test('edits and navigates message revisions that persist after relaunch', async ({ app }) => {
