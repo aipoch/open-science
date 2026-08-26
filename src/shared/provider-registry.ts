@@ -359,7 +359,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'glm-5.1', contextWindow: 200_000 },
       { id: 'glm-5', contextWindow: 200_000 },
       { id: 'glm-5v-turbo', contextWindow: 200_000 },
-      { id: 'glm-5-turbo', contextWindow: 200_000 }
+      { id: 'glm-5-turbo', contextWindow: 200_000 },
+      { id: 'glm-4.5-air', contextWindow: 128_000 }
     ],
     // GLM marks vision variants with a `v` after the major version (e.g. glm-5v-turbo); the pattern
     // also covers future `Nv` ids the live refresh may surface.

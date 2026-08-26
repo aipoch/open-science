@@ -97,6 +97,13 @@ describe('provider registry', () => {
     )
   })
 
+  it('offers GLM-4.5-Air through the official Zhipu provider', () => {
+    expect(getOfficialVendor('zhipu')?.models).toContainEqual({
+      id: 'glm-4.5-air',
+      contextWindow: 128_000
+    })
+  })
+
   it('routes the GLM Coding Plan through the /api/coding OpenAI path, per region', () => {
     expect(vendorHasRegions('glmcodingplan')).toBe(true)
     expect(resolveVendorApiEndpoints('glmcodingplan')).toEqual(['anthropic', 'openai'])
