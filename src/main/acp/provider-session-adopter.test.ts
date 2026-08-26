@@ -74,6 +74,7 @@ const createHarness = (
     initialBackend?: AcpBackendGenerationView
     capabilityPolicy?: SessionCapabilityPolicy
     projectAgentContext?: string
+    projectAgentContextError?: Error
     specialistIdentity?: { append: string; prefix: string }
     specialistSkills?: EffectiveSpecialistSkills
   } = {}
@@ -169,9 +170,13 @@ const createHarness = (
     resolveSpecialistSkills: options.specialistSkills
       ? vi.fn(async () => options.specialistSkills as EffectiveSpecialistSkills)
       : undefined,
-    resolveProjectAgentContext: options.projectAgentContext
-      ? vi.fn(async () => options.projectAgentContext)
-      : undefined,
+    resolveProjectAgentContext: options.projectAgentContextError
+      ? vi.fn(async () => {
+          throw options.projectAgentContextError
+        })
+      : options.projectAgentContext
+        ? vi.fn(async () => options.projectAgentContext)
+        : undefined,
     peekClaudeReplay: () => options.handoffAppend,
     commitClaudeReplay,
     updateCwd: () => order.push('cwd callback'),
@@ -475,6 +480,17 @@ describe('AcpProviderSessionAdopter', () => {
     expect(
       harness.registry.lookup('stable-app-session')?.aggregate.snapshot().sessionSetupPromptPrefix
     ).toContain('Always cite DOIs.')
+  })
+
+  it('does not adopt a provider Session when Project Agent Context resolution fails', async () => {
+    const failure = new Error('database is locked')
+    const harness = createHarness({ projectAgentContextError: failure })
+
+    await expect(harness.adopt()).rejects.toBe(failure)
+
+    expect(harness.connection.agent.buildSession).not.toHaveBeenCalled()
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(harness.registry.lookup('stable-app-session')).toBeUndefined()
   })
 
   it('does not roll back publication when the state observer fails', async () => {

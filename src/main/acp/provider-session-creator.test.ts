@@ -54,6 +54,7 @@ const createHarness = (options: {
   bridgeMcpAliasesEnabled?: boolean
   backendId?: string
   projectAgentContext?: string
+  projectAgentContextError?: Error
   specialistIdentity?: { append: string; prefix: string }
 }): CreatorHarness => {
   const order = options.order ?? []
@@ -138,9 +139,13 @@ const createHarness = (options: {
     },
     capabilities: { provision },
     capabilityPolicy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-    resolveProjectAgentContext: options.projectAgentContext
-      ? vi.fn(async () => options.projectAgentContext)
-      : undefined,
+    resolveProjectAgentContext: options.projectAgentContextError
+      ? vi.fn(async () => {
+          throw options.projectAgentContextError
+        })
+      : options.projectAgentContext
+        ? vi.fn(async () => options.projectAgentContext)
+        : undefined,
     resolveSpecialistIdentity: options.specialistIdentity
       ? vi.fn(async () => options.specialistIdentity)
       : undefined,
@@ -317,5 +322,15 @@ describe('AcpProviderSessionCreator', () => {
 
     expect(harness.sessionSetupAppends.length).toBeGreaterThan(0)
     expect(harness.sessionSetupAppends.flat()).not.toContain('Always cite DOIs.')
+  })
+
+  it('does not start a provider Session when Project Agent Context resolution fails', async () => {
+    const failure = new Error('database is locked')
+    const harness = createHarness({ projectAgentContextError: failure })
+
+    await expect(harness.creator.create({ projectId: 'project-1' })).rejects.toBe(failure)
+
+    expect(harness.provision).not.toHaveBeenCalled()
+    expect(harness.buildSession).not.toHaveBeenCalled()
   })
 })

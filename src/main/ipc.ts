@@ -897,7 +897,12 @@ const createApplicationModules = async (
     onSessionsReconciled: (sessionIds) => visionEvidenceRepository.reconcileSessions(sessionIds)
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
-    updateArchive: (request) => archiveCoordinator.updateProjectArchive(request)
+    updateArchive: (request) => archiveCoordinator.updateProjectArchive(request),
+    onAgentContextChanged: () => {
+      // Runtime generations capture Project Agent Context during Session setup. Retiring them marks
+      // idle Sessions for resume immediately; an in-flight turn drains before its next prompt.
+      void runtimeRef.current?.requestProjectAgentContextReload()
+    }
   })
   const projectFilesHandlers = createProjectFilesHandlers(
     projectFilesRepository,

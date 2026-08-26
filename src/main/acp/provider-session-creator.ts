@@ -204,13 +204,8 @@ export class AcpProviderSessionCreator {
 
   private async resolveProjectAgentContext(projectId: string): Promise<string | undefined> {
     if (!this.deps.resolveProjectAgentContext) return undefined
-    try {
-      const context = await this.deps.resolveProjectAgentContext(projectId)
-      return this.presentation.projectAgentContext(context)
-    } catch (error) {
-      this.safeLogError('project Agent Context resolution failed', error, undefined, false)
-      return undefined
-    }
+    const context = await this.deps.resolveProjectAgentContext(projectId)
+    return this.presentation.projectAgentContext(context)
   }
 
   private async resolveSpecialist(

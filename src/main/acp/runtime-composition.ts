@@ -56,8 +56,8 @@ const log = createLogger('acp')
 
 // Builds the session-setup resolver for a project's Agent Context system-prompt append. The ACP
 // projectId carries the Project id; unknown ids (e.g. the DEFAULT_ARTIFACT_PROJECT_ID fallback
-// namespace), blank contexts, and lookup failures all yield undefined so session setup proceeds
-// without an append.
+// namespace) and blank contexts yield undefined. Lookup failures stay fatal so a Session cannot
+// silently start without a configured policy boundary.
 const createProjectAgentContextResolver = (repository: {
   get: (id: string) => Promise<{ agentContext?: string } | null>
 }): ((projectId: string) => Promise<string | undefined>) => {
@@ -68,7 +68,9 @@ const createProjectAgentContextResolver = (repository: {
       return context ? context : undefined
     } catch (error) {
       log.warn('project Agent Context lookup failed', errorLogFields(error))
-      return undefined
+      throw new Error(
+        'Project Agent Context could not be loaded. Retry after Project storage recovers.'
+      )
     }
   }
 }
