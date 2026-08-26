@@ -275,6 +275,9 @@ export const resilientDownload = async (
     try {
       let offset = await partSize()
       if (offset > 0 && !resumeValidator) {
+        // A same-process retry is not proof that the remote representation stayed unchanged. Without
+        // a strong ETag or Last-Modified value there is no valid If-Range precondition, so retaining
+        // these bytes would recreate the blind cross-version splice this helper is meant to prevent.
         await removeFile(partPath)
         await removeFile(metadataPath).catch(() => undefined)
         offset = 0
