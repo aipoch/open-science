@@ -3290,17 +3290,22 @@ describe('SettingsService: official vendors', () => {
       await service.upsertProvider({ type: 'official', name: 'GLM', vendorId: 'zhipu', key: 'k' })
     ).providers[0]
 
+    // The vendor's first catalog entry is the fallback default; resolve it from the catalog so
+    // the assertion tracks registry ordering (newer GLM models become the default over time).
+    const defaultModel = created.models[0]
+    expect(defaultModel).toBe('glm-5.3')
+
     // A model in the catalog is honored.
     let snapshot = await service.setActiveProvider(created.id, 'glm-5.2')
     expect(snapshot.activeModel).toBe('glm-5.2')
 
     // An unknown model falls back to the vendor's first catalog entry.
     snapshot = await service.setActiveProvider(created.id, 'not-a-model')
-    expect(snapshot.activeModel).toBe('glm-5.2')
+    expect(snapshot.activeModel).toBe(defaultModel)
 
     // No model given also defaults to the first catalog entry.
     snapshot = await service.setActiveProvider(created.id)
-    expect(snapshot.activeModel).toBe('glm-5.2')
+    expect(snapshot.activeModel).toBe(defaultModel)
   })
 
   it('builds spawn env from the registry base URL and the active model', async () => {
