@@ -66,7 +66,7 @@ import type {
 import { createLogger, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import type { PackageMirror } from '../../shared/mirror'
-import { resolveNetworkProxySettings, type NetworkProxySettings } from '../../shared/network-proxy'
+import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
@@ -112,6 +112,7 @@ import { ScenarioModelOwner, createScenarioModels } from './scenario-model-owner
 import type { SystemProxyEnvironment } from './system-proxy'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
+import { NetworkProxySettingsOwner } from './network-proxy-settings-owner'
 
 // Outcome of uninstalling a managed runtime. `activeBackendAffected` is true only when the removed
 // runtime backed the active framework, so the IPC layer reconnects the agent for that case alone —
@@ -190,7 +191,7 @@ class SettingsService {
   private readonly backendResolver: AgentBackendResolver
   private readonly scenarioModels: ScenarioModelOwner
   private readonly storageRoot: string
-  private readonly applyNetworkProxy: (settings: NetworkProxySettings) => Promise<void>
+  private readonly networkProxy: NetworkProxySettingsOwner
   private readonly userClaudeDir: string
   private readonly log: Logger
   private customServerAuthenticator?: (serverId: string) => Promise<void>
@@ -199,7 +200,10 @@ class SettingsService {
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
-    this.applyNetworkProxy = options.applyNetworkProxy ?? (async () => undefined)
+    this.networkProxy = new NetworkProxySettingsOwner({
+      repository: this.repository,
+      apply: options.applyNetworkProxy ?? (async () => undefined)
+    })
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
@@ -355,11 +359,8 @@ class SettingsService {
     return this.notebookRuntimeSettings.setPackageMirror(request)
   }
 
-  async setNetworkProxy(request: SetNetworkProxyRequest): Promise<NetworkProxySettings> {
-    const settings = await this.repository.setNetworkProxy(request)
-    const networkProxy = resolveNetworkProxySettings(settings.networkProxy)
-    await this.applyNetworkProxy(networkProxy)
-    return networkProxy
+  setNetworkProxy(request: SetNetworkProxyRequest): Promise<NetworkProxySettings> {
+    return this.networkProxy.set(request)
   }
 
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {

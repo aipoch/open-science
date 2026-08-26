@@ -516,6 +516,7 @@
     "settings_service_facade": {
       "ownerPaths": [
         "src/main/settings/service.ts",
+        "src/main/settings/network-proxy-settings-owner.ts",
         "src/main/settings/reviewer-model-owner.ts",
         "src/main/settings/subagent-model-owner.ts",
         "src/main/settings/vision-model-owner.ts"

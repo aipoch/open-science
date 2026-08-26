@@ -13,6 +13,10 @@ import type { CustomMcpServerConfig } from './mcp-client-manager'
 import { OAuthCallbackServer, type PersistentOAuthClientProvider } from './oauth-client'
 import { EXTRA_PATH_DIRS } from '../settings/shell-path'
 
+const { netFetch } = vi.hoisted(() => ({ netFetch: vi.fn() }))
+
+vi.mock('electron', () => ({ net: { fetch: netFetch } }))
+
 afterEach(() => vi.restoreAllMocks())
 
 // Builds an in-memory MCP server with one echo tool and one always-erroring tool, and an
@@ -637,6 +641,28 @@ describe('buildTransport', () => {
     })
 
     expect(transport).toBeInstanceOf(StreamableHTTPClientTransport)
+  })
+
+  it('routes streamable HTTP requests through the configured Electron proxy session', async () => {
+    const directFetch = vi.fn().mockRejectedValue(new Error('direct path unavailable'))
+    vi.stubGlobal('fetch', directFetch)
+    netFetch.mockResolvedValue(new Response(null, { status: 202 }))
+    const transport = buildTransport({
+      id: 'srv-http',
+      name: 'http-server',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test'
+    })
+
+    await transport.start()
+    await transport.send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+
+    expect(netFetch).toHaveBeenCalledWith(
+      new URL('https://mcp.example.test'),
+      expect.objectContaining({ method: 'POST' })
+    )
+    expect(directFetch).not.toHaveBeenCalled()
+    await transport.close()
   })
 
   it('throws when a streamable_http config is missing a url', () => {

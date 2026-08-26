@@ -534,6 +534,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/agent-runtime-manager.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/connector-settings.ts',
+      'src/main/settings/network-proxy-settings-owner.ts',
       'src/main/settings/notebook-runtime-settings.ts',
       'src/main/settings/preferences.ts',
       'src/main/settings/provider-accounts.ts',
@@ -832,6 +833,7 @@ describe('Settings backend ownership architecture', () => {
     ])
     expect(manifest.modules.settings_service_facade.ownerPaths).toEqual([
       'src/main/settings/service.ts',
+      'src/main/settings/network-proxy-settings-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/subagent-model-owner.ts',
       'src/main/settings/vision-model-owner.ts'

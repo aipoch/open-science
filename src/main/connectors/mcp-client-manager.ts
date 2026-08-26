@@ -11,6 +11,7 @@ import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-client'
 import type { StoredCustomMcpOAuthState } from '../settings/types'
 import { augmentedPathEnv } from '../settings/shell-path'
+import { netFetchStandard } from '../skills/net-fetch'
 
 // Config for a user-added custom MCP server. OAuth state is a transient main-process projection;
 // stdio remains non-OAuth and remote servers can use OAuth, static headers, or neither.
@@ -118,6 +119,7 @@ export function buildTransport(
         throw new Error(`custom MCP server "${config.name}" is missing a url for streamable_http`)
       }
       return new StreamableHTTPClientTransport(new URL(config.url), {
+        fetch: netFetchStandard,
         ...(authProvider ? { authProvider } : {}),
         ...(config.headers ? { requestInit: { headers: config.headers } } : {})
       })
@@ -127,6 +129,7 @@ export function buildTransport(
         throw new Error(`custom MCP server "${config.name}" is missing a url for sse`)
       }
       return new SSEClientTransport(new URL(config.url), {
+        fetch: netFetchStandard,
         ...(authProvider ? { authProvider } : {}),
         ...(config.headers ? { requestInit: { headers: config.headers } } : {})
       })
