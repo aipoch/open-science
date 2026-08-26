@@ -390,7 +390,7 @@ describe('WorkspaceMessageItem missing artifact badge', () => {
 })
 
 describe('WorkspaceMessageItem turn token usage', () => {
-  it('keeps completion metadata compact and reveals response token totals from Calls', async () => {
+  it('keeps completion metadata compact and reveals response token totals from Usage', async () => {
     await renderMessageItem(
       createMessage({
         role: 'agent',
@@ -625,7 +625,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(segments[3]?.className).toContain('bg-chart-2')
   })
 
-  it('keeps the Calls popover open while the pointer crosses into it, then closes it', async () => {
+  it('keeps the Usage popover open while the pointer crosses into it, then closes it', async () => {
     vi.useFakeTimers()
     await renderMessageItem(
       createMessage({
@@ -662,7 +662,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).toBeNull()
   })
 
-  it('closes the Calls popover with Escape or when keyboard focus leaves it', async () => {
+  it('closes the Usage popover with Escape or when keyboard focus leaves it', async () => {
     vi.useFakeTimers()
     await renderMessageItem(
       createMessage({
@@ -705,7 +705,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).toBeNull()
   })
 
-  it('clears a pending Calls close when the token summary unmounts', async () => {
+  it('clears a pending Usage close when the token summary unmounts', async () => {
     vi.useFakeTimers()
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
     const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
@@ -759,7 +759,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(footer?.querySelector('[data-slot="turn-token-usage"]')).toBeNull()
   })
 
-  it('keeps Calls available when a persisted completion time is out of range', async () => {
+  it('keeps Usage available when a persisted completion time is out of range', async () => {
     await renderMessageItem(
       createMessage({
         role: 'agent',
@@ -798,7 +798,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(footer?.querySelector('[data-slot="turn-token-usage"]')).not.toBeNull()
   })
 
-  it('keeps Calls beside completion when elapsed metadata is unavailable', async () => {
+  it('keeps Usage beside completion when elapsed metadata is unavailable', async () => {
     await renderMessageItem(
       createMessage({
         role: 'agent',
@@ -815,7 +815,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(container.textContent).not.toContain('Input 12,345')
   })
 
-  it('reveals unavailable totals from the Calls summary when the agent did not report them', async () => {
+  it('reveals unavailable totals from the Usage summary when the agent did not report them', async () => {
     await renderMessageItem(
       createMessage({
         role: 'agent',

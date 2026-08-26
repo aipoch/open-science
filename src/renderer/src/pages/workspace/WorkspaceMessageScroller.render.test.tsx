@@ -963,7 +963,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('Answer text')
   })
 
-  it('calculates elapsed time and keeps token totals behind the Calls summary', async () => {
+  it('calculates elapsed time and keeps token totals behind the Usage summary', async () => {
     const html = await renderScroller(
       createSession({
         status: 'idle',
