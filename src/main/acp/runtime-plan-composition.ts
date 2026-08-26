@@ -138,8 +138,10 @@ const composeAcpRuntimePlanWorkflow = (
     projectId: string,
     sessionId: string,
     commandId: string
-  ): Promise<boolean> =>
-    continuationOwner?.begin(projectId, sessionId, commandId) ?? Promise.resolve(false)
+  ): Promise<boolean> => {
+    if (!continuationOwner) return false
+    return continuationOwner.begin(projectId, sessionId, commandId)
+  }
   const clearContinuationReceipt = async (
     projectId: string,
     sessionId: string,
@@ -414,10 +416,15 @@ const composeAcpRuntimePlanWorkflow = (
     publishProjection(input.sessionId, result.projection)
     return result
   }
-  const projection = (projectId: string, sessionId: string): Promise<ActivePlanProjection | null> =>
-    service?.getProjection(projectId, sessionId, {
+  const projection = (
+    projectId: string,
+    sessionId: string
+  ): Promise<ActivePlanProjection | null> => {
+    if (!service) return Promise.resolve(null)
+    return service.getProjection(projectId, sessionId, {
       interactionIsLive: sessionInteractions.current(sessionId) !== undefined
-    }) ?? Promise.resolve(null)
+    })
+  }
   const respond = async (input: PlanResponseCommand): Promise<PlanResponseResult> => {
     if (!service) throw new Error('Session Plan capability is not configured.')
     const approvalInteractionId = interactions.approvalInteractionIdFor(input.sessionId)

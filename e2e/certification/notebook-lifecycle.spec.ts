@@ -5,8 +5,8 @@ import { createProject, openRecentSession, sendPrompt } from './helpers'
 test('runs and shuts down a Notebook session through its packaged MCP boundary', async ({
   app
 }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
   await createProject(page, 'Notebook lifecycle evidence')
   await sendPrompt(page, 'Verify the notebook lifecycle.', 'Notebook lifecycle verified for')
 

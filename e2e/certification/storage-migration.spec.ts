@@ -3,8 +3,8 @@ import { test } from '../fixtures/electron-app'
 import { createProject, openRecentSession, sendPrompt } from './helpers'
 
 test('stages a verified data-root move and recovers on discard', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
   await createProject(page, 'Storage migration evidence')
   await sendPrompt(page, 'Persist the migration fixture.', 'Deterministic reply:')
 

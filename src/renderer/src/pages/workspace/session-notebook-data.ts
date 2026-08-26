@@ -1,3 +1,4 @@
+import { isCurrentInFlight } from '../../../../shared/in-flight-promise'
 import type {
   NotebookRunCursor,
   NotebookRunPage,
@@ -148,7 +149,9 @@ const loadSessionNotebookData = async (
   try {
     return await pending
   } finally {
-    if (pendingPages.get(pendingKey)?.promise === pending) pendingPages.delete(pendingKey)
+    if (isCurrentInFlight(pendingPages.get(pendingKey)?.promise, pending)) {
+      pendingPages.delete(pendingKey)
+    }
   }
 }
 

@@ -541,7 +541,7 @@ const sendWorkspaceMessage = async (
       drainRuntimeEvents: lifecycle.drainRuntimeEvents
     })
     if (!prepared) return undefined
-    let promptAttachments = effectiveAttachments
+    let promptAttachments
     try {
       promptAttachments = await finalizeWorkspaceAttachments({
         sessionId,

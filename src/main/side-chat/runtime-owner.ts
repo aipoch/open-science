@@ -10,21 +10,22 @@ import {
   type AcpRuntimeEvent
 } from '../../shared/acp'
 import type { AcpCreateSessionResponse } from '../../shared/acp'
-import type { PersistedSideChat } from '../../shared/session-persistence'
+import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
-import type {
-  SideChatEntry,
-  SideChatPromptRequest,
-  SideChatRuntimeEvent,
-  SideChatSendMessageRequest,
-  SideChatSendMessageResult,
-  SideChatSessionRequest,
-  SideChatSnapshot,
-  SideChatSnapshotList,
-  SideChatStartRequest,
-  SideChatStartResponse
+import type { PersistedSideChat } from '../../shared/session-persistence'
+import {
+  SIDE_CHAT_MESSAGE_LIMIT,
+  type SideChatEntry,
+  type SideChatPromptRequest,
+  type SideChatRuntimeEvent,
+  type SideChatSendMessageRequest,
+  type SideChatSendMessageResult,
+  type SideChatSessionRequest,
+  type SideChatSnapshot,
+  type SideChatSnapshotList,
+  type SideChatStartRequest,
+  type SideChatStartResponse
 } from '../../shared/side-chat'
-import { SIDE_CHAT_MESSAGE_LIMIT } from '../../shared/side-chat'
 import type { AgentModelChangeTarget, ResolvedAgentBackend } from '../agent-framework'
 import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
@@ -1403,7 +1404,7 @@ class SideChatRuntimeOwner {
       this.touch(active)
       throw error
     } finally {
-      if (this.closingByParent.get(active.parentSessionId) === closing) {
+      if (isCurrentInFlight(this.closingByParent.get(active.parentSessionId), closing)) {
         this.closingByParent.delete(active.parentSessionId)
       }
     }
@@ -1522,7 +1523,7 @@ class SideChatRuntimeOwner {
     try {
       await closing
     } finally {
-      if (this.closingByParent.get(dormant.parentSessionId) === closing) {
+      if (isCurrentInFlight(this.closingByParent.get(dormant.parentSessionId), closing)) {
         this.closingByParent.delete(dormant.parentSessionId)
       }
     }

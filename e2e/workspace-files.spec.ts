@@ -20,8 +20,8 @@ const createProject = async (page: Page): Promise<void> => {
 }
 
 test('uploads an attachment and previews it from Project files', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await createProject(page)
 
   await page.locator('input[type="file"][multiple]').setInputFiles({
@@ -48,8 +48,8 @@ test('uploads an attachment and previews it from Project files', async ({ app })
 })
 
 test('loads managed image previews from Project files', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await createProject(page)
 
   await page.locator('input[type="file"][multiple]').setInputFiles({

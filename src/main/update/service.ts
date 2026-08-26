@@ -5,6 +5,7 @@ import { basename, join } from 'node:path'
 import { app, BrowserWindow, dialog, shell } from 'electron'
 
 import { APP } from '../../shared/app-config'
+import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {
   isNewer,
   selectDownload,
@@ -224,7 +225,7 @@ export class UpdateService implements UpdateStrategy {
     try {
       return await lifecycle
     } finally {
-      if (this.checkLifecycle === lifecycle) this.checkLifecycle = undefined
+      if (isCurrentInFlight(this.checkLifecycle, lifecycle)) this.checkLifecycle = undefined
     }
   }
 

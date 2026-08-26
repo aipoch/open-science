@@ -2519,14 +2519,18 @@ const createApplicationModules = async (
       shutdownForQuit: async () => {
         const [main, reviewer] = await Promise.all([
           runtime.shutdownForQuit(),
-          reviewerModelRuntimeShutdown?.shutdown() ?? Promise.resolve({ reaped: true })
+          reviewerModelRuntimeShutdown
+            ? reviewerModelRuntimeShutdown.shutdown()
+            : Promise.resolve({ reaped: true })
         ])
         return { reaped: main.reaped && reviewer.reaped }
       },
       shutdownForUpdateGate: async () => {
         const [main, reviewer] = await Promise.all([
           runtime.shutdownForUpdateGate(),
-          reviewerModelRuntimeShutdown?.shutdownForUpdateGate() ?? Promise.resolve({ reaped: true })
+          reviewerModelRuntimeShutdown
+            ? reviewerModelRuntimeShutdown.shutdownForUpdateGate()
+            : Promise.resolve({ reaped: true })
         ])
         return { reaped: main.reaped && reviewer.reaped }
       }

@@ -12,8 +12,8 @@ test.use({ windowMode: 'normal' })
 // While the intent text is still pacing, the tool card and the loading indicator must
 // render in real time (only later text messages wait behind the presentation barrier).
 test('shows tool cards and indicators while the intent text is still pacing', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })

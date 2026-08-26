@@ -25,8 +25,8 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
   app
 }, testInfo) => {
   playwrightTest.setTimeout(180_000)
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  await app.configureFakeAgent()
   await app.beginResourceProfile({
     sampleIntervalMs,
     ...(process.env.OPEN_SCIENCE_PERF_OUTPUT_ROOT
@@ -36,7 +36,7 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
 
   let result: Awaited<ReturnType<typeof app.finishResourceProfile>> | undefined
   try {
-    page = await app.restart({ resourceProfilePhase: 'startup' })
+    let page = await app.restart({ resourceProfilePhase: 'startup' })
 
     await app.markResourceProfilePhase('idle')
     await page.waitForTimeout(phaseDurationMs)

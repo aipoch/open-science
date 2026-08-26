@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
-import type { NotebookRunProvenanceContext } from '../../shared/notebook'
 import {
   computeProbeSnapshot,
   type AgentComputeHostSummary,
@@ -9,6 +8,8 @@ import {
   type ComputeHostDetails
 } from '../../shared/compute'
 import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
+import { isCurrentInFlight } from '../../shared/in-flight-promise'
+import type { NotebookRunProvenanceContext } from '../../shared/notebook'
 import type { NotebookRpcConnection } from './mcp-server'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
 import {
@@ -1143,8 +1144,9 @@ class NotebookLocalRpcServer {
       },
       completeControlInvocation: async (controlInvocationId) => {
         if (!ownedControlInvocationIds.has(controlInvocationId)) return []
-        const images = await (this.hostViewImage?.complete(controlInvocationId) ??
-          Promise.resolve([]))
+        const images = this.hostViewImage
+          ? await this.hostViewImage.complete(controlInvocationId)
+          : []
         ownedControlInvocationIds.delete(controlInvocationId)
         return images
       },
@@ -2227,7 +2229,7 @@ class NotebookLocalRpcServer {
             }
             return result
           } catch (error) {
-            if (sessionInvocations.get(invocationId)?.submission === submission) {
+            if (isCurrentInFlight(sessionInvocations.get(invocationId)?.submission, submission)) {
               sessionInvocations.delete(invocationId)
               if (
                 sessionInvocations.size === 0 &&

@@ -159,6 +159,8 @@ def main():
             try:
                 time.sleep(30)
             except KeyboardInterrupt:
+                # The cancel fixture delivers SIGINT during sleep; continue so the
+                # request still gets a matching response.
                 pass
         _respond(req_id, code)
 

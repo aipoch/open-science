@@ -29,8 +29,8 @@ const runLayoutStabilityJourney = async (
   prompt: string,
   agentStatus?: string
 ): Promise<void> => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -97,8 +97,8 @@ for (const scenario of cases) {
 test('keeps a running tool stationary while one line of buffered Markdown finishes rendering', async ({
   app
 }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })

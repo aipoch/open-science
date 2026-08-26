@@ -26,6 +26,7 @@ import type {
   NotebookSessionReference,
   NotebookSessionState
 } from '../../../../shared/notebook'
+import { isCurrentInFlight } from '../../../../shared/in-flight-promise'
 import { resolveProjectId } from '../../../../shared/project-scope'
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
 import { shouldProvisionR } from './lazy-r'
@@ -441,7 +442,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     try {
       return await load
     } finally {
-      if (stateLoadInFlight.current === load) {
+      if (isCurrentInFlight(stateLoadInFlight.current, load)) {
         stateLoadInFlight.current = undefined
       }
     }

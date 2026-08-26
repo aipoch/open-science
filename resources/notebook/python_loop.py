@@ -525,6 +525,7 @@ def _inspect_namespace(include_private=False):
             try:
                 entry["size_bytes"] = sys.getsizeof(value)
             except Exception:
+                # Custom __sizeof__ implementations can raise; size is optional metadata.
                 pass
         shape = _namespace_shape(value)
         if shape:

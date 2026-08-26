@@ -252,8 +252,8 @@ test('projects real production-composed delegation, permission, and Stop lifecyc
   app
 }) => {
   test.setTimeout(180_000)
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await createProject(page, 'Production delegation release gate')
 
   await sendPrompt(
@@ -320,8 +320,8 @@ test('routes a delegated user question through one durable card and same-Frame c
   app
 }) => {
   test.setTimeout(180_000)
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   const projectId = await createProject(page, 'Delegated user question release gate')
 
   await sendPrompt(
@@ -475,8 +475,8 @@ test('routes a delegated user question through one durable card and same-Frame c
 
 test('rejects an unsupported Specialist configuration before child admission', async ({ app }) => {
   test.setTimeout(120_000)
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await createProject(page, 'Unsupported delegation release gate')
   await sendPrompt(
     page,
@@ -505,8 +505,8 @@ test('persists production-composed structured output submitted by the child capa
   app
 }) => {
   test.setTimeout(180_000)
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
   await createProject(page, 'Structured output release gate')
 
   await sendPrompt(
@@ -561,8 +561,8 @@ test('routes reliable Main and child messages through production Host RPC and th
   app
 }) => {
   test.setTimeout(180_000)
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   const projectId = await createProject(page, 'Reliable messaging release gate')
 
   await sendPrompt(
@@ -616,8 +616,8 @@ test('parks an upward message on branch switch and resumes it after restart and 
   app
 }) => {
   test.setTimeout(180_000)
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
   const projectId = await createProject(page, 'Reliable branch park release gate')
 
   const composer = page.getByRole('textbox', { name: 'Ask anything' })
@@ -789,8 +789,8 @@ test('recovers a post-fence receipt persistence failure as uncertain after resta
   app
 }) => {
   test.setTimeout(180_000)
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
   const projectId = await createProject(page, 'Reliable failure window release gate')
 
   await sendPrompt(
@@ -860,8 +860,8 @@ test('recovers a post-fence receipt persistence failure as uncertain after resta
 
 test('fairly schedules two upward lanes with a concurrent real user prompt', async ({ app }) => {
   test.setTimeout(180_000)
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   const projectId = await createProject(page, 'Reliable fairness release gate')
 
   const composer = page.getByRole('textbox', { name: 'Ask anything' })
@@ -911,8 +911,8 @@ test('fairly schedules two upward lanes with a concurrent real user prompt', asy
 
 test('stops only the active branch and exposes a retryable partial failure', async ({ app }) => {
   test.setTimeout(180_000)
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await createProject(page, 'Branch Stop release gate')
 
   await sendPrompt(page, BRANCH_A_PROMPT, 'Inactive branch child A is running.', 120_000)
@@ -969,8 +969,8 @@ test('inherits a real root Specialist when profile is omitted and preserves its 
   app
 }) => {
   test.setTimeout(180_000)
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
   await createProject(page, 'Inherited Specialist release gate')
   const specialist = await page.evaluate(async () =>
     window.api.specialist.create({
@@ -1007,8 +1007,8 @@ test('inherits a real root Specialist when profile is omitted and preserves its 
 test('ships one durable, scalable, keyboard-operable persisted Subagent surface', async ({
   app
 }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
   const projectId = await createProject(page, 'Subagent release gate')
   await seedDelegatedWork(page, projectId)
 

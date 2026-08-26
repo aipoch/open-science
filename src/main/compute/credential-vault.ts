@@ -156,32 +156,29 @@ class CredentialVault {
       }
     }
     const ciphertext = Buffer.from(credential.ciphertext)
-    let password = ''
     try {
-      password = this.cipher.decryptString(ciphertext)
-      validateComputePassword(password)
+      validateComputePassword(this.cipher.decryptString(ciphertext))
     } catch (error) {
       if (error instanceof ComputeConnectionError) throw error
       throw new ComputeConnectionError('credential_unavailable')
-    } finally {
-      password = ''
     }
     return Object.freeze({
       withPassword: async <Result>(
         operation: (password: string) => Promise<Result>
       ): Promise<Result> => {
-        let leasedPassword = ''
+        const lease = { plaintext: '' }
         try {
-          leasedPassword = this.cipher.decryptString(ciphertext)
-          validateComputePassword(leasedPassword)
+          lease.plaintext = this.cipher.decryptString(ciphertext)
+          validateComputePassword(lease.plaintext)
         } catch (error) {
+          lease.plaintext = ''
           if (error instanceof ComputeConnectionError) throw error
           throw new ComputeConnectionError('credential_unavailable')
         }
         try {
-          return await operation(leasedPassword)
+          return await operation(lease.plaintext)
         } finally {
-          leasedPassword = ''
+          lease.plaintext = ''
         }
       }
     })

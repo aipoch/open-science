@@ -299,8 +299,8 @@ test('keeps home actions and content inside compact viewports', async ({ app }) 
 test('keeps representative conversation, project, and recovery states visually stable', async ({
   app
 }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
   await prepareVisualPage(page)
   await setVisualState(page, { theme: 'Light', width: 1280 })
   const projectId = await createProject(page, 'Visual state matrix')

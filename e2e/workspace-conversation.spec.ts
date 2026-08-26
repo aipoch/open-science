@@ -18,8 +18,8 @@ const createProject = async (page: Page): Promise<void> => {
 }
 
 test('edits and navigates message revisions that persist after relaunch', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
   await createProject(page)
 
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
@@ -80,8 +80,8 @@ test('edits and navigates message revisions that persist after relaunch', async 
 test('resolves Agent permission requests through both Allow and Deny decisions', async ({
   app
 }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await createProject(page)
 
   const composer = page.getByRole('textbox', { name: 'Ask anything' })
@@ -133,8 +133,8 @@ test('resolves Agent permission requests through both Allow and Deny decisions',
 test('shows context compaction loading and completion inside the Session transcript', async ({
   app
 }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await createProject(page)
 
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(CONTEXT_COMPACTION_PROMPT)
@@ -162,8 +162,8 @@ test('shows context compaction loading and completion inside the Session transcr
 })
 
 test('archives a completed session from its mobile sidebar actions', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await createProject(page)
 
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)

@@ -1,3 +1,4 @@
+import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import type { Project } from '../../shared/projects'
 import type { ProjectSessionDeletionResult } from '../session-persistence/coordinator'
 import type { ProjectSessionDeletionState } from '../session-persistence/repository'
@@ -219,7 +220,7 @@ class ProjectDeletionCoordinator {
       this.isRecoveryComplete = false
       throw error
     } finally {
-      if (this.recoveryPromise === recovery) this.recoveryPromise = undefined
+      if (isCurrentInFlight(this.recoveryPromise, recovery)) this.recoveryPromise = undefined
     }
   }
 
