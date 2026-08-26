@@ -2,7 +2,8 @@
 
 import type {
   NotebookEnvironmentPackage,
-  NotebookLiveEnvironmentOverlay
+  NotebookLiveEnvironmentOverlay,
+  NotebookNamespaceVariable
 } from '../../shared/notebook'
 
 export type KernelLoopFigure = { mime: string; path: string }
@@ -22,6 +23,11 @@ export type KernelLoopResponse = {
   figures: KernelLoopFigure[]
   outputTruncated?: boolean
   environmentOverlay?: NotebookLiveEnvironmentOverlay
+  namespace?: {
+    variableCount: number
+    variablesTruncated: boolean
+    variables: NotebookNamespaceVariable[]
+  }
 }
 
 // Env var the driver sets so a loop script knows where to write captured figure files.
@@ -92,6 +98,57 @@ const parseEnvironmentOverlay = (value: unknown): NotebookLiveEnvironmentOverlay
   }
 }
 
+const parseWireText = (value: Record<string, unknown>, field: string): string | undefined => {
+  const plain = value[field]
+  if (typeof plain === 'string') return plain
+  const encoded = value[`${field}_base64`]
+  if (typeof encoded !== 'string') return undefined
+  try {
+    return Buffer.from(encoded, 'base64').toString('utf8')
+  } catch {
+    return undefined
+  }
+}
+
+const parseNamespaceVariable = (value: unknown): NotebookNamespaceVariable | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const variable = value as Record<string, unknown>
+  const name = parseWireText(variable, 'name')
+  const type = parseWireText(variable, 'type')
+  const preview = parseWireText(variable, 'preview')
+  if (!name || type === undefined || preview === undefined) return undefined
+  const shape = parseWireText(variable, 'shape')
+  return {
+    name,
+    type,
+    ...(typeof variable.size_bytes === 'number' &&
+    Number.isSafeInteger(variable.size_bytes) &&
+    variable.size_bytes >= 0
+      ? { sizeBytes: variable.size_bytes }
+      : {}),
+    ...(shape ? { shape } : {}),
+    preview,
+    ...(variable.preview_truncated === true ? { previewTruncated: true } : {}),
+    ...(variable.is_private === true ? { private: true } : {})
+  }
+}
+
+const parseNamespace = (value: unknown): KernelLoopResponse['namespace'] | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const namespace = value as Record<string, unknown>
+  const variableCount = namespace.variable_count
+  if (!Number.isSafeInteger(variableCount) || (variableCount as number) < 0) return undefined
+  return {
+    variableCount: variableCount as number,
+    variablesTruncated: namespace.variables_truncated === true,
+    variables: Array.isArray(namespace.variables)
+      ? namespace.variables
+          .map(parseNamespaceVariable)
+          .filter((variable): variable is NotebookNamespaceVariable => variable !== undefined)
+      : []
+  }
+}
+
 // Parses one loop stdout line (snake_case wire fields -> camelCase). Returns null when the line is
 // not valid JSON or not an object, since loop stdout can contain unrelated noise the driver ignores.
 // Missing/invalid fields fall back to safe defaults rather than throwing.
@@ -111,6 +168,7 @@ export function parseLoopResponse(line: string): KernelLoopResponse | null {
         .map((f) => ({ mime: String(f.mime), path: String(f.path) }))
     : []
   const environmentOverlay = parseEnvironmentOverlay(obj.environment)
+  const namespace = parseNamespace(obj.namespace)
 
   return {
     reqId: typeof obj.req_id === 'string' ? obj.req_id : '',
@@ -124,7 +182,8 @@ export function parseLoopResponse(line: string): KernelLoopResponse | null {
     cwd: typeof obj.cwd === 'string' ? obj.cwd : '',
     figures,
     ...(obj.output_truncated === true ? { outputTruncated: true } : {}),
-    ...(environmentOverlay ? { environmentOverlay } : {})
+    ...(environmentOverlay ? { environmentOverlay } : {}),
+    ...(namespace ? { namespace } : {})
   }
 }
 
@@ -142,11 +201,30 @@ export function framePythonRequest(
   })}\n`
 }
 
+export function framePythonNamespaceRequest(reqId: string, includePrivate: boolean): string {
+  return `${JSON.stringify({
+    req_id: reqId,
+    operation: 'inspect_namespace',
+    include_private: includePrivate
+  })}\n`
+}
+
 // R length-prefixed frame: a "<reqId> <codeByteLength>\n" header followed by the exact UTF-8 code
 // bytes. The byte length (not JS string length) lets the R side read a precise number of bytes for
 // multibyte code.
 export function frameRRequest(reqId: string, code: string): Buffer {
-  const codeBuf = Buffer.from(code, 'utf8')
-  const header = Buffer.from(`${reqId} ${codeBuf.byteLength}\n`, 'utf8')
-  return Buffer.concat([header, codeBuf])
+  return frameRBody(reqId, code)
+}
+
+const frameRBody = (reqId: string, body: string, operation?: string): Buffer => {
+  const bodyBuf = Buffer.from(body, 'utf8')
+  const header = Buffer.from(
+    `${reqId} ${bodyBuf.byteLength}${operation ? ` ${operation}` : ''}\n`,
+    'utf8'
+  )
+  return Buffer.concat([header, bodyBuf])
+}
+
+export function frameRNamespaceRequest(reqId: string, includePrivate: boolean): Buffer {
+  return frameRBody(reqId, includePrivate ? 'private' : '', 'inspect_namespace')
 }

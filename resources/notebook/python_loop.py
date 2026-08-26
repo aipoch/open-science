@@ -7,8 +7,10 @@ import hashlib
 import io
 import json
 import os
+import reprlib
 import sys
 import traceback
+import types
 
 # Protocol output must survive user code that reassigns fd 1; keep a private handle to the real stdout.
 _protocol_out = os.fdopen(os.dup(1), "w", buffering=1)
@@ -18,6 +20,9 @@ _diagnostic_limit = min(16 * 1024, max(0, _text_limit))
 _figure_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_FIGURE_LIMIT_BYTES", int(3.5 * 1024 * 1024)))
 _figure_count_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_FIGURE_COUNT_LIMIT", 12))
 _figure_total_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES", 8 * 1024 * 1024))
+_namespace_variable_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_VARIABLE_LIMIT", 500))
+_namespace_preview_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_PREVIEW_LIMIT_BYTES", 512))
+_namespace_response_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_BYTES", 256 * 1024))
 
 
 class _OutputBudget:
@@ -421,6 +426,127 @@ except ImportError:
 
 _globals = {"__name__": "__main__"}
 exec(compile(_BOOTSTRAP, "<bootstrap>", "exec"), _globals)
+_namespace_internal_names = frozenset(_globals)
+
+_namespace_repr = reprlib.Repr()
+_namespace_repr.maxlevel = 2
+_namespace_repr.maxdict = 5
+_namespace_repr.maxlist = 6
+_namespace_repr.maxtuple = 6
+_namespace_repr.maxset = 6
+_namespace_repr.maxfrozenset = 6
+_namespace_repr.maxdeque = 6
+_namespace_repr.maxarray = 6
+_namespace_repr.maxstring = min(256, _namespace_preview_limit)
+_namespace_repr.maxlong = min(64, _namespace_preview_limit)
+_namespace_repr.maxother = min(256, _namespace_preview_limit)
+
+
+def _limit_namespace_text(value, limit):
+    value = value if isinstance(value, str) else ""
+    candidate = value[:limit] if len(value) > limit else value
+    encoded = candidate.encode("utf-8", errors="replace")
+    truncated = len(candidate) < len(value) or len(encoded) > limit
+    if len(encoded) > limit:
+        encoded = encoded[:limit]
+        while encoded and (encoded[-1] & 0xC0) == 0x80:
+            encoded = encoded[:-1]
+        candidate = encoded.decode("utf-8", errors="ignore")
+    return candidate, truncated
+
+
+def _namespace_type_name(value):
+    value_type = type(value)
+    module = getattr(value_type, "__module__", "")
+    qualname = getattr(value_type, "__qualname__", "")
+    if not isinstance(module, str):
+        module = ""
+    if not isinstance(qualname, str) or not qualname:
+        qualname = "object"
+    name = qualname if module in ("", "builtins") else module + "." + qualname
+    return _limit_namespace_text(name, 256)[0]
+
+
+def _namespace_shape(value):
+    value_type = type(value)
+    try:
+        if value_type in (str, bytes, bytearray, list, tuple, dict, set, frozenset):
+            return f"{len(value)} items"
+        module = getattr(value_type, "__module__", "")
+        name = getattr(value_type, "__name__", "")
+        if module == "numpy" and name == "ndarray":
+            return " × ".join(str(part) for part in value.shape)
+        if isinstance(module, str) and module.startswith("pandas.") and name in ("DataFrame", "Series"):
+            return " × ".join(str(part) for part in value.shape)
+        if module == "matplotlib.figure" and name == "Figure":
+            return f"{len(value.axes)} axes"
+    except Exception:
+        return None
+    return None
+
+
+def _namespace_preview(value):
+    value_type = type(value)
+    try:
+        if value_type is types.ModuleType:
+            text = f"<module {getattr(value, '__name__', '')}>"
+        elif value_type is types.FunctionType:
+            text = f"<function {getattr(value, '__name__', '')}>"
+        elif isinstance(value, type):
+            text = f"<class {_namespace_type_name(value)}>"
+        elif value_type in (list, tuple, dict, set, frozenset):
+            text = f"{value_type.__name__} [{len(value)}]"
+        elif value_type in (type(None), str, bytes, bytearray, int, float, complex, bool):
+            text = _namespace_repr.repr(value)
+        elif value_type.__module__ == "matplotlib.figure" and value_type.__name__ == "Figure":
+            text = f"Figure ({len(value.axes)} axes)"
+        else:
+            text = f"<{_namespace_type_name(value)}>"
+    except Exception:
+        text = f"<{_namespace_type_name(value)}>"
+    return _limit_namespace_text(text, _namespace_preview_limit)
+
+
+def _inspect_namespace(include_private=False):
+    names = sorted(
+        name for name in _globals
+        if name not in _namespace_internal_names and (include_private or not name.startswith("_"))
+    )
+    variables = []
+    remaining = max(0, _namespace_response_limit - 256)
+    for name in names[:_namespace_variable_limit]:
+        value = _globals[name]
+        preview, preview_truncated = _namespace_preview(value)
+        value_type = type(value)
+        entry = {
+            "name": name,
+            "type": _namespace_type_name(value),
+            "preview": preview,
+        }
+        if preview_truncated:
+            entry["preview_truncated"] = True
+        if name.startswith("_"):
+            entry["is_private"] = True
+        if value_type.__module__ == "builtins" and value_type in (
+            str, bytes, bytearray, int, float, complex, bool, list, tuple, dict, set, frozenset
+        ):
+            try:
+                entry["size_bytes"] = sys.getsizeof(value)
+            except Exception:
+                pass
+        shape = _namespace_shape(value)
+        if shape:
+            entry["shape"] = _limit_namespace_text(shape, 256)[0]
+        encoded_size = len(json.dumps(entry, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + 1
+        if encoded_size > remaining:
+            break
+        variables.append(entry)
+        remaining -= encoded_size
+    return {
+        "variable_count": len(names),
+        "variables_truncated": len(variables) < len(names),
+        "variables": variables,
+    }
 
 
 # Renders every open matplotlib figure to a content-addressed PNG (inline-backend semantics), then
@@ -552,7 +678,10 @@ def main():
             # SIGINT (KeyboardInterrupt) can land at any point while handling a request,
             # including during figure capture or the response write itself. Catching it
             # here means the loop always survives instead of dying mid-request.
-            response = _run(request.get("code", ""))
+            if request.get("operation") == "inspect_namespace":
+                response = {"namespace": _inspect_namespace(request.get("include_private") is True)}
+            else:
+                response = _run(request.get("code", ""))
             response["req_id"] = req_id
             _protocol_out.write(json.dumps(response) + "\n")
             _protocol_out.flush()

@@ -8,6 +8,8 @@ import type {
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
   NotebookCell,
+  NotebookNamespaceRequest,
+  NotebookNamespaceSnapshot,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
@@ -42,6 +44,7 @@ type NotebookShutdownResult = { sessionId: string; status: 'shutdown' }
 
 type NotebookCommandRuntime = {
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
+  inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot>
   getSessionReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
   beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<BeginNotebookCodeCellResult>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<AppendNotebookCodeCellResult>
@@ -56,6 +59,7 @@ type NotebookCommandRuntime = {
 
 type NotebookCommandWorkflows = {
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
+  inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot>
   reference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
   beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<BeginNotebookCodeCellResult>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<AppendNotebookCodeCellResult>
@@ -91,6 +95,7 @@ const createNotebookCommandWorkflows = (
   runtime: NotebookCommandRuntime
 ): NotebookCommandWorkflows => ({
   state: (request) => runtime.state(request),
+  inspectNamespace: (request) => runtime.inspectNamespace(request),
   reference: (request) => runtime.getSessionReference(request),
   beginCodeCell: (request) => withDataRootWrite(() => runtime.beginCodeCell(request)),
   appendCodeCell: (request) => withDataRootWrite(() => runtime.appendCodeCell(request)),

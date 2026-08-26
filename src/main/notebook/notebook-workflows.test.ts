@@ -19,6 +19,7 @@ const createRuntime = (
   overrides: Partial<NotebookCommandRuntime> = {}
 ): NotebookCommandRuntime => ({
   state: unavailable('state'),
+  inspectNamespace: unavailable('inspectNamespace'),
   getSessionReference: unavailable('getSessionReference'),
   beginCodeCell: unavailable('beginCodeCell'),
   appendCodeCell: unavailable('appendCodeCell'),

@@ -16,6 +16,8 @@ import type {
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
   NotebookLanguage,
+  NotebookNamespaceRequest,
+  NotebookNamespaceSnapshot,
   NotebookRunSummary,
   NotebookSessionRequest,
   NotebookSessionStateRequest,
@@ -25,6 +27,7 @@ import type {
 } from '../../shared/notebook'
 import {
   isNotebookRunCursor,
+  parseNotebookLanguage,
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT
@@ -915,6 +918,44 @@ class NotebookRuntimeService {
         request.historyBefore,
         historyLimit
       )
+    })
+  }
+
+  async inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot> {
+    return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
+      const language = parseNotebookLanguage(request.language)
+      const environment = resolveEnvName(language, request.environment)
+      const processKey = dataProcessKey(language, environment)
+      const session = this.sessions.get(this.sessionLifecycle.laneForRequest(request))
+      if (!session) return { status: 'unavailable', reason: 'kernel-not-live' }
+
+      const kernelEpochId = session.currentKernelEpochId(processKey)
+      if (!kernelEpochId) return { status: 'unavailable', reason: 'kernel-not-live' }
+
+      try {
+        const result = await session.enqueueExecution(
+          processKey,
+          () =>
+            session.inspectNamespace({
+              language,
+              environment,
+              includePrivate: request.includePrivate === true
+            }),
+          deletionSignal
+        )
+        if (session.currentKernelEpochId(processKey) !== kernelEpochId) {
+          return { status: 'unavailable', reason: 'kernel-restarted' }
+        }
+        if (result.status === 'unavailable') {
+          return { status: 'unavailable', reason: 'kernel-not-live' }
+        }
+        return { ...result, language, environment, kernelEpochId }
+      } catch (error) {
+        if (session.currentKernelEpochId(processKey) !== kernelEpochId) {
+          return { status: 'unavailable', reason: 'kernel-restarted' }
+        }
+        throw error
+      }
     })
   }
 

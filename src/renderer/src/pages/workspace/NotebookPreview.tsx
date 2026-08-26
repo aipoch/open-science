@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Variable } from 'lucide-react'
+import { ArrowLeft, RefreshCw, Variable } from 'lucide-react'
 
 import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
@@ -20,6 +20,7 @@ import type {
   NotebookEnvironmentStatus,
   NotebookKernelKind,
   NotebookLanguage,
+  NotebookNamespaceSnapshot,
   NotebookRunRecord,
   NotebookRunStaleness,
   NotebookSessionReference,
@@ -83,9 +84,21 @@ type NotebookPreviewProps = {
   item: NotebookPreviewItem
 }
 
+type NotebookNamespaceViewStatus =
+  'empty' | 'loading' | 'ready' | 'stale' | 'refreshing' | 'unavailable' | 'error'
+
+type AvailableNotebookNamespace = Extract<NotebookNamespaceSnapshot, { status: 'available' }>
+
 // Converts any IPC failure into displayable text without losing non-Error values.
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+const formatNamespaceSize = (sizeBytes: number | undefined): string => {
+  if (sizeBytes === undefined) return '—'
+  if (sizeBytes < 1024) return `${sizeBytes} B`
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
 // Reuses the stable notebook routing fields for every renderer IPC request.
 const createNotebookRequest = (
@@ -321,6 +334,15 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const [isRestarting, setIsRestarting] = useState(false)
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [frameFilter, setFrameFilter] = useState<NotebookFrameFilterValue>()
+  const [showVariables, setShowVariables] = useState(false)
+  const [showPrivateVariables, setShowPrivateVariables] = useState(false)
+  const [namespaceFilter, setNamespaceFilter] = useState('')
+  const [namespaceSnapshot, setNamespaceSnapshot] = useState<AvailableNotebookNamespace>()
+  const [namespaceStatus, setNamespaceStatus] = useState<NotebookNamespaceViewStatus>('empty')
+  const [namespaceError, setNamespaceError] = useState<string>()
+  const namespaceRequestId = useRef(0)
+  const namespaceRefreshQueued = useRef(false)
+  const namespaceLoadKey = useRef<string | undefined>(undefined)
   const session = useSessionStore((state) =>
     state.sessions.find((candidate) => candidate.id === item.notebook.sessionId)
   )
@@ -368,6 +390,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // First-time R selection kicks off the lazy ~1GB R download in the background; Python stays
   // usable throughout (D6 — see lazy-r.ts). R-kernel execution routing is wired later in E5.
   const onSelectLanguage = (lang: NotebookLanguage): void => {
+    setShowVariables(false)
     if (shouldProvisionR(envStatus, lang)) void provision('r')
   }
 
@@ -594,6 +617,122 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     (activeDataLanguage === 'r' && (!envStatus.rReady || isPreparingR))
   const cellCount = notebookState?.runCount ?? runs.length
 
+  const loadNamespace = async (): Promise<void> => {
+    if (
+      !activeDataLanguage ||
+      !activeEnvName ||
+      !selectedTarget ||
+      isNamespaceLost ||
+      isHistoricalEnvironmentView ||
+      isSelectedKernelRunning
+    ) {
+      if (isNamespaceLost || isHistoricalEnvironmentView) {
+        namespaceRequestId.current += 1
+        setNamespaceSnapshot(undefined)
+        setNamespaceStatus('unavailable')
+      }
+      return
+    }
+
+    const requestId = ++namespaceRequestId.current
+    const hasCurrentSnapshot =
+      namespaceSnapshot !== undefined &&
+      `${namespaceSnapshot.language}:${namespaceSnapshot.environment}` === selectedTarget
+    setNamespaceStatus((status) => {
+      if (!hasCurrentSnapshot) return 'loading'
+      return status === 'ready' || status === 'stale' || status === 'error'
+        ? 'refreshing'
+        : 'loading'
+    })
+    setNamespaceError(undefined)
+    try {
+      const result = await window.api.notebook.inspectNamespace({
+        ...latestNotebookRequest.current.request,
+        language: activeDataLanguage,
+        environment: activeEnvName,
+        includePrivate: showPrivateVariables
+      })
+      if (namespaceRequestId.current !== requestId) return
+      if (result.status === 'unavailable') {
+        setNamespaceSnapshot(undefined)
+        setNamespaceStatus('unavailable')
+        return
+      }
+      if (`${result.language}:${result.environment}` !== selectedTarget) return
+      setNamespaceSnapshot(result)
+      setNamespaceStatus('ready')
+    } catch (error) {
+      if (namespaceRequestId.current !== requestId) return
+      setNamespaceError(getErrorMessage(error))
+      setNamespaceStatus('error')
+    }
+  }
+  const loadLatestNamespace = useEffectEvent(loadNamespace)
+
+  // Opening the view, switching target, or changing the private-name filter starts a fresh read.
+  // Reopening never treats an old snapshot as current, and target checks drop late responses.
+  useEffect(() => {
+    if (!showVariables || !activeDataLanguage) {
+      namespaceLoadKey.current = undefined
+      return
+    }
+    const loadKey = `${selectedTarget ?? ''}:${showPrivateVariables}`
+    if (namespaceLoadKey.current === loadKey) return
+    namespaceLoadKey.current = loadKey
+    namespaceRefreshQueued.current = false
+    void loadLatestNamespace()
+  }, [activeDataLanguage, selectedTarget, showPrivateVariables, showVariables])
+
+  // Runtime events have no process key, so mark the open snapshot stale and wait for the refreshed
+  // notebook state. Once the selected kernel is idle, coalesce all queued events into one read.
+  useEffect(() => {
+    return window.api.notebook.onChanged((event) => {
+      if (!showVariables || event.sessionId !== item.notebook.sessionId) return
+      namespaceRefreshQueued.current = true
+      setNamespaceStatus((status) => (status === 'ready' ? 'stale' : status))
+    })
+  }, [item.notebook.sessionId, showVariables])
+
+  useEffect(() => {
+    if (
+      !showVariables ||
+      !namespaceRefreshQueued.current ||
+      isSelectedKernelRunning ||
+      isNamespaceLost ||
+      isHistoricalEnvironmentView
+    ) {
+      return
+    }
+    namespaceRefreshQueued.current = false
+    void loadLatestNamespace()
+  }, [
+    isHistoricalEnvironmentView,
+    isNamespaceLost,
+    isSelectedKernelRunning,
+    notebookState,
+    showVariables
+  ])
+
+  const activeNamespaceSnapshot =
+    namespaceSnapshot &&
+    `${namespaceSnapshot.language}:${namespaceSnapshot.environment}` === selectedTarget
+      ? namespaceSnapshot
+      : undefined
+  const normalizedNamespaceFilter = namespaceFilter.trim().toLocaleLowerCase()
+  const visibleNamespaceVariables = (activeNamespaceSnapshot?.variables ?? []).filter(
+    (variable) =>
+      !normalizedNamespaceFilter ||
+      variable.name.toLocaleLowerCase().includes(normalizedNamespaceFilter) ||
+      variable.type.toLocaleLowerCase().includes(normalizedNamespaceFilter)
+  )
+  const namespaceButtonDisabled =
+    !activeDataLanguage ||
+    !activeEnvName ||
+    isNamespaceLost ||
+    isHistoricalEnvironmentView ||
+    isSelectedKernelRunning ||
+    gated
+
   // Sends terminal code through the same notebook interpreter and history path as agent code.
   const submitTerminalCode = async (): Promise<void> => {
     const code = terminalCode.trim()
@@ -633,6 +772,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const handleRestart = async (): Promise<void> => {
     setIsRestarting(true)
     setActionError(null)
+    namespaceRequestId.current += 1
+    namespaceRefreshQueued.current = false
+    setNamespaceSnapshot(undefined)
+    setNamespaceStatus('unavailable')
     try {
       const next = await window.api.notebook.restart(createNotebookRequest(item.notebook))
       applyNotebookState(next)
@@ -665,6 +808,134 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             />
           )
         })}
+      </div>
+    </div>
+  )
+  const namespaceView = (
+    <div className="flex min-h-0 flex-1 flex-col" data-testid="notebook-variables-view">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border-100 px-3 py-2">
+        <button
+          type="button"
+          aria-label={t('Back to Notebook')}
+          onClick={() => setShowVariables(false)}
+          className="inline-flex size-7 items-center justify-center rounded-md text-text-300 transition-colors hover:bg-bg-200 hover:text-text-100"
+          data-testid="notebook-variables-back"
+        >
+          <ArrowLeft className="size-4" aria-hidden="true" />
+        </button>
+        <div className="mr-auto min-w-0">
+          <div className="text-xs font-medium text-text-100">{t('Variables')}</div>
+          <div className="text-[11px] text-text-300">
+            {activeNamespaceSnapshot
+              ? t('Variables: {{count}}', {
+                  count: activeNamespaceSnapshot.variableCount,
+                  defaultValue_one: 'Variable: {{count}}'
+                })
+              : environmentLabel(activeEnvName ?? '')}
+          </div>
+        </div>
+        <input
+          type="search"
+          value={namespaceFilter}
+          onChange={(event) => setNamespaceFilter(event.target.value)}
+          placeholder={t('Filter variables...')}
+          aria-label={t('Filter variables')}
+          className="h-7 min-w-32 flex-1 rounded-md border border-border-100 bg-bg-000 px-2 text-xs text-text-100 outline-none placeholder:text-text-300 focus-visible:border-primary"
+        />
+        <label className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[11px] text-text-200 hover:bg-bg-200">
+          <input
+            type="checkbox"
+            checked={showPrivateVariables}
+            onChange={(event) => setShowPrivateVariables(event.target.checked)}
+            className="accent-primary"
+          />
+          {t('Show private variables')}
+        </label>
+        <button
+          type="button"
+          aria-label={t('Refresh variables')}
+          disabled={namespaceButtonDisabled || namespaceStatus === 'loading'}
+          onClick={() => void loadNamespace()}
+          className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border-100 px-2 text-[11px] text-text-200 transition-colors hover:bg-bg-200 disabled:cursor-not-allowed disabled:opacity-45"
+          data-testid="notebook-variables-refresh"
+        >
+          <RefreshCw
+            className={cn(
+              'size-3.5',
+              (namespaceStatus === 'loading' || namespaceStatus === 'refreshing') && 'animate-spin'
+            )}
+            aria-hidden="true"
+          />
+          {t('Refresh')}
+        </button>
+      </div>
+
+      {namespaceStatus === 'stale' || namespaceStatus === 'refreshing' ? (
+        <div className="shrink-0 border-b border-border-100 bg-bg-200 px-3 py-1.5 text-[11px] text-text-200">
+          {namespaceStatus === 'refreshing'
+            ? t('Variables changed. Refreshing...')
+            : t('Variables may have changed.')}
+        </div>
+      ) : null}
+      {namespaceStatus === 'error' ? (
+        <div className="shrink-0 border-b border-border-100 bg-danger-900 px-3 py-1.5 text-[11px] text-danger-000">
+          {namespaceError ?? t('Could not inspect variables.')}
+        </div>
+      ) : null}
+      {activeNamespaceSnapshot?.variablesTruncated ? (
+        <div className="shrink-0 border-b border-border-100 bg-bg-200 px-3 py-1.5 text-[11px] text-text-200">
+          {t('Only the first bounded set of variables is shown.')}
+        </div>
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-auto">
+        {!activeNamespaceSnapshot &&
+        (namespaceStatus === 'loading' || namespaceStatus === 'empty') ? (
+          <div className="flex h-full items-center justify-center px-6 text-center text-xs text-text-300">
+            {t('Reading live variables...')}
+          </div>
+        ) : namespaceStatus === 'unavailable' ? (
+          <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center">
+            <div className="text-xs font-medium text-text-100">{t('No live namespace')}</div>
+            <div className="max-w-sm text-[11px] leading-5 text-text-300">
+              {t('Run code with the agent to activate this kernel and create live variables.')}
+            </div>
+          </div>
+        ) : activeNamespaceSnapshot && visibleNamespaceVariables.length === 0 ? (
+          <div className="flex h-full items-center justify-center px-6 text-center text-xs text-text-300">
+            {normalizedNamespaceFilter
+              ? t('No variables match this filter.')
+              : t('This namespace has no variables.')}
+          </div>
+        ) : activeNamespaceSnapshot ? (
+          <table className="w-full table-fixed border-collapse text-left text-xs">
+            <thead className="sticky top-0 z-10 bg-bg-000 text-[11px] text-text-300">
+              <tr className="border-b border-border-100">
+                <th className="w-[24%] px-3 py-2 font-medium">{t('Name')}</th>
+                <th className="w-[24%] px-3 py-2 font-medium">{t('Type')}</th>
+                <th className="w-[18%] px-3 py-2 font-medium">{t('Size / Shape')}</th>
+                <th className="px-3 py-2 font-medium">{t('Preview')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleNamespaceVariables.map((variable) => (
+                <tr key={variable.name} className="border-b border-border-100/70 align-top">
+                  <td className="break-all px-3 py-2 font-mono text-text-100">{variable.name}</td>
+                  <td className="break-all px-3 py-2 font-mono text-text-200">{variable.type}</td>
+                  <td className="break-words px-3 py-2 text-text-300">
+                    {[variable.shape, formatNamespaceSize(variable.sizeBytes)]
+                      .filter((value) => value && value !== '—')
+                      .join(' · ') || '—'}
+                  </td>
+                  <td className="break-all px-3 py-2 font-mono text-text-200">
+                    {variable.preview}
+                    {variable.previewTruncated ? '…' : ''}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
       </div>
     </div>
   )
@@ -744,7 +1015,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                 key={kind}
                 type="button"
                 data-testid={`kernel-switcher-${kind}`}
-                onClick={() => setActiveKind(kind)}
+                onClick={() => {
+                  setShowVariables(false)
+                  setActiveKind(kind)
+                }}
                 className={cn(
                   'flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
                   effectiveActiveKind === kind
@@ -757,6 +1031,39 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             )
           )}
         </div>
+        {activeDataLanguage ? (
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={t('Inspect variables')}
+                  aria-disabled={namespaceButtonDisabled}
+                  onClick={() => {
+                    if (!namespaceButtonDisabled) setShowVariables(true)
+                  }}
+                  className={cn(
+                    'ml-2 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-text-300 transition-colors',
+                    showVariables && !namespaceButtonDisabled
+                      ? 'bg-bg-300 text-text-000'
+                      : 'hover:bg-bg-200 hover:text-text-100',
+                    namespaceButtonDisabled && 'cursor-not-allowed opacity-45'
+                  )}
+                  data-testid="notebook-variables-button"
+                >
+                  <Variable className="size-3.5" aria-hidden="true" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {isSelectedKernelRunning
+                  ? t('Variables are available when this kernel is idle')
+                  : isNamespaceLost || isHistoricalEnvironmentView
+                    ? t('Variables are available only while this kernel is live')
+                    : t('Inspect variables')}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : null}
         {activeRuntimeBinding && activeRuntimeDetails ? (
           <TooltipProvider delayDuration={200}>
             <Tooltip>
@@ -828,7 +1135,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </div>
       ) : null}
 
-      {!activeDataLanguage || isNamespaceLost || isHistoricalEnvironmentView ? (
+      {showVariables && activeDataLanguage ? (
+        namespaceView
+      ) : !activeDataLanguage || isNamespaceLost || isHistoricalEnvironmentView ? (
         <div className="min-h-0 flex-1 overflow-hidden">{notebookCells}</div>
       ) : (
         <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 flex-col">
@@ -889,7 +1198,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </ResizablePanelGroup>
       )}
 
-      {isNamespaceLost || isHistoricalEnvironmentView ? (
+      {!showVariables && (isNamespaceLost || isHistoricalEnvironmentView) ? (
         <footer
           className="flex h-7 shrink-0 items-center justify-between gap-3 border-t border-border-200 bg-bg-000 px-2 text-[11px] text-text-300"
           data-testid="notebook-read-only-status"

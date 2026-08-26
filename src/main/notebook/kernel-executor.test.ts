@@ -253,6 +253,39 @@ afterEach(async () => {
 })
 
 gate('NotebookKernelExecutor (fake loop)', () => {
+  it('inspects only an already-live kernel and forwards the private-variable option', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-namespace-')
+    const executor = makeExecutor()
+    try {
+      await expect(
+        executor.inspectNamespace({
+          language: 'python',
+          environment: DEFAULT_PY_ENV
+        })
+      ).resolves.toEqual({ status: 'unavailable' })
+      expect(procFor(executor, 'python')).toBeUndefined()
+
+      await executor.execute({ ...baseRequest(cwdDir), code: 'activate' })
+      await expect(
+        executor.inspectNamespace({
+          language: 'python',
+          environment: DEFAULT_PY_ENV,
+          includePrivate: true
+        })
+      ).resolves.toEqual({
+        status: 'available',
+        variableCount: 2,
+        variablesTruncated: false,
+        variables: [
+          { name: 'answer', type: 'int', sizeBytes: 28, preview: '42' },
+          { name: '_private', type: 'str', preview: "'hidden'", private: true }
+        ]
+      })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
   it('normalizes persisted working-file paths across operating systems', () => {
     expect(
       toPortableNotebookRelativePath(

@@ -6,7 +6,12 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
-import { frameRRequest, parseLoopResponse, type KernelLoopResponse } from './kernel-protocol'
+import {
+  frameRNamespaceRequest,
+  frameRRequest,
+  parseLoopResponse,
+  type KernelLoopResponse
+} from './kernel-protocol'
 
 // Run with: RUN_KERNEL=1 OPEN_SCIENCE_TEST_R_ENV=/path/to/r/env/prefix \
 //   npx vitest run src/main/notebook/r-loop.integration.test.ts
@@ -34,6 +39,7 @@ const startLoop = (
 ): {
   child: ChildProcessWithoutNullStreams
   send: (code: string) => Promise<KernelLoopResponse>
+  inspect: (includePrivate?: boolean) => Promise<KernelLoopResponse>
   waitFor: (reqId: string) => Promise<KernelLoopResponse>
 } => {
   const child = spawn(rscript, [LOOP], { env: { ...process.env, ...env } })
@@ -77,7 +83,13 @@ const startLoop = (
     child.stdin.write(frameRRequest(reqId, code))
     return pending
   }
-  return { child, send, waitFor }
+  const inspect = (includePrivate = false): Promise<KernelLoopResponse> => {
+    const reqId = randomUUID()
+    const pending = waitFor(reqId)
+    child.stdin.write(frameRNamespaceRequest(reqId, includePrivate))
+    return pending
+  }
+  return { child, send, inspect, waitFor }
 }
 
 // Resolved lazily inside each `it` (not at describe-body scope) so a skipped describe.skip run
@@ -117,6 +129,50 @@ const installBlankPngMaterializationTrace = (
   ].join('\n')
 
 gate('r_loop.R', () => {
+  it('returns fresh bounded user variables without evaluating active bindings', async () => {
+    const { child, send, inspect } = startLoop(rscriptBin(), {})
+    try {
+      await send(
+        "x <- 41L; label <- '活跃变量'; .private <- 'hidden'; " +
+          'items <- seq_len(100000L); blob <- raw(2000000L); ' +
+          'makeActiveBinding("active_value", function() stop("must not evaluate"), .GlobalEnv)'
+      )
+      const first = await inspect()
+      expect(first.namespace?.variables.map(({ name }) => name)).toEqual([
+        'active_value',
+        'blob',
+        'items',
+        'label',
+        'x'
+      ])
+      expect(first.namespace?.variables.find(({ name }) => name === 'label')?.preview).toBe(
+        '活跃变量'
+      )
+      expect(first.namespace?.variables.find(({ name }) => name === 'active_value')).toMatchObject({
+        type: 'active binding',
+        preview: '<not evaluated>'
+      })
+      expect(Buffer.byteLength(JSON.stringify(first), 'utf8')).toBeLessThan(256 * 1024)
+
+      await send('x <- 42L; rm(label); added <- list(ok = TRUE)')
+      const refreshed = await inspect(true)
+      expect(refreshed.namespace?.variables.map(({ name }) => name)).toEqual([
+        '.private',
+        'active_value',
+        'added',
+        'blob',
+        'items',
+        'x'
+      ])
+      expect(refreshed.namespace?.variables.find(({ name }) => name === 'x')?.preview).toBe('42')
+      expect(refreshed.namespace?.variables.find(({ name }) => name === '.private')).toMatchObject({
+        private: true
+      })
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
   it('auto-prints visible results, keeps state across requests, reports errors', async () => {
     const { child, send } = startLoop(rscriptBin(), {})
     try {

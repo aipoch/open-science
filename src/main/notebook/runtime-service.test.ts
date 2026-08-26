@@ -206,6 +206,79 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
+  it('returns only live-epoch namespace snapshots and does not create a session to inspect', async () => {
+    const root = await createStorageRoot()
+    const inspectNamespace = vi.fn(async () => ({
+      status: 'available' as const,
+      variableCount: 1,
+      variablesTruncated: false,
+      variables: [{ name: 'x', type: 'int', preview: '42' }]
+    }))
+    let executorCreations = 0
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => {
+        executorCreations += 1
+        return {
+          execute: async (request): Promise<NotebookExecutionResult> => ({
+            status: 'completed',
+            kernelDispatched: true,
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          inspectNamespace,
+          restart: async () => undefined,
+          shutdown: async () => ({ reaped: true })
+        }
+      }
+    })
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-namespace',
+      workspaceCwd: '/workspace'
+    }
+
+    await expect(
+      service.inspectNamespace({
+        ...request,
+        language: 'python',
+        environment: 'default-python'
+      })
+    ).resolves.toEqual({ status: 'unavailable', reason: 'kernel-not-live' })
+    expect(executorCreations).toBe(0)
+
+    await service.execute({ ...request, code: 'x = 42' })
+    const snapshot = await service.inspectNamespace({
+      ...request,
+      language: 'python',
+      environment: 'default-python'
+    })
+    expect(snapshot).toMatchObject({
+      status: 'available',
+      language: 'python',
+      environment: 'default-python',
+      variableCount: 1,
+      variables: [{ name: 'x', type: 'int', preview: '42' }]
+    })
+    expect(snapshot.status === 'available' && snapshot.kernelEpochId).toEqual(expect.any(String))
+
+    await service.restart(request)
+    await expect(
+      service.inspectNamespace({
+        ...request,
+        language: 'python',
+        environment: 'default-python'
+      })
+    ).resolves.toEqual({ status: 'unavailable', reason: 'kernel-not-live' })
+    expect(inspectNamespace).toHaveBeenCalledOnce()
+  })
+
   it('routes root and child Frames through isolated owners while aggregating attributed history', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []

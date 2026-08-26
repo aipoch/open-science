@@ -344,6 +344,36 @@ describe('NotebookPreview per-kernel tabs', () => {
             ...stateOverrides
           })
         ),
+        inspectNamespace: vi.fn((request) =>
+          Promise.resolve({
+            status: 'available' as const,
+            language: request.language,
+            environment: request.environment,
+            kernelEpochId: 'epoch-1',
+            variableCount: request.includePrivate ? 2 : 1,
+            variablesTruncated: false,
+            variables: [
+              {
+                name: 'frame',
+                type: 'matplotlib.figure.Figure',
+                shape: '1 axes',
+                sizeBytes: 256,
+                preview: 'Figure (1 axes)'
+              },
+              ...(request.includePrivate
+                ? [
+                    {
+                      name: '_private',
+                      type: 'str',
+                      sizeBytes: 7,
+                      preview: "'value'",
+                      private: true
+                    }
+                  ]
+                : [])
+            ]
+          })
+        ),
         execute: vi.fn(() => Promise.resolve({})),
         onChanged: vi.fn(() => vi.fn())
       },
@@ -391,6 +421,35 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(divider?.className).toContain('before:opacity-60')
     expect(container.querySelector('[data-slot="message-scroller-button"]')).toBeNull()
     expect(container.querySelector('[aria-label="Scroll to end"]')).toBeNull()
+  })
+
+  it('opens a bounded live namespace snapshot and reloads when private names are shown', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Inspect variables' }))
+    })
+
+    expect(container.querySelector('[data-testid="notebook-variables-view"]')).not.toBeNull()
+    expect(screen.getByText('matplotlib.figure.Figure')).toBeTruthy()
+    expect(screen.getByText('Figure (1 axes)')).toBeTruthy()
+    expect(screen.queryByText('_private')).toBeNull()
+    expect(window.api.notebook.inspectNamespace).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        language: 'python',
+        environment: 'default-python',
+        includePrivate: false
+      })
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Show private variables' }))
+    })
+
+    expect(screen.getByText('_private')).toBeTruthy()
+    expect(window.api.notebook.inspectNamespace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includePrivate: true })
+    )
   })
 
   it('renders terminated notebook history as view-only without terminal controls', async () => {

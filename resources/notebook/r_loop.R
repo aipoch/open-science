@@ -578,6 +578,122 @@ diagnostic_limit_bytes <- min(16 * 1024, max(0, text_limit_bytes))
 figure_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_LIMIT_BYTES", 3.5 * 1024 * 1024))
 figure_count_limit <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_COUNT_LIMIT", 12))
 figure_total_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES", 8 * 1024 * 1024))
+namespace_variable_limit <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_VARIABLE_LIMIT", 500))
+namespace_preview_limit_bytes <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_PREVIEW_LIMIT_BYTES", 512))
+namespace_response_limit_bytes <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_BYTES", 256 * 1024))
+
+namespace_state <- new.env(parent = emptyenv())
+namespace_state$internal_names <- character()
+
+inspect_namespace <- base::local({
+  limit_text_raw <- function(value, limit) {
+    bytes <- charToRaw(if (is.character(value) && length(value) > 0L) value[[1L]] else "")
+    truncated <- length(bytes) > limit
+    if (truncated) {
+      bytes <- bytes[seq_len(limit)]
+      while (length(bytes) > 0L && !validUTF8(rawToChar(bytes))) {
+        bytes <- bytes[-length(bytes)]
+      }
+    }
+    list(bytes = bytes, truncated = truncated)
+  }
+
+  encoded_text <- function(value, limit = 256L) {
+    jsonlite::base64_enc(limit_text_raw(value, limit)$bytes)
+  }
+
+  value_type <- function(value) {
+    classes <- class(value)
+    if (length(classes) == 0L) typeof(value) else paste(classes, collapse = "/")
+  }
+
+  value_shape <- function(value) {
+    dimensions <- dim(value)
+    if (!is.null(dimensions)) return(paste(dimensions, collapse = " x "))
+    if (is.atomic(value) || is.list(value)) return(paste0(length(value), " items"))
+    NULL
+  }
+
+  value_preview <- function(value) {
+    truncated <- FALSE
+    text <- if (is.null(value)) {
+      "NULL"
+    } else if (is.character(value)) {
+      truncated <- length(value) > 1L
+      if (length(value) == 0L) "character(0)" else value[[1L]]
+    } else if (is.atomic(value)) {
+      shown <- utils::head(value, 6L)
+      truncated <- length(value) > length(shown)
+      paste(as.character(shown), collapse = ", ")
+    } else if (is.data.frame(value)) {
+      paste0("data.frame [", nrow(value), " x ", ncol(value), "]")
+    } else if (is.list(value)) {
+      paste0("list [", length(value), "]")
+    } else if (is.function(value)) {
+      "<function>"
+    } else if (is.environment(value)) {
+      "<environment>"
+    } else {
+      paste0("<", value_type(value), ">")
+    }
+    limited <- limit_text_raw(text, namespace_preview_limit_bytes)
+    list(bytes = limited$bytes, truncated = truncated || limited$truncated)
+  }
+
+  function(include_private = FALSE) {
+    names <- sort(setdiff(
+      ls(envir = .GlobalEnv, all.names = TRUE),
+      namespace_state$internal_names
+    ))
+    if (!isTRUE(include_private)) names <- names[!startsWith(names, ".")]
+    variables <- list()
+    remaining <- max(0L, namespace_response_limit_bytes - 256L)
+    for (name in utils::head(names, namespace_variable_limit)) {
+      entry <- if (bindingIsActive(name, .GlobalEnv)) {
+        list(
+          name_base64 = encoded_text(name, 1024L),
+          type_base64 = encoded_text("active binding"),
+          preview_base64 = encoded_text("<not evaluated>")
+        )
+      } else {
+        value <- get(name, envir = .GlobalEnv, inherits = FALSE)
+        preview <- value_preview(value)
+        shape <- value_shape(value)
+        item <- list(
+          name_base64 = encoded_text(name, 1024L),
+          type_base64 = encoded_text(value_type(value)),
+          preview_base64 = jsonlite::base64_enc(preview$bytes)
+        )
+        if (is.atomic(value)) item$size_bytes <- as.numeric(utils::object.size(value))
+        if (!is.null(shape)) item$shape_base64 <- encoded_text(shape)
+        if (isTRUE(preview$truncated)) item$preview_truncated <- TRUE
+        item
+      }
+      if (startsWith(name, ".")) entry$is_private <- TRUE
+      encoded_size <- nchar(
+        jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null"),
+        type = "bytes"
+      ) + 1L
+      if (encoded_size > remaining) break
+      variables[[length(variables) + 1L]] <- entry
+      remaining <- remaining - encoded_size
+    }
+    list(
+      variable_count = length(names),
+      variables_truncated = length(variables) < length(names),
+      variables = variables
+    )
+  }
+}, envir = base::list2env(
+  base::list(
+    namespace_state = namespace_state,
+    namespace_variable_limit = namespace_variable_limit,
+    namespace_preview_limit_bytes = namespace_preview_limit_bytes,
+    namespace_response_limit_bytes = namespace_response_limit_bytes
+  ),
+  parent = base::baseenv()
+))
+lockEnvironment(environment(inspect_namespace), bindings = TRUE)
 con <- file("stdin", "rb")
 
 emit <- function(obj) {
@@ -1283,6 +1399,11 @@ run <- base::local({
 ))
 lockEnvironment(environment(run), bindings = TRUE)
 
+# Capture the loop's trusted startup bindings once. The inspector subtracts this baseline from
+# .GlobalEnv, while the request loop keeps a private reference to the inspector itself.
+namespace_state$internal_names <- ls(envir = .GlobalEnv, all.names = TRUE)
+rm(namespace_state)
+
 # Request I/O and the read-path interrupt flag live outside .GlobalEnv. User cells eval in
 # globalenv() and may assign names such as interrupt_during_read or getwd; those assignments
 # must not skip the next request or crash cancellation. Parent is baseenv() so cancellation
@@ -1314,6 +1435,7 @@ base::local({
       parts <- strsplit(header, " ", fixed = TRUE)[[1]]
       req_id <- parts[1]
       n <- as.integer(parts[2])
+      operation <- if (length(parts) >= 3L) parts[3L] else "execute"
       if (is.na(n) || n < 0L) n <- 0L
       acc <- raw()
       body_empty <- 0L
@@ -1336,7 +1458,7 @@ base::local({
         acc <- c(acc, chunk)
       }
       code <- if (n > 0L) rawToChar(acc, multiple = FALSE) else ""
-      return(list(req_id = req_id, code = code))
+      return(list(req_id = req_id, code = code, operation = operation))
     }
   }
 
@@ -1387,7 +1509,11 @@ base::local({
           state$during_read <- FALSE
           interrupted_response(req$req_id)
         } else {
-          result <- run(req)
+          result <- if (identical(req$operation, "inspect_namespace")) {
+            list(namespace = inspect_namespace(identical(req$code, "private")))
+          } else {
+            run(req)
+          }
           result$req_id <- req$req_id
           result
         }
@@ -1401,6 +1527,7 @@ base::local({
     con = con,
     emit = emit,
     run = run,
+    inspect_namespace = inspect_namespace,
     capture_environment = capture_environment
   ),
   parent = base::baseenv()

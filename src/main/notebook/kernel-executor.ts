@@ -10,7 +10,9 @@ import { Transform, type TransformCallback } from 'node:stream'
 import { terminateProcessTree, type ProcessTreeKillResult } from '../process-tree'
 import {
   KERNEL_FIGURES_DIR_ENV,
+  frameRNamespaceRequest,
   frameRRequest,
+  framePythonNamespaceRequest,
   framePythonRequest,
   parseLoopResponse,
   type KernelLoopFigure,
@@ -29,6 +31,10 @@ import {
   resolveEnvName
 } from './runtime-paths'
 import type {
+  NotebookSessionNamespaceRequest,
+  NotebookSessionNamespaceResult
+} from './session-aggregate'
+import type {
   NotebookExecutionRequest,
   NotebookExecutionResult,
   NotebookExecutor
@@ -42,6 +48,12 @@ import {
   NOTEBOOK_FIGURE_LIMIT_ENV,
   NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES,
   NOTEBOOK_FIGURE_TOTAL_LIMIT_ENV,
+  NOTEBOOK_NAMESPACE_PREVIEW_LIMIT_BYTES,
+  NOTEBOOK_NAMESPACE_PREVIEW_LIMIT_ENV,
+  NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_BYTES,
+  NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_ENV,
+  NOTEBOOK_NAMESPACE_VARIABLE_LIMIT,
+  NOTEBOOK_NAMESPACE_VARIABLE_LIMIT_ENV,
   NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES,
   NOTEBOOK_TEXT_LIMIT_BYTES,
   NOTEBOOK_TEXT_LIMIT_ENV
@@ -414,6 +426,26 @@ class NotebookKernelExecutor implements NotebookExecutor {
     }
   }
 
+  // Reads a bounded snapshot from an already-live data kernel. Unlike execute(), this deliberately
+  // never calls ensureProc(): opening Variables must not create a fresh, misleading namespace.
+  async inspectNamespace(
+    request: NotebookSessionNamespaceRequest
+  ): Promise<NotebookSessionNamespaceResult> {
+    const kind = request.language
+    const env = resolveEnvName(request.language, request.environment)
+    const key = `${kind}:${env}`
+    const proc = this.procs.get(key)
+    if (!proc?.alive) return { status: 'unavailable' }
+    if (proc.pending) throw new Error('Notebook kernel is already running.')
+
+    this.disarmIdleTimer(proc)
+    const reqId = randomUUID()
+    const response = await this.sendNamespaceRequest(proc, reqId, request.includePrivate === true)
+    if (!response.namespace)
+      throw new Error('Notebook kernel returned an invalid namespace snapshot.')
+    return { status: 'available', ...response.namespace }
+  }
+
   // Kills every loop, rejects any pending run, and removes the temp figures dir. Returns { reaped }:
   // true only when every kernel tree was cleanly reaped, so shutdownAll can gate the update-install
   // uninstall on all interpreter file handles being released.
@@ -682,6 +714,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       [NOTEBOOK_FIGURE_LIMIT_ENV]: String(NOTEBOOK_FIGURE_LIMIT_BYTES),
       [NOTEBOOK_FIGURE_COUNT_LIMIT_ENV]: String(NOTEBOOK_FIGURE_COUNT_LIMIT),
       [NOTEBOOK_FIGURE_TOTAL_LIMIT_ENV]: String(NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES),
+      [NOTEBOOK_NAMESPACE_VARIABLE_LIMIT_ENV]: String(NOTEBOOK_NAMESPACE_VARIABLE_LIMIT),
+      [NOTEBOOK_NAMESPACE_PREVIEW_LIMIT_ENV]: String(NOTEBOOK_NAMESPACE_PREVIEW_LIMIT_BYTES),
+      [NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_ENV]: String(NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_BYTES),
       // Connector RPC endpoint/token reach ONLY the control-plane repl kernel: the python/r data
       // kernels have no host.mcp and no outbound connector access. Gating on kind here is
       // defense-in-depth — even if a data request ever carried these, python/r would never see them.
@@ -824,6 +859,28 @@ class NotebookKernelExecutor implements NotebookExecutor {
         return
       }
       if (timeout && timeoutMs !== undefined) timeout.arm(timeoutMs)
+    })
+  }
+
+  private sendNamespaceRequest(
+    proc: ProcState,
+    reqId: string,
+    includePrivate: boolean
+  ): Promise<KernelLoopResponse> {
+    return new Promise((resolve, reject) => {
+      const pending: PendingRequest = { reqId, resolve, reject, cancelled: false }
+      proc.pending = pending
+      try {
+        proc.child.stdin.write(
+          proc.kind === 'r'
+            ? frameRNamespaceRequest(reqId, includePrivate)
+            : framePythonNamespaceRequest(reqId, includePrivate)
+        )
+      } catch (error) {
+        if (proc.pending === pending) proc.pending = undefined
+        this.rearmIdleTimerIfLive(proc)
+        reject(error)
+      }
     })
   }
 
