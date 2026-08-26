@@ -226,6 +226,10 @@ export const resilientDownload = async (
         await removeFile(metadataPath).catch(() => undefined)
         initial = 0
       }
+    } else {
+      // A sidecar without its .part cannot describe any resumable bytes. Remove it now so a later
+      // validator-less interrupted response cannot accidentally inherit the stale validator.
+      await removeFile(metadataPath).catch(() => undefined)
     }
     await seedHash(hash, initial)
     hashSeededTo = initial

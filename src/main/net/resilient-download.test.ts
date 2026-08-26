@@ -297,6 +297,52 @@ describe('resilientDownload', () => {
     expect(fs.files.get(OUT_PATH)?.equals(body)).toBe(true)
   })
 
+  it('does not let orphaned validator metadata authorize a later partial', async () => {
+    const url = 'https://cdn/file'
+    const firstBody = Buffer.from('version-two-contents')
+    const laterBody = Buffer.from('version-one-contents')
+    const fs = memFs()
+    fs.files.set(
+      `${OUT_PATH}.part.meta`,
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          urlSha256: sha(Buffer.from(url)),
+          validator: { kind: 'etag', value: '"version-one"' },
+          expectedSize: firstBody.length
+        })
+      )
+    )
+
+    await expect(
+      resilientDownload(url, OUT_PATH, {
+        expectedSize: firstBody.length,
+        maxRetries: 0,
+        deps: {
+          fetchImpl: fakeFetch(firstBody, { cutAfter: 8, etag: null }) as unknown as typeof fetch,
+          ...fs,
+          sleep: async () => {},
+          now: () => 0
+        }
+      })
+    ).rejects.toThrow(/short read/i)
+
+    const laterFetch = fakeFetch(laterBody, { etag: '"version-one"' })
+    await resilientDownload(url, OUT_PATH, {
+      expectedSize: laterBody.length,
+      deps: {
+        fetchImpl: laterFetch as unknown as typeof fetch,
+        ...fs,
+        sleep: async () => {},
+        now: () => 0
+      }
+    })
+
+    const retryInit = laterFetch.mock.calls[0][1] as { headers: Record<string, string> }
+    expect(retryInit.headers['Range']).toBeUndefined()
+    expect(fs.files.get(OUT_PATH)?.equals(laterBody)).toBe(true)
+  })
+
   it('restarts from zero rather than resuming without a usable validator', async () => {
     const body = Buffer.from('abcdefghijklmnopqrstuvwxyz')
     const fs = memFs()

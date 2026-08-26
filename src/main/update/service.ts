@@ -102,7 +102,8 @@ export class UpdateService implements UpdateStrategy {
   private readonly log: Logger
   private readonly translate: NativeTranslator
   // Per-session set of target paths that have already been downloaded once this run. The first
-  // download to a given path removes any pre-existing <target>.part so a restart starts fresh
+  // download to a given path removes any pre-existing <target>.part and validator sidecar so a restart
+  // starts fresh
   // (design: "app closes → start from scratch"). Within a session the path stays in the set and a
   // cancel/retry may resume via Range when the response supplied a usable validator; otherwise the
   // shared downloader safely restarts from zero.
@@ -306,18 +307,19 @@ export class UpdateService implements UpdateStrategy {
         if (options.nonInteractive) await this.removeFile(targetPath)
         if (abort.signal.aborted) return
 
-        // First time this session that we download to this exact path: drop any <target>.part left by
-        // a PRIOR session so the resilient core can't Range-resume a stale fragment (the user may
-        // re-pick the same Save location after a restart). Mark the path fresh ONLY after the removal
-        // succeeds — if it throws, we do NOT add it and let the error propagate to the catch below, so
-        // a retry re-attempts the cleanup instead of resuming a fragment we failed to delete (a
-        // same-version fragment would otherwise pass the final checksum and silently complete a
-        // cross-restart resume). Subsequent downloads to the same path this session are left to the
-        // resilient core, which resumes only when its validator sidecar binds the partial to the
-        // remote representation.
+        // First time this session that we download to this exact path: drop any <target>.part and its
+        // validator sidecar left by a PRIOR session so the resilient core can't Range-resume a stale
+        // fragment (the user may re-pick the same Save location after a restart). Mark the path fresh
+        // ONLY after both removals succeed — if either throws, we do NOT add it and let the error
+        // propagate to the catch below, so a retry re-attempts the cleanup instead of resuming a
+        // fragment we failed to delete (a same-version fragment would otherwise pass the final
+        // checksum and silently complete a cross-restart resume). Subsequent downloads to the same
+        // path this session are left to the resilient core, which resumes only when its validator
+        // sidecar binds the partial to the remote representation.
         if (!this.freshTargets.has(targetPath)) {
           operation.phase('prepare-target')
           await this.removeFile(`${targetPath}.part`)
+          await this.removeFile(`${targetPath}.part.meta`)
           this.freshTargets.add(targetPath)
           if (abort.signal.aborted) return
         }
