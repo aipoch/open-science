@@ -1,9 +1,9 @@
-import { code as streamdownCode } from '@streamdown/code'
 import type { HighlightResult } from '@streamdown/code'
 import type { BundledLanguage } from 'shiki'
 import { useEffect, useState } from 'react'
 
 import { cn } from '@/lib/utils'
+import { useCodeHighlighter } from '@/components/streamdown/use-code-highlighter'
 
 const MAX_HIGHLIGHT_BYTES = 256 * 1024
 
@@ -47,10 +47,13 @@ const HighlightedCodeLines = ({
   const source = code.replace(/\0/g, '').replace(/\r\n/g, '\n')
   const highlightKey = language ? `${language}\0${source}` : ''
   const lines = source.length > 0 ? source.split(/\r?\n/) : ['']
-  const shouldHighlight =
-    Boolean(language) &&
-    streamdownCode.supportsLanguage(language as BundledLanguage) &&
-    new TextEncoder().encode(source).byteLength <= MAX_HIGHLIGHT_BYTES
+  const isWithinHighlightLimit = language
+    ? new TextEncoder().encode(source).byteLength <= MAX_HIGHLIGHT_BYTES
+    : false
+  const highlighter = useCodeHighlighter(Boolean(language) && isWithinHighlightLimit)
+  const shouldHighlight = Boolean(
+    isWithinHighlightLimit && language && highlighter?.supportsLanguage(language as BundledLanguage)
+  )
 
   useEffect(() => {
     if (!shouldHighlight) return
@@ -59,11 +62,11 @@ const HighlightedCodeLines = ({
     const apply = (result: HighlightResult): void => {
       if (active) setHighlighted({ key: highlightKey, result })
     }
-    const immediate = streamdownCode.highlight(
+    const immediate = highlighter?.highlight(
       {
         code: source,
         language: language as BundledLanguage,
-        themes: streamdownCode.getThemes()
+        themes: highlighter.getThemes()
       },
       apply
     )
@@ -73,7 +76,7 @@ const HighlightedCodeLines = ({
     return () => {
       active = false
     }
-  }, [highlightKey, language, shouldHighlight, source])
+  }, [highlightKey, language, shouldHighlight, source, highlighter])
 
   const tokens =
     highlighted?.key === highlightKey &&

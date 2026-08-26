@@ -1,18 +1,32 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-import { Component, memo, useMemo, useState, type ErrorInfo, type ReactNode } from 'react'
+import {
+  Component,
+  memo,
+  useEffect,
+  useMemo,
+  useState,
+  type ErrorInfo,
+  type ReactNode
+} from 'react'
 import { Trans, useTranslation } from 'react-i18next'
-import { code } from '@streamdown/code'
 import { cjk } from '@streamdown/cjk'
 import { createMathPlugin } from '@streamdown/math'
-import { mermaid } from '@streamdown/mermaid'
-import { Streamdown, type Components, type LinkSafetyConfig } from 'streamdown'
+import {
+  Streamdown,
+  type Components,
+  type LinkSafetyConfig,
+  type PluginConfig,
+  type ThemeInput
+} from 'streamdown'
 import 'katex/dist/katex.min.css'
 
+import { getMarkdownPluginNeeds } from './code-fence'
 import { AGENT_ALLOWED_TAGS, AGENT_CONTROLS } from './streamdown-config'
 import { LinkSafetyModal } from './LinkSafetyModal'
 import { SessionMessageLink } from './SessionMessageLink'
 import { StreamingBlock } from './StreamingBlock'
 import { createAgentMarkdownNormalizer } from './normalize-agent-markdown'
+import { useCodeHighlighter } from './use-code-highlighter'
 import { useSmoothStreamingContent } from './use-smooth-streaming-content'
 import { cn } from '@/lib/utils'
 
@@ -98,10 +112,37 @@ const MermaidErrorPanel = ({ chart, error, retry }: MermaidErrorPanelProps): Rea
 }
 
 const math = createMathPlugin({ singleDollarTextMath: true })
-const plugins = { code, math, mermaid, cjk } as const
+const basePlugins = { math, cjk } as const
+const shikiThemes: [ThemeInput, ThemeInput] = ['github-light', 'github-light']
 const mermaidOptions = {
   config: { theme: 'default' as const },
   errorComponent: MermaidErrorPanel
+}
+
+const useMarkdownPlugins = (content: string): PluginConfig => {
+  const needs = useMemo(() => getMarkdownPluginNeeds(content), [content])
+  const [optionalPlugins, setOptionalPlugins] = useState<PluginConfig>({})
+  const code = useCodeHighlighter(needs.code)
+
+  useEffect(() => {
+    if (!needs.mermaid || optionalPlugins.mermaid) return
+
+    let active = true
+    void import('./mermaid-runtime').then(
+      ({ mermaid }) => {
+        if (active) setOptionalPlugins((current) => ({ ...current, mermaid }))
+      },
+      (error: unknown) => console.error('Failed to load Mermaid rendering.', error)
+    )
+    return () => {
+      active = false
+    }
+  }, [needs.mermaid, optionalPlugins.mermaid])
+
+  return useMemo(
+    () => ({ ...basePlugins, ...(code ? { code } : {}), ...optionalPlugins }),
+    [code, optionalPlugins]
+  )
 }
 
 const agentLinkSafety: LinkSafetyConfig = {
@@ -169,6 +210,7 @@ const RichAgentMarkdown = memo(
     // Append-only streaming re-normalizes just the trailing block instead of the full message.
     const [normalizer] = useState(() => createAgentMarkdownNormalizer())
     const renderedContent = useMemo(() => normalizer(content), [normalizer, content])
+    const plugins = useMarkdownPlugins(renderedContent)
     const renderedComponents = useMemo(
       () => (sessionLinks ? { ...sessionLinkComponents, ...components } : components),
       [components, sessionLinks]
@@ -196,8 +238,8 @@ const RichAgentMarkdown = memo(
           normalizeHtmlIndentation={!isAnimating}
           allowedTags={AGENT_ALLOWED_TAGS}
           disallowedElements={allowMedia ? undefined : NETWORK_FETCHING_MEDIA_ELEMENTS}
-          shikiTheme={['github-light', 'github-light']}
-          mermaid={mermaidOptions}
+          shikiTheme={plugins.code ? shikiThemes : undefined}
+          mermaid={plugins.mermaid ? mermaidOptions : undefined}
         >
           {renderedContent}
         </Streamdown>

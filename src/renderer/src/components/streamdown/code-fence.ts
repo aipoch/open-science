@@ -2,6 +2,11 @@
 // and the deferred-highlight block) so fence open/close rules live in exactly one place.
 const FENCE_LINE = /^[ \t]{0,3}(`{3,}|~{3,})/
 
+type MarkdownPluginNeeds = {
+  code: boolean
+  mermaid: boolean
+}
+
 // Tracks one fence's open/close state while lines stream through `feed`. A fence opens on the
 // first marker line and closes on a marker with the same character at equal or greater length.
 const createCodeFenceTracker = (): {
@@ -31,4 +36,22 @@ const createCodeFenceTracker = (): {
   }
 }
 
-export { FENCE_LINE, createCodeFenceTracker }
+const getMarkdownPluginNeeds = (markdown: string): MarkdownPluginNeeds => {
+  const tracker = createCodeFenceTracker()
+  let code = false
+
+  for (const line of markdown.split('\n')) {
+    const wasOpen = tracker.isOpen()
+    const isOpen = tracker.feed(line)
+    if (wasOpen || !isOpen) continue
+
+    code = true
+    const language = line.replace(FENCE_LINE, '').trim().split(/\s+/, 1)[0]
+    if (language === 'mermaid') return { code: true, mermaid: true }
+  }
+
+  return { code, mermaid: false }
+}
+
+export { FENCE_LINE, createCodeFenceTracker, getMarkdownPluginNeeds }
+export type { MarkdownPluginNeeds }

@@ -1,10 +1,11 @@
-import { code } from '@streamdown/code'
 import type { HighlightResult } from '@streamdown/code'
 import { cn } from '@/lib/utils'
 import { Copy } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { BundledLanguage } from 'shiki'
+
+import { useCodeHighlighter } from '@/components/streamdown/use-code-highlighter'
 
 type WorkspaceToolCodeBlockProps = {
   code: string
@@ -48,6 +49,7 @@ const WorkspaceToolCodeBlock = ({
   const [highlighted, setHighlighted] = useState<HighlightState | null>(null)
   const [copied, setCopied] = useState(false)
   const highlightKey = createHighlightKey(source, language)
+  const highlighter = useCodeHighlighter(Boolean(language))
 
   const copyCode = useCallback(async () => {
     if (!navigator.clipboard) return
@@ -62,15 +64,15 @@ const WorkspaceToolCodeBlock = ({
   }, [source])
 
   useEffect(() => {
-    if (!language || !code.supportsLanguage(language as BundledLanguage)) return
+    if (!language || !highlighter?.supportsLanguage(language as BundledLanguage)) return
 
     let active = true
     const apply = (result: HighlightResult): void => {
       if (active) setHighlighted({ key: highlightKey, result })
     }
     // The highlighter loads languages/themes asynchronously; cached hits return immediately instead.
-    const immediate = code.highlight(
-      { code: source, language: language as BundledLanguage, themes: code.getThemes() },
+    const immediate = highlighter.highlight(
+      { code: source, language: language as BundledLanguage, themes: highlighter.getThemes() },
       apply
     )
 
@@ -79,7 +81,7 @@ const WorkspaceToolCodeBlock = ({
     return () => {
       active = false
     }
-  }, [source, language, highlightKey])
+  }, [source, language, highlightKey, highlighter])
 
   // Only paint tokens that were produced for the currently rendered code and language.
   const tokens = highlighted?.key === highlightKey ? highlighted.result.tokens : undefined

@@ -5,17 +5,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const streamdownHarness = vi.hoisted(() => ({
   shouldThrow: true,
+  codeImports: 0,
+  mermaidImports: 0,
   disallowedElements: undefined as readonly string[] | undefined,
   components: undefined as Record<string, unknown> | undefined,
+  plugins: undefined as Record<string, unknown> | undefined,
+  shikiTheme: undefined as unknown,
+  mermaidOptions: undefined as unknown,
   animated: undefined as unknown,
   caret: undefined as string | undefined,
   blockComponent: undefined as unknown
 }))
 
-vi.mock('@streamdown/code', () => ({ code: {} }))
+vi.mock('./code-highlighter-runtime', () => {
+  streamdownHarness.codeImports += 1
+  return { code: { name: 'shiki' } }
+})
 vi.mock('@streamdown/cjk', () => ({ cjk: {} }))
 vi.mock('@streamdown/math', () => ({ createMathPlugin: () => ({}) }))
-vi.mock('@streamdown/mermaid', () => ({ mermaid: {} }))
+vi.mock('./mermaid-runtime', () => {
+  streamdownHarness.mermaidImports += 1
+  return { mermaid: { name: 'mermaid' } }
+})
 vi.mock('streamdown', () => ({
   Streamdown: ({
     children,
@@ -23,13 +34,19 @@ vi.mock('streamdown', () => ({
     caret,
     components,
     disallowedElements,
-    BlockComponent
+    BlockComponent,
+    plugins,
+    shikiTheme,
+    mermaid
   }: PropsWithChildren<{
     animated?: unknown
     caret?: string
     components?: Record<string, unknown>
     disallowedElements?: readonly string[]
     BlockComponent?: unknown
+    plugins?: Record<string, unknown>
+    shikiTheme?: unknown
+    mermaid?: unknown
   }>): React.JSX.Element => {
     if (streamdownHarness.shouldThrow) throw new Error('optimized Markdown chunk failed to load')
     streamdownHarness.components = components
@@ -37,12 +54,15 @@ vi.mock('streamdown', () => ({
     streamdownHarness.animated = animated
     streamdownHarness.caret = caret
     streamdownHarness.blockComponent = BlockComponent
+    streamdownHarness.plugins = plugins
+    streamdownHarness.shikiTheme = shikiTheme
+    streamdownHarness.mermaidOptions = mermaid
 
     return <div data-testid="rich-markdown">{children}</div>
   }
 }))
 
-const { AgentMarkdown } = await import('./AgentMarkdown')
+const { AgentMarkdown, PresentedAgentMarkdown } = await import('./AgentMarkdown')
 const { SessionMessageLink } = await import('./SessionMessageLink')
 const { StreamingBlock } = await import('./StreamingBlock')
 
@@ -54,6 +74,9 @@ describe('AgentMarkdown renderer recovery', () => {
     streamdownHarness.shouldThrow = true
     streamdownHarness.disallowedElements = undefined
     streamdownHarness.components = undefined
+    streamdownHarness.plugins = undefined
+    streamdownHarness.shikiTheme = undefined
+    streamdownHarness.mermaidOptions = undefined
     streamdownHarness.animated = undefined
     streamdownHarness.caret = undefined
     streamdownHarness.blockComponent = undefined
@@ -69,6 +92,62 @@ describe('AgentMarkdown renderer recovery', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     container.remove()
+  })
+
+  it('does not request Mermaid or code highlighting for prose, lists, and tables', async () => {
+    streamdownHarness.shouldThrow = false
+
+    await act(async () => {
+      root.render(
+        <AgentMarkdown
+          content={'Plain text\n\n- list item\n\n| Name | Value |\n| --- | --- |\n| A | 1 |'}
+        />
+      )
+    })
+
+    expect(streamdownHarness.codeImports).toBe(0)
+    expect(streamdownHarness.mermaidImports).toBe(0)
+    expect(streamdownHarness.plugins?.code).toBeUndefined()
+    expect(streamdownHarness.plugins?.mermaid).toBeUndefined()
+    expect(streamdownHarness.shikiTheme).toBeUndefined()
+    expect(streamdownHarness.mermaidOptions).toBeUndefined()
+  })
+
+  it('loads code highlighting and its themes only after a fence appears', async () => {
+    streamdownHarness.shouldThrow = false
+    const content = '```ts\nconst value = 1\n```'
+
+    await act(async () => {
+      root.render(<AgentMarkdown content={content} />)
+    })
+
+    expect(streamdownHarness.codeImports).toBe(1)
+    expect(streamdownHarness.mermaidImports).toBe(0)
+    expect(streamdownHarness.plugins?.code).toEqual({ name: 'shiki' })
+    expect(streamdownHarness.shikiTheme).toEqual(['github-light', 'github-light'])
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(content)
+  })
+
+  it('upgrades a streaming fence to Mermaid without dropping its readable source', async () => {
+    streamdownHarness.shouldThrow = false
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={'```mer'} isAnimating />)
+    })
+
+    expect(streamdownHarness.mermaidImports).toBe(0)
+    expect(streamdownHarness.plugins?.mermaid).toBeUndefined()
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('```mer')
+
+    const content = '```mermaid\ngraph TD\n  A --> B'
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={content} isAnimating />)
+    })
+
+    expect(streamdownHarness.mermaidImports).toBe(1)
+    expect(streamdownHarness.plugins?.mermaid).toEqual({ name: 'mermaid' })
+    expect(streamdownHarness.mermaidOptions).toBeDefined()
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(content)
   })
 
   it('keeps the original message and sibling UI visible when rich Markdown rendering fails', async () => {
