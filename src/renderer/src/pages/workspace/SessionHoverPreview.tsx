@@ -187,7 +187,7 @@ const SessionHoverPreviewCard = ({
         className
       )}
     >
-      <p className="line-clamp-3 break-words text-[15px] font-semibold leading-5 tracking-[-0.01em] [text-wrap:pretty]">
+      <p className="truncate text-[15px] font-semibold leading-5 tracking-[-0.01em]">
         {session.title}
       </p>
       {description ? (
