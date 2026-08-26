@@ -678,6 +678,11 @@ const createApplicationModules = async (
       ): Promise<void>
     }
   } = {}
+  const computeJobActivityRef: {
+    current?: {
+      findNonTerminal(): Promise<Array<{ project_id: string }>>
+    }
+  } = {}
   const projectRuntimeQuiescenceRef: { current?: ProjectRuntimeQuiescenceOwner } = {}
   const computeJobDeletionPort = {
     restoreProjectJobDeletion: (projectId: string): Promise<void> => {
@@ -855,8 +860,17 @@ const createApplicationModules = async (
         detectArchiveBlockingSessions().some(
           (session) => session.projectId === projectId && session.sessionId === sessionId
         ),
-      isProjectBusy: (projectId) =>
-        detectArchiveBlockingSessions().some((session) => session.projectId === projectId),
+      isProjectBusy: async (projectId) => {
+        if (
+          reviewerProjectRuntime.isProjectBusy(projectId) ||
+          detectArchiveBlockingSessions().some((session) => session.projectId === projectId)
+        ) {
+          return true
+        }
+        const computeJobs = computeJobActivityRef.current
+        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
+        return (await computeJobs.findNonTerminal()).some((job) => job.project_id === projectId)
+      },
       liveSessionProjectId: (sessionId) => runtimeRef.current?.liveSessionProjectId(sessionId)
     }
   )
@@ -1473,6 +1487,7 @@ const createApplicationModules = async (
     hostRepository,
     enabledComputeHostsRegistry: hostsRegistry
   } = computeIpcModule
+  computeJobActivityRef.current = jobRepository
   const sessionEnabledComputeHostsOwner = new SessionEnabledComputeHostsOwner({
     registry: hostsRegistry,
     hostExists: async (providerId) => (await hostRepository.get(providerId)) !== null,
@@ -3187,6 +3202,8 @@ const createApplicationModules = async (
     acpRuntime: runtime,
     modelRuntime: reviewerModelRuntime,
     projectRuntime: reviewerProjectRuntime,
+    withProjectAvailable: <Result>(projectId: string, operation: () => Promise<Result>) =>
+      archiveCoordinator.withProjectAvailable(projectId, operation),
     mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
     resolveSessionAgentTarget,

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ChatSession } from '@/stores/session-store'
+import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 
 import { type ComposerDoc } from './composer/composer-doc'
 import {
@@ -125,6 +126,7 @@ const options = (
   isPresentationRevealing: vi.fn(() => false),
   isSpecialistReady: vi.fn(() => true),
   hasPendingPermissionRequest: vi.fn(() => false),
+  isProjectActive: vi.fn(() => true),
   abortFixLoop: vi.fn(async () => undefined),
   getSession: () => activeSession,
   subscribeSessionChanges: () => () => undefined,
@@ -181,6 +183,7 @@ const mounted: Hook[] = []
 
 afterEach(() => {
   for (const hook of mounted.splice(0)) hook.unmount()
+  useProjectStore.setState(createInitialProjectState())
   setWorkspaceSpecialistBarrier('session-a', false)
   setWorkspacePresentationRevealing('session-a', false)
   vi.restoreAllMocks()
@@ -244,6 +247,59 @@ describe('workspace message queue controller', () => {
     workspace.returnToWorkspace()
     await vi.waitFor(() => expect(workspace.result.current.items).toEqual([]))
     expect(workspace.result.current.lifecycle.blocksImmediateSend(currentSession.id)).toBe(false)
+  })
+
+  it('does not drain a queued message after its Project is archived', async () => {
+    let currentSession = session()
+    let notifySessionChanged: (() => void) | undefined
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      isProjectActive: (projectId) =>
+        useProjectStore
+          .getState()
+          .projects.some((project) => project.id === projectId && project.archivedAt === undefined),
+      getSession: () => currentSession,
+      subscribeSessionChanges: (listener) => {
+        notifySessionChanged = listener
+        return () => {
+          notifySessionChanged = undefined
+        }
+      }
+    })
+    const workspace = renderController(input)
+    mounted.push(workspace)
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project-a',
+          name: 'Project A',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      isLoaded: true
+    })
+
+    act(() => workspace.result.current.lifecycle.enqueue(admission('do not send after archive')))
+    workspace.leaveWorkspace()
+    useProjectStore.setState((state) => ({
+      projects: state.projects.map((project) => ({ ...project, archivedAt: 2 }))
+    }))
+
+    currentSession = session('idle')
+    act(() => notifySessionChanged?.())
+    await Promise.resolve()
+
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+
+    useProjectStore.setState((state) => ({
+      projects: state.projects.map((project) => ({ ...project, archivedAt: undefined }))
+    }))
+    act(() => notifySessionChanged?.())
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
   })
 
   it('dispatches queued messages with the agentConfiguration captured at enqueue', async () => {

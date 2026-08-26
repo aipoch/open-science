@@ -106,6 +106,10 @@ type ReviewerIpcOptions = {
     >
   }>
   projectRuntime?: Pick<ReviewerProjectRuntimeOwner, 'admit'>
+  withProjectAvailable?: <Result>(
+    projectId: string,
+    operation: () => Promise<Result>
+  ) => Promise<Result>
   resolveSessionAgentTarget?: SessionAgentTargetResolver
   saveSessionAgentConfiguration?: (
     session: PersistedChatSession,
@@ -492,18 +496,23 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   }
 
   const triggerReview = (request: ReviewRunRequest): Promise<ReviewRunResult> => {
-    let projectAdmission: ReviewerProjectAdmission
-    try {
-      // Admission is acquired synchronously before session/repository/model work begins. Once
-      // Project deletion closes it, no new Reviewer operation can slip into the quiescence snapshot.
-      projectAdmission = projectRuntime.admit(request.projectId)
-    } catch (error) {
-      return Promise.reject(error)
+    const admitReview = (): Promise<ReviewRunResult> => {
+      let projectAdmission: ReviewerProjectAdmission
+      try {
+        // Admission is acquired synchronously before session/repository/model work begins. Once
+        // Project deletion closes it, no new Reviewer operation can slip into the quiescence snapshot.
+        projectAdmission = projectRuntime.admit(request.projectId)
+      } catch (error) {
+        return Promise.reject(error)
+      }
+      return triggerAdmittedReview(request, projectAdmission).catch((error: unknown) => {
+        projectAdmission.release()
+        throw error
+      })
     }
-    return triggerAdmittedReview(request, projectAdmission).catch((error: unknown) => {
-      projectAdmission.release()
-      throw error
-    })
+    return options.withProjectAvailable
+      ? options.withProjectAvailable(request.projectId, admitReview)
+      : admitReview()
   }
 
   return { run: triggerReview, triggerReview, getForSession, abort, abortFixLoop }

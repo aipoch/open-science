@@ -24,7 +24,7 @@ type SessionArchivePersistence = {
 
 type SessionRuntimeActivity = {
   isSessionBusy(projectId: string, sessionId: string): boolean
-  isProjectBusy(projectId: string): boolean
+  isProjectBusy(projectId: string): boolean | Promise<boolean>
   liveSessionProjectId(sessionId: string): string | undefined
 }
 
@@ -73,7 +73,7 @@ class ArchiveCoordinator {
       }
       if (request.archived === (currentArchivedAt !== null)) return project
 
-      if (request.archived && this.runtime.isProjectBusy(request.id)) {
+      if (request.archived && (await this.runtime.isProjectBusy(request.id))) {
         throw new Error('Finish or stop active sessions before archiving this project.')
       }
       const sessionIds = request.archived
