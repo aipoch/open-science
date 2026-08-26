@@ -133,7 +133,7 @@ gate('r_loop.R', () => {
     const { child, send, inspect } = startLoop(rscriptBin(), {})
     try {
       await send(
-        "forced <- FALSE; x <- 41L; label <- '活跃变量'; .private <- 'hidden'; assign('run', 1L, envir = .GlobalEnv); con <- 'user con'; " +
+        "forced <- FALSE; x <- 41L; label <- '活跃变量'; .private <- 'hidden'; 1L -> run; 'user con' ->> con; " +
           'items <- seq_len(100000L); blob <- raw(2000000L); huge_label <- strrep("活", 1000000L); ' +
           'makeActiveBinding("active_value", function() stop("must not evaluate"), .GlobalEnv); ' +
           'delayedAssign("lazy_value", stop("must not force"), assign.env = .GlobalEnv); ' +

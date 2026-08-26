@@ -73,7 +73,7 @@ type NotebookCommandWorkflows = {
 }
 
 const withoutTrustedTurnContext = <
-  Request extends RunNotebookCellRequest | ExecuteNotebookCodeRequest
+  Request extends RunNotebookCellRequest | ExecuteNotebookCodeRequest | NotebookNamespaceRequest
 >(
   request: Request
 ): Request => {
@@ -95,7 +95,7 @@ const createNotebookCommandWorkflows = (
   runtime: NotebookCommandRuntime
 ): NotebookCommandWorkflows => ({
   state: (request) => runtime.state(request),
-  inspectNamespace: (request) => runtime.inspectNamespace(request),
+  inspectNamespace: (request) => runtime.inspectNamespace(withoutTrustedTurnContext(request)),
   reference: (request) => runtime.getSessionReference(request),
   beginCodeCell: (request) => withDataRootWrite(() => runtime.beginCodeCell(request)),
   appendCodeCell: (request) => withDataRootWrite(() => runtime.appendCodeCell(request)),

@@ -625,6 +625,10 @@ namespace_tracker <- base::local({
         is.symbol(expr[[2L]])) {
       return(as.character(expr[[2L]]))
     }
+    if (head_name %in% c("->", "->>") && length(expr) >= 3L &&
+        is.symbol(expr[[3L]])) {
+      return(as.character(expr[[3L]]))
+    }
     is_assign <- identical(head, as.name("assign")) ||
       (is.call(head) && length(head) == 3L &&
        identical(head[[1L]], as.name("::")) &&
