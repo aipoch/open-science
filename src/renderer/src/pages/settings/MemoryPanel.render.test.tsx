@@ -5,10 +5,71 @@ import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
-import { MemoryPanel } from './MemoryPanel'
+import type {
+  MemoryCategoryView,
+  MemoryEntryView,
+  MemoryProjectView
+} from '../../../../shared/memory'
+import { MemoryPanel, type MemoryView } from './MemoryPanel'
+
+type AboutYouCategory = Extract<MemoryCategoryView, { systemKey: 'about-you' }>
+type CustomCategory = Extract<MemoryCategoryView, { name: string }>
+
+const memoryEntry = (overrides: Partial<MemoryEntryView> = {}): MemoryEntryView => ({
+  id: 'entry-a',
+  categoryId: 'memory-category-about-you',
+  categoryName: 'About you',
+  projectId: null,
+  projectName: null,
+  content: 'A note',
+  origin: 'user',
+  revision: 1,
+  createdAt: 2,
+  updatedAt: 2,
+  ...overrides
+})
+
+const aboutYouCategory = (overrides: Partial<AboutYouCategory> = {}): AboutYouCategory => ({
+  id: 'memory-category-about-you',
+  systemKey: 'about-you',
+  autoRecall: true,
+  revision: 1,
+  createdAt: 1,
+  updatedAt: 1,
+  entries: [],
+  ...overrides
+})
+
+const customCategory = (overrides: Partial<CustomCategory> = {}): CustomCategory => ({
+  id: 'category-a',
+  name: 'Category A',
+  guidance: '',
+  autoRecall: true,
+  revision: 1,
+  createdAt: 2,
+  updatedAt: 2,
+  entries: [],
+  ...overrides
+})
+
+const memoryProject = (overrides: Partial<MemoryProjectView> = {}): MemoryProjectView => ({
+  projectId: 'project-a',
+  name: 'Project A',
+  archived: false,
+  entries: [],
+  ...overrides
+})
 
 let container: HTMLDivElement
 let root: Root
+
+const renderMemoryPanel = async (
+  view: MemoryView = { kind: 'list' },
+  onNavigate: (view: MemoryView) => void = vi.fn(),
+  onOpenProject?: (projectId: string) => void
+): Promise<void> => {
+  await act(async () => root.render(<MemoryPanel {...{ view, onNavigate, onOpenProject }} />))
+}
 
 beforeEach(() => {
   container = document.createElement('div')
@@ -17,17 +78,7 @@ beforeEach(() => {
   useMemoryStore.setState({
     ...createInitialMemoryState(),
     status: 'ready',
-    categories: [
-      {
-        id: 'memory-category-about-you',
-        systemKey: 'about-you',
-        autoRecall: true,
-        revision: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        entries: []
-      }
-    ],
+    categories: [aboutYouCategory()],
     selectedCategoryId: 'memory-category-about-you'
   })
 })
@@ -39,7 +90,7 @@ afterEach(() => {
 
 describe('MemoryPanel', () => {
   it('renders the retained-data off state and immutable About you category', async () => {
-    await act(async () => root.render(<MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+    await renderMemoryPanel()
 
     expect(document.body.textContent).toContain('Memory is off.')
     expect(document.body.textContent).not.toContain('Turn on')
@@ -49,9 +100,7 @@ describe('MemoryPanel', () => {
   })
 
   it('renders the category form with the custom-category count and auto-recall control', async () => {
-    await act(async () =>
-      root.render(<MemoryPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
-    )
+    await renderMemoryPanel({ kind: 'create' })
 
     expect(document.body.textContent).toContain('0 of 10 categories used')
     expect(document.body.textContent).toContain('Auto-recall')
@@ -74,7 +123,7 @@ describe('MemoryPanel', () => {
   })
 
   it('opens an inline note editor from Add', async () => {
-    await act(async () => root.render(<MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+    await renderMemoryPanel()
 
     const add = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Add'
@@ -88,30 +137,18 @@ describe('MemoryPanel', () => {
     useMemoryStore.setState({
       categories: [
         useMemoryStore.getState().categories[0]!,
-        {
-          id: 'category-a',
-          name: 'Category A',
-          guidance: '',
-          autoRecall: true,
-          revision: 1,
-          createdAt: 2,
-          updatedAt: 2,
-          entries: []
-        },
-        {
+        customCategory(),
+        customCategory({
           id: 'category-b',
           name: 'Category B',
-          guidance: '',
           autoRecall: false,
-          revision: 1,
           createdAt: 3,
-          updatedAt: 3,
-          entries: []
-        }
+          updatedAt: 3
+        })
       ],
       selectedCategoryId: 'category-a'
     })
-    await act(async () => root.render(<MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+    await renderMemoryPanel()
 
     const add = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Add'
@@ -130,21 +167,10 @@ describe('MemoryPanel', () => {
 
   it('exposes auto-recall as one checkable menu item without nested controls', async () => {
     useMemoryStore.setState({
-      categories: [
-        {
-          id: 'category-a',
-          name: 'Category A',
-          guidance: '',
-          autoRecall: true,
-          revision: 1,
-          createdAt: 2,
-          updatedAt: 2,
-          entries: []
-        }
-      ],
+      categories: [customCategory()],
       selectedCategoryId: 'category-a'
     })
-    await act(async () => root.render(<MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+    await renderMemoryPanel()
 
     fireEvent.pointerDown(container.querySelector('button[aria-label="Category actions"]')!, {
       button: 0,
@@ -159,22 +185,10 @@ describe('MemoryPanel', () => {
 
   it('describes destructive actions against current app data without overstating backups', async () => {
     useMemoryStore.setState({
-      categories: [
-        useMemoryStore.getState().categories[0]!,
-        {
-          id: 'category-a',
-          name: 'Category A',
-          guidance: '',
-          autoRecall: true,
-          revision: 1,
-          createdAt: 2,
-          updatedAt: 2,
-          entries: []
-        }
-      ],
+      categories: [useMemoryStore.getState().categories[0]!, customCategory()],
       selectedCategoryId: 'category-a'
     })
-    await act(async () => root.render(<MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+    await renderMemoryPanel()
 
     fireEvent.click(
       Array.from(container.querySelectorAll('button')).find(
@@ -193,27 +207,13 @@ describe('MemoryPanel', () => {
     const deleteEntry = vi.fn().mockResolvedValue(undefined)
     useMemoryStore.setState({
       categories: [
-        {
-          ...useMemoryStore.getState().categories[0]!,
-          entries: [
-            {
-              id: 'entry-a',
-              categoryId: 'memory-category-about-you',
-              categoryName: 'About you',
-              projectId: null,
-              projectName: null,
-              content: 'Keep this until confirmed',
-              origin: 'user',
-              revision: 1,
-              createdAt: 2,
-              updatedAt: 2
-            }
-          ]
-        }
+        aboutYouCategory({
+          entries: [memoryEntry({ content: 'Keep this until confirmed' })]
+        })
       ],
       deleteEntry
     })
-    await act(async () => root.render(<MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+    await renderMemoryPanel()
 
     fireEvent.click(container.querySelector('button[aria-label="Delete note"]')!)
 
@@ -233,27 +233,11 @@ describe('MemoryPanel', () => {
     const deleteEntry = vi.fn().mockResolvedValue(undefined)
     useMemoryStore.setState({
       categories: [
-        {
-          ...useMemoryStore.getState().categories[0]!,
-          entries: [
-            {
-              id: 'entry-a',
-              categoryId: 'memory-category-about-you',
-              categoryName: 'About you',
-              projectId: null,
-              projectName: null,
-              content: 'Keep this after closing',
-              origin: 'user',
-              revision: 1,
-              createdAt: 2,
-              updatedAt: 2
-            }
-          ]
-        }
+        aboutYouCategory({ entries: [memoryEntry({ content: 'Keep this after closing' })] })
       ],
       deleteEntry
     })
-    await act(async () => root.render(<MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+    await renderMemoryPanel()
 
     fireEvent.click(container.querySelector('button[aria-label="Delete note"]')!)
 
@@ -271,20 +255,13 @@ describe('MemoryPanel', () => {
     useMemoryStore.setState({
       categories: [
         useMemoryStore.getState().categories[0]!,
-        {
-          id: 'category-a',
-          name: 'Category A',
-          guidance: 'Save reusable category A findings',
-          autoRecall: true,
-          revision: 1,
-          createdAt: 2,
-          updatedAt: 2,
-          entries: []
-        }
+        customCategory({
+          guidance: 'Save reusable category A findings'
+        })
       ],
       selectedCategoryId: 'category-a'
     })
-    await act(async () => root.render(<MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+    await renderMemoryPanel()
 
     fireEvent.pointerDown(container.querySelector('button[aria-label="Category actions"]')!, {
       button: 0,
@@ -304,38 +281,20 @@ describe('MemoryPanel', () => {
   it('keeps the memory layout and note list within their own scroll region', async () => {
     useMemoryStore.setState({
       categories: [
-        {
-          ...useMemoryStore.getState().categories[0]!,
+        aboutYouCategory({
           entries: [
-            {
-              id: 'entry-a',
-              categoryId: 'memory-category-about-you',
-              categoryName: 'About you',
-              projectId: null,
-              projectName: null,
-              content: 'First note',
-              origin: 'user',
-              revision: 1,
-              createdAt: 2,
-              updatedAt: 2
-            },
-            {
+            memoryEntry({ content: 'First note' }),
+            memoryEntry({
               id: 'entry-b',
-              categoryId: 'memory-category-about-you',
-              categoryName: 'About you',
-              projectId: null,
-              projectName: null,
               content: 'Second note',
-              origin: 'user',
-              revision: 1,
               createdAt: 3,
               updatedAt: 3
-            }
+            })
           ]
-        }
+        })
       ]
     })
-    await act(async () => root.render(<MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+    await renderMemoryPanel()
 
     expect(container.querySelector('[data-slot="memory-panel"]')?.className).toContain('h-full')
     expect(container.querySelector('[data-slot="memory-entry-list"]')?.className).toContain(
@@ -345,27 +304,9 @@ describe('MemoryPanel', () => {
 
   it('renders note rows without separators and aligns non-destructive icon colors', async () => {
     useMemoryStore.setState({
-      categories: [
-        {
-          ...useMemoryStore.getState().categories[0]!,
-          entries: [
-            {
-              id: 'entry-a',
-              categoryId: 'memory-category-about-you',
-              categoryName: 'About you',
-              projectId: null,
-              projectName: null,
-              content: 'A note',
-              origin: 'user',
-              revision: 1,
-              createdAt: 2,
-              updatedAt: 2
-            }
-          ]
-        }
-      ]
+      categories: [aboutYouCategory({ entries: [memoryEntry()] })]
     })
-    await act(async () => root.render(<MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+    await renderMemoryPanel()
 
     expect(container.querySelector('[data-slot="memory-entry"]')?.className).not.toContain(
       'border-b'
@@ -381,14 +322,7 @@ describe('MemoryPanel', () => {
   it('fails closed to the list when an edit history target no longer exists', async () => {
     const onNavigate = vi.fn()
 
-    await act(async () =>
-      root.render(
-        <MemoryPanel
-          view={{ kind: 'edit', categoryId: 'deleted-category' }}
-          onNavigate={onNavigate}
-        />
-      )
-    )
+    await renderMemoryPanel({ kind: 'edit', categoryId: 'deleted-category' }, onNavigate)
 
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
     expect(container.querySelector('input[name="memory-category-name"]')).toBeNull()
@@ -399,12 +333,9 @@ describe('MemoryPanel', () => {
     const onOpenProject = vi.fn()
     useMemoryStore.setState({
       projects: [
-        {
-          projectId: 'project-a',
-          name: 'Project A',
-          archived: false,
+        memoryProject({
           entries: [
-            {
+            memoryEntry({
               id: 'entry-project',
               categoryId: 'category-a',
               categoryName: 'Research findings',
@@ -412,19 +343,14 @@ describe('MemoryPanel', () => {
               projectName: 'Project A',
               content: 'The assay requires a 15 minute incubation.',
               origin: 'agent',
-              revision: 1,
               createdAt: 4,
               updatedAt: 4
-            }
+            })
           ]
-        }
+        })
       ]
     })
-    await act(async () =>
-      root.render(
-        <MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenProject={onOpenProject} />
-      )
-    )
+    await renderMemoryPanel({ kind: 'list' }, vi.fn(), onOpenProject)
 
     fireEvent.click(
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
@@ -446,21 +372,10 @@ describe('MemoryPanel', () => {
   it('creates a manual note inside the selected project without a global category', async () => {
     const createEntry = vi.fn().mockResolvedValue(undefined)
     useMemoryStore.setState({
-      projects: [
-        {
-          projectId: 'project-a',
-          name: 'Project A',
-          archived: false,
-          entries: []
-        }
-      ],
+      projects: [memoryProject()],
       createEntry
     })
-    await act(async () =>
-      root.render(
-        <MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenProject={vi.fn()} />
-      )
-    )
+    await renderMemoryPanel({ kind: 'list' }, vi.fn(), vi.fn())
     fireEvent.click(
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
         button.textContent?.includes('Project A')

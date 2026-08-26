@@ -30,7 +30,11 @@ import { tagOrderingMigration } from './migrations/0012-tag-ordering'
 import { sessionProjectionMigration } from './migrations/0013-session-projection'
 import { reviewQueryIndexesMigration } from './migrations/0014-review-query-indexes'
 import { sessionModelCallUsageMigration } from './migrations/0015-session-model-call-usage'
-import { agentMemoryMigration } from './migrations/0016-agent-memory'
+import {
+  agentMemoryMigration,
+  MEMORY_AUXILIARY_SCHEMA_OBJECTS,
+  MEMORY_AUXILIARY_TABLE_NAMES
+} from './migrations/0016-agent-memory'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -697,6 +701,17 @@ const runMigrationVerifiers = async (
   }
 }
 
+const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<void> => {
+  const memoryTriggerNames = MEMORY_AUXILIARY_SCHEMA_OBJECTS.flatMap(({ type, name }) =>
+    type === 'trigger' ? [name] : []
+  )
+  await verifyCurrentRuntimeSchema(client, {
+    tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
+    triggerNames: memoryTriggerNames
+  })
+  await runMigrationVerifiers(client, agentMemoryMigration.verifiers)
+}
+
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
   const table = await client.$queryRaw<Array<{ name: string }>>`
     SELECT "name" FROM "sqlite_schema"
@@ -1253,7 +1268,7 @@ const migrateApplicationDatabaseWithManifest = async (
   const latest = manifest.at(-1)!
   const complete = async (result: SchemaMigrationResult): Promise<SchemaMigrationResult> => {
     try {
-      await verifyCurrentRuntimeSchema(client)
+      await verifyCurrentApplicationSchema(client)
     } catch (error) {
       throw classifyDatabaseFailure(error, 'validation', latest.id)
     }
@@ -1401,6 +1416,7 @@ export {
   classifyDatabaseFailure,
   migrateApplicationDatabase,
   migrateApplicationDatabaseWithManifest,
+  verifyCurrentApplicationSchema,
   MIGRATION_MANIFEST
 }
 export type {

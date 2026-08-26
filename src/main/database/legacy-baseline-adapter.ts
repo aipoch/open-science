@@ -20,10 +20,6 @@ import {
 } from './sqlite-schema-migrations'
 import { DatabaseValidationError } from './database-validation-error'
 import { migrationSqlExecutor } from './migration-sql-executor'
-import {
-  MEMORY_AUXILIARY_SCHEMA_OBJECTS,
-  MEMORY_AUXILIARY_TABLE_NAMES
-} from './migrations/0016-agent-memory'
 
 // schema-locality: begin frozen-0001-repairs
 // Frozen legacy repair routes into the generated 0001 target. New schema changes must add a
@@ -375,6 +371,11 @@ type RuntimeSchemaTarget = {
   indexes: ReadonlyMap<string, TargetIndex>
 }
 
+type RuntimeSchemaExtensions = Readonly<{
+  tableNames?: readonly string[]
+  triggerNames?: readonly string[]
+}>
+
 const BASELINE_SCHEMA_TARGET: RuntimeSchemaTarget = {
   tableNames: RUNTIME_SCHEMA_BASELINE_TABLES,
   tables: TARGET_TABLES,
@@ -394,7 +395,6 @@ type SqliteTableColumn = {
   pk: bigint | number
 }
 type SqliteSchemaName = { name: string }
-type SqliteSchemaObject = { type: string; name: string; sql: string | null }
 type SqliteIndexListRow = { name: string; unique: bigint | number }
 type SqliteIndexColumnRow = { seqno: bigint | number; name: string }
 type SqliteForeignKeyRow = {
@@ -548,7 +548,8 @@ const verifyRuntimeSchemaTarget = async (
   client: PrismaClient,
   target: RuntimeSchemaTarget,
   exact: boolean = false,
-  allowedSuffixChecks: AllowedSuffixCheckConstraints = {}
+  allowedSuffixChecks: AllowedSuffixCheckConstraints = {},
+  extensions: RuntimeSchemaExtensions = {}
 ): Promise<void> => {
   const tables = await migrationSqlExecutor.query<SqliteSchemaName[]>(
     client,
@@ -558,10 +559,7 @@ const verifyRuntimeSchemaTarget = async (
      ORDER BY "name"`
   )
   const actualTables = new Set(tables.map((table) => table.name))
-  const expectedTables = new Set([
-    ...target.tableNames,
-    ...(exact ? MEMORY_AUXILIARY_TABLE_NAMES : [])
-  ])
+  const expectedTables = new Set([...target.tableNames, ...(extensions.tableNames ?? [])])
   const missingTables = target.tableNames.filter((tableName) => !actualTables.has(tableName))
   if (missingTables.length > 0) {
     throw new DatabaseValidationError(`Database baseline verification found missing tables.`, {
@@ -577,6 +575,23 @@ const verifyRuntimeSchemaTarget = async (
       kind: 'unexpected-tables',
       actual: unexpectedTables
     })
+  }
+
+  if (exact) {
+    const triggers = await migrationSqlExecutor.query<SqliteSchemaName[]>(
+      client,
+      `SELECT "name" FROM "sqlite_schema" WHERE "type" = 'trigger' ORDER BY "name"`
+    )
+    const expectedTriggers = new Set(extensions.triggerNames ?? [])
+    const unexpectedTriggers = triggers
+      .map(({ name }) => name)
+      .filter((name) => !expectedTriggers.has(name))
+    if (unexpectedTriggers.length > 0) {
+      throw new DatabaseValidationError(
+        'Database baseline verification found unexpected triggers.',
+        { kind: 'unexpected-triggers', actual: unexpectedTriggers }
+      )
+    }
   }
 
   const foreignKeyKey = (foreignKey: TargetForeignKey): string =>
@@ -888,66 +903,10 @@ const normalizeSchemaObjectSql = (value: string | null): string | null =>
     ?.replace(/\bif not exists\b/gu, '')
     .replaceAll(/\s+/gu, ' ') ?? null
 
-const verifyMemoryAuxiliarySchema = async (client: PrismaClient): Promise<void> => {
-  const rows = await migrationSqlExecutor.query<SqliteSchemaObject[]>(
-    client,
-    `SELECT "type", "name", "sql" FROM "sqlite_schema"
-     WHERE "name" IN (${MEMORY_AUXILIARY_SCHEMA_OBJECTS.map(() => '?').join(', ')})`,
-    ...MEMORY_AUXILIARY_SCHEMA_OBJECTS.map(({ name }) => name)
-  )
-  const actual = new Map(rows.map((row) => [row.name, row]))
-  for (const expected of MEMORY_AUXILIARY_SCHEMA_OBJECTS) {
-    const row = actual.get(expected.name)
-    if (
-      !row ||
-      row.type !== expected.type ||
-      normalizeSchemaObjectSql(row.sql) !== normalizeSchemaObjectSql(expected.sql)
-    ) {
-      throw new DatabaseValidationError(
-        `Database memory auxiliary schema verification failed for ${expected.name}.`,
-        {
-          kind: 'memory-auxiliary-schema-mismatch',
-          constraint: expected.name,
-          expected: { type: expected.type, sql: normalizeSchemaObjectSql(expected.sql) },
-          actual: row ? { type: row.type, sql: normalizeSchemaObjectSql(row.sql) } : undefined
-        }
-      )
-    }
-  }
-
-  const expectedTriggers = new Set(
-    MEMORY_AUXILIARY_SCHEMA_OBJECTS.filter(({ type }) => type === 'trigger').map(({ name }) => name)
-  )
-  const triggers = await migrationSqlExecutor.query<SqliteSchemaName[]>(
-    client,
-    `SELECT "name" FROM "sqlite_schema" WHERE "type" = 'trigger' ORDER BY "name"`
-  )
-  const unexpectedTriggers = triggers
-    .map(({ name }) => name)
-    .filter((name) => !expectedTriggers.has(name))
-  if (unexpectedTriggers.length > 0) {
-    throw new DatabaseValidationError(
-      'Database memory auxiliary schema verification found unexpected triggers.',
-      { kind: 'unexpected-memory-triggers', actual: unexpectedTriggers }
-    )
-  }
-
-  const secureDelete = await migrationSqlExecutor.query<Array<{ value: bigint | number | string }>>(
-    client,
-    `SELECT "v" AS "value" FROM "MemoryEntryFts_config" WHERE "k" = 'secure-delete'`
-  )
-  if (Number(secureDelete[0]?.value) !== 1) {
-    throw new DatabaseValidationError(
-      'Database memory auxiliary schema verification found insecure FTS deletion.',
-      { kind: 'memory-fts-secure-delete-missing', actual: secureDelete }
-    )
-  }
-}
-
-const verifyCurrentRuntimeSchema = async (client: PrismaClient): Promise<void> => {
-  await verifyRuntimeSchemaTarget(client, CURRENT_SCHEMA_TARGET, true)
-  await verifyMemoryAuxiliarySchema(client)
-}
+const verifyCurrentRuntimeSchema = (
+  client: PrismaClient,
+  extensions: RuntimeSchemaExtensions = {}
+): Promise<void> => verifyRuntimeSchemaTarget(client, CURRENT_SCHEMA_TARGET, true, {}, extensions)
 
 const applyRuntimeSchemaBaseline = async (
   client: PrismaClient,

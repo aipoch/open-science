@@ -6,7 +6,6 @@ import { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient } from '../projects/prisma-client'
-import { verifyCurrentRuntimeSchema } from './legacy-baseline-adapter'
 import { RUNTIME_SCHEMA_TABLE_DDL_BY_NAME } from './migrations/0001-runtime-schema-baseline'
 import {
   BASELINE_CHECKSUM,
@@ -16,6 +15,7 @@ import {
   classifyDatabaseFailure,
   migrateApplicationDatabase,
   migrateApplicationDatabaseWithManifest,
+  verifyCurrentApplicationSchema,
   type MigrationManifestEntry
 } from './migration-service'
 
@@ -290,7 +290,7 @@ describe('application database migrations', () => {
 
     await migrateApplicationDatabase(client)
 
-    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
 
   it('rejects the obsolete pre-release agent memory ledger without rewriting it', async () => {
@@ -531,7 +531,7 @@ describe('application database migrations', () => {
       from: '0005_project_preview_state_owner_fk',
       to: '0016_agent_memory'
     })
-    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
 
   it('upgrades valid 0005 rows while preserving known retired columns', async () => {
@@ -655,7 +655,7 @@ describe('application database migrations', () => {
         credentialCount: 0n
       }
     ])
-    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
 
   it('rolls back 0006 when historical rows violate the new contract', async () => {
@@ -693,7 +693,7 @@ describe('application database migrations', () => {
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('CREATE TABLE "UnversionedDrift" ("id" TEXT PRIMARY KEY)')
 
-    await expect(verifyCurrentRuntimeSchema(client)).rejects.toThrow(/unexpected tables/)
+    await expect(verifyCurrentApplicationSchema(client)).rejects.toThrow(/unexpected tables/)
   })
 
   it('keeps a recovery snapshot when final verification rejects current schema drift', async () => {
@@ -1390,7 +1390,7 @@ describe('application database migrations', () => {
       notifiedAt: null,
       notificationConsumedAt: null
     })
-    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
 
   it('keeps explicitly retired Review and Finding columns after final verification', async () => {
@@ -1514,7 +1514,7 @@ describe('application database migrations', () => {
       capabilityKey: 'exec:agent/shell',
       projectId: 'legacy-project'
     })
-    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
 
   it('rejects a grouped legacy permission constraint with different semantics', async () => {
@@ -1575,7 +1575,7 @@ describe('application database migrations', () => {
         '0016_agent_memory'
       ]
     })
-    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
     await expect(
       client.$queryRaw<Array<{ sql: string }>>`
         SELECT "sql" FROM "sqlite_schema"
@@ -1680,7 +1680,7 @@ describe('application database migrations', () => {
     await expect(
       client.permissionGrantSeed.findUniqueOrThrow({ where: { id: 'global-customize-v1' } })
     ).resolves.toEqual({ id: 'global-customize-v1', appliedAt })
-    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
 
   it('retains only the two newest restorable snapshots after adopting a legacy database', async () => {

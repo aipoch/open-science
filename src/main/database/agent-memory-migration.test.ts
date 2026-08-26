@@ -7,8 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { ABOUT_YOU_MEMORY_CATEGORY_ID, MEMORY_SETTINGS_ID } from '../../shared/memory'
 import { createProjectDbClient } from '../projects/prisma-client'
-import { verifyCurrentRuntimeSchema } from './legacy-baseline-adapter'
-import { migrateApplicationDatabase } from './migration-service'
+import { migrateApplicationDatabase, verifyCurrentApplicationSchema } from './migration-service'
 import { MEMORY_AUXILIARY_SCHEMA_OBJECTS } from './migrations/0016-agent-memory'
 
 describe('agent memory migration', () => {
@@ -266,10 +265,23 @@ describe('agent memory migration', () => {
         ...MEMORY_AUXILIARY_SCHEMA_OBJECTS.map(({ name }) => name)
       )
     ).resolves.toHaveLength(MEMORY_AUXILIARY_SCHEMA_OBJECTS.length)
-    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
 
     await client.$executeRawUnsafe('DROP TRIGGER "MemoryEntry_fts_update"')
-    await expect(verifyCurrentRuntimeSchema(client)).rejects.toThrow(/memory auxiliary schema/i)
+    await expect(verifyCurrentApplicationSchema(client)).rejects.toThrow(
+      /schema object MemoryEntry_fts_update/i
+    )
+  })
+
+  it('rejects an insecure FTS deletion setting when reopening a complete database', async () => {
+    await client.$executeRawUnsafe(
+      `INSERT INTO "MemoryEntryFts"("MemoryEntryFts", "rank") VALUES('secure-delete', 0)`
+    )
+
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      migrationId: '0016_agent_memory'
+    })
   })
 
   it('replays an unledgered partial memory migration and restores missing triggers', async () => {
@@ -282,7 +294,7 @@ describe('agent memory migration', () => {
       applied: ['0016_agent_memory'],
       to: '0016_agent_memory'
     })
-    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
 
   it('rejects unexpected triggers in the current runtime schema', async () => {
@@ -292,6 +304,6 @@ describe('agent memory migration', () => {
         UPDATE "MemorySettings" SET "revision" = "revision" WHERE "id" = 'memory-settings';
       END`)
 
-    await expect(verifyCurrentRuntimeSchema(client)).rejects.toThrow(/unexpected.*trigger/i)
+    await expect(verifyCurrentApplicationSchema(client)).rejects.toThrow(/unexpected.*trigger/i)
   })
 })
