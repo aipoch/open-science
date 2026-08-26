@@ -27,7 +27,10 @@ const clickPermissionDecision = async (page: Page, decision: 'allow' | 'deny'): 
     .getByTestId('permission-actions')
     .getByTestId(decision === 'allow' ? 'allow-primary' : 'deny-button')
   await expect(button).toBeEnabled()
-  await button.click()
+  // Windows E2E can raise a session-persistence conflict toast over the sticky
+  // Allow/Deny row (`fixed bottom-3 right-3 z-50`). Retry reloads the Session
+  // and drops the permission prompt, so click through the overlay.
+  await button.click({ force: true })
 }
 
 test('edits and navigates message revisions that persist after relaunch', async ({ app }) => {
@@ -128,8 +131,6 @@ test('resolves Agent permission requests through both Allow and Deny decisions',
   } finally {
     await page.mouse.up()
   }
-  // Park the cursor so a leftover handle capture cannot keep resizing the panel
-  // while Playwright tries to click Allow.
   await page.mouse.move(8, 8)
   await clickPermissionDecision(page, 'allow')
   await expect(page.getByText('Fixture permission allowed.', { exact: true })).toBeVisible()
