@@ -9,6 +9,7 @@ import { ActionToast } from '@/components/ActionToast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { errorDetail } from '@/lib/error-detail'
 import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
@@ -355,7 +356,7 @@ const ProjectFilesViewContent = ({
     void mutation().catch((error: unknown) => {
       setGrantedRootMutationError({
         kind,
-        detail: error instanceof Error ? error.message : undefined,
+        detail: errorDetail(error),
         retry: mutation
       })
     })

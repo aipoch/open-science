@@ -4384,7 +4384,7 @@ describe('ProjectFilesView — granted local folders', () => {
   })
 
   it('shows the failed access change and retries it from the toast', async () => {
-    setGrantedRootAccess.mockRejectedValueOnce(new Error('database unavailable'))
+    setGrantedRootAccess.mockRejectedValueOnce({ message: 'database unavailable' })
     await renderFilesView()
     await openFilterMenu()
     await hoverElement(document.body.querySelector('[data-testid="granted-root-root-1"]'))
