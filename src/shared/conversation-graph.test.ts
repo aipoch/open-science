@@ -760,6 +760,95 @@ describe('conversation graph', () => {
     )
   })
 
+  it('rejects a Message fork introduced on the child Branch', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [
+        message('u1', 'user', 'original question', 1),
+        message('a1', 'agent', 'original answer', 2)
+      ],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const forked = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(graph, 'u1', 'branch-edited', 3),
+      [message('u2', 'user', 'edited question', 3), message('a2', 'agent', 'edited answer', 4)],
+      4
+    )
+    forked.branches.find(({ id }) => id === 'branch-edited')!.forkMessageId = 'u2'
+
+    expect(() => validateConversationGraph(forked)).toThrow(
+      /Message Branch fork is not on its parent path/
+    )
+  })
+
+  it('rejects an Activity fork introduced on the child Branch', () => {
+    const graph = synchronizeActiveConversationActivities(
+      createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [
+          message('u1', 'user', 'original question', 1),
+          message('a1', 'agent', 'original answer', 2)
+        ],
+        frameworkId: 'claude-code',
+        createdAt: 1,
+        updatedAt: 2
+      }),
+      [
+        {
+          id: 'activity-1',
+          kind: 'tool',
+          title: 'Original activity',
+          promptMessageId: 'u1',
+          status: 'completed',
+          sortIndex: 1,
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      []
+    )
+    const forked = synchronizeActiveConversationActivities(
+      forkConversationAfterActivity(graph, 'a1', 'activity-1', 'branch-revised', 3),
+      [
+        {
+          id: 'activity-2',
+          kind: 'tool',
+          title: 'Child activity',
+          promptMessageId: 'u1',
+          status: 'completed',
+          sortIndex: 2,
+          eventIds: [],
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      []
+    )
+    forked.branches.find(({ id }) => id === 'branch-revised')!.forkActivityId = 'activity-2'
+
+    expect(() => validateConversationGraph(forked)).toThrow(
+      /Message Branch Activity fork is not on its parent path/
+    )
+  })
+
+  it('rejects fork markers on a root Branch', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [message('u1', 'user', 'question', 1)],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    graph.branches[0].forkMessageId = 'u1'
+
+    expect(() => validateConversationGraph(graph)).toThrow(
+      /Message Branch fork requires a parent Branch/
+    )
+  })
+
   it('keeps graph validation within a linear id-read budget', () => {
     const messageCount = 200
     const branchCount = 200

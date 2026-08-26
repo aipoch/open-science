@@ -453,6 +453,13 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
     if (head && !isTreeAncestor(branchAncestry, head.introducedOnBranchId, branch.id)) {
       throw new Error('Message introduction Branch is not on the containing Branch path.')
     }
+    const parentBranch = branch.parentBranchId ? branches.get(branch.parentBranchId) : undefined
+    if ((branch.forkMessageId || branch.forkActivityId) && !parentBranch) {
+      throw new Error('Message Branch fork requires a parent Branch.')
+    }
+    const parentHead = parentBranch?.headMessageId
+      ? messages.get(parentBranch.headMessageId)
+      : undefined
     if (branch.forkMessageId) {
       const fork = messages.get(branch.forkMessageId)
       if (
@@ -462,6 +469,14 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
         !isTreeAncestor(messageAncestry, fork.id, head.id)
       ) {
         throw new Error('Message Branch fork is not on its path.')
+      }
+      if (
+        !parentBranch ||
+        !parentHead ||
+        !isTreeAncestor(messageAncestry, fork.id, parentHead.id) ||
+        !isTreeAncestor(branchAncestry, fork.introducedOnBranchId, parentBranch.id)
+      ) {
+        throw new Error('Message Branch fork is not on its parent path.')
       }
     }
     if (branch.forkActivityId) {
@@ -474,6 +489,14 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
         !isTreeAncestor(branchAncestry, activity.messageBranchId, branch.id)
       ) {
         throw new Error('Message Branch Activity fork is not on its path.')
+      }
+      if (
+        !parentBranch ||
+        !parentHead ||
+        !isTreeAncestor(messageAncestry, activity.promptMessageId, parentHead.id) ||
+        !isTreeAncestor(branchAncestry, activity.messageBranchId, parentBranch.id)
+      ) {
+        throw new Error('Message Branch Activity fork is not on its parent path.')
       }
     }
     let current = head
