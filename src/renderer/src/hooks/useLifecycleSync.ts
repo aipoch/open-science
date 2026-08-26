@@ -33,7 +33,17 @@ type LifecycleSyncOptions = {
 
 type PendingLifecycleAction = {
   isDeletion: boolean
-  run: () => void
+  creationOriginClientId: string | undefined
+  run: (context: PendingLifecycleContext) => void
+}
+
+type PendingLifecycleContext = {
+  coalescedCreationOriginClientId?: string
+}
+
+type QueueLifecycleOptions = {
+  isDeletion?: boolean
+  creationOriginClientId?: string
 }
 
 const useLifecycleSync = ({
@@ -51,7 +61,9 @@ const useLifecycleSync = ({
 
     const pendingActions = [...pendingActionsRef.current.values()]
     pendingActionsRef.current.clear()
-    for (const action of pendingActions) action.run()
+    for (const action of pendingActions) {
+      action.run({ coalescedCreationOriginClientId: action.creationOriginClientId })
+    }
   }, [])
 
   useLayoutEffect(() => {
@@ -62,14 +74,38 @@ const useLifecycleSync = ({
   useLayoutEffect(() => {
     let isSubscribed = true
     const pendingActions = pendingActionsRef.current
-    const applyOrQueue = (key: string, action: () => void, isDeletion = false): void => {
-      if (isHydratedRef.current && lifecycleClientIdRef.current !== undefined) action()
+    const applyOrQueue = (
+      key: string,
+      action: (context: PendingLifecycleContext) => void,
+      options: QueueLifecycleOptions = {}
+    ): void => {
+      const isDeletion = options.isDeletion ?? false
+      if (isHydratedRef.current && lifecycleClientIdRef.current !== undefined) action({})
       else {
         const current = pendingActions.get(key)
         if (!current?.isDeletion || isDeletion) {
-          pendingActions.set(key, { isDeletion, run: action })
+          pendingActions.set(key, {
+            isDeletion,
+            creationOriginClientId: isDeletion
+              ? undefined
+              : (current?.creationOriginClientId ?? options.creationOriginClientId),
+            run: action
+          })
         }
       }
+    }
+    const showExternalSessionNotice = (
+      session: SessionUpsertEvent['session'],
+      originClientId: string
+    ): void => {
+      const lifecycleClientId = lifecycleClientIdRef.current
+      if (lifecycleClientId === null || lifecycleClientId === undefined) return
+      if (originClientId === lifecycleClientId) return
+      setNotice({
+        projectId: session.projectId,
+        sessionId: session.id,
+        title: session.title
+      })
     }
     void window.api.lifecycle
       .getClientId()
@@ -114,29 +150,23 @@ const useLifecycleSync = ({
           }
           setNotice((current) => (current?.projectId === projectId ? undefined : current))
         },
-        true
+        { isDeletion: true }
       )
     })
     const removeSessionCreated = window.api.sessions.onCreated(
       ({ session, originClientId }: SessionUpsertEvent) => {
-        applyOrQueue(`session:${session.id}`, () => {
-          useSessionStore.getState().upsertPersistedSession(session)
-
-          if (
-            lifecycleClientIdRef.current !== null &&
-            originClientId !== lifecycleClientIdRef.current
-          ) {
-            setNotice({
-              projectId: session.projectId,
-              sessionId: session.id,
-              title: session.title
-            })
-          }
-        })
+        applyOrQueue(
+          `session:${session.id}`,
+          () => {
+            useSessionStore.getState().upsertPersistedSession(session)
+            showExternalSessionNotice(session, originClientId)
+          },
+          { creationOriginClientId: originClientId }
+        )
       }
     )
     const removeSessionUpdated = window.api.sessions.onUpdated(({ session, originClientId }) => {
-      applyOrQueue(`session:${session.id}`, () => {
+      applyOrQueue(`session:${session.id}`, ({ coalescedCreationOriginClientId }) => {
         // The ordered persistence owner already applies this renderer's save result. Its lifecycle
         // echo may describe an earlier graph with a later main-owned timestamp, so replacing the
         // live projection here can discard a prompt and the Runtime Segment used by its artifact
@@ -215,10 +245,14 @@ const useLifecycleSync = ({
             store.upsertPersistedSession(session)
           }
         } else if (
-          lifecycleClientIdRef.current !== null &&
+          coalescedCreationOriginClientId !== undefined ||
+          lifecycleClientIdRef.current === null ||
           originClientId !== lifecycleClientIdRef.current
         ) {
           useSessionStore.getState().upsertPersistedSession(session)
+        }
+        if (coalescedCreationOriginClientId !== undefined) {
+          showExternalSessionNotice(session, coalescedCreationOriginClientId)
         }
         useArchiveUndoStore.getState().reconcileSession(session)
         if (
@@ -240,7 +274,7 @@ const useLifecycleSync = ({
           useSessionStore.getState().deleteSession(sessionId)
           setNotice((current) => (current?.sessionId === sessionId ? undefined : current))
         },
-        true
+        { isDeletion: true }
       )
     })
 
