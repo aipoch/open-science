@@ -171,6 +171,78 @@ describe('useLifecycleSync', () => {
     )
   })
 
+  it('applies only the latest queued snapshot for one Session after hydration', async () => {
+    await act(async () => {
+      useProjectStore.setState(createInitialProjectState())
+      root.render(<Harness isSessionPersistenceHydrated={false} />)
+    })
+    await act(async () => {
+      for (let revision = 1; revision <= 50; revision += 1) {
+        listeners.sessionCreated?.({
+          session: {
+            ...session,
+            title: `Queued snapshot ${revision}`,
+            updatedAt: revision
+          },
+          originClientId: 'web:external'
+        })
+      }
+    })
+    const upsertPersistedSession = vi.spyOn(useSessionStore.getState(), 'upsertPersistedSession')
+
+    await act(async () => {
+      useProjectStore.setState({ ...createInitialProjectState(), isLoaded: true })
+      useSessionStore.getState().hydrateSessions([])
+      root.render(<Harness />)
+    })
+
+    expect(upsertPersistedSession).toHaveBeenCalledTimes(1)
+    expect(useSessionStore.getState().sessions[0]?.title).toBe('Queued snapshot 50')
+  })
+
+  it('keeps a queued Session deletion terminal when a stale snapshot arrives later', async () => {
+    await act(async () => {
+      useProjectStore.setState(createInitialProjectState())
+      root.render(<Harness isSessionPersistenceHydrated={false} />)
+    })
+    await act(async () => {
+      listeners.sessionDeleted?.({ projectId: project.id, sessionId: session.id })
+      listeners.sessionCreated?.({
+        session: { ...session, title: 'Stale snapshot after deletion' },
+        originClientId: 'web:external'
+      })
+    })
+
+    await act(async () => {
+      useProjectStore.setState({ ...createInitialProjectState(), isLoaded: true })
+      useSessionStore.getState().hydrateSessions([session])
+      root.render(<Harness />)
+    })
+
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
+  })
+
+  it('does not classify Session events as external when client identity is unavailable', async () => {
+    await act(async () => root.unmount())
+    useSessionStore.setState(createInitialSessionState())
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    window.api.lifecycle.getClientId = vi.fn().mockRejectedValue(new Error('client unavailable'))
+    root = createRoot(container)
+    await act(async () => root.render(<Harness />))
+
+    await act(async () => {
+      listeners.sessionCreated?.({ session, originClientId: 'electron:7' })
+    })
+
+    expect(useSessionStore.getState().sessions[0]?.id).toBe(session.id)
+    expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
+    expect(consoleWarn).toHaveBeenCalledWith(
+      'Unable to identify lifecycle client',
+      expect.any(Error)
+    )
+  })
+
   it('does not notify for a session created by this renderer', async () => {
     await act(async () => {
       listeners.sessionCreated?.({ session, originClientId: 'electron:7' })

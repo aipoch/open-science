@@ -31,6 +31,11 @@ type LifecycleSyncOptions = {
   isSessionPersistenceHydrated: boolean
 }
 
+type PendingLifecycleAction = {
+  isDeletion: boolean
+  run: () => void
+}
+
 const useLifecycleSync = ({
   isSessionPersistenceHydrated
 }: LifecycleSyncOptions): LifecycleSyncResult => {
@@ -39,13 +44,14 @@ const useLifecycleSync = ({
   const isHydrated = isSessionPersistenceHydrated && isProjectPersistenceReady
   const isHydratedRef = useRef(isHydrated)
   const lifecycleClientIdRef = useRef<string | null | undefined>(undefined)
-  const pendingActionsRef = useRef<Array<() => void>>([])
+  const pendingActionsRef = useRef(new Map<string, PendingLifecycleAction>())
 
   const flushPendingActions = useCallback((): void => {
     if (!isHydratedRef.current || lifecycleClientIdRef.current === undefined) return
 
-    const pendingActions = pendingActionsRef.current.splice(0)
-    for (const action of pendingActions) action()
+    const pendingActions = [...pendingActionsRef.current.values()]
+    pendingActionsRef.current.clear()
+    for (const action of pendingActions) action.run()
   }, [])
 
   useLayoutEffect(() => {
@@ -55,9 +61,15 @@ const useLifecycleSync = ({
 
   useLayoutEffect(() => {
     let isSubscribed = true
-    const applyOrQueue = (action: () => void): void => {
+    const pendingActions = pendingActionsRef.current
+    const applyOrQueue = (key: string, action: () => void, isDeletion = false): void => {
       if (isHydratedRef.current && lifecycleClientIdRef.current !== undefined) action()
-      else pendingActionsRef.current.push(action)
+      else {
+        const current = pendingActions.get(key)
+        if (!current?.isDeletion || isDeletion) {
+          pendingActions.set(key, { isDeletion, run: action })
+        }
+      }
     }
     void window.api.lifecycle
       .getClientId()
@@ -73,10 +85,10 @@ const useLifecycleSync = ({
         flushPendingActions()
       })
     const removeProjectCreated = window.api.projects.onCreated((project) => {
-      applyOrQueue(() => useProjectStore.getState().upsertProject(project))
+      applyOrQueue(`project:${project.id}`, () => useProjectStore.getState().upsertProject(project))
     })
     const removeProjectUpdated = window.api.projects.onUpdated((project) => {
-      applyOrQueue(() => {
+      applyOrQueue(`project:${project.id}`, () => {
         useProjectStore.getState().upsertProject(project)
         useArchiveUndoStore.getState().reconcileProject(project)
         if (project.archivedAt !== undefined) {
@@ -92,21 +104,28 @@ const useLifecycleSync = ({
       })
     })
     const removeProjectDeleted = window.api.projects.onDeleted(({ projectId }) => {
-      applyOrQueue(() => {
-        useProjectStore.getState().removeProject(projectId)
-        useSessionStore.getState().removeSessionsForProject(projectId)
-        if (useNavigationStore.getState().activeProjectId === projectId) {
-          useNavigationStore.getState().goHome('automatic')
-        }
-        setNotice((current) => (current?.projectId === projectId ? undefined : current))
-      })
+      applyOrQueue(
+        `project:${projectId}`,
+        () => {
+          useProjectStore.getState().removeProject(projectId)
+          useSessionStore.getState().removeSessionsForProject(projectId)
+          if (useNavigationStore.getState().activeProjectId === projectId) {
+            useNavigationStore.getState().goHome('automatic')
+          }
+          setNotice((current) => (current?.projectId === projectId ? undefined : current))
+        },
+        true
+      )
     })
     const removeSessionCreated = window.api.sessions.onCreated(
       ({ session, originClientId }: SessionUpsertEvent) => {
-        applyOrQueue(() => {
+        applyOrQueue(`session:${session.id}`, () => {
           useSessionStore.getState().upsertPersistedSession(session)
 
-          if (originClientId !== lifecycleClientIdRef.current) {
+          if (
+            lifecycleClientIdRef.current !== null &&
+            originClientId !== lifecycleClientIdRef.current
+          ) {
             setNotice({
               projectId: session.projectId,
               sessionId: session.id,
@@ -117,7 +136,7 @@ const useLifecycleSync = ({
       }
     )
     const removeSessionUpdated = window.api.sessions.onUpdated(({ session, originClientId }) => {
-      applyOrQueue(() => {
+      applyOrQueue(`session:${session.id}`, () => {
         // The ordered persistence owner already applies this renderer's save result. Its lifecycle
         // echo may describe an earlier graph with a later main-owned timestamp, so replacing the
         // live projection here can discard a prompt and the Runtime Segment used by its artifact
@@ -195,7 +214,10 @@ const useLifecycleSync = ({
           } else {
             store.upsertPersistedSession(session)
           }
-        } else if (originClientId !== lifecycleClientIdRef.current) {
+        } else if (
+          lifecycleClientIdRef.current !== null &&
+          originClientId !== lifecycleClientIdRef.current
+        ) {
           useSessionStore.getState().upsertPersistedSession(session)
         }
         useArchiveUndoStore.getState().reconcileSession(session)
@@ -212,10 +234,14 @@ const useLifecycleSync = ({
       })
     })
     const removeSessionDeleted = window.api.sessions.onDeleted(({ sessionId }) => {
-      applyOrQueue(() => {
-        useSessionStore.getState().deleteSession(sessionId)
-        setNotice((current) => (current?.sessionId === sessionId ? undefined : current))
-      })
+      applyOrQueue(
+        `session:${sessionId}`,
+        () => {
+          useSessionStore.getState().deleteSession(sessionId)
+          setNotice((current) => (current?.sessionId === sessionId ? undefined : current))
+        },
+        true
+      )
     })
 
     return () => {
@@ -226,7 +252,7 @@ const useLifecycleSync = ({
       removeSessionCreated()
       removeSessionUpdated()
       removeSessionDeleted()
-      pendingActionsRef.current = []
+      pendingActions.clear()
     }
   }, [flushPendingActions])
 

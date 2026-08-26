@@ -9,7 +9,9 @@ import { useFileDropZone } from './useFileDropZone'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 // Minimal renderHook mirroring the repo's other hook tests (no @testing-library/react dependency).
-const renderHook = <Value>(hook: () => Value): { result: { current: Value } } => {
+const renderHook = <Value>(
+  hook: () => Value
+): { result: { current: Value }; rerender: () => void } => {
   const container = document.createElement('div')
   const root = createRoot(container)
   const result = { current: undefined as unknown as Value }
@@ -19,11 +21,10 @@ const renderHook = <Value>(hook: () => Value): { result: { current: Value } } =>
     return null
   }
 
-  act(() => {
-    root.render(createElement(HookHarness))
-  })
+  const rerender = (): void => act(() => root.render(createElement(HookHarness)))
+  rerender()
 
-  return { result }
+  return { result, rerender }
 }
 
 // Builds a drag event stub whose dataTransfer exposes the requested types and files.
@@ -116,5 +117,30 @@ describe('useFileDropZone', () => {
       result.current.dropZoneProps.onDrop(createDragEvent(['Files'], [file]))
     })
     expect(onFiles).not.toHaveBeenCalled()
+  })
+
+  it('does not restore stale dragging state after being disabled mid-drag', () => {
+    const onFiles = vi.fn()
+    let enabled = true
+    const { result, rerender } = renderHook(() => useFileDropZone({ enabled, onFiles }))
+
+    act(() => {
+      result.current.dropZoneProps.onDragEnter(createDragEvent(['Files']))
+    })
+    expect(result.current.isDragging).toBe(true)
+
+    enabled = false
+    rerender()
+    expect(result.current.isDragging).toBe(false)
+
+    enabled = true
+    rerender()
+    expect(result.current.isDragging).toBe(false)
+
+    act(() => {
+      result.current.dropZoneProps.onDragEnter(createDragEvent(['Files']))
+      result.current.dropZoneProps.onDragLeave(createDragEvent(['Files']))
+    })
+    expect(result.current.isDragging).toBe(false)
   })
 })

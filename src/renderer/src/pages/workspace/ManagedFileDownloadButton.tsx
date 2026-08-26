@@ -5,7 +5,10 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { SaveManagedFileRequest } from '../../../../shared/file-save'
+import {
+  WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME,
+  type SaveManagedFileRequest
+} from '../../../../shared/file-save'
 
 type ManagedFileDownloadButtonProps = SaveManagedFileRequest & {
   appearance?: 'icon' | 'primary'
@@ -32,6 +35,7 @@ const ManagedFileDownloadButtonState = ({
 }: ManagedFileDownloadButtonProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [status, setStatus] = useState<DownloadStatus>('idle')
+  const [sizeLimitError, setSizeLimitError] = useState(false)
   const activeSaveRef = useRef<symbol | undefined>(undefined)
   const resetTimerRef = useRef<number | undefined>(undefined)
   const mountedRef = useRef(true)
@@ -50,6 +54,7 @@ const ManagedFileDownloadButtonState = ({
     const attempt = Symbol('managed-file-save')
     activeSaveRef.current = attempt
     if (resetTimerRef.current !== undefined) window.clearTimeout(resetTimerRef.current)
+    setSizeLimitError(false)
     setStatus('saving')
     void window.api
       .saveManagedFile({ source, path, suggestedName })
@@ -70,6 +75,9 @@ const ManagedFileDownloadButtonState = ({
       .catch((error) => {
         if (mountedRef.current && activeSaveRef.current === attempt) {
           console.error(`Failed to download managed file: ${suggestedName}`, error)
+          setSizeLimitError(
+            error instanceof Error && error.name === WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME
+          )
           setStatus('error')
         }
       })
@@ -78,16 +86,21 @@ const ManagedFileDownloadButtonState = ({
       })
   }
 
-  const label =
-    status === 'saving'
+  const label = sizeLimitError
+    ? t(
+        "{{name}} exceeds this browser's 512 MB download limit. Use a browser that supports streaming file saves.",
+        { name: suggestedName }
+      )
+    : status === 'saving'
       ? t('Saving {{name}}', { name: suggestedName })
       : status === 'saved'
         ? t('Saved {{name}}', { name: suggestedName })
         : status === 'error'
           ? t('Download failed for {{name}}', { name: suggestedName })
           : t('Download {{name}}', { name: suggestedName })
-  const tooltip =
-    status === 'saving'
+  const tooltip = sizeLimitError
+    ? label
+    : status === 'saving'
       ? t('Saving')
       : status === 'saved'
         ? t('Saved')
@@ -97,8 +110,9 @@ const ManagedFileDownloadButtonState = ({
             ? t('File unavailable')
             : t('Download')
   // The labeled fallback action keeps a stable minimum size while allowing longer localized copy.
-  const visibleLabel =
-    status === 'saving'
+  const visibleLabel = sizeLimitError
+    ? t('File too large')
+    : status === 'saving'
       ? t('Saving...')
       : status === 'saved'
         ? t('Saved')
