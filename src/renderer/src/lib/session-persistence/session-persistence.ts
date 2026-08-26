@@ -565,11 +565,15 @@ const createOrderedSessionPersistence = (
     acknowledgedSessions.set(session.id, structuredClone(session))
   }
 
-  const enqueue = <Result>(task: () => Promise<Result>): Promise<Result> => {
+  const releasePendingLatestCadence = (): void => {
     if (pendingLatest) {
       pendingLatest.bypassCadence = true
       pendingLatest.releaseCadence?.()
     }
+  }
+
+  const enqueue = <Result>(task: () => Promise<Result>): Promise<Result> => {
+    releasePendingLatestCadence()
     pendingLatest = undefined
     pendingLatestPromise = undefined
     const run = queue.then(task, task)
@@ -660,7 +664,10 @@ const createOrderedSessionPersistence = (
         }
       }),
     saveManifest: (request) => enqueue(() => api.saveManifest(request)),
-    flush: () => queue.then(() => undefined)
+    flush: () => {
+      releasePendingLatestCadence()
+      return queue.then(() => undefined)
+    }
   }
 }
 

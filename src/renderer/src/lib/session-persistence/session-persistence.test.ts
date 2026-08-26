@@ -1135,7 +1135,7 @@ describe('renderer session persistence bridge', () => {
         await vi.advanceTimersByTimeAsync(33)
       }
 
-      await vi.runAllTimersAsync()
+      await persistence.flush()
       await Promise.all(writes)
 
       expect(writeLatest).toHaveBeenCalledTimes(3)
