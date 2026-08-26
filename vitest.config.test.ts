@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import vitestConfig, {
+  CHANGED_SOURCE_COVERAGE_THRESHOLDS,
   coverageThresholdsEnabled,
+  coverageThresholdsFor,
+  FULL_COVERAGE_THRESHOLDS,
   resolveVitestMaxWorkers,
   VITEST_ARCHITECTURE_TEST_GLOBS,
   VITEST_COVERAGE_EXCLUDE_PATTERNS,
@@ -28,6 +31,37 @@ it('defers coverage thresholds only for explicit shard collection', () => {
   expect(coverageThresholdsEnabled({})).toBe(true)
   expect(coverageThresholdsEnabled({ VITEST_DEFER_COVERAGE_THRESHOLDS: '1' })).toBe(false)
   expect(coverageThresholdsEnabled({ VITEST_DEFER_COVERAGE_THRESHOLDS: '0' })).toBe(true)
+  expect(
+    coverageThresholdsFor({
+      VITEST_CHANGED_COVERAGE_THRESHOLDS: '1',
+      VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
+    })
+  ).toBeUndefined()
+})
+
+it('ratchets full coverage without raising selective changed-source thresholds', () => {
+  expect(FULL_COVERAGE_THRESHOLDS).toEqual({
+    lines: 90,
+    functions: 88,
+    branches: 79,
+    statements: 88
+  })
+  expect(CHANGED_SOURCE_COVERAGE_THRESHOLDS).toEqual({
+    lines: 66,
+    functions: 62,
+    branches: 57,
+    statements: 64
+  })
+  expect(coverageThresholdsFor({})).toMatchObject(FULL_COVERAGE_THRESHOLDS)
+  expect(coverageThresholdsFor({ VITEST_CHANGED_COVERAGE_THRESHOLDS: '1' })).toMatchObject(
+    CHANGED_SOURCE_COVERAGE_THRESHOLDS
+  )
+  expect(coverageThresholdsFor({ VITEST_CHANGED_COVERAGE_THRESHOLDS: '0' })).toMatchObject(
+    FULL_COVERAGE_THRESHOLDS
+  )
+  expect(vitestConfig.test?.coverage).toMatchObject({
+    thresholds: expect.objectContaining(FULL_COVERAGE_THRESHOLDS)
+  })
 })
 
 it('keeps a safe default timeout for schema-backed hooks', () => {

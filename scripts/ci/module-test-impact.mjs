@@ -260,8 +260,15 @@ export function runModuleTestCli(arguments_ = process.argv.slice(2), options = {
     process.stdout.write(formatModuleTestPlan(plan))
     return 0
   }
+  const environment = coverageChanged
+    ? {
+        ...(options.environment ?? process.env),
+        VITEST_CHANGED_COVERAGE_THRESHOLDS: '1'
+      }
+    : options.environment
   return executeModuleTestPlan(plan, {
     ...options,
+    environment,
     testArguments: coverageChanged
       ? ['--coverage', '--coverage.changed', coverageChanged]
       : options.testArguments
