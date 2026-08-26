@@ -10,8 +10,7 @@ import {
   createManagedVersionStorageTag,
   inspectManagedTextEditEligibility,
   isManagedVersionStoredFilename,
-  isSafeManagedFileBasename,
-  managedFileVersionHostCapability
+  isSafeManagedFileBasename
 } from './managed-file-versions'
 
 const encode = (value: string): Uint8Array => new TextEncoder().encode(value)
@@ -194,16 +193,6 @@ describe('managed version storage names', () => {
     expect(isManagedVersionStoredFilename('vk3m8q2az_CON.txt')).toBe(false)
     expect(isManagedVersionStoredFilename('vk3m8q2az_report?.md')).toBe(false)
     expect(isManagedVersionStoredFilename(`vk3m8q2az_${'界'.repeat(81)}.md`)).toBe(false)
-  })
-})
-
-describe('managed file version host capability', () => {
-  it('fails closed with a storage reason outside the Electron file-operator surface', () => {
-    expect(managedFileVersionHostCapability(false)).toEqual({
-      available: false,
-      reason: 'STORAGE_UNAVAILABLE'
-    })
-    expect(managedFileVersionHostCapability(true)).toEqual({ available: true })
   })
 })
 

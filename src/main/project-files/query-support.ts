@@ -1,5 +1,3 @@
-import { join } from 'node:path'
-
 import { Prisma, type FileOriginSession, type ManagedFile } from '@prisma/client'
 
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
@@ -186,6 +184,15 @@ const authoritativeCatalogCte = (projectIds: string[]): Prisma.Sql => {
       AND version."id" = lineage."currentVersionId"
     WHERE lineage."projectId" IN (SELECT scope."projectId" FROM "CatalogProjectScope" AS scope)
       AND version."state" IN ('pending', 'finalized')
+      AND (
+        version."originKind" <> 'legacy'
+        OR NOT EXISTS (
+          SELECT 1 FROM "ManagedFile" AS projected
+          WHERE projected."projectId" = lineage."projectId"
+            AND projected."source" = 'artifact'
+            AND projected."sourceFileId" = lineage."id"
+        )
+      )
       AND (version."originKind" <> 'agent_generated' OR version."managedVisibleAt" IS NOT NULL)
       AND NOT EXISTS (
         SELECT 1 FROM "BlockedCatalogProject" AS blocked
@@ -256,6 +263,7 @@ const authoritativeCatalogCte = (projectIds: string[]): Prisma.Sql => {
       file."createdAt", file."updatedAt", file."deletedAt", file."deleteOperationId"
     FROM "ManagedFile" AS file
     WHERE file."projectId" IN (SELECT scope."projectId" FROM "CatalogProjectScope" AS scope)
+      AND file."sourceVersionId" IS NOT NULL
       AND file."deletedAt" IS NULL
       AND file."deleteOperationId" IS NULL
       AND NOT EXISTS (
@@ -270,9 +278,13 @@ const authoritativeCatalogCte = (projectIds: string[]): Prisma.Sql => {
       AND (
         (file."source" = 'artifact' AND NOT EXISTS (
           SELECT 1 FROM "ArtifactLineage" AS lineage
+          INNER JOIN "ArtifactVersion" AS version
+            ON version."artifactId" = lineage."id"
+            AND version."id" = lineage."currentVersionId"
           WHERE lineage."projectId" = file."projectId"
             AND lineage."id" = file."sourceFileId"
             AND lineage."currentVersionId" IS NOT NULL
+            AND version."originKind" <> 'legacy'
         ))
         OR
         (file."source" = 'upload' AND NOT EXISTS (
@@ -569,40 +581,39 @@ const toOriginProjection = (
       }
     : {}
 
-const toProjectFileItem = (
-  row: ManagedFile,
-  dataRoot: string,
-  origin?: FileOriginSession
-): ProjectFileItem => ({
-  id: row.source === 'upload' ? `upload:${row.sourceFileId}` : row.sourceFileId,
-  source: row.source as ProjectFileSource,
-  sourceFileId: row.sourceFileId,
-  sourceVersionId: row.sourceVersionId ?? undefined,
-  checksum: row.checksum ?? undefined,
-  projectId: row.projectId,
-  sessionId: row.sessionId,
-  messageId: row.messageId ?? undefined,
-  name: row.displayName,
-  path:
-    row.source === 'upload' && row.sourceVersionId
-      ? createUploadVersionReference(row.sourceVersionId, {
-          projectId: row.projectId,
-          sessionId: row.sessionId
-        })
-      : row.source === 'artifact' && row.sourceVersionId
-        ? createArtifactVersionLocator({
+const toProjectFileItem = (row: ManagedFile, origin?: FileOriginSession): ProjectFileItem => {
+  const versionId = row.sourceVersionId
+  if (!versionId) throw new Error('Managed file projection has no current Version identity.')
+  const source = row.source as ProjectFileSource
+  return {
+    id: source === 'upload' ? `upload:${row.sourceFileId}` : row.sourceFileId,
+    source,
+    sourceFileId: row.sourceFileId,
+    sourceVersionId: versionId,
+    checksum: row.checksum ?? undefined,
+    projectId: row.projectId,
+    sessionId: row.sessionId,
+    messageId: row.messageId ?? undefined,
+    name: row.displayName,
+    path:
+      source === 'upload'
+        ? createUploadVersionReference(versionId, {
+            projectId: row.projectId,
+            sessionId: row.sessionId
+          })
+        : createArtifactVersionLocator({
             projectId: row.projectId,
             appSessionId: row.sessionId,
             artifactId: row.sourceFileId,
-            versionId: row.sourceVersionId
-          })
-        : join(dataRoot, ...row.storageKey.split('/')),
-  mimeType: row.mimeType ?? undefined,
-  size: toSafeNumber(row.sizeBytes, 'size'),
-  mtimeMs: row.mtimeMs === null ? undefined : toSafeNumber(row.mtimeMs, 'mtime'),
-  sortAtMs: toSafeNumber(row.sortAtMs, 'sort time'),
-  ...toOriginProjection(origin)
-})
+            versionId
+          }),
+    mimeType: row.mimeType ?? undefined,
+    size: toSafeNumber(row.sizeBytes, 'size'),
+    mtimeMs: row.mtimeMs === null ? undefined : toSafeNumber(row.mtimeMs, 'mtime'),
+    sortAtMs: toSafeNumber(row.sortAtMs, 'sort time'),
+    ...toOriginProjection(origin)
+  }
+}
 
 export {
   decodeFileCursor,

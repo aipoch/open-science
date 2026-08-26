@@ -91,10 +91,6 @@ describe('installWebRendererContracts', () => {
   it('installs Web event subscriptions and omits Electron-only event adapters', () => {
     const api: Record<string, unknown> = {}
     const close = vi.fn()
-    const getManagedFileVersionCapability = vi.fn(() => ({
-      available: false,
-      reason: 'NATIVE_WRITE_REQUIRED'
-    }))
     const subscribe = vi.fn(() => vi.fn())
     const listener = vi.fn()
 
@@ -104,17 +100,12 @@ describe('installWebRendererContracts', () => {
       invoke: vi.fn(),
       subscribe,
       nativeAdapters: {
-        'managedFileVersions.getCapability': getManagedFileVersionCapability,
         'window.close': close
       }
     })
 
     expect(methodAt(api, 'window.close')).toBe(close)
-    expect(methodAt(api, 'managedFileVersions.getCapability')).toBe(getManagedFileVersionCapability)
-    expect(methodAt(api, 'managedFileVersions.getCapability')?.()).toEqual({
-      available: false,
-      reason: 'NATIVE_WRITE_REQUIRED'
-    })
+    expect(methodAt(api, 'managedFileVersions.getCapability')).toBeUndefined()
     expect(methodAt(api, 'managedFileVersions.saveTextEdit')).toBeUndefined()
     expect(methodAt(api, 'managedFileVersions.diffText')).toBeUndefined()
     expect(methodAt(api, 'managedFileVersions.cancelDiff')).toBeUndefined()

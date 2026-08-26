@@ -154,7 +154,9 @@ describe('Project Files repository architecture', () => {
     expect(constructors).toHaveLength(1)
     expect(constructors[0].parameters.map((parameter) => memberName(parameter.name))).toEqual([
       'getClient',
-      'dataRoot'
+      'dataRoot',
+      'legacyArtifactVersionAdopter',
+      'legacyUploadVersionUpgrader'
     ])
     expect(newExpressionSites(facadeFile, 'ManagedFileIndexRepository')).toEqual([
       'outside-constructor'
@@ -166,7 +168,9 @@ describe('Project Files repository architecture', () => {
         'type:ManagedFileSoftDeleteToken',
         'type:ProjectFilesClient',
         'type:ProjectFilesClientFactory',
-        'type:ProjectFilesClientProvider'
+        'type:ProjectFilesClientProvider',
+        'type:LegacyArtifactVersionAdopter',
+        'type:LegacyUploadVersionUpgrader'
       ].sort()
     )
   })
@@ -179,9 +183,11 @@ describe('Project Files repository architecture', () => {
       'dataRoot',
       'getClient',
       'incompleteSessions',
-      'isReconciliationIncomplete'
+      'isReconciliationIncomplete',
+      'legacyArtifactVersionAdopter',
+      'legacyUploadVersionUpgrader'
     ])
-    expect(fields(queryOwner)).toEqual(['dataRoot', 'getClient', 'readIndexComplete'])
+    expect(fields(queryOwner)).toEqual(['getClient', 'readIndexComplete'])
     expect(publicMethods(queryOwner)).toEqual(
       [
         'getOverview',

@@ -49,7 +49,7 @@ const PREVIEW_READ_CONCURRENCY = 4
 const MAX_PREVIEW_CACHE_ENTRIES = 96
 
 const createProjectFilePreviewArtifact = (file: ProjectFileItem): MessageArtifact => ({
-  id: file.sourceVersionId ?? file.sourceFileId,
+  id: file.sourceVersionId,
   artifactId: file.source === 'artifact' ? file.sourceFileId : undefined,
   versionId: file.sourceVersionId,
   kind: 'managed-file',

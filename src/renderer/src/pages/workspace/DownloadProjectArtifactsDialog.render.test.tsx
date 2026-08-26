@@ -183,14 +183,12 @@ describe('DownloadProjectArtifactsDialog', () => {
         {
           source: 'artifact',
           sessionId: 'session-1',
-          path: 'artifact://report',
           fileId: 'report',
           suggestedName: 'report.csv'
         },
         {
           source: 'upload',
           sessionId: 'session-1',
-          path: 'upload://dataset',
           fileId: 'dataset',
           suggestedName: 'dataset.csv'
         }
@@ -199,9 +197,8 @@ describe('DownloadProjectArtifactsDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps a legacy file without an authoritative version on the path fallback', async () => {
-    const legacyFile = { ...files[0], sourceVersionId: undefined }
-    listFiles.mockResolvedValue({ items: [legacyFile], totalCount: 1 })
+  it('exports only the latest logical identity without a path or Version hint', async () => {
+    listFiles.mockResolvedValue({ items: [files[0]!], totalCount: 1 })
     await renderDialog()
 
     await act(async () => {
@@ -216,7 +213,7 @@ describe('DownloadProjectArtifactsDialog', () => {
         {
           source: 'artifact',
           sessionId: 'session-1',
-          path: 'artifact://report',
+          fileId: 'report',
           suggestedName: 'report.csv'
         }
       ]
@@ -225,8 +222,7 @@ describe('DownloadProjectArtifactsDialog', () => {
 
   it('keeps only failed files selected with an inline summary after a partial export', async () => {
     const onClose = vi.fn()
-    // A same-name, same-path file from another session/source must not be mistaken for the
-    // failed one: failure matching keys on source + sessionId + path, not path alone.
+    // A same-name file from another source must not be mistaken for the failed logical file.
     const colliding: ProjectFileItem = {
       ...file('figure-copy', 'upload', 'session-9'),
       name: 'figure.csv',
@@ -240,7 +236,7 @@ describe('DownloadProjectArtifactsDialog', () => {
         {
           source: 'artifact',
           sessionId: 'session-2',
-          path: 'artifact://figure',
+          fileId: 'figure',
           suggestedName: 'figure.csv',
           message: 'disk full'
         }
@@ -269,7 +265,7 @@ describe('DownloadProjectArtifactsDialog', () => {
         {
           source: 'artifact',
           sessionId: 'session-1',
-          path: 'artifact://report',
+          fileId: 'report',
           suggestedName: 'report.csv',
           message: 'disk full'
         }

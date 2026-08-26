@@ -677,7 +677,9 @@ const createApplicationModules = async (
   const projectFilesRepository = createManagedFileIndexRepository(
     getProjectDbClient,
     configRoot,
-    resolveDataRoot()
+    resolveDataRoot(),
+    managedFileVersionService,
+    uploadRepository
   )
   const isComputeJobOwnerLive = async ({
     projectId,
@@ -1644,6 +1646,7 @@ const createApplicationModules = async (
       repository: artifactRepository,
       runRegistry: artifactRunRegistry,
       provenanceRepository: artifactProvenanceRepository,
+      managedFileVersions: managedFileVersionService,
       uploadRepository,
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
@@ -1930,10 +1933,7 @@ const createApplicationModules = async (
   })
   const hostViewImageService = new HostViewImageService({
     catalog: projectFilesRepository,
-    resolvers: {
-      artifact: artifactProvenanceRepository,
-      upload: uploadRepository
-    },
+    managedFileVersions: managedFileVersionService,
     captureBackend: (sessionId) => {
       const backend = runtimeRef.current?.captureSessionBackend(sessionId)
       return backend
@@ -2003,10 +2003,7 @@ const createApplicationModules = async (
             () => artifactProvenanceRepository.replayVersion(request)
           )
       },
-      hostArtifacts: new HostArtifactsService(projectFilesRepository, {
-        artifact: artifactProvenanceRepository,
-        upload: uploadRepository
-      }),
+      hostArtifacts: new HostArtifactsService(projectFilesRepository, managedFileVersionService),
       hostLineage: new HostLineageService({
         catalog: projectFilesRepository,
         provenance: artifactProvenanceRepository
@@ -3016,7 +3013,6 @@ const createApplicationModules = async (
     getActiveArtifactRunIds: () =>
       runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : [],
     provenance: artifactProvenanceRepository,
-    resolveManagedFilePath: (request) => resolveManagedFilePath('artifact', request),
     openLatestManagedFile: (request) =>
       managedFileVersionService.openLatest({
         source: 'artifact',

@@ -560,7 +560,6 @@ const api: OpenScienceAPI = {
     onChanged: (listener) => electronRendererContracts.subscribe('projectFiles.onChanged', listener)
   },
   managedFileVersions: {
-    getCapability: () => electronRendererContracts.invoke('managedFileVersions.getCapability'),
     inspect: (request) => electronRendererContracts.invoke('managedFileVersions.inspect', request),
     diffText: (request) =>
       electronRendererContracts.invoke('managedFileVersions.diffText', request),

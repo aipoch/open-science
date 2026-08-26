@@ -2,7 +2,6 @@ import type { ProjectFilesChangedEvent } from '../../shared/project-files'
 import type {
   ManagedFileVersionInspectRequest,
   ManagedFileVersionInspectResult,
-  ManagedFileVersionHostCapability,
   ManagedFileVersionIpcResult,
   ManagedFileVersionSaveTextEditRequest,
   ManagedFileVersionCancelDiffRequest,
@@ -14,7 +13,6 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 import { ManagedFileVersionError } from './service'
 
 type ManagedFileVersionIpcService = {
-  getCapability(): ManagedFileVersionHostCapability
   inspect(request: ManagedFileVersionInspectRequest): Promise<ManagedFileVersionInspectResult>
   diffText(request: ManagedFileVersionDiffRequest): Promise<ManagedFileVersionDiffResult>
   cancelDiff(requestId: string): boolean
@@ -27,7 +25,6 @@ type ManagedFileVersionHandlerDependencies = {
 }
 
 type ManagedFileVersionHandlers = {
-  getCapability(): ManagedFileVersionHostCapability
   inspect(
     request: ManagedFileVersionInspectRequest
   ): Promise<ManagedFileVersionIpcResult<ManagedFileVersionInspectResult>>
@@ -65,7 +62,6 @@ const createManagedFileVersionHandlers = (
   service: ManagedFileVersionIpcService,
   dependencies: ManagedFileVersionHandlerDependencies
 ): ManagedFileVersionHandlers => ({
-  getCapability: () => service.getCapability(),
   inspect: (request) => rendererResult(() => service.inspect(request)),
   diffText: (request) => rendererResult(() => service.diffText(request)),
   cancelDiff: ({ requestId }) => ({
@@ -143,7 +139,6 @@ const registerManagedFileVersionIpcHandlers = (handlers: ManagedFileVersionHandl
     }
   }
 
-  ipcMainHandle('managed-file-versions:get-capability', () => handlers.getCapability())
   ipcMainHandle(
     'managed-file-versions:inspect',
     (_event, request: ManagedFileVersionInspectRequest) => handlers.inspect(request)

@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -695,14 +695,8 @@ describe('artifact IPC handlers', () => {
     })
   })
 
-  it('resolves a logical Artifact preview at read time and preserves an explicit Version', async () => {
-    const root = await createStorageRoot()
-    const currentPath = join(root, 'current.txt')
-    await writeFile(currentPath, 'current head')
-    const resolveManagedFilePath = vi.fn().mockResolvedValue(currentPath)
-    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
-      resolveManagedFilePath
-    })
+  it('fails closed instead of resolving a logical Artifact Version through a path fallback', async () => {
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry())
     const request = {
       path: '/stale/projection.txt',
       projectId: 'project-1',
@@ -711,10 +705,7 @@ describe('artifact IPC handlers', () => {
       maxBytes: 1024
     }
 
-    await expect(handlers.readPreview(request)).resolves.toMatchObject({
-      content: 'current head'
-    })
-    expect(resolveManagedFilePath).toHaveBeenCalledWith(request)
+    await expect(handlers.readPreview(request)).rejects.toThrow(/Version reader is not configured/u)
   })
 
   it('reads a logical Artifact preview through the verified lease and always closes it', async () => {
@@ -731,10 +722,8 @@ describe('artifact IPC handlers', () => {
       verifyUnchanged,
       close
     })
-    const resolveManagedFilePath = vi.fn().mockRejectedValue(new Error('must not resolve a path'))
     const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
-      openManagedFileVersion,
-      resolveManagedFilePath
+      openManagedFileVersion
     })
     const request = {
       path: '/replaceable/artifact.txt',
@@ -748,7 +737,6 @@ describe('artifact IPC handlers', () => {
       content: 'verified artifact bytes'
     })
     expect(openManagedFileVersion).toHaveBeenCalledWith(request)
-    expect(resolveManagedFilePath).not.toHaveBeenCalled()
     expect(verifyUnchanged).toHaveBeenCalledOnce()
     expect(close).toHaveBeenCalledOnce()
   })
@@ -1246,20 +1234,28 @@ describe('artifact IPC handler registration', () => {
     )
   })
 
-  it('resolves native Version preview locators through Provenance instead of filesystem paths', async () => {
-    const root = await createStorageRoot()
-    const contentPath = join(root, 'immutable-content')
-    await writeFile(contentPath, 'version bytes')
+  it('uses a legacy Version locator only to open the latest logical Artifact preview', async () => {
+    const bytes = Buffer.from('latest version bytes')
     const readManagedFilePreview = vi.fn()
-    const resolveVersionContent = vi.fn().mockResolvedValue({
-      path: contentPath,
-      filename: 'result.txt',
-      contentType: 'text/plain'
+    const resolveVersionContent = vi.fn()
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openLatestManagedFile = vi.fn().mockResolvedValue({
+      size: bytes.byteLength,
+      read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+        const chunk = bytes.subarray(position, position + length)
+        buffer.set(chunk, offset)
+        return { bytesRead: chunk.byteLength }
+      }),
+      verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+      close
     })
     const handlers = createArtifactHandlers(
       { readManagedFilePreview } as unknown as ArtifactRepository,
       new ArtifactRunRegistry(),
-      { provenance: { resolveVersionContent } } as never
+      {
+        openLatestManagedFile,
+        provenance: { resolveVersionContent }
+      } as never
     )
     const identity = {
       projectId: 'project-1',
@@ -1273,9 +1269,53 @@ describe('artifact IPC handler registration', () => {
         path: createArtifactVersionLocator(identity),
         maxBytes: 64
       })
-    ).resolves.toMatchObject({ content: 'version bytes', size: 13, truncated: false })
-    expect(resolveVersionContent).toHaveBeenCalledWith(identity)
+    ).resolves.toMatchObject({ content: 'latest version bytes', size: 20, truncated: false })
+    expect(openLatestManagedFile).toHaveBeenCalledWith({
+      path: createArtifactVersionLocator(identity),
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      fileId: 'artifact-1',
+      maxBytes: 64,
+      versionId: undefined
+    })
+    expect(resolveVersionContent).not.toHaveBeenCalled()
     expect(readManagedFilePreview).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('uses a legacy Version locator only to open the latest logical Artifact in the system app', async () => {
+    const identity = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    }
+    const latestPath = '/managed/latest/report.txt'
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openLatestManagedFile = vi.fn().mockResolvedValue({ path: latestPath, close })
+    const resolveVersionContent = vi.fn()
+    const openPath = vi.fn().mockImplementation(async () => {
+      expect(close).not.toHaveBeenCalled()
+      return ''
+    })
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      openPath,
+      openLatestManagedFile,
+      provenance: { resolveVersionContent }
+    } as never)
+
+    await handlers.openFile({ path: createArtifactVersionLocator(identity) })
+
+    expect(openLatestManagedFile).toHaveBeenCalledWith({
+      path: createArtifactVersionLocator(identity),
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      fileId: 'artifact-1',
+      versionId: undefined
+    })
+    expect(openPath).toHaveBeenCalledWith(latestPath)
+    expect(resolveVersionContent).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
   })
 
   it('threads a live getActiveArtifactRunIds closure into list-project-files', async () => {

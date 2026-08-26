@@ -194,10 +194,8 @@ describe('managed file reference resolver', () => {
         contentType: 'text/csv'
       }
     })
-    const resolveVersionContent = vi.fn().mockRejectedValue(new Error('history path must not open'))
     const resolver = createManagedFileReferenceResolver({
       artifacts: {} as ArtifactRepository,
-      artifactVersions: { resolveVersionContent },
       managedFileVersions: { openLatest } as never
     })
 
@@ -230,7 +228,6 @@ describe('managed file reference resolver', () => {
       projectId: 'project-1',
       fileId: 'artifact-file'
     })
-    expect(resolveVersionContent).not.toHaveBeenCalled()
   })
 
   it('fails closed when a legacy Artifact Version locator disagrees with sourceFileId', async () => {
@@ -248,11 +245,9 @@ describe('managed file reference resolver', () => {
         contentType: 'text/csv'
       }
     })
-    const resolveVersionContent = vi.fn()
     const resolveManagedFilePath = vi.fn()
     const resolver = createManagedFileReferenceResolver({
       artifacts: { resolveManagedFilePath } as never,
-      artifactVersions: { resolveVersionContent },
       managedFileVersions: { openLatest } as never
     })
 
@@ -275,18 +270,12 @@ describe('managed file reference resolver', () => {
       )
     ).rejects.toThrow(/source file.*does not match.*locator/i)
     expect(openLatest).not.toHaveBeenCalled()
-    expect(resolveVersionContent).not.toHaveBeenCalled()
     expect(resolveManagedFilePath).not.toHaveBeenCalled()
   })
 
   it('fails closed for a legacy Artifact Version locator when latest resolution is unavailable', async () => {
-    const resolveVersionContent = vi.fn().mockResolvedValue({
-      path: '/untrusted/history.csv',
-      filename: 'history.csv'
-    })
     const resolver = createManagedFileReferenceResolver({
-      artifacts: {} as ArtifactRepository,
-      artifactVersions: { resolveVersionContent }
+      artifacts: {} as ArtifactRepository
     })
 
     await expect(
@@ -306,7 +295,6 @@ describe('managed file reference resolver', () => {
         }
       )
     ).rejects.toThrow(/latest.*not configured/i)
-    expect(resolveVersionContent).not.toHaveBeenCalled()
   })
 
   it('validates upload paths and returns trusted on-disk metadata', async () => {
@@ -429,10 +417,8 @@ describe('managed file reference resolver', () => {
   })
 
   it('rejects an explicitly referenced Artifact Version from another Project', async () => {
-    const resolveVersionContent = vi.fn()
     const resolver = createManagedFileReferenceResolver({
-      artifacts: {} as ArtifactRepository,
-      artifactVersions: { resolveVersionContent }
+      artifacts: {} as ArtifactRepository
     })
 
     await expect(
@@ -452,7 +438,6 @@ describe('managed file reference resolver', () => {
         }
       )
     ).rejects.toThrow(/different project/i)
-    expect(resolveVersionContent).not.toHaveBeenCalled()
   })
 
   it('leaves linked folders unavailable until a capability-validating adapter is registered', async () => {

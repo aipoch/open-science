@@ -36,7 +36,6 @@ import type {
 import { resolveDataRoot } from '../storage-root'
 import { withDataRootWrite } from '../storage/migration-state'
 import {
-  readBoundedManagedFilePreview,
   readBoundedManagedFilePreviewLease,
   type ManagedFilePreviewReadLease
 } from '../managed-file-preview'
@@ -84,10 +83,9 @@ type ArtifactHandlers = {
 type ArtifactHandlerDependencies = {
   openPath?: (path: string) => Promise<string>
   logger?: Pick<Logger, 'error'>
-  resolveManagedFilePath?: (request: ReadArtifactPreviewRequest) => Promise<string>
   openLatestManagedFile?: (
     request: Omit<ReadArtifactPreviewRequest, 'versionId'> & { versionId?: never }
-  ) => Promise<ManagedFilePreviewReadLease>
+  ) => Promise<ManagedFilePreviewReadLease & { path?: string }>
   openManagedFileVersion?: (
     request: ReadArtifactPreviewRequest & { versionId: string }
   ) => Promise<ManagedFilePreviewReadLease>
@@ -198,30 +196,57 @@ const createArtifactHandlers = (
     openFile: async (request) => {
       // Resolve through the repository first so shell.openPath never sees unmanaged locations.
       const versionIdentity = parseArtifactVersionLocator(request.path)
-      const filePath = versionIdentity
-        ? await dependencies.provenance
-            ?.resolveVersionContent(versionIdentity)
-            .then((resolved) => resolved.path)
-        : await repository.resolveManagedFilePath(request)
-      if (!filePath) throw new Error('Artifact Provenance is not configured.')
-      const openError = await openPath(filePath)
-
-      if (openError) {
-        throw new Error(openError)
+      if (!versionIdentity) {
+        const openError = await openPath(await repository.resolveManagedFilePath(request))
+        if (openError) throw new Error(openError)
+        return
       }
+      if (!dependencies.openLatestManagedFile) {
+        throw new Error('Managed Artifact Version reader is not configured.')
+      }
+      const lease = await dependencies.openLatestManagedFile({
+        ...request,
+        projectId: versionIdentity.projectId,
+        sessionId: versionIdentity.appSessionId,
+        fileId: versionIdentity.artifactId,
+        versionId: undefined
+      })
+      try {
+        if (!lease.path) throw new Error('Managed Artifact Version reader returned no path.')
+        const openError = await openPath(lease.path)
+        if (openError) throw new Error(openError)
+      } catch (error) {
+        await lease.close().catch(() => undefined)
+        throw error
+      }
+      await lease.close()
     },
     readPreview: async (request) => {
-      const lease =
+      const versionIdentity = parseArtifactVersionLocator(request.path)
+      const logicalRequest =
         request.projectId && request.fileId
-          ? request.versionId && dependencies.openManagedFileVersion
-            ? await dependencies.openManagedFileVersion({
+          ? request
+          : versionIdentity
+            ? {
                 ...request,
-                versionId: request.versionId
+                projectId: versionIdentity.projectId,
+                sessionId: versionIdentity.appSessionId,
+                fileId: versionIdentity.artifactId,
+                versionId: undefined
+              }
+            : undefined
+      const lease = logicalRequest
+        ? logicalRequest.versionId
+          ? dependencies.openManagedFileVersion
+            ? await dependencies.openManagedFileVersion({
+                ...logicalRequest,
+                versionId: logicalRequest.versionId
               })
-            : !request.versionId && dependencies.openLatestManagedFile
-              ? await dependencies.openLatestManagedFile({ ...request, versionId: undefined })
-              : undefined
-          : undefined
+            : undefined
+          : dependencies.openLatestManagedFile
+            ? await dependencies.openLatestManagedFile({ ...logicalRequest, versionId: undefined })
+            : undefined
+        : undefined
       if (lease) {
         try {
           return await readBoundedManagedFilePreviewLease(
@@ -233,15 +258,11 @@ const createArtifactHandlers = (
           await lease.close()
         }
       }
-      if (request.projectId && request.fileId && dependencies.resolveManagedFilePath) {
-        const path = await dependencies.resolveManagedFilePath(request)
-        return readBoundedManagedFilePreview(path, request, 'Invalid artifact preview encoding.')
+      if (logicalRequest) {
+        throw new Error('Managed Artifact Version reader is not configured.')
       }
-      const versionIdentity = parseArtifactVersionLocator(request.path)
       if (!versionIdentity) return repository.readManagedFilePreview(request)
-      if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
-      const { path } = await dependencies.provenance.resolveVersionContent(versionIdentity)
-      return readBoundedManagedFilePreview(path, request, 'Invalid artifact preview encoding.')
+      throw new Error('Managed Artifact Version reader is not configured.')
     },
     getLineage: (request) => {
       if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')

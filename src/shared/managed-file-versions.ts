@@ -175,14 +175,6 @@ type ManagedTextEditEligibility =
 
 type SecureRandomIndexSource = (upperBound: number) => number
 
-type ManagedFileVersionHostCapability =
-  { available: true } | { available: false; reason: 'STORAGE_UNAVAILABLE' }
-
-const managedFileVersionHostCapability = (
-  hasVersionFileOperator: boolean
-): ManagedFileVersionHostCapability =>
-  hasVersionFileOperator ? { available: true } : { available: false, reason: 'STORAGE_UNAVAILABLE' }
-
 const extensionOf = (filename: string): string | undefined => {
   const index = filename.lastIndexOf('.')
   if (index <= 0 || index === filename.length - 1) return undefined
@@ -289,7 +281,6 @@ export {
   inspectManagedTextEditEligibility,
   isManagedVersionStoredFilename,
   isSafeManagedFileBasename,
-  managedFileVersionHostCapability,
   type ManagedFileIdentity,
   type ManagedFileSource,
   type ManagedFileVersionDescriptor,
@@ -297,7 +288,6 @@ export {
   type ManagedFileVersionErrorShape,
   type ManagedFileVersionInspectResult,
   type ManagedFileVersionIpcResult,
-  type ManagedFileVersionHostCapability,
   type ManagedFileVersionDiffRequest,
   type ManagedFileVersionCancelDiffRequest,
   type ManagedFileVersionDiffLine,

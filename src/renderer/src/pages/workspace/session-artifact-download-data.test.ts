@@ -7,6 +7,7 @@ const artifact = (id: string): ProjectFileItem => ({
   id,
   source: 'artifact',
   sourceFileId: id,
+  sourceVersionId: id,
   projectId: 'project-1',
   sessionId: 'session-1',
   name: `${id}.csv`,

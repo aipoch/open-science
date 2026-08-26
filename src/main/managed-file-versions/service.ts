@@ -14,7 +14,6 @@ import {
   type ManagedFileVersionErrorCode,
   type ManagedFileVersionInspectRequest,
   type ManagedFileVersionInspectResult,
-  type ManagedFileVersionHostCapability,
   type ManagedFileVersionSaveTextEditRequest,
   type ManagedTextFormat,
   type SaveTextEditResult
@@ -29,6 +28,8 @@ import {
   type VersionFileRecovery
 } from './version-file-operator'
 import { sha256 } from '../artifacts/provenance-canonical'
+import { normalizeArtifactFilename } from '../artifacts/provenance-version-writer'
+import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
 
 const COMPLETE_STATE = { artifact: 'finalized', upload: 'ready' } as const
 const STORAGE_COLLISION_MAX_ATTEMPTS = 16
@@ -121,7 +122,30 @@ type ManagedFileVersionServiceOptions = {
   diffTaskRunner?: Pick<ManagedTextDiffTaskRunner, 'run' | 'cancel'>
 }
 
+type AdoptLegacyArtifactRequest = {
+  projectId: string
+  sessionId: string
+  sourceFileId: string
+  logicalFilename: string
+  content: Uint8Array
+  contentType?: string
+  messageId?: string
+}
+
+type AdoptedLegacyArtifact = {
+  fileId: string
+  versionId: string
+  versionNumber: number
+  storageRef: string
+  storedFilename: string
+  checksum: string
+  sizeBytes: number
+  contentType?: string
+  createdAt: Date
+}
+
 type WriteOperationRecord = Prisma.ManagedFileVersionWriteOperationGetPayload<object>
+type LegacyArtifactVersionRecord = Prisma.ArtifactVersionGetPayload<object>
 
 class ManagedFileVersionError extends Error {
   readonly name = 'ManagedFileVersionError'
@@ -214,8 +238,235 @@ class ManagedFileVersionService {
     this.diffTaskRunner = options.diffTaskRunner ?? new ManagedTextDiffTaskRunner()
   }
 
-  getCapability(): ManagedFileVersionHostCapability {
-    return { available: true }
+  async adoptLegacyArtifact(request: AdoptLegacyArtifactRequest): Promise<AdoptedLegacyArtifact> {
+    assertSafeStorageSegment(request.projectId, 'project id')
+    assertSafeStorageSegment(request.sessionId, 'session id')
+    assertSafeStorageSegment(request.sourceFileId, 'legacy artifact id')
+    if (!(request.content instanceof Uint8Array)) {
+      operationError('INVALID_REQUEST', 'Legacy Artifact content must be bytes.')
+    }
+    assertWithinResourceBudget(
+      'file',
+      request.content.byteLength,
+      LOCAL_RESOURCE_BUDGETS.artifactFileBytes
+    )
+
+    const client = await this.options.getClient()
+    await this.assertProjectWritable(client, request.projectId)
+    const normalizedFilename = normalizeArtifactFilename(request.logicalFilename)
+    const bytes = Buffer.from(request.content)
+    const checksum = sha256(bytes)
+    const lineage = await client.$transaction(async (tx) => {
+      const origin = await tx.fileOriginSession.upsert({
+        where: {
+          projectId_sessionId: {
+            projectId: request.projectId,
+            sessionId: request.sessionId
+          }
+        },
+        create: { projectId: request.projectId, sessionId: request.sessionId },
+        update: {}
+      })
+      if (origin.state !== 'active' || origin.deletedAt || origin.deletionOperationId) {
+        operationError('FILE_DELETED', 'Legacy Artifact origin Session is not active.')
+      }
+
+      const existing = await tx.artifactLineage.findUnique({
+        where: {
+          projectId_sessionId_normalizedFilename: {
+            projectId: request.projectId,
+            sessionId: request.sessionId,
+            normalizedFilename
+          }
+        }
+      })
+      if (existing) return existing
+      const idOwner = await tx.artifactLineage.findUnique({
+        where: { id: request.sourceFileId },
+        select: { id: true }
+      })
+      return tx.artifactLineage.create({
+        data: {
+          id: idOwner ? this.createId() : request.sourceFileId,
+          projectId: request.projectId,
+          sessionId: request.sessionId,
+          normalizedFilename,
+          filename: request.logicalFilename
+        }
+      })
+    })
+
+    if (lineage.currentVersionId) {
+      const current = await client.artifactVersion.findFirst({
+        where: {
+          id: lineage.currentVersionId,
+          artifactId: lineage.id,
+          state: 'finalized'
+        }
+      })
+      if (!current) {
+        operationError('CONTENT_INTEGRITY_FAILED', 'Legacy Artifact head is not finalized.')
+      }
+      return this.toAdoptedLegacyArtifact(
+        current ?? operationError('CONTENT_INTEGRITY_FAILED', 'Legacy Artifact head is missing.')
+      )
+    }
+
+    const operationId = `legacy-artifact-${sha256(
+      JSON.stringify([request.projectId, request.sessionId, lineage.id])
+    )}`
+    let version = await client.artifactVersion.findUnique({
+      where: { writeOperationId: operationId }
+    })
+    if (version) {
+      if (
+        version.artifactId !== lineage.id ||
+        version.originKind !== 'legacy' ||
+        version.filename !== request.logicalFilename ||
+        version.checksum !== checksum ||
+        version.sizeBytes !== BigInt(bytes.byteLength) ||
+        (version.contentType ?? undefined) !== request.contentType
+      ) {
+        operationError('OPERATION_REUSED', 'Legacy Artifact changed during immutable adoption.')
+      }
+    } else {
+      for (
+        let candidateIndex = 0;
+        candidateIndex < STORAGE_COLLISION_MAX_ATTEMPTS;
+        candidateIndex += 1
+      ) {
+        const plannedFile = this.versionFileOperator.planImmutable({
+          operationId,
+          scope: {
+            source: 'artifact',
+            projectId: request.projectId,
+            sessionId: request.sessionId,
+            logicalFileId: lineage.id
+          },
+          logicalFilename: request.logicalFilename,
+          candidateIndex
+        })
+        try {
+          version = await client.artifactVersion.create({
+            data: {
+              id: this.createId(),
+              artifactId: lineage.id,
+              versionNumber: 1,
+              filename: request.logicalFilename,
+              originKind: 'legacy',
+              writeOperationId: operationId,
+              state: 'staging',
+              storageTag: `v${plannedFile.versionToken}`,
+              storedFilename: plannedFile.storedFilename,
+              contentStorageKey: plannedFile.storageRef,
+              contentType: request.contentType,
+              sizeBytes: BigInt(bytes.byteLength),
+              checksum,
+              messageId: request.messageId,
+              createdAt: this.now()
+            }
+          })
+          break
+        } catch (error) {
+          const replay = await client.artifactVersion.findUnique({
+            where: { writeOperationId: operationId }
+          })
+          if (replay) {
+            version = replay
+            break
+          }
+          if (
+            typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            error.code === 'P2002'
+          ) {
+            continue
+          }
+          throw error
+        }
+      }
+    }
+    let activeVersion =
+      version ?? operationError('STORAGE_COLLISION', 'Could not allocate legacy Artifact storage.')
+    if (activeVersion.state === 'finalized') {
+      const current = await client.artifactLineage.findUniqueOrThrow({ where: { id: lineage.id } })
+      if (current.currentVersionId !== activeVersion.id) {
+        operationError(
+          'CONTENT_INTEGRITY_FAILED',
+          'Legacy Artifact version is not the current head.'
+        )
+      }
+      return this.toAdoptedLegacyArtifact(activeVersion)
+    }
+    if (activeVersion.state !== 'staging') {
+      operationError('CONTENT_INTEGRITY_FAILED', 'Legacy Artifact adoption state is invalid.')
+    }
+
+    let plannedFile = this.legacyArtifactPlan(request, lineage.id, operationId, activeVersion)
+    for (let collisionAttempt = 0; ; collisionAttempt += 1) {
+      try {
+        await this.versionFileOperator.publishImmutable({
+          operationId,
+          scope: {
+            source: 'artifact',
+            projectId: request.projectId,
+            sessionId: request.sessionId,
+            logicalFileId: lineage.id
+          },
+          logicalFilename: request.logicalFilename,
+          candidateIndex: plannedFile.candidateIndex,
+          plannedFile,
+          content: bytes
+        })
+        break
+      } catch (error) {
+        if (
+          !(error instanceof VersionFileOperatorError) ||
+          error.reason !== 'DESTINATION_COLLISION' ||
+          collisionAttempt + 1 >= STORAGE_COLLISION_MAX_ATTEMPTS
+        ) {
+          throw translateVersionFileError(error, 'Unable to publish legacy Artifact v1.')
+        }
+        activeVersion = await this.reallocateLegacyArtifactDestination(
+          client,
+          request,
+          lineage.id,
+          operationId,
+          activeVersion,
+          plannedFile.candidateIndex + 1
+        )
+        plannedFile = this.legacyArtifactPlan(request, lineage.id, operationId, activeVersion)
+      }
+    }
+
+    const lease = await this.versionFileOperator.openImmutable(activeVersion.contentStorageKey, {
+      sizeBytes: bytes.byteLength,
+      checksum
+    })
+    await lease.close()
+    const published = await client.$transaction(async (tx) => {
+      const logicalFile = await this.loadLogicalFile(tx, {
+        source: 'artifact',
+        projectId: request.projectId,
+        fileId: lineage.id
+      })
+      await this.assertPublicationAllowed(tx, logicalFile)
+      const current = await tx.artifactLineage.findUniqueOrThrow({ where: { id: lineage.id } })
+      if (current.currentVersionId && current.currentVersionId !== activeVersion.id) {
+        operationError('VERSION_CONFLICT', 'Legacy Artifact gained a different current version.')
+      }
+      const finalized = await tx.artifactVersion.update({
+        where: { id: activeVersion.id },
+        data: { state: 'finalized', managedVisibleAt: this.now() }
+      })
+      await tx.artifactLineage.update({
+        where: { id: lineage.id },
+        data: { currentVersionId: finalized.id }
+      })
+      return finalized
+    })
+    return this.toAdoptedLegacyArtifact(published)
   }
 
   async inspect(
@@ -477,6 +728,126 @@ class ManagedFileVersionService {
   async auditActiveVersionIntegrity(): Promise<ManagedFileVersionIntegrityError[]> {
     const client = await this.options.getClient()
     return this.auditActiveVersions(client)
+  }
+
+  private legacyArtifactPlan(
+    request: AdoptLegacyArtifactRequest,
+    fileId: string,
+    operationId: string,
+    version: Pick<
+      LegacyArtifactVersionRecord,
+      'contentStorageKey' | 'storedFilename' | 'storageTag'
+    >
+  ): PlannedFile {
+    for (
+      let candidateIndex = 0;
+      candidateIndex < STORAGE_COLLISION_MAX_ATTEMPTS;
+      candidateIndex += 1
+    ) {
+      const plannedFile = this.versionFileOperator.planImmutable({
+        operationId,
+        scope: {
+          source: 'artifact',
+          projectId: request.projectId,
+          sessionId: request.sessionId,
+          logicalFileId: fileId
+        },
+        logicalFilename: request.logicalFilename,
+        candidateIndex
+      })
+      if (
+        plannedFile.storageRef === version.contentStorageKey &&
+        plannedFile.storedFilename === version.storedFilename &&
+        `v${plannedFile.versionToken}` === version.storageTag
+      ) {
+        return plannedFile
+      }
+    }
+    return operationError(
+      'CONTENT_INTEGRITY_FAILED',
+      'Legacy Artifact has an invalid immutable storage plan.'
+    )
+  }
+
+  private async reallocateLegacyArtifactDestination(
+    client: PrismaClient,
+    request: AdoptLegacyArtifactRequest,
+    fileId: string,
+    operationId: string,
+    version: LegacyArtifactVersionRecord,
+    firstCandidateIndex: number
+  ): Promise<LegacyArtifactVersionRecord> {
+    for (
+      let candidateIndex = firstCandidateIndex;
+      candidateIndex < STORAGE_COLLISION_MAX_ATTEMPTS;
+      candidateIndex += 1
+    ) {
+      const plannedFile = this.versionFileOperator.planImmutable({
+        operationId,
+        scope: {
+          source: 'artifact',
+          projectId: request.projectId,
+          sessionId: request.sessionId,
+          logicalFileId: fileId
+        },
+        logicalFilename: request.logicalFilename,
+        candidateIndex
+      })
+      try {
+        return await client.artifactVersion.update({
+          where: { id: version.id, state: 'staging' },
+          data: {
+            storageTag: `v${plannedFile.versionToken}`,
+            storedFilename: plannedFile.storedFilename,
+            contentStorageKey: plannedFile.storageRef
+          }
+        })
+      } catch (error) {
+        if (
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          error.code === 'P2002'
+        ) {
+          continue
+        }
+        throw error
+      }
+    }
+    return operationError('STORAGE_COLLISION', 'Could not reallocate legacy Artifact storage.')
+  }
+
+  private toAdoptedLegacyArtifact(
+    version: Pick<
+      LegacyArtifactVersionRecord,
+      | 'id'
+      | 'artifactId'
+      | 'versionNumber'
+      | 'contentStorageKey'
+      | 'storedFilename'
+      | 'filename'
+      | 'checksum'
+      | 'sizeBytes'
+      | 'contentType'
+      | 'createdAt'
+    >
+  ): AdoptedLegacyArtifact {
+    const sizeBytes = Number(version.sizeBytes)
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+      operationError('CONTENT_INTEGRITY_FAILED', 'Legacy Artifact version metadata is invalid.')
+    }
+    const storedFilename = version.storedFilename ?? version.filename
+    return {
+      fileId: version.artifactId,
+      versionId: version.id,
+      versionNumber: version.versionNumber,
+      storageRef: version.contentStorageKey,
+      storedFilename,
+      checksum: version.checksum,
+      sizeBytes,
+      contentType: version.contentType ?? undefined,
+      createdAt: version.createdAt
+    }
   }
 
   private assertIdentity(request: ManagedFileIdentity & { versionId?: string }): void {
@@ -1977,6 +2348,8 @@ class ManagedFileVersionService {
 
 export { ManagedFileVersionError, ManagedFileVersionService }
 export type {
+  AdoptedLegacyArtifact,
+  AdoptLegacyArtifactRequest,
   ManagedFileReadLease,
   ManagedFileVersionRecoveryResult,
   ManagedFileVersionServiceOptions,

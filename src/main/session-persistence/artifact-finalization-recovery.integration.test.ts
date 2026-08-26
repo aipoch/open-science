@@ -17,10 +17,12 @@ import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-mes
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 import { ArtifactRepository } from '../artifacts/repository'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ManagedFileIndexRepository } from '../project-files/repository'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { SessionPersistenceCoordinator } from './coordinator'
 import { SessionRepository } from './repository'
+import { UploadRepository } from '../uploads/repository'
 
 const PROJECT_ID = 'project-1'
 const SESSION_ID = 'session-1'
@@ -38,7 +40,15 @@ describe('artifact finalization startup recovery', () => {
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     sessions = new SessionRepository(storageRoot)
-    files = new ManagedFileIndexRepository(() => Promise.resolve(client), storageRoot)
+    files = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot,
+      new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      }),
+      new UploadRepository(storageRoot, { getClient: () => Promise.resolve(client) })
+    )
   })
 
   afterEach(async () => {

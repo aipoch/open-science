@@ -10,7 +10,7 @@ import type {
   SearchArtifactsRequest,
   SearchArtifactsResult
 } from '../../shared/project-files'
-import type { ProjectFilesClientProvider } from './mutation-projection'
+import type { ProjectFilesClient, ProjectFilesClientProvider } from './mutation-projection'
 import {
   decodeFileCursor,
   decodeGroupCursor,
@@ -31,11 +31,72 @@ import {
 
 type ProjectFilesIndexCompletenessReader = (projectId: string) => boolean
 
+const isExplicitVersionVisible = async (
+  client: ProjectFilesClient,
+  identity: {
+    source: 'artifact' | 'upload'
+    projectId: string
+    sessionId: string
+    sourceFileId: string
+  }
+): Promise<boolean> => {
+  const [project, deletionIntent, origin, sync, projection] = await Promise.all([
+    client.project.findUnique({
+      where: { id: identity.projectId },
+      select: { archivedAt: true }
+    }),
+    client.projectDeletionIntent.findUnique({
+      where: { projectId: identity.projectId },
+      select: { projectId: true }
+    }),
+    client.fileOriginSession.findUnique({
+      where: {
+        projectId_sessionId: {
+          projectId: identity.projectId,
+          sessionId: identity.sessionId
+        }
+      },
+      select: { state: true, deletedAt: true, deletionOperationId: true }
+    }),
+    client.managedFileSessionSync.findUnique({
+      where: {
+        projectId_sessionId: {
+          projectId: identity.projectId,
+          sessionId: identity.sessionId
+        }
+      },
+      select: { deletedAt: true, deleteOperationId: true }
+    }),
+    client.managedFile.findUnique({
+      where: {
+        projectId_source_sourceFileId: {
+          projectId: identity.projectId,
+          source: identity.source,
+          sourceFileId: identity.sourceFileId
+        }
+      },
+      select: { deletedAt: true, deleteOperationId: true }
+    })
+  ])
+
+  return !(
+    project?.archivedAt ||
+    deletionIntent ||
+    !origin ||
+    origin.state !== 'active' ||
+    origin.deletedAt ||
+    origin.deletionOperationId ||
+    sync?.deletedAt ||
+    sync?.deleteOperationId ||
+    projection?.deletedAt ||
+    projection?.deleteOperationId
+  )
+}
+
 // Owns the read-model orchestration while completeness remains authoritative in the mutation owner.
 class ProjectFilesQueryOwner {
   constructor(
     private readonly getClient: ProjectFilesClientProvider,
-    private readonly dataRoot: string,
     private readonly readIndexComplete: ProjectFilesIndexCompletenessReader
   ) {}
 
@@ -108,9 +169,7 @@ class ProjectFilesQueryOwner {
     const originsBySession = new Map(origins.map((origin) => [origin.sessionId, origin]))
 
     return {
-      items: pageRows.map((row) =>
-        toProjectFileItem(row, this.dataRoot, originsBySession.get(row.sessionId))
-      ),
+      items: pageRows.map((row) => toProjectFileItem(row, originsBySession.get(row.sessionId))),
       totalCount,
       nextCursor:
         rows.length > limit && lastRow
@@ -188,11 +247,7 @@ class ProjectFilesQueryOwner {
       origins.map((origin) => [`${origin.projectId}:${origin.sessionId}`, origin])
     )
     const toItem = (row: (typeof rows)[number]): ProjectFileItem =>
-      toProjectFileItem(
-        row,
-        this.dataRoot,
-        originsBySession.get(`${row.projectId}:${row.sessionId}`)
-      )
+      toProjectFileItem(row, originsBySession.get(`${row.projectId}:${row.sessionId}`))
 
     return {
       primary: {
@@ -229,7 +284,7 @@ class ProjectFilesQueryOwner {
         client.artifactVersion.findMany({
           where: {
             id: request.versionId,
-            state: { in: ['pending', 'finalized'] },
+            state: 'finalized',
             artifact: { is: { projectId: request.projectId } }
           },
           include: { artifact: true },
@@ -250,6 +305,13 @@ class ProjectFilesQueryOwner {
       }
       const artifactVersion = artifactVersions[0]
       if (artifactVersion) {
+        const visible = await isExplicitVersionVisible(client, {
+          source: 'artifact',
+          sourceFileId: artifactVersion.artifactId,
+          projectId: artifactVersion.artifact.projectId,
+          sessionId: artifactVersion.artifact.sessionId
+        })
+        if (!visible) return []
         return [
           {
             source: 'artifact',
@@ -273,6 +335,15 @@ class ProjectFilesQueryOwner {
       }
       const uploadVersion = uploadVersions[0]
       const uploadTime = uploadVersion?.createdAt ?? uploadVersion?.registeredAt
+      if (uploadVersion && uploadTime) {
+        const visible = await isExplicitVersionVisible(client, {
+          source: 'upload',
+          sourceFileId: uploadVersion.uploadFileId,
+          projectId: uploadVersion.uploadFile.projectId,
+          sessionId: uploadVersion.uploadFile.sessionId
+        })
+        if (!visible) return []
+      }
       return uploadVersion && uploadTime
         ? [
             {

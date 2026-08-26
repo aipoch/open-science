@@ -139,7 +139,6 @@ const GENERATED_SOURCE_OMISSIONS = [
 
 const BROWSER_NATIVE_CALLABLE_PATHS = [
   'getRuntimeVersions',
-  'managedFileVersions.getCapability',
   'saveBlobFile',
   'saveManagedFile',
   'window.close'

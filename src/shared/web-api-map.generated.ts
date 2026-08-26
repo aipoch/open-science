@@ -80,7 +80,6 @@ export const WEB_INVOKE_CHANNELS = {
   'logs.getPath': 'logs:get-path',
   'logs.openFile': 'logs:open-file',
   'logs.revealInFolder': 'logs:reveal-in-folder',
-  'managedFileVersions.getCapability': 'managed-file-versions:get-capability',
   'notebook.appendCodeCell': 'notebook:append-code-cell',
   'notebook.beginCodeCell': 'notebook:begin-code-cell',
   'notebook.execute': 'notebook:execute',

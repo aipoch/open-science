@@ -9073,10 +9073,45 @@ describe('ACP runtime session management', () => {
         receivedPrompts.push(prompt)
       }
     })
-    const resolveVersionContent = vi.fn(async () => ({
+    const openLatest = vi.fn(async () => ({
       path: immutablePath,
-      filename: 'report.txt',
-      contentType: 'text/plain'
+      size: Buffer.byteLength('version-backed artifact'),
+      read: vi.fn(async () => Buffer.from('version-backed artifact')),
+      readRange: vi.fn(async (offset: number, length: number) =>
+        Buffer.from('version-backed artifact').subarray(offset, offset + length)
+      ),
+      copyTo: vi.fn(async (destinationPath: string) =>
+        writeFile(destinationPath, 'version-backed artifact', { flag: 'wx' })
+      ),
+      verifyUnchanged: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+      logicalFile: {
+        source: 'artifact' as const,
+        id: 'artifact-1',
+        projectId: 'project-1',
+        sessionId: 'source-session',
+        displayName: 'report.txt',
+        currentVersionId: 'artifact-version-2'
+      },
+      version: {
+        id: 'artifact-version-2',
+        fileId: 'artifact-1',
+        versionNumber: 2,
+        state: 'finalized' as const,
+        originKind: 'user_edit' as const,
+        basedOnVersionId: 'artifact-version-1',
+        storageTag: 'vabc12345',
+        storedFilename: 'vabc12345_report.txt',
+        writeOperationId: 'operation-2',
+        contentStorageKey: 'opaque:artifact-version-2',
+        filename: 'report.txt',
+        contentType: 'text/plain',
+        sizeBytes: BigInt(Buffer.byteLength('version-backed artifact')),
+        checksum: '2'.repeat(64),
+        createdAt: new Date('2026-08-24T00:00:00.000Z')
+      },
+      versionToken: 2,
+      snapshot: { dev: 0n, ino: 0n, size: 0n, mtimeNs: 0n }
     }))
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
@@ -9090,9 +9125,9 @@ describe('ACP runtime session management', () => {
         repository: artifactRepository,
         provenance: {
           listRunVersions: vi.fn(async () => []),
-          writeAppGeneratedVersion: vi.fn(),
-          resolveVersionContent
-        }
+          writeAppGeneratedVersion: vi.fn()
+        },
+        managedFileVersions: { openLatest } as never
       }
     })
 
@@ -9119,18 +9154,17 @@ describe('ACP runtime session management', () => {
       ]
     })
 
-    expect(resolveVersionContent).toHaveBeenCalledWith({
+    expect(openLatest).toHaveBeenCalledWith({
+      source: 'artifact',
       projectId: 'project-1',
-      appSessionId: 'source-session',
-      artifactId: 'artifact-1',
-      versionId: 'artifact-version-1'
+      fileId: 'artifact-1'
     })
     expect(receivedPrompts[0][1]).toMatchObject({
       type: 'resource',
       resource: {
         mimeType: 'text/plain',
         text: 'version-backed artifact',
-        uri: expect.stringContaining('content')
+        uri: expect.stringMatching(/^file:.*\.txt$/)
       }
     })
   })

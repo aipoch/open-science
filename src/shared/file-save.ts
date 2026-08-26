@@ -51,8 +51,7 @@ type SaveSessionArtifactsResult =
 type SaveProjectArtifactFile = {
   source: 'artifact' | 'upload'
   sessionId: string
-  path: string
-  fileId?: string
+  fileId: string
   suggestedName: string
 }
 

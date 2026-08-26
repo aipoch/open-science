@@ -7,7 +7,6 @@ import type {
   HostArtifactCatalogItem,
   HostArtifactsResult
 } from '../../shared/project-files'
-import { createUploadVersionReference } from '../../shared/uploads'
 
 type HostArtifactCatalog = {
   readHostArtifactCatalog(request: {
@@ -16,27 +15,17 @@ type HostArtifactCatalog = {
   }): Promise<HostArtifactCatalogItem[]>
 }
 
-type HostArtifactPathResolvers = {
-  artifact: {
-    resolveVersionContent(request: {
-      projectId: string
-      appSessionId: string
-      artifactId: string
-      versionId: string
-    }): Promise<{ path: string }>
-  }
-  upload: {
-    resolveManagedUploadPath(
-      request: { path: string },
-      scope: { projectId: string; sessionId: string }
-    ): Promise<string>
-  }
+type HostManagedFileReader = {
+  openLatest(request: {
+    source: 'artifact' | 'upload'
+    projectId: string
+    fileId: string
+  }): Promise<{ path: string; close(): Promise<void> }>
 }
 
 type HostArtifactReadContext = { projectId: string; sessionId: string }
 
 type NormalizedOptions = {
-  versionId?: string
   frameId?: string
   filename?: string
   exact: boolean
@@ -66,7 +55,6 @@ type RankedArtifact = {
 const HOST_ARTIFACTS_CURSOR_SNAPSHOT_CHANGED = 'HOST_ARTIFACTS_CURSOR_SNAPSHOT_CHANGED'
 
 const OPTION_KEYS = new Set([
-  'version_id',
   'frame_id',
   'filename',
   'exact',
@@ -146,11 +134,6 @@ const normalizeOptions = (value: unknown): NormalizedOptions => {
   const unknown = Object.keys(value).filter((key) => !OPTION_KEYS.has(key))
   if (unknown.length > 0) throw new Error(`host.artifacts unknown option: ${unknown[0]}`)
 
-  const versionId = optionalString(value, 'version_id', 512)
-  if (versionId && Object.keys(value).length !== 1) {
-    throw new Error('host.artifacts version_id cannot be combined with other options.')
-  }
-
   const frameId = optionalString(value, 'frame_id', 512)
   const filename = optionalString(value, 'filename')
   const search = optionalString(value, 'search')
@@ -173,7 +156,6 @@ const normalizeOptions = (value: unknown): NormalizedOptions => {
   }
 
   return {
-    versionId,
     frameId,
     filename,
     exact,
@@ -283,15 +265,12 @@ const matchesContentType = (actual: string | undefined, requested: string): bool
 class HostArtifactsService {
   constructor(
     private readonly catalog: HostArtifactCatalog,
-    private readonly resolvers: HostArtifactPathResolvers
+    private readonly managedFileVersions: HostManagedFileReader
   ) {}
 
   async list(options: unknown, context: HostArtifactReadContext): Promise<HostArtifactsResult> {
     const normalized = normalizeOptions(options)
-    const candidates = await this.catalog.readHostArtifactCatalog({
-      projectId: context.projectId,
-      ...(normalized.versionId ? { versionId: normalized.versionId } : {})
-    })
+    const candidates = await this.catalog.readHostArtifactCatalog({ projectId: context.projectId })
     const snapshotFingerprint = catalogSnapshotFingerprint(candidates)
     const ranked: RankedArtifact[] = candidates.flatMap((item) => {
       if (
@@ -378,30 +357,21 @@ class HostArtifactsService {
     if (!item)
       throw new Error(`Artifact Version not found in the current Project: ${versionIdValue}`)
 
-    const resolved =
-      item.source === 'artifact'
-        ? await this.resolvers.artifact.resolveVersionContent({
-            projectId: context.projectId,
-            appSessionId: item.sessionId,
-            artifactId: item.sourceFileId,
-            versionId: item.versionId
-          })
-        : {
-            path: await this.resolvers.upload.resolveManagedUploadPath(
-              {
-                path: createUploadVersionReference(item.versionId, {
-                  projectId: context.projectId,
-                  sessionId: item.sessionId
-                })
-              },
-              { projectId: context.projectId, sessionId: item.sessionId }
-            )
-          }
-    if (!isAbsolute(resolved.path))
-      throw new Error('Managed Artifact resolver returned a relative path.')
-    return resolved.path
+    const lease = await this.managedFileVersions.openLatest({
+      source: item.source,
+      projectId: context.projectId,
+      fileId: item.sourceFileId
+    })
+    try {
+      if (!isAbsolute(lease.path)) {
+        throw new Error('Managed Artifact reader returned a relative path.')
+      }
+      return lease.path
+    } finally {
+      await lease.close()
+    }
   }
 }
 
 export { HOST_ARTIFACTS_CURSOR_SNAPSHOT_CHANGED, HostArtifactsService }
-export type { HostArtifactCatalog, HostArtifactPathResolvers, HostArtifactReadContext }
+export type { HostArtifactCatalog, HostArtifactReadContext, HostManagedFileReader }

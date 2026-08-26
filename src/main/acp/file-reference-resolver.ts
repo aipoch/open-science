@@ -12,7 +12,6 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { isPathWithin } from '../../shared/local-fs'
 import { MAX_UPLOAD_FILE_BYTES } from '../../shared/uploads'
 import type { ArtifactRepository } from '../artifacts/repository'
-import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { createLogger, errorLogFields } from '../logger'
 import type { UploadRepository } from '../uploads/repository'
 import type {
@@ -332,7 +331,6 @@ export class FileReferenceResolver {
 export const createManagedFileReferenceResolver = (dependencies: {
   uploads?: UploadRepository
   artifacts?: ArtifactRepository
-  artifactVersions?: Partial<Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>>
   readOnlyProjectionMaxSessionBytes?: number
   // Resolves a granted local root id and current access level (settings-backed). Absent ⇒
   // linked-folder references stay unavailable, matching the pre-grant behavior.

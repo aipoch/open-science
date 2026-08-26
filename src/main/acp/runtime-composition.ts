@@ -121,7 +121,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     NotificationInboxController,
     'record' | 'settleAction' | 'settleAuthorization'
   >
-  managedFileVersions?: Pick<
+  managedFileVersions: Pick<
     import('../managed-file-versions/service').ManagedFileVersionService,
     'openLatest'
   >

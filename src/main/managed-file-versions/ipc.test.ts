@@ -94,7 +94,6 @@ describe('managed file version IPC', () => {
 
   it('returns renderer-safe discriminated envelopes and gates writes through the data-root lease', async () => {
     const service = {
-      getCapability: vi.fn(() => ({ available: true as const })),
       inspect: vi.fn(async () => inspectResult),
       diffText: vi.fn(async () => diffResult),
       cancelDiff: vi.fn(() => true),
@@ -129,10 +128,6 @@ describe('managed file version IPC', () => {
   it('preserves stable expected error codes instead of relying on Electron Error serialization', async () => {
     const handlers = createManagedFileVersionHandlers(
       {
-        getCapability: vi.fn(() => ({
-          available: false as const,
-          reason: 'STORAGE_UNAVAILABLE' as const
-        })),
         inspect: vi.fn(async () => {
           throw new ManagedFileVersionError('INVALID_UTF8', 'Not valid UTF-8.')
         }),
@@ -165,7 +160,6 @@ describe('managed file version IPC', () => {
     const onChanged = vi.fn()
     const handlers = createManagedFileVersionHandlers(
       {
-        getCapability: vi.fn(() => ({ available: true as const })),
         inspect: vi.fn(async () => inspectResult),
         diffText: vi.fn(async () => diffResult),
         cancelDiff: vi.fn(() => false),
@@ -183,7 +177,6 @@ describe('managed file version IPC', () => {
 
   it('registers the exact typed channels and forwards requests', async () => {
     const handlers = {
-      getCapability: vi.fn(() => ({ available: true as const })),
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(async () => ({ ok: true as const, value: diffResult })),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
@@ -194,11 +187,9 @@ describe('managed file version IPC', () => {
     expect([...registered.keys()].sort()).toEqual([
       'managed-file-versions:cancel-diff',
       'managed-file-versions:diff-text',
-      'managed-file-versions:get-capability',
       'managed-file-versions:inspect',
       'managed-file-versions:save-text-edit'
     ])
-    await registered.get('managed-file-versions:get-capability')?.({}, undefined as never)
     await registered.get('managed-file-versions:inspect')?.({}, inspectRequest as never)
     const sender = { id: 1, once: vi.fn() }
     await registered.get('managed-file-versions:diff-text')?.({ sender }, diffRequest as never)
@@ -211,7 +202,6 @@ describe('managed file version IPC', () => {
     expect(handlers.diffText).toHaveBeenCalledWith(diffRequest)
     expect(handlers.cancelDiff).not.toHaveBeenCalled()
     expect(handlers.saveTextEdit).toHaveBeenCalledWith(saveRequest)
-    expect(handlers.getCapability).toHaveBeenCalledTimes(1)
   })
 
   it('scopes diff cancellation to its sender and cancels all tasks when that renderer is destroyed', async () => {
@@ -222,7 +212,6 @@ describe('managed file version IPC', () => {
       }
     )
     registerManagedFileVersionIpcHandlers({
-      getCapability: vi.fn(() => ({ available: true as const })),
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
@@ -265,7 +254,6 @@ describe('managed file version IPC', () => {
       }
     )
     const handlers = {
-      getCapability: vi.fn(() => ({ available: true as const })),
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
@@ -309,7 +297,6 @@ describe('managed file version IPC', () => {
       }
     )
     const handlers = {
-      getCapability: vi.fn(() => ({ available: true as const })),
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
@@ -346,7 +333,6 @@ describe('managed file version IPC', () => {
   it('bounds active diff work per sender and globally with a stable concurrency error', async () => {
     const pendingResolvers: Array<() => void> = []
     const handlers = {
-      getCapability: vi.fn(() => ({ available: true as const })),
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(
         () =>
@@ -402,7 +388,6 @@ describe('managed file version IPC', () => {
       }
     )
     const handlers = {
-      getCapability: vi.fn(() => ({ available: true as const })),
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: false } })),
@@ -437,7 +422,6 @@ describe('managed file version IPC', () => {
   it('keeps a cancelled pre-worker request in the sender concurrency count until settle', async () => {
     const pendingResolvers: Array<() => void> = []
     const handlers = {
-      getCapability: vi.fn(() => ({ available: true as const })),
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(
         () =>
@@ -478,7 +462,6 @@ describe('managed file version IPC', () => {
       }
     )
     const handlers = {
-      getCapability: vi.fn(() => ({ available: true as const })),
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: false } })),
@@ -509,7 +492,6 @@ describe('managed file version IPC', () => {
 
   it('releases sender lifecycle observation when destruction happens after all work settles', async () => {
     const handlers = {
-      getCapability: vi.fn(() => ({ available: true as const })),
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(async () => ({ ok: true as const, value: diffResult })),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: false } })),

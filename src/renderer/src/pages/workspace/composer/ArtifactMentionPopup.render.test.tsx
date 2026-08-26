@@ -194,6 +194,7 @@ describe('ArtifactMentionPopup', () => {
           ...defaultProjectFiles[1],
           id: 'long-artifact',
           sourceFileId: 'long-artifact',
+          sourceVersionId: 'long-artifact',
           name: longName
         }
       ],
@@ -477,12 +478,14 @@ describe('ArtifactMentionPopup', () => {
           ...defaultProjectFiles[1],
           id: 'art-late',
           sourceFileId: 'art-late',
+          sourceVersionId: 'art-late',
           name: 'final-report.pdf'
         },
         {
           ...defaultProjectFiles[1],
           id: 'art-early',
           sourceFileId: 'art-early',
+          sourceVersionId: 'art-early',
           name: 'report.pdf'
         }
       ],

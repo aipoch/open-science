@@ -208,7 +208,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['getPath', 'logs:get-path'], ['openFile', 'logs:open-file', LOCAL], ['revealInFolder', 'logs:reveal-in-folder', LOCAL],
   ]),
   group('managed-file-versions', 'managedFileVersions', [
-    ['getCapability', 'managed-file-versions:get-capability', DELEGATED_NATIVE], ['inspect', 'managed-file-versions:inspect', ELECTRON], ['diffText', 'managed-file-versions:diff-text', ELECTRON], ['cancelDiff', 'managed-file-versions:cancel-diff', ELECTRON], ['saveTextEdit', 'managed-file-versions:save-text-edit', ELECTRON],
+    ['inspect', 'managed-file-versions:inspect', ELECTRON], ['diffText', 'managed-file-versions:diff-text', ELECTRON], ['cancelDiff', 'managed-file-versions:cancel-diff', ELECTRON], ['saveTextEdit', 'managed-file-versions:save-text-edit', ELECTRON],
   ]),
   group('network', 'network', [
     ['getInfo', 'network:get-info', ELECTRON], ['checkConnectivity', 'network:check-connectivity', ELECTRON],

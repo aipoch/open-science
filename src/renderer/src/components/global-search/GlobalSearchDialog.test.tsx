@@ -823,8 +823,9 @@ describe('GlobalSearchDialog', () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false)
   })
 
-  it('uses the source message creation time for a legacy artifact', async () => {
-    const createdAt = Date.now() - 4 * 24 * 60 * 60 * 1_000
+  it('uses the indexed current Version time instead of the older source message time', async () => {
+    const sourceCreatedAt = Date.now() - 4 * 24 * 60 * 60 * 1_000
+    const versionCreatedAt = Date.now() - 2 * 24 * 60 * 60 * 1_000
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === 'session-a'
@@ -834,11 +835,11 @@ describe('GlobalSearchDialog', () => {
                 {
                   id: 'message-a',
                   role: 'agent',
-                  content: 'Created legacy artifact',
+                  content: 'Created artifact',
                   status: 'complete',
                   eventIds: [],
                   artifactIds: ['artifact-1'],
-                  createdAt,
+                  createdAt: sourceCreatedAt,
                   updatedAt: Date.now()
                 }
               ]
@@ -851,10 +852,9 @@ describe('GlobalSearchDialog', () => {
         items: [
           {
             ...artifact,
-            sourceVersionId: undefined,
             messageId: 'message-a',
             path: '/workspace/sin.png',
-            sortAtMs: Date.now()
+            sortAtMs: versionCreatedAt
           }
         ],
         totalCount: 1
@@ -871,10 +871,10 @@ describe('GlobalSearchDialog', () => {
     const artifactRow = [...document.body.querySelectorAll('[role="option"]')].find((element) =>
       element.textContent?.includes('sin.png')
     )
-    expect(artifactRow?.textContent).toContain('Python 绘制 sin 函数图 · 4 days ago')
+    expect(artifactRow?.textContent).toContain('Python 绘制 sin 函数图 · 2 days ago')
   })
 
-  it('uses indexed artifact time when legacy Session messages are not loaded', async () => {
+  it('uses indexed current Version time when Session messages are not loaded', async () => {
     const createdAt = Date.now() - 4 * 24 * 60 * 60 * 1_000
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((session) =>
@@ -888,7 +888,6 @@ describe('GlobalSearchDialog', () => {
         items: [
           {
             ...artifact,
-            sourceVersionId: undefined,
             messageId: 'message-a',
             path: '/workspace/sin.png',
             sortAtMs: createdAt

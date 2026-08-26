@@ -268,17 +268,12 @@ describe('PreviewFileSurface managed text versions', () => {
       .mockResolvedValue({ ok: true, value: managedInspect })
   })
 
-  it('stays read-only when the Web runtime exposes capability detection without managed operations', async () => {
+  it('stays read-only when the Web runtime omits managed operations', async () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
         artifacts: window.api.artifacts,
-        managedFileVersions: {
-          getCapability: vi.fn(() => ({
-            available: false,
-            reason: 'STORAGE_UNAVAILABLE'
-          }))
-        }
+        managedFileVersions: {}
       }
     })
 

@@ -375,14 +375,13 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     expect(operation.storedFilename).toBe(expectedPlan.storedFilename)
   })
 
-  it('creates a Node version file operator by default without consulting native capability', async () => {
+  it('creates a Node version file operator by default without a platform capability gate', async () => {
     const fixture = await createFixture('upload')
     const service = new ManagedFileVersionService({
       storageRoot,
       getClient: () => Promise.resolve(client)
     })
 
-    expect(service.getCapability()).toEqual({ available: true })
     await expect(
       service.inspect({
         source: 'upload',
@@ -390,6 +389,114 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         fileId: fixture.fileId
       })
     ).resolves.toMatchObject({ canEdit: true, text: 'second\n' })
+  })
+
+  it('adopts a legacy Artifact as one immutable v1 and replays the same operation', async () => {
+    const content = Buffer.from('legacy artifact bytes\n')
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      createId: vi.fn().mockReturnValueOnce('legacy-artifact-version-1')
+    })
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      sourceFileId: 'legacy-artifact-1',
+      logicalFilename: 'legacy.md',
+      content,
+      contentType: 'text/markdown',
+      messageId: 'message-1'
+    }
+
+    const first = await service.adoptLegacyArtifact(request)
+    const replay = await service.adoptLegacyArtifact(request)
+
+    expect(replay).toEqual(first)
+    expect(first).toMatchObject({
+      fileId: 'legacy-artifact-1',
+      versionId: 'legacy-artifact-version-1',
+      versionNumber: 1,
+      checksum: checksum(content),
+      sizeBytes: content.byteLength
+    })
+    expect(first.storageRef).toMatch(
+      /^artifacts\/project-1\/session-1\/legacy-artifact-1\/managed-versions\/v[a-z0-9]{8}_legacy\.md$/u
+    )
+    await expect(
+      client.artifactLineage.findUniqueOrThrow({ where: { id: first.fileId } })
+    ).resolves.toMatchObject({ currentVersionId: first.versionId })
+    await expect(
+      client.artifactVersion.findUniqueOrThrow({ where: { id: first.versionId } })
+    ).resolves.toMatchObject({
+      artifactId: first.fileId,
+      versionNumber: 1,
+      state: 'finalized',
+      originKind: 'legacy',
+      basedOnVersionId: null,
+      contentStorageKey: first.storageRef,
+      checksum: checksum(content),
+      sizeBytes: BigInt(content.byteLength)
+    })
+    const lease = await service.openLatest({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: first.fileId
+    })
+    try {
+      await expect(lease.readRange(0, content.byteLength)).resolves.toEqual(new Uint8Array(content))
+    } finally {
+      await lease.close()
+    }
+  })
+
+  it('does not finalize a legacy Artifact after Project deletion begins', async () => {
+    const content = Buffer.from('legacy artifact bytes\n')
+    const operator = new NodeVersionFileOperator({ storageRoot })
+    const publishImmutable = operator.publishImmutable.bind(operator)
+    let reportPublished!: () => void
+    let allowReturn!: () => void
+    const published = new Promise<void>((resolve) => {
+      reportPublished = resolve
+    })
+    const mayReturn = new Promise<void>((resolve) => {
+      allowReturn = resolve
+    })
+    vi.spyOn(operator, 'publishImmutable').mockImplementation(async (input) => {
+      const stored = await publishImmutable(input)
+      reportPublished()
+      await mayReturn
+      return stored
+    })
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      versionFileOperator: operator,
+      createId: () => 'legacy-artifact-deletion-version'
+    })
+
+    const adoption = service.adoptLegacyArtifact({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      sourceFileId: 'legacy-artifact-deletion',
+      logicalFilename: 'legacy-deletion.md',
+      content,
+      contentType: 'text/markdown'
+    })
+    await published
+    await client.projectDeletionIntent.create({ data: { projectId: 'project-1' } })
+    allowReturn()
+
+    await expect(adoption).rejects.toMatchObject({ code: 'PROJECT_NOT_WRITABLE' })
+    await expect(
+      client.artifactLineage.findUniqueOrThrow({
+        where: { id: 'legacy-artifact-deletion' }
+      })
+    ).resolves.toMatchObject({ currentVersionId: null })
+    await expect(
+      client.artifactVersion.findUniqueOrThrow({
+        where: { id: 'legacy-artifact-deletion-version' }
+      })
+    ).resolves.toMatchObject({ state: 'staging' })
   })
 
   it.each(['artifact', 'upload'] as const)(

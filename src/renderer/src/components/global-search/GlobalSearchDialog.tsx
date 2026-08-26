@@ -90,7 +90,7 @@ const artifactToPreviewItem = (
   })
 
 const artifactToThumbnailItem = (artifact: ProjectFileItem): MessageArtifact => ({
-  id: artifact.sourceVersionId ?? artifact.sourceFileId,
+  id: artifact.sourceVersionId,
   artifactId: artifact.source === 'artifact' ? artifact.sourceFileId : undefined,
   versionId: artifact.sourceVersionId,
   kind: 'managed-file',
@@ -220,16 +220,6 @@ export const GlobalSearchDialog = ({
       ),
     [sessions]
   )
-  const sessionMessageCreatedTimes = useMemo(() => {
-    const createdTimes = new Map<string, number>()
-    for (const session of sessions) {
-      const messages = [...(session.conversationGraph?.messages ?? []), ...session.messages]
-      for (const message of messages) {
-        createdTimes.set(`${session.projectId}:${session.id}:${message.id}`, message.createdAt)
-      }
-    }
-    return createdTimes
-  }, [sessions])
   const trimmedQuery = query.trim()
   const isSearchMode = trimmedQuery.length > 0
   const otherProjectIds = useMemo(
@@ -704,19 +694,13 @@ export const GlobalSearchDialog = ({
 
   const renderArtifactRow = (artifact: ProjectFileItem, rowIndex: number): React.JSX.Element => {
     const active = rowIndex === activeRowIndex
-    const createdAt = artifact.sourceVersionId
-      ? artifact.sortAtMs
-      : artifact.messageId
-        ? (sessionMessageCreatedTimes.get(
-            `${artifact.projectId}:${artifact.sessionId}:${artifact.messageId}`
-          ) ?? artifact.sortAtMs)
-        : artifact.sortAtMs
+    const createdAt = artifact.sortAtMs
     const isCurrentSessionArtifact = isArtifactMentionTarget(artifact)
     const canMention = canMentionArtifact(artifact)
     return (
       <div
         id={`global-search-option-${rowIndex}`}
-        key={`${artifact.projectId}:${artifact.id}:${artifact.sourceVersionId ?? ''}`}
+        key={`${artifact.projectId}:${artifact.id}:${artifact.sourceVersionId}`}
         role="option"
         tabIndex={-1}
         aria-selected={active}

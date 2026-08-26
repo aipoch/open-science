@@ -60,7 +60,6 @@ import type {
 import type {
   ManagedFileVersionInspectRequest,
   ManagedFileVersionInspectResult,
-  ManagedFileVersionHostCapability,
   ManagedFileVersionIpcResult,
   ManagedFileVersionDiffRequest,
   ManagedFileVersionDiffResult,
@@ -763,7 +762,6 @@ export interface OpenScienceAPI {
     onChanged(listener: AcpListener<ProjectFilesChangedEvent>): RemoveListener
   }
   managedFileVersions: {
-    getCapability(): Promise<ManagedFileVersionHostCapability>
     inspect(
       request: ManagedFileVersionInspectRequest
     ): Promise<ManagedFileVersionIpcResult<ManagedFileVersionInspectResult>>

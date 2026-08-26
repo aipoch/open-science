@@ -30,6 +30,7 @@ describe('managed-file deletion integration', () => {
   let sessions: SessionRepository
   let files: ManagedFileIndexRepository
   let coordinator: SessionPersistenceCoordinator
+  let uploads: UploadRepository
   let uploadPath: string
   let artifactPath: string
 
@@ -38,14 +39,17 @@ describe('managed-file deletion integration', () => {
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     sessions = new SessionRepository(storageRoot)
-    files = new ManagedFileIndexRepository(() => Promise.resolve(client), storageRoot)
-    coordinator = new SessionPersistenceCoordinator(
-      sessions,
-      files,
-      undefined,
-      undefined,
-      new UploadRepository(storageRoot, { getClient: () => Promise.resolve(client) })
+    uploads = new UploadRepository(storageRoot, { getClient: () => Promise.resolve(client) })
+    files = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot,
+      new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      }),
+      uploads
     )
+    coordinator = new SessionPersistenceCoordinator(sessions, files, undefined, undefined, uploads)
     uploadPath = join(
       storageRoot,
       'uploads',
@@ -69,6 +73,7 @@ describe('managed-file deletion integration', () => {
       writeManagedFile(uploadPath, 'upload bytes'),
       writeManagedFile(artifactPath, 'artifact bytes')
     ])
+    await client.project.create({ data: { id: PROJECT_ID, name: 'Project A' } })
     await client.fileOriginSession.create({
       data: { projectId: PROJECT_ID, sessionId: SESSION_ID }
     })
@@ -94,6 +99,10 @@ describe('managed-file deletion integration', () => {
         }
       }
     })
+    await client.uploadFile.update({
+      where: { id: 'upload-1' },
+      data: { currentVersionId: 'upload-version-1' }
+    })
     await sessions.saveSession(createSession(uploadPath, artifactPath))
     await coordinator.loadAll()
     await expect(files.getOverview(PROJECT_ID)).resolves.toMatchObject({ totalCount: 2 })
@@ -118,7 +127,6 @@ describe('managed-file deletion integration', () => {
   })
 
   it('hides Version history during Session deletion and restores the unchanged head on compensation', async () => {
-    await client.project.create({ data: { id: PROJECT_ID, name: 'Project A' } })
     const secondStorageRef =
       'uploads/project-a/session-a/upload-1/managed-versions/vabc12345_input.csv'
     const secondPath = join(storageRoot, ...secondStorageRef.split('/'))
@@ -292,6 +300,8 @@ describe('managed-file deletion integration', () => {
       data: { state: 'staging' }
     })
     await rm(uploadPath, { force: true })
+    await client.session.deleteMany({ where: { projectId: PROJECT_ID } })
+    await client.project.delete({ where: { id: PROJECT_ID } })
     const projects = new ProjectRepository(() => Promise.resolve(client))
     const provenanceRepository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -342,10 +352,15 @@ describe('managed-file deletion integration', () => {
     const tombstoneDir = await replaceLiveSessionWithLegacyTombstone(storageRoot, legacySession)
     await writeManagedFile(legacyPath, 'upload bytes')
     await client.managedFile.deleteMany({ where: { projectId: PROJECT_ID } })
+    await client.uploadFile.update({
+      where: { id: 'upload-1' },
+      data: { currentVersionId: null }
+    })
     await client.uploadVersion.deleteMany({ where: { uploadFileId: 'upload-1' } })
     await client.uploadFile.deleteMany({ where: { id: 'upload-1' } })
-    await client.fileOriginSession.deleteMany({ where: { projectId: PROJECT_ID } })
     await rm(uploadPath, { force: true })
+    await client.session.deleteMany({ where: { projectId: PROJECT_ID } })
+    await client.project.delete({ where: { id: PROJECT_ID } })
     const projects = new ProjectRepository(() => Promise.resolve(client))
     const unrelatedProject = await projects.create({ name: 'Unrelated project' })
     const unrelatedSession = createSession('', '')
@@ -490,9 +505,12 @@ describe('managed-file deletion integration', () => {
       createPathOnlySession(legacyPath)
     )
     await client.managedFile.deleteMany({ where: { projectId: PROJECT_ID } })
+    await client.uploadFile.update({
+      where: { id: 'upload-1' },
+      data: { currentVersionId: null }
+    })
     await client.uploadVersion.deleteMany({ where: { uploadFileId: 'upload-1' } })
     await client.uploadFile.deleteMany({ where: { id: 'upload-1' } })
-    await client.fileOriginSession.deleteMany({ where: { projectId: PROJECT_ID } })
     await rm(uploadPath, { force: true })
     const projects = new ProjectRepository(() => Promise.resolve(client))
     const projectDeletion = new ProjectDeletionCoordinator(
@@ -665,6 +683,10 @@ describe('managed-file deletion integration', () => {
     // Simulate a completed provenance tail followed by tombstone-removal failure and restart. The
     // prepared marker must prevent recovery from consulting authority that the tail already removed.
     await client.managedFile.deleteMany({ where: { projectId: PROJECT_ID } })
+    await client.uploadFile.update({
+      where: { id: 'upload-1' },
+      data: { currentVersionId: null }
+    })
     await client.uploadVersion.deleteMany({ where: { uploadFileId: 'upload-1' } })
     await client.uploadFile.deleteMany({ where: { id: 'upload-1' } })
     await rm(uploadPath, { force: true })
