@@ -103,6 +103,9 @@ describe('FilePreviewDialog closing lifecycle', () => {
 
     expect(rootSpy).toHaveBeenCalledWith(expect.objectContaining({ modal: false }))
     expect(focusScopeSpy).toHaveBeenCalledWith({ trapped: true })
+    expect(contentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ 'data-slot': 'file-preview-dialog' })
+    )
 
     const onInteractOutside = contentSpy.mock.calls[0]?.[0].onInteractOutside as
       ((event: { preventDefault: () => void }) => void) | undefined

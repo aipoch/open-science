@@ -753,6 +753,20 @@ describe('App startup routing', () => {
     expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
   })
 
+  it('routes the close shortcut directly to the owned file preview modal', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.preview.fileDialogItem = { id: 'previewed-file' }
+    const previewDialog = document.createElement('div')
+    previewDialog.setAttribute('role', 'dialog')
+    previewDialog.dataset.slot = 'file-preview-dialog'
+    document.body.appendChild(previewDialog)
+    await render()
+
+    expect(mocks.closeActiveModal.handler?.()).toBe('close-preview')
+    previewDialog.remove()
+  })
+
   it('does not open Settings under the active expanded preview modal', async () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'

@@ -95,6 +95,7 @@ const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX
           className={`${dialogOverlayClassName} z-[60]`}
         />
         <Dialog.Content
+          data-slot="file-preview-dialog"
           aria-describedby={undefined}
           aria-modal="true"
           onInteractOutside={(event) => event.preventDefault()}

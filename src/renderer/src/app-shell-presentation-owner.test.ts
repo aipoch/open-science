@@ -172,4 +172,16 @@ describe('App Shell presentation owner', () => {
     )
     nestedPresentation.remove()
   })
+
+  it('closes the preview directly when its owned file dialog is the only DOM presentation', () => {
+    const previewDialog = document.createElement('div')
+    previewDialog.setAttribute('role', 'dialog')
+    previewDialog.dataset.slot = 'file-preview-dialog'
+    document.body.appendChild(previewDialog)
+
+    expect(resolveAppShellPresentation(input({ preview: true })).resolveCloseAction().kind).toBe(
+      'close-preview'
+    )
+    previewDialog.remove()
+  })
 })
