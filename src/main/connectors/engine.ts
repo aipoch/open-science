@@ -6,8 +6,8 @@ const DEFAULT_TOTAL_TIMEOUT_MS = 120_000
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 
 // Transient-failure retry policy shared by every connector call. Public bio APIs (PubChem PUG-REST,
-// GTEx, NCBI) routinely return 429/5xx or a brief timeout under load; a couple of backed-off retries
-// turn those blips into successes instead of surfacing them to the notebook.
+// GTEx, NCBI) routinely return 429/5xx or a brief connection failure under load; a couple of
+// backed-off retries turn those blips into successes instead of surfacing them to the notebook.
 const DEFAULT_RETRIES = 2
 const DEFAULT_BACKOFF_MS = 400
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
@@ -42,9 +42,11 @@ class ConnectorRequestTimeoutError extends Error {
 
   constructor(url: string, timeoutMs: number, attempts: number, kind: 'idle' | 'total' = 'idle') {
     super(
-      kind === 'total'
-        ? `Connector request exceeded the ${timeoutMs}ms total deadline after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} for ${redactUrl(url)}`
-        : `Connector request timed out after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} of ${timeoutMs}ms for ${redactUrl(url)}`
+      `${
+        kind === 'total'
+          ? `Connector request exceeded the ${timeoutMs}ms total deadline after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} for ${redactUrl(url)}`
+          : `Connector request timed out after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} of ${timeoutMs}ms for ${redactUrl(url)}`
+      }. This is the Connector's own deadline; increasing an outer execution timeout will not extend it. Do not retry solely with a longer timeout.`
     )
   }
 }
@@ -193,11 +195,6 @@ export class ParserEngine {
         if (caught) {
           if (signal?.aborted) throw failure
           if (failure instanceof ConnectorResponseTooLargeError) throw failure
-          // Network failure or timeout abort — retry a bounded number of times, then give up.
-          if (attempt < this.retries) {
-            await abortableDelay(nextDelay(attempt, null), signal)
-            continue
-          }
           if (timedOut) {
             throw new ConnectorRequestTimeoutError(
               url,
@@ -205,6 +202,11 @@ export class ParserEngine {
               attempt + 1,
               timedOut
             )
+          }
+          // Immediate network failures may be transient, so retry them within the bounded budget.
+          if (attempt < this.retries) {
+            await abortableDelay(nextDelay(attempt, null), signal)
+            continue
           }
           throw failure
         }
