@@ -138,6 +138,7 @@ describe('readReleaseNotes', () => {
     writeFileSync(join(dir, 'en.md'), '  English notes\n')
     writeFileSync(join(dir, 'zh-Hans.md'), '  简体中文说明\n')
     writeFileSync(join(dir, 'fr.md'), '  Notes françaises\n')
+    writeFileSync(join(dir, 'de.md'), '  Deutsche Versionshinweise\n')
     writeFileSync(join(dir, 'es.md'), '  Notas en español\n')
 
     expect(readReleaseNotes(dir)).toEqual({
@@ -145,6 +146,7 @@ describe('readReleaseNotes', () => {
       localizedNotes: {
         'zh-Hans': '简体中文说明',
         fr: 'Notes françaises',
+        de: 'Deutsche Versionshinweise',
         es: 'Notas en español'
       }
     })
@@ -160,9 +162,9 @@ describe('readReleaseNotes', () => {
   it('rejects unsupported files instead of silently omitting release content', () => {
     dir = mkdtempSync(join(tmpdir(), 'release-notes-'))
     writeFileSync(join(dir, 'en.md'), 'English')
-    writeFileSync(join(dir, 'de.md'), 'Deutsch')
+    writeFileSync(join(dir, 'pt.md'), 'Português')
 
-    expect(() => readReleaseNotes(dir)).toThrow(/unsupported release-note file: de\.md/)
+    expect(() => readReleaseNotes(dir)).toThrow(/unsupported release-note file: pt\.md/)
   })
 })
 
