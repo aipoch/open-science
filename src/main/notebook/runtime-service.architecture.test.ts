@@ -39,6 +39,25 @@ const isStatelessPolicyObject = (node: Node): boolean =>
       (isPropertyAssignment(property) &&
         (isArrowFunction(property.initializer) || isFunctionExpression(property.initializer)))
   )
+const hasMutableStateInitializer = (node: Node): boolean => {
+  if (isArrowFunction(node) || isFunctionExpression(node) || isStatelessPolicyObject(node)) {
+    return false
+  }
+  if (
+    isCallExpression(node) ||
+    isNewExpression(node) ||
+    isArrayLiteralExpression(node) ||
+    isObjectLiteralExpression(node)
+  ) {
+    return true
+  }
+
+  let hasMutableState = false
+  forEachChild(node, (child) => {
+    if (hasMutableStateInitializer(child)) hasMutableState = true
+  })
+  return hasMutableState
+}
 const moduleStateNames = (sourceFile: SourceFile = facadeFile): readonly string[] =>
   sourceFile.statements
     .filter(isVariableStatement)
@@ -49,11 +68,7 @@ const moduleStateNames = (sourceFile: SourceFile = facadeFile): readonly string[
             (statement.declarationList.flags & NodeFlags.Const) !== NodeFlags.Const
           const initializer = declaration.initializer
           const mutableInitializer =
-            initializer !== undefined &&
-            (isCallExpression(initializer) ||
-              isNewExpression(initializer) ||
-              isArrayLiteralExpression(initializer) ||
-              (isObjectLiteralExpression(initializer) && !isStatelessPolicyObject(initializer)))
+            initializer !== undefined && hasMutableStateInitializer(initializer)
           return mutableDeclaration || mutableInitializer
         })
         .map((declaration) => declaration.name.getText(sourceFile))
@@ -146,6 +161,11 @@ describe('Notebook runtime facade architecture', () => {
       `${facadeSource}\nconst leakedSessions = new SessionCache()\n`
     )
     expect(moduleStateNames(constructedStateFile)).toContain('leakedSessions')
+
+    const wrappedStateFile = sourceFileFor(
+      `${facadeSource}\nconst leakedSessions = enabled ? new Map() : undefined\n`
+    )
+    expect(moduleStateNames(wrappedStateFile)).toContain('leakedSessions')
 
     const duplicateOwnerFile = sourceFileFor(
       `${facadeSource}\nnew NotebookSessionLifecycleOwner({} as never)\n`
