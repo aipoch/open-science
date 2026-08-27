@@ -305,6 +305,45 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
+  it('closes a Session preview immediately after the pointer leaves its hover region', async () => {
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview session={{ id: 'hovered', title: 'Hovered Session' }}>
+              <button type="button">Hovered trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+
+      await act(async () => trigger.dispatchEvent(pointerOver))
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
+
+      const pointerOut = new MouseEvent('pointerout', {
+        bubbles: true,
+        relatedTarget: document.body
+      })
+      Object.defineProperty(pointerOut, 'pointerType', { value: 'mouse' })
+      await act(async () => trigger.dispatchEvent(pointerOut))
+
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
   it('closes an active Session preview when its row is removed', async () => {
     vi.useFakeTimers()
     const { SessionHoverPreview, SessionHoverPreviewProvider } =
