@@ -98,6 +98,12 @@ export type FetchedBundle = {
   packageSourceDir?: string
 }
 
+export type RuntimeRepairOptions = {
+  force?: boolean
+  // Runs only after the rebuilt interpreter verifies, while the per-environment lock is still held.
+  onVerified?: () => Promise<void> | void
+}
+
 // One default environment specification (A-internal). `version` is the curated interpreter version
 // (e.g. "3.12" / "4.4") — it identifies the staged offline pack via packId(language, version) (see
 // bundle-manifest.ts / stage-default-envs.mjs), so the local bundle adapter looks up the matching
@@ -305,7 +311,7 @@ export interface RuntimeProvisioner {
   repair(
     lang: NotebookLanguage,
     onProgress: (p: ProvisionProgress) => void,
-    opts?: { force?: boolean }
+    opts?: RuntimeRepairOptions
   ): Promise<void>
   // Aborts an in-flight (or skips a queued) provision. Per-language: cancelling one language never
   // aborts another's run. `undefined` aborts whatever is in flight. No-op when idle.
@@ -953,7 +959,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   async repair(
     lang: NotebookLanguage,
     rawProgress: (p: ProvisionProgress) => void,
-    opts?: { force?: boolean }
+    opts?: RuntimeRepairOptions
   ): Promise<void> {
     const onProgress = withLanguage(rawProgress, lang)
     const spec = lang === 'r' ? DEFAULT_R_SPEC : DEFAULT_PYTHON_SPEC
@@ -962,10 +968,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // rebuild), so a package install into this env can't slip in between the rm and the rebuild and
     // write into a half-deleted prefix. The rebuild calls the LOCK-FREE do* variants (not the public
     // provision*), which would otherwise re-acquire this same exclusive lock and deadlock.
-    return this.withEnvPrefixLock(spec.name, () =>
+    return this.withEnvPrefixLock(spec.name, async () => {
       // runLanguage consumes a QUEUED cancel (beginLanguageRun throws) BEFORE the rm below, so
       // cancelling a queued Reset never leaves a deleted-but-not-rebuilt env.
-      this.runLanguage(lang, async () => {
+      await this.runLanguage(lang, async () => {
         // Mark this repair UNINTERRUPTIBLE before any destructive step: once we clear the quarantine
         // and rm the prefix there is no safe stopping point — a per-language Cancel arriving mid-repair
         // would abort the rebuild and leave a missing/half-built env with the block already cleared.
@@ -997,7 +1003,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           this.uninterruptible.delete(lang)
         }
       })
-    )
+      await opts?.onVerified?.()
+    })
   }
 
   // Rebuilds envs captured by a data-root relocation (runtime-relocation.exportRuntimeLocks) offline

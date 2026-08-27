@@ -2168,12 +2168,16 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
       }
     })
 
-    await new DefaultRuntimeProvisioner(deps).repair('python', () => {})
+    await new DefaultRuntimeProvisioner(deps).repair('python', () => {}, {
+      onVerified: () => {
+        order.push('repair:completed')
+      }
+    })
 
     // The lock is taken for the default-python env, the rebuild (runArgv) runs while held, and the lock
-    // is only released after — one contiguous critical section.
+    // and repair completion is published before that one contiguous critical section releases.
     expect(order[0]).toBe(`lock:${DEFAULT_PY_ENV}`)
-    expect(order[order.length - 1]).toBe('unlock')
+    expect(order.slice(-2)).toEqual(['repair:completed', 'unlock'])
     expect(runArgv).toHaveBeenCalled()
   })
 
