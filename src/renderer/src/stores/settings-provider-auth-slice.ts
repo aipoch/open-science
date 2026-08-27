@@ -134,7 +134,10 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
       return { providerId: '', validation: { ok: false, category: 'unknown' } }
     }
 
-    const validation = await commands.validateProvider({ providerId })
+    const validation = await commands.validateProvider({
+      providerId,
+      ...(request.model ? { model: request.model } : {})
+    })
     reconcileSnapshot(await commands.getSettings())
     await refreshPreflight()
     return { providerId, validation }

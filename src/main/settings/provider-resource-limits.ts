@@ -32,10 +32,19 @@ const assertProviderDraftLimits = (draft: ProviderDraft): void => {
   }
 }
 
+const assertProviderModelLimit = (model: string | undefined): void => {
+  assertCharacterLimit(model, PROVIDER_RESOURCE_LIMITS.modelIdCharacters, 'Model ID')
+}
+
 const assertProviderCapacity = (providerCount: number, editingExisting: boolean): void => {
   if (!editingExisting && providerCount >= PROVIDER_RESOURCE_LIMITS.providers) {
     throw new Error(`Provider limit of ${PROVIDER_RESOURCE_LIMITS.providers} reached.`)
   }
 }
 
-export { PROVIDER_RESOURCE_LIMITS, assertProviderCapacity, assertProviderDraftLimits }
+export {
+  PROVIDER_RESOURCE_LIMITS,
+  assertProviderCapacity,
+  assertProviderDraftLimits,
+  assertProviderModelLimit
+}
