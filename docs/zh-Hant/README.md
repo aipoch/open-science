@@ -3,7 +3,7 @@
 [![下載](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![版本](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
 [![授權條款](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
-[![網站](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/)
+[![網站](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
 
 <p align="center">
@@ -14,11 +14,12 @@
   <a href="../ko/README.md"><img alt="한국어 README" src="https://img.shields.io/badge/한국어-d9d9d9"></a>
   <a href="../fr/README.md"><img alt="Français README" src="https://img.shields.io/badge/Français-d9d9d9"></a>
   <a href="../ru/README.md"><img alt="俄文 README" src="https://img.shields.io/badge/Русский-d9d9d9"></a>
+  <a href="../es/README.md"><img alt="西班牙文 README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
 > 本文件是英文 `README.md` 的翻譯。若內容有差異，請以[英文原文](../../README.md)為準。
 
-Open Science 是為科學家與研究人員打造的開源、本機優先且與模型無關的 AI 研究工作台。它透過科學 AI 智能體、Python 與 R 執行、科學資料連接器，以及對 macOS、Windows 和 Linux 的跨平台支援，實現可重現、可檢視的研究。在同一個工作區中新增專案，以自然語言描述研究目標，讓智能體讀取檔案、搜尋網頁、執行程式碼、查詢科學資料來源，並產生具可追溯來源的報告、表格與圖表。
+Open Science 是由 [AIPOCH](https://aipoch.com/open-science) 為科學家與研究人員開發的開源、本機優先且與模型無關的 AI 研究工作台。它透過科學 AI 智能體、Python 與 R 執行、科學資料連接器，以及對 macOS、Windows 和 Linux 的跨平台支援，實現可重現、可檢視的研究。在同一個工作區中新增專案，以自然語言描述研究目標，讓智能體讀取檔案、搜尋網頁、執行程式碼、查詢科學資料來源，並產生具可追溯來源的報告、表格與圖表。
 
 Open Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
@@ -119,7 +120,7 @@ Open Science 將研究整理為專案與會話，讓每項結果都能與產生�
   </tr>
 </table>
 
-生成的報告、圖表與表格會繼續附屬於會話，同時彙整到專案檔案庫。面板大小改變時，預覽分頁會讓作用中結果保持可見；長名稱會保留可辨識的字尾與副檔名。Open Science 可預覽常見科學資料、PDF、Office 文件（DOCX、XLSX、PPTX）、影像（支援縮放與平移）、含語法醒目提示的原始碼、分子結構與反應，以及 Notebook 歷史。預覽限制不會截斷底層檔案，智能體與外部工具仍可使用完整產物。使用 `Cmd/Ctrl+F` 搜尋工作區中的對話記錄、Notebook 輸出與轉譯頁面，或使用 `Cmd/Ctrl+K` 開啟專案層級命令面板。工作區也支援深色模式：在 **Settings → General** 切換主題，整個命令列、對話記錄及 renderer 色盤會無閃爍切換。介面也提供簡體中文、繁體中文、日語、韓語、法語和俄語，並能在設定中於執行期間切換語言。
+生成的報告、圖表與表格會繼續附屬於會話，同時彙整到專案檔案庫。面板大小改變時，預覽分頁會讓作用中結果保持可見；長名稱會保留可辨識的字尾與副檔名。Open Science 可預覽常見科學資料、PDF、Office 文件（DOCX、XLSX、PPTX）、影像（支援縮放與平移）、含語法醒目提示的原始碼、分子結構與反應，以及 Notebook 歷史。預覽限制不會截斷底層檔案，智能體與外部工具仍可使用完整產物。使用 `Cmd/Ctrl+F` 搜尋工作區中的對話記錄、Notebook 輸出與轉譯頁面，或使用 `Cmd/Ctrl+K` 開啟專案層級命令面板。工作區也支援深色模式：在 **Settings → General** 切換主題，整個命令列、對話記錄及 renderer 色盤會無閃爍切換。介面也提供簡體中文、繁體中文、日語、韓語、法語、俄語和西班牙語，並能在設定中於執行期間切換語言。
 
 ### 建立對話分支而不失去原始內容
 
@@ -196,7 +197,7 @@ Open Science 在一個本機工作區中整合專案管理、多模型智能體�
 | **連接器**         | **24 個內建**研究連接器，具執行環境狀態與復原介面；自訂本機/遠端 MCP 連接器使用與可編輯顯示名稱分離的不可變小寫呼叫名稱；提供依名稱產生且可驗證覆寫的本機 ID、聯絡中繼資料、連接器/工具層級權限，以及以佔位符替換憑證的標準 MCP 用戶端設定匯入/匯出。目錄互動現採用與技能相同的精簡管理模式。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | **安全控制**       | `Ask for approval`、`Auto-approve edits` 及 `Full access` 對話設定檔；包含程式碼預覽與呼叫/對話決策的核准對話框；在目前回合持續生效的權限拒絕，阻止智能體透過其他路徑重試或變相執行遭拒的操作；持久化的全域、專案與會話層級允許授權，支援篩選、逐列和依系列撤銷及復原；另有逐連接器與逐工具原則。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | **審查與驗證**     | 可選擇啟用的審查器依已完成輪次自身的對話記錄、執行記錄檔與產物進行稽核，回報通過/警告/失敗結果，並能執行有界修正迴圈；可設定審查模型原則，可跟隨作用中模型或固定專用服務商、模型與推理強度；持久審查評估快照保留修正歸因。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| **發佈與支援**     | macOS、Windows 及 Linux 安裝程式；針對環境、智能體執行環境、模型服務商、Notebook 執行環境與資料位置的精簡首次啟動引導；支援法文、簡體中文、繁體中文、日文、韓文和俄文介面，為每種支援語言提供 README 譯本，另有多語言貢獻指南；具醒目更新提醒的更新指引；本機診斷；社群連結。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **發佈與支援**     | macOS、Windows 及 Linux 安裝程式；針對環境、智能體執行環境、模型服務商、Notebook 執行環境與資料位置的精簡首次啟動引導；支援西班牙文、法文、簡體中文、繁體中文、日文、韓文和俄文介面，為每種支援語言提供 README 譯本，另有多語言貢獻指南；具醒目更新提醒的更新指引；本地診斷；社群連結。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## 模型服務商
 
@@ -311,7 +312,7 @@ npm run dev:web
 
 <img width="1920" height="1140" alt="Open Science 作為開放科學 AI 工作流程桌面協調層融入 AIPOCH 生態系統的方式" src="https://github.com/user-attachments/assets/0ab847b1-1b7d-43f4-8c11-480a578e6c7d" />
 
-[AIPOCH](https://aipoch.com/open-science)（[GitHub 組織](https://github.com/aipoch)）將 Open Science 建構為開放科學 AI 工作流程的桌面協調層。
+[AIPOCH](https://aipoch.com/)（[GitHub 組織](https://github.com/aipoch)）將 [Open Science](https://aipoch.com/open-science) 建構為開放科學 AI 工作流程的桌面協調層。
 
 - [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills) 是包含 500 多個檔案型醫學與科學研究技能的更大集合；所有技能都能檢視、匯入，並從 GitHub 與 Open Science 搭配使用。
 - Open Science 提供專案/會話工作區、智能體執行環境、執行、產物、預覽、權限及連接器，將這些指令轉換成互動式工作流程。
@@ -399,13 +400,13 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 Open Science 透過 GitHub、Discord、X 與 AIPOCH 網站接收錯誤回報、功能提案、設計討論、社群問題與專案貢獻。請選擇最符合目標的管道，並在公開分享專案詳情前查看相關貢獻指南與公開發佈安全提醒。
 
-| 管道                                                                     | 用途                                     |
-| ------------------------------------------------------------------------ | ---------------------------------------- |
-| [GitHub Issues](https://github.com/aipoch/open-science/issues)           | 錯誤、可重現失敗及具體功能提案           |
-| [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 設計問題、路線圖提案及較長的技術討論     |
-| [Discord](https://discord.gg/zxQAYjReRv)                                 | 社群協助、貢獻者協調與非正式討論         |
-| [X / @aipoch_ai](https://x.com/aipoch_ai)                                | 版本公告與公開建置動態                   |
-| [網站](https://aipoch.com/)                                              | 產品概覽、下載及 AIPOCH 生態系統其他內容 |
+| 管道                                                                     | 用途                                 |
+| ------------------------------------------------------------------------ | ------------------------------------ |
+| [GitHub Issues](https://github.com/aipoch/open-science/issues)           | 錯誤、可重現失敗及具體功能提案       |
+| [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 設計問題、路線圖提案及較長的技術討論 |
+| [Discord](https://discord.gg/zxQAYjReRv)                                 | 社群協助、貢獻者協調與非正式討論     |
+| [X / @aipoch_ai](https://x.com/aipoch_ai)                                | 版本公告與公開建置動態               |
+| [Open Science 官方網站](https://aipoch.com/open-science)                 | 官方產品概覽與下載                   |
 
 提交公開問題前，請從記錄檔與螢幕擷取畫面移除 API Key、存取權杖、私人檔案路徑、未公開資料、病患識別資訊及其他敏感內容。開發工作流程請參閱[貢獻指南](CONTRIBUTING.md)。
 

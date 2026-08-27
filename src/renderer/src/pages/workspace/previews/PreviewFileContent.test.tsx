@@ -36,7 +36,7 @@ vi.mock('3dmol', () => ({
   }
 }))
 
-vi.mock('@streamdown/code', () => ({
+vi.mock('@/components/streamdown/code-highlighter-runtime', () => ({
   code: {
     supportsLanguage: (language: string) =>
       ['bash', 'css', 'javascript', 'jsx', 'python', 'r', 'typescript', 'tsx'].includes(language),

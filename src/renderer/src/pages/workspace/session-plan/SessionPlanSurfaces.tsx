@@ -345,16 +345,47 @@ const validatedPreviewDocument = (value: unknown): PlanDocumentV1 | null => {
 // rendering without the in-chat surface's header and approval banners. An invalid document renders
 // nothing; the embedding surface owns that error presentation.
 const PlanDocumentBody = ({
-  projection
-}: Readonly<{ projection: PlanDocumentProjection }>): React.JSX.Element => {
+  projection,
+  compactSummary = false
+}: Readonly<{
+  projection: PlanDocumentProjection
+  compactSummary?: boolean
+}>): React.JSX.Element => {
   const { t } = useTranslation()
 
   const planDocument = validatedPreviewDocument(projection.document)
   if (!planDocument) return <></>
+  const summaryHeading = (
+    <h1
+      className={
+        compactSummary
+          ? 'line-clamp-3 break-words text-[22px] leading-7 font-semibold'
+          : 'text-[22px] font-semibold'
+      }
+    >
+      {planDocument.task_summary}
+    </h1>
+  )
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="px-8 py-8">
-        <h1 className="text-[22px] font-semibold">{planDocument.task_summary}</h1>
+        {compactSummary ? (
+          <TooltipProvider delayDuration={1_200}>
+            <Tooltip>
+              <TooltipTrigger asChild>{summaryHeading}</TooltipTrigger>
+              <TooltipContent
+                side="bottom"
+                align="start"
+                sideOffset={8}
+                className="max-w-[min(28rem,calc(100vw-1rem))] px-3 py-2 leading-5"
+              >
+                {planDocument.task_summary}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          summaryHeading
+        )}
         {/* One sentence, one key. It used to be assembled from three pieces — a spelled-out
             count, a hand-picked 'phase'/'phases', and a bare tail — which pins English word
             order and leaves the tail untranslatable. The count is now a number so i18next
@@ -452,6 +483,14 @@ const PlanDocumentBody = ({
           </div>
           <p className="mt-1 text-xs text-muted-foreground">{planDocument.feasibility.rationale}</p>
         </div>
+        {compactSummary ? (
+          <p
+            aria-hidden="true"
+            className="mt-7 select-text break-words border-t border-border pt-4 text-xs leading-5 text-muted-foreground"
+          >
+            {planDocument.task_summary}
+          </p>
+        ) : null}
       </div>
     </ScrollArea>
   )
@@ -595,7 +634,7 @@ const PlanPreviewSurface = ({
         </PlanNoticeBanner>
       ) : null}
       {planDocument ? (
-        <PlanDocumentBody projection={projection} />
+        <PlanDocumentBody projection={projection} compactSummary />
       ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center p-8">
           <div

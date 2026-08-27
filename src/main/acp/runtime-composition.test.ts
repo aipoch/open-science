@@ -1,6 +1,5 @@
 // Pins the production Agent Context resolver: createAcpRuntime is Electron-coupled, so the lookup
-// policy (trim, blank/missing ⇒ undefined, failure ⇒ undefined instead of throwing) is extracted as
-// createProjectAgentContextResolver and covered here against a fake repository.
+// policy is extracted as createProjectAgentContextResolver and covered here against a fake repository.
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -56,14 +55,14 @@ describe('createProjectAgentContextResolver', () => {
     await expect(absent('project-1')).resolves.toBeUndefined()
   })
 
-  it('returns undefined instead of throwing when the lookup fails', async () => {
+  it('fails closed when the Project lookup fails', async () => {
     const resolver = createProjectAgentContextResolver({
       get: vi.fn(async () => {
         throw new Error('database is locked')
       })
     })
 
-    await expect(resolver('project-1')).resolves.toBeUndefined()
+    await expect(resolver('project-1')).rejects.toThrow('Project Agent Context')
   })
 })
 

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ElectronApplication } from 'playwright'
@@ -9,6 +9,7 @@ import {
   RuntimeResourceProfiler,
   mergeResourceSample,
   parseSessionHydrationDiagnostic,
+  readRuntimeStorageSnapshot,
   renderSummaryMarkdown,
   summarizeSamples,
   validatePhase,
@@ -107,6 +108,14 @@ describe('runtime resource profiler', () => {
         processTreeComplete: true,
         electronMetricsComplete: true,
         processes: [],
+        storage: {
+          notebookRunBytes: 1_024,
+          notebookRunFileCount: 1,
+          sessionBytes: 2_048,
+          sessionFileCount: 1,
+          temporaryBytes: 0,
+          temporaryFileCount: 0
+        },
         totals: {
           processCount: 4,
           totalCpuPercent: 1,
@@ -122,6 +131,14 @@ describe('runtime resource profiler', () => {
         processTreeComplete: false,
         electronMetricsComplete: true,
         processes: [],
+        storage: {
+          notebookRunBytes: 2_048,
+          notebookRunFileCount: 1,
+          sessionBytes: 4_096,
+          sessionFileCount: 1,
+          temporaryBytes: 0,
+          temporaryFileCount: 0
+        },
         totals: {
           processCount: 5,
           totalCpuPercent: 3,
@@ -142,8 +159,45 @@ describe('runtime resource profiler', () => {
     expect(summary.phases.idle.summedRssKb).toMatchObject({ first: 1_024, last: 1_024 })
     expect(summary.phases.idle).toMatchObject({ sampleCount: 2, includedSampleCount: 1 })
     expect(summary.phases.idle.roles).toEqual({})
+    expect(summary.phases.idle.storage?.sessionBytes).toMatchObject({
+      first: 2_048,
+      last: 4_096,
+      delta: 2_048
+    })
     expect(summary.incompleteSampleCount).toBe(1)
     expect(renderSummaryMarkdown(summary)).toContain('records no\nprompts, responses')
+    expect(renderSummaryMarkdown(summary)).toContain('## Durable storage snapshots')
+  })
+
+  it('records only aggregate Session, Notebook, and atomic temporary file sizes', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-runtime-storage-'))
+    const dataRoot = join(storageRoot, 'relocated-data')
+    try {
+      const sessions = join(storageRoot, 'sessions', 'project-1')
+      const notebooks = join(dataRoot, 'notebooks', 'project-1', 'session-1')
+      await Promise.all([
+        mkdir(sessions, { recursive: true }),
+        mkdir(notebooks, { recursive: true })
+      ])
+      await Promise.all([
+        writeFile(join(sessions, 'session-1.json'), '12345'),
+        writeFile(join(sessions, 'manifest.json'), 'ignored'),
+        writeFile(join(sessions, 'session-1.json.1700000000000-1.tmp'), '12'),
+        writeFile(join(notebooks, 'run.json'), '1234567'),
+        writeFile(join(notebooks, 'run.json.1700000000000-1.tmp'), '123')
+      ])
+
+      await expect(readRuntimeStorageSnapshot(storageRoot, dataRoot)).resolves.toEqual({
+        sessionFileCount: 1,
+        sessionBytes: 5,
+        notebookRunFileCount: 1,
+        notebookRunBytes: 7,
+        temporaryFileCount: 2,
+        temporaryBytes: 5
+      })
+    } finally {
+      await rm(storageRoot, { force: true, recursive: true })
+    }
   })
 
   it('excludes a sample when Electron metrics are unavailable', () => {

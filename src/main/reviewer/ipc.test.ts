@@ -229,6 +229,22 @@ describe('reviewer IPC handlers', () => {
     expect(quiesced).toBe(true)
   })
 
+  it('checks Project archive availability before admitting a Review', async () => {
+    const projectRuntime = new ReviewerProjectRuntimeOwner()
+    const admit = vi.spyOn(projectRuntime, 'admit')
+    const withProjectAvailable = vi.fn(async () => {
+      throw new Error('Restore this archived Project before continuing.')
+    })
+    const options = { acpRuntime, projectRuntime, withProjectAvailable }
+    const owner = createReviewerCommandOwner(options)
+
+    await expect(owner.run(createRequest())).rejects.toThrow('archived Project')
+
+    expect(withProjectAvailable).toHaveBeenCalledWith('project-1', expect.any(Function))
+    expect(admit).not.toHaveBeenCalled()
+    expect(runReview).not.toHaveBeenCalled()
+  })
+
   it('runs reviews with artifacts rooted at the data root, not the config root', async () => {
     registerReviewerIpcHandlers({ acpRuntime })
 

@@ -3,7 +3,7 @@
 [![ダウンロード](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![バージョン](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
 [![ライセンス](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
-[![ウェブサイト](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/)
+[![ウェブサイト](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
 
 <p align="center">
@@ -14,11 +14,12 @@
   <a href="../ko/README.md"><img alt="한국어 README" src="https://img.shields.io/badge/한국어-d9d9d9"></a>
   <a href="../fr/README.md"><img alt="Français README" src="https://img.shields.io/badge/Français-d9d9d9"></a>
   <a href="../ru/README.md"><img alt="ロシア語 README" src="https://img.shields.io/badge/Русский-d9d9d9"></a>
+  <a href="../es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
 > このドキュメントは英語版 `README.md` の翻訳です。内容に相違がある場合は、[英語版](../../README.md)が優先されます。
 
-Open Science は、科学者と研究者のためのオープンソースかつローカルファーストで、モデル非依存の AI 研究ワークベンチです。科学 AI エージェント、Python と R の実行、科学データコネクタ、macOS・Windows・Linux のクロスプラットフォーム対応により、再現可能で検証可能な研究を実現します。1 つのワークスペースでプロジェクトを作成し、研究目標を自然言語で説明するだけで、エージェントがファイルの読み取り、ウェブ検索、コード実行、科学データソースへの問い合わせを行い、追跡可能な来歴を備えたレポート、表、図を生成します。
+Open Science は、[AIPOCH](https://aipoch.com/open-science) が科学者と研究者向けに開発した、オープンソースかつローカルファーストでモデル非依存の AI 研究ワークベンチです。科学 AI エージェント、Python と R の実行、科学データコネクタ、macOS・Windows・Linux のクロスプラットフォーム対応により、再現可能で検証可能な研究を実現します。1 つのワークスペースでプロジェクトを作成し、研究目標を自然言語で説明するだけで、エージェントがファイルの読み取り、ウェブ検索、コード実行、科学データソースへの問い合わせを行い、追跡可能な来歴を備えたレポート、表、図を生成します。
 
 Open Science は、機械学習、統計学、生命科学、化学、材料科学、物理学、環境科学など、幅広い分野の計算集約型・データ集約型研究を支援します。文献レビューと仮説構築から、コード実行、データ分析、シミュレーション、可視化、追跡可能な研究成果の作成まで、研究プロセス全体を支えます。
 
@@ -119,7 +120,7 @@ Open Science は研究をプロジェクトとセッションに整理し、す�
   </tr>
 </table>
 
-生成されたレポート、図、表はセッションに関連付けられたまま、プロジェクトのファイルライブラリにも集約されます。パネルの大きさが変わってもプレビュータブはアクティブな結果を表示し、長い名前では識別に必要な末尾と拡張子が保たれます。Open Science は一般的な科学データ、PDF、Office ドキュメント（DOCX、XLSX、PPTX）、画像（ズームとパン対応）、シンタックスハイライト付きソースコード、分子構造と反応、Notebook 履歴をプレビューします。プレビュー制限によって基のファイルが切り詰められることはなく、完全なアーティファクトをエージェントや外部ツールから利用できます。`Cmd/Ctrl+F` でワークスペース全体のトランスクリプト、Notebook 出力、レンダリング済みページを検索し、`Cmd/Ctrl+K` でプロジェクトスコープのコマンドパレットを開けます。**Settings → General** でテーマを切り替えると、シェル、トランスクリプト、レンダラーの配色がちらつかずに切り替わります。インターフェースは設定のランタイム言語切り替えにより、簡体字中国語、繁体字中国語、日本語、韓国語、フランス語、ロシア語でも利用できます。
+生成されたレポート、図、表はセッションに関連付けられたまま、プロジェクトのファイルライブラリにも集約されます。パネルの大きさが変わってもプレビュータブはアクティブな結果を表示し、長い名前では識別に必要な末尾と拡張子が保たれます。Open Science は一般的な科学データ、PDF、Office ドキュメント（DOCX、XLSX、PPTX）、画像（ズームとパン対応）、シンタックスハイライト付きソースコード、分子構造と反応、Notebook 履歴をプレビューします。プレビュー制限によって基のファイルが切り詰められることはなく、完全なアーティファクトをエージェントや外部ツールから利用できます。`Cmd/Ctrl+F` でワークスペース全体のトランスクリプト、Notebook 出力、レンダリング済みページを検索し、`Cmd/Ctrl+K` でプロジェクトスコープのコマンドパレットを開けます。**Settings → General** でテーマを切り替えると、シェル、トランスクリプト、レンダラーの配色がちらつかずに切り替わります。インターフェースは設定のランタイム言語切り替えにより、簡体字中国語、繁体字中国語、日本語、韓国語、フランス語、ロシア語、スペイン語でも利用できます。
 
 ### 元の内容を失わずに会話を分岐する
 
@@ -196,7 +197,7 @@ Open Science は、プロジェクト管理、マルチモデルエージェン�
 | **コネクタ**                 | ランタイム状態と回復画面を備えた **24 個の組み込み**研究コネクタ、編集可能な表示名と分離した不変の小文字呼び出し名を持つローカル/リモート MCP コネクタ、検証可能な上書き付き名前ベースローカル ID、連絡先メタデータ、コネクタ/ツール別権限、認証情報をプレースホルダー化する標準 MCP クライアント設定のインポート/エクスポート。カタログ操作はスキルと同じコンパクトな管理パターンに統一されました。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | **安全制御**                 | `Ask for approval`、`Auto-approve edits`、`Full access` の会話プロファイル、コードプレビューと呼び出し/会話単位の選択を持つ承認ダイアログ、拒否した操作を別経路で再試行または代替実行できないようターン中維持される権限拒否、フィルター・行別/ファミリー別取消・Undo を備えた永続グローバル/プロジェクト/セッション許可、コネクタ/ツール別ポリシー。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | **レビューと検証**           | 完了ターンを自身のトランスクリプト・実行ログ・アーティファクトに対して監査し、pass/warn/fail を報告して制限付き修正ループを実行できる任意レビュー、アクティブモデルへの追従または専用プロバイダー・モデル・推論の強度への固定が可能なレビューモデルポリシー、修正帰属を保持する永続レビュー評価スナップショット。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| **配布とサポート**           | macOS、Windows、Linux のインストーラー、環境・エージェントランタイム・モデルプロバイダー・Notebook ランタイム・データの場所を扱う簡潔な初回設定、フランス語・簡体字中国語・繁体字中国語・日本語・韓国語・ロシア語のインターフェース、対応する各言語の README、その他の多言語コントリビューションガイド、目立つ更新通知を含む更新ガイド、ローカル診断、コミュニティリンク。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **配布とサポート**           | macOS、Windows、Linux のインストーラー、環境・エージェントランタイム・モデルプロバイダー・Notebook ランタイム・データの場所を扱う簡潔な初回設定、スペイン語・フランス語・簡体字中国語・繁体字中国語・日本語・韓国語・ロシア語のインターフェース、対応する各言語の README、その他の多言語コントリビューションガイド、目立つ更新通知を含む更新ガイド、ローカル診断、コミュニティリンク。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ## モデルプロバイダー
 
@@ -311,7 +312,7 @@ Remote.It のペアリングにより、スマートフォンやタブレット�
 
 <img width="1920" height="1140" alt="オープンな科学 AI ワークフローのデスクトップオーケストレーション層として Open Science が AIPOCH エコシステムに位置する様子" src="https://github.com/user-attachments/assets/0ab847b1-1b7d-43f4-8c11-480a578e6c7d" />
 
-[AIPOCH](https://aipoch.com/open-science)（[GitHub organization](https://github.com/aipoch)）は、オープンな科学 AI ワークフローのデスクトップオーケストレーション層として Open Science を開発しています。
+[AIPOCH](https://aipoch.com/)（[GitHub organization](https://github.com/aipoch)）は、[Open Science](https://aipoch.com/open-science) をオープンな科学 AI ワークフローのデスクトップオーケストレーション層として開発しています。
 
 - [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills) は、500 以上のファイルベース医療・科学研究スキルを収録する大規模なコレクションです。すべてを確認・インポートし、GitHub から Open Science と組み合わせて使用できます。
 - Open Science は、プロジェクト/セッションワークスペース、エージェントランタイム、実行、アーティファクト、プレビュー、権限、コネクタを提供し、それらの指示を対話的なワークフローに変えます。
@@ -405,7 +406,7 @@ Open Science では、バグ報告、機能提案、設計に関する議論、�
 | [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 設計上の質問、ロードマップ提案、長めの技術的な議論         |
 | [Discord](https://discord.gg/zxQAYjReRv)                                 | コミュニティサポート、コントリビューターの調整、気軽な議論 |
 | [X / @aipoch_ai](https://x.com/aipoch_ai)                                | リリース発表と公開開発の更新                               |
-| [ウェブサイト](https://aipoch.com/)                                      | 製品概要、ダウンロード、AIPOCH エコシステム                |
+| [Open Science 公式サイト](https://aipoch.com/open-science)               | 公式の製品概要とダウンロード                               |
 
 公開 Issue を作成する前に、ログとスクリーンショットから API Key、トークン、非公開ファイルパス、未公開データ、患者識別子、その他の機密情報を削除してください。開発ワークフローは[コントリビューションガイド](CONTRIBUTING.md)を参照してください。
 

@@ -171,7 +171,7 @@ const PermissionUndoItem = ({
               <X className="size-4" aria-hidden="true" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{t('Dismiss')}</TooltipContent>
+          <TooltipContent>{t('Close')}</TooltipContent>
         </Tooltip>
       </TooltipProvider>
     </div>
@@ -271,7 +271,7 @@ const ArchiveUndoItem = ({
               <X className="size-4" aria-hidden="true" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{t('Dismiss')}</TooltipContent>
+          <TooltipContent>{t('Close')}</TooltipContent>
         </Tooltip>
       </TooltipProvider>
     </div>

@@ -111,6 +111,7 @@ describe('ACP Session presentation policy', () => {
       REMOTE_COMPUTE_AWARENESS_APPEND
     ])
     expect(appends.join('\n\n')).not.toContain('<open_science_skill_privacy_instructions>')
+    expect(appends.join('\n\n')).not.toContain('<open_science_citation_instructions>')
   })
 
   it('keeps internal prompt mechanics out of user-facing responses', () => {

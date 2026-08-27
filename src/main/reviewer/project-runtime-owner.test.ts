@@ -8,6 +8,9 @@ describe('ReviewerProjectRuntimeOwner', () => {
     const target = owner.admit('project-1')
     const other = owner.admit('project-2')
 
+    expect(owner.isProjectBusy('project-1')).toBe(true)
+    expect(owner.isProjectBusy('project-2')).toBe(true)
+
     let quiesced = false
     const quiescing = owner.quiesceProject('project-1').then(() => {
       quiesced = true
@@ -22,6 +25,7 @@ describe('ReviewerProjectRuntimeOwner', () => {
     target.release()
     await quiescing
     expect(quiesced).toBe(true)
+    expect(owner.isProjectBusy('project-1')).toBe(false)
 
     const stillAvailable = owner.admit('project-2')
     stillAvailable.release()

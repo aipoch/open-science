@@ -17,6 +17,7 @@ import { I18nextProvider, Trans } from 'react-i18next'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import es from '../../../shared/i18n/locales/es.json'
 import fr from '../../../shared/i18n/locales/fr.json'
 import ja from '../../../shared/i18n/locales/ja.json'
 import ko from '../../../shared/i18n/locales/ko.json'
@@ -38,6 +39,7 @@ type Catalog = Record<string, string>
 type TranslatedLocale = Exclude<(typeof LOCALES)[number], 'en'>
 
 const commonCatalogs = {
+  es: es.common,
   fr: fr.common,
   ja: ja.common,
   ko: ko.common,
@@ -47,6 +49,7 @@ const commonCatalogs = {
 } as const
 
 const sourceCatalogs = {
+  es: { ...es.common, ...es.renderer },
   fr: { ...fr.common, ...fr.renderer },
   ja: { ...ja.common, ...ja.renderer },
   ko: { ...ko.common, ...ko.renderer },
@@ -56,6 +59,7 @@ const sourceCatalogs = {
 } as const satisfies Record<TranslatedLocale, Catalog>
 
 const rendererCatalogs = {
+  es: es.renderer,
   fr: fr.renderer,
   ja: ja.renderer,
   ko: ko.renderer,
@@ -141,12 +145,14 @@ const CONTEXT_SUFFIXES = new Set([
   'inUse',
   'language',
   'runtime',
+  'specialists',
   'step',
   'theme',
   'verb',
   'window'
 ])
 const REQUIRED_PLURAL_CATEGORIES = {
+  es: ['one', 'many', 'other'],
   fr: ['one', 'many', 'other'],
   ja: ['other'],
   ko: ['other'],
@@ -500,6 +506,12 @@ describe.each(TRANSLATED)('%s native catalog', (locale) => {
 
   it('localizes mandatory generic product nouns', () => {
     const expected = {
+      es: {
+        subagent: 'subagente',
+        skill: 'habilidad',
+        specialist: 'especialista',
+        connector: 'conector'
+      },
       fr: {
         subagent: 'sous-agent',
         skill: 'compétence',
@@ -893,6 +905,28 @@ describe('mandatory product glossary', () => {
   })
 
   const chosenGenericTerms = {
+    es: {
+      Agent: 'Agente',
+      'Agent framework': 'Framework de agentes',
+      'Command line tool': 'Herramienta de línea de comandos',
+      Diagnostics: 'Diagnóstico',
+      failed: 'falló',
+      Skills: 'Habilidades',
+      Specialist: 'Especialista',
+      Specialists: 'Especialistas',
+      Marketplace: 'Mercado',
+      Connector: 'Conector',
+      Main: 'Agente principal',
+      Light: 'Claro',
+      Resume: 'Reanudar',
+      Running: 'En ejecución',
+      running: 'en ejecución',
+      Terminal: 'Terminal',
+      Shell: 'Línea de comandos',
+      'Token usage': 'Uso de tokens',
+      'Claude setup token': 'Token de configuración de Claude',
+      'Token: {{masked}}': 'Token: {{masked}}'
+    },
     fr: {
       Agent: 'Agent',
       'Agent framework': "Framework d'agents",
@@ -996,6 +1030,7 @@ describe('mandatory product glossary', () => {
 
   const compoundGlossaryPatterns = {
     mainModel: {
+      es: /modelo principal/iu,
       fr: /modèle principal/iu,
       'zh-Hans': /主模型/u,
       'zh-Hant': /主模型/u,
@@ -1004,6 +1039,7 @@ describe('mandatory product glossary', () => {
       ru: /основн\p{L}*\s+модел/iu
     },
     mainAgent: {
+      es: /agente principal/iu,
       fr: /agent principal/iu,
       'zh-Hans': /主智能体/u,
       'zh-Hant': /主智能體/u,
@@ -1012,6 +1048,7 @@ describe('mandatory product glossary', () => {
       ru: /главн\p{L}*\s+агент/iu
     },
     subagent: {
+      es: /subagentes?/iu,
       fr: /sous-agents?/iu,
       'zh-Hans': /子智能体/u,
       'zh-Hant': /子智能體/u,
@@ -1102,6 +1139,7 @@ describe('mandatory product glossary', () => {
     expect(
       Object.fromEntries(TRANSLATED.map((locale) => [locale, catalog(locale)['provider default']]))
     ).toEqual({
+      es: 'por defecto del proveedor',
       fr: 'réglage du fournisseur',
       ja: 'プロバイダー設定を使用',
       ko: '모델 제공업체 설정 사용',
@@ -1325,6 +1363,7 @@ describe('mandatory product glossary', () => {
 
   it.each(TRANSLATED)('%s uses the chosen Shell spelling in every Shell label', (locale) => {
     const expected = {
+      es: /líneas? de comandos/iu,
       fr: /\btermin(?:al|aux)\b/i,
       'zh-Hans': /命令行/,
       'zh-Hant': /命令列/,
@@ -1368,15 +1407,31 @@ describe('mandatory product glossary', () => {
     /(?<![:/\w])\/(?:[\w.-]+\/)+[\w.-]*[\w-]/g,
     /\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g,
     /\bmax_tokens\b/g,
+    /\bPATH\b/g,
     /\bskills\//g,
     /(?:~\/|\.)[\w./-]*skills\b/g,
     /Specialist Marketplace protocol/g,
     /Claude Connectors Directory/g,
-    /<code>[^<]*(?:skills?|agents?)[^<]*<\/code>/gi
+    /\bKEY=VALUE\b/g,
+    /<code>[^<]*<\/code>/gi
   ]
   const additionalRequiredIdentifiers = {
     'The ZIP contains app metadata, the specialist.json you fill in, and a README.txt guide. Skills placed in the skills folder are discovered automatically.':
       ['skills/']
+  } satisfies Record<string, string[]>
+  const spanishRequiredIdentifiers = {
+    'Leave empty for 22 or Port from ~/.ssh/config.': ['Port'],
+    'Leave empty to use User from ~/.ssh/config.': ['User'],
+    'Password authentication requires a User and Port and never uses keys or ssh-agent.': [
+      'Port',
+      'User'
+    ],
+    'MCP server must define either command or url.': ['command', 'url'],
+    'Star on GitHub': ['Star'],
+    'Star {{app}} on GitHub': ['Star'],
+    'Star {{app}} on GitHub, {{count}} stars': ['Star'],
+    "It's free and open source. Star it on GitHub to help others find it, and come build in public with us on Discord and X. Thanks for being here.":
+      ['Star']
   } satisfies Record<string, string[]>
   const exactTechnicalIdentifiers = (text: string): string[] =>
     exactTechnicalIdentifierPatterns
@@ -1385,6 +1440,7 @@ describe('mandatory product glossary', () => {
   const withoutTechnicalIdentifiers = (text: string): string =>
     [
       /\{\{\w+\}\}/g,
+      /Claude Agent/g,
       ...exactTechnicalIdentifierPatterns.filter(
         (identifier) => identifier !== oauthIdentifierPattern
       )
@@ -1397,15 +1453,23 @@ describe('mandatory product glossary', () => {
   it.each(TRANSLATED)('%s preserves exact technical identifiers', (locale) => {
     const offenders = allCatalogEntries(locale).flatMap(([key, value]) => {
       const source = englishOf(key)
-      const expected = [
-        ...exactTechnicalIdentifiers(source),
-        ...(additionalRequiredIdentifiers[source] ?? [])
-      ].sort((left, right) => left.localeCompare(right))
-      const actual = exactTechnicalIdentifiers(value)
+      const expected = exactTechnicalIdentifiers(source)
+      const requiredIdentifiers = [
+        ...(additionalRequiredIdentifiers[source] ?? []),
+        ...(locale === 'es' ? (spanishRequiredIdentifiers[source] ?? []) : [])
+      ]
+      const actual = exactTechnicalIdentifiers(value).filter(
+        (identifier) => !requiredIdentifiers.includes(identifier) || expected.includes(identifier)
+      )
+      const missingRequired = requiredIdentifiers.filter(
+        (identifier) => !value.includes(identifier)
+      )
 
-      return JSON.stringify(actual) === JSON.stringify(expected)
+      return JSON.stringify(actual) === JSON.stringify(expected) && missingRequired.length === 0
         ? []
-        : [`${key}: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`]
+        : [
+            `${key}: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}, missing ${JSON.stringify(missingRequired)}`
+          ]
     })
 
     expect(offenders).toEqual([])
@@ -1434,6 +1498,12 @@ describe('mandatory product glossary', () => {
   })
 
   const localizedFeatureTerms = {
+    es: {
+      agent: /agentes?/iu,
+      skill: /habilidad(?:es)?/iu,
+      untranslatedAgent: /\b(?:sub)?agents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
     fr: {
       agent: 'agent',
       skill: 'compétence',
@@ -1518,6 +1588,7 @@ describe('mandatory product glossary', () => {
     /^Token:/
   ]
   const localizedTokenTerms = {
+    es: { credential: 'token', model: 'token' },
     fr: { credential: 'jeton', model: 'jeton' },
     'zh-Hans': { credential: '令牌', model: '词元' },
     'zh-Hant': { credential: '權杖', model: '詞元' },
@@ -1537,7 +1608,7 @@ describe('mandatory product glossary', () => {
         ? expected.credential
         : expected.model
       return !prose.toLocaleLowerCase(locale).includes(term.toLocaleLowerCase(locale)) ||
-        /\btokens?\b/i.test(prose)
+        (locale !== 'es' && /\btokens?\b/i.test(prose))
         ? [`${key}: ${term}`]
         : []
     })
@@ -1570,6 +1641,111 @@ describe('mandatory product glossary', () => {
         )
         .map(() => key)
     })
+
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps Spanish UI copy free of known literal machine-translation errors', () => {
+    const invalid = /\b(?:currículum|carcasa|proyectil|fichas?|código postal|antrópico)\b/iu
+    const offenders = allCatalogEntries('es')
+      .filter(([, value]) => invalid.test(value))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses neutral international Spanish for computers and Jupyter kernels', () => {
+    const offenders = allCatalogEntries('es')
+      .filter(([key, value]) => {
+        const source = englishOf(key)
+        if (/\bcomputers?\b/i.test(source) && !/\bequipos?\b/iu.test(value)) return true
+        return /\bkernels?\b/i.test(source) && !/\bkernels?\b/i.test(value)
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses reviewed Spanish punctuation and abbreviations', () => {
+    const invalid = /\bsólo\b|\bp\.ej\./u
+    const offenders = allCatalogEntries('es')
+      .filter(([, value]) => invalid.test(value) || value.includes('...'))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('preserves high-risk Spanish safety semantics', () => {
+    const requirements = {
+      'Approval applies to this call only.': [/solo/iu, /llamada/iu],
+      'The local Compute Host and encrypted password will be deleted. The remote SSH account is unchanged, and the password cannot be recovered.':
+        [/se eliminarán/iu, /no se podrá recuperar/iu],
+      'The agent wants to call a connector tool that sends data to an external service. Approve only if you trust this connector with the current request.':
+        [/servicio externo/iu, /confía/iu],
+      'This report is posted publicly on GitHub. Edit the error text below to remove anything sensitive before sharing. Your runtime log stays on this device and is never attached automatically.':
+        [/se publica/iu, /sensible/iu, /nunca se adjunta/iu],
+      'Current local edits are not recoverable after a successful overwrite. A failed atomic install preserves the current version.':
+        [/no se pueden recuperar/iu, /conserva/iu]
+    } satisfies Record<string, RegExp[]>
+    const offenders = Object.entries(requirements)
+      .filter(([key, patterns]) => {
+        const value = catalog('es')[key]
+        return !value || patterns.some((pattern) => !pattern.test(value))
+      })
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('addresses Spanish users formally', () => {
+    const informal =
+      /\b(?:tú|tu|tus|contigo|inténtalo|inténtala|descárgalo|descárgala|destácalo|sigues|puedes|debes|investigarás|arrastra)\b|\b(?:Actualiza la aplicación|Inicia sesión con|Elimina esta Habilidad|Conserva los archivos|ven a construir)\b/iu
+    const offenders = [...Object.entries(catalog('es')), ...Object.entries(nativeCatalog('es'))]
+      .filter(([, value]) => informal.test(value))
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('preserves Spanish multi-word product, API, and example identifiers', () => {
+    const identifiers = [
+      'Claude Code',
+      'Claude Agent',
+      'MCP Registry',
+      'Messages API',
+      'Chat Completions',
+      'Responses API',
+      'Streamable HTTP',
+      'coder.myworkspace',
+      'changelog-style'
+    ]
+    const offenders = allCatalogEntries('es')
+      .filter(([key, value]) =>
+        identifiers.some(
+          (identifier) => englishOf(key).includes(identifier) && !value.includes(identifier)
+        )
+      )
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it.each([
+    [1, '1 archivo', 'Se encontró 1 habilidad.'],
+    [2, '2 archivos', 'Se encontraron 2 habilidades.'],
+    [1_000_000, '1000000 archivos', 'Se encontraron 1000000 habilidades.']
+  ])('selects grammatical Spanish plural copy for count %d', (count, files, foundSkills) => {
+    const instance = initI18n('es')
+
+    expect(instance.t('{{count}} files', { count })).toBe(files)
+    expect(instance.t('Found {{count}} skills.', { count })).toBe(foundSkills)
+  })
+
+  it('keeps Spanish entries within their source-key line boundaries', () => {
+    const lineBreakCount = (value: string): number => value.match(/\n/g)?.length ?? 0
+    const offenders = allCatalogEntries('es')
+      .filter(([key, value]) => lineBreakCount(englishOf(key)) !== lineBreakCount(value))
+      .map(([key]) => key)
 
     expect(offenders).toEqual([])
   })
@@ -2669,7 +2845,7 @@ describe('Korean binding terminology', () => {
     ['{{count}} jobs_other', '작업 {{count}}개'],
     ['{{count}} repl_other', 'REPL {{count}}개'],
     ['{{count}} steps_other', '{{count}}단계'],
-    ['{{count}} turns_other', '{{count}}턴'],
+    ['{{count}} calls_other', '호출 {{count}}회'],
     [
       'Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._other',
       '이 편집된 프롬프트를 보내면 여기에서 새 브랜치가 시작됩니다. 현재 뒤따르는 {{count}}개 턴은 메시지 수정 컨트롤에서 계속 사용할 수 있습니다.'

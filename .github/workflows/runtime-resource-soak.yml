@@ -1,0 +1,93 @@
+name: Runtime Resource Soak
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Runtime profile duration
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - soak
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: runtime-resource-soak-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Check for unprofiled main changes
+    runs-on: ubuntu-latest
+    outputs:
+      should_test: ${{ steps.decide.outputs.should_test }}
+    steps:
+      - name: Check for unprofiled main changes
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "should_test=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch always profiles the selected ref."
+            exit 0
+          fi
+
+          last_successful_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/runtime-resource-soak.yml/runs?branch=main&event=schedule&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true)"
+          if [[ "$last_successful_sha" == "$GITHUB_SHA" ]]; then
+            echo "should_test=false" >> "$GITHUB_OUTPUT"
+            echo "Runtime resource coverage already passed for $GITHUB_SHA."
+          else
+            echo "should_test=true" >> "$GITHUB_OUTPUT"
+            echo "Latest successful runtime resource coverage is ${last_successful_sha:-unavailable}; profiling $GITHUB_SHA."
+          fi
+
+  runtime_resource_soak:
+    name: Windows runtime resource ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'soak' }}
+    needs: plan
+    if: needs.plan.outputs.should_test == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      CI: 'true'
+      PROFILE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'soak' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+
+      - name: Record runtime resource profile
+        shell: pwsh
+        run: |
+          if ($env:PROFILE_MODE -eq 'smoke') {
+            $profileArgs = @('--repeat=1', '--phase-ms=2000', '--interval-ms=500', '--stress-cycles=1')
+          } else {
+            $profileArgs = @('--repeat=3', '--phase-ms=10000', '--interval-ms=1000', '--stress-cycles=6')
+          }
+          npm run perf:runtime -- @profileArgs '--output=test-results/performance'
+
+      - name: Upload runtime resource evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: runtime-resource-${{ env.PROFILE_MODE }}-windows
+          path: test-results
+          retention-days: 14
+          if-no-files-found: error

@@ -29,6 +29,12 @@ describe('resolveLocaleFromTags', () => {
     expect(resolveLocaleFromTags(['FR_ca'])).toBe('fr')
   })
 
+  it('matches Spanish and its regional tags', () => {
+    expect(resolveLocaleFromTags(['es'])).toBe('es')
+    expect(resolveLocaleFromTags(['es-ES'])).toBe('es')
+    expect(resolveLocaleFromTags(['ES_mx'])).toBe('es')
+  })
+
   it('matches Japanese and its regional tags', () => {
     expect(resolveLocaleFromTags(['ja'])).toBe('ja')
     expect(resolveLocaleFromTags(['ja-JP'])).toBe('ja')
@@ -98,6 +104,7 @@ describe('resolveLocale', () => {
     expect(resolveLocale('system', ['ko-KR'])).toBe('ko')
     expect(resolveLocale('system', ['ru-RU'])).toBe('ru')
     expect(resolveLocale('system', ['fr-CA'])).toBe('fr')
+    expect(resolveLocale('system', ['es-MX'])).toBe('es')
   })
 
   it('returns an explicit preference verbatim, ignoring the host list', () => {
@@ -106,6 +113,7 @@ describe('resolveLocale', () => {
     expect(resolveLocale('ja', ['en-US'])).toBe('ja')
     expect(resolveLocale('ko', ['en-US'])).toBe('ko')
     expect(resolveLocale('ru', ['en-US'])).toBe('ru')
+    expect(resolveLocale('es', ['en-US'])).toBe('es')
     expect(resolveLocale('zh-Hant', ['en-US'])).toBe('zh-Hant')
     expect(resolveLocale('zh-Hans', [])).toBe('zh-Hans')
   })
@@ -118,6 +126,7 @@ describe('guards and constants', () => {
     expect(isLocale('ko')).toBe(true)
     expect(isLocale('ru')).toBe(true)
     expect(isLocale('fr')).toBe(true)
+    expect(isLocale('es')).toBe(true)
     expect(isLocale('zh-CN')).toBe(false)
     expect(isLocale('system')).toBe(false)
     expect(isLocale(undefined)).toBe(false)
@@ -127,6 +136,7 @@ describe('guards and constants', () => {
     expect(isLanguagePreference('ko')).toBe(true)
     expect(isLanguagePreference('ru')).toBe(true)
     expect(isLanguagePreference('fr')).toBe(true)
+    expect(isLanguagePreference('es')).toBe(true)
   })
 
   it('defaults to system with an English fallback', () => {
@@ -137,6 +147,7 @@ describe('guards and constants', () => {
   it('emits valid BCP-47 html lang values', () => {
     expect(htmlLang('en')).toBe('en')
     expect(htmlLang('fr')).toBe('fr')
+    expect(htmlLang('es')).toBe('es')
     expect(htmlLang('ja')).toBe('ja')
     expect(htmlLang('ko')).toBe('ko')
     expect(htmlLang('ru')).toBe('ru')

@@ -1337,9 +1337,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
     expect(container.textContent).toContain('Minimal change')
     await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="elicitation-answer-summary"]')
-        ?.click()
+      container.querySelector<HTMLButtonElement>('[data-testid="elicitation-answer-row"]')?.click()
     })
     expect(container.querySelector('[data-testid="elicitation-choice-review"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="elicitation-option-Expanded"]')).not.toBeNull()

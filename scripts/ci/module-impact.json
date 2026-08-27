@@ -746,6 +746,7 @@
     "i18n_catalog": {
       "ownerPaths": [
         "src/shared/i18n/core.ts",
+        "src/shared/i18n/locales/es.json",
         "src/shared/i18n/locales/fr.json",
         "src/shared/i18n/locales/ja.json",
         "src/shared/i18n/locales/ko.json",

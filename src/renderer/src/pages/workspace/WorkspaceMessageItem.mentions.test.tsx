@@ -416,7 +416,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(elapsedSegment?.textContent).toBe('Elapsed 2m 5s')
     expect(elapsedSegment?.classList.contains('whitespace-nowrap')).toBe(true)
     expect(separator).toBeNull()
-    expect(usage?.textContent).toBe('Usage')
+    expect(usage?.textContent).toBe('Calls')
     expect(usageTrigger?.getAttribute('aria-label')).toBe('Token usage for this response')
     expect(usageTrigger?.querySelector('[data-slot="turn-token-usage-icon"]')).not.toBeNull()
     expect(usageTrigger?.className).toContain('border-dashed')
@@ -433,10 +433,10 @@ describe('WorkspaceMessageItem turn token usage', () => {
     })
 
     const usagePopover = document.body.querySelector('[data-slot="turn-token-usage-popover"]')
-    expect(usagePopover?.textContent).toContain('Usage')
+    expect(usagePopover?.textContent).toContain('Calls')
     expect(
       usagePopover?.querySelector('[data-slot="turn-token-usage-turn-count"]')?.textContent
-    ).toBe('3 turns')
+    ).toBe('3 calls')
     expect(usagePopover?.textContent).toContain('Input12,345')
     expect(usagePopover?.textContent).toContain('Cache678')
     expect(usagePopover?.textContent).toContain('Output90')
@@ -612,7 +612,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(usagePopover?.textContent).toContain('Total160')
     expect(
       usagePopover?.querySelector('[data-slot="turn-token-usage-turn-count"]')?.textContent
-    ).toBe('1 turn')
+    ).toBe('1 call')
 
     const segments = Array.from(
       usagePopover?.querySelectorAll<HTMLElement>('[data-slot="turn-token-usage-segment"]') ?? []
@@ -811,7 +811,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     const usage = container.querySelector('[data-slot="turn-token-usage"]')
     const usageTrigger = usage?.querySelector('button')
     expect(usageTrigger?.getAttribute('aria-label')).toBe('Token usage for this response')
-    expect(usage?.textContent).toBe('Usage')
+    expect(usage?.textContent).toBe('Calls')
     expect(container.textContent).not.toContain('Input 12,345')
   })
 
@@ -830,7 +830,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(usageTrigger?.getAttribute('aria-label')).toBe(
       'Token usage unavailable for this response'
     )
-    expect(usage?.textContent).toBe('Usage')
+    expect(usage?.textContent).toBe('Calls')
     expect(document.body.textContent).not.toContain('Input—')
 
     await act(async () => {

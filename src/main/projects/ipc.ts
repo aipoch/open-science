@@ -42,14 +42,16 @@ type ProjectDeleteHandler = Pick<
 >
 type ProjectCrudRepository = Pick<ProjectRepository, 'list' | 'get' | 'create' | 'update'> &
   Partial<Pick<ProjectRepository, 'updateArchive'>>
-type ProjectArchiveHandler = Pick<ProjectHandlers, 'updateArchive'>
+type ProjectHandlerEffects = Pick<ProjectHandlers, 'updateArchive'> & {
+  onAgentContextChanged?: (projectId: string) => void
+}
 
 // Adapts repository operations into thin handlers while enforcing Project-scoped recovery admission.
 // A failed durable deletion intent remains closed without denying unrelated Project operations.
 const createProjectHandlers = (
   repository: ProjectCrudRepository,
   deletionCoordinator: ProjectDeleteHandler,
-  archiveHandler: ProjectArchiveHandler = {
+  effects: ProjectHandlerEffects = {
     updateArchive: (request) => {
       if (!repository.updateArchive) throw new Error('Project archive is unavailable.')
       return repository.updateArchive(request, Date.now())
@@ -70,11 +72,19 @@ const createProjectHandlers = (
   },
   update: async (request) => {
     await deletionCoordinator.waitForProjectOperations([request.id])
-    return repository.update(request)
+    const previousAgentContext =
+      request.agentContext === undefined
+        ? undefined
+        : (await repository.get(request.id))?.agentContext
+    const project = await repository.update(request)
+    if (request.agentContext !== undefined && previousAgentContext !== project.agentContext) {
+      effects.onAgentContextChanged?.(request.id)
+    }
+    return project
   },
   updateArchive: async (request) => {
     await deletionCoordinator.waitForProjectOperations([request.id])
-    return archiveHandler.updateArchive(request)
+    return effects.updateArchive(request)
   },
   delete: async (id) => {
     await deletionCoordinator.waitForProjectOperations([id])

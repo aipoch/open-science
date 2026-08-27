@@ -148,6 +148,30 @@ describe('preview persistence projections', () => {
     expect(persisted.items[0]).not.toHaveProperty('type')
   })
 
+  it('keeps source preview URLs and identifiers out of the durable projection', () => {
+    usePreviewWorkbenchStore.setState({
+      panelState: 'open',
+      activeItemId: 'source:https://example.com/private-paper',
+      items: [
+        {
+          id: 'source:https://example.com/private-paper',
+          sessionId: '__sources__',
+          type: 'source',
+          title: 'Private paper',
+          url: 'https://example.com/private-paper',
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    const persisted = toPersistedPreviewState(usePreviewWorkbenchStore.getState())
+
+    expect(persisted.activeItemId).toBeUndefined()
+    expect(persisted.items).toEqual([])
+    expect(JSON.stringify(persisted)).not.toContain('https://example.com/private-paper')
+  })
+
   it('round-trips the one durable Session Subagents Preview and selected Frame', () => {
     usePreviewWorkbenchStore.setState({
       panelState: 'collapsed',

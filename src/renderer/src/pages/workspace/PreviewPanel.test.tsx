@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -7,6 +7,7 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore,
   type PreviewFileItem,
+  type PreviewSourceItem,
   type PreviewToolItem
 } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -38,11 +39,14 @@ const { PreviewPanel } = await import('./PreviewPanel')
 const createFileItem = (overrides: Partial<PreviewFileItem>): PreviewFileItem => ({
   id: 'item-1',
   sessionId: 'session-1',
+  projectId: 'default',
+  managedFileId: 'item-1',
   title: 'file-1.png',
   type: 'file',
   path: '/workspace/file-1.png',
   name: 'file-1.png',
   format: 'image',
+  source: 'artifact',
   ...overrides
 })
 
@@ -55,14 +59,36 @@ const createToolItem = (overrides: Partial<PreviewToolItem>): PreviewToolItem =>
   ...overrides
 })
 
+const createSourceItem = (overrides: Partial<PreviewSourceItem> = {}): PreviewSourceItem => ({
+  id: 'source:https://example.com/paper',
+  sessionId: '__sources__',
+  title: 'Genome study',
+  type: 'source',
+  url: 'https://example.com/paper',
+  ...overrides
+})
+
 describe('PreviewPanel', () => {
   let container: HTMLDivElement
   let root: Root
+  let sourcePreviewListener: ((state: Record<string, unknown>) => void) | undefined
+  let releaseSourcePreview: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    releaseSourcePreview = vi.fn()
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      managedFileVersions: {},
+      sourcePreview: {
+        release: releaseSourcePreview,
+        onLoadState: (listener: (state: Record<string, unknown>) => void) => {
+          sourcePreviewListener = listener
+          return () => {
+            sourcePreviewListener = undefined
+          }
+        }
+      },
       uploads: { stageLocalPath: vi.fn().mockResolvedValue({ id: 'attachment-1' }) }
     } as unknown as Window['api']
     container = document.createElement('div')
@@ -80,14 +106,15 @@ describe('PreviewPanel', () => {
     await act(async () => {
       root.unmount()
     })
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     container.remove()
   })
 
-  const renderPanel = async (): Promise<void> => {
+  const renderPanel = async (strict = false): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
-      root.render(
+      const panel = (
         <PreviewPanel
           panelRef={{ current: null }}
           defaultSize="40%"
@@ -95,6 +122,7 @@ describe('PreviewPanel', () => {
           onResize={vi.fn()}
         />
       )
+      root.render(strict ? <StrictMode>{panel}</StrictMode> : panel)
     })
   }
 
@@ -217,6 +245,279 @@ describe('PreviewPanel', () => {
 
     const activeContent = container.querySelector('[data-testid="file-content"]')
     expect(activeContent?.textContent).toBe('file:image:artifact:file-1.png:/workspace/file-1.png')
+  })
+
+  it('keeps an HTTPS source iframe mounted while its tab is inactive', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+    usePreviewWorkbenchStore.getState().upsertItem(createFileItem({}))
+
+    await renderPanel()
+
+    const sourceTab = container.querySelector('[role="tab"][title="Genome study"]')
+    const sourceHeader = container.querySelector('[data-source-preview-header]')
+    const iframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
+    expect(sourceTab?.querySelector('[data-source-preview-tab-icon]')).not.toBeNull()
+    expect(sourceTab?.textContent).toContain('Genome study')
+    expect(sourceHeader?.textContent).toContain('Genome study')
+    expect(sourceHeader?.textContent).toContain('https://example.com/paper')
+    expect(sourceHeader?.textContent).not.toContain('Cited URL:')
+    expect(sourceHeader?.querySelector('.lucide-link-2')).toBeNull()
+    const sourceHeaderTitle = sourceHeader?.querySelector<HTMLElement>(
+      '[data-source-preview-header-title]'
+    )
+    expect(sourceHeaderTitle?.className).toContain('text-text-000')
+    const sourceHeaderUrl = sourceHeader?.querySelector<HTMLElement>(
+      '[data-source-preview-header-url]'
+    )
+    expect(sourceHeaderUrl?.className).toContain('text-text-000/70')
+    const sourceHeaderExternal = sourceHeader?.querySelector<HTMLButtonElement>(
+      '[data-source-preview-header-external]'
+    )
+    const sourceHeaderClose = sourceHeader?.querySelector<HTMLButtonElement>(
+      '[data-source-preview-header-close]'
+    )
+    expect(sourceHeader?.className).toContain('items-start')
+    expect(sourceHeader?.className).not.toContain('items-center')
+    expect(sourceHeader?.className).toContain('px-2')
+    expect(sourceHeader?.className).toContain('py-1')
+    expect(sourceHeaderExternal?.dataset.size).toBe('icon-xs')
+    expect(sourceHeaderExternal?.className).toContain('text-text-100')
+    expect(sourceHeaderExternal?.className).toContain('hover:text-text-000')
+    expect(sourceHeaderClose?.dataset.size).toBe('icon-xs')
+    expect(sourceHeaderClose?.className).toContain('text-text-100')
+    expect(sourceHeaderClose?.className).toContain('hover:text-text-000')
+    expect(sourceHeaderExternal?.nextElementSibling).toBe(sourceHeaderClose)
+    expect(iframe?.getAttribute('src')).toBe('https://example.com/paper')
+    expect(iframe?.getAttribute('sandbox')).toBe(
+      'allow-same-origin allow-scripts allow-forms allow-popups'
+    )
+    expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')
+    expect(iframe?.getAttribute('title')).toBe('Source preview: Genome study')
+    expect(container.querySelector('[aria-label="Open source in browser"]')).not.toBeNull()
+    const sourcePanel = iframe?.closest<HTMLElement>('[role="tabpanel"]')
+    expect(sourcePanel?.className).toContain('rounded-md')
+    expect(sourcePanel?.className).toContain('bg-bg-000')
+    expect(sourcePanel?.className).toContain('shadow-card')
+    expect(sourcePanel?.parentElement?.className).toContain('pl-2')
+    expect(sourcePanel?.parentElement?.className).toContain('pr-1')
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateItem('item-1')
+    })
+
+    expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
+    expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(true)
+    expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateItem(createSourceItem().id)
+    })
+
+    expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
+    expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(false)
+  })
+
+  it('closes a source preview from the header action', async () => {
+    const sourceItem = createSourceItem()
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
+
+    await renderPanel(true)
+
+    const closeButton = container.querySelector<HTMLButtonElement>(
+      '[data-source-preview-header-close]'
+    )
+    expect(closeButton?.getAttribute('aria-label')).toBe('Close preview of Genome study')
+
+    await act(async () => closeButton?.click())
+
+    expect(usePreviewWorkbenchStore.getState().items).not.toContainEqual(sourceItem)
+    expect(container.querySelector('[data-source-preview-frame]')).toBeNull()
+    expect(releaseSourcePreview).toHaveBeenCalledWith('https://example.com/paper')
+  })
+
+  it('keeps an HTTPS source iframe mounted while the preview panel is collapsed', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+
+    await renderPanel()
+
+    const iframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
+    await act(async () => usePreviewWorkbenchStore.getState().collapsePanel())
+
+    expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
+    expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(true)
+    expect(releaseSourcePreview).not.toHaveBeenCalled()
+
+    await act(async () => usePreviewWorkbenchStore.getState().togglePanel())
+
+    expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
+    expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(false)
+  })
+
+  it('shows a two-pixel simulated loading bar until the source frame loads', async () => {
+    vi.useFakeTimers()
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+
+    await renderPanel()
+
+    const progress = container.querySelector<HTMLElement>('[data-source-preview-progress]')
+    const progressFill = progress?.querySelector<HTMLElement>('[data-source-preview-progress-fill]')
+    const skeleton = container.querySelector<HTMLElement>('[data-source-preview-skeleton]')
+    expect(progress).not.toBeNull()
+    expect(skeleton).not.toBeNull()
+    expect(progress?.className).toContain('h-0.5')
+    expect(progress?.getAttribute('role')).toBe('progressbar')
+    expect(progress?.getAttribute('aria-valuenow')).toBeNull()
+    expect(progressFill?.style.transform).toBe('scaleX(0.08)')
+
+    await act(async () => vi.advanceTimersByTimeAsync(700))
+
+    const advancedProgress = Number(progressFill?.style.transform.match(/scaleX\(([^)]+)\)/u)?.[1])
+    expect(advancedProgress).toBeGreaterThan(0.08)
+    expect(advancedProgress).toBeLessThanOrEqual(0.9)
+
+    await act(async () => vi.advanceTimersByTimeAsync(20_000))
+    expect(progressFill?.style.transform).toBe('scaleX(0.9)')
+    expect(vi.getTimerCount()).toBe(0)
+
+    await act(async () => {
+      sourcePreviewListener?.({
+        navigationId: 1,
+        sourceUrl: 'https://example.com/paper',
+        currentUrl: 'https://example.com/paper',
+        phase: 'loaded',
+        httpStatusCode: 200,
+        httpStatusText: 'OK'
+      })
+    })
+
+    expect(progressFill?.style.transform).toBe('scaleX(1)')
+    await act(async () => vi.advanceTimersByTimeAsync(250))
+    expect(container.querySelector('[data-source-preview-progress]')).toBeNull()
+    expect(container.querySelector('[data-source-preview-skeleton]')).toBeNull()
+  })
+
+  it('shows a retryable ErrorNotice with the blocked-frame failure reason', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+
+    await renderPanel()
+    const firstIframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
+
+    await act(async () => {
+      sourcePreviewListener?.({
+        navigationId: 1,
+        sourceUrl: 'https://example.com/paper',
+        currentUrl: 'https://example.com/paper',
+        phase: 'failed',
+        failure: 'blocked',
+        errorCode: -27,
+        errorDescription: 'ERR_BLOCKED_BY_RESPONSE'
+      })
+    })
+
+    const alert = container.querySelector<HTMLElement>('[data-source-preview-error]')
+    expect(alert?.textContent).toContain('Could not load this source')
+    expect(alert?.textContent).toContain('This source does not allow embedded previews.')
+    expect(alert?.textContent).toContain('ERR_BLOCKED_BY_RESPONSE (-27)')
+    expect(container.querySelector('[data-source-preview-progress]')).toBeNull()
+
+    const retryButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Try again'
+    )
+    await act(async () => retryButton?.click())
+
+    expect(container.querySelector('[data-source-preview-skeleton]')).not.toBeNull()
+    expect(container.querySelector('[data-source-preview-frame]')).not.toBe(firstIframe)
+  })
+
+  it('preserves a failed source state while its tab is inactive', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+    usePreviewWorkbenchStore.getState().upsertItem(createFileItem({}))
+
+    await renderPanel()
+
+    await act(async () => {
+      sourcePreviewListener?.({
+        navigationId: 1,
+        sourceUrl: 'https://example.com/paper',
+        currentUrl: 'https://example.com/paper',
+        phase: 'failed',
+        failure: 'network',
+        errorCode: -102,
+        errorDescription: 'ERR_CONNECTION_REFUSED'
+      })
+    })
+
+    const error = container.querySelector('[data-source-preview-error]')
+    expect(error?.textContent).toContain('ERR_CONNECTION_REFUSED (-102)')
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateItem('item-1')
+    })
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateItem(createSourceItem().id)
+    })
+
+    expect(container.querySelector('[data-source-preview-error]')).toBe(error)
+    expect(container.querySelector('[data-source-preview-skeleton]')).toBeNull()
+  })
+
+  it('releases a source iframe and its cached state only when the tab closes', async () => {
+    const sourceItem = createSourceItem()
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
+    usePreviewWorkbenchStore.getState().upsertItem(createFileItem({}))
+
+    await renderPanel(true)
+
+    const firstIframe = container.querySelector('[data-source-preview-frame]')
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateItem('item-1')
+    })
+    expect(releaseSourcePreview).not.toHaveBeenCalled()
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().removeItem(sourceItem.id)
+    })
+    expect(container.querySelector('[data-source-preview-frame]')).toBeNull()
+    expect(releaseSourcePreview).toHaveBeenCalledOnce()
+    expect(releaseSourcePreview).toHaveBeenCalledWith('https://example.com/paper')
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
+    })
+    expect(container.querySelector('[data-source-preview-frame]')).not.toBe(firstIframe)
+    expect(container.querySelector('[data-source-preview-skeleton]')).not.toBeNull()
+  })
+
+  it('restarts source loading progress when the active URL changes', async () => {
+    vi.useFakeTimers()
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
+
+    await renderPanel()
+    await act(async () => vi.advanceTimersByTimeAsync(700))
+
+    const firstIframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
+    const firstFill = container.querySelector<HTMLElement>('[data-source-preview-progress-fill]')
+    expect(firstFill?.style.transform).not.toBe('scaleX(0.08)')
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createSourceItem({
+          title: 'Second study',
+          url: 'https://example.com/second'
+        })
+      )
+    })
+
+    const restartedFill = container.querySelector<HTMLElement>(
+      '[data-source-preview-progress-fill]'
+    )
+    expect(restartedFill?.style.transform).toBe('scaleX(0.08)')
+
+    await act(async () => {
+      firstIframe?.dispatchEvent(new Event('load'))
+    })
+    expect(restartedFill?.style.transform).toBe('scaleX(0.08)')
+    expect(container.querySelector('[data-source-preview-progress]')).not.toBeNull()
   })
 
   it('wraps an active file in a compact card with middle-ellipsis title and header actions', async () => {
@@ -527,7 +828,8 @@ describe('PreviewPanel', () => {
         title: 'upload.png',
         name: 'upload.png',
         path: '/Users/example/.open-science/uploads/default-project/session-1/upload.png',
-        source: 'upload'
+        source: 'upload',
+        managedFileId: 'upload-1'
       })
     )
 
@@ -546,7 +848,8 @@ describe('PreviewPanel', () => {
     })
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'upload',
-      path: '/Users/example/.open-science/uploads/default-project/session-1/upload.png',
+      projectId: 'default',
+      fileId: 'upload-1',
       suggestedName: 'upload.png'
     })
   })
@@ -758,6 +1061,7 @@ describe('PreviewPanel', () => {
         name,
         path: `/workspace/${name}`,
         artifactId: 'artifact-1',
+        projectId: 'project-1',
         sessionId: 'session-1'
       })
     )
@@ -793,6 +1097,7 @@ describe('PreviewPanel', () => {
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-1' })
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      managedFileVersions: {},
       artifacts: {
         getLineage: vi.fn().mockResolvedValue({
           artifactId: 'artifact-1',
@@ -909,7 +1214,8 @@ describe('PreviewPanel', () => {
     })
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/file-1.png',
+      projectId: 'default',
+      fileId: 'item-1',
       suggestedName: 'file-1.png'
     })
   })
@@ -920,6 +1226,7 @@ describe('PreviewPanel', () => {
     Object.assign(navigator, { clipboard: { writeText } })
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      managedFileVersions: {},
       uploads: { stageLocalPath }
     } as unknown as Window['api']
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(

@@ -202,6 +202,89 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(onRespond).not.toHaveBeenCalled()
   })
 
+  it('counts each checked option of a multi-select question in the selected tally', async () => {
+    const mixedRequest = { ...multiQuestionRequest, fields: mixedChoiceFields }
+
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: mixedRequest.message,
+            fields: mixedChoiceFields,
+            state: 'pending'
+          }}
+          request={mixedRequest}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('0 selected')
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-multi-omics"]')
+        ?.click()
+    })
+    expect(container.textContent).toContain('1 selected')
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-clinical"]')
+        ?.click()
+    })
+    expect(container.textContent).toContain('2 selected')
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-clinical"]')
+        ?.click()
+    })
+    expect(container.textContent).toContain('1 selected')
+  })
+
+  it('counts only the current question selection in the footer tally', async () => {
+    const onDraftChange = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: multiQuestionFields,
+            state: 'pending'
+          }}
+          request={multiQuestionRequest}
+          onDraftChange={onDraftChange}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('0 selected')
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-multi-omics"]')
+        ?.click()
+    })
+    expect(container.textContent).toContain('1 selected')
+
+    const next = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Next'
+    )
+    await act(async () => next?.click())
+
+    // The first question's answer must not leak into the second question's tally.
+    expect(container.querySelector('h3')?.textContent).toBe('Which language should the skill use?')
+    expect(container.textContent).toContain('0 selected')
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-chinese"]')
+        ?.click()
+    })
+    expect(container.textContent).toContain('1 selected')
+  })
+
   it('presents multiple choice questions one at a time and finishes only after the last answer', async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined)
     const onDraftChange = vi.fn()
@@ -372,10 +455,11 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(
       container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent
     ).toBe('2 of 2')
-    expect(container.textContent).toContain('1 selected')
+    // The tally reflects the question on screen, not the restored draft of the previous one.
+    expect(container.textContent).toContain('0 selected')
   })
 
-  it('reviews completed multi-question choices without exposing mutation controls', async () => {
+  it('expands each answered question accordion-style to reveal its original content', async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined)
     const durableRequest = {
       ...multiQuestionRequest,
@@ -405,62 +489,270 @@ describe('WorkspaceElicitationCard choice question', () => {
       )
     })
 
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="elicitation-answer-summary"]')
-        ?.click()
-    })
-    expect(
-      container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent
-    ).toBe('1 of 2')
-    expect(
-      container
-        .querySelector('[data-testid="elicitation-option-multi-omics"]')
-        ?.getAttribute('data-selected')
-    ).toBe('true')
-    const emptyCustomAnswer = container.querySelector(
-      '[data-testid="elicitation-custom-answer-review"]'
+    const rows = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="elicitation-answer-row"]')
     )
-    expect(emptyCustomAnswer).not.toBeNull()
-    expect(emptyCustomAnswer?.getAttribute('data-selected')).toBe('false')
-    expect(emptyCustomAnswer?.textContent).toBe('')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.getAttribute('aria-expanded')).toBe('false')
+    expect(rows[1]?.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('[data-testid="elicitation-choice-review"]')).toBeNull()
+
+    // Expanding the first question reveals only its own original content in place.
+    await act(async () => rows[0]?.click())
+    expect(rows[0]?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('[data-testid="elicitation-choice-review"]')).toHaveLength(1)
+    // The expanded content sits on a translucent white panel — a different material from the
+    // gray summary rows so the two read apart at a glance.
+    const reviewWrap = container.querySelector(
+      '[data-testid="elicitation-choice-review"]'
+    )?.parentElement
+    expect(reviewWrap?.className).toContain('bg-bg-000/60')
+    expect(reviewWrap?.className).toContain('rounded-')
+    expect(reviewWrap?.className).not.toContain('border-l-2')
+    // Expanded rows match the compact scale of the summary list rows above — no separators.
+    const expandedOption = container.querySelector('[data-testid="elicitation-option-multi-omics"]')
+    const expandedBadge = expandedOption?.querySelector('span')
+    expect(expandedBadge?.className).toContain('size-5')
+    expect(expandedOption?.classList.contains('border-b')).toBe(false)
+    expect(expandedOption?.getAttribute('data-selected')).toBe('true')
+    // The second question stays a collapsed list row — its options are not rendered.
+    expect(container.querySelector('[data-testid="elicitation-option-chinese"]')).toBeNull()
+    expect(container.textContent).toContain('What should this skill primarily cover?')
+    expect(container.textContent).not.toContain('Which language should the skill use?')
+    // The custom-input row only appears when the recorded answer was a custom input.
+    expect(container.querySelector('[data-testid="elicitation-custom-answer-review"]')).toBeNull()
     expect(container.querySelector('textarea')).toBeNull()
     expect(container.textContent).not.toContain('Skip')
     expect(container.textContent).not.toContain('Submit')
     expect(onRespond).not.toHaveBeenCalled()
 
-    const nextQuestion = container.querySelector<HTMLButtonElement>('[aria-label="Next question"]')
-    expect(nextQuestion?.querySelector('svg.lucide-chevron-right')).not.toBeNull()
-    expect(nextQuestion?.parentElement).toBe(
-      container.querySelector<HTMLButtonElement>('[aria-label="Previous question"]')?.parentElement
-    )
-    await act(async () => {
-      nextQuestion?.click()
-    })
-    expect(
-      container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent
-    ).toBe('2 of 2')
+    // Expanding the second question stacks below the first, accordion-style.
+    await act(async () => rows[1]?.click())
+    expect(rows[1]?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('[data-testid="elicitation-choice-review"]')).toHaveLength(2)
+    expect(container.textContent).toContain('Which language should the skill use?')
     expect(
       container
         .querySelector('[data-testid="elicitation-option-chinese"]')
         ?.getAttribute('data-selected')
     ).toBe('true')
 
-    const previousQuestion = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Previous question"]'
+    // Collapsing the first question leaves the second one open.
+    await act(async () => rows[0]?.click())
+    expect(rows[0]?.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelectorAll('[data-testid="elicitation-choice-review"]')).toHaveLength(1)
+    expect(container.querySelector('[data-testid="elicitation-option-multi-omics"]')).toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-option-chinese"]')).not.toBeNull()
+    expect(onRespond).not.toHaveBeenCalled()
+  })
+
+  it('styles skipped choice cards like the summary and expands each question for review', async () => {
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: multiQuestionFields,
+            state: 'declined'
+          }}
+          request={multiQuestionRequest}
+        />
+      )
+    })
+
+    const card = container.querySelector('[data-testid="elicitation-card"]')
+    expect(card?.className).toContain('bg-bg-200')
+    expect(card?.className).not.toContain('border-border-200')
+
+    const summary = container.querySelector('[data-testid="elicitation-answer-summary"]')
+    expect(summary?.querySelector('svg.lucide-circle-question-mark')).not.toBeNull()
+    expect(summary?.textContent).toContain('What should this skill primarily cover?')
+    expect(summary?.textContent).toContain('2 questions')
+    // The status sits on the title line itself, right after the icon, ahead of the title.
+    const headerText = summary?.querySelector('h3')?.textContent ?? ''
+    expect(headerText).toContain('Skipped')
+    expect(headerText.indexOf('Skipped')).toBeLessThan(
+      headerText.indexOf('What should this skill primarily cover?')
     )
-    expect(previousQuestion?.querySelector('svg.lucide-chevron-left')).not.toBeNull()
-    await act(async () => previousQuestion?.click())
+    expect(summary?.querySelector('p')).toBeNull()
+
+    const rows = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="elicitation-answer-row"]')
+    )
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.getAttribute('aria-expanded')).toBe('false')
+    expect(rows[0]?.textContent).toContain('Skill scope')
+    expect(container.querySelector('[data-testid="elicitation-choice-review"]')).toBeNull()
+
+    // Clicking a row reveals that question's original content with nothing selected.
+    await act(async () => rows[0]?.click())
+    expect(rows[0]?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelector('[data-testid="elicitation-choice-review"]')).not.toBeNull()
     expect(
-      container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent
-    ).toBe('1 of 2')
+      container
+        .querySelector('[data-testid="elicitation-option-multi-omics"]')
+        ?.getAttribute('data-selected')
+    ).toBe('false')
+    expect(container.querySelector('[data-testid="elicitation-custom-answer-review"]')).toBeNull()
+
+    await act(async () => rows[0]?.click())
+    expect(container.querySelector('[data-testid="elicitation-choice-review"]')).toBeNull()
+  })
+
+  it('places a warning-colored Skip all button last in the footer row for multi-question cards', async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="Close answer review"]')?.click()
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: multiQuestionFields,
+            state: 'pending'
+          }}
+          request={multiQuestionRequest}
+          onRespond={onRespond}
+        />
+      )
     })
-    expect(container.querySelector('[data-testid="elicitation-choice-review"]')).toBeNull()
-    expect(container.querySelector('[data-testid="elicitation-answer-summary"]')).not.toBeNull()
-    expect(onRespond).not.toHaveBeenCalled()
+
+    const skip = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Skip all'
+    )
+    expect(skip).toBeDefined()
+    expect(skip?.className).toContain('status-warning')
+    // Footer buttons match the compact card scale.
+    expect(skip?.className).not.toContain('h-11')
+    // Advance to the second question so Back renders, then check it shares the same pill
+    // geometry as the solid buttons (no borderless ghost).
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-multi-omics"]')
+        ?.click()
+    })
+    const next = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Next'
+    )
+    await act(async () => next?.click())
+    const back = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Back'
+    )
+    expect(back?.getAttribute('data-variant')).toBe('secondary')
+    expect(back?.className).toContain('px-3')
+    // Same row as the footer tally, last button in the action group.
+    const skipAfter = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Skip all'
+    )
+    expect(skipAfter?.parentElement?.lastElementChild).toBe(skipAfter)
+    expect(skipAfter?.parentElement?.parentElement?.textContent).toContain('selected')
+    // The full-width separator is gone; the input carries its own underline instead.
+    const customRow = container.querySelector('textarea')?.closest('div')
+    expect(customRow?.textContent).not.toContain('Skip')
+    expect(customRow?.classList.contains('border-t')).toBe(false)
+    expect(customRow?.classList.contains('border-b')).toBe(false)
+    expect(container.querySelector('textarea')?.className).toContain('border-b')
+
+    await act(async () => skip?.click())
+    expect(onRespond).toHaveBeenCalledWith({
+      requestId: multiQuestionRequest.requestId,
+      action: 'decline'
+    })
+  })
+
+  it('renders the answered summary as a compact checklist with a question-type icon', async () => {
+    const mixedRequest = { ...multiQuestionRequest, fields: mixedChoiceFields }
+
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: mixedRequest.message,
+            fields: mixedChoiceFields,
+            state: 'answered',
+            answers: [
+              { fieldId: 'question_0', value: ['multi-omics', 'clinical'] },
+              { fieldId: 'question_1', value: 'chinese' }
+            ]
+          }}
+          request={mixedRequest}
+        />
+      )
+    })
+
+    const card = container.querySelector('[data-testid="elicitation-card"]')
+    expect(card?.className).toContain('bg-bg-200')
+    expect(card?.className).not.toContain('border-border-200')
+
+    // Header: question-type icon (bare — no tile background or shadow); the title is the
+    // first question's text plus a question count.
+    const summary = container.querySelector('[data-testid="elicitation-answer-summary"]')
+    expect(summary?.querySelector('svg.lucide-circle-question-mark')).not.toBeNull()
+    const iconWrap = summary?.querySelector('span')
+    expect(iconWrap?.className).not.toContain('bg-bg-000')
+    expect(iconWrap?.className).not.toContain('shadow-sm')
+    expect(summary?.textContent).toContain('What should this skill primarily cover?')
+    expect(summary?.textContent).toContain('2 questions')
+    expect(summary?.textContent).not.toContain('Please answer the following questions.')
+    // No separator lines between summary rows.
+    expect(summary?.children[1]?.className).not.toContain('divide-y')
+
+    const rows = Array.from(container.querySelectorAll('[data-testid="elicitation-answer-row"]'))
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.querySelector('svg.lucide-chevron-down')).not.toBeNull()
+    expect(rows[0]?.querySelector('svg.lucide-check')).not.toBeNull()
+    expect(rows[0]?.textContent).toContain('Skill scope')
+    expect(rows[0]?.textContent).toContain('Multi-omics integration, Clinical statistics')
+    expect(rows[1]?.textContent).toContain('Chinese')
+  })
+
+  it('keeps answered free-text answers as plain text on the summary', async () => {
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: activity.elicitation?.message ?? '',
+            fields,
+            state: 'answered',
+            answers: [{ fieldId: 'question_0_custom', value: 'A literature review skill' }]
+          }}
+          request={request}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="elicitation-answer-row"]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="elicitation-answer-summary"]')?.textContent
+    ).toContain('A literature review skill')
+  })
+
+  it('labels custom and agent-decide answer rows with the question label instead of Other', async () => {
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: multiQuestionFields,
+            state: 'answered',
+            answers: [
+              { fieldId: 'question_0_custom', value: 'Use our private sources' },
+              { fieldId: 'question_1_custom', value: 'Let the agent decide' }
+            ]
+          }}
+          request={multiQuestionRequest}
+        />
+      )
+    })
+
+    const rows = Array.from(container.querySelectorAll('[data-testid="elicitation-answer-row"]'))
+    expect(rows).toHaveLength(2)
+    // Custom answers live on the `question_N_custom` field whose label is "Other" — the row
+    // must surface the owning question's label instead.
+    expect(rows[0]?.textContent).toContain('Skill scope')
+    expect(rows[0]?.textContent).not.toContain('Other')
+    expect(rows[0]?.textContent).toContain('Use our private sources')
+    expect(rows[1]?.textContent).toContain('Language')
+    expect(rows[1]?.textContent).not.toContain('Other')
   })
 
   it('marks a preset choice as selected before enabling Finish', async () => {
@@ -479,7 +771,7 @@ describe('WorkspaceElicitationCard choice question', () => {
     const firstChoice = container.querySelector<HTMLButtonElement>(
       '[data-testid="elicitation-option-multi-omics"]'
     )
-    expect(firstChoice?.className).toContain('hover:shadow-card')
+    expect(firstChoice?.className).toContain('hover:bg-bg-200')
     expect(firstChoice?.className).toContain('cursor-pointer')
     expect(firstChoice?.getAttribute('aria-pressed')).toBe('false')
     expect(container.textContent).not.toContain('Finish')
@@ -540,10 +832,56 @@ describe('WorkspaceElicitationCard choice question', () => {
     )
     expect(firstChoice).not.toBeNull()
     expect(firstChoice?.className).toContain('focus-visible:ring-2')
+    // Compact option rows: size-6 badges, 13px text, tight padding.
+    expect(firstChoice?.className).toContain('py-1.5')
+    expect(firstChoice?.className).not.toContain('py-3')
+    expect(firstChoice?.querySelector('span')?.className).toContain('size-6')
+    expect(firstChoice?.textContent).toContain('Multi-omics integration')
+    const optionLabel = firstChoice?.querySelectorAll('span')[1]?.firstElementChild
+    expect(optionLabel?.className).toContain('text-[13px]')
     await act(async () => firstChoice?.click())
 
     expect(firstChoice?.getAttribute('data-selected')).toBe('true')
     expect(onRespond).not.toHaveBeenCalled()
+  })
+
+  it('renders choice options as rounded items instead of square-edged separators', async () => {
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard elicitation={activity.elicitation!} request={request} />
+      )
+    })
+
+    const options = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-elicitation-option-row="true"]')
+    )
+    expect(options.length).toBeGreaterThan(0)
+    for (const option of options) {
+      expect(option.className).toContain('rounded-xl')
+      expect(option.classList.contains('border')).toBe(false)
+      expect(option.classList.contains('border-b')).toBe(false)
+      // Unselected options sit directly on the card; only the badge marks them.
+      expect(option.className).toContain('bg-bg-000')
+      // Hover swaps the background instead of raising a shadow.
+      expect(option.className).toContain('hover:bg-bg-200')
+      expect(option.className).not.toContain('hover:shadow-card')
+    }
+    // The "Let the agent decide" row is an option too and must share the rounded look.
+    const agentDecides = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')
+    ).find((button) => !button.hasAttribute('data-elicitation-option-row'))
+    expect(agentDecides?.className).toContain('rounded-xl')
+    expect(agentDecides?.classList.contains('border')).toBe(false)
+    expect(agentDecides?.className).toContain('bg-bg-000')
+    expect(agentDecides?.className).toContain('hover:bg-bg-200')
+    expect(agentDecides?.className).not.toContain('hover:shadow-card')
+
+    await act(async () => options[0]?.click())
+    // Selected items carry only the brand tint — no outline; hover deepens the tint.
+    expect(options[0]?.className).toContain('bg-primary/10')
+    expect(options[0]?.className).toContain('hover:bg-primary/15')
+    expect(options[0]?.classList.contains('border')).toBe(false)
+    expect(options[0]?.className).not.toContain('bg-bg-000')
   })
 
   it('lets the bottom composer own the single card shadow', async () => {
@@ -584,8 +922,13 @@ describe('WorkspaceElicitationCard choice question', () => {
     })
     expect(customInput?.style.height).toBe('96px')
     expect(customInput?.className).toContain('focus-visible:ring-0')
+    // Tighter gap between the input text and its underline.
+    expect(customInput?.className).toContain('pb-0.5')
+    expect(customInput?.className).not.toContain('py-1.5')
+    // The 36px min-height padded the gap below a single line — keep the box snug.
+    expect(customInput?.className).toContain('min-h-7')
     expect(customInput?.closest('div')?.className).toContain('items-start')
-    expect(customInput?.closest('div')?.className).toContain('gap-3')
+    expect(customInput?.closest('div')?.className).toContain('gap-2')
     expect(customInput?.closest('div')?.firstElementChild?.className).toContain('mt-0.5')
     expect(container.querySelector('svg.lucide-bot')).not.toBeNull()
     const finishCustomAnswer = Array.from(
@@ -604,9 +947,13 @@ describe('WorkspaceElicitationCard choice question', () => {
     const agentDecides = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Let the agent decide'
     )
-    expect(agentDecides?.className).toContain('hover:shadow-card')
+    expect(agentDecides?.className).toContain('hover:bg-bg-200')
     expect(agentDecides?.className).toContain('cursor-pointer')
-    expect(agentDecides?.firstElementChild?.className).toContain('mt-0.5')
+    // Single-line row: icon and label center-aligned, not top-aligned.
+    expect(agentDecides?.className).toContain('items-center')
+    expect(agentDecides?.firstElementChild?.className).not.toContain('mt-px')
+    // The label column stretches like the option rows' flex-1 content column.
+    expect(agentDecides?.lastElementChild?.className).toContain('flex-1')
     await act(async () => agentDecides?.click())
     expect(agentDecides?.getAttribute('aria-pressed')).toBe('true')
     expect(onRespond).not.toHaveBeenCalled()
@@ -684,20 +1031,18 @@ describe('WorkspaceElicitationCard choice question', () => {
     })
 
     expect(container.querySelector('[data-testid="elicitation-choice-mode"]')).toBeNull()
-    const reviewAffordance = container.querySelector(
-      '[data-testid="elicitation-answer-review-affordance"]'
-    )
-    expect(reviewAffordance?.className).toContain('opacity-0')
-    expect(reviewAffordance?.className).toContain('group-hover:opacity-100')
-    expect(reviewAffordance?.querySelector('svg.lucide-eye')).not.toBeNull()
-    expect(container.querySelector('svg.lucide-chevron-down')).toBeNull()
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="elicitation-answer-summary"]')
-        ?.click()
-    })
+    const summary = container.querySelector('[data-testid="elicitation-answer-summary"]')
+    // Single-question cards use the question itself as the summary title.
+    expect(summary?.textContent).toContain('Skill type')
+    expect(summary?.querySelector('svg.lucide-circle-question-mark')).not.toBeNull()
+    const row = container.querySelector<HTMLButtonElement>('[data-testid="elicitation-answer-row"]')
+    expect(row?.getAttribute('aria-expanded')).toBe('false')
+    expect(row?.querySelector('svg.lucide-chevron-down')).not.toBeNull()
+    await act(async () => row?.click())
 
     expect(container.querySelector('[data-testid="elicitation-choice-review"]')).not.toBeNull()
+    expect(row?.getAttribute('aria-expanded')).toBe('true')
+    expect(row?.querySelector('svg.lucide-chevron-up')).not.toBeNull()
     expect(
       container
         .querySelector('[data-testid="elicitation-option-multi-omics"]')
@@ -705,9 +1050,8 @@ describe('WorkspaceElicitationCard choice question', () => {
     ).toBe('true')
     expect(container.querySelector('svg.lucide-check')).not.toBeNull()
     expect(container.querySelector('svg.lucide-bot')).not.toBeNull()
-    expect(
-      container.querySelector('[data-testid="elicitation-custom-answer-review"]')
-    ).not.toBeNull()
+    // The recorded answer is a preset option, so the custom-input row stays hidden.
+    expect(container.querySelector('[data-testid="elicitation-custom-answer-review"]')).toBeNull()
     expect(container.querySelector('textarea')).toBeNull()
     expect(container.textContent).not.toContain('Skip')
     expect(container.textContent).not.toContain('Submit')
@@ -740,9 +1084,7 @@ describe('WorkspaceElicitationCard choice question', () => {
     })
 
     await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="elicitation-answer-summary"]')
-        ?.click()
+      container.querySelector<HTMLButtonElement>('[data-testid="elicitation-answer-row"]')?.click()
     })
 
     const customAnswer = container.querySelector('[data-testid="elicitation-custom-answer-review"]')

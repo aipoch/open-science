@@ -327,14 +327,25 @@ describe('ProjectFilesView', () => {
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       previewResources: {
-        acquire: vi.fn(({ path }: { path: string }) =>
-          Promise.resolve({
-            id: `resource:${path}`,
-            url: `open-science-preview://resource/${encodeURIComponent(path)}`,
-            size: 40 * 1024 * 1024,
-            mimeType: 'image/png',
-            version: 1
-          })
+        acquire: vi.fn(
+          ({
+            source,
+            projectId,
+            fileId
+          }: {
+            source: string
+            projectId: string
+            fileId: string
+          }) => {
+            const resourceId = `resource:${source}:${projectId}:${fileId}`
+            return Promise.resolve({
+              id: resourceId,
+              url: `open-science-preview://resource/${encodeURIComponent(resourceId)}`,
+              size: 40 * 1024 * 1024,
+              mimeType: 'image/png',
+              version: 1
+            })
+          }
         ),
         readRange: vi.fn(),
         release: vi.fn().mockResolvedValue(undefined)
@@ -1184,7 +1195,6 @@ describe('ProjectFilesView', () => {
 
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'upload',
-      path: upload.path,
       projectId: 'default',
       fileId: 'upload-1',
       suggestedName: 'user upload.png'
@@ -1220,7 +1230,6 @@ describe('ProjectFilesView', () => {
 
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/report.pdf',
       projectId: 'default',
       fileId: 'artifact-download',
       suggestedName: 'report.pdf'
@@ -2861,17 +2870,13 @@ describe('ProjectFilesView', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/typhoon_tracks.png',
       projectId: 'default',
-      sessionId: 'session-1',
       fileId: 'artifact-1',
       mimeType: 'image/png'
     })
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
-      path: '/uploads/uploaded_image.png',
       projectId: 'default',
-      sessionId: 'session-1',
       fileId: 'upload-1',
       mimeType: 'image/png'
     })
@@ -2931,7 +2936,7 @@ describe('ProjectFilesView', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
     expect(window.api.previewResources.release).toHaveBeenCalledWith({
-      resourceId: 'resource:/workspace/changing.png'
+      resourceId: 'resource:artifact:default:artifact-1'
     })
   })
 
@@ -2959,9 +2964,7 @@ describe('ProjectFilesView', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/generated-image',
       projectId: 'default',
-      sessionId: 'session-1',
       fileId: 'artifact-1',
       mimeType: 'image/png'
     })
@@ -2996,7 +2999,7 @@ describe('ProjectFilesView', () => {
 
     expect(container.querySelector('img[alt="Preview of broken.png"]')).toBeNull()
     expect(window.api.previewResources.release).toHaveBeenCalledWith({
-      resourceId: 'resource:/workspace/broken.png'
+      resourceId: 'resource:artifact:default:artifact-1'
     })
   })
 
@@ -3301,7 +3304,7 @@ describe('ProjectFilesView', () => {
     await vi.waitFor(() =>
       expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
         expect.objectContaining({
-          path: 'upload-version:default/session-1/upload-version-1',
+          path: 'upload-version:default/session-1/upload-1/upload-version-1',
           encoding: 'utf8'
         })
       )
@@ -3314,7 +3317,8 @@ describe('ProjectFilesView', () => {
     const versionId = 'upload-version-cross-session'
     const path = createUploadVersionReference(versionId, {
       projectId: 'default',
-      sessionId: sourceSessionId
+      sessionId: sourceSessionId,
+      fileId: 'upload-cross-session'
     })
     await renderView([
       createSession({
@@ -3424,7 +3428,7 @@ describe('ProjectFilesView', () => {
     await vi.waitFor(() =>
       expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
         expect.objectContaining({
-          path: 'upload-version:default/session-1/upload-version-1',
+          path: 'upload-version:default/session-1/upload-1/upload-version-1',
           encoding: 'utf8'
         })
       )
@@ -3760,7 +3764,11 @@ describe('ProjectFilesView', () => {
 
     await vi.waitFor(() =>
       expect(window.api.previewResources.acquire).toHaveBeenCalledWith(
-        expect.objectContaining({ path: '/workspace/chart.tiff' })
+        expect.objectContaining({
+          source: 'artifact',
+          projectId: 'default',
+          fileId: 'artifact-tiff'
+        })
       )
     )
   })
@@ -4410,6 +4418,74 @@ describe('ProjectFilesView — granted local folders', () => {
     await clickElement(document.body.querySelector('[data-testid="granted-root-remove-root-1"]'))
     expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
     expect(useGrantedFoldersStore.getState().roots).toEqual([])
+  })
+
+  it('shows the failed access change and retries it from the toast', async () => {
+    setGrantedRootAccess.mockRejectedValueOnce({ message: 'database unavailable' })
+    await renderFilesView()
+    await openFilterMenu()
+    await hoverElement(document.body.querySelector('[data-testid="granted-root-root-1"]'))
+
+    await waitFor(() => {
+      expect(
+        document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
+      ).not.toBeNull()
+    })
+    await clickElement(
+      document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
+    )
+    expect(setGrantedRootAccess).toHaveBeenCalledWith({ id: 'root-1', access: 'rw' })
+
+    await waitFor(() => {
+      expect(document.body.querySelector('[data-testid="granted-root-error-toast"]')).not.toBeNull()
+    })
+    const toast = document.body.querySelector('[data-testid="granted-root-error-toast"]')
+    expect(toast?.textContent).toContain('Could not change folder access.')
+    expect(toast?.textContent).toContain('database unavailable')
+    expect(useGrantedFoldersStore.getState().roots[0]?.access).toBe('ro')
+
+    await clickElement(
+      Array.from(toast?.querySelectorAll('button') ?? []).find(
+        (button) => button.textContent === 'Retry'
+      )
+    )
+
+    expect(setGrantedRootAccess).toHaveBeenCalledTimes(2)
+    expect(useGrantedFoldersStore.getState().roots[0]?.access).toBe('rw')
+    expect(document.body.querySelector('[data-testid="granted-root-error-toast"]')).toBeNull()
+  })
+
+  it('shows the failed access removal and retries it from the toast', async () => {
+    removeGrantedRoot.mockRejectedValueOnce(new Error('database unavailable'))
+    await renderFilesView()
+    await openFilterMenu()
+    await hoverElement(document.body.querySelector('[data-testid="granted-root-root-1"]'))
+
+    await waitFor(() => {
+      expect(
+        document.body.querySelector('[data-testid="granted-root-remove-root-1"]')
+      ).not.toBeNull()
+    })
+    await clickElement(document.body.querySelector('[data-testid="granted-root-remove-root-1"]'))
+    expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
+
+    await waitFor(() => {
+      expect(document.body.querySelector('[data-testid="granted-root-error-toast"]')).not.toBeNull()
+    })
+    const toast = document.body.querySelector('[data-testid="granted-root-error-toast"]')
+    expect(toast?.textContent).toContain('Could not remove folder access.')
+    expect(toast?.textContent).toContain('database unavailable')
+    expect(useGrantedFoldersStore.getState().roots).toEqual([grantedRoot])
+
+    await clickElement(
+      Array.from(toast?.querySelectorAll('button') ?? []).find(
+        (button) => button.textContent === 'Retry'
+      )
+    )
+
+    expect(removeGrantedRoot).toHaveBeenCalledTimes(2)
+    expect(useGrantedFoldersStore.getState().roots).toEqual([])
+    expect(document.body.querySelector('[data-testid="granted-root-error-toast"]')).toBeNull()
   })
 
   it('opens the manage submenu when the row itself is hovered', async () => {

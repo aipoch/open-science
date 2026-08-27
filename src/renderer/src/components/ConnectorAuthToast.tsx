@@ -29,7 +29,7 @@ const ConnectorAuthToast = (): React.JSX.Element | null => {
         'Authorization expired or was revoked. Sign in again to keep this Connector available.'
       )}
       actionLabel={t('Open Connectors')}
-      dismissLabel={t('Dismiss')}
+      dismissLabel={t('Close')}
       onAction={() => {
         dismissConnectorAuthNotice()
         openSettingsToPanel('connectors')

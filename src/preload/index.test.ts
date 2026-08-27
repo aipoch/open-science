@@ -145,6 +145,10 @@ type PreloadApi = {
     attachFrame: (sessionId: string) => Promise<unknown>
     reportState: (sessionId: string, state: unknown) => void
   }
+  sourcePreview: {
+    release: (sourceUrl: string) => void
+    onLoadState: (listener: (state: unknown) => void) => () => void
+  }
   uploads: {
     stageLocalFile: (file: File, request: unknown) => Promise<unknown>
     claimLocalFile: (request: unknown) => Promise<void>
@@ -560,6 +564,8 @@ describe('preload bridge — public surface inventory', () => {
       'sideChat.onRelayDelivered',
       'sideChat.send',
       'sideChat.start',
+      'sourcePreview.onLoadState',
+      'sourcePreview.release',
       'specialist.addMarketplaceSource',
       'specialist.cancelHandoff',
       'specialist.cancelMarketplaceCandidate',
@@ -746,6 +752,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'network',
       'notifications',
       'office-preview',
+      'source-preview',
       'platform-file-save',
       'preview',
       'preview-resources',
@@ -1485,6 +1492,35 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
       sessionId: 'office-session-1',
       phase: 'ready'
     })
+  })
+
+  it('exposes source loading as a read-only renderer event', () => {
+    const listener = vi.fn()
+    const state = {
+      navigationId: 1,
+      sourceUrl: 'https://example.com/paper',
+      currentUrl: 'https://example.com/paper',
+      phase: 'loaded'
+    }
+
+    api.sourcePreview.onLoadState(listener)
+
+    expect(onMock).toHaveBeenCalledWith('source-preview:load-state', expect.any(Function))
+    const wrappedListener = onMock.mock.calls.at(-1)?.[1] as
+      ((_event: unknown, payload: unknown) => void) | undefined
+    wrappedListener?.({}, state)
+    expect(listener).toHaveBeenCalledWith(state)
+  })
+
+  it('releases source-preview tracking through a one-way renderer message', () => {
+    const sourcePreview = api.sourcePreview as typeof api.sourcePreview & {
+      release?: (sourceUrl: string) => void
+    }
+
+    expect(sourcePreview.release).toBeTypeOf('function')
+    sourcePreview.release?.('https://example.com/paper')
+
+    expect(sendMock).toHaveBeenCalledWith('source-preview:release', 'https://example.com/paper')
   })
 
   it('resolves native upload paths in preload and sends only metadata to main', async () => {

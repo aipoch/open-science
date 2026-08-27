@@ -5,9 +5,11 @@ import { ToggleGroup } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ActionToast } from '@/components/ActionToast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { errorDetail } from '@/lib/error-detail'
 import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
@@ -44,6 +46,13 @@ import {
 import { FILE_PAGE_SIZE, type PageState } from './use-project-files-index'
 
 type FilePageLoadMode = 'manual' | 'scroll'
+type GrantedRootMutationKind = 'change' | 'remove'
+
+type GrantedRootMutationError = {
+  kind: GrantedRootMutationKind
+  detail?: string
+  retry: () => Promise<unknown>
+}
 
 // Keeps manual pagination recognizable without the outline competing with the surrounding file tiles.
 const loadMoreButtonClassName = 'bg-bg-200 text-text-100 hover:bg-bg-300 hover:text-text-000'
@@ -336,6 +345,22 @@ const ProjectFilesViewContent = ({
   // Granted folder the local browser is scoped to; undefined means the machine itself.
   const [selectedLocalRootId, setSelectedLocalRootId] = useState<string | undefined>(undefined)
   const [grantDialogOpen, setGrantDialogOpen] = useState(false)
+  const [grantedRootMutationError, setGrantedRootMutationError] =
+    useState<GrantedRootMutationError>()
+
+  const runGrantedRootMutation = (
+    kind: GrantedRootMutationKind,
+    mutation: () => Promise<unknown>
+  ): void => {
+    setGrantedRootMutationError(undefined)
+    void mutation().catch((error: unknown) => {
+      setGrantedRootMutationError({
+        kind,
+        detail: errorDetail(error),
+        retry: mutation
+      })
+    })
+  }
 
   // Load the granted folders once so the filter menu can list them; localFs is absent outside
   // Electron, where the section just shows the machine entry and "Add folder…" stays inert. A
@@ -487,6 +512,11 @@ const ProjectFilesViewContent = ({
     ? grantedRoots.find((root) => root.id === selectedLocalRootId)
     : undefined
   const filesExpansionLabel = isFilesExpanded ? t('Exit full screen files') : t('Expand files')
+  const grantedRootMutationErrorTitle = grantedRootMutationError
+    ? grantedRootMutationError.kind === 'change'
+      ? t('Could not change folder access.')
+      : t('Could not remove folder access.')
+    : undefined
 
   return (
     <div data-testid="files-view" className="flex h-full min-h-0 w-full flex-col bg-bg-10">
@@ -522,6 +552,7 @@ const ProjectFilesViewContent = ({
           onBrowseLocal={handleBrowseLocal}
           onAddFolder={() => setGrantDialogOpen(true)}
           onSelectGrantedRoot={handleSelectGrantedRoot}
+          onGrantedRootMutation={runGrantedRootMutation}
           localMachineName={localMachineName}
           isLocalSelected={isLocalMode}
           selectedLocalRootId={selectedLocalRoot?.id}
@@ -813,6 +844,19 @@ const ProjectFilesViewContent = ({
         onOpenChange={setGrantDialogOpen}
         onGranted={handleSelectGrantedRoot}
       />
+      {grantedRootMutationError ? (
+        <ActionToast
+          title={grantedRootMutationErrorTitle!}
+          detail={grantedRootMutationError.detail}
+          actionLabel={t('Retry')}
+          dismissLabel={t('Close')}
+          onAction={() =>
+            runGrantedRootMutation(grantedRootMutationError.kind, grantedRootMutationError.retry)
+          }
+          onDismiss={() => setGrantedRootMutationError(undefined)}
+          testId="granted-root-error-toast"
+        />
+      ) : null}
     </div>
   )
 }

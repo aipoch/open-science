@@ -18,12 +18,14 @@ const GrantedRootMenuRow = ({
   root,
   isSelected,
   onSelect,
-  onCloseMenu
+  onCloseMenu,
+  onMutation
 }: {
   root: GrantedLocalRoot
   isSelected: boolean
   onSelect: (root: GrantedLocalRoot) => void
   onCloseMenu: () => void
+  onMutation: (kind: 'change' | 'remove', mutation: () => Promise<unknown>) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const setAccess = useGrantedFoldersStore((state) => state.setAccess)
@@ -83,7 +85,7 @@ const GrantedRootMenuRow = ({
           <DropdownMenuItem
             className="gap-2"
             data-testid={`granted-root-allow-writes-${root.id}`}
-            onSelect={() => void setAccess(root.id, 'rw').catch(() => undefined)}
+            onSelect={() => onMutation('change', () => setAccess(root.id, 'rw'))}
           >
             <LockOpen
               className="size-4 shrink-0 text-text-300"
@@ -96,7 +98,7 @@ const GrantedRootMenuRow = ({
           <DropdownMenuItem
             className="gap-2"
             data-testid={`granted-root-make-read-only-${root.id}`}
-            onSelect={() => void setAccess(root.id, 'ro').catch(() => undefined)}
+            onSelect={() => onMutation('change', () => setAccess(root.id, 'ro'))}
           >
             <Lock className="size-4 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
             <span>{t('Make read-only')}</span>
@@ -105,7 +107,7 @@ const GrantedRootMenuRow = ({
         <DropdownMenuItem
           className="gap-2 text-danger-000 data-[highlighted]:text-danger-000"
           data-testid={`granted-root-remove-${root.id}`}
-          onSelect={() => void remove(root.id).catch(() => undefined)}
+          onSelect={() => onMutation('remove', () => remove(root.id))}
         >
           <Trash2 className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
           <span>{t('Remove access')}</span>

@@ -63,6 +63,7 @@ type WorkspaceMessageQueueControllerOptions = {
   isPresentationRevealing: (sessionId: string) => boolean
   isSpecialistReady: (sessionId: string) => boolean
   hasPendingPermissionRequest: (sessionId: string) => boolean
+  isProjectActive?: (projectId: string) => boolean
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
   subscribeSessionChanges: (listener: () => void) => () => void
@@ -83,6 +84,7 @@ type WorkspaceMessageQueueRuntimeOptions = Pick<
   | 'isSpecialistReady'
   | 'isSideChatOpen'
   | 'hasPendingPermissionRequest'
+  | 'isProjectActive'
   | 'abortFixLoop'
   | 'getSession'
   | 'subscribeSessionChanges'

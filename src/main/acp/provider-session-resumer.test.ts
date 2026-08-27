@@ -71,6 +71,7 @@ type HarnessOptions = {
   invalidateDuringResume?: boolean
   observerError?: Error
   projectAgentContext?: string
+  projectAgentContextError?: Error
   providerSessionId?: string
   resumeError?: unknown
   specialistIdentity?:
@@ -298,9 +299,13 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     ...(options.specialistSkills
       ? { resolveSpecialistSkills: vi.fn(async () => options.specialistSkills!) }
       : {}),
-    resolveProjectAgentContext: options.projectAgentContext
-      ? vi.fn(async () => options.projectAgentContext)
-      : undefined,
+    resolveProjectAgentContext: options.projectAgentContextError
+      ? vi.fn(async () => {
+          throw options.projectAgentContextError
+        })
+      : options.projectAgentContext
+        ? vi.fn(async () => options.projectAgentContext)
+        : undefined,
     updateCwd: () => order.push('cwd callback'),
     pushEvent: () => {
       order.push('event callback')
@@ -877,6 +882,17 @@ describe('AcpProviderSessionResumer', () => {
     expect(
       harness.registry.lookup('stable-app-session')?.aggregate.snapshot().sessionSetupPromptPrefix
     ).toContain('Always cite DOIs.')
+  })
+
+  it('does not resume a provider Session when Project Agent Context resolution fails', async () => {
+    const failure = new Error('database is locked')
+    const harness = createHarness({ projectAgentContextError: failure })
+
+    await expect(harness.resume()).rejects.toBe(failure)
+
+    expect(harness.request).not.toHaveBeenCalled()
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(harness.registry.lookup('stable-app-session')).toBeUndefined()
   })
 
   it.each([

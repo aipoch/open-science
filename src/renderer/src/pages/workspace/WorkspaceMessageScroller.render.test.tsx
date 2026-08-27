@@ -985,7 +985,7 @@ describe('WorkspaceMessageScroller loading render', () => {
 
     expect(html).toContain('Completed ')
     expect(html).toContain('Elapsed 2m 5s')
-    expect(html).toContain('>Usage</button>')
+    expect(html).toContain('>Calls</button>')
     expect(html).not.toContain('Input</dt>')
   })
 
@@ -1055,7 +1055,7 @@ describe('WorkspaceMessageScroller loading render', () => {
       })
     )
 
-    expect(html).not.toContain('>Usage</button>')
+    expect(html).not.toContain('>Calls</button>')
   })
 
   it('renders completion metadata once after the final assistant message fragment in a tool turn', async () => {

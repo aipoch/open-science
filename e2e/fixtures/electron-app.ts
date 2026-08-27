@@ -98,6 +98,7 @@ const closeElectronApplicationForCleanup = async (
 
 type ElectronApp = {
   readonly page: Page
+  allowRendererConsoleError: (text: string) => void
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
   beginResourceProfile: (options?: RuntimeResourceProfilerOptions) => Promise<void>
   capturePersistedLocaleNativeQuitDialog: () => Promise<{
@@ -317,9 +318,31 @@ class ElectronAppHarness implements ElectronApp {
     return this.currentPage
   }
 
+  allowRendererConsoleError(text: string): void {
+    this.rendererFailures.allowConsoleError(text)
+  }
+
   async beginResourceProfile(options: RuntimeResourceProfilerOptions = {}): Promise<void> {
     if (this.resourceProfiler) throw new Error('Runtime resource profiling is already active.')
-    const profiler = new RuntimeResourceProfiler(options)
+    const profileDataRoot = join(this.testRoot, 'profile-data')
+    await mkdir(profileDataRoot, { recursive: true })
+    await this.close()
+    const settingsPath = join(this.roots.storageRoot, 'settings.json')
+    const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as Record<string, unknown>
+    settings.dataRoot = profileDataRoot
+    await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+    await this.launch()
+    const dataRoot = await this.page.evaluate(
+      async () => (await window.api.storage.getInfo()).dataRoot
+    )
+    if (dataRoot !== profileDataRoot) {
+      throw new Error('Runtime resource profile did not activate its isolated data root.')
+    }
+    const profiler = new RuntimeResourceProfiler({
+      ...options,
+      dataRoot,
+      storageRoot: this.roots.storageRoot
+    })
     this.resourceProfiler = profiler
     await profiler.attach(this.runningApplication)
   }

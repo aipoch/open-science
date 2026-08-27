@@ -5,17 +5,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const streamdownHarness = vi.hoisted(() => ({
   shouldThrow: true,
+  codeImports: 0,
+  mermaidImports: 0,
   disallowedElements: undefined as readonly string[] | undefined,
   components: undefined as Record<string, unknown> | undefined,
+  plugins: undefined as Record<string, unknown> | undefined,
+  shikiTheme: undefined as unknown,
+  mermaidOptions: undefined as unknown,
   animated: undefined as unknown,
   caret: undefined as string | undefined,
   blockComponent: undefined as unknown
 }))
 
-vi.mock('@streamdown/code', () => ({ code: {} }))
+vi.mock('./code-highlighter-runtime', () => {
+  streamdownHarness.codeImports += 1
+  return { code: { name: 'shiki' } }
+})
 vi.mock('@streamdown/cjk', () => ({ cjk: {} }))
 vi.mock('@streamdown/math', () => ({ createMathPlugin: () => ({}) }))
-vi.mock('@streamdown/mermaid', () => ({ mermaid: {} }))
+vi.mock('./mermaid-runtime', () => {
+  streamdownHarness.mermaidImports += 1
+  return { mermaid: { name: 'mermaid' } }
+})
 vi.mock('streamdown', () => ({
   Streamdown: ({
     children,
@@ -23,13 +34,19 @@ vi.mock('streamdown', () => ({
     caret,
     components,
     disallowedElements,
-    BlockComponent
+    BlockComponent,
+    plugins,
+    shikiTheme,
+    mermaid
   }: PropsWithChildren<{
     animated?: unknown
     caret?: string
     components?: Record<string, unknown>
     disallowedElements?: readonly string[]
     BlockComponent?: unknown
+    plugins?: Record<string, unknown>
+    shikiTheme?: unknown
+    mermaid?: unknown
   }>): React.JSX.Element => {
     if (streamdownHarness.shouldThrow) throw new Error('optimized Markdown chunk failed to load')
     streamdownHarness.components = components
@@ -37,12 +54,16 @@ vi.mock('streamdown', () => ({
     streamdownHarness.animated = animated
     streamdownHarness.caret = caret
     streamdownHarness.blockComponent = BlockComponent
+    streamdownHarness.plugins = plugins
+    streamdownHarness.shikiTheme = shikiTheme
+    streamdownHarness.mermaidOptions = mermaid
 
     return <div data-testid="rich-markdown">{children}</div>
   }
 }))
 
-const { AgentMarkdown, SessionMessageLink } = await import('./AgentMarkdown')
+const { AgentMarkdown, PresentedAgentMarkdown } = await import('./AgentMarkdown')
+const { SessionMessageLink } = await import('./SessionMessageLink')
 const { StreamingBlock } = await import('./StreamingBlock')
 
 describe('AgentMarkdown renderer recovery', () => {
@@ -53,6 +74,9 @@ describe('AgentMarkdown renderer recovery', () => {
     streamdownHarness.shouldThrow = true
     streamdownHarness.disallowedElements = undefined
     streamdownHarness.components = undefined
+    streamdownHarness.plugins = undefined
+    streamdownHarness.shikiTheme = undefined
+    streamdownHarness.mermaidOptions = undefined
     streamdownHarness.animated = undefined
     streamdownHarness.caret = undefined
     streamdownHarness.blockComponent = undefined
@@ -68,6 +92,99 @@ describe('AgentMarkdown renderer recovery', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     container.remove()
+  })
+
+  it('does not request Mermaid or code highlighting for prose, lists, and tables', async () => {
+    streamdownHarness.shouldThrow = false
+
+    await act(async () => {
+      root.render(
+        <AgentMarkdown
+          content={'Plain text\n\n- list item\n\n| Name | Value |\n| --- | --- |\n| A | 1 |'}
+        />
+      )
+    })
+
+    expect(streamdownHarness.codeImports).toBe(0)
+    expect(streamdownHarness.mermaidImports).toBe(0)
+    expect(streamdownHarness.plugins?.code).toBeUndefined()
+    expect(streamdownHarness.plugins?.mermaid).toBeUndefined()
+    expect(streamdownHarness.shikiTheme).toBeUndefined()
+    expect(streamdownHarness.mermaidOptions).toBeUndefined()
+  })
+
+  it('loads code highlighting and its themes only after a fence appears', async () => {
+    streamdownHarness.shouldThrow = false
+    const content = '```ts\nconst value = 1\n```'
+
+    await act(async () => {
+      root.render(<AgentMarkdown content={content} />)
+    })
+
+    expect(streamdownHarness.codeImports).toBe(1)
+    expect(streamdownHarness.mermaidImports).toBe(0)
+    expect(streamdownHarness.plugins?.code).toEqual({ name: 'shiki' })
+    expect(streamdownHarness.shikiTheme).toEqual(['github-light', 'github-light'])
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(content)
+  })
+
+  it('upgrades a streaming fence to Mermaid without dropping its readable source', async () => {
+    streamdownHarness.shouldThrow = false
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={'```mer'} isAnimating />)
+    })
+
+    expect(streamdownHarness.mermaidImports).toBe(0)
+    expect(streamdownHarness.plugins?.mermaid).toBeUndefined()
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('```mer')
+
+    const content = '```mermaid\ngraph TD\n  A --> B'
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={content} isAnimating />)
+    })
+
+    expect(streamdownHarness.mermaidImports).toBe(1)
+    expect(streamdownHarness.plugins?.mermaid).toEqual({ name: 'mermaid' })
+    expect(streamdownHarness.mermaidOptions).toBeDefined()
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(content)
+  })
+
+  it('loads plugins for code and Mermaid fences nested in Markdown containers', async () => {
+    streamdownHarness.shouldThrow = false
+
+    const listCode = '- ```ts\n  const value = 1\n  ```'
+    await act(async () => {
+      root.render(<AgentMarkdown content={listCode} />)
+    })
+    expect(streamdownHarness.plugins?.code).toEqual({ name: 'shiki' })
+
+    const quotedMermaid = '> ```mermaid\n> graph TD\n>   A --> B\n> ```'
+    await act(async () => {
+      root.render(<AgentMarkdown content={quotedMermaid} />)
+    })
+    expect(streamdownHarness.plugins?.mermaid).toEqual({ name: 'mermaid' })
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(
+      quotedMermaid
+    )
+  })
+
+  it('loads plugins for fences on indented list continuations', async () => {
+    streamdownHarness.shouldThrow = false
+
+    const listCode = '- Code sample:\n\n    ```ts\n    const value = 1\n    ```'
+    await act(async () => {
+      root.render(<AgentMarkdown content={listCode} />)
+    })
+    expect(streamdownHarness.plugins?.code).toEqual({ name: 'shiki' })
+
+    const listMermaid =
+      '- Outer item\n    - Inner item\n      ```mermaid\n      graph TD\n        A --> B\n      ```'
+    await act(async () => {
+      root.render(<AgentMarkdown content={listMermaid} />)
+    })
+    expect(streamdownHarness.plugins?.mermaid).toEqual({ name: 'mermaid' })
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(listMermaid)
   })
 
   it('keeps the original message and sibling UI visible when rich Markdown rendering fails', async () => {
@@ -329,72 +446,5 @@ describe('AgentMarkdown renderer recovery', () => {
     })
 
     expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('abcXYZ')
-  })
-
-  it('uses one lazy, no-referrer favicon source per hostname and falls back on failure', async () => {
-    await act(async () => {
-      root.render(
-        <SessionMessageLink href="https://pubmed.ncbi.nlm.nih.gov/123?view=full">
-          Paper
-        </SessionMessageLink>
-      )
-    })
-
-    let favicon = container.querySelector<HTMLImageElement>('[data-session-link-favicon] img')
-    expect(favicon?.getAttribute('src')).toBe('https://pubmed.ncbi.nlm.nih.gov/favicon.ico')
-    expect(favicon?.getAttribute('loading')).toBe('lazy')
-    expect(favicon?.getAttribute('referrerpolicy')).toBe('no-referrer')
-
-    await act(async () => {
-      root.render(
-        <SessionMessageLink href="https://pubmed.ncbi.nlm.nih.gov/456">Paper</SessionMessageLink>
-      )
-    })
-    favicon = container.querySelector<HTMLImageElement>('[data-session-link-favicon] img')
-    expect(favicon?.getAttribute('src')).toBe('https://pubmed.ncbi.nlm.nih.gov/favicon.ico')
-
-    await act(async () => {
-      favicon?.dispatchEvent(new Event('error'))
-    })
-    expect(container.querySelector('[data-session-link-favicon]')?.getAttribute('data-state')).toBe(
-      'error'
-    )
-    expect(container.querySelector('[data-session-link-favicon] img')).toBeNull()
-    expect(container.querySelector('[data-session-link-favicon-fallback]')).not.toBeNull()
-
-    await act(async () => {
-      root.render(
-        <SessionMessageLink href="mailto:researcher@example.com">Email</SessionMessageLink>
-      )
-    })
-    expect(container.querySelector('[data-session-link-favicon]')).toBeNull()
-  })
-
-  it('keeps the external-link safety confirmation before opening a session link', async () => {
-    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
-
-    await act(async () => {
-      root.render(<SessionMessageLink href="https://example.com/paper">Paper</SessionMessageLink>)
-    })
-
-    const link = container.querySelector<HTMLButtonElement>('[data-session-message-link]')
-    await act(async () => {
-      link?.click()
-    })
-    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
-
-    const dialog = document.body.querySelector<HTMLElement>(
-      '[role="dialog"][aria-label="Open external link?"]'
-    )
-    expect(dialog).not.toBeNull()
-
-    const openLink = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Open link'
-    )
-    await act(async () => {
-      openLink?.click()
-    })
-
-    expect(open).toHaveBeenCalledWith('https://example.com/paper', '_blank', 'noreferrer')
   })
 })

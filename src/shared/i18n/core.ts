@@ -177,6 +177,7 @@ export const createNamespacedResource = <Namespace extends string>(
   ) as Record<Namespace, Record<string, string>>
 
 const fallbackLng: Record<string, string[]> = {
+  es: [DEFAULT_LOCALE],
   fr: [DEFAULT_LOCALE],
   ja: [DEFAULT_LOCALE],
   ko: [DEFAULT_LOCALE],

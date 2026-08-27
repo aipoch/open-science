@@ -3,7 +3,7 @@
 [![下载](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![版本](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
 [![许可证](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
-[![网站](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/)
+[![网站](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
 
 <p align="center">
@@ -14,11 +14,12 @@
   <a href="../ko/README.md"><img alt="한국어 README" src="https://img.shields.io/badge/한국어-d9d9d9"></a>
   <a href="../fr/README.md"><img alt="Français README" src="https://img.shields.io/badge/Français-d9d9d9"></a>
   <a href="../ru/README.md"><img alt="俄语 README" src="https://img.shields.io/badge/Русский-d9d9d9"></a>
+  <a href="../es/README.md"><img alt="西班牙语 README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
 > 本文档是英文 `README.md` 的翻译。如内容存在差异，请以[英文原文](../../README.md)为准。
 
-Open Science 是面向科学家和研究人员的开源、本地优先且模型无关的 AI 研究工作台。它通过科学 AI 智能体、Python 和 R 执行、科学数据连接器以及对 macOS、Windows 和 Linux 的跨平台支持，实现可复现、可检查的研究。在同一个工作区中，新建项目，用自然语言描述研究目标，然后让智能体读取文件、搜索网页、运行代码、查询科学数据源，并生成带有可追溯来源的报告、表格和图表。
+Open Science 是由 [AIPOCH](https://aipoch.com/open-science) 为科学家和研究人员开发的开源、本地优先且模型无关的 AI 研究工作台。它通过科学 AI 智能体、Python 和 R 执行、科学数据连接器以及对 macOS、Windows 和 Linux 的跨平台支持，实现可复现、可检查的研究。在同一个工作区中，新建项目，用自然语言描述研究目标，然后让智能体读取文件、搜索网页、运行代码、查询科学数据源，并生成带有可追溯来源的报告、表格和图表。
 
 Open Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
@@ -119,7 +120,7 @@ Open Science 将研究组织成项目和会话，使每项结果都能与产生�
   </tr>
 </table>
 
-生成的报告、图表和表格会继续附属于会话，同时汇集到项目文件库。面板尺寸变化时，预览标签页会保持活动结果可见；长名称会保留用于识别的后缀和扩展名。Open Science 可以预览常见科学数据、PDF、Office 文档（DOCX、XLSX、PPTX）、图像（支持缩放和平移）、带语法高亮的源代码、分子结构与反应，以及 Notebook 历史。预览限制不会截断底层文件，智能体和外部工具仍可使用完整产物。使用 `Cmd/Ctrl+F` 搜索工作区中的对话记录、Notebook 输出和渲染页面，或使用 `Cmd/Ctrl+K` 打开项目级命令面板。工作区还支持深色模式：在 **Settings → General** 中切换主题，整个命令行、对话记录和渲染器配色会无闪烁切换。界面也提供简体中文、繁体中文、日语、韩语、法语和俄语，并可在设置中运行时切换语言。
+生成的报告、图表和表格会继续附属于会话，同时汇集到项目文件库。面板尺寸变化时，预览标签页会保持活动结果可见；长名称会保留用于识别的后缀和扩展名。Open Science 可以预览常见科学数据、PDF、Office 文档（DOCX、XLSX、PPTX）、图像（支持缩放和平移）、带语法高亮的源代码、分子结构与反应，以及 Notebook 历史。预览限制不会截断底层文件，智能体和外部工具仍可使用完整产物。使用 `Cmd/Ctrl+F` 搜索工作区中的对话记录、Notebook 输出和渲染页面，或使用 `Cmd/Ctrl+K` 打开项目级命令面板。工作区还支持深色模式：在 **Settings → General** 中切换主题，整个命令行、对话记录和渲染器配色会无闪烁切换。界面也提供简体中文、繁体中文、日语、韩语、法语、俄语和西班牙语，并可在设置中运行时切换语言。
 
 ### 为对话创建分支而不丢失原始内容
 
@@ -196,7 +197,7 @@ Open Science 在一个本地工作区中整合项目管理、多模型智能体�
 | **连接器**       | **24 个内置**研究连接器，具有运行时状态和恢复界面；自定义本地/远程 MCP 连接器使用与可编辑显示名称分离的不可变小写调用名称；提供基于名称生成且可验证覆盖的本地 ID、联系元数据、连接器/工具级权限，以及以占位符替换凭据的标准 MCP 客户端配置导入/导出。目录交互现采用与技能相同的紧凑管理模式。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | **安全控制**     | `Ask for approval`、`Auto-approve edits` 和 `Full access` 对话配置；包含代码预览以及调用/对话决定的批准对话框；在当前回合持续生效的权限拒绝，阻止智能体通过其他路径重试或变相执行被拒绝的操作；持久化的全局、项目和会话级允许授权，支持筛选、逐行和按系列撤销以及撤销操作；另有逐连接器和逐工具策略。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | **审查与验证**   | 可选择启用的审查器根据已完成轮次自身的对话记录、执行日志和产物进行审计，报告通过/警告/失败结果，并可运行有界修复循环进行纠正；可配置审查模型策略，可跟随活动模型或固定专用服务商、模型和推理强度；持久化审查评估快照保留纠正归因。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| **分发与支持**   | macOS、Windows 和 Linux 安装程序；针对环境、智能体运行时、模型服务商、Notebook 运行时和数据位置的精简首次启动向导；支持法语、简体中文、繁体中文、日语、韩语和俄语界面，为每种受支持语言提供 README 译本，并另有多语言贡献指南；带醒目更新提醒的更新指引；本地诊断；社区链接。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **分发与支持**   | macOS、Windows 和 Linux 安装程序；针对环境、智能体运行时、模型服务商、Notebook 运行时和数据位置的精简首次启动向导；支持西班牙语、法语、简体中文、繁体中文、日语、韩语和俄语界面，为每种受支持语言提供 README 译本，并另有多语言贡献指南；带醒目更新提醒的更新指引；本地诊断；社区链接。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## 模型服务商
 
@@ -311,7 +312,7 @@ npm run dev:web
 
 <img width="1920" height="1140" alt="Open Science 作为开放科学 AI 工作流桌面编排层融入 AIPOCH 生态系统的方式" src="https://github.com/user-attachments/assets/0ab847b1-1b7d-43f4-8c11-480a578e6c7d" />
 
-[AIPOCH](https://aipoch.com/open-science)（[GitHub 组织](https://github.com/aipoch)）将 Open Science 构建为开放科学 AI 工作流的桌面编排层。
+[AIPOCH](https://aipoch.com/)（[GitHub 组织](https://github.com/aipoch)）将 [Open Science](https://aipoch.com/open-science) 打造为开放科学 AI 工作流的桌面编排层。
 
 - [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills) 是包含 500 多个文件型医学和科学研究技能的更大集合；所有技能都可以检查、导入，并从 GitHub 与 Open Science 搭配使用。
 - Open Science 提供项目/会话工作区、智能体运行时、执行、产物、预览、权限和连接器，将这些指令转变为交互式工作流。
@@ -399,13 +400,13 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 Open Science 通过 GitHub、Discord、X 和 AIPOCH 网站接收缺陷报告、功能建议、设计讨论、社区问题和项目贡献。请选择最符合你目标的渠道，并在公开分享项目详情前查看相关贡献指南与公开发布安全提醒。
 
-| 渠道                                                                     | 用途                                     |
-| ------------------------------------------------------------------------ | ---------------------------------------- |
-| [GitHub Issues](https://github.com/aipoch/open-science/issues)           | 缺陷、可复现故障和具体功能建议           |
-| [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 设计问题、路线图提议和较长技术讨论       |
-| [Discord](https://discord.gg/zxQAYjReRv)                                 | 社区帮助、贡献者协调和非正式讨论         |
-| [X / @aipoch_ai](https://x.com/aipoch_ai)                                | 版本公告和公开构建动态                   |
-| [网站](https://aipoch.com/)                                              | 产品概览、下载和 AIPOCH 生态系统其他内容 |
+| 渠道                                                                     | 用途                               |
+| ------------------------------------------------------------------------ | ---------------------------------- |
+| [GitHub Issues](https://github.com/aipoch/open-science/issues)           | 缺陷、可复现故障和具体功能建议     |
+| [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 设计问题、路线图提议和较长技术讨论 |
+| [Discord](https://discord.gg/zxQAYjReRv)                                 | 社区帮助、贡献者协调和非正式讨论   |
+| [X / @aipoch_ai](https://x.com/aipoch_ai)                                | 版本公告和公开构建动态             |
+| [Open Science 官网](https://aipoch.com/open-science)                     | 官方产品概览与下载                 |
 
 提交公开问题前，从日志和截图中移除 API Key、令牌、私有文件路径、未公开数据、患者标识符和其他敏感材料。开发工作流请参阅[贡献指南](CONTRIBUTING.md)。
 

@@ -2,25 +2,32 @@
 import {
   Component,
   memo,
+  useEffect,
   useMemo,
   useState,
-  type ComponentProps,
   type ErrorInfo,
   type ReactNode
 } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
-import { code } from '@streamdown/code'
 import { cjk } from '@streamdown/cjk'
 import { createMathPlugin } from '@streamdown/math'
-import { mermaid } from '@streamdown/mermaid'
-import { Globe2 } from 'lucide-react'
-import { Streamdown, type AllowedTags, type Components, type LinkSafetyConfig } from 'streamdown'
+import {
+  Streamdown,
+  type AllowedTags,
+  type Components,
+  type LinkSafetyConfig,
+  type PluginConfig,
+  type ThemeInput
+} from 'streamdown'
 import 'katex/dist/katex.min.css'
 
+import { getMarkdownPluginNeeds } from './code-fence'
 import { AGENT_ALLOWED_TAGS, AGENT_CONTROLS } from './streamdown-config'
 import { LinkSafetyModal } from './LinkSafetyModal'
+import { SessionMessageLink } from './SessionMessageLink'
 import { StreamingBlock } from './StreamingBlock'
 import { createAgentMarkdownNormalizer } from './normalize-agent-markdown'
+import { useCodeHighlighter } from './use-code-highlighter'
 import { useSmoothStreamingContent } from './use-smooth-streaming-content'
 import { cn } from '@/lib/utils'
 
@@ -42,85 +49,6 @@ type AgentMarkdownProps = {
 
 type RichAgentMarkdownProps = AgentMarkdownProps & {
   incrementalBlocks?: boolean
-}
-
-type SessionMessageLinkProps = ComponentProps<'a'> & {
-  node?: unknown
-  'data-incomplete'?: boolean
-}
-
-type FaviconState = 'loading' | 'success' | 'error'
-
-const getSessionLinkFaviconUrl = (href: string | undefined): string | undefined => {
-  if (!href) return undefined
-
-  try {
-    const url = new URL(href)
-    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname) return undefined
-
-    return `https://${url.hostname.toLowerCase()}/favicon.ico`
-  } catch {
-    return undefined
-  }
-}
-
-const SessionLinkFavicon = ({ src }: { src: string }): React.JSX.Element => {
-  const [state, setState] = useState<FaviconState>('loading')
-
-  return (
-    <span data-session-link-favicon="" data-state={state} aria-hidden="true">
-      <Globe2 data-session-link-favicon-fallback="" />
-      {state !== 'error' ? (
-        <img
-          src={src}
-          alt=""
-          width="16"
-          height="16"
-          loading="lazy"
-          decoding="async"
-          referrerPolicy="no-referrer"
-          draggable={false}
-          onLoad={() => setState('success')}
-          onError={() => setState('error')}
-        />
-      ) : null}
-    </span>
-  )
-}
-
-const SessionMessageLink = ({
-  children,
-  className,
-  href,
-  'data-incomplete': dataIncomplete
-}: SessionMessageLinkProps): React.JSX.Element => {
-  const [isOpen, setIsOpen] = useState(false)
-  const faviconUrl = getSessionLinkFaviconUrl(href)
-
-  return (
-    <>
-      <button
-        type="button"
-        className={className}
-        data-incomplete={dataIncomplete}
-        data-session-message-link=""
-        data-streamdown="link"
-        disabled={!href}
-        onClick={() => setIsOpen(true)}
-      >
-        {faviconUrl ? <SessionLinkFavicon key={faviconUrl} src={faviconUrl} /> : null}
-        {children}
-      </button>
-      {href ? (
-        <LinkSafetyModal
-          url={href}
-          isOpen={isOpen}
-          onClose={() => setIsOpen(false)}
-          onConfirm={() => window.open(href, '_blank', 'noreferrer')}
-        />
-      ) : null}
-    </>
-  )
 }
 
 const sessionLinkComponents = { a: SessionMessageLink } satisfies Components
@@ -194,10 +122,37 @@ const MermaidErrorPanel = ({ chart, error, retry }: MermaidErrorPanelProps): Rea
 }
 
 const math = createMathPlugin({ singleDollarTextMath: true })
-const plugins = { code, math, mermaid, cjk } as const
+const basePlugins = { math, cjk } as const
+const shikiThemes: [ThemeInput, ThemeInput] = ['github-light', 'github-light']
 const mermaidOptions = {
   config: { theme: 'default' as const },
   errorComponent: MermaidErrorPanel
+}
+
+const useMarkdownPlugins = (content: string): PluginConfig => {
+  const needs = useMemo(() => getMarkdownPluginNeeds(content), [content])
+  const [optionalPlugins, setOptionalPlugins] = useState<PluginConfig>({})
+  const code = useCodeHighlighter(needs.code)
+
+  useEffect(() => {
+    if (!needs.mermaid || optionalPlugins.mermaid) return
+
+    let active = true
+    void import('./mermaid-runtime').then(
+      ({ mermaid }) => {
+        if (active) setOptionalPlugins((current) => ({ ...current, mermaid }))
+      },
+      (error: unknown) => console.error('Failed to load Mermaid rendering.', error)
+    )
+    return () => {
+      active = false
+    }
+  }, [needs.mermaid, optionalPlugins.mermaid])
+
+  return useMemo(
+    () => ({ ...basePlugins, ...(code ? { code } : {}), ...optionalPlugins }),
+    [code, optionalPlugins]
+  )
 }
 
 const agentLinkSafety: LinkSafetyConfig = {
@@ -271,6 +226,7 @@ const RichAgentMarkdown = memo(
       () => (extension ? { ...AGENT_ALLOWED_TAGS, ...extension.allowedTags } : AGENT_ALLOWED_TAGS),
       [extension]
     )
+    const plugins = useMarkdownPlugins(renderedContent)
     const renderedComponents = useMemo(() => {
       if (!sessionLinks && !components && !extension) return undefined
       return {
@@ -303,8 +259,8 @@ const RichAgentMarkdown = memo(
           allowedTags={allowedTags}
           literalTagContent={extension?.literalTagContent}
           disallowedElements={allowMedia ? undefined : NETWORK_FETCHING_MEDIA_ELEMENTS}
-          shikiTheme={['github-light', 'github-light']}
-          mermaid={mermaidOptions}
+          shikiTheme={plugins.code ? shikiThemes : undefined}
+          mermaid={plugins.mermaid ? mermaidOptions : undefined}
         >
           {renderedContent}
         </Streamdown>
@@ -374,5 +330,5 @@ const AgentMarkdown = memo(
 
 AgentMarkdown.displayName = 'AgentMarkdown'
 
-export { AgentMarkdown, PresentedAgentMarkdown, SessionMessageLink }
+export { AgentMarkdown, PresentedAgentMarkdown }
 export type { AgentMarkdownExtension }

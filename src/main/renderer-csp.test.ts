@@ -24,4 +24,19 @@ describe('renderer content security policy', () => {
 
     expect(directives.get('connect-src')).toContain('open-science-preview:')
   })
+
+  it('allows HTTPS only as a remote iframe source without widening renderer fetch access', () => {
+    const directives = readRendererCspDirectives()
+
+    expect(directives.get('frame-src')).toContain('https:')
+    expect(directives.get('frame-src')).not.toContain('http:')
+    expect(directives.get('connect-src')).not.toContain('https:')
+  })
+
+  it('declares insecure request upgrades without allowing HTTP frames', () => {
+    const directives = readRendererCspDirectives()
+
+    expect(directives.has('upgrade-insecure-requests')).toBe(true)
+    expect(directives.get('frame-src')).not.toContain('http:')
+  })
 })

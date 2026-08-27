@@ -3,7 +3,7 @@
 [![다운로드](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![버전](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
 [![라이선스](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
-[![웹사이트](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/)
+[![웹사이트](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
 
 <p align="center">
@@ -14,11 +14,12 @@
   <a href="../ko/README.md"><img alt="한국어 README" src="https://img.shields.io/badge/한국어-d9d9d9"></a>
   <a href="../fr/README.md"><img alt="Français README" src="https://img.shields.io/badge/Français-d9d9d9"></a>
   <a href="../ru/README.md"><img alt="러시아어 README" src="https://img.shields.io/badge/Русский-d9d9d9"></a>
+  <a href="../es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
 > 이 문서는 영어 `README.md`의 번역본입니다. 내용이 다르면 [영문 원본](../../README.md)을 기준으로 합니다.
 
-Open Science는 과학자와 연구자를 위한 오픈 소스이자 로컬 우선이며 모델에 구애받지 않는 AI 연구 워크벤치입니다. 과학 AI 에이전트, Python 및 R 실행, 과학 데이터 커넥터, macOS·Windows·Linux 크로스 플랫폼 지원을 통해 재현 가능하고 검토 가능한 연구를 수행합니다. 하나의 워크스페이스에서 프로젝트를 만들고 연구 목표를 자연어로 설명하면, 에이전트가 파일을 읽고 웹을 검색하며 코드를 실행하고 과학 데이터 소스를 조회하여 추적 가능한 출처가 포함된 보고서, 표, 그림을 생성합니다.
+Open Science는 [AIPOCH](https://aipoch.com/open-science)가 과학자와 연구자를 위해 개발한 오픈 소스, 로컬 우선, 모델 독립형 AI 연구 워크벤치입니다. 과학 AI 에이전트, Python 및 R 실행, 과학 데이터 커넥터, macOS·Windows·Linux 크로스 플랫폼 지원을 통해 재현 가능하고 검토 가능한 연구를 수행합니다. 하나의 워크스페이스에서 프로젝트를 만들고 연구 목표를 자연어로 설명하면, 에이전트가 파일을 읽고 웹을 검색하며 코드를 실행하고 과학 데이터 소스를 조회하여 추적 가능한 출처가 포함된 보고서, 표, 그림을 생성합니다.
 
 Open Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
@@ -119,7 +120,7 @@ Open Science는 연구를 프로젝트와 세션으로 구성하여 각 결과�
   </tr>
 </table>
 
-생성된 보고서, 그림, 표는 세션에 연결된 상태로 프로젝트 파일 라이브러리에도 모입니다. 패널 크기가 변해도 미리보기 탭은 활성 결과를 표시하며, 긴 이름은 식별 가능한 접미사와 확장자를 유지합니다. Open Science는 일반 과학 데이터, PDF, Office 문서(DOCX, XLSX, PPTX), 확대/축소 및 이동이 가능한 이미지, 구문 강조 소스 코드, 분자 구조와 반응, Notebook 기록을 미리 봅니다. 미리보기 한도는 원본 파일을 자르지 않으므로 에이전트와 외부 도구가 전체 아티팩트를 계속 사용할 수 있습니다. `Cmd/Ctrl+F`로 워크스페이스 전체의 대화 기록, Notebook 출력, 렌더링된 페이지를 검색하거나 `Cmd/Ctrl+K`로 프로젝트 범위 명령 팔레트를 열 수 있습니다. **Settings → General**에서 테마를 전환하면 셸, 대화 기록, 렌더러 색상이 깜박임 없이 전환됩니다. 인터페이스는 설정의 런타임 언어 전환을 통해 중국어 간체·번체, 일본어, 한국어, 프랑스어, 러시아어로도 사용할 수 있습니다.
+생성된 보고서, 그림, 표는 세션에 연결된 상태로 프로젝트 파일 라이브러리에도 모입니다. 패널 크기가 변해도 미리보기 탭은 활성 결과를 표시하며, 긴 이름은 식별 가능한 접미사와 확장자를 유지합니다. Open Science는 일반 과학 데이터, PDF, Office 문서(DOCX, XLSX, PPTX), 확대/축소 및 이동이 가능한 이미지, 구문 강조 소스 코드, 분자 구조와 반응, Notebook 기록을 미리 봅니다. 미리보기 한도는 원본 파일을 자르지 않으므로 에이전트와 외부 도구가 전체 아티팩트를 계속 사용할 수 있습니다. `Cmd/Ctrl+F`로 워크스페이스 전체의 대화 기록, Notebook 출력, 렌더링된 페이지를 검색하거나 `Cmd/Ctrl+K`로 프로젝트 범위 명령 팔레트를 열 수 있습니다. **Settings → General**에서 테마를 전환하면 셸, 대화 기록, 렌더러 색상이 깜박임 없이 전환됩니다. 인터페이스는 설정의 런타임 언어 전환을 통해 중국어 간체·번체, 일본어, 한국어, 프랑스어, 러시아어, 스페인어로도 사용할 수 있습니다.
 
 ### 원본을 잃지 않고 대화 분기
 
@@ -196,7 +197,7 @@ Open Science는 프로젝트 관리, 다중 모델 에이전트 실행, Python �
 | **커넥터**            | 런타임 상태 및 복구 화면을 갖춘 **24개의 기본** 연구 커넥터, 편집 가능한 표시 이름과 분리된 불변 소문자 호출 이름을 쓰는 로컬/원격 MCP 커넥터, 검증 가능한 재정의가 있는 이름 기반 로컬 ID, 연락처 메타데이터, 커넥터/도구별 권한, 자격 증명을 플레이스홀더로 대체하는 표준 MCP 클라이언트 설정 가져오기/내보내기. 카탈로그 상호작용은 스킬과 같은 간결한 관리 패턴을 따릅니다.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | **안전 제어**         | `Ask for approval`, `Auto-approve edits`, `Full access` 대화 프로필, 코드 미리보기와 호출/대화 결정을 포함한 승인 대화상자, 거부된 작업을 다른 경로로 재시도하거나 우회하지 못하도록 해당 턴 동안 유지되는 권한 거부, 필터·행별/계열별 취소·실행 취소가 있는 영구 전역/프로젝트/세션 범위 허용 권한, 커넥터/도구별 정책.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | **리뷰 및 검증**      | 완료된 턴을 자체 대화 기록·실행 로그·아티팩트와 대조해 감사하고 pass/warn/fail 결과 및 제한된 수정 루프를 제공하는 선택적 리뷰어, 활성 모델을 따르거나 전용 제공업체·모델·추론 강도로 고정하는 리뷰어 모델 정책, 수정 귀속을 유지하는 영구 리뷰 평가 스냅샷.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| **배포 및 지원**      | macOS, Windows, Linux 설치 프로그램, 환경·에이전트 런타임·모델 제공업체·Notebook 런타임·데이터 위치를 위한 간결한 최초 실행 마법사, 프랑스어·중국어 간체·중국어 번체·일본어·한국어·러시아어 인터페이스, 지원 언어별 README 번역, 그 밖의 다국어 기여 가이드, 눈에 띄는 업데이트 알림이 포함된 업데이트 안내, 로컬 진단, 커뮤니티 링크.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **배포 및 지원**      | macOS, Windows, Linux 설치 프로그램, 환경·에이전트 런타임·모델 제공업체·Notebook 런타임·데이터 위치를 위한 간결한 최초 실행 마법사, 스페인어·프랑스어·중국어 간체·중국어 번체·일본어·한국어·러시아어 인터페이스, 지원 언어별 README 번역, 그 밖의 다국어 기여 가이드, 눈에 띄는 업데이트 알림이 포함된 업데이트 안내, 로컬 진단, 커뮤니티 링크.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ## 모델 제공업체
 
@@ -311,7 +312,7 @@ Remote.It 페어링을 통해 휴대전화나 태블릿에서 동일한 localhos
 
 <img width="1920" height="1140" alt="오픈 과학 AI 워크플로를 위한 데스크톱 오케스트레이션 계층으로서 AIPOCH 생태계에 속하는 Open Science" src="https://github.com/user-attachments/assets/0ab847b1-1b7d-43f4-8c11-480a578e6c7d" />
 
-[AIPOCH](https://aipoch.com/open-science)([GitHub 조직](https://github.com/aipoch))는 Open Science를 오픈 과학 AI 워크플로의 데스크톱 오케스트레이션 계층으로 개발합니다.
+[AIPOCH](https://aipoch.com/)([GitHub 조직](https://github.com/aipoch))는 [Open Science](https://aipoch.com/open-science)를 오픈 과학 AI 워크플로의 데스크톱 오케스트레이션 계층으로 개발합니다.
 
 - [aipoch/medical-research-skills](https://github.com/aipoch/medical-research-skills)는 500개 이상의 파일 기반 의료 및 과학 연구 스킬을 제공하는 더 큰 컬렉션입니다. 모든 스킬을 검토하고 가져와 GitHub에서 Open Science와 함께 사용할 수 있습니다.
 - Open Science는 프로젝트/세션 워크스페이스, 에이전트 런타임, 실행, 아티팩트, 미리보기, 권한, 커넥터를 제공하여 이러한 지침을 대화형 워크플로로 바꿉니다.
@@ -405,7 +406,7 @@ Open Science는 GitHub, Discord, X 및 AIPOCH 웹사이트를 통해 버그 신�
 | [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 설계 질문, 로드맵 제안, 긴 기술 토론       |
 | [Discord](https://discord.gg/zxQAYjReRv)                                 | 커뮤니티 지원, 기여자 조율, 비공식 토론    |
 | [X / @aipoch_ai](https://x.com/aipoch_ai)                                | 릴리스 발표 및 공개 개발 업데이트          |
-| [웹사이트](https://aipoch.com/)                                          | 제품 개요, 다운로드 및 AIPOCH 생태계       |
+| [Open Science 공식 웹사이트](https://aipoch.com/open-science)            | 공식 제품 개요 및 다운로드                 |
 
 공개 이슈를 만들기 전에 로그와 스크린샷에서 API Key, 토큰, 비공개 파일 경로, 미공개 데이터, 환자 식별자 및 기타 민감한 정보를 제거하세요. 개발 워크플로는 [기여 가이드](CONTRIBUTING.md)를 참고하세요.
 

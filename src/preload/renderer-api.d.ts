@@ -31,6 +31,7 @@ import type {
   SideChatStartRequest,
   SideChatStartResponse
 } from '../shared/side-chat'
+import type { SourcePreviewLoadState } from '../shared/source-preview'
 import type {
   ArtifactFile,
   ArtifactPreviewResult,
@@ -866,6 +867,10 @@ export interface OpenScienceAPI {
     reportState(sessionId: string, state: OfficePreviewRuntimeState): void
     close(sessionId: string): Promise<void>
     onState(listener: (state: OfficePreviewRuntimeState) => void): RemoveListener
+  }
+  sourcePreview?: {
+    release(sourceUrl: string): void
+    onLoadState(listener: (state: SourcePreviewLoadState) => void): RemoveListener
   }
   artifacts: {
     finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<FinalizeRunArtifactsResult>

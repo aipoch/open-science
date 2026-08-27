@@ -466,6 +466,7 @@ const ProjectFilesFilterMenu = ({
   onBrowseLocal,
   onAddFolder,
   onSelectGrantedRoot,
+  onGrantedRootMutation,
   localMachineName,
   isLocalSelected,
   selectedLocalRootId
@@ -484,9 +485,9 @@ const ProjectFilesFilterMenu = ({
   onBrowseLocal: () => void
   onAddFolder: () => void
   onSelectGrantedRoot: (root: GrantedLocalRoot) => void
+  onGrantedRootMutation: (kind: 'change' | 'remove', mutation: () => Promise<unknown>) => void
   localMachineName: string | undefined
   isLocalSelected: boolean
-  // Id of the granted folder the local browser is scoped to; undefined means the machine itself.
   selectedLocalRootId: string | undefined
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -504,7 +505,6 @@ const ProjectFilesFilterMenu = ({
   const selectedLocalRoot = selectedLocalRootId
     ? grantedRoots.find((root) => root.id === selectedLocalRootId)
     : undefined
-  // The machine row is checked only when the local browser is not scoped to a granted folder.
   const isMachineSelected = isLocalSelected && selectedLocalRoot === undefined
 
   useEffect(() => {
@@ -634,6 +634,7 @@ const ProjectFilesFilterMenu = ({
               isSelected={root.id === selectedLocalRootId}
               onSelect={onSelectGrantedRoot}
               onCloseMenu={() => setMenuOpen(false)}
+              onMutation={onGrantedRootMutation}
             />
           ))}
           <DropdownMenuItem

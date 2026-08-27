@@ -90,6 +90,8 @@ const GENERATED_SOURCE_OMISSIONS = [
   'sideChat.onRelayDelivered',
   'sideChat.send',
   'sideChat.start',
+  'sourcePreview.onLoadState',
+  'sourcePreview.release',
   'specialist.addMarketplaceSource',
   'specialist.cancelHandoff',
   'specialist.cancelMarketplaceCandidate',

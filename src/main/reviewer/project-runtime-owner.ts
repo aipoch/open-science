@@ -47,6 +47,10 @@ class ReviewerProjectRuntimeOwner {
     })
   }
 
+  isProjectBusy(projectId: string): boolean {
+    return (this.activeByProject.get(projectId)?.size ?? 0) > 0
+  }
+
   async quiesceProject(projectId: string): Promise<void> {
     this.restoreProjectDeletion(projectId)
     for (;;) {
