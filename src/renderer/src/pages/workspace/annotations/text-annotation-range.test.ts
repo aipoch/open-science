@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 
-import { reconcileTextAnnotationRanges, retargetTextAnnotationRange } from './text-annotation-range'
+import {
+  quoteOccurrenceForRange,
+  reconcileTextAnnotationRanges,
+  retargetTextAnnotationRange
+} from './text-annotation-range'
 
 const rangeAt = (node: Text, start: number, length = 6): Range => {
   const range = document.createRange()
@@ -146,6 +150,38 @@ describe('retargetTextAnnotationRange', () => {
     expect(restored).not.toBe(existing)
     expect(restored?.toString()).toBe('printf shell-command')
     expect(restored?.startContainer.isConnected).toBe(true)
+    surface.remove()
+  })
+
+  it('rebuilds a duplicate quote onto the selected occurrence after highlight spans replace it', () => {
+    const surface = document.createElement('div')
+    const code = document.createElement('code')
+    const original = document.createTextNode('repeat then repeat')
+    code.appendChild(original)
+    surface.appendChild(code)
+    document.body.appendChild(surface)
+    const existing = rangeAt(original, 12)
+    const occurrence = quoteOccurrenceForRange(surface, 'repeat', existing)
+    expect(occurrence).toBe(1)
+
+    code.replaceChildren()
+    for (const part of ['repeat', ' then ', 'repeat']) {
+      const token = document.createElement('span')
+      token.appendChild(document.createTextNode(part))
+      code.appendChild(token)
+    }
+
+    const restored = retargetTextAnnotationRange(surface, 'repeat', existing, occurrence)
+    expect(restored).not.toBe(existing)
+    expect(restored?.toString()).toBe('repeat')
+    expect(restored?.startContainer).toBe(code.lastChild?.firstChild)
+    expect(quoteOccurrenceForRange(surface, 'repeat', restored!)).toBe(1)
+    surface.remove()
+  })
+
+  it('counts the first duplicate quote as occurrence 0', () => {
+    const { surface, text } = surfaceWithDuplicates()
+    expect(quoteOccurrenceForRange(surface, 'repeat', rangeAt(text, 0))).toBe(0)
     surface.remove()
   })
 

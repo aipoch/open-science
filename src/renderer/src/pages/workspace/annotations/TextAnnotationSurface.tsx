@@ -15,9 +15,13 @@ import {
   AnnotationMarkers,
   type AnnotationControl
 } from './TextAnnotationEditors'
-import { reconcileTextAnnotationRanges, retargetTextAnnotationRange } from './text-annotation-range'
+import {
+  quoteOccurrenceForRange,
+  reconcileTextAnnotationRanges,
+  retargetTextAnnotationRange
+} from './text-annotation-range'
 
-type SelectionDraft = { quote: string; backward: boolean; range: Range }
+type SelectionDraft = { quote: string; backward: boolean; range: Range; occurrence: number }
 
 const DRAFT_HIGHLIGHT_NAME = 'agent-annotation-draft'
 const draftHighlightRanges = new Map<string, Range>()
@@ -160,10 +164,13 @@ const TextAnnotationSurface = ({
       return
     }
     suppressFollowingClickRef.current = suppressFollowingClick
+    const cloned = range.cloneRange()
+    const content = contentRef.current
     setSelection({
       quote,
       backward: isBackwardSelection(selected),
-      range: range.cloneRange()
+      range: cloned,
+      occurrence: content ? quoteOccurrenceForRange(content, quote, cloned) : 0
     })
   }
 
@@ -226,7 +233,12 @@ const TextAnnotationSurface = ({
     const content = contentRef.current
     const draft = selectionRef.current
     if (!content || !draft) return
-    const nextRange = retargetTextAnnotationRange(content, draft.quote, draft.range)
+    const nextRange = retargetTextAnnotationRange(
+      content,
+      draft.quote,
+      draft.range,
+      draft.occurrence
+    )
     if (nextRange === draft.range) return
     if (nextRange) {
       setSelection({ ...draft, range: nextRange })

@@ -747,6 +747,66 @@ describe('TextAnnotationSurface annotate trigger', () => {
     expect(annotateTrigger()).toBeDefined()
   })
 
+  it('keeps a duplicate quote on the selected occurrence after highlight replacement', async () => {
+    const highlights = installCssHighlightsMock()
+    const onAdd = vi.fn<(annotation: TextAnnotation) => undefined>(() => undefined)
+    try {
+      await act(async () =>
+        root.render(
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={[]}
+            onAdd={onAdd}
+            onError={vi.fn()}
+          >
+            <p>repeat then repeat</p>
+          </TextAnnotationSurface>
+        )
+      )
+      const paragraph = container.querySelector('p')!
+      const range = document.createRange()
+      range.setStart(paragraph.firstChild!, 12)
+      range.setEnd(paragraph.firstChild!, 18)
+      Object.defineProperty(range, 'getBoundingClientRect', {
+        configurable: true,
+        value: () =>
+          ({
+            left: 10,
+            right: 120,
+            top: 20,
+            bottom: 40,
+            width: 110,
+            height: 20,
+            x: 10,
+            y: 20,
+            toJSON: () => ({})
+          }) as DOMRect
+      })
+      const selection = window.getSelection()!
+      selection.removeAllRanges()
+      selection.addRange(range)
+      await act(async () => paragraph.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+      expect(annotateTrigger()).toBeDefined()
+
+      await act(async () => {
+        paragraph.replaceChildren()
+        for (const part of ['repeat', ' then ', 'repeat']) {
+          const token = document.createElement('span')
+          token.textContent = part
+          paragraph.appendChild(token)
+        }
+      })
+      expect(annotateTrigger()).toBeDefined()
+
+      await act(async () => annotateTrigger()?.click())
+      const draftRange = Array.from(highlights.get('agent-annotation-draft') ?? [])[0]
+      expect(draftRange?.toString()).toBe('repeat')
+      expect(draftRange?.startContainer).toBe(paragraph.lastChild?.firstChild)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('hides the trigger when streaming replaces the selected message content', async () => {
     const paragraph = await renderSurface()
     await commitSelection(paragraph)
