@@ -1010,48 +1010,82 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           onChange={(event) => setQuery(event.target.value)}
         />
       </div>
-      {!loading && snapshot && snapshot.specialists.length > 0 ? (
-        <div
-          role="group"
-          aria-label={t('Filter Marketplace Specialists')}
-          className="mb-4 flex flex-wrap items-center gap-1.5"
-        >
-          {(
-            [
-              ['all', t('All'), filterCounts.all],
-              ['official', t('Official'), filterCounts.official],
-              ['community', t('Community'), filterCounts.community]
-            ] as const
-          ).map(([key, label, count]) => (
-            <button
-              key={key}
-              type="button"
-              aria-pressed={filter === key}
-              onClick={() => setFilter(key)}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors motion-reduce:transition-none ${
-                filter === key
-                  ? 'bg-primary/10 font-medium text-primary'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-              }`}
+      {!loading &&
+      snapshot &&
+      (snapshot.specialists.length > 0 || (snapshot.sources.length > 0 && !lastRefreshFailed)) ? (
+        <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          {snapshot.specialists.length > 0 ? (
+            <div
+              role="group"
+              aria-label={t('Filter Marketplace Specialists')}
+              className="flex flex-wrap items-center gap-1.5"
             >
-              {label}
-              <span className="tabular-nums">{count}</span>
-            </button>
-          ))}
-          {filterCounts.updates > 0 || filter === 'updates' ? (
-            <button
-              type="button"
-              aria-pressed={filter === 'updates'}
-              onClick={() => setFilter('updates')}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors motion-reduce:transition-none ${
-                filter === 'updates'
-                  ? 'bg-primary/10 font-medium text-primary'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-              }`}
+              {(
+                [
+                  ['all', t('All'), filterCounts.all],
+                  ['official', t('Official'), filterCounts.official],
+                  ['community', t('Community'), filterCounts.community]
+                ] as const
+              ).map(([key, label, count]) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={filter === key}
+                  onClick={() => setFilter(key)}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors motion-reduce:transition-none ${
+                    filter === key
+                      ? 'bg-primary/10 font-medium text-primary'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                  }`}
+                >
+                  {label}
+                  <span className="tabular-nums">{count}</span>
+                </button>
+              ))}
+              {filterCounts.updates > 0 || filter === 'updates' ? (
+                <button
+                  type="button"
+                  aria-pressed={filter === 'updates'}
+                  onClick={() => setFilter('updates')}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors motion-reduce:transition-none ${
+                    filter === 'updates'
+                      ? 'bg-primary/10 font-medium text-primary'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                  }`}
+                >
+                  {t('Updates available')}
+                  <span className="tabular-nums">{filterCounts.updates}</span>
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {/* Stale-while-revalidate status: neutral while content is on screen, and distinct from
+              the warning banners below, which mean degraded data rather than merely old data. */}
+          {snapshot.sources.length > 0 && !lastRefreshFailed ? (
+            <p
+              role="status"
+              aria-live="polite"
+              className="ml-auto flex min-h-4 items-center gap-1.5 text-xs text-muted-foreground"
             >
-              {t('Updates available')}
-              <span className="tabular-nums">{filterCounts.updates}</span>
-            </button>
+              {isRefreshing ? (
+                <>
+                  <Loader2
+                    className="size-3.5 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                  <span className="font-medium text-foreground">
+                    {t('Refreshing Marketplace…')}
+                  </span>
+                  {lastDataAt ? (
+                    <span>
+                      · {t('Showing data from {{time}}', { time: formatRelative(lastDataAt) })}
+                    </span>
+                  ) : null}
+                </>
+              ) : lastDataAt ? (
+                <span>{t('Updated {{time}}', { time: formatRelative(lastDataAt) })}</span>
+              ) : null}
+            </p>
           ) : null}
         </div>
       ) : null}
@@ -1061,32 +1095,6 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           message={t('Marketplace unavailable')}
           retry={() => void refreshMarketplace()}
         />
-      ) : null}
-      {/* Stale-while-revalidate status: neutral while content is on screen, and distinct from the
-          warning banners below, which mean degraded data rather than merely old data. */}
-      {!loading && snapshot && snapshot.sources.length > 0 && !lastRefreshFailed ? (
-        <p
-          role="status"
-          aria-live="polite"
-          className="mb-3.5 flex min-h-4 items-center gap-1.5 text-xs text-muted-foreground"
-        >
-          {isRefreshing ? (
-            <>
-              <Loader2
-                className="size-3.5 animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-              <span className="font-medium text-foreground">{t('Refreshing Marketplace…')}</span>
-              {lastDataAt ? (
-                <span>
-                  · {t('Showing data from {{time}}', { time: formatRelative(lastDataAt) })}
-                </span>
-              ) : null}
-            </>
-          ) : lastDataAt ? (
-            <span>{t('Updated {{time}}', { time: formatRelative(lastDataAt) })}</span>
-          ) : null}
-        </p>
       ) : null}
       {!loading && snapshot && lastRefreshFailed ? (
         <div
