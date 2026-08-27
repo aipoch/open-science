@@ -3411,6 +3411,7 @@
     "Memory note changed or no longer exists.": "메모리 노트가 변경되었거나 더 이상 존재하지 않습니다.",
     "Memory category no longer exists.": "메모리 카테고리가 더 이상 존재하지 않습니다.",
     "Memory note is required.": "메모리 노트를 입력해야 합니다.",
+    "Memory note": "메모리 노트",
     "Memory category name is required.": "메모리 카테고리 이름을 입력해야 합니다.",
     "Memory text is too long.": "메모리 텍스트가 너무 깁니다.",
     "Memory could not be updated.": "메모리를 업데이트하지 못했습니다.",

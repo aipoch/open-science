@@ -3413,6 +3413,7 @@
     "Memory note changed or no longer exists.": "记忆笔记已更改或不存在。",
     "Memory category no longer exists.": "记忆分类已不存在。",
     "Memory note is required.": "记忆笔记不能为空。",
+    "Memory note": "记忆笔记",
     "Memory category name is required.": "记忆分类名称不能为空。",
     "Memory text is too long.": "记忆文本过长。",
     "Memory could not be updated.": "无法更新记忆。",

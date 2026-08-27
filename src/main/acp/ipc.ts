@@ -52,7 +52,7 @@ const withDurableMemoryPreference = async (
     sessionId: request.sessionId,
     ...(request.projectId ? { projectId: request.projectId } : {})
   })
-  return memoryEnabled === undefined ? request : { ...request, memoryEnabled }
+  return { ...request, memoryEnabled: memoryEnabled ?? false }
 }
 
 const withResponseAdmission = <Result>(

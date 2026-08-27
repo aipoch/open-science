@@ -631,16 +631,24 @@ describe('MemoryService', () => {
     )
   })
 
-  it('returns a visible non-retryable rejection and preserves it for the same turn', async () => {
+  it('caches only an identical rejected category payload for the same turn', async () => {
     const service = createService()
     await service.setEnabled({ enabled: true })
     const context = { ...agentContext, turnId: 'turn-1' }
+    const invalidRequest = rememberRequest('invalid category memory', 'missing-category')
 
-    const rejected = await service.rememberForAgent(
-      rememberRequest('invalid category memory', 'missing-category'),
-      context
-    )
-    const retry = await service.rememberForAgent(
+    const rejected = await service.rememberForAgent(invalidRequest, context)
+    await client.memoryCategory.create({
+      data: {
+        id: 'missing-category',
+        name: 'Recovered category',
+        nameKey: 'recovered category',
+        guidance: '',
+        autoRecall: false
+      }
+    })
+    const identicalRetry = await service.rememberForAgent(invalidRequest, context)
+    const corrected = await service.rememberForAgent(
       rememberRequest('invalid category memory', ABOUT_YOU_MEMORY_CATEGORY_ID),
       context
     )
@@ -651,9 +659,82 @@ describe('MemoryService', () => {
       code: 'category_not_found',
       reason: 'The selected memory category no longer exists.'
     })
-    expect(retry).toEqual(rejected)
+    expect(identicalRetry).toEqual(rejected)
+    expect(corrected).toMatchObject({ status: 'created' })
+    await expect(client.memoryEntry.count()).resolves.toBe(1)
+  })
+
+  it('revalidates corrected analysis for the same content and turn', async () => {
+    const service = createService()
+    await service.setEnabled({ enabled: true })
+    const context = { ...agentContext, turnId: 'turn-analysis' }
+    const request = rememberRequest('The assay uses a 15 minute incubation.')
+
+    await expect(
+      service.rememberForAgent(
+        {
+          ...request,
+          analysis: {
+            ...request.analysis,
+            reason: 'This is temporary and useful only for the current session.'
+          }
+        },
+        context
+      )
+    ).resolves.toMatchObject({ status: 'rejected', code: 'invalid_analysis' })
+    await expect(service.rememberForAgent(request, context)).resolves.toMatchObject({
+      status: 'created'
+    })
+    await expect(client.memoryEntry.count()).resolves.toBe(1)
+  })
+
+  it.each([
+    'ghp_1234567890abcdefghijklmnopqrstuvwxyz',
+    'github_pat_11AA0_exampleTokenCharacters1234567890',
+    'ｇｈｐ＿1234567890abcdefghijklmnopqrstuvwxyz',
+    'AKIAIOSFODNN7EXAMPLE',
+    ['xoxb', '123456789012', '123456789012', 'abcdefghijklmnopqrstuvwx'].join('-'),
+    'npm_1234567890abcdefghijklmnopqrstuvwxyz',
+    'pypi-AgEIcHlwaS5vcmcCJGZha2VfY3JlZGVudGlhbF9mb3JfdGVzdGluZw',
+    'pypi-AgEIcHlwaS5vcmcCJGZha2VfY3JlZGVudGlhbF9mb3JfdGVzdGluZw-',
+    'glpat-1234567890abcdefghij',
+    'glpat-1234567890abcdefghi-',
+    'AIzaSyA1234567890abcdefghijklmnopqrst',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkphbmUgRG9lIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+  ])('rejects a high-confidence bare credential before SQLite: %s', async (content) => {
+    const service = createService()
+    await service.setEnabled({ enabled: true })
+
+    await expect(
+      service.rememberForAgent(rememberRequest(content), {
+        ...agentContext,
+        turnId: `turn-bare-credential-${content.slice(0, 8)}`
+      })
+    ).resolves.toEqual({
+      status: 'rejected',
+      retryable: false,
+      code: 'sensitive_content',
+      reason: 'Memory cannot save credentials or secrets.'
+    })
     await expect(client.memoryEntry.count()).resolves.toBe(0)
   })
+
+  it.each([
+    'Use the ghp_ prefix when documenting GitHub authentication.',
+    'AKIA is a project codename, not a credential.',
+    'JWT authentication is supported by the service.',
+    'The release version has three dotted segments: 1.2.3.'
+  ])(
+    'does not reject ordinary text that only resembles a credential marker: %s',
+    async (content) => {
+      const service = createService()
+      await service.setEnabled({ enabled: true })
+
+      await expect(
+        service.rememberForAgent(rememberRequest(content), agentContext)
+      ).resolves.toMatchObject({ status: 'created' })
+    }
+  )
 
   it.each([
     {

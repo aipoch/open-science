@@ -3823,6 +3823,7 @@
     "Memory note changed or no longer exists.": "Заметка в памяти была изменена или больше не существует.",
     "Memory category no longer exists.": "Категория памяти больше не существует.",
     "Memory note is required.": "Заметка обязательна.",
+    "Memory note": "Заметка в памяти",
     "Memory category name is required.": "Укажите название категории памяти.",
     "Memory text is too long.": "Текст слишком длинный.",
     "Memory could not be updated.": "Не удалось обновить память.",

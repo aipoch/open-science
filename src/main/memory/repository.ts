@@ -555,5 +555,11 @@ class MemoryRepository {
   }
 }
 
-export { MemoryRepository, cleanMemoryCategoryName, memoryCategoryNameKey, memoryContentKey }
+export {
+  MemoryRepository,
+  cleanMemoryCategoryName,
+  cleanMemoryContent,
+  memoryCategoryNameKey,
+  memoryContentKey
+}
 export type { MemorySearchCandidate }

@@ -3,10 +3,12 @@ import type { Project } from '../../shared/projects'
 import type { ProjectSessionDeletionResult } from '../session-persistence/coordinator'
 import type { ProjectSessionDeletionState } from '../session-persistence/repository'
 import { withDataRootWrite } from '../storage/migration-state'
+import type { ApplicationEventPublisher } from '../application-events'
+import type { ProjectDeletionResult } from './repository'
 
 type ProjectDeletionRepository = {
   get(id: string): Promise<Project | null>
-  delete(id: string): Promise<void>
+  delete(id: string): Promise<ProjectDeletionResult | undefined>
   createDeletionIntent(projectId: string): Promise<void>
   deleteDeletionIntent(projectId: string): Promise<void>
   listDeletionIntents(): Promise<string[]>
@@ -149,7 +151,8 @@ class ProjectDeletionCoordinator {
     private readonly reviews?: ProjectReviewDeletion,
     private readonly provenance?: ProjectProvenanceDeletion,
     private readonly permissionGrants?: ProjectPermissionGrantDeletion,
-    private readonly lifecycle?: ProjectDeletionLifecycle
+    private readonly lifecycle?: ProjectDeletionLifecycle,
+    private readonly events?: Pick<ApplicationEventPublisher, 'publish'>
   ) {}
 
   // Enqueues before yielding so two callers in the same event-loop turn cannot publish competing
@@ -348,7 +351,12 @@ class ProjectDeletionCoordinator {
     // Prune is transactional and idempotent. Run it before the soft delete so a Registry/database
     // failure retains the visible Project plus its durable intent for an explicit or startup retry.
     await this.permissionGrants?.prune({ kind: 'project', projectId })
-    if (await this.projects.get(projectId)) await this.projects.delete(projectId)
+    const projectDeletion = (await this.projects.get(projectId))
+      ? await this.projects.delete(projectId)
+      : undefined
+    if (projectDeletion) {
+      this.events?.publish('memory:changed', { revision: projectDeletion.memoryRevision })
+    }
     // The metadata tombstone commits outside the Registry mutation queue. A remember/restore already
     // in flight may have updated its cache around that commit, so enqueue one non-failing barrier.
     await this.permissionGrants

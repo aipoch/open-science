@@ -3413,6 +3413,7 @@
     "Memory note changed or no longer exists.": "メモリのメモが変更されたか、存在しません。",
     "Memory category no longer exists.": "メモリカテゴリは存在しません。",
     "Memory note is required.": "メモリのメモを入力してください。",
+    "Memory note": "メモリのメモ",
     "Memory category name is required.": "メモリカテゴリ名を入力してください。",
     "Memory text is too long.": "メモリのテキストが長すぎます。",
     "Memory could not be updated.": "メモリを更新できませんでした。",

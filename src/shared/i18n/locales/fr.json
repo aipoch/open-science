@@ -3703,6 +3703,7 @@
     "Memory note changed or no longer exists.": "La note de mémoire a été modifiée ou n’existe plus.",
     "Memory category no longer exists.": "La catégorie de mémoire n’existe plus.",
     "Memory note is required.": "La note de mémoire est requise.",
+    "Memory note": "Note de mémoire",
     "Memory category name is required.": "Le nom de la catégorie de mémoire est requis.",
     "Memory text is too long.": "Le texte de la mémoire est trop long.",
     "Memory could not be updated.": "La mémoire n’a pas pu être mise à jour.",

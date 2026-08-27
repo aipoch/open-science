@@ -1144,6 +1144,24 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     expect(resolveMemoryEnabled).toHaveBeenCalledTimes(2)
   })
 
+  it('fails closed when the durable Memory preference is missing', async () => {
+    const resolveMemoryEnabled = vi.fn(async () => undefined)
+    registerWithFakes({ resolveMemoryEnabled })
+    const request: AcpResumeSessionRequest = {
+      sessionId: 's-1',
+      cwd: '/workspace',
+      projectId: 'project-1',
+      memoryEnabled: true
+    }
+
+    await handlers.get('acp:resume-session')?.({}, request)
+    await handlers.get('acp:reset-session-context')?.({}, request)
+
+    expect(resumeSession).toHaveBeenCalledWith({ ...request, memoryEnabled: false })
+    expect(resetSessionContext).toHaveBeenCalledWith({ ...request, memoryEnabled: false })
+    expect(resolveMemoryEnabled).toHaveBeenCalledTimes(2)
+  })
+
   it('rejects reset before runtime mutation when Session admission is closed', async () => {
     const failure = new Error('Project is being deleted.')
     const withSessionAvailableById = vi.fn().mockRejectedValue(failure)

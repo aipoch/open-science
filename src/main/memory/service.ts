@@ -18,7 +18,7 @@ import {
   type UpdateMemoryEntryRequest
 } from '../../shared/memory'
 import type { ApplicationEventPublisher } from '../application-events'
-import type { MemoryRepository, MemorySearchCandidate } from './repository'
+import { cleanMemoryContent, type MemoryRepository, type MemorySearchCandidate } from './repository'
 
 const normalizeSearchText = (value: string): string => value.normalize('NFKC').toLowerCase().trim()
 const searchTerms = (value: string): string[] => {
@@ -65,7 +65,16 @@ type MemoryAnalysisRejection = Extract<MemoryAgentRememberResult, { status: 'rej
 const sensitiveMemoryPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/iu,
   /\b(?:api[_ -]?key|access[_ -]?token|password|secret)\s*[:=]\s*\S+/iu,
-  /(?:密码|口令|密钥|令牌)\s*[:：=]\s*\S+/u
+  /(?:密码|口令|密钥|令牌)\s*[:：=]\s*\S+/u,
+  /(?<![A-Za-z0-9_])ghp_[A-Za-z0-9]{36}(?![A-Za-z0-9_])/u,
+  /(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,255}(?![A-Za-z0-9_])/u,
+  /(?<![0-9A-Z])AKIA[0-9A-Z]{16}(?![0-9A-Z])/u,
+  /(?<![A-Za-z0-9-])xoxb-[A-Za-z0-9-]{40,}(?![A-Za-z0-9-])/u,
+  /(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{36}(?![A-Za-z0-9_])/u,
+  /(?<![A-Za-z0-9_-])pypi-[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])/u,
+  /(?<![A-Za-z0-9_-])glpat-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/u,
+  /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/u,
+  /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])/u
 ]
 const promptInjectionPatterns = [
   /\b(?:ignore|disregard|override)\b.{0,40}\b(?:previous|prior|system|developer)\b.{0,30}\binstructions?\b/iu,
@@ -82,7 +91,8 @@ const transientAnalysisPatterns = [
 const validateAgentMemoryAnalysis = (
   request: MemoryAgentRememberRequest
 ): MemoryAnalysisRejection | undefined => {
-  if (sensitiveMemoryPatterns.some((pattern) => pattern.test(request.content))) {
+  const canonicalContent = cleanMemoryContent(request.content)
+  if (sensitiveMemoryPatterns.some((pattern) => pattern.test(canonicalContent))) {
     return {
       status: 'rejected',
       retryable: false,
@@ -90,7 +100,7 @@ const validateAgentMemoryAnalysis = (
       reason: 'Memory cannot save credentials or secrets.'
     }
   }
-  if (promptInjectionPatterns.some((pattern) => pattern.test(request.content))) {
+  if (promptInjectionPatterns.some((pattern) => pattern.test(canonicalContent))) {
     return {
       status: 'rejected',
       retryable: false,
@@ -108,6 +118,22 @@ const validateAgentMemoryAnalysis = (
   }
   return undefined
 }
+
+const normalizeRememberPayload = (request: MemoryAgentRememberRequest): string =>
+  JSON.stringify({
+    content: normalizeSearchText(request.content),
+    categoryId: request.categoryId ? normalizeSearchText(request.categoryId) : null,
+    analysis: {
+      scope: request.analysis.scope,
+      durability: request.analysis.durability,
+      evidence: request.analysis.evidence,
+      subject: normalizeSearchText(request.analysis.subject),
+      reason: normalizeSearchText(request.analysis.reason),
+      categoryReason: request.analysis.categoryReason
+        ? normalizeSearchText(request.analysis.categoryReason)
+        : null
+    }
+  })
 
 const toAgentResult = (row: MemorySearchCandidate): MemoryAgentResult => ({
   id: row.id,
@@ -273,7 +299,7 @@ class MemoryService {
     return this.enqueue(async () => {
       await this.requireEnabled()
       const rejectionKey = context.turnId
-        ? `${context.sessionId}\u0000${context.turnId}\u0000${normalizeSearchText(request.content)}`
+        ? JSON.stringify([context.sessionId, context.turnId, normalizeRememberPayload(request)])
         : undefined
       const previousRejection = rejectionKey ? this.rejectedWrites.get(rejectionKey) : undefined
       if (previousRejection) return previousRejection

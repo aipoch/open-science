@@ -70,13 +70,34 @@ describe('memory store', () => {
         return () => undefined
       })
     })
-    useMemoryStore.setState({ ...snapshot(2), status: 'ready' })
+    useMemoryStore.setState({
+      ...snapshot(2),
+      status: 'ready',
+      selectedCategoryId: undefined,
+      selectedProjectId: 'project-deleted',
+      projects: [
+        {
+          projectId: 'project-deleted',
+          name: 'Deleted project',
+          archived: false,
+          entries: []
+        }
+      ]
+    })
     useMemoryStore.getState().listen()
 
     listener?.({ revision: 2 })
     expect(read).not.toHaveBeenCalled()
     listener?.({ revision: 3 })
     await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(useMemoryStore.getState()).toMatchObject({
+        revision: 3,
+        projects: [],
+        selectedCategoryId: 'memory-category-about-you',
+        selectedProjectId: undefined
+      })
+    )
   })
 
   it('preserves a selected project container across snapshots and falls back when it disappears', async () => {

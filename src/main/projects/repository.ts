@@ -6,6 +6,7 @@ import type {
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../../shared/projects'
+import { MEMORY_SETTINGS_ID } from '../../shared/memory'
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
 
 // Only the project delegate is needed; typing to this subset keeps the repository unit-testable with a
@@ -20,7 +21,10 @@ type ProjectClient = Pick<
   | 'projectPreviewState'
   | 'visionEvidence'
   | 'memoryEntry'
+  | 'memorySettings'
 >
+
+type ProjectDeletionResult = Readonly<{ memoryRevision: number }>
 
 // Normalizes Prisma rows into the epoch-ms shape shared with the renderer.
 const toProject = (row: PrismaProject): Project => ({
@@ -199,22 +203,33 @@ class ProjectRepository {
 
   // Retains Project and Session metadata/Usage for historical totals while removing active-only
   // derived children that previously relied on a hard-delete cascade.
-  async delete(id: string): Promise<void> {
+  async delete(id: string): Promise<ProjectDeletionResult | undefined> {
     const client = await this.getClient()
-    await client.$transaction(async (transaction) => {
+    return client.$transaction(async (transaction) => {
       await migrationSqlExecutor.query(
         transaction as unknown as Prisma.TransactionClient,
         'PRAGMA secure_delete = ON'
       )
       await transaction.projectPreviewState.deleteMany({ where: { projectId: id } })
       await transaction.visionEvidence.deleteMany({ where: { projectId: id } })
-      await transaction.memoryEntry.deleteMany({ where: { projectId: id } })
+      const deletedMemory = await transaction.memoryEntry.deleteMany({ where: { projectId: id } })
+      const memoryChange =
+        deletedMemory.count > 0
+          ? await transaction.memorySettings.update({
+              where: { id: MEMORY_SETTINGS_ID },
+              data: { revision: { increment: 1 } },
+              select: { revision: true }
+            })
+          : undefined
       const current = await transaction.project.findUnique({ where: { id } })
-      if (!current || current.deletedAt !== null) return
+      if (!current || current.deletedAt !== null) {
+        return memoryChange ? { memoryRevision: memoryChange.revision } : undefined
+      }
       await transaction.project.updateMany({
         where: { id, deletedAt: null },
         data: { deletedAt: new Date(), updatedAt: current.updatedAt }
       })
+      return memoryChange ? { memoryRevision: memoryChange.revision } : undefined
     })
   }
 
@@ -247,4 +262,4 @@ class ProjectRepository {
 }
 
 export { ProjectRepository, toProject }
-export type { ProjectClient, ProjectClientProvider }
+export type { ProjectClient, ProjectClientProvider, ProjectDeletionResult }

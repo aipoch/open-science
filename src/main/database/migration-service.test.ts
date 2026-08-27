@@ -297,63 +297,40 @@ describe('application database migrations', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-pre-release-memory-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
-    await client.memoryEntry.createMany({
-      data: [
-        {
-          id: 'memory-1',
-          categoryId: 'memory-category-about-you',
-          content: 'Prefers concise answers',
-          contentKey: 'prefers concise answers',
-          origin: 'user'
-        },
-        {
-          id: 'memory-2',
-          categoryId: 'memory-category-about-you',
-          content: 'Uses temporary storage for migration tests',
-          contentKey: 'uses temporary storage for migration tests',
-          origin: 'user'
-        }
-      ]
+    await client.memoryEntry.create({
+      data: {
+        id: 'memory-1',
+        categoryId: 'memory-category-about-you',
+        content: 'Prefers concise answers',
+        contentKey: 'prefers concise answers',
+        origin: 'user'
+      }
     })
-
-    for (const table of [
-      'SessionArtifactRef',
-      'SessionRun',
-      'SessionTurnUsage',
-      'PendingSessionReconciliation',
-      'SessionProjectionState',
-      'Session',
-      'SessionNumberSequence'
-    ]) {
-      await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
-    }
-    await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "deletedAt"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0013_session_projection', '0014_review_query_indexes', '0016_agent_memory_project_scope')`
-    )
-    await client.$executeRawUnsafe(
-      `INSERT INTO "_open_science_migrations" ("id", "checksum") VALUES (?, ?)`,
-      '0013_agent_memory',
-      'e398804209d9fc699a966bed07186717062e0516fbd43bb5f46ef7d9668986fc'
+      `UPDATE "_open_science_migrations" SET "id" = ?, "checksum" = ? WHERE "id" = ?`,
+      '0016_agent_memory',
+      '43bd42fc137a0a88fb513f701db6e3e19ed3bdb5b8ead5691b5fad3fb68fb01a',
+      '0016_agent_memory_project_scope'
     )
 
     await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
       code: 'database_history_invalid',
-      migrationId: '0013_agent_memory'
+      migrationId: '0016_agent_memory'
     })
     await expect(
       client.memoryEntry.findMany({ orderBy: { id: 'asc' }, select: { id: true, content: true } })
-    ).resolves.toEqual([
-      { id: 'memory-1', content: 'Prefers concise answers' },
-      { id: 'memory-2', content: 'Uses temporary storage for migration tests' }
-    ])
+    ).resolves.toEqual([{ id: 'memory-1', content: 'Prefers concise answers' }])
     await expect(
-      client.$queryRaw<Array<{ id: string }>>`
-        SELECT "id" FROM "_open_science_migrations"
-        WHERE "id" IN ('0013_agent_memory', '0013_session_projection', '0014_review_query_indexes', '0016_agent_memory_project_scope')
-        ORDER BY "id"
+      client.$queryRaw<Array<{ checksum: string; id: string }>>`
+        SELECT "id", "checksum" FROM "_open_science_migrations"
+        WHERE "id" IN ('0016_agent_memory', '0016_agent_memory_project_scope')
       `
-    ).resolves.toEqual([{ id: '0013_agent_memory' }])
+    ).resolves.toEqual([
+      {
+        id: '0016_agent_memory',
+        checksum: '43bd42fc137a0a88fb513f701db6e3e19ed3bdb5b8ead5691b5fad3fb68fb01a'
+      }
+    ])
   })
 
   it('keeps historical aggregate-only turn usage when adding exact model-call storage', async () => {

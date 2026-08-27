@@ -34,6 +34,7 @@ describe('ProjectDeletionCoordinator', () => {
 
   it('soft-deletes the project metadata and removes active-only project data', async () => {
     const projects = createProjects()
+    projects.delete = vi.fn().mockResolvedValue({ memoryRevision: 7 })
     const sessions = createSessions()
     const reviews = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
     const provenance = { deleteProjectProvenance: vi.fn().mockResolvedValue(undefined) }
@@ -44,6 +45,7 @@ describe('ProjectDeletionCoordinator', () => {
     const finalizeProjectDeletion = vi.fn().mockResolvedValue(undefined)
     const completeProjectDeletion = vi.fn()
     const abortProjectDeletion = vi.fn()
+    const events = { publish: vi.fn() }
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
@@ -55,7 +57,8 @@ describe('ProjectDeletionCoordinator', () => {
         finalizeProjectDeletion,
         completeProjectDeletion,
         abortProjectDeletion
-      }
+      },
+      events
     )
 
     await coordinator.deleteProject('project-1')
@@ -77,6 +80,7 @@ describe('ProjectDeletionCoordinator', () => {
     expect(finalizeProjectDeletion).toHaveBeenCalledWith('project-1')
     expect(completeProjectDeletion).toHaveBeenCalledWith('project-1')
     expect(abortProjectDeletion).not.toHaveBeenCalled()
+    expect(events.publish).toHaveBeenCalledWith('memory:changed', { revision: 7 })
     expect(vi.mocked(permissionGrants.prune).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(projects.delete).mock.invocationCallOrder[0]
     )
@@ -196,6 +200,7 @@ describe('ProjectDeletionCoordinator', () => {
     projects.get = vi.fn(async () => (projectExists ? project : null))
     projects.delete = vi.fn(async () => {
       projectExists = false
+      return undefined
     })
     projects.createDeletionIntent = vi.fn(async () => {
       intentExists = true
@@ -268,6 +273,7 @@ describe('ProjectDeletionCoordinator', () => {
     projects.get = vi.fn(async () => (projectExists ? project : null))
     projects.delete = vi.fn(async () => {
       projectExists = false
+      return undefined
     })
     projects.createDeletionIntent = vi.fn(async () => {
       intentExists = true
@@ -753,6 +759,7 @@ describe('ProjectDeletionCoordinator', () => {
     projects.get = vi.fn(async () => (projectExists ? project : null))
     projects.delete = vi.fn(async () => {
       projectExists = false
+      return undefined
     })
     projects.createDeletionIntent = vi.fn(async () => {
       intentExists = true
@@ -802,6 +809,7 @@ describe('ProjectDeletionCoordinator', () => {
     const projects = createProjects()
     projects.delete = vi.fn(async () => {
       order.push('project')
+      return undefined
     })
     projects.deleteDeletionIntent = vi.fn(async () => {
       order.push('intent')

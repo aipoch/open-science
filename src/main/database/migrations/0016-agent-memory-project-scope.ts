@@ -128,28 +128,6 @@ const MEMORY_ENTRY_INDEX_DDLS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey")`
 ] as const
 
-const PRE_RELEASE_MEMORY_ENTRY_REPLACEMENT_TABLE = '__open_science_pre_release_MemoryEntry'
-const PRE_RELEASE_MEMORY_ENTRY_REBUILD_DDLS = {
-  beforeCopy: [
-    `DROP TRIGGER IF EXISTS "MemoryEntry_fts_insert"`,
-    `DROP TRIGGER IF EXISTS "MemoryEntry_fts_delete"`,
-    `DROP TRIGGER IF EXISTS "MemoryEntry_fts_update"`,
-    `DROP TABLE IF EXISTS "MemoryEntryFts"`,
-    `DROP TABLE IF EXISTS "${PRE_RELEASE_MEMORY_ENTRY_REPLACEMENT_TABLE}"`,
-    MEMORY_ENTRY_DDL.replace(
-      'CREATE TABLE IF NOT EXISTS "MemoryEntry"',
-      `CREATE TABLE "${PRE_RELEASE_MEMORY_ENTRY_REPLACEMENT_TABLE}"`
-    )
-  ],
-  afterCopy: [
-    `DROP TABLE "MemoryEntry"`,
-    `ALTER TABLE "${PRE_RELEASE_MEMORY_ENTRY_REPLACEMENT_TABLE}" RENAME TO "MemoryEntry"`,
-    ...MEMORY_ENTRY_INDEX_DDLS,
-    MEMORY_ENTRY_FTS_DDL,
-    ...MEMORY_ENTRY_FTS_TRIGGER_DDLS
-  ]
-} as const
-
 const agentMemoryProjectScopeMigration = {
   id: '0016_agent_memory_project_scope',
   statements: [
@@ -306,7 +284,5 @@ export {
   MEMORY_ENTRY_FTS_DDL,
   MEMORY_ENTRY_FTS_TABLE,
   MEMORY_ENTRY_FTS_TRIGGER_DDLS,
-  MEMORY_ENTRY_INDEX_DDLS,
-  PRE_RELEASE_MEMORY_ENTRY_REBUILD_DDLS,
-  PRE_RELEASE_MEMORY_ENTRY_REPLACEMENT_TABLE
+  MEMORY_ENTRY_INDEX_DDLS
 }

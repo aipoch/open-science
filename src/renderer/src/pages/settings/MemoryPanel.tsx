@@ -341,6 +341,7 @@ const NoteEditor = ({
         value={value}
         required
         maxLength={MEMORY_ENTRY_MAX_LENGTH}
+        aria-label={t('Memory note')}
         placeholder={placeholder}
         className="min-h-20 resize-y"
         onChange={(event) => setValue(event.target.value)}
@@ -389,6 +390,18 @@ const EntryRow = ({
   const projectLabel = viewKind === 'category' ? entry.projectName : null
   const showMetadata = entry.origin === 'agent' || categoryLabel || projectLabel
 
+  const copyNote = async (): Promise<void> => {
+    setCopied(false)
+    try {
+      if (!navigator.clipboard) return
+      await navigator.clipboard.writeText(entry.content)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1_200)
+    } catch {
+      setCopied(false)
+    }
+  }
+
   if (editing) {
     return (
       <NoteEditor
@@ -417,11 +430,7 @@ const EntryRow = ({
                 size="icon-xs"
                 className="text-muted-foreground hover:text-foreground"
                 aria-label={t('Copy note')}
-                onClick={() => {
-                  void navigator.clipboard?.writeText(entry.content)
-                  setCopied(true)
-                  window.setTimeout(() => setCopied(false), 1_200)
-                }}
+                onClick={() => void copyNote()}
               >
                 {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
               </Button>

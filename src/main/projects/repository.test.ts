@@ -29,6 +29,7 @@ const createMockClient = (
   projectPreviewState: { deleteMany: ReturnType<typeof vi.fn> }
   visionEvidence: { deleteMany: ReturnType<typeof vi.fn> }
   memoryEntry: { deleteMany: ReturnType<typeof vi.fn> }
+  memorySettings: { update: ReturnType<typeof vi.fn> }
 } => {
   const project = {
     findMany: vi.fn(methods.findMany as never),
@@ -48,6 +49,9 @@ const createMockClient = (
   const projectPreviewState = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const visionEvidence = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const memoryEntry = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const memorySettings = {
+    update: vi.fn().mockResolvedValue({ revision: 7 })
+  }
   const client = {
     $executeRaw: executeRaw,
     $queryRawUnsafe: vi.fn().mockResolvedValue([{ secure_delete: 1n }]),
@@ -56,7 +60,8 @@ const createMockClient = (
     projectDeletionIntent,
     projectPreviewState,
     visionEvidence,
-    memoryEntry
+    memoryEntry,
+    memorySettings
   } as unknown as ProjectClient
 
   return {
@@ -66,7 +71,8 @@ const createMockClient = (
     projectDeletionIntent,
     projectPreviewState,
     visionEvidence,
-    memoryEntry
+    memoryEntry,
+    memorySettings
   }
 }
 
@@ -201,19 +207,25 @@ describe('project repository', () => {
   })
 
   it('soft-deletes a project while removing active-only derived children', async () => {
-    const { client, project, projectPreviewState, visionEvidence, memoryEntry } = createMockClient({
-      findUnique: () => Promise.resolve(createRow()),
-      updateMany: () => Promise.resolve({ count: 1 })
-    })
+    const { client, project, projectPreviewState, visionEvidence, memoryEntry, memorySettings } =
+      createMockClient({
+        findUnique: () => Promise.resolve(createRow()),
+        updateMany: () => Promise.resolve({ count: 1 })
+      })
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
-    await repository.delete('project-1')
+    await expect(repository.delete('project-1')).resolves.toEqual({ memoryRevision: 7 })
 
     expect(projectPreviewState.deleteMany).toHaveBeenCalledWith({
       where: { projectId: 'project-1' }
     })
     expect(visionEvidence.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
     expect(memoryEntry.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
+    expect(memorySettings.update).toHaveBeenCalledWith({
+      where: { id: 'memory-settings' },
+      data: { revision: { increment: 1 } },
+      select: { revision: true }
+    })
     expect(project.updateMany).toHaveBeenCalledWith({
       where: { id: 'project-1', deletedAt: null },
       data: {

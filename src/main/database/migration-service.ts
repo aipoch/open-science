@@ -15,11 +15,6 @@ import {
 } from './legacy-baseline-adapter'
 import { DatabaseValidationError } from './database-validation-error'
 import { migrationSqlExecutor } from './migration-sql-executor'
-import {
-  isSupportedPreReleaseAgentMemory,
-  PRE_RELEASE_AGENT_MEMORY_MIGRATION_ID,
-  upgradePreReleaseAgentMemorySchema
-} from './pre-release-agent-memory-adapter'
 import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
 import { projectAgentContextMigration } from './migrations/0002-project-agent-context'
 import { grantedLocalRootsMigration } from './migrations/0003-granted-local-roots'
@@ -1001,30 +996,6 @@ const validateLedger = (
   return ledger.length
 }
 
-type PreReleaseAgentMemoryUpgrade = {
-  ledgerRow: LedgerRow
-  migration: MigrationManifestEntry
-}
-
-const findPreReleaseAgentMemoryUpgrade = (
-  ledger: readonly LedgerRow[],
-  manifest: readonly MigrationManifestEntry[]
-): PreReleaseAgentMemoryUpgrade | undefined => {
-  const migrationIndex = manifest.findIndex(
-    (candidate) =>
-      candidate.id === agentMemoryProjectScopeMigration.id &&
-      candidate.checksum === AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM
-  )
-  if (migrationIndex < 0 || ledger.length !== migrationIndex + 1) return undefined
-
-  const ledgerRow = ledger[migrationIndex]!
-  if (!isSupportedPreReleaseAgentMemory(ledgerRow.id, ledgerRow.checksum)) return undefined
-
-  // A recognized pre-release suffix never relaxes validation of the released ledger prefix.
-  validateLedger(ledger.slice(0, migrationIndex), manifest)
-  return { ledgerRow, migration: manifest[migrationIndex]! }
-}
-
 const readForeignKeyState = async (client: PrismaClient): Promise<number> => {
   const rows = await migrationSqlExecutor.query<SqliteForeignKeyStateRow[]>(
     client,
@@ -1125,37 +1096,6 @@ const insertLedgerRow = async (
     INSERT INTO "_open_science_migrations" ("id", "checksum")
     VALUES (${migration.id}, ${migration.checksum})
   `
-}
-
-const applyPreReleaseAgentMemoryUpgrade = async (
-  client: PrismaClient,
-  upgrade: PreReleaseAgentMemoryUpgrade
-): Promise<void> => {
-  try {
-    await client.$transaction(async (transaction) => {
-      const transactionClient = transaction as unknown as PrismaClient
-      await upgradePreReleaseAgentMemorySchema(transaction, upgrade.ledgerRow.checksum)
-      await verifyCurrentApplicationSchema(transactionClient)
-      const deleted = await transaction.$executeRaw`
-        DELETE FROM "_open_science_migrations"
-        WHERE "id" = ${PRE_RELEASE_AGENT_MEMORY_MIGRATION_ID}
-          AND "checksum" = ${upgrade.ledgerRow.checksum}
-      `
-      if (deleted !== 1) {
-        throw new DatabaseValidationError(
-          'Pre-release agent memory migration ledger changed during the upgrade.',
-          {
-            kind: 'pre-release-agent-memory-ledger-race',
-            expected: 1,
-            actual: deleted
-          }
-        )
-      }
-      await insertLedgerRow(transactionClient, upgrade.migration)
-    })
-  } catch (error) {
-    throw classifyDatabaseFailure(error, 'migration', upgrade.migration.id)
-  }
 }
 
 const hasOnlyDeferredPreviewStateForeignKeyViolations = async (
@@ -1382,16 +1322,6 @@ const migrateApplicationDatabaseWithManifest = async (
   }
 
   const applied: string[] = []
-  const preReleaseAgentMemoryUpgrade = findPreReleaseAgentMemoryUpgrade(ledger, manifest)
-  if (preReleaseAgentMemoryUpgrade) {
-    const migration = preReleaseAgentMemoryUpgrade.migration
-    options.onProgress?.({ phase: 'migrating', migrationId: migration.id })
-    await backupBeforeMigration(migration)
-    await applyPreReleaseAgentMemoryUpgrade(client, preReleaseAgentMemoryUpgrade)
-    applied.push(migration.id)
-    ledger = await readLedger(client)
-  }
-
   const appliedCount = validateLedger(ledger, manifest)
   if (appliedCount === manifest.length) {
     return complete({ adoptedLegacy: false, applied, from, to: latest.id })

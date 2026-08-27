@@ -130,7 +130,54 @@ describe('MemoryPanel', () => {
     )
     fireEvent.click(add!)
 
-    expect(container.querySelector('textarea[placeholder="Add a note…"]')).not.toBeNull()
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      'textarea[placeholder="Add a note…"]'
+    )
+    expect(editor).not.toBeNull()
+    expect(editor?.getAttribute('aria-label')).toBe('Memory note')
+  })
+
+  it('shows copied state only after the clipboard write succeeds', async () => {
+    let resolveWrite: (() => void) | undefined
+    const write = new Promise<void>((resolve) => {
+      resolveWrite = resolve
+    })
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(() => write) }
+    })
+    useMemoryStore.setState({
+      categories: [aboutYouCategory({ entries: [memoryEntry()] })]
+    })
+    await renderMemoryPanel()
+    const copy = container.querySelector<HTMLButtonElement>('button[aria-label="Copy note"]')!
+    const initialIcon = copy.querySelector('svg')?.outerHTML
+
+    fireEvent.click(copy)
+    expect(initialIcon).toBeTruthy()
+    expect(copy.querySelector('svg')?.outerHTML).toBe(initialIcon)
+
+    await act(async () => resolveWrite?.())
+    expect(copy.querySelector('svg')?.outerHTML).not.toBe(initialIcon)
+  })
+
+  it('keeps copy state unchanged when the clipboard write fails', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error('clipboard unavailable')) }
+    })
+    useMemoryStore.setState({
+      categories: [aboutYouCategory({ entries: [memoryEntry()] })]
+    })
+    await renderMemoryPanel()
+    const copy = container.querySelector<HTMLButtonElement>('button[aria-label="Copy note"]')!
+    const initialIcon = copy.querySelector('svg')?.outerHTML
+
+    await act(async () => fireEvent.click(copy))
+
+    expect(initialIcon).toBeTruthy()
+    expect(copy.querySelector('svg')?.outerHTML).toBe(initialIcon)
+    expect(document.body.textContent).not.toContain('Copied')
   })
 
   it('discards a category-bound note draft when the selected category changes', async () => {

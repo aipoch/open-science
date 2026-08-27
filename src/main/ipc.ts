@@ -840,7 +840,8 @@ const createApplicationModules = async (
         sideChatOwnerRef.current?.restoreProject(projectId)
         await computeJobDeletionPort.abortProjectJobDeletion(projectId)
       }
-    }
+    },
+    applicationEvents
   )
   const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
     detectActiveSessions({
