@@ -30,7 +30,7 @@ const flush = async (): Promise<void> => {
 }
 
 beforeEach(() => {
-  window.localStorage.clear()
+  window.localStorage.removeItem(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -40,7 +40,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
-  window.localStorage.clear()
+  window.localStorage.removeItem(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
   delete (window as unknown as { api?: unknown }).api
   vi.useRealTimers()
   vi.restoreAllMocks()
