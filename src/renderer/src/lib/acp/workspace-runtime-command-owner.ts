@@ -5,6 +5,7 @@ import type { ActivePlanProjection } from '../../../../shared/session-plan/contr
 import {
   collectSessionReferences,
   type MessagePart,
+  type PersistedMessageAgentTarget,
   type SessionReference
 } from '../../../../shared/session-persistence'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
@@ -109,6 +110,29 @@ type HistoryReplayContext = {
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+// Snapshots the target a send actually runs with. Only a complete identity (framework + admitted
+// provider configuration) is stamped; a partial snapshot would mark false config changes.
+const resolveSendAgentTarget = (
+  input: Readonly<{
+    agentFrameworkId?: AgentFrameworkId
+    agentBackendId?: string
+    agentModel?: string
+    agentConfiguration?: SessionAgentConfiguration
+  }>
+): PersistedMessageAgentTarget | undefined => {
+  const configuration = input.agentConfiguration
+  if (!input.agentFrameworkId || !configuration) return undefined
+  const backendId = input.agentBackendId?.trim()
+  const model = configuration.model ?? (input.agentModel?.trim() || undefined)
+  return {
+    frameworkId: input.agentFrameworkId,
+    ...(backendId ? { backendId } : {}),
+    providerId: configuration.providerId,
+    ...(model ? { model } : {}),
+    reasoningEffort: configuration.reasoningEffort
+  }
+}
 const createSessionFailureMessage = (error: unknown): string =>
   errorMessage(error)
     .replace(/^Error invoking remote method '[^']*':\s*/i, '')
@@ -418,6 +442,7 @@ const sendWorkspaceMessage = async (
       agentBackendId: input.agentBackendId,
       agentModel: input.agentModel,
       agentConfiguration: input.agentConfiguration,
+      agentTarget: resolveSendAgentTarget(input),
       specialistId: input.specialistId
     })
     if (!pending?.messageId) return undefined
@@ -506,6 +531,7 @@ const sendWorkspaceMessage = async (
         agentBackendId: input.agentBackendId,
         agentModel: input.agentModel,
         agentConfiguration: input.agentConfiguration,
+        agentTarget: resolveSendAgentTarget(input),
         preserveSelection: input.preserveSelection
       })
       if (!appended) return undefined
@@ -588,6 +614,12 @@ const sendWorkspaceMessage = async (
       agentBackendId: prepared.appendOwnership.agentBackendId,
       agentModel: input.agentModel,
       agentConfiguration: input.agentConfiguration,
+      agentTarget: resolveSendAgentTarget({
+        agentFrameworkId: prepared.appendOwnership.agentFrameworkId ?? input.agentFrameworkId,
+        agentBackendId: prepared.appendOwnership.agentBackendId ?? input.agentBackendId,
+        agentModel: input.agentModel,
+        agentConfiguration: input.agentConfiguration
+      }),
       preserveSelection: input.preserveSelection
     })
     if (!appended) return undefined
@@ -643,6 +675,7 @@ const sendWorkspaceMessage = async (
     agentBackendId: input.agentBackendId,
     agentModel: input.agentModel,
     agentConfiguration: input.agentConfiguration,
+    agentTarget: resolveSendAgentTarget(input),
     specialistId: input.specialistId ?? undefined,
     enabledComputeHosts: input.enabledComputeHosts,
     selectedComputeHosts: input.selectedComputeHosts

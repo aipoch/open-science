@@ -3434,6 +3434,8 @@
     "Provider validation response exceeded {{limit}} bytes.": "服务商校验响应超过 {{limit}} 字节。",
     "The vendor returned more than {{limit}} models.": "服务商返回了超过 {{limit}} 个模型。",
     "The vendor returned a model ID longer than {{limit}} characters.": "服务商返回了长度超过 {{limit}} 个字符的模型 ID。",
-    "Claude token must not exceed {{limit}} bytes.": "Claude 令牌不得超过 {{limit}} 字节。"
+    "Claude token must not exceed {{limit}} bytes.": "Claude 令牌不得超过 {{limit}} 字节。",
+    "{{framework}} · {{model}} · {{effort}}": "{{framework}} · {{model}} · {{effort}}",
+    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "会话配置已更改为 {{framework}} · {{model}} · {{effort}}"
   }
 }

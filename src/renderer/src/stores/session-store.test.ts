@@ -2717,6 +2717,53 @@ describe('session store', () => {
     expect(toPersistedSession(session).agentModel).toBe('model-b')
   })
 
+  it('stamps the resolved agent target onto each sent user message', () => {
+    const firstTarget = {
+      frameworkId: 'claude-code' as const,
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'default' as const
+    }
+    const secondTarget = {
+      frameworkId: 'codex' as const,
+      backendId: 'codex-responses',
+      providerId: 'provider-b',
+      reasoningEffort: 'high' as const
+    }
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'First run',
+      agentTarget: firstTarget
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Second run',
+      agentTarget: secondTarget
+    })
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.messages.map((message) => message.agentTarget)).toEqual([
+      firstTarget,
+      secondTarget
+    ])
+    expect(toPersistedSession(session).messages.map((message) => message.agentTarget)).toEqual([
+      firstTarget,
+      secondTarget
+    ])
+  })
+
+  it('leaves the agent target unset when no snapshot is supplied', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'First run'
+    })
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.messages[0]).not.toHaveProperty('agentTarget')
+  })
+
   it('keeps an existing Session agentConfiguration when a later send snapshot differs', () => {
     const snapshot = {
       providerId: 'provider-a',

@@ -203,7 +203,8 @@ export const createSessionMessageGraphOwner = <
     specialistId,
     enabledComputeHosts,
     selectedComputeHosts,
-    preserveSelection
+    preserveSelection,
+    agentTarget
   }) => {
     const trimmedContent = content.trim()
     const normalizedAgentBackendId = agentBackendId?.trim() || undefined
@@ -217,15 +218,18 @@ export const createSessionMessageGraphOwner = <
     const state = get()
     const existingSession = state.sessions.find((session) => session.id === sessionId)
     const now = Date.now()
-    const userMessage = buildUserMessage({
-      id: createMessageId(),
-      content: trimmedContent,
-      uploads,
-      parts,
-      annotations,
-      turnIntent,
-      sortIndex: createSortIndex()
-    })
+    const userMessage: ChatMessage = {
+      ...buildUserMessage({
+        id: createMessageId(),
+        content: trimmedContent,
+        uploads,
+        parts,
+        annotations,
+        turnIntent,
+        sortIndex: createSortIndex()
+      }),
+      ...(agentTarget ? { agentTarget } : {})
+    }
     const activeRun: ActiveRun = {
       promptMessageId: userMessage.id,
       startedAt: now
@@ -347,7 +351,8 @@ export const createSessionMessageGraphOwner = <
     agentBackendId,
     agentModel,
     agentConfiguration,
-    specialistId
+    specialistId,
+    agentTarget
   }) => {
     const trimmedContent = content?.trim() ?? ''
     const uploads = attachments.map(createPersistedUpload)
@@ -375,15 +380,18 @@ export const createSessionMessageGraphOwner = <
     const sessionId = createPendingSessionId()
     const userMessage = sourceMessage
       ? undefined
-      : buildUserMessage({
-          id: createMessageId(),
-          content: trimmedContent,
-          uploads,
-          parts,
-          annotations,
-          turnIntent,
-          sortIndex: createSortIndex()
-        })
+      : {
+          ...buildUserMessage({
+            id: createMessageId(),
+            content: trimmedContent,
+            uploads,
+            parts,
+            annotations,
+            turnIntent,
+            sortIndex: createSortIndex()
+          }),
+          ...(agentTarget ? { agentTarget } : {})
+        }
     const messages = [
       ...sourceMessages.map(({ message, sortIndex }) => copySnapshotMessage(message, sortIndex)),
       ...(userMessage ? [userMessage] : [])

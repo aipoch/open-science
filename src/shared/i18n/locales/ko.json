@@ -3432,6 +3432,8 @@
     "Provider validation response exceeded {{limit}} bytes.": "모델 제공업체 검증 응답이 {{limit}}바이트를 초과했습니다.",
     "The vendor returned more than {{limit}} models.": "공급업체에서 {{limit}}개보다 많은 모델을 반환했습니다.",
     "The vendor returned a model ID longer than {{limit}} characters.": "공급업체에서 {{limit}}자보다 긴 모델 ID를 반환했습니다.",
-    "Claude token must not exceed {{limit}} bytes.": "Claude 토큰은 {{limit}}바이트를 초과할 수 없습니다."
+    "Claude token must not exceed {{limit}} bytes.": "Claude 토큰은 {{limit}}바이트를 초과할 수 없습니다.",
+    "{{framework}} · {{model}} · {{effort}}": "{{framework}} · {{model}} · {{effort}}",
+    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "세션 구성이 변경되었습니다: {{framework}} · {{model}} · {{effort}}"
   }
 }

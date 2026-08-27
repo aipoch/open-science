@@ -3724,6 +3724,8 @@
     "Provider validation response exceeded {{limit}} bytes.": "La respuesta de validación del proveedor superó los {{limit}} bytes.",
     "The vendor returned more than {{limit}} models.": "El proveedor devolvió más de {{limit}} modelos.",
     "The vendor returned a model ID longer than {{limit}} characters.": "El proveedor devolvió un ID de modelo de más de {{limit}} caracteres.",
-    "Claude token must not exceed {{limit}} bytes.": "El token de Claude no debe superar {{limit}} bytes."
+    "Claude token must not exceed {{limit}} bytes.": "El token de Claude no debe superar {{limit}} bytes.",
+    "{{framework}} · {{model}} · {{effort}}": "{{framework}} · {{model}} · {{effort}}",
+    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "La configuración de la sesión cambió a {{framework}} · {{model}} · {{effort}}"
   }
 }

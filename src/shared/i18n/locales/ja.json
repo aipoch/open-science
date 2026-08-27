@@ -3434,6 +3434,8 @@
     "Provider validation response exceeded {{limit}} bytes.": "プロバイダー検証レスポンスが {{limit}} バイトを超えました。",
     "The vendor returned more than {{limit}} models.": "ベンダーから {{limit}} 件を超えるモデルが返されました。",
     "The vendor returned a model ID longer than {{limit}} characters.": "ベンダーから {{limit}} 文字を超えるモデル ID が返されました。",
-    "Claude token must not exceed {{limit}} bytes.": "Claude トークンは {{limit}} バイト以内である必要があります。"
+    "Claude token must not exceed {{limit}} bytes.": "Claude トークンは {{limit}} バイト以内である必要があります。",
+    "{{framework}} · {{model}} · {{effort}}": "{{framework}} · {{model}} · {{effort}}",
+    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "セッション構成が {{framework}} · {{model}} · {{effort}} に変更されました"
   }
 }

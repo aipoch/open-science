@@ -55,6 +55,7 @@ import { Button } from '@/components/ui/button'
 import { ReviewerCard } from '@/components/ReviewerCard'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
+import { WorkspaceSessionConfigChangeRow } from './WorkspaceSessionConfigChangeRow'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { parseGeneratePlanDocument } from './generate-plan-activity-projection'
 import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
@@ -1597,6 +1598,16 @@ const WorkspaceMessageScrollerImpl = ({
                 if (item.type === 'compaction-activity') {
                   return (
                     <WorkspaceContextCompactionActivityRow key={item.id} activity={item.activity} />
+                  )
+                }
+
+                if (item.type === 'session-config-change') {
+                  return (
+                    <WorkspaceSessionConfigChangeRow
+                      key={item.id}
+                      id={item.id}
+                      agentTarget={item.agentTarget}
+                    />
                   )
                 }
 

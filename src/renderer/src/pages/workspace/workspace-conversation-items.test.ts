@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ChatSession, ToolActivity } from '@/stores/session-store'
+import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import { ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME } from '../../../../shared/acp'
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
@@ -509,6 +509,190 @@ describe('workspace conversation items', () => {
       'activity-tool-web-1',
       'message-2'
     ])
+  })
+
+  describe('session config-change markers', () => {
+    const targetA = {
+      frameworkId: 'claude-code' as const,
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'default' as const
+    }
+    const targetB = {
+      frameworkId: 'claude-code' as const,
+      providerId: 'provider-a',
+      model: 'model-b',
+      reasoningEffort: 'default' as const
+    }
+
+    const stampedUserMessage = (
+      id: string,
+      sortIndex: number,
+      agentTarget?: ChatMessage['agentTarget']
+    ): ChatMessage => ({
+      id,
+      role: 'user',
+      content: `Turn ${id}`,
+      status: 'complete',
+      eventIds: [],
+      sortIndex,
+      createdAt: 1710000000000 + sortIndex,
+      updatedAt: 1710000000000 + sortIndex,
+      ...(agentTarget ? { agentTarget } : {})
+    })
+
+    const configChangeItems = (session: ChatSession): ReturnType<typeof createConversationItems> =>
+      createConversationItems(session).filter((item) => item.type === 'session-config-change')
+
+    it('marks a model change above the new user message', () => {
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [
+          stampedUserMessage('message-1', 1, targetA),
+          stampedUserMessage('message-2', 2, targetB)
+        ]
+      }
+
+      const items = createConversationItems(session)
+      const divider = items.find((item) => item.type === 'session-config-change')
+      expect(divider).toEqual({
+        id: 'session-config-change-message-2',
+        type: 'session-config-change',
+        createdAt: 1710000000002,
+        sortIndex: 1.5,
+        agentTarget: targetB
+      })
+      expect(items.map((item) => item.id)).toEqual([
+        'message-1',
+        'session-config-change-message-2',
+        'message-2'
+      ])
+    })
+
+    it('marks an effort-only change', () => {
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [
+          stampedUserMessage('message-1', 1, targetA),
+          stampedUserMessage('message-2', 2, { ...targetA, reasoningEffort: 'high' })
+        ]
+      }
+
+      expect(configChangeItems(session)).toHaveLength(1)
+    })
+
+    it('marks a framework change', () => {
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [
+          stampedUserMessage('message-1', 1, targetA),
+          stampedUserMessage('message-2', 2, { ...targetA, frameworkId: 'codex' })
+        ]
+      }
+
+      expect(configChangeItems(session)).toHaveLength(1)
+    })
+
+    it('marks a backend-only change', () => {
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [
+          stampedUserMessage('message-1', 1, targetA),
+          stampedUserMessage('message-2', 2, { ...targetA, backendId: 'codex-bridge' })
+        ]
+      }
+
+      expect(configChangeItems(session)).toHaveLength(1)
+    })
+
+    it('stays quiet when the target is unchanged', () => {
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [
+          stampedUserMessage('message-1', 1, targetA),
+          stampedUserMessage('message-2', 2, targetA)
+        ]
+      }
+
+      expect(configChangeItems(session)).toEqual([])
+    })
+
+    it('stays quiet on the first stamped message of a session', () => {
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [stampedUserMessage('message-1', 1, targetA)]
+      }
+
+      expect(configChangeItems(session)).toEqual([])
+    })
+
+    it('stays quiet when the previous turn predates snapshots', () => {
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [stampedUserMessage('message-1', 1), stampedUserMessage('message-2', 2, targetA)]
+      }
+
+      expect(configChangeItems(session)).toEqual([])
+    })
+
+    it('ignores unstamped gaps between stamped turns when comparing', () => {
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [
+          stampedUserMessage('message-1', 1, targetA),
+          stampedUserMessage('message-2', 2),
+          stampedUserMessage('message-3', 3, targetB)
+        ]
+      }
+
+      expect(configChangeItems(session).map((item) => item.id)).toEqual([
+        'session-config-change-message-3'
+      ])
+    })
+
+    it('stays quiet when picker churn nets out between sent turns', () => {
+      // A → B → A in the picker records only the two applied sends, both with target A.
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [
+          stampedUserMessage('message-1', 1, targetA),
+          stampedUserMessage('message-2', 2, targetA)
+        ]
+      }
+
+      expect(configChangeItems(session)).toEqual([])
+    })
+
+    it('marks a branched session first send whose config differs from the copied history', () => {
+      const session: ChatSession = {
+        ...baseSession,
+        branchSource: { sessionId: 'source-session' },
+        messages: [
+          stampedUserMessage('copied-1', 1, targetA),
+          stampedUserMessage('message-2', 2, targetB)
+        ]
+      }
+
+      expect(configChangeItems(session).map((item) => item.id)).toEqual([
+        'session-config-change-message-2'
+      ])
+    })
+
+    it('ignores relayed side-chat messages when tracking the baseline', () => {
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [
+          stampedUserMessage('message-1', 1, targetA),
+          {
+            ...stampedUserMessage('relay-1', 2, targetB),
+            relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+          },
+          stampedUserMessage('message-3', 3, targetA)
+        ]
+      }
+
+      expect(configChangeItems(session)).toEqual([])
+    })
   })
 
   it('projects every generate_plan status as a standalone item and hides step status updates', () => {

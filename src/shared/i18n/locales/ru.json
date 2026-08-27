@@ -3844,6 +3844,8 @@
     "Provider validation response exceeded {{limit}} bytes.": "Размер ответа при проверке поставщика превысил {{limit}} байт.",
     "The vendor returned more than {{limit}} models.": "Поставщик вернул более {{limit}} моделей.",
     "The vendor returned a model ID longer than {{limit}} characters.": "Поставщик вернул идентификатор модели длиннее {{limit}} символов.",
-    "Claude token must not exceed {{limit}} bytes.": "Токен Claude не должен превышать {{limit}} байт."
+    "Claude token must not exceed {{limit}} bytes.": "Токен Claude не должен превышать {{limit}} байт.",
+    "{{framework}} · {{model}} · {{effort}}": "{{framework}} · {{model}} · {{effort}}",
+    "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "Конфигурация сессии изменена на {{framework}} · {{model}} · {{effort}}"
   }
 }
