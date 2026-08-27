@@ -551,9 +551,9 @@ describe('TextAnnotationSurface annotate trigger', () => {
   const annotateTrigger = (): HTMLButtonElement | undefined =>
     document.querySelector<HTMLButtonElement>('[data-annotation-trigger]') ?? undefined
 
-  const commitSelection = async (paragraph: HTMLParagraphElement): Promise<void> => {
+  const commitSelection = async (target: HTMLElement): Promise<void> => {
     const range = document.createRange()
-    range.selectNodeContents(paragraph.firstChild!)
+    range.selectNodeContents(target.firstChild!)
     Object.defineProperty(range, 'getBoundingClientRect', {
       configurable: true,
       value: () =>
@@ -572,7 +572,7 @@ describe('TextAnnotationSurface annotate trigger', () => {
     const selection = window.getSelection()!
     selection.removeAllRanges()
     selection.addRange(range)
-    await act(async () => paragraph.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+    await act(async () => target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
   }
 
   it('keeps the trigger alive when clicking it collapses the browser selection', async () => {
@@ -664,6 +664,33 @@ describe('TextAnnotationSurface annotate trigger', () => {
     await commitSelection(paragraph)
     expect(annotateTrigger()).toBeDefined()
     expect(document.querySelector('textarea')).toBeNull()
+  })
+
+  it('hides the trigger when a nested containing block is removed', async () => {
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+          activeAnnotations={[]}
+          onAdd={vi.fn()}
+          onError={vi.fn()}
+        >
+          <div>
+            <p>
+              <span>selectable agent reply</span>
+            </p>
+          </div>
+        </TextAnnotationSurface>
+      )
+    )
+    const span = container.querySelector('span')!
+    await commitSelection(span)
+    expect(annotateTrigger()).toBeDefined()
+
+    await act(async () => {
+      container.querySelector('p')?.remove()
+    })
+    expect(annotateTrigger()).toBeUndefined()
   })
 
   it('hides the trigger as soon as the selected content is removed', async () => {

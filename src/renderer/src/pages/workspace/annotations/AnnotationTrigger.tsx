@@ -20,7 +20,12 @@ const observeSelectionMutations = (range: Range, onMutate: () => void): (() => v
     observers.push(observer)
   }
   observe(element, { childList: true, characterData: true, subtree: true })
-  if (element.parentElement) observe(element.parentElement, { childList: true })
+  let ancestor = element.parentElement
+  while (ancestor) {
+    observe(ancestor, { childList: true })
+    if (ancestor === document.body) break
+    ancestor = ancestor.parentElement
+  }
   return () => {
     for (const observer of observers) observer.disconnect()
   }
