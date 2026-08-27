@@ -485,28 +485,6 @@ describe('formatStepCount', () => {
       ])
     ).toBe('1 step')
   })
-
-  it('counts skills instead of steps when every activity is a Skill load', () => {
-    const loadSkill = (id: string): ToolActivity =>
-      createActivity({
-        id,
-        providerToolName: 'mcp__skills__load_skill',
-        title: 'mcp__skills__load_skill',
-        rawInput: { skill: id }
-      })
-
-    expect(formatStepCount([loadSkill('skill-1')])).toBe('1 skill')
-    expect(formatStepCount([loadSkill('skill-1'), loadSkill('skill-2')])).toBe('2 skills')
-  })
-
-  it('keeps the step count for a mixed group containing Skill loads', () => {
-    expect(
-      formatStepCount([
-        createActivity({ id: 'skill-1', providerToolName: 'mcp__skills__load_skill' }),
-        createActivity({ id: 'read-1', toolKind: 'read' })
-      ])
-    ).toBe('2 steps')
-  })
 })
 
 describe('activity group elapsed time', () => {

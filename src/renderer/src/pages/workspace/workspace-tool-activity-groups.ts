@@ -322,8 +322,7 @@ const getRenderableActivityEntries = (activities: ToolActivity[]): RenderableAct
     .filter(({ activity }) => !(hasSearchActivities && isToolSearchWrapperActivity(activity)))
 }
 
-// Formats the group header's total visible-step count, flagging any failed steps. A group made
-// entirely of Skill loads counts skills instead of generic steps.
+// Formats the group header's total visible-step count, flagging any failed steps.
 const formatStepCount = (
   activities: ToolActivity[],
   permission?: SessionPermissionRuntimeContext,
@@ -331,14 +330,8 @@ const formatStepCount = (
   t: TFunction = i18next.t.bind(i18next)
 ): string => {
   const activityCount = activities.length
-  const allSkills = activityCount > 0 && activities.every((activity) => isSkillActivity(activity))
-  const stepLabel = allSkills
-    ? activityCount === 1
-      ? t('1 skill')
-      : t('{{count}} skills', { count: activityCount })
-    : activityCount === 1
-      ? t('1 step')
-      : t('{{count}} steps', { count: activityCount })
+  const stepLabel =
+    activityCount === 1 ? t('1 step') : t('{{count}} steps', { count: activityCount })
   const failedCount = activities.filter(
     (activity) => getToolExecutionPhase(activity, permission, notebookRunsById) === 'failed'
   ).length
