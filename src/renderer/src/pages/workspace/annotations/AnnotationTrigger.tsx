@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Pencil } from 'lucide-react'
 
 import { PopoverAnchor } from '@/components/ui/popover'
-import { anchorRangeTrigger } from './annotation-trigger-anchor'
+import { anchorRangeTrigger, isRangeTriggerVisible } from './annotation-trigger-anchor'
 
 const FALLBACK_TRIGGER_WIDTH = 82
 const FALLBACK_TRIGGER_HEIGHT = 24
@@ -22,7 +22,7 @@ const AnnotationTrigger = ({
   onActivate: () => void
 }): React.ReactPortal => {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
-  const [position, setPosition] = useState({ left: 0, top: 0, ready: false })
+  const [position, setPosition] = useState({ left: 0, top: 0, ready: false, visible: true })
 
   const updatePosition = useCallback((): void => {
     const trigger = triggerRef.current
@@ -32,10 +32,17 @@ const AnnotationTrigger = ({
       triggerWidth: trigger?.offsetWidth || FALLBACK_TRIGGER_WIDTH,
       triggerHeight: trigger?.offsetHeight || FALLBACK_TRIGGER_HEIGHT
     })
+    const visible = isRangeTriggerVisible(range, backward, {
+      width: window.innerWidth,
+      height: window.innerHeight
+    })
     setPosition((current) =>
-      current.ready && current.left === next.left && current.top === next.top
+      current.ready &&
+      current.left === next.left &&
+      current.top === next.top &&
+      current.visible === visible
         ? current
-        : { ...next, ready: true }
+        : { ...next, ready: true, visible }
     )
   }, [backward, range])
 
@@ -58,7 +65,7 @@ const AnnotationTrigger = ({
           aria-hidden="true"
         />
       </PopoverAnchor>
-      {hidden ? null : (
+      {hidden || !position.visible ? null : (
         <button
           ref={triggerRef}
           type="button"

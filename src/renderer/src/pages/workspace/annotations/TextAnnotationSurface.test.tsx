@@ -666,6 +666,77 @@ describe('TextAnnotationSurface annotate trigger', () => {
     expect(document.querySelector('textarea')).toBeNull()
   })
 
+  it('hides the trigger when the selection scrolls outside its clipping container', async () => {
+    await act(async () =>
+      root.render(
+        <div data-testid="annotation-scroll-viewport" style={{ maxHeight: 100, overflow: 'auto' }}>
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={[]}
+            onAdd={vi.fn()}
+            onError={vi.fn()}
+          >
+            <p>selectable agent reply</p>
+          </TextAnnotationSurface>
+        </div>
+      )
+    )
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="annotation-scroll-viewport"]'
+    )!
+    const paragraph = container.querySelector('p')!
+    const rect = (top: number, bottom: number): DOMRect =>
+      ({
+        left: 10,
+        right: 120,
+        top,
+        bottom,
+        width: 110,
+        height: bottom - top,
+        x: 10,
+        y: top,
+        toJSON: () => ({})
+      }) as DOMRect
+    Object.defineProperty(viewport, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(0, 100)
+    })
+
+    let selectionRect = rect(20, 40)
+    const originalRangeRect = Object.getOwnPropertyDescriptor(
+      Range.prototype,
+      'getBoundingClientRect'
+    )
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => selectionRect
+    })
+
+    try {
+      const range = document.createRange()
+      range.selectNodeContents(paragraph.firstChild!)
+      const selection = window.getSelection()!
+      selection.removeAllRanges()
+      selection.addRange(range)
+      await act(async () => paragraph.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+      expect(annotateTrigger()).toBeDefined()
+
+      selectionRect = rect(120, 140)
+      await act(async () => viewport.dispatchEvent(new Event('scroll')))
+      expect(annotateTrigger()).toBeUndefined()
+
+      selectionRect = rect(20, 40)
+      await act(async () => viewport.dispatchEvent(new Event('scroll')))
+      expect(annotateTrigger()).toBeDefined()
+    } finally {
+      if (originalRangeRect) {
+        Object.defineProperty(Range.prototype, 'getBoundingClientRect', originalRangeRect)
+      } else {
+        delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect
+      }
+    }
+  })
+
   it('places the trigger beside the last line of a multi-line selection', async () => {
     const paragraph = await renderSurface()
     const range = document.createRange()
