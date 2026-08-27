@@ -1,9 +1,20 @@
 import type { ComputeJob as PrismaComputeJob, PrismaClient } from '@prisma/client'
 import type { ComputeJob, ComputeJobStatus } from '../../shared/compute'
+import { createLogger } from '../logger'
+import {
+  OptionalSecureStorageStringProtection,
+  type ProtectedJsonContainer
+} from './credential-vault'
 
 // Only ComputeJob persistence and a transaction wrapper are needed.
 type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
 type ComputeJobClientProvider = () => Promise<ComputeJobClient>
+type ComputeJobFieldProtection = Pick<
+  OptionalSecureStorageStringProtection,
+  'isAvailable' | 'protect' | 'protectJson' | 'reveal' | 'revealJson'
+>
+
+const log = createLogger('compute-job-repository')
 
 export type ComputeJobOwner = Readonly<{
   projectId: string
@@ -35,42 +46,6 @@ const asStatus = (value: string): ComputeJobStatus => {
   ]
   return valid.includes(value as ComputeJobStatus) ? (value as ComputeJobStatus) : 'error'
 }
-
-// Maps a Prisma row to the shared ComputeJob type.
-const toJob = (row: PrismaComputeJob): ComputeJob => ({
-  job_id: row.id,
-  provider_id: row.providerId,
-  shape: row.shape,
-  session_id: row.sessionId,
-  project_id: row.projectId,
-  status: asStatus(row.status),
-  intent: row.intent,
-  command: row.command,
-  command_hash: row.commandHash,
-  environment: row.environment ?? undefined,
-  resource_request: row.resourceRequest ?? undefined,
-  input_manifest: row.inputManifest ?? undefined,
-  output_manifest: row.outputManifest ?? undefined,
-  harvest_config: row.harvestConfig ?? undefined,
-  timeout_seconds: row.timeoutSeconds ?? undefined,
-  remote_workdir: row.remoteWorkdir ?? undefined,
-  remote_handle: row.remoteHandle ?? undefined,
-  exit_code: row.exitCode ?? undefined,
-  stdout_tail: row.stdoutTail ?? undefined,
-  stderr_tail: row.stderrTail ?? undefined,
-  error_code: row.errorCode ?? undefined,
-  last_poll_error: row.lastPollError ?? undefined,
-  // Phase 3b harvest fields
-  harvest_error: row.harvestError ?? undefined,
-  left_on_remote: row.leftOnRemote ?? undefined,
-  notified_at: row.notifiedAt?.getTime(),
-  notification_consumed_at: row.notificationConsumedAt?.getTime(),
-  created_at: row.createdAt.getTime(),
-  submitted_at: row.submittedAt?.getTime(),
-  started_at: row.startedAt?.getTime(),
-  finished_at: row.finishedAt?.getTime(),
-  harvested_at: row.harvestedAt?.getTime()
-})
 
 export type CreateJobRequest = {
   id: string
@@ -117,37 +92,22 @@ export type UpdateJobRequest = {
 
 type ComputeJobUpdateData = Parameters<ComputeJobClient['computeJob']['update']>[0]['data']
 
-const toUpdateData = (updates: UpdateJobRequest): ComputeJobUpdateData => {
-  const data: ComputeJobUpdateData = {}
-
-  if (updates.status !== undefined) data.status = updates.status
-  if (updates.remoteHandle !== undefined) data.remoteHandle = updates.remoteHandle
-  if ('exitCode' in updates) data.exitCode = updates.exitCode
-  if ('stdoutTail' in updates) data.stdoutTail = updates.stdoutTail
-  if ('stderrTail' in updates) data.stderrTail = updates.stderrTail
-  if ('errorCode' in updates) data.errorCode = updates.errorCode
-  if ('lastPollError' in updates) data.lastPollError = updates.lastPollError
-  if (updates.submittedAt !== undefined) data.submittedAt = updates.submittedAt
-  if (updates.startedAt !== undefined) data.startedAt = updates.startedAt
-  if (updates.finishedAt !== undefined) data.finishedAt = updates.finishedAt
-  if (updates.harvestedAt !== undefined) data.harvestedAt = updates.harvestedAt
-  if ('harvestError' in updates) data.harvestError = updates.harvestError
-  if ('leftOnRemote' in updates) data.leftOnRemote = updates.leftOnRemote
-  if ('notifiedAt' in updates) data.notifiedAt = updates.notifiedAt
-  if ('notificationConsumedAt' in updates)
-    data.notificationConsumedAt = updates.notificationConsumedAt
-
-  return data
-}
-
 // Owns ComputeJob reads/writes. Follows the same lazy-provider pattern as ComputeHostRepository.
 export class ComputeJobRepository {
   private mutationQueue: Promise<unknown> = Promise.resolve()
   private readonly deletingProjects = new Set<string>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletingProviders = new Set<string>()
+  private warnedAboutProtectionFailure = false
 
-  constructor(private readonly getClient: ComputeJobClientProvider) {}
+  constructor(
+    private readonly getClient: ComputeJobClientProvider,
+    private readonly fieldProtection: ComputeJobFieldProtection = new OptionalSecureStorageStringProtection()
+  ) {}
+
+  isFieldProtectionAvailable(): boolean {
+    return this.fieldProtection.isAvailable()
+  }
 
   async beginProviderDeletion(providerId: string): Promise<void> {
     await this.runMutation(async () => {
@@ -185,7 +145,7 @@ export class ComputeJobRepository {
       where: ownerWhere(owner),
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return rows.map(this.toJob)
   }
 
   async listOwners(): Promise<ComputeJobSessionOwner[]> {
@@ -220,27 +180,27 @@ export class ComputeJobRepository {
           sessionId: request.sessionId,
           projectId: request.projectId,
           status: initialStatus,
-          intent: request.intent,
-          command: request.command,
+          intent: this.protect(request.intent),
+          command: this.protect(request.command),
           commandHash: request.commandHash,
-          environment: request.environment,
-          resourceRequest: request.resourceRequest,
-          inputManifest: request.inputManifest,
-          outputManifest: request.outputManifest,
-          harvestConfig: request.harvestConfig,
+          environment: this.protectOptional(request.environment),
+          resourceRequest: this.protectJsonOptional(request.resourceRequest, 'object'),
+          inputManifest: this.protectJsonOptional(request.inputManifest, 'array'),
+          outputManifest: this.protectJsonOptional(request.outputManifest, 'array'),
+          harvestConfig: this.protectJsonOptional(request.harvestConfig, 'object'),
           timeoutSeconds: request.timeoutSeconds,
-          remoteWorkdir: request.remoteWorkdir,
+          remoteWorkdir: this.protectOptional(request.remoteWorkdir),
           submittedAt: initialStatus === 'submitted' ? new Date() : undefined
         }
       })
-      return toJob(row)
+      return this.toJob(row)
     })
   }
 
   async get(jobId: string): Promise<ComputeJob | null> {
     const client = await this.getClient()
     const row = await client.computeJob.findUnique({ where: { id: jobId } })
-    return row ? toJob(row) : null
+    return row ? this.toJob(row) : null
   }
 
   // Returns all non-terminal jobs (queued + submitted + running) for the poller to resume after restart.
@@ -250,7 +210,7 @@ export class ComputeJobRepository {
       where: { status: { in: ['queued', 'submitted', 'running'] } },
       orderBy: { createdAt: 'asc' }
     })
-    return this.excludeDeletingOwners(rows.map(toJob))
+    return this.excludeDeletingOwners(rows.map(this.toJob))
   }
 
   // Returns all terminal jobs (success/failed/timeout) that have not yet been harvested.
@@ -264,7 +224,7 @@ export class ComputeJobRepository {
       },
       orderBy: { createdAt: 'asc' }
     })
-    return this.excludeDeletingOwners(rows.map(toJob))
+    return this.excludeDeletingOwners(rows.map(this.toJob))
   }
 
   // Returns error-state jobs that have not yet emitted a compute_done notification.
@@ -281,7 +241,7 @@ export class ComputeJobRepository {
       },
       orderBy: { createdAt: 'asc' }
     })
-    return this.excludeDeletingOwners(rows.map(toJob))
+    return this.excludeDeletingOwners(rows.map(this.toJob))
   }
 
   // Returns all non-terminal jobs for a given provider (used by per-host batch polling).
@@ -291,16 +251,16 @@ export class ComputeJobRepository {
       where: { providerId, status: { in: ['queued', 'submitted', 'running'] } },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return rows.map(this.toJob)
   }
 
   async update(jobId: string, updates: UpdateJobRequest): Promise<ComputeJob> {
     const client = await this.getClient()
     const row = await client.computeJob.update({
       where: { id: jobId },
-      data: toUpdateData(updates)
+      data: this.toUpdateData(updates)
     })
-    return toJob(row)
+    return this.toJob(row)
   }
 
   async updateIfStatus(
@@ -316,12 +276,12 @@ export class ComputeJobRepository {
 
         const applied = await transaction.computeJob.updateMany({
           where: { id: jobId, status: { in: [...expectedStatuses] } },
-          data: toUpdateData(updates)
+          data: this.toUpdateData(updates)
         })
         if (applied.count === 0) return null
 
         const row = await transaction.computeJob.findUnique({ where: { id: jobId } })
-        return row ? toJob(row) : null
+        return row ? this.toJob(row) : null
       })
     })
   }
@@ -336,7 +296,7 @@ export class ComputeJobRepository {
       },
       orderBy: { createdAt: 'desc' }
     })
-    return rows.map(toJob)
+    return rows.map(this.toJob)
   }
 
   // Checks if a provider has any non-terminal jobs (used by delete guard on ComputeHost).
@@ -385,7 +345,7 @@ export class ComputeJobRepository {
       },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return rows.map(this.toJob)
   }
 
   // Marks a batch of jobs as notification-consumed by setting notificationConsumedAt to now.
@@ -483,7 +443,123 @@ export class ComputeJobRepository {
       where: { status: 'queued' },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return rows.map(this.toJob)
+  }
+
+  private readonly toJob = (row: PrismaComputeJob): ComputeJob => ({
+    job_id: row.id,
+    provider_id: row.providerId,
+    shape: row.shape,
+    session_id: row.sessionId,
+    project_id: row.projectId,
+    status: asStatus(row.status),
+    intent: this.fieldProtection.reveal(row.intent),
+    command: this.fieldProtection.reveal(row.command),
+    command_hash: row.commandHash,
+    environment: this.revealOptional(row.environment),
+    resource_request: this.revealJsonOptional(row.resourceRequest, 'object'),
+    input_manifest: this.revealJsonOptional(row.inputManifest, 'array'),
+    output_manifest: this.revealJsonOptional(row.outputManifest, 'array'),
+    harvest_config: this.revealJsonOptional(row.harvestConfig, 'object'),
+    timeout_seconds: row.timeoutSeconds ?? undefined,
+    remote_workdir: this.revealOptional(row.remoteWorkdir),
+    remote_handle: this.revealJsonOptional(row.remoteHandle, 'object'),
+    exit_code: row.exitCode ?? undefined,
+    stdout_tail: this.revealOptional(row.stdoutTail),
+    stderr_tail: this.revealOptional(row.stderrTail),
+    error_code: row.errorCode ?? undefined,
+    last_poll_error: this.revealOptional(row.lastPollError),
+    harvest_error: this.revealOptional(row.harvestError),
+    left_on_remote: this.revealJsonOptional(row.leftOnRemote, 'array'),
+    notified_at: row.notifiedAt?.getTime(),
+    notification_consumed_at: row.notificationConsumedAt?.getTime(),
+    created_at: row.createdAt.getTime(),
+    submitted_at: row.submittedAt?.getTime(),
+    started_at: row.startedAt?.getTime(),
+    finished_at: row.finishedAt?.getTime(),
+    harvested_at: row.harvestedAt?.getTime()
+  })
+
+  private toUpdateData(updates: UpdateJobRequest): ComputeJobUpdateData {
+    const data: ComputeJobUpdateData = {}
+
+    if (updates.status !== undefined) data.status = updates.status
+    if (updates.remoteHandle !== undefined)
+      data.remoteHandle = this.protectJson(updates.remoteHandle, 'object')
+    if ('exitCode' in updates) data.exitCode = updates.exitCode
+    if ('stdoutTail' in updates)
+      data.stdoutTail =
+        updates.stdoutTail === null ? null : this.protectOptional(updates.stdoutTail)
+    if ('stderrTail' in updates)
+      data.stderrTail =
+        updates.stderrTail === null ? null : this.protectOptional(updates.stderrTail)
+    if ('errorCode' in updates) data.errorCode = updates.errorCode
+    if ('lastPollError' in updates)
+      data.lastPollError =
+        updates.lastPollError === null ? null : this.protectOptional(updates.lastPollError)
+    if (updates.submittedAt !== undefined) data.submittedAt = updates.submittedAt
+    if (updates.startedAt !== undefined) data.startedAt = updates.startedAt
+    if (updates.finishedAt !== undefined) data.finishedAt = updates.finishedAt
+    if (updates.harvestedAt !== undefined) data.harvestedAt = updates.harvestedAt
+    if ('harvestError' in updates)
+      data.harvestError =
+        updates.harvestError === null ? null : this.protectOptional(updates.harvestError)
+    if ('leftOnRemote' in updates)
+      data.leftOnRemote =
+        updates.leftOnRemote === null
+          ? null
+          : this.protectJsonOptional(updates.leftOnRemote, 'array')
+    if ('notifiedAt' in updates) data.notifiedAt = updates.notifiedAt
+    if ('notificationConsumedAt' in updates)
+      data.notificationConsumedAt = updates.notificationConsumedAt
+
+    return data
+  }
+
+  private protect(value: string): string {
+    try {
+      return this.fieldProtection.protect(value)
+    } catch {
+      this.warnAboutProtectionFailure()
+      return value
+    }
+  }
+
+  private protectOptional(value: string | undefined): string | undefined {
+    return value === undefined ? undefined : this.protect(value)
+  }
+
+  private protectJson(value: string, container: ProtectedJsonContainer): string {
+    try {
+      return this.fieldProtection.protectJson(value, container)
+    } catch {
+      this.warnAboutProtectionFailure()
+      return value
+    }
+  }
+
+  private protectJsonOptional(
+    value: string | undefined,
+    container: ProtectedJsonContainer
+  ): string | undefined {
+    return value === undefined ? undefined : this.protectJson(value, container)
+  }
+
+  private revealOptional(value: string | null): string | undefined {
+    return value === null ? undefined : this.fieldProtection.reveal(value)
+  }
+
+  private revealJsonOptional(
+    value: string | null,
+    container: ProtectedJsonContainer
+  ): string | undefined {
+    return value === null ? undefined : this.fieldProtection.revealJson(value, container)
+  }
+
+  private warnAboutProtectionFailure(): void {
+    if (this.warnedAboutProtectionFailure) return
+    this.warnedAboutProtectionFailure = true
+    log.warn('Compute Job field protection failed; persisting without encryption')
   }
 
   private assertOwnerMutable(projectId: string, sessionId: string): void {
@@ -513,5 +589,4 @@ export class ComputeJobRepository {
   }
 }
 
-export { toJob }
-export type { ComputeJobClient, ComputeJobClientProvider }
+export type { ComputeJobClient, ComputeJobClientProvider, ComputeJobFieldProtection }

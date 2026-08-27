@@ -263,7 +263,10 @@ export class ComputeJobWorkflowOwner {
         command_full: command,
         inputs_summary: inputsSummary || undefined,
         timeout_seconds: timeoutSeconds,
-        remote_workdir: remoteWorkdir
+        remote_workdir: remoteWorkdir,
+        ...(!this.jobRepository.isFieldProtectionAvailable()
+          ? { willPersistUnencrypted: true }
+          : {})
       },
       {
         sessionId: context.sessionId,

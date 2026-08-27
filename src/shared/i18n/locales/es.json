@@ -726,6 +726,7 @@
     "Could not sign out of Claude.": "No se pudo cerrar sesión en Claude.",
     "Could not sign out of Codex.": "No se pudo cerrar sesión en Codex.",
     "Could not submit this approval. Try again.": "No se pudo enviar esta aprobación. Inténtelo de nuevo.",
+    "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption.": "El almacenamiento seguro no está disponible. El comando, las rutas y la salida de este trabajo pueden almacenarse sin cifrar.",
     "Could not stop background processes before updating. Please try again.": "No se pudieron detener los procesos en segundo plano antes de la actualización. Inténtelo de nuevo.",
     "Could not switch to this folder.": "No se pudo cambiar a esta carpeta.",
     "Could not switch to {{name}}": "No se pudo cambiar a {{name}}",

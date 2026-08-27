@@ -685,6 +685,7 @@
     "Could not sign out of Claude.": "Claude からサインアウトできませんでした。",
     "Could not sign out of Codex.": "Codex からサインアウトできませんでした。",
     "Could not submit this approval. Try again.": "この承認を送信できませんでした。もう一度やり直してください。",
+    "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption.": "安全なストレージを利用できません。このジョブのコマンド、パス、出力は暗号化されずに保存される可能性があります。",
     "Could not stop background processes before updating. Please try again.": "アップデート前にバックグラウンドプロセスを停止できませんでした。もう一度お試しください。",
     "Could not switch to this folder.": "このフォルダーに切り替えられませんでした。",
     "Could not switch to {{name}}": "{{name}} に切り替えられませんでした",

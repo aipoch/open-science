@@ -6,16 +6,98 @@ import type { ComputePasswordCapability } from '../../shared/compute'
 import { ComputeConnectionError } from './connection-broker'
 
 const MAX_PASSWORD_BYTES = 16 * 1024
+const PROTECTED_STRING_PREFIX = 'open-science:protected:v1:'
+const PROTECTED_JSON_MARKER = 'open-science:protected-json:v1'
 
 type StoredComputeCredential = Readonly<{ ciphertext: Buffer; revision?: number }>
 interface ComputeCredentialReader {
   getCredential(computeHostId: string): Promise<StoredComputeCredential | null>
 }
-interface ComputeCredentialCipher {
+export interface SecureStorageCipher {
   isEncryptionAvailable(): boolean
   getSelectedStorageBackend?(): string
   encryptString(value: string): Buffer
   decryptString(value: Buffer): string
+}
+export type ComputeCredentialCipher = SecureStorageCipher
+export type ProtectedJsonContainer = 'object' | 'array'
+
+export const isSecureStorageAvailable = (
+  cipher: SecureStorageCipher = safeStorage,
+  currentPlatform: NodeJS.Platform = platform()
+): boolean => {
+  try {
+    if (!cipher.isEncryptionAvailable()) return false
+    return !(currentPlatform === 'linux' && cipher.getSelectedStorageBackend?.() === 'basic_text')
+  } catch {
+    return false
+  }
+}
+
+export class OptionalSecureStorageStringProtection {
+  constructor(
+    private readonly cipher: SecureStorageCipher = safeStorage,
+    private readonly currentPlatform: NodeJS.Platform = platform()
+  ) {}
+
+  isAvailable(): boolean {
+    return isSecureStorageAvailable(this.cipher, this.currentPlatform)
+  }
+
+  protect(value: string): string {
+    if (!this.isAvailable()) return value
+    return `${PROTECTED_STRING_PREFIX}${this.cipher.encryptString(value).toString('base64')}`
+  }
+
+  protectJson(value: string, container: ProtectedJsonContainer): string {
+    if (!this.isAvailable()) return value
+    const protectedValue = this.protect(value)
+    return JSON.stringify(
+      container === 'object'
+        ? { [PROTECTED_JSON_MARKER]: protectedValue }
+        : [PROTECTED_JSON_MARKER, protectedValue]
+    )
+  }
+
+  reveal(value: string): string {
+    if (!value.startsWith(PROTECTED_STRING_PREFIX)) return value
+
+    try {
+      const ciphertext = Buffer.from(value.slice(PROTECTED_STRING_PREFIX.length), 'base64')
+      return this.cipher.decryptString(ciphertext)
+    } catch {
+      throw new Error('Protected application data cannot be decrypted on this system.')
+    }
+  }
+
+  revealJson(value: string, container: ProtectedJsonContainer): string {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(value)
+    } catch {
+      return value
+    }
+
+    if (container === 'object') {
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        Array.isArray(parsed) ||
+        Object.keys(parsed).length !== 1
+      ) {
+        return value
+      }
+      const protectedValue = (parsed as Record<string, unknown>)[PROTECTED_JSON_MARKER]
+      return typeof protectedValue === 'string' ? this.reveal(protectedValue) : value
+    }
+
+    return Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      parsed[0] === PROTECTED_JSON_MARKER &&
+      typeof parsed[1] === 'string'
+      ? this.reveal(parsed[1])
+      : value
+  }
 }
 
 interface CredentialPasswordLease {
@@ -45,15 +127,7 @@ class CredentialVault {
   }
 
   isAvailable(): boolean {
-    try {
-      if (!this.cipher.isEncryptionAvailable()) return false
-      return !(
-        this.suppliedPlatform === 'linux' &&
-        this.cipher.getSelectedStorageBackend?.() === 'basic_text'
-      )
-    } catch {
-      return false
-    }
+    return isSecureStorageAvailable(this.cipher, this.suppliedPlatform)
   }
 
   capability(): ComputePasswordCapability {
@@ -183,7 +257,6 @@ class CredentialVault {
 
 export { CredentialVault, MAX_PASSWORD_BYTES, validateComputePassword }
 export type {
-  ComputeCredentialCipher,
   ComputeCredentialReader,
   CredentialPasswordLease,
   StoredComputeCredential

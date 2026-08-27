@@ -273,6 +273,7 @@ describe('ComputeService job workflow facade', () => {
     const { repo } = makeRepo()
     let storedJob: ComputeJob | undefined
     const jobRepository = {
+      isFieldProtectionAvailable: vi.fn(() => true),
       create: vi.fn(async (request: CreateJobRequest) => {
         storedJob = {
           job_id: request.id,

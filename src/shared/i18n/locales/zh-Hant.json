@@ -755,6 +755,7 @@
     "Could not sign out of Claude.": "無法登出 Claude。",
     "Could not sign out of Codex.": "無法登出 Codex。",
     "Could not submit this approval. Try again.": "無法提交此核准。請重試。",
+    "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption.": "安全儲存無法使用。此作業的命令、路徑和輸出可能會以未加密形式儲存。",
     "Could not stop background processes before updating. Please try again.": "更新前無法停止背景程序。請重試。",
     "Could not switch to this folder.": "無法切換到該資料夾。",
     "Could not switch to {{name}}": "無法切換到 {{name}}",

@@ -134,7 +134,8 @@ const makeOwner = (
   )
 
 const makeJobRepo = (
-  jobs: Map<string, import('../../shared/compute').ComputeJob> = new Map()
+  jobs: Map<string, import('../../shared/compute').ComputeJob> = new Map(),
+  fieldProtectionAvailable = true
 ): {
   repo: import('./job-repository').ComputeJobRepository
   createCalls: ReturnType<typeof vi.fn>
@@ -209,6 +210,7 @@ const makeJobRepo = (
 
   return {
     repo: {
+      isFieldProtectionAvailable: vi.fn(() => fieldProtectionAvailable),
       create: createCalls,
       get: getCalls,
       update: updateCalls,
@@ -794,6 +796,39 @@ describe('resolveInputs — mixed inputs summary', () => {
 })
 
 describe('ComputeJobWorkflowOwner.submitJob — inputs_summary in approval', () => {
+  it('discloses plaintext persistence when secure storage is unavailable', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo } = makeJobRepo(new Map(), false)
+    const { repo } = makeRepo()
+    const requestWithContext = vi.fn(() => Promise.resolve('once' as const))
+    const broker = {
+      request: requestWithContext,
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = makeOwner(runner, repo, broker, jobRepo)
+    await service.submitJob(
+      'ssh:biowulf',
+      'test',
+      'echo hi',
+      {},
+      { sessionId: 's1', projectId: 'p1' }
+    )
+
+    expect(requestWithContext).toHaveBeenCalledWith(
+      expect.objectContaining({ willPersistUnencrypted: true }),
+      expect.anything(),
+      undefined
+    )
+  })
+
   it('passes inputs_summary to the approval request when inputs are provided', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
