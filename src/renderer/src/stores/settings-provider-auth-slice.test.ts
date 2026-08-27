@@ -214,7 +214,7 @@ describe('provider auth slice: persistence and validation', () => {
     commands.upsertProvider.mockResolvedValue(snapshot([provider('new')]))
     commands.getSettings.mockResolvedValue(snapshot([provider('new')]))
 
-    await store.getState().saveProvider({ type: 'custom', name: 'new', model: 'model-a' })
+    await store.getState().saveProvider({ type: 'custom', name: 'new', model: ' model-a ' })
 
     expect(commands.validateProvider).toHaveBeenCalledWith({
       providerId: 'new',
@@ -244,7 +244,7 @@ describe('provider auth slice: persistence and validation', () => {
     store.setState({ saveProvider, setActiveProvider })
 
     await expect(
-      store.getState().saveAndActivateProvider({ type: 'custom', name: 'new', model: 'model-a' })
+      store.getState().saveAndActivateProvider({ type: 'custom', name: 'new', model: ' model-a ' })
     ).resolves.toEqual({ providerId: 'new', validation })
     expect(setActiveProvider).toHaveBeenCalledWith('new', 'model-a')
   })
