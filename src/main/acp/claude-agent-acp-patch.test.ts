@@ -1,7 +1,13 @@
 import type { McpServerStatus, Query } from '@anthropic-ai/claude-agent-sdk'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { waitForMcpServers } from '@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'
+import {
+  ClaudeAcpAgent,
+  waitForMcpServers
+} from '@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'
 
 type McpStatusQuery = Pick<Query, 'mcpServerStatus' | 'close'>
 
@@ -86,5 +92,21 @@ describe('claude-agent-acp MCP readiness patch', () => {
       '[mcp-readiness] Timed out waiting for MCP servers: open-science-notebook'
     )
     expect(query.close).toHaveBeenCalledOnce()
+  })
+})
+
+describe('claude-agent-acp Session deletion patch', () => {
+  it('treats a never-materialized Session as already deleted', async () => {
+    const sessionId = '11111111-1111-4111-8111-111111111111'
+    const configDir = mkdtempSync(join(tmpdir(), 'open-science-claude-session-delete-'))
+    vi.stubEnv('CLAUDE_CONFIG_DIR', configDir)
+
+    try {
+      const agent = new ClaudeAcpAgent({} as never)
+      await expect(agent.deleteSession({ sessionId })).resolves.toEqual({})
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(configDir, { recursive: true, force: true })
+    }
   })
 })
