@@ -1814,6 +1814,7 @@
     "Review unavailable": "審查無法使用",
     "Reviewer": "審查",
     "Reviewer log": "審閱器記錄",
+    "Reviewer log content was truncated to fit the size limit.": "審閱器記錄內容已截斷，以符合大小限制。",
     "Reviewer model Model": "審查模型",
     "Reviewer model Reasoning effort": "審查模型 推理強度",
     "Reviewing...": "正在審查…",

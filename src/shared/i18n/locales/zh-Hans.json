@@ -1817,6 +1817,7 @@
     "Review unavailable": "审查不可用",
     "Reviewer": "审查",
     "Reviewer log": "审阅器日志",
+    "Reviewer log content was truncated to fit the size limit.": "审阅器日志内容已截断，以符合大小限制。",
     "Reviewer model Model": "审查模型",
     "Reviewer model Reasoning effort": "审查模型 推理强度",
     "Reviewing...": "正在审查…",

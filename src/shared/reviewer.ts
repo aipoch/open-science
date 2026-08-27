@@ -17,14 +17,17 @@
 // The old split tool_call / tool_result pair is collapsed into ONE unified tool entry per call:
 // tool_call seeds the entry, tool_call_update(s) mutate it in place via shared object reference.
 export type ReviewerLogEntry =
-  | { kind: 'thought'; text: string }
-  | { kind: 'message'; text: string }
+  | { kind: 'thought'; text: string; textTruncated?: boolean; reviewLogTruncated?: boolean }
+  | { kind: 'message'; text: string; textTruncated?: boolean; reviewLogTruncated?: boolean }
   | {
       kind: 'tool'
       toolName: string
       title?: string
       rawInput?: string
       rawOutput?: string
+      rawInputTruncated?: boolean
+      rawOutputTruncated?: boolean
+      reviewLogTruncated?: boolean
       status?: 'ok' | 'error'
       exitCode?: number | null
     }

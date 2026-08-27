@@ -1811,6 +1811,7 @@
     "Review unavailable": "Avis indisponible",
     "Reviewer": "Réviseur",
     "Reviewer log": "Journal des évaluateurs",
+    "Reviewer log content was truncated to fit the size limit.": "Le contenu du journal du réviseur a été tronqué pour respecter la limite de taille.",
     "Reviewer model Model": "Modèle de réviseur Modèle",
     "Reviewer model Reasoning effort": "Modèle de réviseur Effort de raisonnement",
     "Reviewing...": "Révision...",

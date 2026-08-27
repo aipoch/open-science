@@ -1753,6 +1753,7 @@
     "Review unavailable": "검토할 수 없음",
     "Reviewer": "리뷰어",
     "Reviewer log": "리뷰어 로그",
+    "Reviewer log content was truncated to fit the size limit.": "리뷰어 로그 내용은 크기 제한에 맞게 잘렸습니다.",
     "Reviewer model Model": "리뷰어 모델",
     "Reviewer model Reasoning effort": "리뷰어 모델 추론 강도",
     "Reviewing...": "검토 중...",

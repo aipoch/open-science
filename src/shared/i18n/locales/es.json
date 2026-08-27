@@ -1811,6 +1811,7 @@
     "Review unavailable": "Revisión no disponible",
     "Reviewer": "Revisor",
     "Reviewer log": "Registro del revisor",
+    "Reviewer log content was truncated to fit the size limit.": "El contenido del registro del revisor se truncó para ajustarse al límite de tamaño.",
     "Reviewer model Model": "Modelo del revisor",
     "Reviewer model Reasoning effort": "Esfuerzo de razonamiento del modelo del revisor",
     "Reviewing...": "Revisando…",
