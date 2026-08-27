@@ -222,6 +222,13 @@ const formatActivityTitle = (
   return t('Using tool: {{name}}', { name: toolName })
 }
 
+// Config-change dividers are annotations on the following user Message. Hide them with that
+// Message (and other message-like rows) so they cannot appear while the owning turn is still
+// behind the presentation barrier. Tool and activity rows stay live so running work remains
+// visible above the paced reply.
+const hidesBehindPresentationBarrier = (type: string): boolean =>
+  type === 'message' || type === 'subagent-message' || type === 'session-config-change'
+
 // Two send targets describe the same turn configuration only when every routed field matches.
 const agentTargetsMatch = (
   left: PersistedMessageAgentTarget,
@@ -391,6 +398,7 @@ export {
   formatActivityTitle,
   formatNotebookToolName,
   getNotebookToolSuffix,
+  hidesBehindPresentationBarrier,
   isActivityActive,
   resolveTurnTerminalAgentMessageIds,
   isContextCompactionActivity

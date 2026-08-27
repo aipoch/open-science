@@ -65,7 +65,10 @@ import { WorkspaceRunMarks } from './WorkspaceRunMarks'
 import type { ArtifactMentionPart, EditAnnotationTarget } from './WorkspaceMessageItem'
 import { useWorkspaceArtifactVisibility, type MessageArtifact } from './WorkspaceArtifactVisibility'
 import { useWorkspaceMessageEditState } from './workspace-message-edit-state-context'
-import { createConversationItems } from './workspace-conversation-items'
+import {
+  createConversationItems,
+  hidesBehindPresentationBarrier
+} from './workspace-conversation-items'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
 import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useSessionJobStore } from '@/stores/session-job-store'
@@ -1323,13 +1326,14 @@ const WorkspaceMessageScrollerImpl = ({
               />
               {/* Messages and tool activities share one sorted transcript timeline. */}
               {transcriptWindow.entries.map(({ item, itemIndex }) => {
-                // Only later text messages stay behind the presentation barrier; tool,
-                // activity, and other non-message rows render in real time so their
-                // running state stays visible while the reply paces above them.
+                // Later text messages and their config-change dividers stay behind the
+                // presentation barrier. Tool, activity, and other non-message rows render
+                // in real time so their running state stays visible while the reply paces
+                // above them.
                 if (
                   presentationBarrierIndex >= 0 &&
                   itemIndex > presentationBarrierIndex &&
-                  (item.type === 'message' || item.type === 'subagent-message')
+                  hidesBehindPresentationBarrier(item.type)
                 ) {
                   return null
                 }

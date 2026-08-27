@@ -113,18 +113,18 @@ const errorMessage = (error: unknown): string =>
 
 // Snapshots the target a send actually runs with. Only a complete identity (framework + admitted
 // provider configuration) is stamped; a partial snapshot would mark false config changes.
+// Unpinned configurations omit model; catalog fallbacks on agentModel are not persisted.
 const resolveSendAgentTarget = (
   input: Readonly<{
     agentFrameworkId?: AgentFrameworkId
     agentBackendId?: string
-    agentModel?: string
     agentConfiguration?: SessionAgentConfiguration
   }>
 ): PersistedMessageAgentTarget | undefined => {
   const configuration = input.agentConfiguration
   if (!input.agentFrameworkId || !configuration) return undefined
   const backendId = input.agentBackendId?.trim()
-  const model = configuration.model ?? (input.agentModel?.trim() || undefined)
+  const model = configuration.model?.trim() || undefined
   return {
     frameworkId: input.agentFrameworkId,
     ...(backendId ? { backendId } : {}),
@@ -617,7 +617,6 @@ const sendWorkspaceMessage = async (
       agentTarget: resolveSendAgentTarget({
         agentFrameworkId: prepared.appendOwnership.agentFrameworkId ?? input.agentFrameworkId,
         agentBackendId: prepared.appendOwnership.agentBackendId ?? input.agentBackendId,
-        agentModel: input.agentModel,
         agentConfiguration: input.agentConfiguration
       }),
       preserveSelection: input.preserveSelection

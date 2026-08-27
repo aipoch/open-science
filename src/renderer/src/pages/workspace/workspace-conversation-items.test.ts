@@ -663,6 +663,42 @@ describe('workspace conversation items', () => {
       expect(configChangeItems(session)).toEqual([])
     })
 
+    it('stays quiet when consecutive unpinned targets omit the model', () => {
+      const unpinned = {
+        frameworkId: 'codex' as const,
+        providerId: 'builtin-codex-subscription',
+        reasoningEffort: 'default' as const
+      }
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [
+          stampedUserMessage('message-1', 1, unpinned),
+          stampedUserMessage('message-2', 2, unpinned)
+        ]
+      }
+
+      expect(configChangeItems(session)).toEqual([])
+    })
+
+    it('marks pinning a model after an unpinned subscription send', () => {
+      const unpinned = {
+        frameworkId: 'codex' as const,
+        providerId: 'builtin-codex-subscription',
+        reasoningEffort: 'default' as const
+      }
+      const session: ChatSession = {
+        ...baseSession,
+        messages: [
+          stampedUserMessage('message-1', 1, unpinned),
+          stampedUserMessage('message-2', 2, { ...unpinned, model: 'gpt-5.4' })
+        ]
+      }
+
+      expect(configChangeItems(session).map((item) => item.id)).toEqual([
+        'session-config-change-message-2'
+      ])
+    })
+
     it('marks a branched session first send whose config differs from the copied history', () => {
       const session: ChatSession = {
         ...baseSession,
