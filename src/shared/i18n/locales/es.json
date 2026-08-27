@@ -655,6 +655,7 @@
     "Could not load project artifacts.": "No se pudieron cargar los artefactos del proyecto.",
     "Could not load project files": "No se pudieron cargar los archivos del proyecto",
     "Could not load review history.": "No se pudo cargar el historial de revisión.",
+    "Could not load version history.": "No se pudo cargar el historial de versiones.",
     "Could not load token usage.": "No se pudo cargar el uso de tokens.",
     "Could not load runtimes.": "No se pudieron cargar los entornos de ejecución.",
     "Could not mark as read. Try again.": "No se pudo marcar como leído. Inténtelo de nuevo.",
