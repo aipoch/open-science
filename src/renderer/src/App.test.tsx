@@ -500,6 +500,7 @@ describe('App startup routing', () => {
   })
 
   afterEach(async () => {
+    vi.useRealTimers()
     await act(async () => root?.unmount())
     canvasContextSpy.mockRestore()
     container.remove()
@@ -515,6 +516,21 @@ describe('App startup routing', () => {
     await render()
 
     expect(mocks.compute.jobsList).toHaveBeenCalledWith({ nonTerminal: true })
+  })
+
+  it('retries global Compute Job activity hydration after a transient startup failure', async () => {
+    vi.useFakeTimers()
+    mocks.settings.isLoaded = true
+    mocks.compute.jobsList
+      .mockRejectedValueOnce(new Error('main process unavailable'))
+      .mockResolvedValueOnce([])
+
+    await render()
+    await act(async () => Promise.resolve())
+    await act(async () => vi.advanceTimersByTimeAsync(1_000))
+
+    expect(mocks.compute.jobsList).toHaveBeenCalledTimes(2)
+    expect(mocks.compute.jobsList).toHaveBeenLastCalledWith({ nonTerminal: true })
   })
 
   it('keeps the remote-job analysis owner active while Home is presented', async () => {

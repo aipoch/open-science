@@ -390,7 +390,19 @@ const useApplicationEventBindings = ({
   useEffect(() => window.api.compute.onJobUpdated(applyJobUpdate), [applyJobUpdate])
   useEffect(() => {
     if (startupView !== 'app' || !sessionPersistence.isHydrated) return
-    void hydrateNonTerminalJobs().catch(() => undefined)
+    let isActive = true
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    const hydrate = (attempt = 0): void => {
+      void hydrateNonTerminalJobs().catch(() => {
+        if (!isActive || attempt >= 2) return
+        retryTimer = setTimeout(() => hydrate(attempt + 1), 1_000 * 2 ** attempt)
+      })
+    }
+    hydrate()
+    return () => {
+      isActive = false
+      clearTimeout(retryTimer)
+    }
   }, [hydrateNonTerminalJobs, sessionPersistence.isHydrated, startupView])
 
   return {
