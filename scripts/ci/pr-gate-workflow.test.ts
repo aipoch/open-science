@@ -364,8 +364,9 @@ describe('PR Gate workflow', () => {
     )
     expect(shardRun).toMatchObject({
       'continue-on-error': true,
-      run: 'npx vitest run --coverage --coverage.reporter=text-summary --shard=${{ matrix.shard }}/2 --reporter=blob --outputFile=vitest-reports/blob-${{ matrix.shard }}.json'
+      run: 'npx vitest run --coverage --coverage.reporter=text-summary --shard=${{ matrix.shard }}/2 --reporter=blob --outputFile=vitest-reports/blob-${{ matrix.shard }}.json --passWithNoTests'
     })
+    expect(shardRun?.run).toContain('--passWithNoTests')
     expect(shardUpload).toMatchObject({
       if: '${{ always() }}',
       with: {
