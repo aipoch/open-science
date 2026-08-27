@@ -34,7 +34,8 @@ const mocks = vi.hoisted(() => {
     compute: {
       enqueueApproval: vi.fn(),
       dismissApproval: vi.fn(),
-      pendingApprovals: [] as unknown[]
+      pendingApprovals: [] as unknown[],
+      jobsList: vi.fn().mockResolvedValue([])
     },
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
     sessions: [] as Array<{ id: string }>,
@@ -391,6 +392,7 @@ describe('App startup routing', () => {
     mocks.skillImport.dismiss.mockClear()
     mocks.compute.enqueueApproval.mockClear()
     mocks.compute.dismissApproval.mockClear()
+    mocks.compute.jobsList.mockClear()
     mocks.navigation.view = 'home'
     mocks.startupView = 'app'
     mocks.sessionPersistence.isReady = true
@@ -452,6 +454,7 @@ describe('App startup routing', () => {
         onApprovalSettled: vi.fn(() => vi.fn()),
         replayPendingApprovals: vi.fn().mockResolvedValue(undefined),
         onJobUpdated: vi.fn(() => vi.fn()),
+        jobsList: mocks.compute.jobsList,
         enabledHostsSet: vi.fn(() => Promise.resolve())
       },
       permissions: { onChanged: vi.fn(() => vi.fn()) },
@@ -494,6 +497,13 @@ describe('App startup routing', () => {
     root = createRoot(container)
     await act(async () => root.render(<App />))
   }
+
+  it('hydrates the persisted non-terminal Compute Job projection at app startup', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+
+    expect(mocks.compute.jobsList).toHaveBeenCalledWith({ nonTerminal: true })
+  })
 
   it('opens Settings with Cmd/Ctrl+, after startup is interactive', async () => {
     await render()

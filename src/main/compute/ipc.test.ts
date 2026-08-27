@@ -826,6 +826,36 @@ describe('compute handlers — jobsList', () => {
     expect(findBySession).toHaveBeenCalledWith('sess-1', undefined)
   })
 
+  it('returns all persisted non-terminal jobs for the renderer activity projection', async () => {
+    const host = sampleHost({ providerId: 'ssh:biowulf', displayName: 'Biowulf HPC' })
+    const list = vi.fn().mockResolvedValue([host])
+    const jobs = [
+      makeJob({ job_id: 'job-1', session_id: 'sess-1', status: 'queued' }),
+      makeJob({ job_id: 'job-2', session_id: 'sess-2', status: 'running' })
+    ]
+    const findNonTerminal = vi.fn().mockResolvedValue(jobs)
+
+    const handlers = createComputeHandlers(
+      mockRepository({ list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepository({ findNonTerminal }),
+      undefined,
+      undefined,
+      '/tmp/test-storage'
+    )
+
+    const result = await handlers.jobsList({ nonTerminal: true })
+
+    expect(result.map((job) => [job.job_id, job.session_id])).toEqual([
+      ['job-1', 'sess-1'],
+      ['job-2', 'sess-2']
+    ])
+    expect(findNonTerminal).toHaveBeenCalledOnce()
+  })
+
   it('returns empty array when no jobRepository is injected', async () => {
     const handlers = createComputeHandlers(mockRepository({}))
     const result = await handlers.jobsList({ sessionId: 'sess-1' })

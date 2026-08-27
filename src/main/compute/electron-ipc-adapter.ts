@@ -1,6 +1,7 @@
 import type {
   ChangeComputeHostAuthenticationRequest,
   ComputeApprovalDecision,
+  ComputeJobsListFilter,
   CreateComputeHostRequest,
   CreatePasswordComputeHostRequest,
   ResetPasswordComputeHostRequest,
@@ -122,10 +123,9 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
     typeof id === 'string' ? handlers.approvalReplay(id) : null
   )
   ipcMainHandle('compute:approval-replay-pending', () => handlers.approvalReplayPending())
-  // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
-  ipcMainHandle(
-    COMPUTE_JOBS_LIST_CHANNEL,
-    (_event, filter: { sessionId: string; status?: string[] }) => handlers.jobsList(filter)
+  // Returns a Session job feed or the global non-terminal activity projection.
+  ipcMainHandle(COMPUTE_JOBS_LIST_CHANNEL, (_event, filter: ComputeJobsListFilter) =>
+    handlers.jobsList(filter)
   )
   // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null — issue 05).
   ipcMainHandle('compute:jobs:pending-notification', (_event, sessionId: string) =>

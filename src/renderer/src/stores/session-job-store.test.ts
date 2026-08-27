@@ -110,6 +110,50 @@ describe('session job store — hydrate', () => {
   })
 })
 
+describe('session job store — global activity projection', () => {
+  it('hydrates persisted non-terminal jobs across Sessions', async () => {
+    const jobs = [
+      makeJob({ job_id: 'job-a', session_id: 'session-a', status: 'queued' }),
+      makeJob({ job_id: 'job-b', session_id: 'session-b', status: 'running' })
+    ]
+    const jobsList = vi.fn().mockResolvedValue(jobs)
+    setJobsApi({ jobsList })
+
+    await useSessionJobStore.getState().hydrateNonTerminal()
+
+    const projection = useSessionJobStore.getState().nonTerminalJobsById
+    expect(jobsList).toHaveBeenCalledWith({ nonTerminal: true })
+    expect(Array.from(projection.values())).toEqual(jobs)
+  })
+
+  it('does not resurrect a job that becomes terminal while global hydration is pending', async () => {
+    let resolveHydration: ((jobs: JobSummary[]) => void) | undefined
+    setJobsApi({
+      jobsList: vi.fn(() => new Promise<JobSummary[]>((resolve) => (resolveHydration = resolve)))
+    })
+    const running = makeJob({ job_id: 'job-race', status: 'running' })
+
+    const hydration = useSessionJobStore.getState().hydrateNonTerminal()
+    useSessionJobStore.getState().applyUpdate({ ...running, status: 'success' })
+    resolveHydration?.([running])
+    await hydration
+
+    expect(useSessionJobStore.getState().nonTerminalJobsById.has('job-race')).toBe(false)
+  })
+
+  it('keeps global activity when a Workspace hydrates one Session history', async () => {
+    const active = makeJob({ job_id: 'global-job', session_id: 'other-session' })
+    setJobsApi({
+      jobsList: vi.fn().mockResolvedValueOnce([active]).mockResolvedValueOnce([])
+    })
+
+    await useSessionJobStore.getState().hydrateNonTerminal()
+    await useSessionJobStore.getState().hydrate('workspace-session')
+
+    expect(useSessionJobStore.getState().nonTerminalJobsById.get(active.job_id)).toEqual(active)
+  })
+})
+
 describe('session job store — applyUpdate', () => {
   it('inserts a new job into the map', () => {
     const job = makeJob({ job_id: 'job-x', status: 'running' })

@@ -339,6 +339,26 @@ describe('TaskNotificationService', () => {
     expect(hasNonTerminalComputeJobs).toHaveBeenCalledWith('session-1')
   })
 
+  it('still records and delivers completion when the compute activity query fails', async () => {
+    const queryError = new Error('compute database unavailable')
+    const inbox = {
+      record: vi.fn(async () => undefined),
+      settleAction: vi.fn(async () => undefined),
+      settleAuthorization: vi.fn(async () => undefined)
+    }
+    const { service, shown, deliveryErrors } = createService({
+      inbox,
+      hasNonTerminalComputeJobs: vi.fn(async () => Promise.reject(queryError))
+    })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Run the remote analysis' })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(deliveryErrors).toEqual([queryError])
+    expect(inbox.record).toHaveBeenCalledWith(expect.objectContaining({ kind: 'task.completed' }))
+    expect(shown).toHaveLength(1)
+  })
+
   it('collapses multiline prompts to their first line', async () => {
     const { service, shown } = createService({})
 

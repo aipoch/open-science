@@ -181,7 +181,7 @@ const HomePage = ({
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
   const sessions = useSessionStore((state) => state.sessions)
-  const computeJobsById = useSessionJobStore((state) => state.jobsById)
+  const computeJobsById = useSessionJobStore((state) => state.nonTerminalJobsById)
   const notificationItems = useNotificationInboxStore((state) => state.items)
   const markSessionCompletionsRead = useNotificationInboxStore(
     (state) => state.markSessionCompletionsRead

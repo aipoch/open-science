@@ -317,9 +317,9 @@ export class TaskNotificationService {
     try {
       return await this.deps.hasNonTerminalComputeJobs(sessionId)
     } catch (error) {
-      // If workflow activity cannot be established, fail closed instead of announcing completion.
+      // Preserve notification delivery when the activity projection is temporarily unavailable.
       reportTaskNotificationError(this.deps.onDeliveryError, error)
-      return true
+      return false
     }
   }
 

@@ -101,6 +101,7 @@ const useApplicationEventBindings = ({
     state.pending.some((candidate) => !openSideChatParentSessionIds.has(candidate.sessionId))
   )
   const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
+  const hydrateNonTerminalJobs = useSessionJobStore((state) => state.hydrateNonTerminal)
   const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
   const isFilePreviewOpen = usePreviewWorkbenchStore((state) => state.fileDialogItem !== undefined)
   const isExpandedPreviewOpen = usePreviewWorkbenchStore(
@@ -387,6 +388,10 @@ const useApplicationEventBindings = ({
     }
   }, [dismissComputeApproval, enqueueComputeApproval])
   useEffect(() => window.api.compute.onJobUpdated(applyJobUpdate), [applyJobUpdate])
+  useEffect(() => {
+    if (startupView !== 'app' || !sessionPersistence.isHydrated) return
+    void hydrateNonTerminalJobs().catch(() => undefined)
+  }, [hydrateNonTerminalJobs, sessionPersistence.isHydrated, startupView])
 
   return {
     presentation,
