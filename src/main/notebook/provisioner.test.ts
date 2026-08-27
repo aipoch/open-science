@@ -2714,6 +2714,19 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     expect(existsSync(bin)).toBe(true)
   })
 
+  it('does not carry a cancel during repair finalization into the next operation', async () => {
+    const root = makeRoot()
+    const provisioner = serializeProvisioner(new DefaultRuntimeProvisioner(makeDeps(root)))
+
+    await provisioner.repair('python', () => {}, {
+      onVerified: () => {
+        provisioner.cancel('python')
+      }
+    })
+
+    await expect(provisioner.provisionPython(() => {})).resolves.toBeUndefined()
+  })
+
   it('a per-language cancel is dropped while idle (does not arm a future queued Reset)', () => {
     // cancel(lang) while nothing is running/queued must be a pure no-op at this layer (no crash, no
     // lingering arm) — env-ipc.serializeProvisioner is the layer that enforces "no-op when idle" for the

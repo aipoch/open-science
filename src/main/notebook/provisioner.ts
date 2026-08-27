@@ -999,11 +999,11 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             rmSync(rReadyMarkerPath(this.deps.root), { force: true })
             await this.doProvisionR(onProgress)
           }
+          await opts?.onVerified?.()
         } finally {
           this.uninterruptible.delete(lang)
         }
       })
-      await opts?.onVerified?.()
     })
   }
 
