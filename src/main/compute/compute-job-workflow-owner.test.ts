@@ -12,6 +12,7 @@ import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
 import type { ConcurrencyManager } from './concurrency-manager'
 import { sharedDispatchTracker } from './dispatch-tracker'
+import { JobPoller } from './job-poller'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -117,7 +118,8 @@ const makeOwner = (
   publishJobUpdated?: (job: import('../../shared/compute').ComputeJob) => void,
   artifactResolver?: { resolveArtifactPath(uri: string): Promise<string> },
   storageRoot?: string,
-  concurrencyManager?: ConcurrencyManager
+  concurrencyManager?: ConcurrencyManager,
+  observeBackgroundDispatch?: (dispatch: Promise<void>) => void
 ): ComputeJobWorkflowOwner =>
   new ComputeJobWorkflowOwner(
     brokerFromRunner(runner),
@@ -127,7 +129,8 @@ const makeOwner = (
     publishJobUpdated,
     artifactResolver,
     storageRoot,
-    concurrencyManager
+    concurrencyManager,
+    observeBackgroundDispatch
   )
 
 const makeJobRepo = (
@@ -220,6 +223,65 @@ const makeJobRepo = (
 }
 
 describe('ComputeJobWorkflowOwner.submitJob', () => {
+  it('does not misclassify an unexpected live dispatch failure as restart recovery', async () => {
+    const jobs = new Map<string, import('../../shared/compute').ComputeJob>()
+    const runner: SshRunner = { run: vi.fn(() => Promise.reject(new Error('transport crashed'))) }
+    const { repo: jobRepo } = makeJobRepo(jobs)
+    const { repo: hostRepo } = makeRepo()
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(() => Promise.resolve('once' as const)),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+    let backgroundDispatch: Promise<void> | undefined
+    const service = makeOwner(
+      runner,
+      hostRepo,
+      broker,
+      jobRepo,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (dispatch) => {
+        backgroundDispatch = dispatch.catch(() => undefined)
+      }
+    )
+
+    const submitted = await service.submitJob(
+      'ssh:biowulf',
+      'test unexpected dispatch failure',
+      'echo hi',
+      {},
+      { sessionId: 's1', projectId: 'p1' }
+    )
+    expect(backgroundDispatch).toBeDefined()
+    await backgroundDispatch
+
+    const pollerRepository = {
+      ...jobRepo,
+      findNonTerminal: vi.fn(async () =>
+        [...jobs.values()].filter((job) => ['queued', 'submitted', 'running'].includes(job.status))
+      )
+    } as unknown as import('./job-repository').ComputeJobRepository
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: hostRepo,
+      jobRepository: pollerRepository,
+      dispatchTracker: sharedDispatchTracker
+    })
+
+    await poller.tick()
+
+    expect(jobs.get(submitted.job_id)).toMatchObject({
+      status: 'error',
+      error_code: 'dispatch_failed',
+      stderr_tail: 'The remote Compute Job dispatch failed unexpectedly.',
+      started_at: undefined,
+      remote_handle: undefined
+    })
+  })
+
   it('tracks a committed submitted row through dispatcher registration', async () => {
     const runner = makeFakeRunner({
       exitCode: 1,

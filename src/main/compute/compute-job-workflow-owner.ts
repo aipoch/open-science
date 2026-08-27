@@ -146,7 +146,8 @@ export class ComputeJobWorkflowOwner {
     private readonly publishJobUpdated: ((job: ComputeJob) => void) | undefined,
     private readonly artifactResolver: ArtifactResolver | undefined,
     private readonly storageRoot: string | undefined,
-    private readonly concurrencyManager: ConcurrencyManager | undefined
+    private readonly concurrencyManager: ConcurrencyManager | undefined,
+    private readonly observeBackgroundDispatch?: (dispatch: Promise<void>) => void
   ) {}
 
   async submitJob(
@@ -328,12 +329,14 @@ export class ComputeJobWorkflowOwner {
       }
 
       if (initialStatus === 'submitted') {
-        void dispatchJob(jobId, {
+        const dispatch = dispatchJob(jobId, {
           connectionBroker: this.connectionBroker,
           hostRepository: this.hostRepository,
           jobRepository: this.jobRepository,
           onJobUpdated: this.handleJobUpdated
         })
+        this.observeBackgroundDispatch?.(dispatch)
+        void dispatch
       }
     } finally {
       if (dispatchHandoffHeld) sharedDispatchTracker.end(jobId)
