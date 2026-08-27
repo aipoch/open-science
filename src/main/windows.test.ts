@@ -73,7 +73,7 @@ type PermissionCheckHandler = (
   webContents: unknown,
   permission: string,
   requestingOrigin: string,
-  details: { isMainFrame: boolean }
+  details: { isMainFrame: boolean; requestingUrl?: string }
 ) => boolean
 type HeadersReceivedDetails = {
   webContentsId?: number
@@ -907,8 +907,9 @@ describe('window navigation policy', () => {
     }
   )
 
-  it('denies every subframe permission request while preserving trusted main-frame checks', () => {
+  it('denies sensitive Chromium permissions regardless of frame', () => {
     createMainWindow()
+    const window = lastWindow!
 
     expect(permissionRequestHandler).toBeDefined()
     expect(permissionCheckHandler).toBeDefined()
@@ -925,14 +926,67 @@ describe('window navigation policy', () => {
     ).toBe(false)
 
     const mainFrameDecision = vi.fn()
-    permissionRequestHandler?.({}, 'notifications', mainFrameDecision, {
+    permissionRequestHandler?.(window.webContents, 'media', mainFrameDecision, {
       isMainFrame: true,
       requestingUrl: 'file:///app/index.html'
     })
-    expect(mainFrameDecision).toHaveBeenCalledWith(true)
-    expect(permissionCheckHandler?.({}, 'notifications', 'file://', { isMainFrame: true })).toBe(
-      true
-    )
+    expect(mainFrameDecision).toHaveBeenCalledWith(false)
+    expect(
+      permissionCheckHandler?.(window.webContents, 'geolocation', 'file://', {
+        isMainFrame: true,
+        requestingUrl: 'file:///app/index.html'
+      })
+    ).toBe(false)
+  })
+
+  it('allows sanitized clipboard writes only from the trusted main renderer document', () => {
+    createMainWindow()
+    const window = lastWindow!
+
+    const trustedDecision = vi.fn()
+    permissionRequestHandler?.(window.webContents, 'clipboard-sanitized-write', trustedDecision, {
+      isMainFrame: true,
+      requestingUrl: 'file:///app/index.html'
+    })
+    expect(trustedDecision).toHaveBeenCalledWith(true)
+    expect(
+      permissionCheckHandler?.(window.webContents, 'clipboard-sanitized-write', 'file://', {
+        isMainFrame: true,
+        requestingUrl: 'file:///app/index.html'
+      })
+    ).toBe(true)
+
+    const untrustedDecision = vi.fn()
+    permissionRequestHandler?.(window.webContents, 'clipboard-sanitized-write', untrustedDecision, {
+      isMainFrame: true,
+      requestingUrl: 'https://example.com/'
+    })
+    expect(untrustedDecision).toHaveBeenCalledWith(false)
+    expect(
+      permissionCheckHandler?.(
+        window.webContents,
+        'clipboard-sanitized-write',
+        'https://example.com',
+        {
+          isMainFrame: true,
+          requestingUrl: 'https://example.com/'
+        }
+      )
+    ).toBe(false)
+
+    const otherWindowDecision = vi.fn()
+    permissionRequestHandler?.({}, 'clipboard-sanitized-write', otherWindowDecision, {
+      isMainFrame: true,
+      requestingUrl: 'file:///app/index.html'
+    })
+    expect(otherWindowDecision).toHaveBeenCalledWith(false)
+
+    const subframeDecision = vi.fn()
+    permissionRequestHandler?.(window.webContents, 'clipboard-sanitized-write', subframeDecision, {
+      isMainFrame: false,
+      requestingUrl: 'file:///app/index.html'
+    })
+    expect(subframeDecision).toHaveBeenCalledWith(false)
   })
 })
 
