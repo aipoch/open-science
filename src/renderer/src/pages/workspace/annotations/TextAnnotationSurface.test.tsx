@@ -715,6 +715,38 @@ describe('TextAnnotationSurface annotate trigger', () => {
     expect(annotateTrigger()).toBeUndefined()
   })
 
+  it('keeps the trigger after syntax highlighting retargets the selected code', async () => {
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{
+            kind: 'session-item',
+            sessionId: 'session-1',
+            itemId: 'tool-1',
+            itemType: 'tool-activity',
+            sectionId: 'code'
+          }}
+          activeAnnotations={[]}
+          onAdd={vi.fn()}
+          onError={vi.fn()}
+        >
+          <WorkspaceToolCodeBlock code="const answer = 42" language="typescript" />
+        </TextAnnotationSurface>
+      )
+    )
+    const code = container.querySelector<HTMLElement>('[data-testid="tool-code-block"] code')!
+    await commitSelection(code)
+    expect(annotateTrigger()).toBeDefined()
+
+    await vi.waitFor(() => {
+      expect(
+        container.querySelectorAll('[data-testid="tool-code-block"] code span').length
+      ).toBeGreaterThan(0)
+    })
+    await act(async () => Promise.resolve())
+    expect(annotateTrigger()).toBeDefined()
+  })
+
   it('hides the trigger when streaming replaces the selected message content', async () => {
     const paragraph = await renderSurface()
     await commitSelection(paragraph)

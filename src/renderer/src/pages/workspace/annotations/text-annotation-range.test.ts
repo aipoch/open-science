@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 
-import { reconcileTextAnnotationRanges } from './text-annotation-range'
+import { reconcileTextAnnotationRanges, retargetTextAnnotationRange } from './text-annotation-range'
 
 const rangeAt = (node: Text, start: number, length = 6): Range => {
   const range = document.createRange()
@@ -115,6 +115,46 @@ describe('text annotation range reconciliation', () => {
     )
 
     expect(result.size).toBe(0)
+    surface.remove()
+  })
+})
+
+describe('retargetTextAnnotationRange', () => {
+  it('keeps a still-connected exact range', () => {
+    const { surface, text } = surfaceWithDuplicates()
+    const existing = rangeAt(text, 0)
+
+    expect(retargetTextAnnotationRange(surface, 'repeat', existing)).toBe(existing)
+    surface.remove()
+  })
+
+  it('rebuilds the quote after highlight spans replace the original text node', () => {
+    const surface = document.createElement('div')
+    const code = document.createElement('code')
+    code.appendChild(document.createTextNode('printf shell-command'))
+    surface.appendChild(code)
+    document.body.appendChild(surface)
+    const existing = document.createRange()
+    existing.selectNodeContents(code.firstChild!)
+
+    code.replaceChildren()
+    const token = document.createElement('span')
+    token.appendChild(document.createTextNode('printf shell-command'))
+    code.appendChild(token)
+
+    const restored = retargetTextAnnotationRange(surface, 'printf shell-command', existing)
+    expect(restored).not.toBe(existing)
+    expect(restored?.toString()).toBe('printf shell-command')
+    expect(restored?.startContainer.isConnected).toBe(true)
+    surface.remove()
+  })
+
+  it('returns undefined when the quote is no longer in the surface', () => {
+    const { surface, text } = surfaceWithDuplicates()
+    const existing = rangeAt(text, 0)
+    text.data = 'stream replaced the quote'
+
+    expect(retargetTextAnnotationRange(surface, 'repeat', existing)).toBeUndefined()
     surface.remove()
   })
 })

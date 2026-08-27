@@ -72,4 +72,20 @@ const reconcileTextAnnotationRanges = (
   return next
 }
 
-export { rangeForTextOccurrence, reconcileTextAnnotationRanges }
+const retargetTextAnnotationRange = (
+  surface: HTMLElement,
+  quote: string,
+  existing?: Range
+): Range | undefined => {
+  if (
+    existing &&
+    !existing.collapsed &&
+    existing.toString() === quote &&
+    rangeBelongsToSurface(existing, surface)
+  ) {
+    return existing
+  }
+  return rangeForTextOccurrence(surface, quote)
+}
+
+export { rangeForTextOccurrence, reconcileTextAnnotationRanges, retargetTextAnnotationRange }

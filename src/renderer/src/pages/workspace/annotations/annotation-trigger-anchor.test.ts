@@ -243,4 +243,35 @@ describe('isRangeTriggerVisible', () => {
 
     expect(isRangeTriggerVisible(range, false, viewport)).toBe(true)
   })
+
+  it('keeps the trigger when an overflow ancestor reports a zero-size rectangle', () => {
+    const viewportElement = document.createElement('div')
+    viewportElement.style.overflow = 'hidden'
+    const paragraph = document.createElement('p')
+    paragraph.textContent = 'selectable agent reply'
+    viewportElement.appendChild(paragraph)
+    document.body.appendChild(viewportElement)
+    Object.defineProperty(viewportElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(0, 0, 0, 0)
+    })
+    const range = document.createRange()
+    range.selectNodeContents(paragraph.firstChild!)
+    Object.defineProperty(range, 'getClientRects', {
+      configurable: true,
+      value: () => [rect(10, 20, 180, 40)]
+    })
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(10, 20, 180, 40)
+    })
+
+    expect(isRangeTriggerVisible(range, false, viewport)).toBe(true)
+  })
+
+  it('keeps the trigger when the window viewport has no usable size', () => {
+    const range = selectWithRects([rect(10, 20, 180, 40)], rect(10, 20, 180, 40))
+
+    expect(isRangeTriggerVisible(range, false, { width: 0, height: 0 })).toBe(true)
+  })
 })

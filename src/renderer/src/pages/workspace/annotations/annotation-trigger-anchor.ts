@@ -59,9 +59,17 @@ const isRangeTriggerVisible = (
   // often still expose a zero-size DOMRect; treat that as missing so placement
   // keeps its existing fallback. Live browser text selections provide a box.
   if (!anchorRect) return true
-  if (
-    !rectsIntersect(anchorRect, { left: 0, right: viewport.width, top: 0, bottom: viewport.height })
-  ) {
+  const viewportRect = {
+    left: 0,
+    right: viewport.width,
+    top: 0,
+    bottom: viewport.height,
+    width: viewport.width,
+    height: viewport.height
+  }
+  // A zero-size window is layout-unusable, not an off-screen selection. jsdom
+  // and pre-layout browsers report that; hiding the trigger would drop a live draft.
+  if (hasUsableAnchorGeometry(viewportRect) && !rectsIntersect(anchorRect, viewportRect)) {
     return false
   }
 
@@ -74,7 +82,14 @@ const isRangeTriggerVisible = (
     const clips = [style.overflow, style.overflowX, style.overflowY].some((overflow) =>
       /^(auto|clip|hidden|scroll)$/.test(overflow)
     )
-    if (clips && !rectsIntersect(anchorRect, ancestor.getBoundingClientRect())) return false
+    if (clips) {
+      const ancestorRect = ancestor.getBoundingClientRect()
+      // Same missing-geometry fallback as the Range itself: an overflow ancestor
+      // with a zero-size box cannot clip a selection that still exists in the tree.
+      if (hasUsableAnchorGeometry(ancestorRect) && !rectsIntersect(anchorRect, ancestorRect)) {
+        return false
+      }
+    }
     ancestor = ancestor.parentElement
   }
   return true

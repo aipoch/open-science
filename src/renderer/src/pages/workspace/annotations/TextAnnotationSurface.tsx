@@ -15,7 +15,7 @@ import {
   AnnotationMarkers,
   type AnnotationControl
 } from './TextAnnotationEditors'
-import { reconcileTextAnnotationRanges } from './text-annotation-range'
+import { reconcileTextAnnotationRanges, retargetTextAnnotationRange } from './text-annotation-range'
 
 type SelectionDraft = { quote: string; backward: boolean; range: Range }
 
@@ -75,6 +75,7 @@ const TextAnnotationSurface = ({
   const pendingHighlightKey = `pending-${useId()}`
   const noteInputId = `annotation-note-${useId()}`
   const [selection, setSelection] = useState<SelectionDraft>()
+  const selectionRef = useRef(selection)
   const [open, setOpen] = useState(false)
   const [note, setNote] = useState('')
   const [annotationControls, setAnnotationControls] = useState<readonly AnnotationControl[]>([])
@@ -218,8 +219,28 @@ const TextAnnotationSurface = ({
   }, [matchingAnnotations, measureAnnotationControls])
 
   useLayoutEffect(() => {
+    selectionRef.current = selection
+  }, [selection])
+
+  const retargetDraftSelection = useCallback((): void => {
+    const content = contentRef.current
+    const draft = selectionRef.current
+    if (!content || !draft) return
+    const nextRange = retargetTextAnnotationRange(content, draft.quote, draft.range)
+    if (nextRange === draft.range) return
+    if (nextRange) {
+      setSelection({ ...draft, range: nextRange })
+      return
+    }
+    setSelection(undefined)
+    setOpen(false)
+    setNote('')
+  }, [])
+
+  useLayoutEffect(() => {
     reconcileAnnotationHighlights()
-  }, [children, reconcileAnnotationHighlights])
+    retargetDraftSelection()
+  }, [children, reconcileAnnotationHighlights, retargetDraftSelection])
 
   useLayoutEffect(() => {
     const content = contentRef.current
@@ -231,7 +252,9 @@ const TextAnnotationSurface = ({
       scheduled = true
       queueMicrotask(() => {
         scheduled = false
-        if (!disconnected) reconcileAnnotationHighlights()
+        if (disconnected) return
+        reconcileAnnotationHighlights()
+        retargetDraftSelection()
       })
     })
     observer.observe(content, { childList: true, characterData: true, subtree: true })
@@ -239,7 +262,7 @@ const TextAnnotationSurface = ({
       disconnected = true
       observer.disconnect()
     }
-  }, [reconcileAnnotationHighlights])
+  }, [reconcileAnnotationHighlights, retargetDraftSelection])
 
   useEffect(() => {
     window.addEventListener('resize', measureAnnotationControls)
