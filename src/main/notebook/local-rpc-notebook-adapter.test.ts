@@ -22,10 +22,48 @@ const createCapability = (): NotebookLocalRpcCapability =>
 const request = {
   sessionId: 'session-1',
   workspaceCwd: '/workspace',
-  provenanceContext: { promptMessageId: 'message-user-1' },
-  registeredInputFiles: [{ inputFileVersionId: 'input-1' }],
+  provenanceContext: {
+    rootFrameId: 'frame-root',
+    agentFrameId: 'frame-agent',
+    messageBranchId: 'branch-1',
+    runtimeSegmentId: 'runtime-1',
+    promptMessageId: 'message-user-1'
+  },
+  registeredInputFiles: [
+    {
+      inputFileVersionId: 'input-1',
+      sourceKind: 'upload-version',
+      sourceFileId: 'upload-1',
+      sourceProjectId: 'project-1',
+      sourceSessionId: 'session-1',
+      filename: 'input.csv',
+      sizeBytes: 10,
+      checksum: 'checksum-1',
+      storageKey: 'uploads/input-1',
+      association: 'turn-attached'
+    }
+  ],
   inputRunLeaseId: 'input-run-1'
 }
+
+const requestByMethod = {
+  beginCodeCell: request,
+  appendCodeCell: { ...request, writeId: 'write-1', cellId: 'cell-1', delta: 'print(1)' },
+  finishCodeCell: { ...request, writeId: 'write-1', cellId: 'cell-1' },
+  runCell: { ...request, cellId: 'cell-1' },
+  execute: { ...request, code: 'print(1)', language: 'python' },
+  executeControl: { ...request, code: 'return 1' },
+  executeShell: { ...request, command: 'echo hi' },
+  state: request,
+  restart: request,
+  shutdown: request,
+  inspectPackages: { ...request, language: 'python', packages: ['numpy'] },
+  managePackages: { ...request, language: 'python', packages: ['numpy'] },
+  manageEnvironments: { ...request, action: 'list' },
+  listRuntimes: request,
+  bindRuntime: { ...request, language: 'python', runtimeId: 'analysis' },
+  switchRuntime: { ...request, language: 'python', runtimeId: 'analysis' }
+} satisfies Record<NotebookLocalRpcMethod, Record<string, unknown>>
 
 describe('notebook local RPC adapter', () => {
   it('owns exactly the notebook capability method surface', () => {
@@ -74,16 +112,17 @@ describe('notebook local RPC adapter', () => {
     'preserves request, result and error identity for %s',
     async (method) => {
       const capability = createCapability()
-      const handler = resolveNotebookLocalRpcHandler(capability, method, request)
+      const methodRequest = requestByMethod[method]
+      const handler = resolveNotebookLocalRpcHandler(capability, method, methodRequest)
       const methodMock = (
         capability as unknown as Record<NotebookLocalRpcMethod, ReturnType<typeof vi.fn>>
       )[method]
       const result = { method }
       methodMock.mockResolvedValueOnce(result)
 
-      await expect(handler(request)).resolves.toBe(result)
+      await expect(handler(methodRequest)).resolves.toBe(result)
       expect(methodMock).toHaveBeenCalledTimes(1)
-      expect(methodMock.mock.calls[0]?.[0]).toBe(request)
+      expect(methodMock.mock.calls[0]?.[0]).toBe(methodRequest)
       for (const otherMethod of NOTEBOOK_LOCAL_RPC_METHODS) {
         if (otherMethod === method) continue
         expect(
@@ -96,7 +135,7 @@ describe('notebook local RPC adapter', () => {
       if (method === 'bindRuntime' || method === 'switchRuntime') return
       const failure = new Error(`${method} failed`)
       methodMock.mockRejectedValueOnce(failure)
-      await expect(handler(request)).rejects.toBe(failure)
+      await expect(handler(methodRequest)).rejects.toBe(failure)
     }
   )
 
@@ -111,11 +150,10 @@ describe('notebook local RPC adapter', () => {
         target: { language: 'python', selection: 'unresolved' }
       }
       vi.mocked(capability[method]).mockResolvedValueOnce(failure)
-      const handler = resolveNotebookLocalRpcHandler(capability, method, request)
+      const methodRequest = requestByMethod[method]
+      const handler = resolveNotebookLocalRpcHandler(capability, method, methodRequest)
 
-      await expect(
-        handler({ ...request, language: 'python', runtimeId: 'analysis' })
-      ).resolves.toBe(failure)
+      await expect(handler(methodRequest)).resolves.toBe(failure)
       expect(capability.listRuntimes).not.toHaveBeenCalled()
     }
   )
@@ -124,7 +162,8 @@ describe('notebook local RPC adapter', () => {
     'forwards request cancellation to data execution method %s',
     async (method) => {
       const capability = createCapability()
-      const handler = resolveNotebookLocalRpcHandler(capability, method, request)
+      const methodRequest = requestByMethod[method]
+      const handler = resolveNotebookLocalRpcHandler(capability, method, methodRequest)
       const cancellation = new AbortController()
 
       await (
@@ -132,9 +171,9 @@ describe('notebook local RPC adapter', () => {
           request: Record<string, unknown>,
           signal: AbortSignal
         ) => Promise<unknown>
-      )(request, cancellation.signal)
+      )(methodRequest, cancellation.signal)
 
-      expect(capability[method]).toHaveBeenCalledWith(request, cancellation.signal)
+      expect(capability[method]).toHaveBeenCalledWith(methodRequest, cancellation.signal)
     }
   )
 
@@ -156,7 +195,8 @@ describe('notebook local RPC adapter', () => {
       resolveNotebookLocalRpcHandler(capability, 'execute', {
         ...request,
         sessionId: '',
-        workspaceCwd: ''
+        workspaceCwd: '',
+        code: 'print(1)'
       })
     ).not.toThrow()
   })
