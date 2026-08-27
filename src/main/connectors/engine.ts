@@ -1,4 +1,5 @@
 import type { ConnectorCredentials, ToolContext, ToolDescriptor } from './types'
+import { abortableDelay } from './abortable-delay'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_TOTAL_TIMEOUT_MS = 120_000
@@ -10,24 +11,6 @@ const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 const DEFAULT_RETRIES = 2
 const DEFAULT_BACKOFF_MS = 400
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
-
-const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
-  signal?.throwIfAborted()
-  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms))
-
-  return new Promise((resolve, reject) => {
-    const finish = (): void => {
-      signal.removeEventListener('abort', abort)
-      resolve()
-    }
-    const abort = (): void => {
-      clearTimeout(timer)
-      reject(signal.reason)
-    }
-    const timer = setTimeout(finish, ms)
-    signal.addEventListener('abort', abort, { once: true })
-  })
-}
 
 // Some public APIs (e.g. AlphaFold EBI) reject requests without a User-Agent; send a stable one.
 const USER_AGENT =
@@ -212,7 +195,7 @@ export class ParserEngine {
           if (failure instanceof ConnectorResponseTooLargeError) throw failure
           // Network failure or timeout abort — retry a bounded number of times, then give up.
           if (attempt < this.retries) {
-            await sleep(nextDelay(attempt, null), signal)
+            await abortableDelay(nextDelay(attempt, null), signal)
             continue
           }
           if (timedOut) {
@@ -232,7 +215,10 @@ export class ParserEngine {
         }
         // Retry only transient upstream statuses; client errors (4xx except 429) fail fast.
         if (attempt < this.retries && RETRYABLE_STATUS.has(res.status)) {
-          await sleep(nextDelay(attempt, res.headers?.get?.('retry-after') ?? null), signal)
+          await abortableDelay(
+            nextDelay(attempt, res.headers?.get?.('retry-after') ?? null),
+            signal
+          )
           continue
         }
         throw new Error(`HTTP ${res.status} for ${redactUrl(url)}`)
