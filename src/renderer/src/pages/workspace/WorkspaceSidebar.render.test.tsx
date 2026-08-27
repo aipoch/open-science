@@ -330,12 +330,23 @@ describe('WorkspaceSidebar accessible render', () => {
       await act(async () => trigger.dispatchEvent(pointerOver))
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
-      const pointerOut = new MouseEvent('pointerout', {
+      const hoverRegion = document.body.querySelector<HTMLElement>('[data-slot="tooltip-content"]')
+      if (!hoverRegion) throw new Error('Session preview hover region did not render')
+      const leaveTrigger = new MouseEvent('pointerout', {
+        bubbles: true,
+        relatedTarget: hoverRegion
+      })
+      Object.defineProperty(leaveTrigger, 'pointerType', { value: 'mouse' })
+      await act(async () => trigger.dispatchEvent(leaveTrigger))
+
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
+
+      const leaveHoverRegion = new MouseEvent('pointerout', {
         bubbles: true,
         relatedTarget: document.body
       })
-      Object.defineProperty(pointerOut, 'pointerType', { value: 'mouse' })
-      await act(async () => trigger.dispatchEvent(pointerOut))
+      Object.defineProperty(leaveHoverRegion, 'pointerType', { value: 'mouse' })
+      await act(async () => hoverRegion.dispatchEvent(leaveHoverRegion))
 
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
     } finally {

@@ -188,6 +188,8 @@ const SessionHoverPreview = ({
   const { activeSessionId, closeNow, requestOpen } = context
   const open = activeSessionId === session.id
   const onPreviewRequestRef = useRef(onPreviewRequest)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const [descriptionLoading, setDescriptionLoading] = useState(false)
 
   useEffect(() => {
@@ -213,10 +215,17 @@ const SessionHoverPreview = ({
   return (
     <Tooltip open={open}>
       <TooltipTrigger
+        ref={triggerRef}
         asChild
         onPointerEnter={() => requestOpen(session.id)}
         onPointerLeave={(event) => {
           if (event.currentTarget.matches(':focus-visible')) return
+          if (
+            event.relatedTarget instanceof Node &&
+            contentRef.current?.contains(event.relatedTarget)
+          ) {
+            return
+          }
           closeNow(session.id)
         }}
         onFocus={() => requestOpen(session.id)}
@@ -228,13 +237,22 @@ const SessionHoverPreview = ({
         {children}
       </TooltipTrigger>
       <TooltipContent
+        ref={contentRef}
         side="right"
         align="start"
-        sideOffset={10}
+        sideOffset={0}
         collisionPadding={8}
-        onPointerLeave={() => closeNow(session.id)}
+        onPointerLeave={(event) => {
+          if (
+            event.relatedTarget instanceof Node &&
+            triggerRef.current?.contains(event.relatedTarget)
+          ) {
+            return
+          }
+          closeNow(session.id)
+        }}
         onEscapeKeyDown={() => closeNow(session.id)}
-        className="max-w-none overflow-visible bg-transparent p-0 text-inherit shadow-none motion-reduce:animate-none"
+        className="max-w-none overflow-visible bg-transparent py-0 pr-0 pl-2.5 text-inherit shadow-none motion-reduce:animate-none"
       >
         <SessionHoverPreviewCard
           session={session}
