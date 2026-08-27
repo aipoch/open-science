@@ -267,6 +267,7 @@ const createService = (overrides: {
   onAttentionError?: (error: unknown) => void
   inbox?: TaskNotificationServiceDeps['inbox']
   onInboxError?: (error: unknown) => void
+  hasNonTerminalComputeJobs?: (sessionId: string) => Promise<boolean>
 }): {
   service: TaskNotificationService
   shown: TaskNotificationRequest[]
@@ -287,7 +288,8 @@ const createService = (overrides: {
     onDeliveryError: overrides.onDeliveryError ?? ((error) => deliveryErrors.push(error)),
     onAttentionError: overrides.onAttentionError ?? ((error) => attentionErrors.push(error)),
     inbox: overrides.inbox,
-    onInboxError: overrides.onInboxError ?? ((error) => inboxErrors.push(error))
+    onInboxError: overrides.onInboxError ?? ((error) => inboxErrors.push(error)),
+    hasNonTerminalComputeJobs: overrides.hasNonTerminalComputeJobs
   })
   service.setAttentionHandlers({
     request: overrides.requestAttention ?? (() => attentionRequests.push(1)),
@@ -316,6 +318,25 @@ describe('TaskNotificationService', () => {
       body: 'The agent finished responding to "Plot the curve".'
     })
     expect(attentionRequests).toEqual([])
+  })
+
+  it('defers completion while the Session owns non-terminal remote compute', async () => {
+    const inbox = {
+      record: vi.fn(async () => undefined),
+      settleAction: vi.fn(async () => undefined),
+      settleAuthorization: vi.fn(async () => undefined)
+    }
+    const hasNonTerminalComputeJobs = vi.fn(async () => true)
+    const { service, shown } = createService({ inbox, hasNonTerminalComputeJobs })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Run the remote analysis' })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(shown).toHaveLength(0)
+    expect(inbox.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'task.completed' })
+    )
+    expect(hasNonTerminalComputeJobs).toHaveBeenCalledWith('session-1')
   })
 
   it('collapses multiline prompts to their first line', async () => {

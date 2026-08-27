@@ -44,6 +44,9 @@ export type TaskNotificationServiceDeps = {
   // without changing the underlying task or approval lifecycle.
   inbox?: Pick<NotificationInboxController, 'record' | 'settleAction' | 'settleAuthorization'>
   onInboxError?: (error: unknown) => void
+  // A clean foreground turn is not a completed workflow while its remote Compute Jobs can still
+  // trigger an automatic analysis turn.
+  hasNonTerminalComputeJobs?: (sessionId: string) => Promise<boolean>
 }
 
 export type TaskNotificationAttentionHandlers = {
@@ -309,6 +312,17 @@ export class TaskNotificationService {
     }
   }
 
+  private async hasNonTerminalComputeJobs(sessionId: string): Promise<boolean> {
+    if (!this.deps.hasNonTerminalComputeJobs) return false
+    try {
+      return await this.deps.hasNonTerminalComputeJobs(sessionId)
+    } catch (error) {
+      // If workflow activity cannot be established, fail closed instead of announcing completion.
+      reportTaskNotificationError(this.deps.onDeliveryError, error)
+      return true
+    }
+  }
+
   // Bound once the window lifecycle exists (index.ts, after installAppLifecycle): clicking a
   // notification surfaces the main window (always) and opens the conversation when the notification
   // belonged to a known session.
@@ -421,6 +435,15 @@ export class TaskNotificationService {
     // injected via runtime.sendPrompt directly) never pass through trackPrompt, so their terminal
     // events stay silent — the background reviewer must never notify.
     if (!tracked) return
+
+    if (
+      event.kind === 'stop' &&
+      event.text === 'end_turn' &&
+      this.deps.hasNonTerminalComputeJobs &&
+      (await this.hasNonTerminalComputeJobs(sessionId))
+    ) {
+      return
+    }
 
     const notification = describeTaskNotification(event, snippet)
 

@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
+import { useSessionJobStore } from '@/stores/session-job-store'
 import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -114,17 +115,21 @@ const getRequiredEnvironmentFailures = (
   environment: EnvironmentCheckResult | undefined
 ): EnvironmentCheckItem[] => environment?.checks.filter((check) => check.status === 'failed') ?? []
 
-const getHomeSessionActivity = (session: ChatSession): HomeSessionActivity | undefined => {
+const getHomeSessionActivity = (
+  session: ChatSession,
+  hasNonTerminalCompute: boolean
+): HomeSessionActivity | undefined => {
   const actionability = projectPresentedSessionActionability(session)
   if (actionability.waitReason) return actionability.waitReason
-  if (actionability.activity === 'running') return 'running'
+  if (actionability.activity === 'running' || hasNonTerminalCompute) return 'running'
   return undefined
 }
 
-const getRunningActivityTimestamp = (session: ChatSession): number => {
+const getRunningActivityTimestamp = (session: ChatSession, computeStartedAt?: number): number => {
   const candidates = [
     session.status === 'running' ? session.activeRun?.startedAt : undefined,
-    earliestCurrentDelegatedAttemptStartedAt(session)
+    earliestCurrentDelegatedAttemptStartedAt(session),
+    computeStartedAt
   ].filter((value): value is number => value !== undefined)
   return candidates.length > 0
     ? Math.min(...candidates)
@@ -176,6 +181,7 @@ const HomePage = ({
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
   const sessions = useSessionStore((state) => state.sessions)
+  const computeJobsById = useSessionJobStore((state) => state.jobsById)
   const notificationItems = useNotificationInboxStore((state) => state.items)
   const markSessionCompletionsRead = useNotificationInboxStore(
     (state) => state.markSessionCompletionsRead
@@ -248,9 +254,26 @@ const HomePage = ({
     return completedBySession
   }, [notificationItems])
 
+  const activeComputeStartedAtBySession = useMemo(() => {
+    const startedAtBySession = new Map<string, number>()
+
+    for (const job of computeJobsById.values()) {
+      if (job.status !== 'queued' && job.status !== 'submitted' && job.status !== 'running')
+        continue
+      const startedAt = job.started_at ?? job.created_at
+      startedAtBySession.set(
+        job.session_id,
+        Math.min(startedAtBySession.get(job.session_id) ?? startedAt, startedAt)
+      )
+    }
+
+    return startedAtBySession
+  }, [computeJobsById])
+
   const sessionUpdates = useMemo<HomeSessionUpdate[]>(() => {
     const updates = persistedSessions.flatMap<HomeSessionUpdate>((session) => {
-      const activity = getHomeSessionActivity(session)
+      const computeStartedAt = activeComputeStartedAtBySession.get(session.id)
+      const activity = getHomeSessionActivity(session, computeStartedAt !== undefined)
 
       if (activity) {
         return [
@@ -259,7 +282,7 @@ const HomePage = ({
             activity,
             activityTimestamp: isSessionWaitReason(activity)
               ? session.updatedAt
-              : getRunningActivityTimestamp(session)
+              : getRunningActivityTimestamp(session, computeStartedAt)
           }
         ]
       }
@@ -282,7 +305,7 @@ const HomePage = ({
           (isSessionWaitReason(right.activity) ? 0 : right.activity === 'running' ? 1 : 2) ||
         right.activityTimestamp - left.activityTimestamp
     )
-  }, [persistedSessions, unreadCompletedBySession])
+  }, [activeComputeStartedAtBySession, persistedSessions, unreadCompletedBySession])
 
   const activeSessionCounts = useMemo(
     () => ({
@@ -311,10 +334,15 @@ const HomePage = ({
         project,
         sessionCount: projectSessions.length,
         runningCount: projectSessions.filter(
-          (session) => getHomeSessionActivity(session) === 'running'
+          (session) =>
+            getHomeSessionActivity(session, activeComputeStartedAtBySession.has(session.id)) ===
+            'running'
         ).length,
         waitingCount: projectSessions.filter((session) => {
-          const activity = getHomeSessionActivity(session)
+          const activity = getHomeSessionActivity(
+            session,
+            activeComputeStartedAtBySession.has(session.id)
+          )
           return activity !== undefined && isSessionWaitReason(activity)
         }).length,
         lastActivityAt
@@ -326,7 +354,7 @@ const HomePage = ({
         Number(Boolean(right.project.pinned)) - Number(Boolean(left.project.pinned)) ||
         right.lastActivityAt - left.lastActivityAt
     )
-  }, [activeProjects, persistedSessions])
+  }, [activeComputeStartedAtBySession, activeProjects, persistedSessions])
 
   const recentSessions = useMemo(
     () =>
@@ -422,7 +450,8 @@ const HomePage = ({
     !sessions.some(
       (session) =>
         session.projectId === project.id &&
-        projectPresentedSessionActionability(session).activity !== 'inactive'
+        getHomeSessionActivity(session, activeComputeStartedAtBySession.has(session.id)) !==
+          undefined
     )
 
   const archiveUnavailableReason = (project: Project): string | undefined => {
