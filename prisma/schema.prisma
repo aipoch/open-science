@@ -573,9 +573,7 @@ model ReviewScopeSnapshot {
 // lifecycle: submitted → running → success/failed/timeout/error.
 // Columns for harvest (harvestedAt, outputManifest) and concurrency (queued) are included now per
 // design.md §1 to avoid a schema change in 3b/3c — they are null until those phases fill them.
-// Security: free-form execution fields use conditional OS-backed protection at the repository
-// boundary; commandHash remains queryable for deduplication. Legacy and reduced-protection rows may
-// contain plaintext when secure storage is unavailable.
+// Security: no credentials are stored; command is stored for audit; commandHash for dedup.
 model ComputeJob {
   id              String    @id @default(cuid())
   providerId      String
