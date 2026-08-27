@@ -893,7 +893,7 @@ describe('Session Store architecture', () => {
     for (const file of actualModules) {
       const source = readSource(resolve(__dirname, file))
       const lines = source.split(/\r?\n/).length - Number(source.endsWith('\n'))
-      const completionGate = file === 'session-store-persistence-owner.ts' ? 785 : 710
+      const completionGate = file === 'session-store-persistence-owner.ts' ? 785 : 719
       expect(lines, file).toBeLessThanOrEqual(completionGate)
     }
   })

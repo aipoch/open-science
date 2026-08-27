@@ -166,7 +166,16 @@ export const createSessionMessageGraphOwner = <
     const messages = matchingFeedback
       ? session.messages.map((existing, index) =>
           index === matchingFeedbackIndex
-            ? { ...message, sortIndex: matchingFeedback.sortIndex }
+            ? {
+                ...message,
+                sortIndex: matchingFeedback.sortIndex,
+                // The provider echo cannot know renderer-stamped send markers; keep the local
+                // copy's target snapshot and turn intent when it replaces the local Message.
+                ...(matchingFeedback.agentTarget
+                  ? { agentTarget: matchingFeedback.agentTarget }
+                  : {}),
+                ...(matchingFeedback.turnIntent ? { turnIntent: matchingFeedback.turnIntent } : {})
+              }
             : existing
         )
       : [...session.messages, message]

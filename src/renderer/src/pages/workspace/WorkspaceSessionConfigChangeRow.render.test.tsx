@@ -8,8 +8,13 @@ import type { PersistedMessageAgentTarget } from '../../../../shared/session-per
 import type { AgentFrameworkView, ProviderView } from '../../../../shared/settings'
 import { WorkspaceSessionConfigChangeRow } from './WorkspaceSessionConfigChangeRow'
 
+const scrollerItemProps: Array<Record<string, unknown>> = []
+
 vi.mock('@/components/ui/message-scroller', () => ({
-  MessageScrollerItem: ({ children }: { children: ReactNode }) => <div>{children}</div>
+  MessageScrollerItem: (props: { children: ReactNode }) => {
+    scrollerItemProps.push({ ...props, children: undefined })
+    return <div>{props.children}</div>
+  }
 }))
 
 // renderToStaticMarkup reads zustand's server snapshot (the initial state), so the store hook is
@@ -36,6 +41,7 @@ const agentTarget = (
 })
 
 beforeEach(() => {
+  scrollerItemProps.length = 0
   settingsFixture.agentFrameworks = [
     { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
     { id: 'codex', displayName: 'Codex', supportsSkills: true }
@@ -69,10 +75,28 @@ describe('WorkspaceSessionConfigChangeRow', () => {
     expect(html).toContain(
       'aria-label="Session configuration changed to Claude Code · model-a · High"'
     )
-    expect(html).toContain('lucide-sliders-horizontal')
     expect(html).toContain('bg-border-200')
     expect(html).not.toContain('role="status"')
     expect(html).not.toContain('<button')
+  })
+
+  it('renders the framework and provider brand icons inline without a badge circle', () => {
+    const html = renderRow()
+
+    // ClaudeCode brand mark (lobehub ClaudeColor) plus the custom-provider kind icon.
+    expect(html).toContain('<title>Claude</title>')
+    expect(html).toContain('lucide-circle-plus')
+    expect(html).not.toContain('lucide-sliders-horizontal')
+    expect(html).not.toContain('rounded-full border')
+  })
+
+  it('omits the provider icon when the provider no longer resolves', () => {
+    settingsFixture.providers = []
+    const html = renderRow()
+
+    expect(html).toContain('Claude Code · model-a · High')
+    expect(html).toContain('<title>Claude</title>')
+    expect(html).not.toContain('lucide-circle-plus')
   })
 
   it('labels an omitted model with the provider name like the Composer model picker', () => {
@@ -85,6 +109,16 @@ describe('WorkspaceSessionConfigChangeRow', () => {
     const html = renderRow({ reasoningEffort: 'default' })
 
     expect(html).toContain('Claude Code · model-a · Default')
+  })
+
+  it('opts out of content-visibility containment so the short row never renders as a placeholder', () => {
+    renderRow()
+
+    expect(scrollerItemProps).toHaveLength(1)
+    expect(scrollerItemProps[0]).toMatchObject({
+      messageId: 'session-config-change-message-2',
+      disableContainment: true
+    })
   })
 
   it('falls back to the raw framework id when the framework is unknown', () => {

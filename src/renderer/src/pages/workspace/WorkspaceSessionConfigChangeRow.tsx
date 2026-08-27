@@ -1,7 +1,6 @@
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
-import { SlidersHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type { PersistedMessageAgentTarget } from '../../../../shared/session-persistence'
@@ -10,6 +9,8 @@ import {
   resolveProviderReasoningEffortProfile
 } from '../../../../shared/provider-reasoning-effort'
 import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effort'
+import { providerKindKey } from '../settings/provider-form-value'
+import { AgentFrameworkIcon, ProviderKindIcon } from '../settings/provider-icons'
 
 type WorkspaceSessionConfigChangeRowProps = {
   id: string
@@ -31,6 +32,7 @@ const WorkspaceSessionConfigChangeRow = ({
     agentFrameworks.find((candidate) => candidate.id === agentTarget.frameworkId)?.displayName ??
     agentTarget.frameworkId
   const provider = providers.find((candidate) => candidate.id === agentTarget.providerId)
+  const kindKey = provider ? providerKindKey(provider.type, provider.vendorId) : undefined
   // An omitted model is the provider default; the Composer model picker labels that entry with
   // the provider name rather than pinning a concrete catalog model.
   const model = agentTarget.model ?? provider?.name ?? t('Default')
@@ -49,7 +51,10 @@ const WorkspaceSessionConfigChangeRow = ({
           ?.label ?? agentTarget.reasoningEffort)
 
   return (
-    <MessageScrollerItem messageId={id} className="min-w-0">
+    // A 40px divider must never render as the 10rem content-visibility placeholder: mounting
+    // off-screen mid-send would substitute the estimate for a frame and the scroll anchor would
+    // snap against the inflated height — the visible flash this row exists to avoid.
+    <MessageScrollerItem messageId={id} className="min-w-0" disableContainment>
       <div className={cn('px-4 pb-0.5 pt-2.5 md:px-6', contentPaddingClassName)}>
         <div
           className="flex min-w-0 items-center gap-3 py-1.5"
@@ -62,12 +67,14 @@ const WorkspaceSessionConfigChangeRow = ({
         >
           <span className="hidden h-px min-w-4 flex-1 bg-border-200 sm:block" aria-hidden="true" />
           <span className="flex min-w-0 max-w-[44rem] items-center gap-2">
-            <span className="grid size-7 shrink-0 place-items-center rounded-full border border-border-200 bg-bg-000">
-              <SlidersHorizontal
-                className="size-3.5 shrink-0 text-muted-foreground"
-                strokeWidth={2.2}
-                aria-hidden={true}
+            {/* Brand marks stay decorative; the row's aria-label already names the change. */}
+            <span className="flex shrink-0 items-center gap-1.5" aria-hidden="true">
+              <AgentFrameworkIcon
+                frameworkId={agentTarget.frameworkId}
+                size={14}
+                className="shrink-0"
               />
+              {kindKey ? <ProviderKindIcon kindKey={kindKey} className="size-3.5" /> : null}
             </span>
             <span className="min-w-0 truncate text-[12px] leading-4 text-muted-foreground">
               {t('{{framework}} · {{model}} · {{effort}}', { framework, model, effort })}
