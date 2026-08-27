@@ -92,7 +92,13 @@ const sessionWithPendingPermission = (
 
 const admission = (text: string): MessageQueueAdmission => ({
   session: session(),
-  snapshot: { draftKey: 'session-a', version: 1, doc: textDoc(text), attachments: [] },
+  snapshot: {
+    draftKey: 'session-a',
+    version: 1,
+    doc: textDoc(text),
+    annotations: [],
+    attachments: []
+  },
   text,
   forcedSkillIds: [],
   permissionProfile: 'full',
@@ -342,6 +348,78 @@ describe('workspace message queue controller', () => {
         agentConfiguration: queuedConfiguration
       })
     )
+  })
+
+  it('dispatches the frozen annotations captured when the message was queued', async () => {
+    const annotation = {
+      id: 'annotation-1',
+      kind: 'text' as const,
+      target: 'agent' as const,
+      quote: 'Quoted Agent evidence',
+      note: 'Explain this evidence.',
+      source: {
+        kind: 'agent-message' as const,
+        sessionId: 'session-a',
+        messageId: 'agent-message-1'
+      }
+    }
+    let currentSession = session()
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      getSession: () => currentSession
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const queued = admission('queued with annotation')
+    queued.snapshot.annotations = [annotation]
+
+    act(() => hook.result.current.lifecycle.enqueue(queued))
+    currentSession = session('idle')
+    hook.rerender({
+      ...input,
+      activeSession: currentSession,
+      getSession: () => currentSession
+    })
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'queued with annotation',
+        annotations: [annotation]
+      })
+    )
+  })
+
+  it('dispatches a queued revision through the unified edited-message runtime seam', async () => {
+    let currentSession = session()
+    const resendEditedMessage = vi.fn(async () => true)
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      runtime: {
+        sendMessage: vi.fn(async () => ({ sessionId: 'session-a', messageId: 'message-sent' })),
+        resendEditedMessage,
+        cancelRun: vi.fn(async () => undefined)
+      },
+      getSession: () => currentSession
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const queued = admission('revised prompt')
+    queued.revisionMessageId = 'message-user-a'
+
+    act(() => hook.result.current.lifecycle.enqueue(queued))
+    currentSession = session('idle')
+    hook.rerender({ ...input, activeSession: currentSession, getSession: () => currentSession })
+
+    await vi.waitFor(() => expect(resendEditedMessage).toHaveBeenCalledOnce())
+    expect(resendEditedMessage).toHaveBeenCalledWith('session-a', 'message-user-a', {
+      text: 'revised prompt',
+      annotations: [],
+      referencedArtifacts: [],
+      parts: [{ type: 'text', text: 'revised prompt' }],
+      forcedSkillIds: []
+    })
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
   it('resumes background draining when a Specialist barrier settles', async () => {
@@ -688,6 +766,7 @@ describe('workspace message queue controller', () => {
           draftKey: 'session-a',
           version: 1,
           doc: textDoc('Draw a pie chart'),
+          annotations: [],
           attachments: [attachment]
         }
       })
@@ -791,6 +870,7 @@ describe('workspace message queue controller', () => {
           draftKey: 'session-a',
           version: 1,
           doc: textDoc('Draw a pie chart'),
+          annotations: [],
           attachments: [attachment]
         }
       })
@@ -866,6 +946,7 @@ describe('workspace message queue controller', () => {
           draftKey: 'session-a',
           version: 1,
           doc: textDoc('Draw a pie chart'),
+          annotations: [],
           attachments: [attachment]
         }
       })
@@ -1359,6 +1440,42 @@ describe('workspace message queue controller', () => {
     expect(hook.result.current.items).toEqual([])
   })
 
+  it('defers annotation Send now until idle instead of losing structured context in steering', async () => {
+    const steerFollowUp = vi.fn()
+    const input = options(session(), {
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage: vi.fn(),
+        steerFollowUp
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const queued = admission('')
+    queued.snapshot.annotations = [
+      {
+        id: 'annotation-1',
+        kind: 'text',
+        target: 'agent',
+        quote: 'Quoted Agent evidence',
+        source: {
+          kind: 'agent-message',
+          sessionId: 'session-a',
+          messageId: 'agent-message-1'
+        }
+      }
+    ]
+    act(() => hook.result.current.lifecycle.enqueue(queued))
+
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+
+    expect(steerFollowUp).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.items).toEqual([
+      expect.objectContaining({ phase: 'queued', deferredUntilIdle: true })
+    ])
+  })
+
   it('requeues when native follow-up is refused instead of interrupting', async () => {
     let currentSession = session()
     const input = options(currentSession, {
@@ -1491,6 +1608,7 @@ describe('workspace message queue controller', () => {
           draftKey: 'session-a',
           version: 1,
           doc: textDoc('with file'),
+          annotations: [],
           attachments: [attachment]
         }
       })

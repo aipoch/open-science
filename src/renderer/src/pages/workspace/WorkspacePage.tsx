@@ -70,6 +70,7 @@ import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-
 import { createWorkspaceComputeHostAccessController } from './workspace-compute-host-access-controller'
 import { useWorkspaceSessionAgentConfiguration } from './workspace-session-agent-configuration-controller'
 import { resolveWorkspaceAgentControlAvailability } from './workspace-agent-control-availability'
+import { annotationValidationMessage } from './annotations/annotation-validation-message'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -78,7 +79,6 @@ type WorkspacePageProps = {
   isPreviewPresentationActive?: boolean
 }
 
-// New-conversation drafts are project-scoped so switching projects never leaks unsent intent.
 const newConversationDraftKeyFor = (projectId: string): string => `new:${projectId}`
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
@@ -115,7 +115,6 @@ const WorkspacePage = ({
     state.projects.find((project) => project.id === scopedProjectId)
   )
 
-  // Specialist catalog for new-conversation draft validation.
   const specialistItems = useSpecialistStore((state) => state.items)
   const specialistCatalogLoaded = useSpecialistStore((state) => state.isLoaded)
   const loadSpecialists = useSpecialistStore((state) => state.load)
@@ -134,19 +133,11 @@ const WorkspacePage = ({
   const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
   const togglePreviewPanel = usePreviewWorkbenchStore((state) => state.togglePanel)
   const projectFormDialog = useProjectFormDialog()
-  // Drives the sidebar project menu's Download artifacts… disabled state. An incomplete index
-  // leaves the item clickable (the count may be partial) so the click path can repair the index
-  // before collecting (listAllProjectFiles); only an authoritatively complete empty project
-  // disables the item (see ProjectFilesOverview.isIndexComplete in shared/project-files).
-  // Keyed by project so a project switch renders the menu item disabled without a synchronous
-  // setState reset inside the effect (react-hooks/set-state-in-effect).
   const [projectFileCount, setProjectFileCount] = useState<{
     projectId: string
     total: number
     complete: boolean
   } | null>(null)
-  // A count recorded for another project is not authoritative for the active one; treat it as
-  // unknown and keep the menu item clickable.
   const activeProjectFileCount =
     projectFileCount && projectFileCount.projectId === activeProjectId ? projectFileCount : null
   const canCollectProjectArtifacts =
@@ -160,8 +151,6 @@ const WorkspacePage = ({
     }
 
     let cancelled = false
-    // Out-of-order responses must not rewind the count: only the latest request may write it
-    // (same pattern as overviewRequestRef in use-project-files-index).
     let requestVersion = 0
     const refresh = async (): Promise<void> => {
       const request = ++requestVersion
@@ -379,6 +368,18 @@ const WorkspacePage = ({
   })
   const { doc: draftDoc, error: attachmentError } = composer.view
   const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
+  const previewAnnotations = {
+    activeAnnotations: composer.view.annotations,
+    onAddAnnotation: (annotation: Parameters<typeof composer.actions.addAnnotation>[0]) => {
+      const error = composer.actions.addAnnotation(annotation)
+      composer.actions.setError(error ? annotationValidationMessage(error, t) : null)
+      return error
+    },
+    onUpdateAnnotationNote: composer.actions.updateAnnotationNote,
+    onRemoveAnnotation: composer.actions.removeAnnotation,
+    onAnnotationError: (error: Parameters<typeof annotationValidationMessage>[0]) =>
+      composer.actions.setError(annotationValidationMessage(error, t))
+  }
   const sideChat = useSideChatController(
     activeSession ? { sessionId: activeSession.id, projectId: activeSession.projectId } : undefined
   )
@@ -445,7 +446,6 @@ const WorkspacePage = ({
   const activePermissionProfileState = activeSession
     ? permissionProfiles?.[activeSession.id]
     : undefined
-  // Session grants only exist for a bound Agent session; new conversations have none yet.
   const activePermissionGrants = activeSession ? (permissionGrants?.[activeSession.id] ?? []) : []
   const activeContextUsage = activeSession
     ? (contextUsageBySession?.[activeSession.id] ?? activeSession.contextUsage)
@@ -453,8 +453,6 @@ const WorkspacePage = ({
   const activeSessionSupportsNativeCompaction = activeSession
     ? nativeContextCompactionSessionIds?.includes(activeSession.id) === true
     : false
-  // Auto-review defaults off: an existing session is enabled only when explicitly turned on; a new
-  // conversation uses the draft toggle (which also starts off).
   const activeAutoReviewEnabled = activeSession
     ? activeSession.autoReviewEnabled === true
     : newConversationAutoReviewEnabled
@@ -957,6 +955,7 @@ const WorkspacePage = ({
           toggle: togglePreviewPanel,
           syncState: syncPreviewPanelState
         }}
+        previewAnnotations={previewAnnotations}
         renderDesktopSidebar={({ sidebarToggle, sidebarToggleRef }) => (
           <WorkspaceSidebarContainer
             projectId={scopedProjectId}
@@ -1219,6 +1218,7 @@ const WorkspacePage = ({
             : undefined
         }
         onClose={closeFileDialog}
+        {...previewAnnotations}
       />
 
       <SessionNotebookDialog

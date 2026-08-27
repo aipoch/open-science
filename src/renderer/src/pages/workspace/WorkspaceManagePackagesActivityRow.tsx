@@ -4,9 +4,11 @@
  */
 import type { ToolActivity } from '@/stores/session-store'
 import { cn } from '@/lib/utils'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { AnnotationPort } from './annotations/annotation-port'
+import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
 import type { ToolExecutionPhase } from './tool-execution-phase'
 import {
@@ -19,6 +21,8 @@ type WorkspaceManagePackagesActivityRowProps = {
   phase: ToolExecutionPhase
   isExpanded: boolean
   onToggle: (activityId: string, nextExpanded: boolean) => void
+  annotationPort?: AnnotationPort
+  revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }
 
 const ELAPSED_TICK_MS = 1_000
@@ -48,9 +52,32 @@ const formatElapsed = (elapsedMs: number): string => {
 
 type PackageDetail = {
   name: string
+  identity: string
   change?: string
   version?: string
   source?: string
+}
+
+const normalizePackageIdentityPart = (value: string): string =>
+  value.trim().normalize('NFKC').toLowerCase()
+
+const boundedIdentityHash = (value: string): string => {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+const packageAnnotationSectionId = (
+  detail: PackageDetail,
+  scope: 'package' | 'related-package',
+  field: 'identity' | 'version'
+): string => {
+  const normalizedName = normalizePackageIdentityPart(detail.name)
+  const readableName = normalizedName.replace(/[^a-z0-9._-]+/gu, '_').slice(0, 24) || 'package'
+  return `${scope}:${readableName}:${boundedIdentityHash(detail.identity)}:${field}`
 }
 
 const githubRepositoryFromSpec = (spec: string): string | undefined => {
@@ -77,7 +104,9 @@ const WorkspaceManagePackagesActivityRow = ({
   activity,
   phase,
   isExpanded,
-  onToggle
+  onToggle,
+  annotationPort,
+  revealRequest
 }: WorkspaceManagePackagesActivityRowProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [now, setNow] = useState(() => Date.now())
@@ -117,6 +146,12 @@ const WorkspaceManagePackagesActivityRow = ({
               .filter(Boolean)
               .join(' ')
           : undefined
+    const sourceIdentity =
+      source?.type === 'github' && typeof source.repository === 'string'
+        ? `github:${normalizePackageIdentityPart(source.repository)}@${typeof source.ref === 'string' ? source.ref.trim() : ''}`
+        : source?.type === 'bioconductor'
+          ? `bioconductor:${typeof source.version === 'string' ? source.version.trim() : ''}`
+          : ''
     const beforeVersion =
       typeof change?.beforeVersion === 'string' ? change.beforeVersion.trim() : undefined
     const afterVersion =
@@ -130,6 +165,7 @@ const WorkspaceManagePackagesActivityRow = ({
 
     return {
       name,
+      identity: `${normalizePackageIdentityPart(name)}\u0000${sourceIdentity}`,
       change: typeof change?.change === 'string' ? change.change : undefined,
       version: version || undefined,
       source: sourceLabel
@@ -150,7 +186,9 @@ const WorkspaceManagePackagesActivityRow = ({
         source.repository.toLowerCase() === repository.toLowerCase()
       )
     })
-    return change ? detailFromChange(change) : { name }
+    return change
+      ? detailFromChange(change)
+      : { name, identity: normalizePackageIdentityPart(name) }
   })
   for (const change of requestedChanges) {
     const detail = detailFromChange(change)
@@ -223,6 +261,38 @@ const WorkspaceManagePackagesActivityRow = ({
     const timer = setInterval(() => setNow(Date.now()), ELAPSED_TICK_MS)
     return () => clearInterval(timer)
   }, [isActive])
+
+  const relatedChangesRef = useRef<HTMLDetailsElement>(null)
+  useLayoutEffect(() => {
+    if (
+      revealRequest?.itemId === activity.id &&
+      (revealRequest.sectionId === 'related-changes' ||
+        revealRequest.sectionId?.startsWith('related-package:')) &&
+      relatedChangesRef.current
+    ) {
+      relatedChangesRef.current.open = true
+    }
+  }, [activity.id, revealRequest])
+  const annotateTerminalText = (children: React.ReactNode, sectionId: string): React.JSX.Element =>
+    !isActive && annotationPort ? (
+      <TextAnnotationSurface
+        source={{
+          kind: 'session-item',
+          sessionId: annotationPort.sessionId,
+          itemType: 'tool-activity',
+          itemId: activity.id,
+          sectionId
+        }}
+        activeAnnotations={annotationPort.activeAnnotations}
+        onAdd={annotationPort.onAdd}
+        onUpdateNote={annotationPort.onUpdateNote}
+        onError={annotationPort.onError}
+      >
+        {children}
+      </TextAnnotationSurface>
+    ) : (
+      <>{children}</>
+    )
 
   return (
     <div
@@ -302,13 +372,20 @@ const WorkspaceManagePackagesActivityRow = ({
                   className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-2.5 py-2 text-[12px] sm:grid-cols-[minmax(0,1fr)_minmax(76px,auto)_minmax(88px,auto)]"
                   data-testid="manage-packages-package-row"
                 >
-                  <span className="min-w-0" title={detail.name}>
-                    <span className="block truncate font-medium text-text-000">{detail.name}</span>
-                    {detail.source ? (
-                      <span className="block truncate text-[11px] text-text-200">
-                        {detail.source}
-                      </span>
-                    ) : null}
+                  <div className="min-w-0" title={detail.name}>
+                    {annotateTerminalText(
+                      <span className="block min-w-0">
+                        <span className="block truncate font-medium text-text-000">
+                          {detail.name}
+                        </span>
+                        {detail.source ? (
+                          <span className="block truncate text-[11px] text-text-200">
+                            {detail.source}
+                          </span>
+                        ) : null}
+                      </span>,
+                      packageAnnotationSectionId(detail, 'package', 'identity')
+                    )}
                     <span
                       className={cn(
                         'mt-0.5 block text-[11px] sm:hidden',
@@ -324,7 +401,7 @@ const WorkspaceManagePackagesActivityRow = ({
                     >
                       {changeLabel}
                     </span>
-                  </span>
+                  </div>
                   <span
                     className={cn(
                       'hidden sm:block',
@@ -340,12 +417,15 @@ const WorkspaceManagePackagesActivityRow = ({
                   >
                     {changeLabel}
                   </span>
-                  <span
-                    className="truncate text-right font-mono tabular-nums text-text-100"
-                    data-testid="manage-packages-package-version"
-                  >
-                    {detail.version ?? '—'}
-                  </span>
+                  {annotateTerminalText(
+                    <span
+                      className="block truncate text-right font-mono tabular-nums text-text-100"
+                      data-testid="manage-packages-package-version"
+                    >
+                      {detail.version ?? '—'}
+                    </span>,
+                    packageAnnotationSectionId(detail, 'package', 'version')
+                  )}
                 </div>
               )
             })}
@@ -353,7 +433,10 @@ const WorkspaceManagePackagesActivityRow = ({
         </div>
       ) : null}
       {showDetails && relatedPackageDetails.length > 0 ? (
-        <details className="group ml-[26px] border-b border-border-200 text-[12px]">
+        <details
+          ref={relatedChangesRef}
+          className="group ml-[26px] border-b border-border-200 text-[12px]"
+        >
           <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 py-2 text-text-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
             <span className="inline-flex items-center gap-1.5 font-medium text-text-000">
               <span
@@ -373,17 +456,28 @@ const WorkspaceManagePackagesActivityRow = ({
                 className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-2.5 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(76px,auto)_minmax(88px,auto)]"
                 data-testid="manage-packages-related-row"
               >
-                <span className="min-w-0 truncate font-medium text-text-000">{detail.name}</span>
-                <span className="hidden text-text-100 sm:block">
+                {annotateTerminalText(
+                  <span className="block min-w-0 truncate font-medium text-text-000">
+                    {detail.name}
+                  </span>,
+                  packageAnnotationSectionId(detail, 'related-package', 'identity')
+                )}
+                <span
+                  className="hidden text-text-100 sm:block"
+                  data-testid="manage-packages-related-status"
+                >
                   {detail.change === 'updated'
                     ? t('Updated')
                     : detail.change === 'removed'
                       ? t('Removed')
                       : t('Installed')}
                 </span>
-                <span className="truncate text-right font-mono tabular-nums text-text-100">
-                  {detail.version ?? '—'}
-                </span>
+                {annotateTerminalText(
+                  <span className="block truncate text-right font-mono tabular-nums text-text-100">
+                    {detail.version ?? '—'}
+                  </span>,
+                  packageAnnotationSectionId(detail, 'related-package', 'version')
+                )}
               </div>
             ))}
           </div>
@@ -407,12 +501,15 @@ const WorkspaceManagePackagesActivityRow = ({
               </div>
             </>
           ) : isFailed ? (
-            <p
-              className="line-clamp-2 break-words text-[12px] text-status-failure-foreground dark:text-status-failure-dark-foreground"
-              title={failureMessage ?? undefined}
-            >
-              {failureMessage ?? t('Failed')}
-            </p>
+            annotateTerminalText(
+              <p
+                className="line-clamp-2 break-words text-[12px] text-status-failure-foreground dark:text-status-failure-dark-foreground"
+                title={failureMessage ?? undefined}
+              >
+                {failureMessage ?? t('Failed')}
+              </p>,
+              'failure'
+            )
           ) : needsRestart ? (
             <p className="text-[12px] text-status-warning-foreground dark:text-status-warning-dark-foreground">
               {isRemoving

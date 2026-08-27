@@ -47,11 +47,17 @@ import {
   Square,
   X
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import { isUnsupportedCodexAcpVersionError } from '../../../../shared/codex-runtime'
+import {
+  validateAnnotations,
+  type AnnotationValidationError,
+  type TextAnnotation
+} from '../../../../shared/annotations'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
+import { ErrorNotice } from '@/components/error-notice'
 import { RemoteJobBadge } from '@/components/RemoteJobBadge'
 import { Button } from '@/components/ui/button'
 import { ResizablePanel } from '@/components/ui/resizable'
@@ -78,6 +84,7 @@ import { ComposerEditor } from './composer/ComposerEditor'
 import {
   appendArtifactMention,
   docToSkillIds,
+  docToText,
   pastedTextAttachmentDomId,
   pastedTextPreviewName,
   type ComposerPastedTextNode
@@ -99,6 +106,9 @@ import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
+import { AnnotationDraftCards } from './annotations/AnnotationCards'
+import { requestAnnotationReveal } from './annotations/annotation-reveal'
+import { annotationValidationMessage } from './annotations/annotation-validation-message'
 import { SessionSwitchSkeleton } from './SessionSwitchSkeleton'
 import { PlanProgressChip, WorkspacePlanCard } from './session-plan/SessionPlanSurfaces'
 import { projectDelegatedQuestionQueue } from './subagent-release-projection'
@@ -120,6 +130,7 @@ import type { WorkspaceComposerController } from './workspace-composer-controlle
 import type { WorkspaceConversationController } from './workspace-conversation-controller'
 import type { WorkspaceSessionController } from './workspace-session-controller'
 import { getAvatarColor } from '../settings/specialist-icons'
+import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
 
 const localizeVisionRunFailure = (
   error: string | null | undefined,
@@ -385,8 +396,10 @@ const ConversationPanel = ({
   const {
     view: {
       doc: draftDoc,
+      annotations,
       attachments,
       transfers: attachmentTransfers,
+      error: composerError,
       historyStatus,
       isHistoryBrowsing,
       isUploading: isUploadingAttachments,
@@ -394,6 +407,9 @@ const ConversationPanel = ({
     },
     actions: {
       changeDoc: onDraftDocChange,
+      addAnnotation: onAddAnnotation,
+      updateAnnotationNote: onUpdateAnnotationNote,
+      removeAnnotation: onRemoveAnnotation,
       navigateHistory: onNavigateHistory,
       stageFiles: onStageAttachmentFiles,
       stagePastedText: onStagePastedText,
@@ -401,9 +417,43 @@ const ConversationPanel = ({
       removeAttachment: onRemoveAttachment,
       restorePastedText: onRestorePastedText,
       undo: onUndo,
-      redo: onRedo
+      redo: onRedo,
+      setError: onSetComposerError
     }
   } = composer
+  // Stable identities across re-renders: the transcript memo compares these callbacks, so an
+  // inline closure would re-render every message on each composer state change.
+  const handleAddTranscriptAnnotation = useCallback(
+    (annotation: TextAnnotation): AnnotationValidationError | undefined => {
+      const error = onAddAnnotation(annotation)
+      if (!error) onSetComposerError(null)
+      return error
+    },
+    [onAddAnnotation, onSetComposerError]
+  )
+  const handleTranscriptAnnotationError = useCallback(
+    (error: AnnotationValidationError): void => {
+      onSetComposerError(annotationValidationMessage(error, t))
+    },
+    [onSetComposerError, t]
+  )
+  const handleUpdateTranscriptAnnotation = useCallback(
+    (id: string, note: string): AnnotationValidationError | undefined => {
+      const error = onUpdateAnnotationNote(id, note)
+      if (!error) onSetComposerError(null)
+      return error
+    },
+    [onSetComposerError, onUpdateAnnotationNote]
+  )
+  const onValidatedDraftDocChange = (
+    nextDoc: Parameters<typeof onDraftDocChange>[0],
+    caret?: Parameters<typeof onDraftDocChange>[1]
+  ): void => {
+    if (caret) onDraftDocChange(nextDoc, caret)
+    else onDraftDocChange(nextDoc)
+    const validation = validateAnnotations(annotations, docToText(nextDoc))
+    onSetComposerError(validation ? annotationValidationMessage(validation, t) : null)
+  }
   const {
     availability: {
       submit: canSendMessage,
@@ -613,9 +663,13 @@ const ConversationPanel = ({
       ? activePendingPlan
       : undefined
   const resolvedRunError =
+    localizeImageAnnotationSourceError(activeSession?.error, t) ??
     localizeVisionRunFailure(activeSession?.error, t) ??
     normalizeRunFailureError(activeSession?.error)
-  const resolvedActionError = localizeVisionRunFailure(actionError, t) ?? actionError
+  const resolvedActionError =
+    localizeImageAnnotationSourceError(actionError, t) ??
+    localizeVisionRunFailure(actionError, t) ??
+    actionError
   const showVisionModelSettings =
     visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
     visionRunFailureMessage(activeSession?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
@@ -764,7 +818,7 @@ const ConversationPanel = ({
   // same appendArtifactMention path Global Search uses); ComposerEditor syncs the chip into the DOM.
   const handleInsertFileReference = (reference: LinkedFolderFileReference): void => {
     if (!canEditDraft) return
-    onDraftDocChange(appendArtifactMention(draftDoc, reference))
+    onValidatedDraftDocChange(appendArtifactMention(draftDoc, reference))
   }
 
   const handleBranchInNewSession = (): void => {
@@ -815,12 +869,13 @@ const ConversationPanel = ({
     )
   )
   const canPlanFirst = effectiveCanSend && hasTextDraft
+  const hasSideChatDraft = hasTextDraft || annotations.length > 0
   const canStartSideChat =
     Boolean(activeSession) &&
     hasMainConversation(activeSession) &&
     actionability?.actions.startSideChat.allowed !== false &&
     canEditDraft &&
-    hasTextDraft &&
+    hasSideChatDraft &&
     attachments.length === 0 &&
     attachmentTransfers.length === 0 &&
     !sideChatDisabledReason
@@ -958,6 +1013,10 @@ const ConversationPanel = ({
               handoffLifecycleSource={workspaceHandoffLifecycleClient}
               onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
               reportPresentationRevealing
+              annotations={annotations}
+              onAddAnnotation={handleAddTranscriptAnnotation}
+              onUpdateAnnotationNote={handleUpdateTranscriptAnnotation}
+              onAnnotationError={handleTranscriptAnnotationError}
             />
           </WorkspaceMessageEditStateProvider>
         )}
@@ -976,6 +1035,14 @@ const ConversationPanel = ({
             {/* Runtime and session errors stay near the composer so recovery is visible. */}
             <div className={composerContentClassName}>
               <div className="px-1 md:px-3">
+                {composerError ? (
+                  <div
+                    role="alert"
+                    className="mb-2 [&>section]:max-w-none [&>section]:items-start [&>section]:gap-2 [&>section>svg]:hidden [&_h1]:text-xs"
+                  >
+                    <ErrorNotice icon={AlertTriangle} tone="red" title={composerError} />
+                  </div>
+                ) : null}
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
                 {!sideChat && activeSession?.interrupted && !hasUnsupportedCodexAcpRunError ? (
@@ -1375,6 +1442,27 @@ const ConversationPanel = ({
                       {...messageQueue}
                       expanded={messageQueueExpanded}
                     />
+                    <AnnotationDraftCards
+                      annotations={annotations}
+                      disabled={!canEditDraft}
+                      onReveal={requestAnnotationReveal}
+                      onUpdateNote={(id, note) => {
+                        const error = onUpdateAnnotationNote(id, note)
+                        if (error) onSetComposerError(annotationValidationMessage(error, t))
+                        else onSetComposerError(null)
+                        return error
+                      }}
+                      onRemove={(id) => {
+                        onRemoveAnnotation(id)
+                        const validation = validateAnnotations(
+                          annotations.filter((annotation) => annotation.id !== id),
+                          docToText(draftDoc)
+                        )
+                        onSetComposerError(
+                          validation ? annotationValidationMessage(validation, t) : null
+                        )
+                      }}
+                    />
                     <div className="flex flex-col gap-2">
                       {attachments.length > 0 || attachmentTransfers.length > 0 ? (
                         <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">
@@ -1544,7 +1632,7 @@ const ConversationPanel = ({
                         {/* Draft editing waits for persistence hydration to avoid targeting the wrong session. */}
                         <ComposerEditor
                           doc={draftDoc}
-                          onDocChange={onDraftDocChange}
+                          onDocChange={onValidatedDraftDocChange}
                           onSubmit={handleSubmit}
                           onPaste={handleMessageDraftPaste}
                           onLongTextPaste={onStagePastedText}

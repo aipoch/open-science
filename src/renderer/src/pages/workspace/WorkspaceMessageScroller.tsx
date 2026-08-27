@@ -61,7 +61,7 @@ import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
 import { EmptyConversationBanner } from './EmptyConversationBanner'
 import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
 import { WorkspaceRunMarks } from './WorkspaceRunMarks'
-import type { ArtifactMentionPart } from './WorkspaceMessageItem'
+import type { ArtifactMentionPart, EditAnnotationTarget } from './WorkspaceMessageItem'
 import { useWorkspaceArtifactVisibility, type MessageArtifact } from './WorkspaceArtifactVisibility'
 import { useWorkspaceMessageEditState } from './workspace-message-edit-state-context'
 import { createConversationItems } from './workspace-conversation-items'
@@ -69,7 +69,13 @@ import type { ActivityExpansionOverrides } from './workspace-tool-activity-group
 import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
-import type { ComposerDoc } from './composer/composer-doc'
+import type { SendEditedMessage } from './workspace-edited-message'
+import type {
+  Annotation,
+  AnnotationValidationError,
+  SessionTextAnnotationItemType,
+  TextAnnotation
+} from '../../../../shared/annotations'
 import type {
   HandoffLifecycleEventSource,
   HandoffRetryRequest
@@ -85,13 +91,19 @@ import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
 import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
 import { setWorkspacePresentationRevealing } from './workspace-presentation-revealing'
 import { useTranscriptWindow } from './use-transcript-window'
+import { subscribeAnnotationRevealPreparation } from './annotations/annotation-reveal'
+import type { AnnotationPort } from './annotations/annotation-port'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
   isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
-  onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
+  onSendEditedMessage: SendEditedMessage
   optimisticMessage?: ChatMessage
+  annotations?: readonly Annotation[]
+  onAddAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
+  onUpdateAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
+  onAnnotationError?: (error: AnnotationValidationError) => void
   canBranchInNewSession?: boolean
   onBranchInNewSession?: (messageId: string) => void
   trailingContent?: ReactNode
@@ -123,6 +135,13 @@ type SessionScopedActivityExpansionState = {
   sessionId: string | undefined
   overrides: ActivityExpansionOverrides
 }
+
+type SessionItemRevealRequest = Readonly<{
+  requestId: number
+  itemId: string
+  itemType: SessionTextAnnotationItemType
+  sectionId?: string
+}>
 
 type SessionScopedNearViewportNotebookRunState = {
   sessionId: string | undefined
@@ -368,6 +387,10 @@ const WorkspaceMessageScrollerImpl = ({
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
+  annotations = [],
+  onAddAnnotation,
+  onUpdateAnnotationNote,
+  onAnnotationError,
   optimisticMessage,
   canBranchInNewSession = false,
   onBranchInNewSession,
@@ -378,7 +401,36 @@ const WorkspaceMessageScrollerImpl = ({
   reportPresentationRevealing = false
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const editAnnotationTargetRef = useRef<EditAnnotationTarget | undefined>(undefined)
+  const handleEditAnnotationTargetChange = useCallback(
+    (messageId: string, target: EditAnnotationTarget | undefined): void => {
+      if (target || editAnnotationTargetRef.current?.messageId === messageId) {
+        editAnnotationTargetRef.current = target
+      }
+    },
+    []
+  )
+  const handleAddTextAnnotation = useCallback(
+    (annotation: TextAnnotation): AnnotationValidationError | undefined =>
+      editAnnotationTargetRef.current?.add(annotation) ?? onAddAnnotation?.(annotation),
+    [onAddAnnotation]
+  )
   const currentSessionId = activeSession?.id
+  const activeTextAnnotations = annotations.filter(
+    (annotation): annotation is TextAnnotation => annotation.kind === 'text'
+  )
+  const annotationPortFor = (
+    activeAnnotations: readonly TextAnnotation[]
+  ): AnnotationPort | undefined =>
+    currentSessionId && onAddAnnotation && onAnnotationError
+      ? {
+          sessionId: currentSessionId,
+          activeAnnotations,
+          onAdd: handleAddTextAnnotation,
+          onUpdateNote: onUpdateAnnotationNote,
+          onError: onAnnotationError
+        }
+      : undefined
   const currentProjectId = activeSession?.projectId
   const statusAllowsScrollToFirstMessage = Boolean(
     activeSession &&
@@ -481,6 +533,9 @@ const WorkspaceMessageScrollerImpl = ({
       sessionId: undefined,
       overrides: {}
     }))
+  const [sessionItemRevealRequest, setSessionItemRevealRequest] =
+    useState<SessionItemRevealRequest>()
+  const annotationRevealRequestIdRef = useRef(0)
   const [messagePresentationState, setMessagePresentationState] =
     useState<SessionScopedMessagePresentationState>(() => ({
       scopeId: undefined,
@@ -600,6 +655,76 @@ const WorkspaceMessageScrollerImpl = ({
     conversationItems,
     presentationBarrierIndex,
     messageScrollerViewportRef
+  )
+  const revealTranscriptItem = transcriptWindow.revealMessage
+  useEffect(
+    () =>
+      subscribeAnnotationRevealPreparation((annotation) => {
+        if (annotation.kind !== 'text') return
+        const source = annotation.source
+        if (
+          (source.kind !== 'agent-message' && source.kind !== 'session-item') ||
+          source.sessionId !== currentSessionId
+        ) {
+          return
+        }
+
+        const targetIndex = conversationItems.findIndex((item) => {
+          if (source.kind === 'agent-message') {
+            return item.type === 'message' && item.message.id === source.messageId
+          }
+          if (source.itemType === 'tool-activity') {
+            return (
+              item.type === 'activity-group' &&
+              item.activities.some((activity) => activity.id === source.itemId)
+            )
+          }
+          if (source.itemType === 'plan') {
+            return item.type === 'plan-activity' && item.activity.id === source.itemId
+          }
+          if (source.itemType === 'elicitation') {
+            return item.type === 'activity' && item.activity.id === source.itemId
+          }
+          if (source.itemType === 'subagent-message') {
+            return item.type === 'subagent-message' && item.message.messageId === source.itemId
+          }
+          return false
+        })
+        if (
+          targetIndex < 0 ||
+          (presentationBarrierIndex >= 0 && targetIndex > presentationBarrierIndex)
+        ) {
+          return
+        }
+
+        const target = conversationItems[targetIndex]!
+        revealTranscriptItem(target.id)
+        if (source.kind !== 'session-item') return
+
+        const request = {
+          requestId: ++annotationRevealRequestIdRef.current,
+          itemId: source.itemId,
+          itemType: source.itemType,
+          ...(source.sectionId ? { sectionId: source.sectionId } : {})
+        }
+        setSessionItemRevealRequest(request)
+        if (source.itemType !== 'tool-activity' || target.type !== 'activity-group') return
+
+        setCollapsedActivityGroupState((current) => {
+          const groupIds =
+            current.sessionId === currentSessionId ? new Set(current.groupIds) : new Set<string>()
+          groupIds.delete(target.id)
+          return { sessionId: currentSessionId, groupIds }
+        })
+        setActivityExpansionOverrideState((current) => ({
+          sessionId: currentSessionId,
+          overrides: {
+            ...(current.sessionId === currentSessionId ? current.overrides : {}),
+            [source.itemId]: true
+          }
+        }))
+      }),
+    [conversationItems, currentSessionId, presentationBarrierIndex, revealTranscriptItem]
   )
   const revealFullTranscript = transcriptWindow.revealAll
   const [windowFindOpen, setWindowFindOpen] = useState(false)
@@ -1251,6 +1376,16 @@ const WorkspaceMessageScrollerImpl = ({
                     onOpenSkillMention,
                     onPreviewMentionArtifact,
                     onSendEditedMessage,
+                    onEditAnnotationTargetChange: isHumanUser
+                      ? handleEditAnnotationTargetChange
+                      : undefined,
+                    annotationPort: annotationPortFor(
+                      activeTextAnnotations.filter(
+                        (annotation) =>
+                          annotation.source.kind === 'agent-message' &&
+                          annotation.source.messageId === item.message.id
+                      )
+                    ),
                     canBranchInNewSession,
                     onBranchInNewSession,
                     turnStartedAt: item.message.responseToMessageId
@@ -1393,6 +1528,13 @@ const WorkspaceMessageScrollerImpl = ({
                         <div className="mx-auto w-full max-w-[56rem]">
                           <WorkspaceSubagentMessageRow
                             message={item.message}
+                            revealRequest={
+                              sessionItemRevealRequest?.itemType === 'subagent-message' &&
+                              sessionItemRevealRequest.itemId === item.message.messageId
+                                ? sessionItemRevealRequest
+                                : undefined
+                            }
+                            annotationPort={annotationPortFor(activeTextAnnotations)}
                             onOpenSource={() => {
                               if (!currentSessionId) return
                               usePreviewWorkbenchStore
@@ -1441,6 +1583,13 @@ const WorkspaceMessageScrollerImpl = ({
                       key={item.id}
                       activity={item.activity}
                       hasDurablePlanAuthority={item.activity.id === durablePlanOwnerActivityId}
+                      revealRequest={
+                        sessionItemRevealRequest?.itemType === 'plan' &&
+                        sessionItemRevealRequest.itemId === item.activity.id
+                          ? sessionItemRevealRequest
+                          : undefined
+                      }
+                      annotationPort={annotationPortFor(activeTextAnnotations)}
                     />
                   )
                 }
@@ -1480,6 +1629,18 @@ const WorkspaceMessageScrollerImpl = ({
                                 ? 'pending-placeholder'
                                 : 'default'
                             }
+                            annotationPort={
+                              item.activity.elicitation.durable
+                                ? annotationPortFor(activeTextAnnotations)
+                                : undefined
+                            }
+                            annotationItemId={item.activity.id}
+                            revealRequest={
+                              sessionItemRevealRequest?.itemType === 'elicitation' &&
+                              sessionItemRevealRequest.itemId === item.activity.id
+                                ? sessionItemRevealRequest
+                                : undefined
+                            }
                           />
                         </div>
                       </div>
@@ -1500,6 +1661,12 @@ const WorkspaceMessageScrollerImpl = ({
                     permission={activeSession?.runtimeContext?.permission}
                     jobsByActivityId={jobsByActivityId}
                     onOpenJobDetail={handleOpenJobDetail}
+                    annotationPort={annotationPortFor(activeTextAnnotations)}
+                    revealRequest={
+                      sessionItemRevealRequest?.itemType === 'tool-activity'
+                        ? sessionItemRevealRequest
+                        : undefined
+                    }
                   />
                 )
               })}
@@ -1650,6 +1817,20 @@ const areSessionsEqualForTranscript = (
   )
 }
 
+// The composer draft is immutable snapshots (add/update/remove rebuild the array while keeping
+// element identity), so element-wise comparison is both exact and cheap.
+const areAnnotationsEqual = (
+  previous: readonly Annotation[] | undefined,
+  next: readonly Annotation[] | undefined
+): boolean => {
+  if (previous === next) return true
+  const left = previous ?? []
+  const right = next ?? []
+  return (
+    left.length === right.length && left.every((annotation, index) => annotation === right[index])
+  )
+}
+
 const areWorkspaceMessageScrollerPropsEqual = (
   previous: WorkspaceMessageScrollerProps,
   next: WorkspaceMessageScrollerProps
@@ -1661,6 +1842,10 @@ const areWorkspaceMessageScrollerPropsEqual = (
   previous.onBranchInNewSession === next.onBranchInNewSession &&
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
+  previous.onAddAnnotation === next.onAddAnnotation &&
+  previous.onUpdateAnnotationNote === next.onUpdateAnnotationNote &&
+  previous.onAnnotationError === next.onAnnotationError &&
+  areAnnotationsEqual(previous.annotations, next.annotations) &&
   previous.notebookReference?.sessionId === next.notebookReference?.sessionId &&
   (previous.notebookReference ? resolveProjectId(previous.notebookReference) : undefined) ===
     (next.notebookReference ? resolveProjectId(next.notebookReference) : undefined) &&

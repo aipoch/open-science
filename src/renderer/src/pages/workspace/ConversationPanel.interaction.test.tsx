@@ -5,6 +5,7 @@ import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConversationPanel } from './ConversationPanel'
+import { subscribeAnnotationReveal } from './annotations/annotation-reveal'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
 import {
@@ -335,6 +336,73 @@ const delegatedQuestionSession = (): ChatSession => ({
   }
 })
 
+describe('ConversationPanel annotation composer integration', () => {
+  it('renders a compact annotation chip, reveals its source, returns focus on Esc, and removes it', async () => {
+    const removeAnnotation = vi.fn()
+    renderPanel({
+      composer: {
+        view: {
+          annotations: [
+            {
+              id: 'annotation-1',
+              kind: 'text',
+              target: 'agent',
+              quote: 'Quoted Agent evidence',
+              note: 'Explain this evidence.',
+              source: {
+                kind: 'agent-message',
+                sessionId: 'session-1',
+                messageId: 'message-1'
+              }
+            }
+          ]
+        },
+        actions: { removeAnnotation }
+      }
+    })
+
+    const card = container.querySelector('[aria-label="Annotations for Agent"]')
+    const chip = card?.querySelector('[data-annotation-draft-chip]')
+    const chipBody = chip?.querySelector<HTMLButtonElement>('[data-annotation-quote]')
+    expect(chipBody?.querySelector('span')?.textContent).toBe('Explain this evidence.')
+    expect(chip?.getAttribute('data-annotation-hover-label')).toBe(
+      'Explain this evidence. - Agent Message'
+    )
+
+    // The draft cards live INSIDE the composer input card, above the editor —
+    // like the attachments strip — not above the composer box.
+    const form = container.querySelector('[data-testid="ordinary-composer-form"]')
+    expect(form).not.toBeNull()
+    expect(form?.contains(card!)).toBe(true)
+
+    // The compact label shows the note; its body still reveals the quoted
+    // source through the cross-surface annotation reveal seam.
+    const reveal = vi.fn()
+    const unsubscribe = subscribeAnnotationReveal(reveal)
+    await act(async () => chipBody?.click())
+    expect(reveal).toHaveBeenCalledWith('annotation-1')
+    unsubscribe()
+
+    const edit = card?.querySelector<HTMLButtonElement>('[aria-label="Edit annotation note"]')
+    await act(async () => edit?.click())
+    const note = document.body.querySelector<HTMLTextAreaElement>(
+      '[data-annotation-note-editor] textarea[id^="edit-annotation-"]'
+    )
+    expect(note).not.toBeNull()
+    expect(chip?.contains(note ?? null)).toBe(false)
+    await act(async () => {
+      note?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(document.activeElement).toBe(edit)
+
+    act(() => {
+      card?.querySelector<HTMLButtonElement>('[aria-label="Remove annotation"]')?.click()
+    })
+    expect(removeAnnotation).toHaveBeenCalledWith('annotation-1')
+  })
+})
+
 type PanelProps = Parameters<typeof ConversationPanel>[0]
 type DeepPartial<T> = {
   [Key in keyof T]?: T[Key] extends readonly unknown[]
@@ -376,6 +444,7 @@ const createPanelDefaults = (): PanelProps => ({
   composer: {
     view: {
       doc: emptyDoc,
+      annotations: [],
       attachments: [],
       transfers: [],
       error: null,
@@ -386,6 +455,9 @@ const createPanelDefaults = (): PanelProps => ({
     },
     actions: {
       changeDoc: vi.fn(),
+      addAnnotation: vi.fn(),
+      updateAnnotationNote: vi.fn(),
+      removeAnnotation: vi.fn(),
       navigateHistory: vi.fn(() => false),
       stageFiles: onStageAttachmentFiles,
       stagePastedText: vi.fn(),
@@ -622,6 +694,18 @@ describe('ConversationPanel header spacing', () => {
     const surfaceFade = container.querySelector('[data-testid="composer-surface-fade"]')
     expect(surfaceFade?.classList.contains('-top-12')).toBe(true)
     expect(surfaceFade?.classList.contains('h-12')).toBe(true)
+  })
+})
+
+describe('ConversationPanel composer errors', () => {
+  it('uses the shared ErrorNotice with the semantic failure tone', () => {
+    renderPanel({ composer: { view: { error: 'Annotation payload is too large.' } } })
+
+    const alert = container.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('Annotation payload is too large.')
+    expect(alert?.querySelector('section')).not.toBeNull()
+    expect(alert?.querySelector('.bg-status-failure-surface')).not.toBeNull()
+    expect(alert?.className).not.toContain('bg-red-50')
   })
 })
 
@@ -2127,6 +2211,51 @@ describe('ConversationPanel composer intake', () => {
     expect(onStartSideChat).toHaveBeenCalledOnce()
   })
 
+  it('offers Side chat for an annotation-only existing Session draft', () => {
+    const onStartSideChat = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'session-existing',
+          projectId: 'project-a',
+          title: 'Existing session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: planOriginMessages(),
+          createdAt: 1,
+          updatedAt: 2
+        }
+      },
+      conversation: {
+        availability: { submit: true },
+        actions: { sideChat: { start: onStartSideChat } }
+      },
+      composer: {
+        view: {
+          doc: { nodes: [] },
+          annotations: [
+            {
+              id: 'annotation-side-chat',
+              kind: 'text',
+              target: 'agent',
+              quote: 'Quoted Agent evidence',
+              source: {
+                kind: 'agent-message',
+                sessionId: 'session-existing',
+                messageId: 'message-1'
+              }
+            }
+          ]
+        }
+      }
+    })
+
+    const side = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+    expect(side.disabled).toBe(false)
+    act(() => side.click())
+    expect(onStartSideChat).toHaveBeenCalledOnce()
+  })
+
   it('keeps Side chat available while the main Session is running', () => {
     const onStartSideChat = vi.fn()
     renderPanel({
@@ -2546,6 +2675,73 @@ describe('ConversationPanel composer intake', () => {
     expect(followUp.disabled).toBe(false)
     expect(container.querySelector('[aria-label="Send Side chat follow up"]')).toBeNull()
     expect(container.querySelector('[aria-label="Cancel Side chat response"]')).not.toBeNull()
+  })
+
+  it('presents complete user annotation text consistently and leaves invalid or assistant text raw', () => {
+    const annotationText =
+      'Compare these observations.\n\n[Annotations]\n' +
+      '{"items":[{"type":"quote","content":"Quoted evidence","instruction":"Explain this caveat."},{"type":"image-point","source":{"kind":"artifact-version","artifactId":"artifact-1","versionId":"version-1","name":"figure.png"},"x":500,"y":200,"instruction":"Inspect the peak."}]}'
+    const malformedText = '[Annotations]\n{"items":[{"type":"quote","content":"Broken"}] trailing'
+    const sideChatProps = {
+      sideChat: {
+        send: vi.fn(async () => true),
+        setDraft: vi.fn(),
+        cancel: vi.fn(),
+        close: vi.fn()
+      }
+    }
+    const sideChatView = (
+      entries: NonNullable<NonNullable<PanelProps['sideChat']>['view']>['entries']
+    ): NonNullable<NonNullable<PanelProps['sideChat']>['view']> => ({
+      generation: 1,
+      parentSessionId: 'session-existing',
+      projectId: 'project-a',
+      sideSessionId: 'side-1',
+      draft: '',
+      running: false,
+      entries
+    })
+
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        ...sideChatProps.sideChat,
+        view: sideChatView([
+          { id: 'optimistic-user', kind: 'message', role: 'user', text: annotationText }
+        ])
+      }
+    })
+
+    expect(container.textContent).toContain('Compare these observations.')
+    expect(container.textContent).toContain('Quoted evidence')
+    expect(container.textContent).toContain('Explain this caveat.')
+    expect(container.textContent).toContain('figure.png')
+    expect(container.textContent).toContain('artifact-1')
+    expect(container.textContent).toContain('version-1')
+    expect(container.textContent).toContain('Point 1 at 500, 200')
+    expect(container.textContent).not.toContain('"items"')
+    expect(container.querySelectorAll('[data-side-chat-annotation-card]')).toHaveLength(2)
+
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        ...sideChatProps.sideChat,
+        view: sideChatView([
+          { id: 'hydrated-user', kind: 'message', role: 'user', text: annotationText },
+          { id: 'invalid-user', kind: 'message', role: 'user', text: malformedText },
+          { id: 'assistant-raw', kind: 'message', role: 'assistant', text: annotationText }
+        ])
+      }
+    })
+
+    expect(container.querySelectorAll('[data-side-chat-annotation-card]')).toHaveLength(2)
+    expect(container.textContent).toContain(malformedText)
+    expect(
+      container
+        .querySelector('[data-side-chat-raw-message]')
+        ?.classList.contains('whitespace-pre-wrap')
+    ).toBe(true)
+    expect(container.textContent?.match(/"items"/g)).toHaveLength(2)
   })
 
   it('paces only the live Side chat turn and keeps its tool behind visible text', async () => {

@@ -9,6 +9,27 @@
 
 @custom-variant dark (&:is(.dark *));
 
+::highlight(agent-annotation-draft) {
+  background-color: color-mix(in oklab, var(--primary) 22%, transparent);
+  text-decoration: underline 0.125rem var(--primary);
+}
+
+/* A short, stronger flash when a composer card jumps back to the quoted
+   text; cleared by the reveal module after its timeout. */
+::highlight(agent-annotation-reveal) {
+  background-color: color-mix(in oklab, var(--primary) 45%, transparent);
+  text-decoration: underline 0.125rem var(--primary);
+}
+
+/* The annotate trigger hangs below the selection's last line, inside a transcript row whose
+   `content-visibility: auto` containment makes it a stacking context. Later sibling rows and
+   the composer card would otherwise paint over the trigger whenever it overhangs its row, so
+   promote the owning row while the trigger is mounted. */
+[data-slot='message-scroller-item']:has([data-annotation-trigger]) {
+  position: relative;
+  z-index: 20;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

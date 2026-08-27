@@ -6,6 +6,7 @@ import {
   synchronizeActiveConversationMessages
 } from '../../../shared/conversation-graph'
 import type { MessagePart } from '../../../shared/session-persistence'
+import type { Annotation } from '../../../shared/annotations'
 import {
   sanitizeActivityGroup,
   sanitizeToolActivity,
@@ -32,6 +33,7 @@ export type AppendUserMessageInput = {
   content: string
   attachments?: PersistedUploadedAttachment[]
   parts?: MessagePart[]
+  annotations?: Annotation[]
   turnIntent?: PersistedChatMessage['turnIntent']
   cwd?: string
   projectId?: string
@@ -56,6 +58,7 @@ export type BranchInNewSessionInput = {
   content?: string
   attachments?: PersistedUploadedAttachment[]
   parts?: MessagePart[]
+  annotations?: Annotation[]
   turnIntent?: PersistedChatMessage['turnIntent']
   permissionProfile?: ChatSession['permissionProfile']
   agentFrameworkId?: PersistedChatSession['agentFrameworkId']
@@ -97,6 +100,7 @@ export type AppendRoutedUserMessageInput = {
   relayedFrom?: PersistedChatMessage['relayedFrom']
   uploads?: PersistedUploadedAttachment[]
   parts?: MessagePart[]
+  annotations?: Annotation[]
 }
 
 export type SessionMessageGraphActions = {
@@ -328,6 +332,7 @@ export const buildMessage = (input: {
   eventIds: string[]
   uploads: PersistedUploadedAttachment[]
   parts?: MessagePart[]
+  annotations?: Annotation[]
   turnIntent?: PersistedChatMessage['turnIntent']
   sortIndex: number
   now: number
@@ -342,12 +347,27 @@ export const buildMessage = (input: {
     eventIds: input.eventIds,
     uploads: persistedUploads.length > 0 ? persistedUploads : undefined,
     parts: input.parts && input.parts.length > 0 ? input.parts : undefined,
+    annotations: input.annotations?.length ? input.annotations : undefined,
     turnIntent: input.turnIntent,
     sortIndex: input.sortIndex,
     createdAt: input.now,
     updatedAt: input.now
   }
 }
+
+export const buildUserMessage = (
+  input: Omit<
+    Parameters<typeof buildMessage>[0],
+    'role' | 'status' | 'streamId' | 'eventIds' | 'now'
+  >
+): ChatMessage =>
+  buildMessage({
+    ...input,
+    role: 'user',
+    status: 'complete',
+    eventIds: [],
+    now: Date.now()
+  })
 
 export const copySnapshotMessage = (
   message: PersistedChatMessage,
@@ -360,6 +380,7 @@ export const copySnapshotMessage = (
   uploads: message.uploads?.map(copySnapshotUpload),
   images: message.images?.map((image) => ({ ...image })),
   parts: message.parts?.map((part) => ({ ...part })),
+  annotations: message.annotations?.map((annotation) => structuredClone(annotation)),
   turnUsage: message.turnUsage ? { ...message.turnUsage } : undefined,
   modelCallUsage: message.modelCallUsage?.map((call) => ({ ...call })),
   sortIndex

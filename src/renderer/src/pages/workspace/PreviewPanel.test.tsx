@@ -13,6 +13,7 @@ import {
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import type { Annotation } from '../../../../shared/annotations'
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
@@ -21,10 +22,23 @@ vi.mock('@/components/ui/resizable', () => ({
 }))
 
 vi.mock('./previews/PreviewFileContent', () => ({
-  PreviewFileContent: ({ item }: { item: PreviewFileItem }): React.JSX.Element => (
-    <div data-testid="file-content">
+  PreviewFileContent: ({
+    item,
+    activeAnnotations,
+    onAddAnnotation
+  }: {
+    item: PreviewFileItem
+    activeAnnotations?: readonly Annotation[]
+    onAddAnnotation?: (annotation: Annotation) => void
+  }): React.JSX.Element => (
+    <button
+      type="button"
+      data-testid="file-content"
+      data-annotation-count={activeAnnotations?.length ?? 0}
+      onClick={() => activeAnnotations?.[0] && onAddAnnotation?.(activeAnnotations[0])}
+    >
       file:{item.format}:{item.source ?? 'artifact'}:{item.name}:{item.path}
-    </div>
+    </button>
   )
 }))
 
@@ -107,7 +121,10 @@ describe('PreviewPanel', () => {
     container.remove()
   })
 
-  const renderPanel = async (strict = false): Promise<void> => {
+  const renderPanel = async (
+    annotationProps: Partial<React.ComponentProps<typeof PreviewPanel>> = {},
+    strict = false
+  ): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
       const panel = (
@@ -116,11 +133,39 @@ describe('PreviewPanel', () => {
           defaultSize="40%"
           minSize="30%"
           onResize={vi.fn()}
+          {...annotationProps}
         />
       )
       root.render(strict ? <StrictMode>{panel}</StrictMode> : panel)
     })
   }
+
+  it('forwards one annotation port through the desktop and fullscreen file surface', async () => {
+    const annotation: Annotation = {
+      id: 'annotation-1',
+      kind: 'text',
+      target: 'agent',
+      quote: 'Selected text',
+      source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }
+    }
+    const onAddAnnotation = vi.fn()
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+    await renderPanel({ activeAnnotations: [annotation], onAddAnnotation })
+
+    const content = container.querySelector<HTMLButtonElement>('[data-testid="file-content"]')!
+    expect(content.dataset.annotationCount).toBe('1')
+    await act(async () => content.click())
+    expect(onAddAnnotation).toHaveBeenCalledWith(annotation)
+
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Open full screen preview of file-1.png"]')
+        ?.click()
+    )
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="file-content"]')).toBe(content)
+    expect(content.dataset.annotationCount).toBe('1')
+  })
 
   const renderTwoFileTabs = async (): Promise<void> => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
@@ -317,7 +362,7 @@ describe('PreviewPanel', () => {
     const sourceItem = createSourceItem()
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
 
-    await renderPanel(true)
+    await renderPanel({}, true)
 
     const closeButton = container.querySelector<HTMLButtonElement>(
       '[data-source-preview-header-close]'
@@ -462,7 +507,7 @@ describe('PreviewPanel', () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
     usePreviewWorkbenchStore.getState().upsertItem(createFileItem({}))
 
-    await renderPanel(true)
+    await renderPanel({}, true)
 
     const firstIframe = container.querySelector('[data-source-preview-frame]')
     await act(async () => {

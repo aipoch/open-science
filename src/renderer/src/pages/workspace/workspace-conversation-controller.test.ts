@@ -8,6 +8,7 @@ import {
   type ChatSession,
   useSessionStore
 } from '@/stores/session-store'
+import type { TextAnnotation } from '../../../../shared/annotations'
 
 import type { ComposerDoc } from './composer/composer-doc'
 import {
@@ -19,6 +20,15 @@ import {
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
+
+const quotedAnnotation = (): TextAnnotation => ({
+  id: 'annotation-side-chat',
+  kind: 'text',
+  target: 'agent',
+  quote: 'The confidence intervals overlap.',
+  note: 'Explain this caveat.',
+  source: { kind: 'agent-message', sessionId: 'session-a', messageId: 'agent-message-a' }
+})
 
 const session = (overrides: Partial<ChatSession> = {}): ChatSession => ({
   id: 'session-a',
@@ -103,13 +113,21 @@ const options = (
     newConversationAutoReviewEnabled: false,
     newConversationEnabledComputeHosts: [],
     composer: {
-      view: { doc, attachments: [], transfers: [] },
+      view: { doc, annotations: [], attachments: [], transfers: [] },
       actions: { setError: vi.fn() },
       lifecycle: {
         captureSend: vi.fn(() => ({
           draftKey: 'session-a',
           version: 1,
           doc,
+          annotations: [],
+          attachments: []
+        })),
+        captureRevision: vi.fn((revisionDoc, annotations) => ({
+          draftKey: 'session-a',
+          version: 1,
+          doc: revisionDoc,
+          annotations,
           attachments: []
         })),
         clearDraft: vi.fn(),
@@ -190,6 +208,135 @@ afterEach(() => {
 })
 
 describe('workspace conversation controller', () => {
+  it('admits and sends a structured annotation without message text', async () => {
+    const annotation = {
+      id: 'annotation-1',
+      kind: 'text' as const,
+      target: 'agent' as const,
+      quote: 'Quoted Agent response',
+      source: {
+        kind: 'agent-message' as const,
+        sessionId: 'session-a',
+        messageId: 'agent-message-a'
+      }
+    }
+    const input = options()
+    let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void
+    input.runtime.sendMessage = vi.fn(
+      () =>
+        new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+          resolveAdmission = resolve
+        })
+    )
+    input.composer.view.doc = { nodes: [] }
+    input.composer.view.annotations = [annotation]
+    input.composer.lifecycle.captureSend = vi.fn(() => ({
+      draftKey: 'session-a',
+      version: 1,
+      doc: { nodes: [] },
+      annotations: [annotation],
+      attachments: []
+    }))
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.submit).toBe(true)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '', annotations: [annotation] })
+    )
+    expect(hook.result.current.optimisticMessage).toMatchObject({
+      content: '',
+      annotations: [annotation]
+    })
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+
+    await act(async () =>
+      resolveAdmission({ sessionId: 'session-a', messageId: 'annotation-message-1' })
+    )
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 1)
+  })
+
+  it('blocks an image-point annotation before capture when the model cannot read images', () => {
+    const input = options()
+    const annotation = {
+      id: 'point-1',
+      kind: 'image-point' as const,
+      target: 'agent' as const,
+      note: 'Inspect this point',
+      source: {
+        kind: 'artifact-version' as const,
+        projectId: 'project-a',
+        sessionId: 'session-a',
+        versionId: 'version-1',
+        name: 'figure.png',
+        path: 'artifact-version:project-a/session-a/artifact-1/version-1',
+        mimeType: 'image/png'
+      },
+      point: { x: 0.5, y: 0.5 },
+      naturalSize: { width: 100, height: 100 }
+    }
+    input.supportsImageInput = false
+    input.composer.view.annotations = [annotation]
+    const hook = renderController(input)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+
+    expect(input.composer.actions.setError).toHaveBeenCalledWith(
+      "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
+    )
+    expect(input.composer.lifecycle.captureSend).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    hook.unmount()
+  })
+
+  it('sends an annotation-only New Conversation to the current project without a Session id', async () => {
+    const annotation = {
+      id: 'new-conversation-annotation',
+      kind: 'text' as const,
+      target: 'agent' as const,
+      quote: 'Quoted project evidence',
+      source: {
+        kind: 'project-file' as const,
+        projectId: 'project-a',
+        path: 'results/report.md',
+        versionId: 'version-a'
+      }
+    }
+    const input = options({
+      activeSession: undefined,
+      currentDraftKey: 'new:project-a'
+    })
+    input.composer.view.doc = { nodes: [] }
+    input.composer.view.annotations = [annotation]
+    input.composer.lifecycle.captureSend = vi.fn(() => ({
+      draftKey: 'new:project-a',
+      version: 3,
+      doc: { nodes: [] },
+      annotations: [annotation],
+      attachments: []
+    }))
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: undefined,
+        projectId: 'project-a',
+        text: '',
+        annotations: [annotation]
+      })
+    )
+    await vi.waitFor(() =>
+      expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('new:project-a', 3)
+    )
+  })
+
   it('exposes the submitted draft immediately while runtime admission is pending', async () => {
     let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void
     const admission = new Promise<{ sessionId: string; messageId: string }>((resolve) => {
@@ -423,7 +570,9 @@ describe('workspace conversation controller', () => {
 
     expect(hook.result.current.availability).toMatchObject({ submit: false, revise: false })
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
-    act(() => hook.result.current.actions.revise('message-a', textDoc('changed')))
+    act(() => {
+      void hook.result.current.actions.revise('message-a', textDoc('changed'), [])
+    })
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
     expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
   })
@@ -605,7 +754,9 @@ describe('workspace conversation controller', () => {
 
     expect(hook.result.current.availability).toMatchObject({ submit: false, revise: false })
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
-    act(() => hook.result.current.actions.revise('message-user-a', textDoc('changed')))
+    act(() => {
+      void hook.result.current.actions.revise('message-user-a', textDoc('changed'), [])
+    })
     expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
     expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
 
@@ -619,20 +770,62 @@ describe('workspace conversation controller', () => {
 
     expect(hook.result.current.availability).toMatchObject({ submit: false, revise: false })
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
-    act(() => hook.result.current.actions.revise('message-a', textDoc('changed')))
+    act(() => {
+      void hook.result.current.actions.revise('message-a', textDoc('changed'), [])
+    })
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
     expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
   })
 
   it('moves the captured draft into Side chat and clears only its admitted version', async () => {
+    const annotation = quotedAnnotation()
     const input = options({ sideChat: { start: vi.fn(async () => true) } })
+    input.composer.view.annotations = [annotation]
+    input.composer.lifecycle.captureSend = vi.fn(() => ({
+      draftKey: 'session-a',
+      version: 7,
+      doc: textDoc('Compare these observations.'),
+      annotations: [annotation],
+      attachments: []
+    }))
     const hook = renderController(input)
     mounted.push(hook)
 
     act(() => hook.result.current.actions.sideChat.start())
-    await vi.waitFor(() => expect(input.sideChat?.start).toHaveBeenCalledWith('hello'))
+    await vi.waitFor(() =>
+      expect(input.sideChat?.start).toHaveBeenCalledWith(
+        'Compare these observations.\n\n[Annotations]\n' +
+          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","instruction":"Explain this caveat."}]}'
+      )
+    )
 
-    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 1)
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 7)
+  })
+
+  it('starts Side chat from an annotation-only captured draft', async () => {
+    const annotation = quotedAnnotation()
+    const input = options({ sideChat: { start: vi.fn(async () => true) } })
+    input.composer.view.doc = { nodes: [] }
+    input.composer.view.annotations = [annotation]
+    input.composer.lifecycle.captureSend = vi.fn(() => ({
+      draftKey: 'session-a',
+      version: 3,
+      doc: { nodes: [] },
+      annotations: [annotation],
+      attachments: []
+    }))
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.sideChat.start())
+
+    await vi.waitFor(() =>
+      expect(input.sideChat?.start).toHaveBeenCalledWith(
+        '[Annotations]\n' +
+          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","instruction":"Explain this caveat."}]}'
+      )
+    )
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 3)
   })
 
   it('keeps the draft when Side chat is unavailable or not admitted', async () => {
@@ -642,6 +835,21 @@ describe('workspace conversation controller', () => {
 
     act(() => hook.result.current.actions.sideChat.start())
     await vi.waitFor(() => expect(input.sideChat?.start).toHaveBeenCalledOnce())
+
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+  })
+
+  it('keeps the captured draft and reports the existing error when Side chat start throws', async () => {
+    const input = options({
+      sideChat: { start: vi.fn(async () => Promise.reject(new Error('Side chat is unavailable.'))) }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.sideChat.start())
+    await vi.waitFor(() =>
+      expect(input.composer.actions.setError).toHaveBeenCalledWith('Side chat is unavailable.')
+    )
 
     expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
   })
@@ -683,7 +891,9 @@ describe('workspace conversation controller', () => {
     mounted.push(hook)
 
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
-    act(() => hook.result.current.actions.revise('message-user-a', textDoc('changed')))
+    act(() => {
+      void hook.result.current.actions.revise('message-user-a', textDoc('changed'), [])
+    })
     await act(async () => hook.result.current.actions.resume())
     await act(async () => hook.result.current.actions.cancel())
 
@@ -766,6 +976,56 @@ describe('workspace conversation controller', () => {
     expect(hook.result.current.optimisticMessage).toBeUndefined()
   })
 
+  it('preserves the complete image annotation draft when fixed-source preflight rejects', async () => {
+    const annotation = {
+      id: 'point-fixed',
+      kind: 'image-point' as const,
+      target: 'agent' as const,
+      note: 'Inspect this fixed point.',
+      source: {
+        kind: 'artifact-version' as const,
+        projectId: 'project-a',
+        sessionId: 'session-a',
+        versionId: 'version-deleted',
+        name: 'figure.png',
+        path: 'artifact-version:project-a/session-a/artifact-1/version-deleted',
+        mimeType: 'image/png'
+      },
+      point: { x: 0.25, y: 0.75 },
+      naturalSize: { width: 800, height: 600 }
+    }
+    const input = options()
+    const snapshot = {
+      draftKey: 'session-a',
+      version: 1,
+      doc: textDoc('keep this explanation'),
+      annotations: [annotation],
+      attachments: []
+    }
+    input.composer.view = { ...input.composer.view, doc: snapshot.doc, annotations: [annotation] }
+    input.composer.lifecycle.captureSend = vi.fn(() => snapshot)
+    input.runtime.sendMessage = vi.fn(() =>
+      Promise.reject(
+        new Error(
+          'An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.'
+        )
+      )
+    )
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    await vi.waitFor(() =>
+      expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledWith(snapshot)
+    )
+
+    expect(input.composer.actions.setError).toHaveBeenCalledWith(
+      expect.stringContaining('fixed version')
+    )
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+    expect(hook.result.current.optimisticMessage).toBeUndefined()
+  })
+
   it('includes new-Session Memory and Compute intent and stamps Review after submit succeeds', async () => {
     const input = options({
       activeSession: undefined,
@@ -779,6 +1039,7 @@ describe('workspace conversation controller', () => {
       draftKey: 'new:project-a',
       version: 1,
       doc: textDoc('new'),
+      annotations: [],
       attachments: []
     }))
     input.runtime.sendMessage = vi.fn(() =>
@@ -817,18 +1078,134 @@ describe('workspace conversation controller', () => {
       session: input.session
     })
     hook.rerender(blocked)
-    act(() => revise('message-a', textDoc('changed')))
+    act(() => {
+      void revise('message-a', textDoc('changed'), [])
+    })
     expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
 
     hook.rerender(input)
-    act(() => revise('message-a', textDoc('changed')))
+    act(() => {
+      void revise('message-a', textDoc('changed'), [])
+    })
     expect(input.runtime.resendEditedMessage).toHaveBeenCalledWith('session-a', 'message-a', {
       text: 'changed',
+      annotations: [],
       parts: textDoc('changed').nodes,
       forcedSkillIds: [],
       referencedArtifacts: []
     })
     expect(hook.result.current.actions.revise).toBe(revise)
+  })
+
+  it('resends an annotation-only edit through the existing message revision seam', async () => {
+    const annotations = [
+      {
+        id: 'quote-1',
+        kind: 'text' as const,
+        target: 'agent' as const,
+        quote: 'Quoted evidence',
+        note: 'Updated note',
+        source: {
+          kind: 'project-file' as const,
+          projectId: 'project-a',
+          path: 'results/report.md',
+          versionId: 'version-1'
+        }
+      }
+    ]
+    const input = options()
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    let result: Awaited<ReturnType<WorkspaceConversationController['actions']['revise']>> = {
+      ok: false
+    }
+    await act(async () => {
+      result = await hook.result.current.actions.revise(
+        'message-user-a',
+        { nodes: [] },
+        annotations
+      )
+    })
+
+    expect(result).toEqual({ ok: true, disposition: 'sent' })
+    expect(input.runtime.resendEditedMessage).toHaveBeenCalledWith('session-a', 'message-user-a', {
+      text: '',
+      annotations,
+      parts: [],
+      forcedSkillIds: [],
+      referencedArtifacts: []
+    })
+  })
+
+  it('captures an edited annotation message for the existing queue while a turn is running', async () => {
+    const activeSession = runningSession()
+    const input = options({
+      activeSession,
+      getSession: (sessionId) => (sessionId === activeSession.id ? activeSession : undefined)
+    })
+    const annotation = {
+      id: 'queued-quote',
+      kind: 'text' as const,
+      target: 'agent' as const,
+      quote: 'Queued evidence',
+      source: {
+        kind: 'agent-message' as const,
+        sessionId: 'session-a',
+        messageId: 'agent-message-a'
+      }
+    }
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.revise).toBe(true)
+    await expect(
+      hook.result.current.actions.revise('message-user-a', { nodes: [] }, [annotation])
+    ).resolves.toEqual({ ok: true, disposition: 'queued' })
+
+    expect(input.composer.lifecycle.captureRevision).toHaveBeenCalledWith({ nodes: [] }, [
+      annotation
+    ])
+    expect(hook.result.current.queue.items).toEqual([
+      expect.objectContaining({ text: '', attachmentCount: 0, phase: 'queued' })
+    ])
+    expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
+  })
+
+  it('blocks an edited image annotation when the selected model cannot read images', async () => {
+    const input = options({ supportsImageInput: false })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const annotation = {
+      id: 'point-1',
+      kind: 'image-point' as const,
+      target: 'agent' as const,
+      note: 'Inspect this point.',
+      source: {
+        kind: 'artifact-version' as const,
+        projectId: 'project-a',
+        sessionId: 'session-a',
+        versionId: 'version-1',
+        name: 'figure.png',
+        path: 'artifact-version:project-a/session-a/artifact-1/version-1',
+        mimeType: 'image/png'
+      },
+      point: { x: 0.5, y: 0.25 },
+      naturalSize: { width: 800, height: 400 }
+    }
+
+    await expect(
+      hook.result.current.actions.revise('message-user-a', { nodes: [] }, [annotation])
+    ).resolves.toEqual({
+      ok: false,
+      displayMessage:
+        "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
+    })
+
+    expect(input.composer.actions.setError).toHaveBeenCalledWith(
+      "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
+    )
+    expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
   })
 
   it('aborts an active Fix Loop before cancelling the runtime run', async () => {

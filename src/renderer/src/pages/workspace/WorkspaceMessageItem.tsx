@@ -1,4 +1,5 @@
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
+import { ErrorNotice } from '@/components/error-notice'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -59,6 +60,7 @@ import {
   docFromMessageParts,
   docFromText,
   docIsEmpty,
+  docToText,
   emptyDoc,
   type ComposerDoc
 } from './composer/composer-doc'
@@ -72,6 +74,23 @@ import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 import { resolveSessionProviderId } from './error-report'
 import { SessionMessageMarkdown } from './SessionMessageMarkdown'
+import { AnnotationDraftCards, AnnotationMessageCards } from './annotations/AnnotationCards'
+import type { AnnotationPort } from './annotations/annotation-port'
+import { requestAnnotationReveal } from './annotations/annotation-reveal'
+import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
+import {
+  validateAnnotations,
+  type Annotation,
+  type AnnotationValidationError,
+  type TextAnnotation
+} from '../../../../shared/annotations'
+import { annotationValidationMessage } from './annotations/annotation-validation-message'
+import type { SendEditedMessage } from './workspace-edited-message'
+
+type EditAnnotationTarget = {
+  messageId: string
+  add: (annotation: TextAnnotation) => AnnotationValidationError | undefined
+}
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
@@ -104,7 +123,12 @@ type WorkspaceMessageItemProps = {
   sending?: boolean
   // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
   contentPaddingClassName?: string
-  onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
+  onSendEditedMessage?: SendEditedMessage
+  onEditAnnotationTargetChange?: (
+    messageId: string,
+    target: EditAnnotationTarget | undefined
+  ) => void
+  annotationPort?: AnnotationPort
   canBranchInNewSession?: boolean
   onBranchInNewSession?: (messageId: string) => void
   // Prompt send time for an Agent response; paired with its completion time for elapsed duration.
@@ -1159,6 +1183,8 @@ const WorkspaceMessageItemImpl = ({
   sending = false,
   contentPaddingClassName,
   onSendEditedMessage,
+  onEditAnnotationTargetChange,
+  annotationPort,
   canBranchInNewSession = false,
   onBranchInNewSession,
   turnStartedAt,
@@ -1207,9 +1233,32 @@ const WorkspaceMessageItemImpl = ({
   // structured parts so mention chips survive the round-trip.
   const [isEditing, setIsEditing] = useState(false)
   const [editDoc, setEditDoc] = useState<ComposerDoc>(emptyDoc)
+  const [editAnnotations, setEditAnnotations] = useState<Annotation[]>([])
+  const [editError, setEditError] = useState<string>()
+  const [isResendingEdit, setIsResendingEdit] = useState(false)
   // True while the destructive-resend confirmation dialog is open.
   const [isConfirmingEdit, setIsConfirmingEdit] = useState(false)
   const copyResetTimeoutRef = useRef<number | null>(null)
+  const editButtonRef = useRef<HTMLButtonElement | null>(null)
+  const editDocRef = useRef(editDoc)
+  const editAnnotationsRef = useRef(editAnnotations)
+  const restoreEditButtonFocusRef = useRef(false)
+  const [editFocusRequest, setEditFocusRequest] = useState(0)
+
+  const updateEditAnnotations = (next: Annotation[]): AnnotationValidationError | undefined => {
+    const validation = validateAnnotations(next, docToText(editDocRef.current))
+    if (validation) {
+      setEditError(annotationValidationMessage(validation, t))
+      return validation
+    }
+    editAnnotationsRef.current = next
+    setEditAnnotations(next)
+    setEditError(undefined)
+    return undefined
+  }
+
+  const addEditAnnotation = (annotation: TextAnnotation): AnnotationValidationError | undefined =>
+    updateEditAnnotations([...editAnnotationsRef.current, annotation])
 
   // Clear a pending copied-state reset so it never fires setState after unmount.
   useEffect(
@@ -1217,6 +1266,20 @@ const WorkspaceMessageItemImpl = ({
       if (copyResetTimeoutRef.current !== null) window.clearTimeout(copyResetTimeoutRef.current)
     },
     []
+  )
+
+  useLayoutEffect(() => {
+    if (!isEditing && restoreEditButtonFocusRef.current) {
+      restoreEditButtonFocusRef.current = false
+      editButtonRef.current?.focus()
+    }
+  }, [isEditing])
+
+  useEffect(
+    () => () => {
+      onEditAnnotationTargetChange?.(message.id, undefined)
+    },
+    [message.id, onEditAnnotationTargetChange]
   )
 
   // Copies the message text and briefly swaps the icon to confirm the clipboard write succeeded.
@@ -1231,29 +1294,61 @@ const WorkspaceMessageItemImpl = ({
   // Opens the inline editor with the prompt rebuilt as a composer doc (mention chips restored when
   // the message carries structured parts, plain text otherwise).
   const handleStartEdit = (): void => {
-    setEditDoc(
+    const nextDoc =
       message.parts && message.parts.length > 0
         ? docFromMessageParts(message.parts)
         : docFromText(message.content)
-    )
+    editDocRef.current = nextDoc
+    setEditDoc(nextDoc)
+    const annotations = [...(message.annotations ?? [])]
+    editAnnotationsRef.current = annotations
+    setEditAnnotations(annotations)
+    setEditError(undefined)
     setIsEditing(true)
+    setEditFocusRequest((request) => request + 1)
+    onEditAnnotationTargetChange?.(message.id, {
+      messageId: message.id,
+      add: addEditAnnotation
+    })
   }
 
   const handleCancelEdit = (): void => {
+    setEditError(undefined)
+    restoreEditButtonFocusRef.current = true
+    onEditAnnotationTargetChange?.(message.id, undefined)
     setIsEditing(false)
   }
 
   // The destructive resend itself: the conversation is truncated at this message and the adjusted
   // prompt is resent as a fresh turn, then the editor closes.
-  const confirmEditedResend = (): void => {
-    onSendEditedMessage?.(message.id, editDoc)
-    setIsConfirmingEdit(false)
-    setIsEditing(false)
+  const confirmEditedResend = async (): Promise<void> => {
+    if (!onSendEditedMessage || isResendingEdit) return
+    setIsResendingEdit(true)
+    setEditError(undefined)
+    try {
+      const result = await onSendEditedMessage(message.id, editDoc, [...editAnnotations])
+      if (!result.ok) {
+        setEditError(t(result.displayMessage ?? 'Something went wrong. Try again.'))
+        return
+      }
+      setIsConfirmingEdit(false)
+      onEditAnnotationTargetChange?.(message.id, undefined)
+      setIsEditing(false)
+    } catch {
+      setEditError(t('Something went wrong. Try again.'))
+    } finally {
+      setIsResendingEdit(false)
+    }
   }
 
   // Confirms the inline edit; with several later turns changing visibility, ask before branching.
   const handleConfirmEdit = (): void => {
-    if (!canEditMessage || docIsEmpty(editDoc)) return
+    if (!canEditMessage || (docIsEmpty(editDoc) && editAnnotations.length === 0)) return
+    const validation = validateAnnotations(editAnnotations, docToText(editDoc))
+    if (validation) {
+      setEditError(annotationValidationMessage(validation, t))
+      return
+    }
 
     if (subsequentTurns >= EDIT_TRUNCATION_WARNING_TURNS) {
       setIsConfirmingEdit(true)
@@ -1347,7 +1442,7 @@ const WorkspaceMessageItemImpl = ({
           isEditing ? (
             <div className="flex justify-end">
               {/* Inline editing swaps the bubble for a multi-line editor; confirm resends the prompt. */}
-              <div className={editCardClassName}>
+              <div className={editCardClassName} aria-busy={isResendingEdit}>
                 <MessageUploadAttachmentList
                   attachments={uploads}
                   onPreviewUploadAttachment={onPreviewUploadAttachment}
@@ -1358,18 +1453,55 @@ const WorkspaceMessageItemImpl = ({
                     className="-mt-1.5 w-full border-0 border-t border-border-200"
                   />
                 ) : null}
+                <AnnotationDraftCards
+                  annotations={editAnnotations}
+                  disabled={!canEditMessage || isResendingEdit}
+                  onReveal={requestAnnotationReveal}
+                  onUpdateNote={(id, note) => {
+                    const next = editAnnotations.map((annotation) =>
+                      annotation.id === id
+                        ? annotation.kind === 'text'
+                          ? { ...annotation, note: note.trim() || undefined }
+                          : { ...annotation, note: note.trim() }
+                        : annotation
+                    )
+                    return updateEditAnnotations(next)
+                  }}
+                  onRemove={(id) => {
+                    updateEditAnnotations(
+                      editAnnotationsRef.current.filter((annotation) => annotation.id !== id)
+                    )
+                  }}
+                />
                 <ComposerEditor
                   doc={editDoc}
-                  onDocChange={setEditDoc}
+                  onDocChange={(next) => {
+                    editDocRef.current = next
+                    setEditDoc(next)
+                    const validation = validateAnnotations(editAnnotations, docToText(next))
+                    setEditError(
+                      validation ? annotationValidationMessage(validation, t) : undefined
+                    )
+                  }}
                   onSubmit={handleConfirmEdit}
                   onPaste={ignoreEditPaste}
                   placeholder={t('Edit your message')}
                   ariaLabel={t('Edit message')}
+                  focusRequest={editFocusRequest}
                 />
+                {editError ? (
+                  <div
+                    role="alert"
+                    className="[&>section]:max-w-none [&>section]:gap-2 [&_h1]:text-xs"
+                  >
+                    <ErrorNotice tone="red" title={editError} />
+                  </div>
+                ) : null}
                 <div className="flex items-center justify-end gap-1">
                   <button
                     type="button"
                     className={editCancelButtonClassName}
+                    disabled={isResendingEdit}
                     onClick={handleCancelEdit}
                   >
                     {t('Cancel')}
@@ -1377,9 +1509,16 @@ const WorkspaceMessageItemImpl = ({
                   <button
                     type="button"
                     className={editSendButtonClassName}
-                    disabled={!canEditMessage || docIsEmpty(editDoc)}
+                    disabled={
+                      !canEditMessage ||
+                      isResendingEdit ||
+                      (docIsEmpty(editDoc) && editAnnotations.length === 0)
+                    }
                     onClick={handleConfirmEdit}
                   >
+                    {isResendingEdit ? (
+                      <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                    ) : null}
                     {t('Send')}
                   </button>
                 </div>
@@ -1411,6 +1550,7 @@ const WorkspaceMessageItemImpl = ({
                       </UserMessageActionTooltip>
                       <UserMessageActionTooltip label={t('Edit message')}>
                         <button
+                          ref={editButtonRef}
                           type="button"
                           className={userMessageActionButtonClassName}
                           aria-label={t('Edit message')}
@@ -1424,6 +1564,7 @@ const WorkspaceMessageItemImpl = ({
                   </TooltipProvider>
                 ) : null}
                 <div data-slot="user-message-bubble" className={userMessageBubbleClassName}>
+                  <AnnotationMessageCards annotations={message.annotations ?? []} />
                   <MessageUploadAttachmentList
                     attachments={uploads}
                     onPreviewUploadAttachment={onPreviewUploadAttachment}
@@ -1519,13 +1660,35 @@ const WorkspaceMessageItemImpl = ({
             )}
           >
             {message.content ? (
-              <SessionMessageMarkdown
-                content={assistantPresentation.content}
-                isAnimating={isAssistantPresenting}
-                artifacts={artifacts}
-                onPreviewArtifact={onPreviewArtifact}
-                onPreviewArtifactModal={onPreviewArtifactModal}
-              />
+              annotationPort ? (
+                <TextAnnotationSurface
+                  source={{
+                    kind: 'agent-message',
+                    sessionId: annotationPort.sessionId,
+                    messageId: message.id
+                  }}
+                  activeAnnotations={annotationPort.activeAnnotations}
+                  onAdd={annotationPort.onAdd}
+                  onUpdateNote={annotationPort.onUpdateNote}
+                  onError={annotationPort.onError}
+                >
+                  <SessionMessageMarkdown
+                    content={assistantPresentation.content}
+                    isAnimating={isAssistantPresenting}
+                    artifacts={artifacts}
+                    onPreviewArtifact={onPreviewArtifact}
+                    onPreviewArtifactModal={onPreviewArtifactModal}
+                  />
+                </TextAnnotationSurface>
+              ) : (
+                <SessionMessageMarkdown
+                  content={assistantPresentation.content}
+                  isAnimating={isAssistantPresenting}
+                  artifacts={artifacts}
+                  onPreviewArtifact={onPreviewArtifact}
+                  onPreviewArtifactModal={onPreviewArtifactModal}
+                />
+              )
             ) : null}
             <MessageImageList images={message.images ?? []} />
             <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
@@ -1579,6 +1742,31 @@ const areRuntimeIdentitiesEqual = (
     previous.backendId === next.backendId &&
     previous.model === next.model)
 
+const areTextAnnotationsEqual = (
+  previous: readonly TextAnnotation[] | undefined,
+  next: readonly TextAnnotation[] | undefined
+): boolean => {
+  if (previous === next) return true
+  const left = previous ?? []
+  const right = next ?? []
+  return (
+    left.length === right.length && left.every((annotation, index) => annotation === right[index])
+  )
+}
+
+const areAnnotationPortsEqual = (
+  previous: AnnotationPort | undefined,
+  next: AnnotationPort | undefined
+): boolean =>
+  previous === next ||
+  (previous !== undefined &&
+    next !== undefined &&
+    previous.sessionId === next.sessionId &&
+    areTextAnnotationsEqual(previous.activeAnnotations, next.activeAnnotations) &&
+    previous.onAdd === next.onAdd &&
+    previous.onUpdateNote === next.onUpdateNote &&
+    previous.onError === next.onError)
+
 // The scroller rebuilds this object (with fresh closures) on every render. The closures only
 // capture the session id and a revision's branch id, both of which change only together with
 // index/total or the message itself, so those fields fully determine what a re-render would show.
@@ -1607,6 +1795,8 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.onOpenSkillMention === next.onOpenSkillMention &&
   previous.onPreviewMentionArtifact === next.onPreviewMentionArtifact &&
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  previous.onEditAnnotationTargetChange === next.onEditAnnotationTargetChange &&
+  areAnnotationPortsEqual(previous.annotationPort, next.annotationPort) &&
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   previous.onBranchInNewSession === next.onBranchInNewSession &&
   (previous.canEditMessage ?? false) === (next.canEditMessage ?? false) &&
@@ -1629,4 +1819,4 @@ const WorkspaceMessageItem = memo(WorkspaceMessageItemImpl, areWorkspaceMessageI
 WorkspaceMessageItem.displayName = 'WorkspaceMessageItem'
 
 export { MessageArtifactList, WorkspaceAssistantTurnCompletion, WorkspaceMessageItem }
-export type { ArtifactMentionPart }
+export type { ArtifactMentionPart, EditAnnotationTarget }

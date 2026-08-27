@@ -33,9 +33,10 @@ import {
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
+import type { PreviewAnnotationPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 
-type PreviewFileSurfaceProps = {
+type PreviewFileSurfaceProps = PreviewAnnotationPort & {
   item: PreviewFileItem
   contentKey?: string
   renderContent?: boolean
@@ -370,7 +371,12 @@ const PreviewFileSurface = ({
   onClose,
   onOpenFullScreen,
   onViewInContextNavigate,
-  provenanceEntry = 'menu'
+  provenanceEntry = 'menu',
+  activeAnnotations,
+  onAddAnnotation,
+  onUpdateAnnotationNote,
+  onRemoveAnnotation,
+  onAnnotationError
 }: PreviewFileSurfaceProps): React.JSX.Element => {
   const [provenanceTarget, setProvenanceTarget] = useState<string>()
   // Bumping this token remounts the content tree so a local file is re-read from disk.
@@ -541,6 +547,11 @@ const PreviewFileSurface = ({
           <PreviewFileContent
             key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
             item={resolvedPreviewItem}
+            activeAnnotations={activeAnnotations}
+            onAddAnnotation={onAddAnnotation}
+            onUpdateAnnotationNote={onUpdateAnnotationNote}
+            onRemoveAnnotation={onRemoveAnnotation}
+            onAnnotationError={onAnnotationError}
           />
         ) : null}
       </div>
