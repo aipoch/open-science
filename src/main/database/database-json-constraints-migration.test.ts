@@ -10,6 +10,10 @@ import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-serv
 import { applySqliteMigrationOperations } from './sqlite-schema-migrations'
 
 const MIGRATION_ID = '0008_database_json_constraints'
+// Hosted Windows runners rebuild tables and copy SQLite backups under disk
+// contention. The Windows full-test workflow default is 60s; these suites
+// finish later without hanging.
+const WINDOWS_SQLITE_TEST_TIMEOUT_MS = 120_000
 
 const createDatabaseAtMigration0007 = async (client: PrismaClient): Promise<void> => {
   const migration0008Index = MIGRATION_MANIFEST.findIndex(
@@ -209,7 +213,7 @@ describe('database JSON constraints migration', () => {
         SELECT "seq" FROM "ManagedFile" WHERE "sourceFileId" = 'next-file'
       `
     ).resolves.toEqual([{ seq: 44 }])
-  })
+  }, WINDOWS_SQLITE_TEST_TIMEOUT_MS)
 
   it('fails closed and rolls back all rebuilt tables when historical data is invalid', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-json-0008-invalid-'))
@@ -250,5 +254,5 @@ describe('database JSON constraints migration', () => {
       })
     ])
     await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
-  })
+  }, WINDOWS_SQLITE_TEST_TIMEOUT_MS)
 })
