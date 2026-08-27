@@ -135,6 +135,20 @@ describe('provider-kind helpers', () => {
     expect(
       providerFormApiEndpoints(createEmptyProviderFormValue({ type: 'xai-subscription' }))
     ).toEqual(['anthropic', 'openai', 'responses'])
+    expect(
+      providerFormApiEndpoints(
+        createEmptyProviderFormValue({ type: 'official', vendorId: 'opencode' })
+      )
+    ).toEqual(['openai', 'responses', 'anthropic'])
+    expect(
+      providerFormApiEndpoints(
+        createEmptyProviderFormValue({
+          type: 'official',
+          vendorId: 'opencode',
+          model: 'claude-opus-5'
+        })
+      )
+    ).toEqual(['anthropic'])
   })
 
   it('groups each subscription on its own, official vendors under API, and custom under Other', () => {

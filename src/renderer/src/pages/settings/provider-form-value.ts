@@ -11,7 +11,7 @@ import {
 import {
   OFFICIAL_VENDORS,
   getOfficialVendor,
-  resolveVendorApiEndpoints,
+  resolveVendorModelApiEndpoints,
   type OfficialVendorId
 } from '../../../../shared/provider-registry'
 import type {
@@ -93,10 +93,25 @@ export const defaultCustomApiEndpoint = (
   frameworkEndpoints: readonly ChatApiEndpoint[]
 ): ChatApiEndpoint => preferredEndpoint(frameworkEndpoints, frameworkEndpoints) ?? 'anthropic'
 
-// Built-in providers expose their complete protocol set; `apiEndpoint` only represents the single
-// format selected for a custom gateway and may be stale after switching provider kinds.
+// Built-in providers expose their complete catalog protocol set until a model is chosen;
+// `apiEndpoint` only represents the single format selected for a custom gateway and may be stale
+// after switching provider kinds.
 export const providerFormApiEndpoints = (value: ProviderFormValue): ChatApiEndpoint[] => {
-  if (value.type === 'official' && value.vendorId) return resolveVendorApiEndpoints(value.vendorId)
+  if (value.type === 'official' && value.vendorId) {
+    const vendorId = value.vendorId
+    const selectedModel = value.model.trim()
+    const models = selectedModel
+      ? [selectedModel]
+      : (getOfficialVendor(vendorId)?.models.map(({ id }) => id) ?? [])
+
+    return [
+      ...new Set(
+        (models.length > 0 ? models : [undefined]).flatMap((model) =>
+          resolveVendorModelApiEndpoints(vendorId, model)
+        )
+      )
+    ]
+  }
   if (value.type === 'xai-subscription') return ['anthropic', 'openai', 'responses']
   return [value.apiEndpoint]
 }
