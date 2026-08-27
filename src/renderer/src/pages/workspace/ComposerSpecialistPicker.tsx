@@ -176,7 +176,7 @@ const ComposerSpecialistPicker = ({
             aria-controls={listboxId}
             aria-activedescendant={activeOption ? `${listboxId}-${activeOption.key}` : undefined}
             autoComplete="off"
-            className="h-9 w-full rounded-lg border border-border-200 bg-bg-000 pr-2 pl-8 text-[13px] text-text-000 outline-none placeholder:text-text-300 focus:border-ring focus:ring-[3px] focus:ring-ring/20 [@media(pointer:coarse)]:h-11"
+            className="h-9 w-full rounded-lg border border-input bg-bg-000 pr-2 pl-8 text-[13px] text-text-000 outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-[3px] focus:ring-ring/20 [@media(pointer:coarse)]:h-11"
           />
         </div>
         <div

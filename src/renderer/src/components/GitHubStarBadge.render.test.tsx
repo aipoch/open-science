@@ -16,6 +16,8 @@ import { APP } from '../../../shared/app-config'
 
 let container: HTMLDivElement
 let root: Root
+const STAR_NUDGE_LAST_SHOWN_STORAGE_KEY = 'open-science:github-star-nudge-last-shown-at'
+const STAR_NUDGE_COOLDOWN_MS = 2 * 24 * 60 * 60 * 1_000
 
 const installApi = (getStars: () => Promise<number | null>): void => {
   ;(window as unknown as { api: unknown }).api = { github: { getStars } }
@@ -28,6 +30,7 @@ const flush = async (): Promise<void> => {
 }
 
 beforeEach(() => {
+  window.localStorage.removeItem(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -37,6 +40,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+  window.localStorage.removeItem(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
   delete (window as unknown as { api?: unknown }).api
   vi.useRealTimers()
   vi.restoreAllMocks()
@@ -100,6 +104,7 @@ describe('GitHubStarBadge', () => {
 
     act(() => vi.advanceTimersByTime(1))
     expect(popover()?.getAttribute('data-popover-open')).toBe('true')
+    expect(Number(window.localStorage.getItem(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY))).toBe(Date.now())
     expect(container.textContent).toContain('A star helps more researchers find it.')
     expect(container.querySelector('svg[class*="_infinite"]')).not.toBeNull()
 
@@ -110,6 +115,38 @@ describe('GitHubStarBadge', () => {
     expect(popover()?.getAttribute('data-popover-open')).toBe('false')
 
     getClientRects.mockRestore()
+  })
+
+  it('shows the workspace nudge at most once every two days across projects', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-27T00:00:00.000Z'))
+    vi.spyOn(Element.prototype, 'getClientRects').mockReturnValue({ length: 1 } as DOMRectList)
+    installApi(() => Promise.resolve(2600))
+
+    const popover = (): Element | null => container.querySelector('[data-popover-open]')
+    await act(async () => {
+      root.render(<GitHubStarBadge key="project-1" variant="workspace" nudgeKey="project-1" />)
+    })
+    act(() => vi.advanceTimersByTime(5_000))
+    expect(popover()?.getAttribute('data-popover-open')).toBe('true')
+    const lastShownAt = Number(window.localStorage.getItem(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY))
+
+    await act(async () => {
+      root.render(<GitHubStarBadge key="project-2" variant="workspace" nudgeKey="project-2" />)
+    })
+    vi.setSystemTime(lastShownAt + STAR_NUDGE_COOLDOWN_MS - 1)
+    act(() => vi.advanceTimersByTime(10_000))
+    expect(popover()?.getAttribute('data-popover-open')).toBe('false')
+
+    vi.setSystemTime(lastShownAt + STAR_NUDGE_COOLDOWN_MS)
+    await act(async () => {
+      root.render(<GitHubStarBadge key="project-3" variant="workspace" nudgeKey="project-3" />)
+    })
+    act(() => vi.advanceTimersByTime(4_999))
+    expect(popover()?.getAttribute('data-popover-open')).toBe('false')
+
+    act(() => vi.advanceTimersByTime(1))
+    expect(popover()?.getAttribute('data-popover-open')).toBe('true')
   })
 
   it('starts the workspace delay after the sidebar becomes visible and closes when hidden', async () => {

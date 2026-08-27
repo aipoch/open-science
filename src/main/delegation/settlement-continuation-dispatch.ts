@@ -33,7 +33,7 @@ const createDelegationSettlementContinuationDispatch =
               }
             : {}),
           messageAncestry: [request.originatingPromptId],
-          runtimeSegmentId: request.promptId
+          runtimeSegmentId: request.runtimeSegmentId
         }
       },
       () => {

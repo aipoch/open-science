@@ -189,7 +189,7 @@ const ReportErrorDialog = ({
               {t('Error details')}
             </label>
             <textarea
-              className="mt-1 min-h-0 flex-1 resize-none overflow-auto rounded-lg border border-border-200 bg-bg-100 px-3 py-2.5 font-mono text-[12px] leading-5 text-text-100 focus:outline-none focus:ring-1 focus:ring-primary/50"
+              className="mt-1 min-h-0 flex-1 resize-none overflow-auto rounded-lg border border-input bg-bg-100 px-3 py-2.5 font-mono text-[12px] leading-5 text-text-100 focus:outline-none focus:ring-1 focus:ring-primary/50"
               aria-label={t('Error details')}
               value={editedError}
               onChange={(event) => {

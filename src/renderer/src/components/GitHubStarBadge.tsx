@@ -17,9 +17,29 @@ import { APP } from '../../../shared/app-config'
 const STAR_NUDGE_DELAY_MS = 5_000
 const STAR_NUDGE_VISIBILITY_POLL_MS = 500
 const STAR_NUDGE_VISIBLE_MS = 30_000
+const STAR_NUDGE_COOLDOWN_MS = 2 * 24 * 60 * 60 * 1_000
+const STAR_NUDGE_LAST_SHOWN_STORAGE_KEY = 'open-science:github-star-nudge-last-shown-at'
 
 const isVisibleStarNudgeAnchor = (anchor: HTMLElement | null): anchor is HTMLElement =>
   Boolean(anchor && !anchor.closest('[inert]') && anchor.getClientRects().length > 0)
+
+const wasStarNudgeRecentlyShown = (): boolean => {
+  try {
+    const lastShownAt = Number(window.localStorage.getItem(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY))
+    const elapsed = Date.now() - lastShownAt
+    return lastShownAt > 0 && elapsed >= 0 && elapsed < STAR_NUDGE_COOLDOWN_MS
+  } catch {
+    return false
+  }
+}
+
+const recordStarNudgeShown = (): void => {
+  try {
+    window.localStorage.setItem(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY, String(Date.now()))
+  } catch {
+    // The nudge remains best-effort when renderer storage is unavailable.
+  }
+}
 
 // GitHub's octocat is a brand asset that lucide-react dropped in v1, so we inline the official mark
 // here. currentColor lets it inherit the link's text color like the other icons.
@@ -78,7 +98,7 @@ const GitHubStarBadge = ({
   }, [])
 
   useEffect(() => {
-    if (variant !== 'workspace' || !nudgeKey) return
+    if (variant !== 'workspace' || !nudgeKey || wasStarNudgeRecentlyShown()) return
 
     let timeoutId: number
     const scheduleWhenVisible = (): void => {
@@ -94,6 +114,7 @@ const GitHubStarBadge = ({
           scheduleWhenVisible()
           return
         }
+        recordStarNudgeShown()
         setStarNudgeOpen(true)
       }, STAR_NUDGE_DELAY_MS)
     }

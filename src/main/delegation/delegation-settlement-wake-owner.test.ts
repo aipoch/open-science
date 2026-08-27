@@ -15,7 +15,15 @@ const snapshot = (
   rootFrameId: 'root-frame',
   activeRootPromptIds: ['root-prompt'],
   attempts,
-  ...overrides
+  ...overrides,
+  rootPromptRuntimeSegments:
+    overrides.rootPromptRuntimeSegments ??
+    Object.fromEntries(
+      (overrides.activeRootPromptIds ?? ['root-prompt']).map((promptId) => [
+        promptId,
+        'root-runtime'
+      ])
+    )
 })
 
 const child = (

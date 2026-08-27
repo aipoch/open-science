@@ -23,6 +23,7 @@ type DelegationSettlementSnapshot = Readonly<{
   rootFrameId: string
   rootBranchId?: string
   activeRootPromptIds: readonly string[]
+  rootPromptRuntimeSegments: Readonly<Record<string, string>>
   attempts: readonly DelegationSettlementAttempt[]
 }>
 
@@ -32,6 +33,7 @@ type DelegationSettlementDispatch = Readonly<{
   originatingPromptId: string
   rootFrameId: string
   rootBranchId?: string
+  runtimeSegmentId: string
   promptId: string
   text: string
 }>
@@ -56,6 +58,7 @@ type Watch = {
   originatingPromptId: string
   rootFrameId: string
   rootBranchId?: string
+  runtimeSegmentId: string
   remaining: Map<string, WatchedAttempt>
   pending: Map<string, SettlementItem>
 }
@@ -215,6 +218,11 @@ class DelegationSettlementWakeOwner {
         this.deleteIfIdle(input.sessionId, state)
         return
       }
+      const runtimeSegmentId = snapshot.rootPromptRuntimeSegments[input.originatingPromptId]
+      if (!runtimeSegmentId) {
+        this.deleteIfIdle(input.sessionId, state)
+        return
+      }
       const remaining = new Map<string, WatchedAttempt>()
       const pending = new Map<string, SettlementItem>()
       for (const attempt of snapshot.attempts) {
@@ -245,7 +253,8 @@ class DelegationSettlementWakeOwner {
       if (
         existing &&
         existing.projectId === snapshot.projectId &&
-        existing.rootFrameId === snapshot.rootFrameId
+        existing.rootFrameId === snapshot.rootFrameId &&
+        existing.runtimeSegmentId === runtimeSegmentId
       ) {
         existing.rootBranchId = snapshot.rootBranchId
         for (const [key, watched] of remaining) {
@@ -261,6 +270,7 @@ class DelegationSettlementWakeOwner {
           originatingPromptId: input.originatingPromptId,
           rootFrameId: snapshot.rootFrameId,
           ...(snapshot.rootBranchId ? { rootBranchId: snapshot.rootBranchId } : {}),
+          runtimeSegmentId,
           remaining,
           pending
         })
@@ -418,6 +428,7 @@ class DelegationSettlementWakeOwner {
           originatingPromptId: selected.originatingPromptId,
           rootFrameId: selected.rootFrameId,
           ...(selected.rootBranchId ? { rootBranchId: selected.rootBranchId } : {}),
+          runtimeSegmentId: selected.runtimeSegmentId,
           promptId,
           text: settlementText(items, selected.remaining.size)
         }
