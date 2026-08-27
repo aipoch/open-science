@@ -275,11 +275,6 @@ describe('WorkspaceActivityGroup text annotations', () => {
     const packageStatus = packageRow.querySelector<HTMLElement>(
       '[data-testid="manage-packages-package-status"]'
     )!
-    const tableHeaders = Array.from(
-      container.querySelectorAll<HTMLElement>(
-        '[data-testid="manage-packages-details"] > div:first-child > span'
-      )
-    )
     const relatedRow = container.querySelector<HTMLElement>(
       '[data-testid="manage-packages-related-row"]'
     )!
@@ -292,26 +287,24 @@ describe('WorkspaceActivityGroup text annotations', () => {
     const failure = Array.from(container.querySelectorAll<HTMLElement>('p')).find(
       (element) => element.textContent === 'The analysis environment is read-only.'
     )!
-    const headerButton = container.querySelector<HTMLElement>(
-      '[data-testid="manage-packages-progress"] > button'
-    )!
-    const relatedSummary = container.querySelector<HTMLElement>('details > summary')!
-    expect(tableHeaders.map((header) => header.textContent)).toEqual([
-      'Package',
-      'Status',
-      'Version'
-    ])
+    const excludedFromAnnotation = [
+      ...container.querySelectorAll<HTMLElement>(
+        '[data-testid="manage-packages-details"] > div:first-child > span'
+      ),
+      packageStatus,
+      relatedStatus,
+      container.querySelector<HTMLElement>('[data-testid="manage-packages-progress"] > button')!,
+      container.querySelector<HTMLElement>('details > summary')!
+    ]
     expect(
-      tableHeaders.every((header) => header.closest('[data-annotation-surface]') === null)
+      excludedFromAnnotation.every(
+        (element) => element.closest('[data-annotation-surface]') === null
+      )
     ).toBe(true)
-    expect(packageStatus.closest('[data-annotation-surface]')).toBeNull()
     expect(packageName.closest('[data-annotation-surface]')).not.toBeNull()
     expect(packageVersion.closest('[data-annotation-surface]')).not.toBeNull()
     expect(relatedName.closest('[data-annotation-surface]')).not.toBeNull()
-    expect(relatedStatus.closest('[data-annotation-surface]')).toBeNull()
     expect(failure.closest('[data-annotation-surface]')).not.toBeNull()
-    expect(headerButton.closest('[data-annotation-surface]')).toBeNull()
-    expect(relatedSummary.closest('[data-annotation-surface]')).toBeNull()
 
     await selectAndAnnotate(packageName)
     await selectAndAnnotate(relatedName)

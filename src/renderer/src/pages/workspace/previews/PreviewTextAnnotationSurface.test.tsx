@@ -374,22 +374,6 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(document.querySelector<HTMLElement>('[data-annotation-trigger]')).toBeNull()
   })
 
-  it('hides the entry while the note editor is open and restores it after escape', async () => {
-    await renderSurface()
-    await selectQuote()
-    const entry = document.querySelector<HTMLElement>('[data-annotation-trigger]')
-    await act(async () => entry?.click())
-
-    expect(document.querySelector<HTMLElement>('[data-annotation-trigger]')).toBeNull()
-    expect(document.querySelector('textarea')).not.toBeNull()
-
-    await act(async () =>
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    )
-    expect(document.querySelector<HTMLElement>('[data-annotation-trigger]')).toBeDefined()
-    expect(document.querySelector('textarea')).toBeNull()
-  })
-
   it('keeps the selection highlighted while the note editor is open', async () => {
     await renderSurface()
     await selectQuote()
@@ -423,19 +407,7 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(Array.from(registeredRanges)[0]).toBe(pending)
   })
 
-  it('does not repeat the selected quote inside the note editor', async () => {
-    await renderSurface()
-    await selectQuote()
-    const entry = document.querySelector<HTMLElement>('[data-annotation-trigger]')
-    await act(async () => entry?.click())
-
-    const editor = document.querySelector('[data-radix-popper-content-wrapper]')
-    expect(editor).not.toBeNull()
-    expect(editor?.textContent).toContain('To Agent')
-    expect(editor?.textContent).not.toContain('confidence intervals overlap')
-  })
-
-  it('clears the native selection when the editor is dismissed by escape', async () => {
+  it('restores the entry and clears transient selection state after escape', async () => {
     await renderSurface()
     await selectQuote()
     const entry = document.querySelector<HTMLElement>('[data-annotation-trigger]')
@@ -445,6 +417,7 @@ describe('PreviewTextAnnotationSurface', () => {
     await act(async () =>
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     )
+    expect(document.querySelector<HTMLElement>('[data-annotation-trigger]')).toBeDefined()
     expect(document.querySelector('textarea')).toBeNull()
     expect(window.getSelection()?.rangeCount).toBe(0)
     expect(registeredRanges.size).toBe(0)

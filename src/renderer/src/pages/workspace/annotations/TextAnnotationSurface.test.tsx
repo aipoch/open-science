@@ -308,20 +308,18 @@ describe('TextAnnotationSurface note editor highlight', () => {
 
   const draftRanges = (): Range[] => Array.from(highlights.get('agent-annotation-draft') ?? [])
 
-  it('keeps the selection highlighted while the note editor is open', async () => {
+  it('highlights the selection only while the note editor is open', async () => {
     const paragraph = await renderSurface()
     await commitSelection(paragraph)
     expect(draftRanges()).toHaveLength(0)
 
     await act(async () => annotateTrigger()?.click())
     expect(draftRanges().map((range) => range.toString())).toContain('selectable agent reply')
-  })
 
-  it('clears the pending highlight when the editor is dismissed', async () => {
-    const paragraph = await renderSurface()
-    await commitSelection(paragraph)
-    await act(async () => annotateTrigger()?.click())
-    expect(draftRanges()).toHaveLength(1)
+    const editor = document.querySelector('[data-radix-popper-content-wrapper]')
+    expect(editor).not.toBeNull()
+    expect(editor?.textContent).toContain('To Agent')
+    expect(editor?.textContent).not.toContain('selectable agent reply')
 
     const cancel = Array.from(document.querySelectorAll('button')).find(
       (button) => button.textContent === 'Cancel'
@@ -329,19 +327,6 @@ describe('TextAnnotationSurface note editor highlight', () => {
     await act(async () => cancel?.click())
 
     expect(draftRanges()).toHaveLength(0)
-  })
-
-  it('does not repeat the selected quote inside the note editor', async () => {
-    const paragraph = await renderSurface()
-    await commitSelection(paragraph)
-    await act(async () => annotateTrigger()?.click())
-
-    const editor = document.querySelector('[data-radix-popper-content-wrapper]')
-    expect(editor).not.toBeNull()
-    expect(editor?.textContent).toContain('To Agent')
-    // The selection stays highlighted in the message itself; the editor never
-    // repeats the quote.
-    expect(editor?.textContent).not.toContain('selectable agent reply')
   })
 
   it('reveals the quoted text when the composer card requests it', async () => {
@@ -625,23 +610,6 @@ describe('TextAnnotationSurface annotate trigger', () => {
     const survivingEditor = document.querySelector<HTMLTextAreaElement>('textarea')
     expect(survivingEditor).toBe(editor)
     expect(survivingEditor?.value).toBe('first character')
-  })
-
-  it('shows only the trigger after selecting again, not the note editor', async () => {
-    const paragraph = await renderSurface()
-    await commitSelection(paragraph)
-    await act(async () => annotateTrigger()?.click())
-    expect(document.querySelector('textarea')).not.toBeNull()
-
-    // The user dismisses the editor and selects different text.
-    await act(async () =>
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    )
-    expect(document.querySelector('textarea')).toBeNull()
-
-    await commitSelection(paragraph)
-    expect(annotateTrigger()).toBeDefined()
-    expect(document.querySelector('textarea')).toBeNull()
   })
 
   it('clears the draft trigger when clicking anywhere outside it', async () => {

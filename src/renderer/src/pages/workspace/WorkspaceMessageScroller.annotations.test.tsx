@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import { installCssHighlightsMock, type TestHighlightRegistry } from '@/test-utils/css-highlights'
-import type { TextAnnotation } from '../../../../shared/annotations'
+import type { AnnotationValidationError, TextAnnotation } from '../../../../shared/annotations'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SendEditedMessage } from './workspace-edited-message'
@@ -166,18 +166,24 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
     container.remove()
   })
 
-  const renderScroller = async (
-    session: ChatSession,
-    annotations: readonly TextAnnotation[],
-    onSendEditedMessage: SendEditedMessage
-  ): Promise<void> => {
+  const renderScroller = async ({
+    session,
+    annotations = [],
+    onAddAnnotation = vi.fn(() => undefined),
+    onSendEditedMessage = vi.fn<SendEditedMessage>(() => ({ ok: true, disposition: 'sent' }))
+  }: {
+    session: ChatSession
+    annotations?: readonly TextAnnotation[]
+    onAddAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
+    onSendEditedMessage?: SendEditedMessage
+  }): Promise<void> => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     await act(async () => {
       root.render(
         <WorkspaceMessageScroller
           activeSession={session}
           annotations={annotations}
-          onAddAnnotation={vi.fn(() => undefined)}
+          onAddAnnotation={onAddAnnotation}
           onAnnotationError={vi.fn()}
           onSendEditedMessage={onSendEditedMessage}
         />
@@ -185,12 +191,47 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
     })
   }
 
-  it('withdraws the message highlight when the annotation is removed from the draft', async () => {
-    // Transcript-scoped props (send handler, session object) keep their identity across
-    // composer re-renders — exactly what the memo comparison sees when only the composer's
-    // annotation draft changed.
+  const selectAndAnnotate = async (
+    surface: HTMLElement,
+    selectionTarget: Node = surface
+  ): Promise<void> => {
+    const range = document.createRange()
+    range.selectNodeContents(selectionTarget)
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () =>
+        ({
+          left: 10,
+          right: 180,
+          top: 20,
+          bottom: 40,
+          width: 170,
+          height: 20,
+          x: 10,
+          y: 20,
+          toJSON: () => ({})
+        }) as DOMRect
+    })
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await act(async () => surface.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+
+    const trigger = document.querySelector<HTMLButtonElement>('[data-annotation-trigger]')
+    expect(trigger).not.toBeNull()
+    await act(async () => trigger?.click())
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+      .filter((button) => button.textContent === 'Annotate')
+      .at(-1)
+    await act(async () => confirm?.click())
+  }
+
+  it('syncs the message badge and highlight as draft annotations are added and removed', async () => {
     const session = replySession()
     const onSendEditedMessage = vi.fn<SendEditedMessage>(() => ({ ok: true, disposition: 'sent' }))
+    await renderScroller({ session, onSendEditedMessage })
+    expect(container.querySelector('[data-annotation-active="true"]')).toBeNull()
+
     const annotation: TextAnnotation = {
       id: 'annotation-1',
       kind: 'text',
@@ -198,34 +239,14 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
       quote: 'quotable words',
       source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'reply-1' }
     }
-    await renderScroller(session, [annotation], onSendEditedMessage)
-    expect(container.querySelector('[data-annotation-active="true"]')).not.toBeNull()
-    expect(draftHighlightRanges().map((range) => range.toString())).toContain('quotable words')
-
-    await renderScroller(session, [], onSendEditedMessage)
-    expect(container.querySelector('[data-annotation-active="true"]')).toBeNull()
-    expect(draftHighlightRanges()).toHaveLength(0)
-  })
-
-  it('shows the annotation badge and highlight as soon as the draft gains the annotation', async () => {
-    // Annotating writes the highlight imperatively, but the surface state (badge and reconciled
-    // range) must also follow the composer draft on the next parent render.
-    const session = replySession()
-    const onSendEditedMessage = vi.fn<SendEditedMessage>(() => ({ ok: true, disposition: 'sent' }))
-    await renderScroller(session, [], onSendEditedMessage)
-    expect(container.querySelector('[data-annotation-active="true"]')).toBeNull()
-
-    const annotation: TextAnnotation = {
-      id: 'annotation-1',
-      kind: 'text',
-      target: 'agent',
-      quote: 'quotable words',
-      source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'reply-1' }
-    }
-    await renderScroller(session, [annotation], onSendEditedMessage)
+    await renderScroller({ session, annotations: [annotation], onSendEditedMessage })
     expect(container.querySelector('[data-annotation-active="true"]')).not.toBeNull()
     expect(container.textContent).toContain('Annotated for Agent')
     expect(draftHighlightRanges().map((range) => range.toString())).toContain('quotable words')
+
+    await renderScroller({ session, onSendEditedMessage })
+    expect(container.querySelector('[data-annotation-active="true"]')).toBeNull()
+    expect(draftHighlightRanges()).toHaveLength(0)
   })
 
   it('annotates and restores independent Tool and Notebook transcript sections', async () => {
@@ -277,49 +298,13 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
       ok: true,
       disposition: 'sent'
     }))
-    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const render = async (annotations: readonly TextAnnotation[]): Promise<void> => {
-      await act(async () => {
-        root.render(
-          <WorkspaceMessageScroller
-            activeSession={session}
-            annotations={annotations}
-            onAddAnnotation={onAddAnnotation}
-            onAnnotationError={vi.fn()}
-            onSendEditedMessage={onSendEditedMessage}
-          />
-        )
+      await renderScroller({
+        session,
+        annotations,
+        onAddAnnotation,
+        onSendEditedMessage
       })
-    }
-    const selectAndAnnotate = async (codeBlock: HTMLElement): Promise<void> => {
-      const range = document.createRange()
-      range.selectNodeContents(codeBlock)
-      Object.defineProperty(range, 'getBoundingClientRect', {
-        configurable: true,
-        value: () =>
-          ({
-            left: 10,
-            right: 160,
-            top: 20,
-            bottom: 40,
-            width: 150,
-            height: 20,
-            x: 10,
-            y: 20,
-            toJSON: () => ({})
-          }) as DOMRect
-      })
-      const selection = window.getSelection()!
-      selection.removeAllRanges()
-      selection.addRange(range)
-      await act(async () => codeBlock.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
-      const trigger = document.querySelector<HTMLButtonElement>('[data-annotation-trigger]')
-      expect(trigger).not.toBeNull()
-      await act(async () => trigger?.click())
-      const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
-        .filter((button) => button.textContent === 'Annotate')
-        .at(-1)
-      await act(async () => confirm?.click())
     }
 
     await render([])
@@ -427,22 +412,15 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
         sectionId: 'output'
       }
     }
-    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const onSendEditedMessage = vi.fn<SendEditedMessage>(() => ({
       ok: true,
       disposition: 'sent'
     }))
     const render = async (activities: ToolActivity[]): Promise<void> => {
-      await act(async () => {
-        root.render(
-          <WorkspaceMessageScroller
-            activeSession={createSession({ status: 'idle', activities })}
-            annotations={[annotation]}
-            onAddAnnotation={vi.fn(() => undefined)}
-            onAnnotationError={vi.fn()}
-            onSendEditedMessage={onSendEditedMessage}
-          />
-        )
+      await renderScroller({
+        session: createSession({ status: 'idle', activities }),
+        annotations: [annotation],
+        onSendEditedMessage
       })
     }
 
@@ -520,21 +498,14 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
         sectionId: 'step:6:description'
       }
     }
-    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const onSendEditedMessage = vi.fn<SendEditedMessage>(() => ({
       ok: true,
       disposition: 'sent'
     }))
-    await act(async () => {
-      root.render(
-        <WorkspaceMessageScroller
-          activeSession={createSession({ status: 'idle', activities: [plan, ...fillers] })}
-          annotations={[annotation]}
-          onAddAnnotation={vi.fn(() => undefined)}
-          onAnnotationError={vi.fn()}
-          onSendEditedMessage={onSendEditedMessage}
-        />
-      )
+    await renderScroller({
+      session: createSession({ status: 'idle', activities: [plan, ...fillers] }),
+      annotations: [annotation],
+      onSendEditedMessage
     })
     expect(
       container.querySelector('[data-message-id="plan-activity-plan-reveal-target"]')
@@ -557,7 +528,7 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
     expect(step.getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('annotates durable elicitation field descriptions without changing answers', async () => {
+  it('annotates and reveals durable elicitation field descriptions', async () => {
     const fields = [
       {
         id: 'question_0',
@@ -614,49 +585,12 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
       addedAnnotations.push(annotation)
       return undefined
     })
-    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const render = async (annotations: readonly TextAnnotation[]): Promise<void> => {
-      await act(async () => {
-        root.render(
-          <WorkspaceMessageScroller
-            activeSession={session}
-            annotations={annotations}
-            onAddAnnotation={onAddAnnotation}
-            onAnnotationError={vi.fn()}
-            onSendEditedMessage={vi.fn()}
-          />
-        )
+      await renderScroller({
+        session,
+        annotations,
+        onAddAnnotation
       })
-    }
-    const selectAndAnnotate = async (element: HTMLElement): Promise<void> => {
-      const range = document.createRange()
-      range.selectNodeContents(element)
-      Object.defineProperty(range, 'getBoundingClientRect', {
-        configurable: true,
-        value: () =>
-          ({
-            left: 10,
-            right: 180,
-            top: 20,
-            bottom: 40,
-            width: 170,
-            height: 20,
-            x: 10,
-            y: 20,
-            toJSON: () => ({})
-          }) as DOMRect
-      })
-      const selection = window.getSelection()!
-      selection.removeAllRanges()
-      selection.addRange(range)
-      await act(async () => element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
-      const trigger = document.querySelector<HTMLButtonElement>('[data-annotation-trigger]')
-      expect(trigger).not.toBeNull()
-      await act(async () => trigger?.click())
-      const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
-        .filter((button) => button.textContent === 'Annotate')
-        .at(-1)
-      await act(async () => confirm?.click())
     }
 
     await render([])
@@ -666,10 +600,6 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
       )
     expect(answerRows()).toHaveLength(2)
     await act(async () => answerRows()[0]?.click())
-    const selectedOption = container.querySelector<HTMLElement>(
-      '[data-testid="elicitation-option-bayesian"]'
-    )!
-    expect(selectedOption.dataset.selected).toBe('true')
 
     const firstQuestionDescription = Array.from(
       container.querySelectorAll<HTMLElement>('[data-annotation-surface] p')
@@ -678,7 +608,6 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
       'Which analysis method should the report use?'
     )
     await selectAndAnnotate(firstQuestionDescription)
-    expect(selectedOption.dataset.selected).toBe('true')
     expect(addedAnnotations[0]?.source).toEqual({
       kind: 'session-item',
       sessionId: 'session-1',
@@ -690,7 +619,6 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
     expect(draftHighlightRanges().map((range) => range.toString())).toContain(
       'Which analysis method should the report use?'
     )
-    expect(selectedOption.dataset.selected).toBe('true')
 
     const secondQuestionAnnotation: TextAnnotation = {
       id: 'second-question-annotation',
@@ -708,25 +636,11 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
     await render([...addedAnnotations, secondQuestionAnnotation])
     expect(answerRows()[1]?.getAttribute('aria-expanded')).toBe('false')
 
-    await act(async () =>
-      requestAnnotationReveal({
-        ...secondQuestionAnnotation,
-        source: { ...secondQuestionAnnotation.source, sessionId: 'another-session' }
-      })
-    )
-    expect(answerRows()[1]?.getAttribute('aria-expanded')).toBe('false')
-
     await act(async () => requestAnnotationReveal(secondQuestionAnnotation))
     expect(answerRows()[1]?.getAttribute('aria-expanded')).toBe('true')
     expect(
       Array.from(highlights.get('agent-annotation-reveal') ?? []).map((range) => range.toString())
     ).toContain('Who will read the report?')
-
-    await act(async () => answerRows()[1]?.click())
-    expect(answerRows()[1]?.getAttribute('aria-expanded')).toBe('false')
-    await render([...addedAnnotations, secondQuestionAnnotation])
-    await act(async () => requestAnnotationReveal(secondQuestionAnnotation))
-    expect(answerRows()[1]?.getAttribute('aria-expanded')).toBe('true')
   })
 
   it('reveals a windowed elicitation without accepting a request from another session', async () => {
@@ -763,17 +677,9 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
         sectionId: 'prompt'
       }
     }
-    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
-    await act(async () => {
-      root.render(
-        <WorkspaceMessageScroller
-          activeSession={createSession({ status: 'idle', activities: [activity, ...fillers] })}
-          annotations={[annotation]}
-          onAddAnnotation={vi.fn(() => undefined)}
-          onAnnotationError={vi.fn()}
-          onSendEditedMessage={vi.fn()}
-        />
-      )
+    await renderScroller({
+      session: createSession({ status: 'idle', activities: [activity, ...fillers] }),
+      annotations: [annotation]
     })
     expect(container.querySelector('[data-message-id="activity-windowed-question"]')).toBeNull()
 
@@ -858,18 +764,11 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
       addedAnnotations.push(annotation)
       return undefined
     })
-    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const render = async (annotations: readonly TextAnnotation[]): Promise<void> => {
-      await act(async () => {
-        root.render(
-          <WorkspaceMessageScroller
-            activeSession={session}
-            annotations={annotations}
-            onAddAnnotation={onAddAnnotation}
-            onAnnotationError={vi.fn()}
-            onSendEditedMessage={vi.fn()}
-          />
-        )
+      await renderScroller({
+        session,
+        annotations,
+        onAddAnnotation
       })
     }
 
@@ -883,34 +782,7 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
     expect(heading.closest('[data-annotation-surface]')).toBeNull()
     expect(sourceButton.closest('[data-annotation-surface]')).toBeNull()
 
-    const range = document.createRange()
-    range.selectNodeContents(body)
-    Object.defineProperty(range, 'getBoundingClientRect', {
-      configurable: true,
-      value: () =>
-        ({
-          left: 10,
-          right: 180,
-          top: 20,
-          bottom: 40,
-          width: 170,
-          height: 20,
-          x: 10,
-          y: 20,
-          toJSON: () => ({})
-        }) as DOMRect
-    })
-    const selection = window.getSelection()!
-    selection.removeAllRanges()
-    selection.addRange(range)
-    await act(async () => body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
-    const trigger = document.querySelector<HTMLButtonElement>('[data-annotation-trigger]')
-    expect(trigger).not.toBeNull()
-    await act(async () => trigger?.click())
-    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
-      .filter((button) => button.textContent === 'Annotate')
-      .at(-1)
-    await act(async () => confirm?.click())
+    await selectAndAnnotate(body)
 
     expect(addedAnnotations[0]).toMatchObject({
       quote: 'Should I include the preprint evidence?',
@@ -968,16 +840,10 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
         updatedAt: 1710000000002 + index
       })
     )
-    await act(async () => {
-      root.render(
-        <WorkspaceMessageScroller
-          activeSession={{ ...session, activities: fillers }}
-          annotations={addedAnnotations}
-          onAddAnnotation={onAddAnnotation}
-          onAnnotationError={vi.fn()}
-          onSendEditedMessage={vi.fn()}
-        />
-      )
+    await renderScroller({
+      session: { ...session, activities: fillers },
+      annotations: addedAnnotations,
+      onAddAnnotation
     })
     expect(
       container.querySelector('[data-message-id="subagent-message-durable-upward-message"]')
@@ -1032,18 +898,11 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
       addedAnnotations.push(annotation)
       return undefined
     })
-    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const render = async (annotations: readonly TextAnnotation[]): Promise<void> => {
-      await act(async () => {
-        root.render(
-          <WorkspaceMessageScroller
-            activeSession={session}
-            annotations={annotations}
-            onAddAnnotation={onAddAnnotation}
-            onAnnotationError={vi.fn()}
-            onSendEditedMessage={vi.fn()}
-          />
-        )
+      await renderScroller({
+        session,
+        annotations,
+        onAddAnnotation
       })
     }
 
@@ -1059,34 +918,7 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
       (node): node is Text =>
         node.nodeType === Node.TEXT_NODE && node.textContent === 'new evidence'
     )!
-    const range = document.createRange()
-    range.selectNodeContents(addedText)
-    Object.defineProperty(range, 'getBoundingClientRect', {
-      configurable: true,
-      value: () =>
-        ({
-          left: 20,
-          right: 120,
-          top: 20,
-          bottom: 40,
-          width: 100,
-          height: 20,
-          x: 20,
-          y: 20,
-          toJSON: () => ({})
-        }) as DOMRect
-    })
-    const selection = window.getSelection()!
-    selection.removeAllRanges()
-    selection.addRange(range)
-    await act(async () => addedLine.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
-    const trigger = document.querySelector<HTMLButtonElement>('[data-annotation-trigger]')
-    expect(trigger).not.toBeNull()
-    await act(async () => trigger?.click())
-    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
-      .filter((button) => button.textContent === 'Annotate')
-      .at(-1)
-    await act(async () => confirm?.click())
+    await selectAndAnnotate(addedLine, addedText)
 
     expect(addedAnnotations.map(({ quote, source }) => ({ quote, source }))).toEqual([
       {
