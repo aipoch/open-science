@@ -5,6 +5,7 @@ import {
   createSourceFile,
   forEachChild,
   isArrowFunction,
+  isClassDeclaration,
   isConstructorDeclaration,
   isExportDeclaration,
   isFunctionDeclaration,
@@ -14,8 +15,10 @@ import {
   isNamedExports,
   isNewExpression,
   isPropertyDeclaration,
+  isSourceFile,
   ScriptKind,
   ScriptTarget,
+  SyntaxKind,
   type Node,
   type SourceFile
 } from 'typescript'
@@ -34,10 +37,20 @@ const sources = new Map(
 const sourceFileFor = (file: (typeof productionFiles)[number]): SourceFile =>
   createSourceFile(file, sources.get(file)!, ScriptTarget.Latest, true, ScriptKind.TS)
 
-const hasClassLifetime = (expression: Node): boolean => {
+const hasFacadeLifetime = (expression: Node): boolean => {
   let current: Node | undefined = expression.parent
   while (current) {
-    if (isConstructorDeclaration(current) || isPropertyDeclaration(current)) return true
+    if (isConstructorDeclaration(current) || isPropertyDeclaration(current)) {
+      const facade = current.parent
+      const isTargetFacade =
+        isClassDeclaration(facade) &&
+        facade.name?.text === 'ManagedFileIndexRepository' &&
+        isSourceFile(facade.parent)
+      const isStaticField =
+        isPropertyDeclaration(current) &&
+        current.modifiers?.some((modifier) => modifier.kind === SyntaxKind.StaticKeyword)
+      return isTargetFacade && !isStaticField
+    }
     if (
       isMethodDeclaration(current) ||
       isFunctionDeclaration(current) ||
@@ -62,7 +75,7 @@ const newExpressionCount = (
       isNewExpression(node) &&
       isIdentifier(node.expression) &&
       node.expression.text === className &&
-      (hasClassLifetime(node) ? 'class' : 'transient') === lifetime
+      (hasFacadeLifetime(node) ? 'class' : 'transient') === lifetime
     ) {
       count += 1
     }
@@ -108,7 +121,7 @@ describe('Project Files repository architecture', () => {
 
     const fieldInitializerFile = createSourceFile(
       'field-initializer.ts',
-      'class Repository { private readonly owner = new ProjectFilesMutationOwner() }',
+      'class ManagedFileIndexRepository { private readonly owner = new ProjectFilesMutationOwner() }',
       ScriptTarget.Latest,
       true,
       ScriptKind.TS
@@ -117,7 +130,7 @@ describe('Project Files repository architecture', () => {
 
     const methodConstructionFile = createSourceFile(
       'method-construction.ts',
-      'class Repository { createOwner() { return new ProjectFilesMutationOwner() } }',
+      'class ManagedFileIndexRepository { createOwner() { return new ProjectFilesMutationOwner() } }',
       ScriptTarget.Latest,
       true,
       ScriptKind.TS
@@ -126,6 +139,24 @@ describe('Project Files repository architecture', () => {
     expect(
       newExpressionCount(methodConstructionFile, 'ProjectFilesMutationOwner', 'transient')
     ).toBe(1)
+
+    const staticFieldFile = createSourceFile(
+      'static-field.ts',
+      'class ManagedFileIndexRepository { static owner = new ProjectFilesMutationOwner() }',
+      ScriptTarget.Latest,
+      true,
+      ScriptKind.TS
+    )
+    expect(newExpressionCount(staticFieldFile, 'ProjectFilesMutationOwner')).toBe(0)
+
+    const nestedClassFile = createSourceFile(
+      'nested-class.ts',
+      'class ManagedFileIndexRepository { createOwner() { class Holder { owner = new ProjectFilesMutationOwner() } return Holder } }',
+      ScriptTarget.Latest,
+      true,
+      ScriptKind.TS
+    )
+    expect(newExpressionCount(nestedClassFile, 'ProjectFilesMutationOwner')).toBe(0)
   })
 
   it('keeps Prisma writes and mutation state out of stateless support modules', () => {

@@ -7,6 +7,7 @@ import {
   isArrayLiteralExpression,
   isArrowFunction,
   isCallExpression,
+  isClassDeclaration,
   isConstructorDeclaration,
   isFunctionDeclaration,
   isFunctionExpression,
@@ -16,10 +17,12 @@ import {
   isObjectLiteralExpression,
   isPropertyAssignment,
   isPropertyDeclaration,
+  isSourceFile,
   isVariableStatement,
   NodeFlags,
   ScriptKind,
   ScriptTarget,
+  SyntaxKind,
   type SourceFile,
   type Node
 } from 'typescript'
@@ -75,10 +78,20 @@ const moduleStateNames = (sourceFile: SourceFile = facadeFile): readonly string[
     )
     .sort()
 
-const hasClassLifetime = (expression: Node): boolean => {
+const hasFacadeLifetime = (expression: Node): boolean => {
   let current: Node | undefined = expression.parent
   while (current) {
-    if (isConstructorDeclaration(current) || isPropertyDeclaration(current)) return true
+    if (isConstructorDeclaration(current) || isPropertyDeclaration(current)) {
+      const facade = current.parent
+      const isTargetFacade =
+        isClassDeclaration(facade) &&
+        facade.name?.text === 'NotebookRuntimeService' &&
+        isSourceFile(facade.parent)
+      const isStaticField =
+        isPropertyDeclaration(current) &&
+        current.modifiers?.some((modifier) => modifier.kind === SyntaxKind.StaticKeyword)
+      return isTargetFacade && !isStaticField
+    }
     if (
       isMethodDeclaration(current) ||
       isFunctionDeclaration(current) ||
@@ -101,7 +114,7 @@ const ownerConstructionCounts = (
     if (
       isNewExpression(node) &&
       isIdentifier(node.expression) &&
-      (hasClassLifetime(node) ? 'class' : 'transient') === lifetime
+      (hasFacadeLifetime(node) ? 'class' : 'transient') === lifetime
     ) {
       counts.set(node.expression.text, (counts.get(node.expression.text) ?? 0) + 1)
     }
@@ -193,6 +206,29 @@ describe('Notebook runtime facade architecture', () => {
     `)
     expect(
       ownerConstructionCounts(methodConstructionFile).get('NotebookSessionLifecycleOwner')
+    ).toBeUndefined()
+
+    const staticFieldFile = sourceFileFor(`
+      class NotebookRuntimeService {
+        private static readonly sessionLifecycle = new NotebookSessionLifecycleOwner({} as never)
+      }
+    `)
+    expect(
+      ownerConstructionCounts(staticFieldFile).get('NotebookSessionLifecycleOwner')
+    ).toBeUndefined()
+
+    const nestedClassFile = sourceFileFor(`
+      class NotebookRuntimeService {
+        createSessionLifecycle() {
+          class SessionLifecycleHolder {
+            readonly owner = new NotebookSessionLifecycleOwner({} as never)
+          }
+          return SessionLifecycleHolder
+        }
+      }
+    `)
+    expect(
+      ownerConstructionCounts(nestedClassFile).get('NotebookSessionLifecycleOwner')
     ).toBeUndefined()
   })
 })

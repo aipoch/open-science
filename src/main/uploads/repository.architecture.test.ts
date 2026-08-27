@@ -21,6 +21,7 @@ import {
   isNewExpression,
   isPropertyDeclaration,
   isPropertyAccessExpression,
+  isSourceFile,
   isVariableStatement,
   ScriptKind,
   ScriptTarget,
@@ -50,10 +51,19 @@ const hasModifier = (node: Node, kind: SyntaxKind): boolean =>
   canHaveModifiers(node) &&
   (getModifiers(node)?.some((modifier) => modifier.kind === kind) ?? false)
 
-const hasClassLifetime = (expression: Node): boolean => {
+const hasFacadeLifetime = (expression: Node): boolean => {
   let current: Node | undefined = expression.parent
   while (current) {
-    if (isConstructorDeclaration(current) || isPropertyDeclaration(current)) return true
+    if (isConstructorDeclaration(current) || isPropertyDeclaration(current)) {
+      const facade = current.parent
+      const isTargetFacade =
+        isClassDeclaration(facade) &&
+        facade.name?.text === 'UploadRepository' &&
+        isSourceFile(facade.parent)
+      const isStaticField =
+        isPropertyDeclaration(current) && hasModifier(current, SyntaxKind.StaticKeyword)
+      return isTargetFacade && !isStaticField
+    }
     if (
       isMethodDeclaration(current) ||
       isFunctionDeclaration(current) ||
@@ -78,7 +88,7 @@ const newExpressionLifetimes = (
       isIdentifier(node.expression) &&
       node.expression.text === className
     ) {
-      lifetimes.push(hasClassLifetime(node) ? 'class' : 'transient')
+      lifetimes.push(hasFacadeLifetime(node) ? 'class' : 'transient')
     }
     forEachChild(node, visit)
   }
@@ -241,7 +251,7 @@ describe('Upload repository architecture', () => {
 
     const fieldInitializerFile = createSourceFile(
       'field-initializer.ts',
-      'class Repository { private readonly owner = new ActiveTransferOwner() }',
+      'class UploadRepository { private readonly owner = new ActiveTransferOwner() }',
       ScriptTarget.Latest,
       true,
       ScriptKind.TS
@@ -250,7 +260,7 @@ describe('Upload repository architecture', () => {
 
     const methodConstructionFile = createSourceFile(
       'method-construction.ts',
-      'class Repository { createOwner() { return new ActiveTransferOwner() } }',
+      'class UploadRepository { createOwner() { return new ActiveTransferOwner() } }',
       ScriptTarget.Latest,
       true,
       ScriptKind.TS
@@ -258,6 +268,24 @@ describe('Upload repository architecture', () => {
     expect(newExpressionLifetimes(methodConstructionFile, 'ActiveTransferOwner')).toEqual([
       'transient'
     ])
+
+    const staticFieldFile = createSourceFile(
+      'static-field.ts',
+      'class UploadRepository { static owner = new ActiveTransferOwner() }',
+      ScriptTarget.Latest,
+      true,
+      ScriptKind.TS
+    )
+    expect(newExpressionLifetimes(staticFieldFile, 'ActiveTransferOwner')).toEqual(['transient'])
+
+    const nestedClassFile = createSourceFile(
+      'nested-class.ts',
+      'class UploadRepository { createOwner() { class Holder { owner = new ActiveTransferOwner() } return Holder } }',
+      ScriptTarget.Latest,
+      true,
+      ScriptKind.TS
+    )
+    expect(newExpressionLifetimes(nestedClassFile, 'ActiveTransferOwner')).toEqual(['transient'])
   })
 
   it('keeps recovery and verified cleanup decisions behind their owners', () => {
