@@ -6,6 +6,7 @@ import {
   forEachChild,
   isArrayLiteralExpression,
   isArrowFunction,
+  isCallExpression,
   isConstructorDeclaration,
   isFunctionDeclaration,
   isFunctionExpression,
@@ -29,7 +30,6 @@ const facadeSource = readFileSync(facadePath, 'utf8')
 const sourceFileFor = (source: string): SourceFile =>
   createSourceFile(facadePath, source, ScriptTarget.Latest, true, ScriptKind.TS)
 const facadeFile = sourceFileFor(facadeSource)
-const statefulConstructors = new Set(['Map', 'Set', 'WeakMap', 'WeakSet'])
 const isStatelessPolicyObject = (node: Node): boolean =>
   isObjectLiteralExpression(node) &&
   node.properties.length > 0 &&
@@ -48,16 +48,13 @@ const moduleStateNames = (sourceFile: SourceFile = facadeFile): readonly string[
           const mutableDeclaration =
             (statement.declarationList.flags & NodeFlags.Const) !== NodeFlags.Const
           const initializer = declaration.initializer
-          const mutableCollection =
+          const mutableInitializer =
             initializer !== undefined &&
-            isNewExpression(initializer) &&
-            isIdentifier(initializer.expression) &&
-            statefulConstructors.has(initializer.expression.text)
-          const mutableLiteral =
-            initializer !== undefined &&
-            (isArrayLiteralExpression(initializer) ||
+            (isCallExpression(initializer) ||
+              isNewExpression(initializer) ||
+              isArrayLiteralExpression(initializer) ||
               (isObjectLiteralExpression(initializer) && !isStatelessPolicyObject(initializer)))
-          return mutableDeclaration || mutableCollection || mutableLiteral
+          return mutableDeclaration || mutableInitializer
         })
         .map((declaration) => declaration.name.getText(sourceFile))
     )
@@ -139,6 +136,16 @@ describe('Notebook runtime facade architecture', () => {
 
     const objectStateFile = sourceFileFor(`${facadeSource}\nconst leakedSessions = {}\n`)
     expect(moduleStateNames(objectStateFile)).toContain('leakedSessions')
+
+    const factoryStateFile = sourceFileFor(
+      `${facadeSource}\nconst leakedSessions = createSessionCache()\n`
+    )
+    expect(moduleStateNames(factoryStateFile)).toContain('leakedSessions')
+
+    const constructedStateFile = sourceFileFor(
+      `${facadeSource}\nconst leakedSessions = new SessionCache()\n`
+    )
+    expect(moduleStateNames(constructedStateFile)).toContain('leakedSessions')
 
     const duplicateOwnerFile = sourceFileFor(
       `${facadeSource}\nnew NotebookSessionLifecycleOwner({} as never)\n`
