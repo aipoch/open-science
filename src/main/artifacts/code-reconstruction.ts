@@ -7,14 +7,17 @@ import type {
   GetArtifactCodeReconstructionRequest
 } from '../../shared/artifact-code-reconstruction'
 import type {
-  ArtifactVersionProvenance,
   ProvenanceNotebookOutput,
   ProvenanceNotebookRun
 } from '../../shared/artifact-provenance'
 import { isArtifactNotebookProducer } from '../../shared/artifact-provenance'
 import type { NotebookKernelKind } from '../../shared/notebook'
+import type { NotebookHelperModuleEvidence } from '../../shared/notebook'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
+import { notebookHelperEvidenceKey } from '../notebook/helper-evidence'
+import type { ArtifactVersionReconstructionProvenance } from './provenance-read-model'
+import { readArtifactReconstructionEvidence } from './provenance-reconstruction-evidence'
 
 const CONTEXT_MAX_BYTES = 256 * 1024
 const PRODUCER_SCRIPT_MAX_BYTES = 160 * 1024
@@ -24,7 +27,7 @@ const PROMPT_VERSION = 'artifact-code-reconstruction-v2'
 
 type CodeReconstructionRepository = Pick<
   import('./provenance-repository').ArtifactProvenanceRepository,
-  'getVersionProvenance' | 'readCodeReconstructionCache' | 'writeCodeReconstructionCache'
+  'readCodeReconstructionCache' | 'writeCodeReconstructionCache'
 >
 
 type CodeReconstructionRunner = {
@@ -37,32 +40,51 @@ type CodeReconstructionRunner = {
 
 type ArtifactCodeReconstructionServiceOptions = {
   provenance: CodeReconstructionRepository
+  loadProvenance?: (
+    request: GetArtifactCodeReconstructionRequest
+  ) => Promise<ArtifactVersionReconstructionProvenance>
   runner: CodeReconstructionRunner
   now?: () => Date
 }
 
 type ReconstructionSource = {
-  provenance: ArtifactVersionProvenance
+  provenance: ArtifactVersionReconstructionProvenance
   producerRun: ProvenanceNotebookRun
   language: NotebookKernelKind
   sourceChecksum: string
   sourceTruncated: boolean
 }
 
-type ReconstructionCache = {
-  schemaVersion: 1
+type ReconstructionCacheBase = {
   artifactVersionId: string
   sourceExecutionChecksum: string
   contextChecksum: string
   promptVersion: typeof PROMPT_VERSION
-  frameworkId: AgentFrameworkId
-  model: string
   language: NotebookKernelKind
   generatedAt: string
   sourceTruncated: boolean
   codeChecksum: string
   code: string
 }
+
+type ReconstructionCache = ReconstructionCacheBase &
+  (
+    | {
+        schemaVersion: 1
+        frameworkId: AgentFrameworkId
+        model: string
+      }
+    | {
+        schemaVersion: 2
+        origin: 'app-replay'
+      }
+    | {
+        schemaVersion: 2
+        origin: 'llm'
+        frameworkId: AgentFrameworkId
+        model: string
+      }
+  )
 
 type ReconstructionContext = {
   schemaVersion: 1
@@ -176,7 +198,7 @@ const projectRun = (run: ProvenanceNotebookRun, maxScriptBytes: number): Reconst
 }
 
 const sourceState = (
-  provenance: ArtifactVersionProvenance
+  provenance: ArtifactVersionReconstructionProvenance
 ): ReconstructionSource | ArtifactCodeReconstructionState => {
   if (!provenance.execution || !provenance.evidence.execution_snapshot_checksum) {
     return { state: 'unavailable', reason: 'execution-unavailable' }
@@ -191,6 +213,33 @@ const sourceState = (
   if (!producerRun?.script.trim()) {
     return { state: 'unavailable', reason: 'producer-script-missing' }
   }
+  const hasHelperKeys = provenance.execution.runs.some(
+    (run) => (run.helperModuleKeys?.length ?? 0) > 0
+  )
+  if (
+    (hasHelperKeys &&
+      (!provenance.execution.helperModules || !provenance.execution.helperEvidenceStatus)) ||
+    (provenance.execution.helperModules?.length && !provenance.execution.helperEvidenceStatus) ||
+    (provenance.execution.helperEvidenceStatus?.state === 'complete' &&
+      !provenance.execution.helperModules?.length)
+  ) {
+    return { state: 'unavailable', reason: 'helper-evidence-incomplete' }
+  }
+  if (provenance.execution.helperEvidenceStatus?.state === 'incomplete') {
+    return { state: 'unavailable', reason: 'helper-evidence-incomplete' }
+  }
+  if (provenance.execution.helperModules?.length) {
+    const helperKeys = new Set(provenance.execution.helperModules.map(notebookHelperEvidenceKey))
+    if (
+      provenance.execution.runs.some((run) =>
+        run.helperModuleKeys?.some((key) => !helperKeys.has(key))
+      ) ||
+      producerRun.scriptTruncated ||
+      provenance.execution.truncation?.omittedLeadingRunCount
+    ) {
+      return { state: 'unavailable', reason: 'supporting-code-incomplete' }
+    }
+  }
   return {
     provenance,
     producerRun,
@@ -203,6 +252,125 @@ const sourceState = (
       producerRun.hasOmittedInputs ||
       producerRun.omittedOutputCount
     )
+  }
+}
+
+const orderedHelpers = (
+  helpers: readonly NotebookHelperModuleEvidence[]
+): NotebookHelperModuleEvidence[] => {
+  const byId = new Map(helpers.map((helper) => [helper.helperId, helper]))
+  const ordered: NotebookHelperModuleEvidence[] = []
+  const visited = new Set<string>()
+  const visiting = new Set<string>()
+  const visit = (helper: NotebookHelperModuleEvidence): void => {
+    if (visited.has(helper.helperId)) return
+    if (visiting.has(helper.helperId))
+      throw new Error('Helper evidence contains a dependency cycle.')
+    visiting.add(helper.helperId)
+    for (const dependency of helper.dependencies ?? []) {
+      const value = byId.get(dependency)
+      if (!value) throw new Error(`Helper evidence is missing dependency: ${dependency}`)
+      visit(value)
+    }
+    visiting.delete(helper.helperId)
+    visited.add(helper.helperId)
+    ordered.push(helper)
+  }
+  for (const helper of [...helpers].sort((left, right) =>
+    left.helperId.localeCompare(right.helperId)
+  )) {
+    visit(helper)
+  }
+  return ordered
+}
+
+const buildFreshReplayCode = (source: ReconstructionSource): string | undefined => {
+  const producer = source.producerRun
+  const allHelpers = source.provenance.execution?.helperModules
+  if (!allHelpers?.length || source.language !== 'python') return undefined
+  const producerKeys = new Set(producer.helperModuleKeys ?? [])
+  if (producerKeys.size === 0) return undefined
+  const helpers = allHelpers.filter((helper) => producerKeys.has(notebookHelperEvidenceKey(helper)))
+  if (helpers.length !== producerKeys.size) {
+    throw new Error('Producer helper evidence is incomplete.')
+  }
+  const replayRuns = source.provenance
+    .execution!.runs.filter(
+      (run) =>
+        run.runIndex <= producer.runIndex &&
+        run.kernelKind === producer.kernelKind &&
+        (!producer.kernelEpochId ||
+          !run.kernelEpochId ||
+          run.kernelEpochId === producer.kernelEpochId)
+    )
+    .sort((left, right) => left.runIndex - right.runIndex)
+  if (replayRuns.some((run) => run.status === 'completed' && run.scriptTruncated)) {
+    throw new Error('Supporting cell evidence is incomplete.')
+  }
+  const byId = new Map(helpers.map((helper) => [helper.helperId, helper]))
+  const helperSection = (helper: NotebookHelperModuleEvidence): string => {
+    const dependencyExports = (helper.dependencies ?? []).flatMap(
+      (dependency) => byId.get(dependency)?.exports ?? []
+    )
+    return [
+      `# === Supporting helper source: ${helper.helperId} (${helper.registeredGeneration}, sha256:${helper.sourceDigest}) ===`,
+      `__os_helper_source = ${JSON.stringify(helper.source)}`,
+      `__os_dependency_names = ${JSON.stringify(dependencyExports)}`,
+      '__os_private = {"__builtins__": __builtins__, **{name: globals()[name] for name in __os_dependency_names}}',
+      `exec(compile(__os_helper_source, ${JSON.stringify(`<open-science-helper:${helper.helperId}>`)}, "exec"), __os_private, __os_private)`,
+      `__os_exports = ${JSON.stringify(helper.exports)}`,
+      '__os_missing = [name for name in __os_exports if name not in __os_private or not callable(__os_private[name])]',
+      'if __os_missing:',
+      '    raise RuntimeError("OPEN_SCIENCE_HELPER_MISSING_EXPORT")',
+      'globals().update({name: __os_private[name] for name in __os_exports})',
+      'del __os_helper_source, __os_dependency_names, __os_private, __os_exports, __os_missing'
+    ].join('\n')
+  }
+  const ordered = orderedHelpers(helpers)
+  const emittedHelperKeys = new Set<string>()
+  const sections: string[] = []
+  for (const run of replayRuns) {
+    const runHelperKeys = new Set(run.helperModuleKeys ?? [])
+    const newlyLoaded = ordered.filter((helper) => {
+      const key = notebookHelperEvidenceKey(helper)
+      return runHelperKeys.has(key) && !emittedHelperKeys.has(key)
+    })
+    for (const helper of newlyLoaded) {
+      const missingDependency = (helper.dependencies ?? []).find((dependency) => {
+        const evidence = byId.get(dependency)
+        return !evidence || !runHelperKeys.has(notebookHelperEvidenceKey(evidence))
+      })
+      if (missingDependency) {
+        throw new Error(`Helper evidence is missing dependency: ${missingDependency}`)
+      }
+      sections.push(helperSection(helper))
+      emittedHelperKeys.add(notebookHelperEvidenceKey(helper))
+    }
+    if (run.runId === producer.runId) {
+      sections.push(`# === Producer cell: ${producer.runId} ===\n${producer.script}`)
+    } else if (run.status === 'completed') {
+      sections.push(`# === Earlier successful cell: ${run.runId} ===\n${run.script}`)
+    }
+  }
+  if ([...producerKeys].some((key) => !emittedHelperKeys.has(key))) {
+    throw new Error('Producer helper evidence is incomplete.')
+  }
+  const code = sections.join('\n\n')
+  if (byteLength(code) > RESPONSE_MAX_BYTES) {
+    throw new Error('Fresh replay evidence exceeds the bounded reconstruction limit.')
+  }
+  return code
+}
+
+type ReplayCodeResolution =
+  | { state: 'available'; code: string | undefined }
+  | Extract<ArtifactCodeReconstructionState, { state: 'unavailable' }>
+
+function resolveReplayCode(source: ReconstructionSource): ReplayCodeResolution {
+  try {
+    return { state: 'available', code: buildFreshReplayCode(source) }
+  } catch {
+    return { state: 'unavailable', reason: 'supporting-code-incomplete' }
   }
 }
 
@@ -354,9 +522,14 @@ const parseCache = (
 ): ArtifactCodeReconstruction | undefined => {
   if (!serialized) return undefined
   try {
-    const cache = JSON.parse(serialized) as Partial<ReconstructionCache>
+    const cache = JSON.parse(serialized) as Partial<ReconstructionCacheBase> & {
+      schemaVersion?: unknown
+      origin?: unknown
+      frameworkId?: unknown
+      model?: unknown
+    }
     if (
-      cache.schemaVersion !== 1 ||
+      (cache.schemaVersion !== 1 && cache.schemaVersion !== 2) ||
       cache.artifactVersionId !== source.provenance.evidence.version_id ||
       cache.sourceExecutionChecksum !== source.sourceChecksum ||
       cache.promptVersion !== PROMPT_VERSION ||
@@ -364,22 +537,34 @@ const parseCache = (
       typeof cache.code !== 'string' ||
       !cache.code.trim() ||
       cache.codeChecksum !== sha256(cache.code) ||
-      typeof cache.generatedAt !== 'string' ||
-      typeof cache.model !== 'string' ||
-      (cache.frameworkId !== 'claude-code' &&
-        cache.frameworkId !== 'opencode' &&
-        cache.frameworkId !== 'codex')
+      typeof cache.generatedAt !== 'string'
     ) {
       return undefined
     }
-    return {
+    const common = {
       code: cache.code,
       language: cache.language,
       generatedAt: cache.generatedAt,
-      frameworkId: cache.frameworkId,
-      model: cache.model,
       sourceTruncated: cache.sourceTruncated === true
     }
+    if (cache.schemaVersion === 2 && cache.origin === 'app-replay') {
+      return { ...common, origin: 'app-replay' }
+    }
+    if (
+      (cache.schemaVersion === 1 || cache.origin === 'llm') &&
+      typeof cache.model === 'string' &&
+      (cache.frameworkId === 'claude-code' ||
+        cache.frameworkId === 'opencode' ||
+        cache.frameworkId === 'codex')
+    ) {
+      return {
+        ...common,
+        origin: 'llm',
+        frameworkId: cache.frameworkId,
+        model: cache.model
+      }
+    }
+    return undefined
   } catch {
     return undefined
   }
@@ -403,13 +588,15 @@ export class ArtifactCodeReconstructionService {
       await this.options.provenance.readCodeReconstructionCache(request),
       source
     )
-    return cached
-      ? { state: 'cached', value: cached }
-      : {
-          state: 'ready',
-          language: source.language,
-          sourceTruncated: source.sourceTruncated
-        }
+    if (cached) return { state: 'cached', value: cached }
+    const replay = resolveReplayCode(source)
+    if (replay.state === 'unavailable') return replay
+    return {
+      state: 'ready',
+      origin: replay.code ? 'app-replay' : 'llm',
+      language: source.language,
+      sourceTruncated: source.sourceTruncated
+    }
   }
 
   generate(
@@ -441,9 +628,6 @@ export class ArtifactCodeReconstructionService {
   private async generateFresh(
     request: GenerateArtifactCodeReconstructionRequest
   ): Promise<ArtifactCodeReconstructionState> {
-    // Snapshot the non-secret identity before evidence I/O so the click, not a later settings state,
-    // determines the framework/provider/model/effort. Credentials are still resolved only at spawn.
-    const target = await this.options.runner.captureTarget()
     const source = await this.loadSource(request)
     if (!isSource(source)) return source
     const existing = parseCache(
@@ -452,51 +636,79 @@ export class ArtifactCodeReconstructionService {
     )
     if (existing) return { state: 'cached', value: existing }
 
-    const context = buildContext(source)
-    const result = await this.options.runner.run(buildPrompt(context.serialized), target)
-    const code = normalizeResponse(result.text)
-    const cache: ReconstructionCache = {
-      schemaVersion: 1,
+    const replay = resolveReplayCode(source)
+    if (replay.state === 'unavailable') return replay
+    const replayCode = replay.code
+    const generatedAt = this.now().toISOString()
+    const commonCache = {
       artifactVersionId: source.provenance.evidence.version_id,
       sourceExecutionChecksum: source.sourceChecksum,
-      contextChecksum: context.checksum,
       promptVersion: PROMPT_VERSION,
-      frameworkId: result.frameworkId,
-      model: result.model,
       language: source.language,
-      generatedAt: this.now().toISOString(),
-      sourceTruncated: source.sourceTruncated || context.truncated,
-      codeChecksum: sha256(code),
-      code
+      generatedAt
+    } as const
+    let cache: ReconstructionCache
+    let value: ArtifactCodeReconstruction
+    if (replayCode) {
+      value = {
+        origin: 'app-replay',
+        code: replayCode,
+        language: source.language,
+        generatedAt,
+        sourceTruncated: source.sourceTruncated
+      }
+      cache = {
+        ...commonCache,
+        schemaVersion: 2,
+        origin: 'app-replay',
+        contextChecksum: sha256(replayCode),
+        sourceTruncated: value.sourceTruncated,
+        codeChecksum: sha256(replayCode),
+        code: replayCode
+      }
+    } else {
+      // Snapshot the non-secret identity only for model-backed reconstruction. Credentials remain
+      // resolved at spawn time by the runner.
+      const target = await this.options.runner.captureTarget()
+      const context = buildContext(source)
+      const result = await this.options.runner.run(buildPrompt(context.serialized), target)
+      const code = normalizeResponse(result.text)
+      value = {
+        origin: 'llm',
+        code,
+        language: source.language,
+        generatedAt,
+        frameworkId: result.frameworkId,
+        model: result.model,
+        sourceTruncated: source.sourceTruncated || context.truncated
+      }
+      cache = {
+        ...commonCache,
+        schemaVersion: 2,
+        origin: 'llm',
+        contextChecksum: context.checksum,
+        frameworkId: result.frameworkId,
+        model: result.model,
+        sourceTruncated: value.sourceTruncated,
+        codeChecksum: sha256(code),
+        code
+      }
     }
     await this.options.provenance.writeCodeReconstructionCache(
       request,
       `${JSON.stringify(cache, null, 2)}\n`
     )
-    return {
-      state: 'cached',
-      value: {
-        code,
-        language: cache.language,
-        generatedAt: cache.generatedAt,
-        frameworkId: cache.frameworkId,
-        model: cache.model,
-        sourceTruncated: cache.sourceTruncated
-      }
-    }
+    return { state: 'cached', value }
   }
 
   private async loadSource(
     request: GetArtifactCodeReconstructionRequest
   ): Promise<ReconstructionSource | ArtifactCodeReconstructionState> {
     return sourceState(
-      await this.options.provenance.getVersionProvenance(request, {
-        execution: true,
-        messages: false,
-        review: false
-      })
+      await (this.options.loadProvenance?.(request) ??
+        readArtifactReconstructionEvidence(this.options.provenance, request))
     )
   }
 }
 
-export { CONTEXT_MAX_BYTES, PROMPT_VERSION, buildContext, normalizeResponse }
+export { CONTEXT_MAX_BYTES, PROMPT_VERSION, buildContext, buildFreshReplayCode, normalizeResponse }

@@ -142,11 +142,8 @@ export type SettingsServiceOptions = {
   // The framework-neutral Agents config dir. Codex and other compatible agents discover skills
   // under ~/.agents/skills; it is scanned regardless of the active framework.
   userAgentsDir?: string
-  // Bundled-skill source, injectable so tests can point at a seeded temp dir instead of app resources.
   skillRegistry?: SkillRegistry
-  // Writable personal/imported skill store, injectable so tests can use a temp storage root.
   userSkills?: UserSkillRepository
-  // GitHub request implementation, injectable so credential tests never hit the network.
   githubFetch?: FetchLike
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
@@ -217,7 +214,7 @@ class SettingsService {
       userCodexDir,
       userAgentsDir: options.userAgentsDir ?? join(homedir(), '.agents'),
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
-      userSkills: options.userSkills ?? new UserSkillRepository(this.storageRoot),
+      userSkills: options.userSkills,
       githubFetch: options.githubFetch
     })
     const allocateSettingsIdSequence = createSettingsIdSequence()
@@ -504,17 +501,17 @@ class SettingsService {
   async listSkills(): Promise<SkillView[]> {
     return this.skills.listSkills()
   }
-
   // Internal main-process adapter used by host.skills. Unlike listSkills(), this includes bundled
   // internal Skills and returns source directories only to the trusted caller callback.
   async listHostSkills(): Promise<BundledSkill[]> {
     return this.skills.listHostSkills()
   }
-
+  registeredHelperCatalog(): ReturnType<SkillCatalogModule['registeredHelperCatalog']> {
+    return this.skills.registeredHelperCatalog()
+  }
   async listUserSkills(): Promise<BundledSkill[]> {
     return this.skills.listUserSkills()
   }
-
   async withHostSkillRead<T>(
     id: string,
     read: (skill: BundledSkill) => Promise<T>

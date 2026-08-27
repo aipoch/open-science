@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -77,6 +77,8 @@ import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { NotebookEnvironmentManager } from './environment-management'
 
 let storageRoot: string | undefined
+
+const helperDigest = (source: string): string => createHash('sha256').update(source).digest('hex')
 
 const createStorageRoot = async (): Promise<string> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-notebook-runtime-'))
@@ -277,6 +279,266 @@ describe('notebook runtime service', () => {
       })
     ).resolves.toEqual({ status: 'unavailable', reason: 'kernel-not-live' })
     expect(inspectNamespace).toHaveBeenCalledOnce()
+  })
+
+  it('resolves registered helper IDs before dispatching the producer request', async () => {
+    const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
+    let generation = 1
+    let terminateKernel!: () => Promise<void>
+    const repository = new NotebookRunRepository(root)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository,
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      helperModuleCatalog: {
+        resolve: async (id: string) => {
+          const source =
+            `PRIVATE_CONSTANT = ${generation === 1 ? 40 : 50}\n` +
+            'def public_add(value):\n    return PRIVATE_CONSTANT + value'
+          return id === 'registered-test-helper'
+            ? {
+                id,
+                language: 'python' as const,
+                source,
+                sourceDigest: helperDigest(source),
+                exports: ['public_add'],
+                skillIdentity: 'skill:registered-test-helper',
+                packageOrigin: 'personal',
+                interfaceRevision: '2026-08-01',
+                registeredGeneration: `generation-${generation}`,
+                generationRoot: join(root, 'registered', `generation-${generation}`)
+              }
+            : undefined
+        }
+      },
+      executorFactory: (_sessionId, lifecycle) => {
+        terminateKernel = () => lifecycle.onTerminated('python', 'default-python')
+        return {
+          execute: async (request) => {
+            executions.push(request)
+            return {
+              status: 'completed' as const,
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: [],
+              helperModulesInitialized: request.helperModules?.map(({ id }) => id)
+            }
+          },
+          shutdown: async () => ({ reaped: true }),
+          restart: async () => undefined
+        }
+      }
+    } as ConstructorParameters<typeof NotebookRuntimeService>[0])
+
+    await service.execute({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      language: 'python',
+      code: 'print(public_add(2))',
+      helperModules: ['registered-test-helper']
+    } as Parameters<NotebookRuntimeService['execute']>[0])
+    generation = 2
+    await service.execute({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      language: 'python',
+      code: 'print(public_add(3))'
+    } as Parameters<NotebookRuntimeService['execute']>[0])
+    await terminateKernel()
+    await service.execute({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      language: 'python',
+      code: 'print(public_add(4))',
+      helperModules: ['registered-test-helper']
+    } as Parameters<NotebookRuntimeService['execute']>[0])
+    generation = 3
+    await service.restart({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+    await service.execute({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      language: 'python',
+      code: 'print(public_add(5))',
+      helperModules: ['registered-test-helper']
+    } as Parameters<NotebookRuntimeService['execute']>[0])
+
+    expect(executions).toHaveLength(4)
+    expect(executions[0]).toMatchObject({
+      code: 'print(public_add(2))',
+      helperModules: [
+        {
+          id: 'registered-test-helper',
+          language: 'python',
+          exports: ['public_add']
+        }
+      ]
+    })
+    expect(executions[0]?.helperModules?.[0]?.code).not.toContain('print(public_add(2))')
+    expect(executions[0]?.helperModules?.[0]).toMatchObject({
+      registeredGeneration: 'generation-1'
+    })
+    expect(executions[0]?.protectedDirs).toContain(join(root, 'registered', 'generation-1'))
+    expect(executions[1]?.helperModules).toBeUndefined()
+    const persistedRuns = await repository.readSessionRuns('default-project', 'session-1')
+    expect(persistedRuns[0]?.helperModules).toEqual(persistedRuns[1]?.helperModules)
+    expect(persistedRuns[1]?.helperModules).toEqual([
+      {
+        helperId: 'registered-test-helper',
+        skillIdentity: 'skill:registered-test-helper',
+        packageOrigin: 'personal',
+        interfaceRevision: '2026-08-01',
+        registeredGeneration: 'generation-1',
+        exports: ['public_add'],
+        source:
+          'PRIVATE_CONSTANT = 40\ndef public_add(value):\n    return PRIVATE_CONSTANT + value',
+        sourceDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
+      }
+    ])
+    expect(executions[1]?.protectedDirs).toContain(join(root, 'registered', 'generation-1'))
+    expect(executions[2]?.helperModules?.[0]).toMatchObject({
+      registeredGeneration: 'generation-2'
+    })
+    expect(executions[2]?.protectedDirs).toContain(join(root, 'registered', 'generation-2'))
+    expect(executions[3]?.helperModules?.[0]).toMatchObject({
+      registeredGeneration: 'generation-3'
+    })
+    expect(executions[3]?.protectedDirs).toContain(join(root, 'registered', 'generation-3'))
+  })
+
+  it('forwards only authenticated bridge Skill scope to helper resolution', async () => {
+    const root = await createStorageRoot()
+    const scopes: unknown[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      helperModuleCatalog: {
+        resolve: async (id, scope) => {
+          scopes.push(scope)
+          return {
+            id,
+            language: 'python',
+            source: 'def public_value():\n    return 1',
+            sourceDigest: helperDigest('def public_value():\n    return 1'),
+            exports: ['public_value'],
+            skillIdentity: 'skill:scope-helper',
+            packageOrigin: 'personal',
+            interfaceRevision: '1',
+            registeredGeneration: 'generation-1'
+          }
+        }
+      },
+      executorFactory: () => ({
+        execute: async (request) => ({
+          status: 'completed' as const,
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: [],
+          helperModulesInitialized: request.helperModules?.map(({ id }) => id)
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const base = {
+      projectId: 'default-project',
+      workspaceCwd: root,
+      code: 'public_value()',
+      helperModules: ['scope-helper'],
+      registeredHelperSkillIds: ['forged-skill']
+    }
+
+    await service.execute({ ...base, sessionId: 'untrusted-session' })
+    await service.execute({
+      ...base,
+      sessionId: 'trusted-session',
+      executionInvocationId: 'trusted-invocation'
+    })
+
+    expect(scopes).toEqual([
+      {
+        projectId: 'default-project',
+        sessionId: 'untrusted-session'
+      },
+      {
+        projectId: 'default-project',
+        sessionId: 'trusted-session',
+        allowedSkillIds: ['forged-skill']
+      }
+    ])
+  })
+
+  it('rejects unknown, illegal, structured, and R helper requests before kernel dispatch', async () => {
+    const root = await createStorageRoot()
+    const execute = vi.fn()
+    const executorFactory = vi.fn(() => ({
+      execute,
+      shutdown: async () => ({ reaped: true })
+    }))
+    const catalogResolve = vi.fn(async () => undefined)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      helperModuleCatalog: { resolve: catalogResolve },
+      executorFactory
+    })
+    const base = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'producer_sentinel = True'
+    }
+
+    await expect(service.execute({ ...base, helperModules: ['unknown-helper'] })).rejects.toThrow(
+      /UNKNOWN_HELPER_MODULE/
+    )
+    for (const id of [
+      '',
+      ' ',
+      '.',
+      '..',
+      './helper',
+      'helper/name',
+      'helper\\name',
+      'helper\0name',
+      'Helper',
+      'héĺper',
+      'a'.repeat(129)
+    ]) {
+      await expect(service.execute({ ...base, helperModules: [id] })).rejects.toThrow(
+        /INVALID_HELPER_ID/
+      )
+    }
+    await expect(
+      service.execute({
+        ...base,
+        helperModules: [{ id: 'unknown-helper', path: '/tmp/kernel.py', source: 'x', digest: 'x' }]
+      } as unknown as Parameters<NotebookRuntimeService['execute']>[0])
+    ).rejects.toThrow(/INVALID_HELPER_ID/)
+    await expect(
+      service.execute({ ...base, language: 'r', helperModules: ['unknown-helper'] })
+    ).rejects.toThrow(/UNSUPPORTED_HELPER_LANGUAGE/)
+
+    expect(catalogResolve).toHaveBeenCalledTimes(1)
+    expect(executorFactory).toHaveBeenCalledTimes(1)
+    expect(execute).not.toHaveBeenCalled()
   })
 
   it('routes root and child Frames through isolated owners while aggregating attributed history', async () => {

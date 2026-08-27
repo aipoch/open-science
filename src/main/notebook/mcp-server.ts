@@ -31,15 +31,15 @@ const HOST_SDK_DISCOVERY_GUIDANCE =
 // Scoped prompt addendum that only applies when the agent is given notebook tools.
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   '<open_science_notebook_instructions>',
-  'Notebook tool instructions (only applies when using open-science-notebook tools).',
-  'Use the app-owned `ask_user_question` as the first tool call when a request has materially different interpretations; do not inspect or use other tools first, and never print a textual choice list. Put all 1-3 known questions in one call with 2-4 real options each. Infer minor reversible details and omit Other; the UI adds custom, agent-decide, and Skip. It shows questions one at a time, then continues the task after Finish. A pending result ends the turn normally.',
-  'Notebook preview is only for code and execution results; keep chat, explanation, and diagnosis in the chat area.',
-  'Use `notebook_execute` for one persistent Python/R cell per call; reuse `cellId` to rerun it. Python/R data kernels cannot call connectors; use `repl_execute` for `host.capabilities`/`host.llm`/`host.mcp`/`host.compute`/`host.agents`/`host.skills`. For large cross-kernel data, write under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL and read that path from Python/R.',
+  'Guidance only applies when using open-science-notebook tools.',
+  'For materially different interpretations, app-owned `ask_user_question` must be the first tool call; do not inspect or use other tools first or print choices. Put all 1-3 known questions in one call with 2-4 options each. Infer reversible details; omit Other (UI adds custom, agent-decide, Skip). UI asks sequentially; Finish continues. Pending ends the turn.',
+  'Notebook preview is for code/results only; keep explanations and diagnosis in chat.',
+  'Use `notebook_execute` once per persistent Python/R cell; reuse `cellId` to rerun. Data kernels cannot call connectors; use `repl_execute` for `host.capabilities`/`host.llm`/`host.mcp`/`host.compute`/`host.agents`/`host.skills`. For large cross-kernel data, write under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL, then read it from Python/R.',
   HOST_SDK_DISCOVERY_GUIDANCE,
   '`manage_environments` creates separate runtimes and returns canonical `created.runtimeId`.',
   'The notebook already runs inside a writable session workspace. cwd is the session data dir; use plain relative paths. Connector handoff is outside cwd and must be resolved from `OPEN_SCIENCE_HANDOFF_DIR`. Never copy a saved file onto the same path. Do not modify original user files.',
   'Use `inspect_packages` for version checks and `manage_packages` for installs. Never install inside a cell or shell. App-managed runtime contents belong under `$OPEN_SCIENCE_RUNTIME_DIR`, never the project, workspace, system Python, or a user global environment.',
-  'MCP execution replies include bounded output for the next step; use it directly when sufficient. Full output remains in the notebook preview. Inspect stdout, stderr, traceback, outputs, and workingFiles, then revise and rerun if needed. The notebook runtime does not classify files for you.',
+  'MCP replies give bounded next-step output; use it if sufficient. Full output stays in preview. Inspect stdout, stderr, traceback, outputs, and workingFiles; revise/rerun as needed. The notebook runtime does not classify files for you.',
   'Dependency metadata describes execution order, not an execution verdict: `clear` means no later tracked change, `stale` means a tracked dependency changed after that run, and `unknown` means tracking was incomplete. `stale` does not mean the run failed or its captured output is incorrect; rerun only when the task requires the current variable state.',
   'For a final user-facing file, call `write_artifact_file` from the `open-science-artifacts` server before announcing it. Use `source: { "kind": "localPath", "path": "plot.png" }` with the SAME relative filename you saved with and `producerRunId` set to the exact `runId` returned by the execution that last wrote it. Use inline content only for small text.',
   '</open_science_notebook_instructions>'
@@ -66,7 +66,9 @@ type NotebookMcpServerConfigRequest = NotebookMcpEnvironment & {
 const executeToolSchema = {
   code: z.string(),
   cellId: z.string().min(1).optional(),
-  language: z.enum(['python', 'r']).optional()
+  language: z.enum(['python', 'r']).optional(),
+  helperModules: z.array(z.string().min(1).max(128)).optional(),
+  artifactVersionInputs: z.array(z.string().min(1).max(256)).max(64).optional()
   // No `environment`: the env is the session's bound runtime (notebook_bind_runtime), not a per-call
   // argument. To run in a different env, bind/switch to it first.
 }
@@ -1246,7 +1248,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_execute',
     title: 'Execute notebook code',
     description:
-      'Write and run one persistent Python/R cell; reuse cellId to rerun it. The session binding selects the runtime (no per-call runtime/environment). Keep runId as producerRunId when this run last writes a final artifact.',
+      "Run persistent Python/R code; reuse cellId. helperModules accepts registered Python helper IDs, not paths/source/digests. artifactVersionInputs accepts immutable Artifact Version IDs, not paths, as this Run's provenance inputs. Binding selects runtime. Keep final artifact runId as producerRunId.",
     method: 'execute',
     inputSchema: executeToolSchema,
     mapResult: compactNotebookExecutionResult,

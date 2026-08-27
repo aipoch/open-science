@@ -116,6 +116,24 @@
       "updatedAt": "2026-08-12T00:00:00.000Z"
     },
     {
+      "id": "figure-composer",
+      "name": "Figure Composer",
+      "source": "featured",
+      "updatedAt": "2026-08-26T00:00:00.000Z"
+    },
+    {
+      "id": "figure-style",
+      "name": "Figure Style",
+      "source": "featured",
+      "updatedAt": "2026-08-26T00:00:00.000Z"
+    },
+    {
+      "id": "paper-narrative",
+      "name": "Paper Narrative",
+      "source": "featured",
+      "updatedAt": "2026-08-26T00:00:00.000Z"
+    },
+    {
       "id": "self-awareness",
       "name": "Self-awareness",
       "source": "featured",

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { SkillRegistry } from './registry'
+import { toUnpackedAsarPath } from './resource-path'
 
 const seedRoot = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), 'skills-reg-'))
@@ -40,6 +41,42 @@ const seedRoot = async (): Promise<string> => {
 }
 
 describe('SkillRegistry', () => {
+  it('resolves packaged Skill resources outside app.asar without consulting the cwd', () => {
+    expect(
+      toUnpackedAsarPath(
+        '/Applications/Open Science.app/Contents/Resources/app.asar/resources/skills'
+      )
+    ).toBe('/Applications/Open Science.app/Contents/Resources/app.asar.unpacked/resources/skills')
+    expect(toUnpackedAsarPath('/workspace/resources/skills')).toBe('/workspace/resources/skills')
+  })
+
+  it('discovers the bundled figure helper descriptors from the production manifest', async () => {
+    const skillsRoot = join(__dirname, '..', '..', '..', 'resources', 'skills')
+    const skills = await new SkillRegistry(skillsRoot).list()
+    const figureSkills = skills.filter(({ id }) =>
+      ['figure-style', 'figure-composer', 'paper-narrative'].includes(id)
+    )
+
+    expect(figureSkills.map(({ id }) => id).sort()).toEqual([
+      'figure-composer',
+      'figure-style',
+      'paper-narrative'
+    ])
+    for (const skill of figureSkills) {
+      expect(skill).toMatchObject({ source: 'featured' })
+      expect(skill.helpers).toEqual([
+        expect.objectContaining({
+          id: skill.id,
+          language: 'python',
+          implementation: 'kernel.py',
+          exports: expect.any(Array)
+        })
+      ])
+      expect(skill.helpers?.[0]?.exports.length).toBeGreaterThan(0)
+      expect(skill.helpers?.[0]).not.toHaveProperty('source')
+    }
+  })
+
   it('lists skills merging manifest metadata with SKILL.md description', async () => {
     const registry = new SkillRegistry(await seedRoot())
     const skills = await registry.list()
@@ -146,6 +183,38 @@ describe('SkillRegistry', () => {
     const after = (await new SkillRegistry(root).list())[0]?.compatibility
     expect(after).toMatch(/^sha256:[a-f0-9]{64}$/)
     expect(after).not.toBe(before)
+  })
+
+  it('normalizes a bundled registered-helper descriptor without exposing its source', async () => {
+    const root = await seedRoot()
+    await writeFile(join(root, 'demo', 'kernel.py'), 'def public_demo():\n    return 1\n')
+    await writeFile(
+      join(root, 'demo', 'open-science.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        helpers: [
+          {
+            id: 'demo-helper',
+            language: 'python',
+            interfaceRevision: 1,
+            implementation: 'kernel.py',
+            exports: ['public_demo'],
+            dependencies: []
+          }
+        ]
+      })
+    )
+
+    expect((await new SkillRegistry(root).list())[0]?.helpers).toEqual([
+      {
+        id: 'demo-helper',
+        language: 'python',
+        interfaceRevision: 1,
+        implementation: 'kernel.py',
+        exports: ['public_demo'],
+        dependencies: []
+      }
+    ])
   })
 
   it('skips manifest entries whose SKILL.md is missing', async () => {

@@ -340,6 +340,40 @@ describe('notebook_execute tool', () => {
     expect(() => schema.parse({ code: 'x', language: 'julia' })).toThrow()
   })
 
+  it('accepts only stable helper IDs and never helper implementation descriptors', () => {
+    const schema = z.object(tool?.inputSchema ?? {})
+
+    expect(
+      schema.parse({ code: 'public_add(2)', helperModules: ['registered-test-helper'] })
+    ).toEqual({ code: 'public_add(2)', helperModules: ['registered-test-helper'] })
+    expect(() =>
+      schema.parse({
+        code: 'public_add(2)',
+        helperModules: [
+          { id: 'registered-test-helper', path: '/tmp/kernel.py', source: 'x', digest: 'x' }
+        ]
+      })
+    ).toThrow()
+  })
+
+  it('accepts bounded Artifact Version identities as explicit Run inputs', () => {
+    const schema = z.object(tool?.inputSchema ?? {})
+
+    expect(
+      schema.parse({
+        code: 'compose_figure(...)',
+        artifactVersionInputs: ['panel-a-v1', 'panel-b-v1']
+      })
+    ).toEqual({
+      code: 'compose_figure(...)',
+      artifactVersionInputs: ['panel-a-v1', 'panel-b-v1']
+    })
+    expect(() =>
+      schema.parse({ code: 'x', artifactVersionInputs: [{ versionId: 'panel-a-v1' }] })
+    ).toThrow()
+    expect(tool?.description).toContain("this Run's provenance inputs")
+  })
+
   it('has no per-call environment param — the env is the session-bound runtime (v4)', () => {
     expect(tool).toBeDefined()
     // The env is the session's bound runtime (notebook_bind_runtime), not a per-call argument, so the
@@ -359,7 +393,7 @@ describe('notebook_execute tool', () => {
     expect(schema.parse({ code: 'print(1)', timeoutMs: 5 })).toEqual({ code: 'print(1)' })
   })
 
-  it('forwards the selected language straight through to the execute RPC call', async () => {
+  it('forwards language, helper IDs, and Artifact Version inputs to the execute RPC call', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
@@ -384,6 +418,8 @@ describe('notebook_execute tool', () => {
       {
         code: '1 + 1',
         language: 'r',
+        helperModules: ['registered-test-helper'],
+        artifactVersionInputs: ['panel-a-v1', 'panel-b-v1'],
         projectId: 'forged-project',
         sessionId: 'forged-session'
       },
@@ -393,9 +429,17 @@ describe('notebook_execute tool', () => {
     expect(result).toEqual({ ok: true })
     expect(fetchCalls).toHaveLength(1)
     const sentBody = JSON.parse(fetchCalls[0].body) as {
-      params: { language?: string; projectId?: string; sessionId?: string }
+      params: {
+        language?: string
+        helperModules?: string[]
+        artifactVersionInputs?: string[]
+        projectId?: string
+        sessionId?: string
+      }
     }
     expect(sentBody.params.language).toBe('r')
+    expect(sentBody.params.helperModules).toEqual(['registered-test-helper'])
+    expect(sentBody.params.artifactVersionInputs).toEqual(['panel-a-v1', 'panel-b-v1'])
     expect(sentBody.params.projectId).toBe('default-project')
     expect(sentBody.params.sessionId).toBe('session-1')
   })

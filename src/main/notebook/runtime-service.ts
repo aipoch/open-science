@@ -116,6 +116,7 @@ import {
   assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit
 } from './content-limits'
+import { NotebookHelperModuleHost, type NotebookHelperModuleCatalog } from './helper-module-host'
 
 // Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
 // to public hosts, so this default never silently forces a CN mirror).
@@ -225,6 +226,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
     | 'refreshAfterPackageMutation'
   >
   dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
+  helperModuleCatalog?: NotebookHelperModuleCatalog
 }
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
@@ -321,6 +323,7 @@ class NotebookRuntimeService {
   private readonly exportReader: NotebookExportReader
   private readonly runTerminalization: NotebookRunTerminalizationOwner
   private readonly executionOwner: NotebookExecutionOwner
+  private readonly helperModules: NotebookHelperModuleHost
   private readonly dependencyAnalyzer: Pick<NotebookDependencyAnalyzer, 'project'>
   private readonly dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   private readonly packageOperations: NotebookPackageOperations
@@ -503,6 +506,7 @@ class NotebookRuntimeService {
       repository: this.repository,
       notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session as RuntimeSession)
     })
+    this.helperModules = new NotebookHelperModuleHost(options.helperModuleCatalog)
     this.executionOwner = new NotebookExecutionOwner({
       configRoot: options.configRoot,
       runTerminalization: this.runTerminalization,
@@ -522,6 +526,7 @@ class NotebookRuntimeService {
           completedRun: run,
           ...(interpreter ? { interpreter } : {})
         }),
+      helperModules: this.helperModules,
       platform: options.platform,
       shellProcess: options.shellProcess
     })
@@ -810,14 +815,16 @@ class NotebookRuntimeService {
   // Compatibility facade: Session lookup and public summary projection stay here; lifecycle is owned.
   async runCell(
     request: RunNotebookCellRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    helperModules?: readonly string[]
   ): Promise<NotebookRunSummary> {
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       const session = await this.sessionLifecycle.ensure(request)
       const { run, dependencyProjection } = await this.executionOwner.executeDataCell(
         session,
         request,
-        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
+        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
+        helperModules
       )
       return this.sessionReadModel.toRunSummary(session, run, dependencyProjection)
     })
@@ -848,7 +855,8 @@ class NotebookRuntimeService {
         ...request,
         cellId: begin.cellId
       },
-      signal
+      signal,
+      request.helperModules
     )
   }
 

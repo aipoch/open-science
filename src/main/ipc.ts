@@ -123,6 +123,7 @@ import {
 import { ManagedPreviewResources } from './managed-preview-resources'
 import type { PreviewProtocolRegistrar } from './managed-preview-protocol'
 import type { ManagedPreviewSource } from '../shared/preview-resources'
+import { resolveEffectiveSpecialistSkills } from '../shared/specialist'
 import {
   createOfficePreviewFrameProcessResolver,
   createOfficePreviewProcessMemoryReader
@@ -504,8 +505,19 @@ const createApplicationModules = async (
       return
     }
     if (runtimeRef.current) {
-      broadcastToRenderers('skills:catalog-changed', undefined)
-      void runtimeRef.current.requestSkillsReload()
+      void settingsService
+        .registeredHelperCatalog()
+        .refresh()
+        .then(() => {
+          broadcastToRenderers('skills:catalog-changed', undefined)
+          return runtimeRef.current?.requestSkillsReload()
+        })
+        .catch((error) => {
+          createLogger('skills').warn(
+            'Skill catalog reconciliation failed',
+            diagnosticErrorFields(error)
+          )
+        })
     }
   }
   const sideChatOwnerRef: { current: SideChatRuntimeOwner | undefined } = {
@@ -1066,6 +1078,7 @@ const createApplicationModules = async (
       locale: app.getLocale(),
       appVersion: app.getVersion(),
       translate,
+      helperModuleCatalog: settingsService.registeredHelperCatalog(),
       events: applicationEvents,
       disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
       isBackendTeardownOwned: () => backendTeardownOwnedByCoordinator
@@ -1931,6 +1944,15 @@ const createApplicationModules = async (
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
       onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
+      resolveSpecialistSkillIds: async (specialistId) => {
+        const profile = await profileService.resolveRunnableById(specialistId)
+        if (!profile.enabled) return []
+        const effective = resolveEffectiveSpecialistSkills(
+          profile,
+          await settingsService.listSpecialistSkillCatalog()
+        )
+        return effective.kind === 'specialist' ? [...new Set(effective.skillIds)] : []
+      },
       connectorService,
       computeService: agentComputeService,
       skillImporter: conversationSkillImporter,
@@ -2235,6 +2257,7 @@ const createApplicationModules = async (
       storageRoot: configRoot,
       catalog: { list: () => settingsService.listUserSkills() },
       onCatalogChanged: async () => {
+        await settingsService.registeredHelperCatalog().refresh()
         broadcastToRenderers('skills:catalog-changed', undefined)
         await runtime.requestSkillsReload()
       }

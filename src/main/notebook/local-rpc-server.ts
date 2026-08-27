@@ -93,6 +93,7 @@ type NotebookLocalRpcServerOptions = {
   requestBytes?: number
   now?: () => number
   onSessionReleased?: (sessionId: string) => void
+  resolveSpecialistSkillIds?: (specialistId: string) => Promise<readonly string[]>
   transport?: LocalRpcListenOptions['transport']
   connectorService?: {
     call(
@@ -434,6 +435,26 @@ const notebookExecutionInputFingerprint = (
           ? input.timeoutMs
           : NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
         : null
+  // Match host request normalization: omission and [] are equivalent, duplicates collapse, and
+  // first-request order remains significant because it is also helper initialization order.
+  const helperModules =
+    method !== 'execute' || input?.helperModules === undefined
+      ? []
+      : Array.isArray(input.helperModules) &&
+          input.helperModules.every((helperId): helperId is string => typeof helperId === 'string')
+        ? [...new Set(input.helperModules)]
+        : undefined
+  if (helperModules === undefined) return undefined
+  const artifactVersionInputs =
+    method !== 'execute' || input?.artifactVersionInputs === undefined
+      ? []
+      : Array.isArray(input.artifactVersionInputs) &&
+          input.artifactVersionInputs.every(
+            (versionId): versionId is string => typeof versionId === 'string'
+          )
+        ? [...new Set(input.artifactVersionInputs)]
+        : undefined
+  if (artifactVersionInputs === undefined) return undefined
 
   return createHash('sha256')
     .update(
@@ -446,7 +467,9 @@ const notebookExecutionInputFingerprint = (
           : method === 'execute'
             ? 'python'
             : null,
-        method === 'execute' && typeof input?.cellId === 'string' ? input.cellId : null
+        method === 'execute' && typeof input?.cellId === 'string' ? input.cellId : null,
+        helperModules,
+        artifactVersionInputs
       ])
     )
     .digest('hex')
@@ -490,6 +513,7 @@ class NotebookLocalRpcServer {
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
   private readonly hostModel: NotebookLocalRpcServerOptions['hostModel']
   private readonly hostViewImage: NotebookLocalRpcServerOptions['hostViewImage']
+  private readonly resolveSpecialistSkillIds: NotebookLocalRpcServerOptions['resolveSpecialistSkillIds']
   private server: Server | undefined
   private serverLifecycle: NotebookRpcServerLifecycle | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
@@ -528,6 +552,7 @@ class NotebookLocalRpcServer {
     this.requestBytes = options.requestBytes ?? LOCAL_RESOURCE_BUDGETS.requestBytes
     this.now = options.now ?? Date.now
     this.onSessionReleased = options.onSessionReleased
+    this.resolveSpecialistSkillIds = options.resolveSpecialistSkillIds
     this.transport = options.transport
     this.connectorService = options.connectorService
     this.computeService = options.computeService
@@ -1637,6 +1662,7 @@ class NotebookLocalRpcServer {
       if (method === 'planCall' && lifecycle.closing) disconnect.abort()
       let resolvedParams = { ...this.resolveSessionAlias(params) }
       delete resolvedParams.executionInvocationId
+      delete resolvedParams.registeredHelperSkillIds
       const authenticatedBinding = authenticatedSessionBinding
       if (authenticatedBinding?.delegatedNotebook && isNotebookLocalRpcMethod(method)) {
         resolvedParams = {
@@ -2571,7 +2597,20 @@ class NotebookLocalRpcServer {
       )
     }
 
-    const handler = resolveNotebookLocalRpcHandler(this.service, method, params)
+    let trustedParams = params
+    if (method === 'execute' && typeof params.sessionId === 'string') {
+      const specialistId = this.sessionSpecialists.get(params.sessionId)
+      if (specialistId) {
+        const allowedSkillIds = this.resolveSpecialistSkillIds
+          ? await this.resolveSpecialistSkillIds(specialistId).catch(() => [])
+          : []
+        trustedParams = {
+          ...params,
+          registeredHelperSkillIds: [...allowedSkillIds]
+        }
+      }
+    }
+    const handler = resolveNotebookLocalRpcHandler(this.service, method, trustedParams)
 
     const projectId =
       typeof params.sessionId === 'string'
@@ -2590,7 +2629,10 @@ class NotebookLocalRpcServer {
       const lease = await this.inputRegistry.openRun({
         projectId,
         appSessionId: sessionId,
-        promptMessageId: provenanceContext.promptMessageId
+        promptMessageId: provenanceContext.promptMessageId,
+        ...(method === 'execute' && Array.isArray(params.artifactVersionInputs)
+          ? { artifactVersionInputs: params.artifactVersionInputs as string[] }
+          : {})
       })
       const leases = this.activeInputRunLeases.get(sessionId) ?? new Set<NotebookInputRunLease>()
       const inputRunLeaseId = randomUUID()
@@ -2600,7 +2642,7 @@ class NotebookLocalRpcServer {
       try {
         return await handler(
           {
-            ...params,
+            ...trustedParams,
             registeredInputFiles: lease.getRunInputFiles(),
             inputRunLeaseId
           },
@@ -2614,7 +2656,17 @@ class NotebookLocalRpcServer {
       }
     }
 
-    return handler(params, signal)
+    if (
+      method === 'execute' &&
+      Array.isArray(params.artifactVersionInputs) &&
+      params.artifactVersionInputs.length > 0
+    ) {
+      throw new Error(
+        'artifactVersionInputs requires an active Artifact provenance context and input registry.'
+      )
+    }
+
+    return handler(trustedParams, signal)
   }
 
   // Rewrites the temporary notebook session id to the final ACP session id when needed.

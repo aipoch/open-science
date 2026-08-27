@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest, type ClientRequest, type Server } from 'node:http'
@@ -10,7 +11,11 @@ import type { NotebookRunInputFile } from '../../shared/notebook'
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookLocalRpcServer } from './local-rpc-server'
-import { NotebookControlCompletionCapturedError, NotebookRuntimeService } from './runtime-service'
+import {
+  NotebookControlCompletionCapturedError,
+  NotebookRuntimeService,
+  type NotebookExecutionRequest
+} from './runtime-service'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
 import type { NotebookInputRunLease } from './input-registry'
 import {
@@ -22,6 +27,8 @@ import {
 } from './runtime-paths'
 
 let storageRoot: string | undefined
+
+const helperDigest = (source: string): string => createHash('sha256').update(source).digest('hex')
 
 const createStorageRoot = async (): Promise<string> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-notebook-rpc-'))
@@ -369,7 +376,8 @@ describe('notebook local RPC server', () => {
     const connections: Array<Awaited<ReturnType<typeof server.issueSessionConnection>>> = []
     const dispatch = async (
       sessionId: string,
-      code = 'print(1)'
+      code = 'print(1)',
+      helperModules?: string[]
     ): Promise<Record<string, unknown>> => {
       const connection = await server.issueSessionConnection(
         sessionId,
@@ -391,7 +399,9 @@ describe('notebook local RPC server', () => {
               sessionId: 'forged',
               workspaceCwd: '/workspace',
               code,
-              executionInvocationId: 'caller-controlled'
+              ...(helperModules ? { helperModules } : {}),
+              executionInvocationId: 'caller-controlled',
+              registeredHelperSkillIds: ['forged-skill']
             }
           })
         },
@@ -421,7 +431,9 @@ describe('notebook local RPC server', () => {
         rawInput: { code: 'print(1)' }
       })
       expect(freshId).toEqual(expect.any(String))
-      expect(await dispatch('fresh')).toMatchObject({ executionInvocationId: freshId })
+      const fresh = await dispatch('fresh')
+      expect(fresh).toMatchObject({ executionInvocationId: freshId })
+      expect(fresh).not.toHaveProperty('registeredHelperSkillIds')
 
       setTurn('missing')
       expect(await dispatch('missing')).not.toHaveProperty('executionInvocationId')
@@ -476,6 +488,30 @@ describe('notebook local RPC server', () => {
       })
       expect(await dispatch('mismatch', 'print(2)')).not.toHaveProperty('executionInvocationId')
       expect(await dispatch('mismatch')).not.toHaveProperty('executionInvocationId')
+
+      setTurn('helper-mismatch')
+      server.authorizeExecution({
+        sessionId: 'helper-mismatch',
+        toolCallId: 'tool-helper-mismatch',
+        promptMessageId: 'prompt-1',
+        method: 'execute',
+        rawInput: { code: 'print(1)', helperModules: ['helper-a'] }
+      })
+      expect(await dispatch('helper-mismatch', 'print(1)', ['helper-b'])).not.toHaveProperty(
+        'executionInvocationId'
+      )
+
+      setTurn('helper-normalized')
+      const normalizedHelperId = server.authorizeExecution({
+        sessionId: 'helper-normalized',
+        toolCallId: 'tool-helper-normalized',
+        promptMessageId: 'prompt-1',
+        method: 'execute',
+        rawInput: { code: 'print(1)', helperModules: ['helper-a', 'helper-a'] }
+      })
+      expect(await dispatch('helper-normalized', 'print(1)', ['helper-a'])).toMatchObject({
+        executionInvocationId: normalizedHelperId
+      })
 
       setTurn('repl-default')
       const replId = server.authorizeExecution({
@@ -1356,28 +1392,48 @@ describe('notebook local RPC server', () => {
 
   it('requires a bearer token and dispatches notebook execute calls', async () => {
     const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
+      helperModuleCatalog: {
+        resolve: async (id) => ({
+          id,
+          language: 'python',
+          source: 'def public_add(value):\n    return value + 1',
+          sourceDigest: helperDigest('def public_add(value):\n    return value + 1'),
+          exports: ['public_add'],
+          skillIdentity: 'skill:rpc-helper',
+          packageOrigin: 'personal',
+          interfaceRevision: '1',
+          registeredGeneration: 'generation-1'
+        })
+      },
       executorFactory: () => ({
-        execute: async (request) => ({
-          status: 'completed',
-          stdout: '2\n',
-          stderr: '',
-          traceback: '',
-          cwdAfter: request.cwd,
-          outputs: [],
-          workingFiles: []
-        }),
+        execute: async (request) => {
+          executions.push(request)
+          return {
+            status: 'completed' as const,
+            stdout: '2\n',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: [],
+            workingFiles: []
+          }
+        },
         shutdown: async () => ({ reaped: true })
       })
     })
+    const resolveSpecialistSkillIds = vi.fn(async () => ['registered-test-skill'])
     const server = new NotebookLocalRpcServer(service, {
       transport: 'tcp',
-      token: 'secret-token'
+      token: 'secret-token',
+      resolveSpecialistSkillIds
     })
+    server.registerSessionSpecialist('session-1', 'specialist-1')
     const connection = await server.ensureStarted()
 
     try {
@@ -1404,7 +1460,8 @@ describe('notebook local RPC server', () => {
             projectId: 'default-project',
             sessionId: 'session-1',
             workspaceCwd: '/workspace',
-            code: 'print(1 + 1)'
+            code: 'print(1 + 1)',
+            helperModules: ['registered-test-helper']
           }
         })
       })
@@ -1419,6 +1476,11 @@ describe('notebook local RPC server', () => {
           stdout: '2\n'
         }
       })
+      expect(executions[0]).toMatchObject({
+        code: 'print(1 + 1)',
+        helperModules: [{ id: 'registered-test-helper', exports: ['public_add'] }]
+      })
+      expect(resolveSpecialistSkillIds).toHaveBeenCalledWith('specialist-1')
     } finally {
       await server.close()
     }
@@ -2523,6 +2585,31 @@ describe('notebook local RPC server', () => {
     let rpcEndpoint = ''
     let rpcToken = ''
     const leasedInput: NotebookRunInputFile = { ...registeredInput }
+    const workflowArtifact: NotebookRunInputFile = {
+      inputFileVersionId: 'panel-a-v1',
+      sourceKind: 'artifact-version',
+      sourceFileId: 'panel-a',
+      sourceVersionNumber: 1,
+      sourceProjectId: 'default-project',
+      sourceSessionId: 'panel-worker-1',
+      filename: 'panel_A.png',
+      contentType: 'image/png',
+      sizeBytes: 20,
+      checksum: 'b'.repeat(64),
+      storageKey: 'artifacts/default-project/panel-worker-1/panel-a-v1/content',
+      association: 'turn-attached'
+    }
+    const openRun = vi.fn(
+      async () =>
+        ({
+          getRunInputFiles: () => [leasedInput, workflowArtifact],
+          resolve: async () => {
+            leasedInput.association = 'resolver-accessed'
+            return '/managed/groups.csv'
+          },
+          close: () => [{ ...leasedInput }, { ...workflowArtifact }]
+        }) as never
+    )
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -2569,15 +2656,7 @@ describe('notebook local RPC server', () => {
       inputRegistry: {
         registerTurn: async () => undefined,
         getTurnInputs: () => [registeredInput],
-        openRun: async () =>
-          ({
-            getRunInputFiles: () => [leasedInput],
-            resolve: async () => {
-              leasedInput.association = 'resolver-accessed'
-              return '/managed/groups.csv'
-            },
-            close: () => [{ ...leasedInput }]
-          }) as never,
+        openRun,
         clearSession: () => undefined
       }
     })
@@ -2612,7 +2691,8 @@ describe('notebook local RPC server', () => {
             projectId: 'default-project',
             sessionId: 'session-1',
             workspaceCwd: '/workspace',
-            code: 'print("ok")'
+            code: 'print("ok")',
+            artifactVersionInputs: ['panel-a-v1']
           }
         })
       })
@@ -2627,13 +2707,20 @@ describe('notebook local RPC server', () => {
         messageBranchId: 'branch-1',
         runtimeSegmentId: 'runtime-1',
         promptMessageId: 'message-user-1',
-        inputFiles: [{ ...registeredInput, association: 'resolver-accessed' }]
+        inputFiles: [{ ...registeredInput, association: 'resolver-accessed' }, workflowArtifact]
+      })
+      expect(openRun).toHaveBeenCalledWith({
+        projectId: 'default-project',
+        appSessionId: 'session-1',
+        promptMessageId: 'message-user-1',
+        artifactVersionInputs: ['panel-a-v1']
       })
       const payload = (await response.json()) as {
         result: { inputFiles: Array<Record<string, unknown>> }
       }
       expect(payload.result.inputFiles).toEqual([
-        expect.objectContaining({ inputFileVersionId: 'upload-version-1' })
+        expect.objectContaining({ inputFileVersionId: 'upload-version-1' }),
+        expect.objectContaining({ inputFileVersionId: 'panel-a-v1' })
       ])
       expect(payload.result.inputFiles[0]).not.toHaveProperty('storageKey')
     } finally {

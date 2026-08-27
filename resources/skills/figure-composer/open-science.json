@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "helpers": [
+    {
+      "id": "figure-composer",
+      "language": "python",
+      "interfaceRevision": 2,
+      "implementation": "kernel.py",
+      "exports": [
+        "figure_outline_schema",
+        "validate_figure_outline",
+        "grid_geom",
+        "panel_px",
+        "panel_xy",
+        "panel_task",
+        "compose_crops",
+        "compose_figure",
+        "group_fixes_by_panel",
+        "review_schema",
+        "composite_review_task",
+        "apply_outline_revisions"
+      ],
+      "dependencies": []
+    }
+  ]
+}

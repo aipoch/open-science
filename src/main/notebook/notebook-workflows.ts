@@ -81,12 +81,14 @@ const withoutTrustedTurnContext = <
     provenanceContext,
     executionInvocationId,
     registeredInputFiles,
+    registeredHelperSkillIds,
     inputRunLeaseId,
     ...publicRequest
   } = request
   void provenanceContext
   void executionInvocationId
   void registeredInputFiles
+  void registeredHelperSkillIds
   void inputRunLeaseId
   return publicRequest as Request
 }

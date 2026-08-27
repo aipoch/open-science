@@ -389,6 +389,27 @@ export type NotebookKernelMetadata = {
 export type NotebookKernelInstanceIdentity =
   { kind: 'python' | 'r'; environment: string } | { kind: 'repl' }
 
+// Immutable source evidence for one registered helper generation loaded into a Python kernel.
+// The host computes sourceDigest from the exact UTF-8 source stored here; callers never supply it.
+export type NotebookHelperModuleEvidence = {
+  helperId: string
+  skillIdentity: string
+  packageOrigin: string
+  interfaceRevision: string
+  registeredGeneration: string
+  exports: string[]
+  dependencies?: string[]
+  source: string
+  sourceDigest: string
+}
+
+export type NotebookHelperEvidenceStatus =
+  | { state: 'complete' }
+  | {
+      state: 'incomplete'
+      reasons: Array<'source-missing' | 'source-corrupt' | 'payload-limit'>
+    }
+
 // Stores one durable notebook execution, including code, output, and generated-file references.
 export type NotebookRunRecord = {
   runId: string
@@ -401,6 +422,10 @@ export type NotebookRunRecord = {
   // Whether this run's source was handed to the persistent data kernel. Pre-dispatch failures set
   // false so dependency projection never invents mutations; absent legacy evidence stays conservative.
   kernelDispatched?: boolean
+  // Sticky for the kernel epoch: every later Python run retains the complete loaded-helper set,
+  // even when that cell omitted helperModules.
+  helperModules?: NotebookHelperModuleEvidence[]
+  helperEvidenceStatus?: NotebookHelperEvidenceStatus
   // Stable identity of the external runtime used by this run. Managed runs are reproducible from
   // their environment; external runs need this identity to rebuild a missing derived sidecar.
   runtimeId?: string
@@ -618,6 +643,9 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
   // Injected only by the authenticated local RPC bridge after resolving the active turn registry.
   // Renderer IPC strips this field before calling the runtime service.
   registeredInputFiles?: NotebookRunInputFile[]
+  // Injected only by the authenticated local RPC bridge for a Specialist-bound session. Renderer
+  // IPC strips this field together with executionInvocationId; it is never caller authority.
+  registeredHelperSkillIds?: string[]
   // Identifies the exact active input lease for this execution. The bridge generates it and the
   // kernel returns it when resolving an immutable input so overlapping runs cannot claim access.
   inputRunLeaseId?: string
@@ -765,6 +793,14 @@ export type RunNotebookCellRequest = NotebookSessionRequest & {
 // Convenience request that writes a cell and runs it in one command.
 export type ExecuteNotebookCodeRequest = NotebookSessionRequest & {
   code: string
+  // Stable IDs resolved by the host-owned registered Skill catalog. Callers cannot provide helper
+  // implementation paths, source, or digests.
+  helperModules?: string[]
+  // Immutable Artifact Versions produced or selected during the current control-plane workflow.
+  // The main process resolves and validates these identities before dispatch, then records them as
+  // inputs of this Run. This is intentionally identities-only: callers cannot supply paths or
+  // provenance metadata.
+  artifactVersionInputs?: string[]
   timeoutMs?: number
   cellId?: string
   source?: NotebookRunSource

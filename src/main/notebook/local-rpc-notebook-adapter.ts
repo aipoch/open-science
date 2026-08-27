@@ -52,6 +52,7 @@ const notebookSessionRequestSchema = z
     provenanceContext: provenanceContextSchema.optional(),
     executionInvocationId: z.string().optional(),
     registeredInputFiles: z.array(registeredInputFileSchema).optional(),
+    registeredHelperSkillIds: z.array(z.string()).optional(),
     inputRunLeaseId: z.string().optional(),
     delegatedWorkAttemptId: z.string().optional()
   })
@@ -90,6 +91,8 @@ const notebookLocalRpcRequestSchemas = {
   }),
   execute: notebookSessionRequestSchema.extend({
     code: z.string(),
+    helperModules: z.array(z.string().min(1).max(128)).optional(),
+    artifactVersionInputs: z.array(z.string().min(1).max(256)).max(64).optional(),
     timeoutMs: positiveTimeoutSchema.optional(),
     cellId: z.string().optional(),
     source: runSourceSchema.optional(),

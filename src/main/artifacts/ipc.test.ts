@@ -614,9 +614,14 @@ describe('artifact IPC handlers', () => {
       get: vi.fn(),
       generate: vi.fn(
         () =>
-          new Promise<{ state: 'ready'; language: 'python'; sourceTruncated: false }>((resolve) => {
+          new Promise<{
+            state: 'ready'
+            origin: 'llm'
+            language: 'python'
+            sourceTruncated: false
+          }>((resolve) => {
             releaseGeneration = () =>
-              resolve({ state: 'ready', language: 'python', sourceTruncated: false })
+              resolve({ state: 'ready', origin: 'llm', language: 'python', sourceTruncated: false })
           })
       )
     }
@@ -642,6 +647,7 @@ describe('artifact IPC handlers', () => {
     releaseGeneration?.()
     await expect(generationPromise).resolves.toEqual({
       state: 'ready',
+      origin: 'llm',
       language: 'python',
       sourceTruncated: false
     })
@@ -1065,12 +1071,14 @@ describe('artifact IPC handler registration', () => {
     }
     const get = vi.fn().mockResolvedValue({
       state: 'ready',
+      origin: 'llm',
       language: 'python',
       sourceTruncated: false
     })
     const generate = vi.fn().mockResolvedValue({
       state: 'cached',
       value: {
+        origin: 'llm',
         code: 'print(1)',
         language: 'python',
         generatedAt: '2026-08-06T00:00:00.000Z',
