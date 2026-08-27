@@ -4946,6 +4946,96 @@ describe('notebook runtime service', () => {
       await first
     })
 
+    it('does not clear a stale repair rejection after the queued Session changes runtime binding', async () => {
+      const root = await createStorageRoot()
+      const firstStarted = createDeferred<void>()
+      const releaseFirst = createDeferred<void>()
+      const executions: NotebookExecutionRequest[] = []
+      const externalRuntime: DiscoveredInterpreter = {
+        language: 'python',
+        provenance: 'user-own',
+        envId: '/opt/external-python/bin/python',
+        interpreterPath: '/opt/external-python/bin/python',
+        label: 'External Python',
+        version: '3.13.2',
+        runnable: true
+      }
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        discoverRuntimes: async (language) => (language === 'python' ? [externalRuntime] : []),
+        notebookRuntimeSettings: {
+          getSnapshot: async (language) => ({
+            language,
+            runtimeEnablement: {
+              enabled: { [externalRuntime.envId]: true },
+              installAuthorized: {}
+            },
+            manualInterpreters: [],
+            packageMirror: {}
+          })
+        },
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => {
+            executions.push(request)
+            if (request.code === 'hold_environment()') {
+              firstStarted.resolve()
+              await releaseFirst.promise
+            }
+            return {
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          shutdown: async () => ({ reaped: true })
+        })
+      })
+
+      const first = service.execute({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: 'hold_environment()'
+      })
+      await firstStarted.promise
+
+      addRepairRequired(getRuntimeRoot(root), DEFAULT_PY_ENV, 'protected-identity-change')
+      const repair = service.withEnvLock(DEFAULT_PY_ENV, async () => {
+        await service.completeRuntimeRepair('python')
+      })
+      const queued = service.execute({
+        sessionId: 'session-2',
+        workspaceCwd: root,
+        code: 'must_not_run_with_stale_binding()'
+      })
+      await vi.waitFor(async () => {
+        const state = await service.state({ sessionId: 'session-2', workspaceCwd: root })
+        expect(state.cells[0]?.status).toBe('running')
+      })
+
+      await service.bindRuntime({
+        sessionId: 'session-2',
+        workspaceCwd: root,
+        language: 'python',
+        runtimeId: externalRuntime.envId
+      })
+      releaseFirst.resolve()
+      await repair
+
+      const queuedResult = await queued
+      expect(queuedResult).toMatchObject({
+        status: 'failed',
+        text: { traceback: expect.stringContaining('RUNTIME_BINDING_CHANGED') }
+      })
+      expect(executions.map((request) => request.code)).toEqual(['hold_environment()'])
+      await first
+    })
+
     it('does not block a different-language run behind an install (G2)', async () => {
       const root = await createStorageRoot()
       const events: string[] = []
