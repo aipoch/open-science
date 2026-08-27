@@ -614,7 +614,9 @@ describe('ProviderStep', () => {
     await clickButton(/test & continue/i)
 
     expect(container.textContent).not.toContain("isn't compatible with Claude Code")
-    expect(saveAndActivateProvider).toHaveBeenCalledOnce()
+    expect(saveAndActivateProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ vendorId: 'opencode', model: 'claude-fable-5' })
+    )
   })
 
   // Switches the auth picker to the isolated "Sign in with Open Science" mode — the only path that

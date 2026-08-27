@@ -142,7 +142,7 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
 
   saveAndActivateProvider: async (request) => {
     const result = await get().saveProvider(request)
-    if (result.providerId) await get().setActiveProvider(result.providerId)
+    if (result.providerId) await get().setActiveProvider(result.providerId, request.model)
     return result
   },
 

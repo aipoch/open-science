@@ -232,9 +232,9 @@ describe('provider auth slice: persistence and validation', () => {
     store.setState({ saveProvider, setActiveProvider })
 
     await expect(
-      store.getState().saveAndActivateProvider({ type: 'custom', name: 'new' })
+      store.getState().saveAndActivateProvider({ type: 'custom', name: 'new', model: 'model-a' })
     ).resolves.toEqual({ providerId: 'new', validation })
-    expect(setActiveProvider).toHaveBeenCalledWith('new')
+    expect(setActiveProvider).toHaveBeenCalledWith('new', 'model-a')
   })
 
   it('refreshes saved validation outcomes but leaves draft validation projection untouched', async () => {

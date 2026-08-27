@@ -8,6 +8,7 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
+  providerFormModelForFramework,
   providerKindPatch,
   selectedKindKey
 } from './provider-form-value'
@@ -139,7 +140,7 @@ describe('provider-kind helpers', () => {
       providerFormApiEndpoints(
         createEmptyProviderFormValue({ type: 'official', vendorId: 'opencode' })
       )
-    ).toEqual(['openai', 'responses', 'anthropic'])
+    ).toEqual(['openai'])
     expect(
       providerFormApiEndpoints(
         createEmptyProviderFormValue({
@@ -149,6 +150,14 @@ describe('provider-kind helpers', () => {
         })
       )
     ).toEqual(['anthropic'])
+  })
+
+  it('chooses a directly compatible official model before onboarding validation', () => {
+    const zen = createEmptyProviderFormValue({ type: 'official', vendorId: 'opencode' })
+
+    expect(providerFormModelForFramework(zen, ['anthropic'])).toBe('claude-fable-5')
+    expect(providerFormModelForFramework(zen, ['responses'])).toBe('gpt-5.6-sol')
+    expect(providerFormModelForFramework(zen, ['anthropic', 'openai'])).toBe('kimi-k2.7-code')
   })
 
   it('groups each subscription on its own, official vendors under API, and custom under Other', () => {

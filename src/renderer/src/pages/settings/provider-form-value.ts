@@ -10,6 +10,7 @@ import {
 } from '../../../../shared/settings'
 import {
   OFFICIAL_VENDORS,
+  defaultVendorModel,
   getOfficialVendor,
   resolveVendorModelApiEndpoints,
   type OfficialVendorId
@@ -93,27 +94,40 @@ export const defaultCustomApiEndpoint = (
   frameworkEndpoints: readonly ChatApiEndpoint[]
 ): ChatApiEndpoint => preferredEndpoint(frameworkEndpoints, frameworkEndpoints) ?? 'anthropic'
 
-// Built-in providers expose their complete catalog protocol set until a model is chosen;
-// `apiEndpoint` only represents the single format selected for a custom gateway and may be stale
-// after switching provider kinds.
+// Built-in providers resolve the exact protocol for the selected/default model. `apiEndpoint` only
+// represents the single format selected for a custom gateway and may be stale after switching
+// provider kinds.
 export const providerFormApiEndpoints = (value: ProviderFormValue): ChatApiEndpoint[] => {
   if (value.type === 'official' && value.vendorId) {
-    const vendorId = value.vendorId
-    const selectedModel = value.model.trim()
-    const models = selectedModel
-      ? [selectedModel]
-      : (getOfficialVendor(vendorId)?.models.map(({ id }) => id) ?? [])
-
-    return [
-      ...new Set(
-        (models.length > 0 ? models : [undefined]).flatMap((model) =>
-          resolveVendorModelApiEndpoints(vendorId, model)
-        )
-      )
-    ]
+    return resolveVendorModelApiEndpoints(
+      value.vendorId,
+      value.model.trim() || defaultVendorModel(value.vendorId)
+    )
   }
   if (value.type === 'xai-subscription') return ['anthropic', 'openai', 'responses']
   return [value.apiEndpoint]
+}
+
+// Before an official provider is saved, select the first model that speaks a protocol the active
+// framework consumes directly. If none does, keep the vendor default so the normal compatibility
+// gate can reject the pair (or allow Codex's Chat bridge).
+export const providerFormModelForFramework = (
+  value: ProviderFormValue,
+  frameworkEndpoints: readonly ChatApiEndpoint[]
+): string | undefined => {
+  const selectedModel = value.model.trim()
+  if (selectedModel || value.type !== 'official' || !value.vendorId) {
+    return selectedModel || undefined
+  }
+
+  const vendorId = value.vendorId
+  return (
+    getOfficialVendor(vendorId)?.models.find(({ id }) =>
+      resolveVendorModelApiEndpoints(vendorId, id).some((endpoint) =>
+        frameworkEndpoints.includes(endpoint)
+      )
+    )?.id ?? defaultVendorModel(vendorId)
+  )
 }
 
 // The provider kind pre-selected when the Add provider form opens, matched to the active agent
