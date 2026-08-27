@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { spawn } from 'node:child_process'
 import { createConnection } from 'node:net'
 import { platform } from 'node:os'
 
@@ -31,7 +32,7 @@ const target: ResolvedSshTarget = {
   extraArgs: ['-o', 'BatchMode=yes']
 }
 
-const unixSocketAskpass = it.skipIf(platform() === 'win32')
+const socketAskpass = it
 
 const answeredAskpass = (): {
   env: NodeJS.ProcessEnv
@@ -67,17 +68,57 @@ const askAskpass = (env: NodeJS.ProcessEnv, prompt: string): Promise<Record<stri
 
 describe('ComputeConnectionBroker SSH configuration compatibility', () => {
   it.runIf(platform() === 'win32')(
-    'rejects Unix-socket askpass construction on Windows',
+    'returns one matching password through the constrained Windows askpass helper',
     async () => {
-      await expect(
-        createAskpassEnvironment('must-not-open-a-socket', ['researcher@cluster'])
-      ).rejects.toMatchObject({
-        code: 'unsupported_auth_configuration'
-      })
+      const secret = 'Windows askpass secret "quoted" Unicode 密码'
+      vi.stubEnv('OPEN_SCIENCE_RELEASE_GATE_SECRET', secret)
+      const askpass = await createAskpassEnvironment(secret, ['researcher@cluster'])
+      const invoke = (
+        prompt: string
+      ): Promise<{ code: number | null; stdout: string; stderr: string }> =>
+        new Promise((resolve, reject) => {
+          const child = spawn(askpass.env['SSH_ASKPASS'] as string, [prompt], {
+            env: askpass.env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true
+          })
+          let stdout = ''
+          let stderr = ''
+          child.stdout.setEncoding('utf8')
+          child.stderr.setEncoding('utf8')
+          child.stdout.on('data', (chunk) => {
+            stdout += chunk
+          })
+          child.stderr.on('data', (chunk) => {
+            stderr += chunk
+          })
+          child.once('error', reject)
+          child.once('close', (code) => resolve({ code, stdout, stderr }))
+        })
+
+      try {
+        expect(askpass.env['OPEN_SCIENCE_RELEASE_GATE_SECRET']).toBeUndefined()
+        expect(JSON.stringify(askpass.env)).not.toContain(secret)
+        expect(askpass.env['OPEN_SCIENCE_ASKPASS_SOCKET']).toMatch(/^\\\\\.\\pipe\\/)
+        expect(askpass.env['SSH_ASKPASS']).toBe(process.execPath)
+        expect(askpass.env['NODE_OPTIONS']).toContain('compute-askpass-win.cjs')
+
+        await expect(invoke("researcher@cluster's password:")).resolves.toEqual({
+          code: 0,
+          stdout: secret,
+          stderr: ''
+        })
+        expect(askpass.wasAnswered()).toBe(true)
+
+        await expect(invoke("researcher@cluster's password:")).resolves.toMatchObject({ code: 1 })
+        expect(askpass.wasUnsupportedPromptRejected?.()).toBe(true)
+      } finally {
+        await askpass.dispose()
+      }
     }
   )
 
-  unixSocketAskpass(
+  socketAskpass(
     'does not inherit unrelated process environment values into the askpass child',
     async () => {
       const distinctiveSecret = 'release gate secret "quoted"\nUnicode 密码'
@@ -1268,7 +1309,7 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     )
   })
 
-  unixSocketAskpass(
+  socketAskpass(
     'fails closed after rejecting any interactive variant or repeated target prompt',
     async () => {
       const secret = 'distinctive target-only secret'
@@ -1327,7 +1368,7 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     }
   )
 
-  unixSocketAskpass.each([
+  socketAskpass.each([
     ['passphrase', ["Enter passphrase for key '/tmp/id_ed25519':"]],
     ['other-account password', ["proxy@bastion's password:"]],
     ['keyboard-interactive', ['Keyboard-interactive authentication:']],
@@ -1526,7 +1567,7 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     await expect(lease.redactSensitiveOutputs?.(['tail 1'])).resolves.toEqual(['tail [redacted]'])
   })
 
-  unixSocketAskpass(
+  socketAskpass(
     'keeps an answered target-password failure classified and persisted as authentication_failed',
     async () => {
       const passwordHost = {
@@ -1587,7 +1628,7 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     }
   )
 
-  unixSocketAskpass(
+  socketAskpass(
     'does not persist a rejected proxy prompt as an authentication failure',
     async () => {
       const passwordHost = {

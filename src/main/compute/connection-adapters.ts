@@ -193,7 +193,14 @@ const askpassBaseEnvironment = (): NodeJS.ProcessEnv => {
     'TMPDIR',
     'TMP',
     'TEMP',
-    'XDG_CONFIG_HOME'
+    'XDG_CONFIG_HOME',
+    'SystemRoot',
+    'WINDIR',
+    'USERPROFILE',
+    'HOMEDRIVE',
+    'HOMEPATH',
+    'APPDATA',
+    'LOCALAPPDATA'
   ]) {
     const value = process.env[name]
     if (value !== undefined) result[name] = value
@@ -205,20 +212,23 @@ const createAskpassEnvironment = async (
   password: string,
   expectedAccounts: readonly string[] = []
 ): Promise<AskpassEnvironment> => {
-  if (platform() === 'win32') throw new ComputeConnectionError('unsupported_auth_configuration')
+  const currentPlatform = platform()
   const capability = randomUUID()
-  const socketPath = join(tmpdir(), `os-askpass-${randomUUID()}.sock`)
+  const socketPath =
+    currentPlatform === 'win32'
+      ? `\\\\.\\pipe\\open-science-askpass-${randomUUID()}`
+      : join(tmpdir(), `os-askpass-${randomUUID()}.sock`)
   let answered = false
   let unsupportedPromptRejected = false
   const server = createServer((socket) => {
     let request = ''
+    let responded = false
     socket.setEncoding('utf8')
     socket.on('data', (chunk) => {
       request += chunk
-    })
-    socket.on('end', () => {
       try {
         const payload = JSON.parse(request) as { capability?: string; prompt?: string }
+        responded = true
         const prompt = payload.prompt ?? ''
         const rejected = /passphrase|keyboard|interactive|verification|one[- ]?time|otp|mfa|proxy/i
         const targetPasswordPrompt = expectedAccounts.some((account) =>
@@ -236,40 +246,57 @@ const createAskpassEnvironment = async (
         answered = true
         socket.end(JSON.stringify({ password }))
       } catch {
-        socket.end('{}')
+        // A request may arrive in multiple chunks. Wait for the complete JSON payload.
       }
+    })
+    socket.on('end', () => {
+      if (!responded) socket.end('{}')
     })
   })
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
     server.listen(socketPath, resolve)
   })
-  try {
-    await chmod(socketPath, 0o600)
-  } catch {
-    await new Promise<void>((resolve) => server.close(() => resolve()))
-    await rm(socketPath, { force: true })
-    throw new ComputeConnectionError('credential_unavailable')
+  if (currentPlatform !== 'win32') {
+    try {
+      await chmod(socketPath, 0o600)
+    } catch {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await rm(socketPath, { force: true })
+      throw new ComputeConnectionError('credential_unavailable')
+    }
+  }
+  const sharedEnvironment = {
+    ...askpassBaseEnvironment(),
+    LANG: 'C',
+    LC_ALL: 'C',
+    SSH_ASKPASS_REQUIRE: 'force',
+    OPEN_SCIENCE_ASKPASS_SOCKET: socketPath,
+    OPEN_SCIENCE_ASKPASS_CAPABILITY: capability,
+    ELECTRON_RUN_AS_NODE: '1'
   }
   return {
-    env: {
-      ...askpassBaseEnvironment(),
-      LANG: 'C',
-      LC_ALL: 'C',
-      DISPLAY: process.env.DISPLAY || 'open-science-askpass',
-      SSH_ASKPASS_REQUIRE: 'force',
-      SSH_ASKPASS: askpassResourcePath('compute-askpass.sh'),
-      OPEN_SCIENCE_ASKPASS_RUNTIME: process.execPath,
-      OPEN_SCIENCE_ASKPASS_MODULE: askpassResourcePath('compute-askpass.cjs'),
-      OPEN_SCIENCE_ASKPASS_SOCKET: socketPath,
-      OPEN_SCIENCE_ASKPASS_CAPABILITY: capability,
-      ELECTRON_RUN_AS_NODE: '1'
-    },
+    env:
+      currentPlatform === 'win32'
+        ? {
+            ...sharedEnvironment,
+            SSH_ASKPASS: process.execPath,
+            NODE_OPTIONS: `--require=${JSON.stringify(
+              askpassResourcePath('compute-askpass-win.cjs')
+            )}`
+          }
+        : {
+            ...sharedEnvironment,
+            DISPLAY: process.env.DISPLAY || 'open-science-askpass',
+            SSH_ASKPASS: askpassResourcePath('compute-askpass.sh'),
+            OPEN_SCIENCE_ASKPASS_RUNTIME: process.execPath,
+            OPEN_SCIENCE_ASKPASS_MODULE: askpassResourcePath('compute-askpass.cjs')
+          },
     wasAnswered: () => answered,
     wasUnsupportedPromptRejected: () => unsupportedPromptRejected,
     dispose: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
-      await rm(socketPath, { force: true })
+      if (currentPlatform !== 'win32') await rm(socketPath, { force: true })
     }
   }
 }

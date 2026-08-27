@@ -46,7 +46,6 @@ class CredentialVault {
 
   isAvailable(): boolean {
     try {
-      if (this.suppliedPlatform === 'win32') return false
       if (!this.cipher.isEncryptionAvailable()) return false
       return !(
         this.suppliedPlatform === 'linux' &&
@@ -62,10 +61,7 @@ class CredentialVault {
       ? { available: true }
       : {
           available: false,
-          reason:
-            this.suppliedPlatform === 'win32'
-              ? 'unsupported_platform'
-              : 'secure_storage_unavailable'
+          reason: 'secure_storage_unavailable'
         }
   }
 
