@@ -36,7 +36,7 @@ import { runNotificationTask } from './notification-safety'
 const AUTO_DISMISS_MS = 6000
 const TOAST_GAP = 8
 const VIEWPORT_MARGIN = 8
-const TOAST_MAX_WIDTH = 360
+const TOAST_MAX_WIDTH = 320
 
 type LiveNotice = Readonly<{
   lead: PresentedNotificationInboxItem
