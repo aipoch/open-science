@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bot,
@@ -30,6 +30,8 @@ import {
   type ElicitationValue,
   type PendingElicitationRequest
 } from '../../../../shared/acp'
+import type { AnnotationValidationError, TextAnnotation } from '../../../../shared/annotations'
+import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 
 const displayValue = (
   value: ElicitationValue,
@@ -137,6 +139,13 @@ type WorkspaceElicitationCardProps = {
   embedded?: boolean
   onRespond?: (response: ElicitationResponse) => Promise<void>
   onDraftChange?: (answers: ElicitationAnswer[]) => void
+  annotationSessionId?: string
+  annotationItemId?: string
+  activeTextAnnotations?: readonly TextAnnotation[]
+  onAddTextAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
+  onUpdateTextAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
+  onAnnotationError?: (error: AnnotationValidationError) => void
+  revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }
 
 const answerForChoiceQuestion = (
@@ -185,7 +194,14 @@ const WorkspaceElicitationCard = ({
   variant = 'default',
   embedded = false,
   onRespond,
-  onDraftChange
+  onDraftChange,
+  annotationSessionId,
+  annotationItemId,
+  activeTextAnnotations,
+  onAddTextAnnotation,
+  onUpdateTextAnnotationNote,
+  onAnnotationError,
+  revealRequest
 }: WorkspaceElicitationCardProps): React.JSX.Element => {
   const { t } = useTranslation()
   const choiceQuestions = request ? resolveAgentUserChoiceQuestions(request.fields) : undefined
@@ -204,6 +220,7 @@ const WorkspaceElicitationCard = ({
   const [error, setError] = useState<string>()
   // Accordion review: indexes of the questions whose original content is expanded in place.
   const [expandedQuestions, setExpandedQuestions] = useState<ReadonlySet<number>>(new Set())
+  const appliedRevealRequestIdRef = useRef<number | undefined>(undefined)
   const customAnswerRef = useRef<HTMLTextAreaElement>(null)
 
   const canSubmit = useMemo(
@@ -254,6 +271,10 @@ const WorkspaceElicitationCard = ({
     choiceQuestion && (elicitation.state === 'pending' || choiceQuestions?.length === 1)
       ? choiceQuestion.choiceField.description || choiceQuestion.choiceField.label
       : undefined
+  const titleAnnotationSectionId =
+    choiceTitle && choiceQuestion
+      ? `field:${choiceQuestion.choiceField.id}:${choiceQuestion.choiceField.description ? 'description' : 'label'}`
+      : 'prompt'
   const showChoiceProgress = Boolean(
     choiceQuestions &&
     choiceQuestions.length > 1 &&
@@ -318,9 +339,29 @@ const WorkspaceElicitationCard = ({
       // Translucent white panel: a different material from the gray summary rows,
       // scaled to the summary rows (size-5 badges, 13px text).
       <div className="mb-1.5 mt-1 rounded-[10px] bg-bg-000/60 p-2">
-        <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
-          {question.choiceField.description || question.choiceField.label}
-        </p>
+        {annotationSessionId && annotationItemId && onAddTextAnnotation && onAnnotationError ? (
+          <TextAnnotationSurface
+            source={{
+              kind: 'session-item',
+              sessionId: annotationSessionId,
+              itemType: 'elicitation',
+              itemId: annotationItemId,
+              sectionId: `field:${question.choiceField.id}:${question.choiceField.description ? 'description' : 'label'}`
+            }}
+            activeAnnotations={activeTextAnnotations ?? []}
+            onAdd={onAddTextAnnotation}
+            onUpdateNote={onUpdateTextAnnotationNote}
+            onError={onAnnotationError}
+          >
+            <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
+              {question.choiceField.description || question.choiceField.label}
+            </p>
+          </TextAnnotationSurface>
+        ) : (
+          <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
+            {question.choiceField.description || question.choiceField.label}
+          </p>
+        )}
         <div className="mt-1" data-testid="elicitation-choice-review">
           {question.choiceField.options?.map((option, index) => {
             const selected = isChoiceOptionSelected(question, reviewValues, option.value)
@@ -405,6 +446,40 @@ const WorkspaceElicitationCard = ({
       </div>
     )
   }
+
+  useLayoutEffect(() => {
+    if (
+      !request ||
+      !revealRequest ||
+      elicitation.state !== 'answered' ||
+      revealRequest.itemId !== annotationItemId ||
+      appliedRevealRequestIdRef.current === revealRequest.requestId
+    ) {
+      return
+    }
+    const fieldMatch = /^field:([^:]+):(description|label)$/u.exec(revealRequest.sectionId ?? '')
+    if (!fieldMatch) return
+    const questions = resolveAgentUserChoiceQuestions(request.fields)
+    if (!questions) return
+    const questionIndex = questions.findIndex(
+      (question) => question.choiceField.id === fieldMatch[1]
+    )
+    if (questionIndex < 0) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      appliedRevealRequestIdRef.current = revealRequest.requestId
+      setExpandedQuestions((current) => {
+        if (current.has(questionIndex)) return current
+        const next = new Set(current)
+        next.add(questionIndex)
+        return next
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [annotationItemId, elicitation.answers, elicitation.state, request, revealRequest])
 
   const respond = async (response: ElicitationResponse): Promise<boolean> => {
     if (!onRespond || isSubmitting) return false
@@ -546,14 +621,42 @@ const WorkspaceElicitationCard = ({
 
       {isAnsweredSummary || isTerminalChoiceSummary ? null : (
         <div className="flex items-start">
-          <h3
-            className={cn(
-              'min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6',
-              showChoiceProgress && 'pr-36'
-            )}
-          >
-            {choiceTitle ?? elicitation.message}
-          </h3>
+          {annotationSessionId && annotationItemId && onAddTextAnnotation && onAnnotationError ? (
+            <div className="min-w-0 flex-1">
+              <TextAnnotationSurface
+                key={titleAnnotationSectionId}
+                source={{
+                  kind: 'session-item',
+                  sessionId: annotationSessionId,
+                  itemType: 'elicitation',
+                  itemId: annotationItemId,
+                  sectionId: titleAnnotationSectionId
+                }}
+                activeAnnotations={activeTextAnnotations ?? []}
+                onAdd={onAddTextAnnotation}
+                onUpdateNote={onUpdateTextAnnotationNote}
+                onError={onAnnotationError}
+              >
+                <h3
+                  className={cn(
+                    'min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6',
+                    showChoiceProgress && 'pr-36'
+                  )}
+                >
+                  {choiceTitle ?? elicitation.message}
+                </h3>
+              </TextAnnotationSurface>
+            </div>
+          ) : (
+            <h3
+              className={cn(
+                'min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6',
+                showChoiceProgress && 'pr-36'
+              )}
+            >
+              {choiceTitle ?? elicitation.message}
+            </h3>
+          )}
         </div>
       )}
 

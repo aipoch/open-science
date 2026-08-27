@@ -11,6 +11,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { MobilePreviewSheet } from './MobilePreviewSheet'
 import { PreviewPanel } from './PreviewPanel'
 import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
+import type { PreviewAnnotationPort } from './previews/preview-types'
 
 const PANEL_COLLAPSED_SIZE = 0
 const PANEL_COLLAPSED_SIZE_CSS = `${PANEL_COLLAPSED_SIZE}%`
@@ -497,6 +498,7 @@ type WorkspacePanelLayoutProps = {
   hasPreviewItems: boolean
   isPreviewPresentationActive?: boolean
   restoredPlanResponder?: RestoredPlanResponder
+  previewAnnotations?: PreviewAnnotationPort
   preview: PreviewPanelLayoutPort
   renderDesktopSidebar: (options: {
     sidebarToggle: {
@@ -518,6 +520,7 @@ const WorkspacePanelLayout = ({
   hasPreviewItems,
   isPreviewPresentationActive = true,
   restoredPlanResponder,
+  previewAnnotations,
   preview: previewPort,
   renderDesktopSidebar,
   renderMobileSidebar,
@@ -625,6 +628,7 @@ const WorkspacePanelLayout = ({
                 minSize={preview.minSize}
                 onResize={preview.onResize}
                 restoredPlanResponder={restoredPlanResponder}
+                {...previewAnnotations}
               />
             </>
           ) : null}
@@ -638,6 +642,7 @@ const WorkspacePanelLayout = ({
           open={isPreviewPresentationActive && preview.state === 'open'}
           onClose={preview.collapse}
           restoredPlanResponder={restoredPlanResponder}
+          {...previewAnnotations}
         />
       ) : null}
     </>

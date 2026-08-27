@@ -1,5 +1,6 @@
 import type { AcpMessageImage, AcpRuntimeEvent } from '../../../../shared/acp'
 import type { FileReference } from '../../../../shared/artifacts'
+import * as annotationProtocol from '../../../../shared/annotations'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import {
   collectSessionReferences,
@@ -37,7 +38,7 @@ import {
   partitionWorkspacePromptAttachments
 } from './workspace-runtime-attachment-owner'
 import type { useAcpRuntime } from './useAcpRuntime'
-
+import { validateImageAnnotationSourcesBeforeSend } from '../../pages/workspace/annotations/image-annotation-source-validation'
 type SendWorkspaceMessageIntent = {
   sessionId?: string
   branchSourceSessionId?: string
@@ -48,6 +49,7 @@ type SendWorkspaceMessageIntent = {
     pendingAction?: 'review' | 'approve' | 'reject'
   }
   attachments?: UploadedAttachment[]
+  annotations?: annotationProtocol.Annotation[]
   cwd?: string
   projectId?: string
   permissionProfile?: PermissionProfileId
@@ -73,15 +75,14 @@ type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   requireExistingSession?: boolean
 }
 type SendWorkspaceMessageResult = { sessionId: string; messageId: string }
-type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
-type RuntimeEventDrain = (sessionId?: string) => Promise<void>
 type WorkspaceCommandLifecycle = {
-  onSendPreparationStateChange?: SendPreparationStateChange
-  drainRuntimeEvents?: RuntimeEventDrain
+  onSendPreparationStateChange?: (sessionId: string, inFlight: boolean) => void
+  drainRuntimeEvents?: (sessionId?: string) => Promise<void>
   onSessionBound?: (pendingSessionId: string, sessionId: string) => void
 }
 type ResendEditedMessageInput = {
   text: string
+  annotations?: annotationProtocol.Annotation[]
   parts?: MessagePart[]
   forcedSkillIds?: string[]
   referencedArtifacts?: FileReference[]
@@ -108,13 +109,11 @@ type HistoryReplayContext = {
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
-
 const createSessionFailureMessage = (error: unknown): string =>
   errorMessage(error)
     .replace(/^Error invoking remote method '[^']*':\s*/i, '')
     .replace(/^Error(?::\s*|$)/i, '')
     .trim() || 'Agent session could not be created.'
-
 const latestFailureId = (events: AcpRuntimeEvent[], sessionId: string): string | undefined => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
@@ -122,7 +121,6 @@ const latestFailureId = (events: AcpRuntimeEvent[], sessionId: string): string |
   }
   return undefined
 }
-
 const failPrompt = async (
   sessionId: string,
   message: string,
@@ -143,11 +141,10 @@ const failPrompt = async (
       .find((item) => item.kind === 'error' && item.sessionId === sessionId)
     if (event && event.id !== priorErrorEventId && event.providerError) reportable = false
   } catch {
-    // The persisted run error remains useful when the live runtime snapshot is unavailable.
+    reportable = undefined
   }
   useSessionStore.getState().failRun(sessionId, message, { reportable })
 }
-
 const replayHistory = (
   messages: ChatMessage[],
   input: SendWorkspaceMessageCommand,
@@ -184,6 +181,7 @@ type PromptDispatch = {
   sessionId: string
   messageId: string
   content: string
+  annotations?: annotationProtocol.Annotation[]
   attachments: UploadedAttachment[]
   forcedSkillIds?: string[]
   referencedArtifacts?: FileReference[]
@@ -202,12 +200,17 @@ const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatc
     [...(runtime.currentRuntimeEvents?.() ?? runtime.state.events)],
     request.sessionId
   )
+  const preparedAnnotations = annotationProtocol.prepareAnnotationsForAgent(
+    request.content,
+    request.annotations ?? [],
+    request.referencedArtifacts
+  )
   const args = [
     request.sessionId,
-    request.content,
+    preparedAnnotations.promptText,
     request.attachments,
     request.forcedSkillIds,
-    request.referencedArtifacts,
+    preparedAnnotations.referencedArtifacts,
     request.replay?.historyPreamble,
     request.replay?.historyAttachments,
     request.replay?.historyImages,
@@ -354,6 +357,7 @@ const startPendingPrompt = (
       sessionId: created.sessionId,
       messageId: boundMessageId,
       content: request.content,
+      annotations: request.annotations,
       attachments,
       forcedSkillIds: request.forcedSkillIds,
       referencedArtifacts: request.referencedArtifacts,
@@ -390,19 +394,23 @@ const sendWorkspaceMessage = async (
     ? replaySession.messages.find((item) => item.id === replaySession.pendingContextReplayMessageId)
     : undefined
   const attachments = input.attachments ?? []
+  const annotations = input.annotations ?? []
+  if (annotationProtocol.validateAnnotations(annotations, content)) return undefined
+  await validateImageAnnotationSourcesBeforeSend(annotations)
   const effectiveAttachments =
     attachments.length > 0 || !replayPrompt?.uploads?.length
       ? attachments
       : replayPrompt.uploads.map((upload) =>
           toRuntimeUploadedAttachment(upload, replaySession?.projectId)
         )
-  if (!content && effectiveAttachments.length === 0) return undefined
+  if (!content && effectiveAttachments.length === 0 && annotations.length === 0) return undefined
 
   if (input.branchSourceSessionId) {
     const pending = useSessionStore.getState().branchInNewSession({
       sourceSessionId: input.branchSourceSessionId,
       content,
       attachments,
+      annotations,
       parts: input.parts,
       turnIntent: input.turnIntent,
       permissionProfile: input.permissionProfile,
@@ -489,6 +497,7 @@ const sendWorkspaceMessage = async (
         sessionId,
         content,
         attachments: effectiveAttachments,
+        annotations,
         parts: input.parts,
         turnIntent: input.turnIntent,
         cwd,
@@ -570,6 +579,7 @@ const sendWorkspaceMessage = async (
       sessionId,
       content,
       attachments: promptAttachments,
+      annotations,
       parts: input.parts,
       turnIntent: input.turnIntent,
       cwd: input.cwd,
@@ -605,6 +615,7 @@ const sendWorkspaceMessage = async (
       sessionId,
       messageId: appended.messageId,
       content,
+      annotations,
       attachments: promptMedia?.currentAttachments ?? promptAttachments,
       forcedSkillIds: input.forcedSkillIds,
       referencedArtifacts: input.referencedArtifacts,
@@ -622,6 +633,7 @@ const sendWorkspaceMessage = async (
   const pending = useSessionStore.getState().appendPendingUserMessage({
     content,
     attachments,
+    annotations,
     parts: input.parts,
     turnIntent: input.turnIntent,
     cwd: input.cwd,
@@ -662,15 +674,15 @@ const resendEditedWorkspaceMessage = async (
   const session = useSessionStore.getState().sessions.find((item) => item.id === input.sessionId)
   if (!session) return false
   const sourceMessage = session.messages.find((message) => message.id === input.messageId)
+  const annotations = input.annotations ?? sourceMessage?.annotations ?? []
   const cwd = session.cwd || runtime.state.cwd
   if (
     !cwd ||
-    !input.text.trim() ||
+    (!input.text.trim() && annotations.length === 0) ||
     !sourceMessage ||
     runtime.state.promptInFlightSessionIds.includes(input.sessionId)
-  ) {
+  )
     return false
-  }
   let attachments: UploadedAttachment[]
   try {
     attachments = (sourceMessage.uploads ?? []).map((upload) =>
@@ -687,6 +699,7 @@ const resendEditedWorkspaceMessage = async (
         sessionId: input.sessionId,
         text: input.text.trim(),
         attachments,
+        annotations,
         parts: input.parts,
         cwd,
         projectId: session.projectId,
@@ -706,6 +719,5 @@ const resendEditedWorkspaceMessage = async (
     )
   )
 }
-
 export { resendEditedWorkspaceMessage, sendWorkspaceMessage }
 export type { ResendEditedMessageInput, SendWorkspaceMessageIntent, SendWorkspaceMessageResult }

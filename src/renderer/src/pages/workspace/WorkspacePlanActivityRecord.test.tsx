@@ -5,6 +5,7 @@ import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivity } from '@/stores/session-store'
+import type { TextAnnotation } from '../../../../shared/annotations'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 
 vi.mock('@/components/ui/message-scroller', () => ({
@@ -91,6 +92,38 @@ const activateNativeButtonWithKeyboard = (button: HTMLButtonElement, key: 'Enter
 const getStepButtons = (container: ParentNode): HTMLButtonElement[] =>
   Array.from(container.querySelectorAll<HTMLButtonElement>('button[aria-controls^="plan-step-"]'))
 
+class TestHighlight extends Set<Range> {
+  constructor(...ranges: Range[]) {
+    super(ranges)
+  }
+}
+
+const highlights = new Map<string, TestHighlight>()
+
+const selectText = (element: HTMLElement): void => {
+  const range = document.createRange()
+  range.selectNodeContents(element)
+  Object.defineProperty(range, 'getBoundingClientRect', {
+    configurable: true,
+    value: () =>
+      ({
+        left: 10,
+        right: 120,
+        top: 20,
+        bottom: 40,
+        width: 110,
+        height: 20,
+        x: 10,
+        y: 20,
+        toJSON: () => ({})
+      }) as DOMRect
+  })
+  const selection = window.getSelection()!
+  selection.removeAllRanges()
+  selection.addRange(range)
+  element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+}
+
 describe('WorkspacePlanActivityRecord', () => {
   let container: HTMLDivElement
   let root: Root
@@ -98,6 +131,9 @@ describe('WorkspacePlanActivityRecord', () => {
   const originalResizeObserver = globalThis.ResizeObserver
 
   beforeEach(() => {
+    highlights.clear()
+    vi.stubGlobal('Highlight', TestHighlight)
+    vi.stubGlobal('CSS', { highlights })
     globalThis.ResizeObserver = class {
       constructor(private readonly callback: ResizeObserverCallback) {}
       observe(): void {
@@ -119,6 +155,8 @@ describe('WorkspacePlanActivityRecord', () => {
     act(() => root.unmount())
     container.remove()
     notifyResize = undefined
+    window.getSelection()?.removeAllRanges()
+    vi.unstubAllGlobals()
     if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver
     else delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver
   })
@@ -140,6 +178,80 @@ describe('WorkspacePlanActivityRecord', () => {
     ])
     expect(buttons.every((button) => button.getAttribute('aria-expanded') === 'false')).toBe(true)
     expect(buttons.every((button) => Boolean(button.getAttribute('aria-controls')))).toBe(true)
+  })
+
+  it('creates and restores a task-summary annotation with the stable Plan source', () => {
+    const activity = createActivity(planArguments)
+    const onAdd = vi.fn<(annotation: TextAnnotation) => undefined>(() => undefined)
+    const renderWith = (activeAnnotations: readonly TextAnnotation[]): void => {
+      act(() =>
+        root.render(
+          <WorkspacePlanActivityRecord
+            activity={activity}
+            annotationPort={{
+              sessionId: 'session-1',
+              activeAnnotations,
+              onAdd,
+              onError: vi.fn()
+            }}
+          />
+        )
+      )
+    }
+
+    renderWith([])
+    const summary = container.querySelector<HTMLElement>('[data-testid="plan-task-summary"]')!
+    act(() => selectText(summary))
+    const trigger = document.querySelector<HTMLButtonElement>('[data-annotation-trigger]')
+    expect(trigger).not.toBeNull()
+    act(() => trigger?.click())
+    const confirm = Array.from(document.querySelectorAll('button'))
+      .filter((button) => button.textContent === 'Annotate')
+      .at(-1)
+    act(() => confirm?.click())
+
+    const added = onAdd.mock.calls[0]?.[0]
+    expect(added?.source).toEqual({
+      kind: 'session-item',
+      sessionId: 'session-1',
+      itemId: activity.id,
+      itemType: 'plan',
+      sectionId: 'task-summary'
+    })
+
+    renderWith(added ? [added] : [])
+    expect(
+      Array.from(highlights.get('agent-annotation-draft') ?? []).map((range) => range.toString())
+    ).toContain('Polish the example paragraph')
+  })
+
+  it('does not expand a step from the click following a text drag, but keeps ordinary click', () => {
+    const onAdd = vi.fn<(annotation: TextAnnotation) => undefined>(() => undefined)
+    act(() =>
+      root.render(
+        <WorkspacePlanActivityRecord
+          activity={createActivity(planArguments)}
+          annotationPort={{
+            sessionId: 'session-1',
+            activeAnnotations: [],
+            onAdd,
+            onError: vi.fn()
+          }}
+        />
+      )
+    )
+    const first = getStepButtons(container)[0]
+    const title = first.querySelector<HTMLElement>('span')!
+
+    act(() => {
+      selectText(title)
+      first.click()
+    })
+    expect(first.getAttribute('aria-expanded')).toBe('false')
+
+    window.getSelection()?.removeAllRanges()
+    act(() => first.click())
+    expect(first.getAttribute('aria-expanded')).toBe('true')
   })
 
   it('expands step descriptions independently with native button controls', () => {
@@ -197,17 +309,33 @@ describe('WorkspacePlanActivityRecord', () => {
     expect(container.textContent).toContain('Plan details unavailable')
   })
 
-  it('keeps failed tool details available from the Plan record', () => {
-    act(() =>
-      root.render(
-        <WorkspacePlanActivityRecord
-          activity={createActivity(planArguments, {
-            status: 'failed',
-            rawOutput: { error: 'Plan service unavailable' }
-          })}
-        />
+  it('annotates failed Plan details and reveals them by the Plan activity', () => {
+    const activity = createActivity(planArguments, {
+      status: 'failed',
+      rawOutput: { error: 'Plan service unavailable' }
+    })
+    const onAdd = vi.fn<(annotation: TextAnnotation) => undefined>(() => undefined)
+    const renderWith = (
+      activeAnnotations: readonly TextAnnotation[],
+      revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
+    ): void => {
+      act(() =>
+        root.render(
+          <WorkspacePlanActivityRecord
+            activity={activity}
+            annotationPort={{
+              sessionId: 'session-1',
+              activeAnnotations,
+              onAdd,
+              onError: vi.fn()
+            }}
+            revealRequest={revealRequest}
+          />
+        )
       )
-    )
+    }
+
+    renderWith([])
 
     expect(container.textContent).toContain('Failed to create execution Plan')
     const detailsButton = container.querySelector<HTMLButtonElement>('button')
@@ -216,6 +344,41 @@ describe('WorkspacePlanActivityRecord', () => {
     act(() => detailsButton?.click())
     expect(detailsButton?.getAttribute('aria-expanded')).toBe('true')
     expect(container.textContent).toContain('Plan service unavailable')
+
+    const errorDetails = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-testid="tool-code-block"]')
+    ).find((element) => element.textContent?.includes('Plan service unavailable'))
+    expect(errorDetails).toBeDefined()
+    act(() => selectText(errorDetails!))
+    const trigger = document.querySelector<HTMLButtonElement>('[data-annotation-trigger]')
+    expect(trigger).not.toBeNull()
+    act(() => trigger?.click())
+    const confirm = Array.from(document.querySelectorAll('button'))
+      .filter((button) => button.textContent === 'Annotate')
+      .at(-1)
+    act(() => confirm?.click())
+
+    const added = onAdd.mock.calls[0]?.[0]
+    expect(added?.source).toEqual({
+      kind: 'session-item',
+      sessionId: 'session-1',
+      itemId: activity.id,
+      itemType: 'plan',
+      sectionId: 'output'
+    })
+
+    act(() => detailsButton?.click())
+    expect(detailsButton?.getAttribute('aria-expanded')).toBe('false')
+    renderWith(added ? [added] : [], {
+      requestId: 1,
+      itemId: activity.id,
+      sectionId: 'output'
+    })
+
+    expect(detailsButton?.getAttribute('aria-expanded')).toBe('true')
+    expect(
+      Array.from(highlights.get('agent-annotation-draft') ?? []).map((range) => range.toString())
+    ).toContain(errorDetails?.textContent)
   })
 
   it('offers an independent three-line task preview only when the summary overflows', () => {

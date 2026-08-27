@@ -30,6 +30,7 @@ import { formatWebSearchDetails } from './workspace-web-search-details'
 import { getCorrelatedNotebookRun, getToolExecutionPhase } from './tool-execution-phase'
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 import { isNotebookManagePackagesToolName } from './notebook-tool-names'
+import type { AnnotationValidationError, TextAnnotation } from '../../../../shared/annotations'
 
 const isManagePackagesActivity = (
   activity: ConversationActivityGroupItem['activities'][number]
@@ -52,6 +53,12 @@ type WorkspaceActivityGroupProps = {
   jobsByActivityId?: Map<string, JobSummary>
   onOpenJobDetail?: (job: JobSummary) => void
   permission?: SessionPermissionRuntimeContext
+  annotationSessionId?: string
+  activeTextAnnotations?: readonly TextAnnotation[]
+  onAddTextAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
+  onUpdateTextAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
+  onAnnotationError?: (error: AnnotationValidationError) => void
+  revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }
 
 const ACTIVE_ELAPSED_TICK_MS = 100
@@ -93,7 +100,13 @@ const WorkspaceActivityGroup = ({
   contentPaddingClassName,
   jobsByActivityId,
   onOpenJobDetail,
-  permission
+  permission,
+  annotationSessionId,
+  activeTextAnnotations,
+  onAddTextAnnotation,
+  onUpdateTextAnnotationNote,
+  onAnnotationError,
+  revealRequest
 }: WorkspaceActivityGroupProps): React.JSX.Element => {
   const { t } = useTranslation()
   const { scrollToMessage } = useMessageScroller()
@@ -171,6 +184,14 @@ const WorkspaceActivityGroup = ({
                           phase={phase}
                           isExpanded={isRowExpanded}
                           onToggle={onToggleRow}
+                          annotationSessionId={annotationSessionId}
+                          activeTextAnnotations={activeTextAnnotations}
+                          onAddTextAnnotation={onAddTextAnnotation}
+                          onUpdateTextAnnotationNote={onUpdateTextAnnotationNote}
+                          onAnnotationError={onAnnotationError}
+                          revealRequest={
+                            revealRequest?.itemId === activity.id ? revealRequest : undefined
+                          }
                         />
                       ) : searchDetails ? (
                         <WorkspaceWebSearchActivityRow
@@ -179,6 +200,11 @@ const WorkspaceActivityGroup = ({
                           details={searchDetails}
                           isExpanded={isRowExpanded}
                           onToggleSearch={onToggleRow}
+                          annotationSessionId={annotationSessionId}
+                          activeTextAnnotations={activeTextAnnotations}
+                          onAddTextAnnotation={onAddTextAnnotation}
+                          onUpdateTextAnnotationNote={onUpdateTextAnnotationNote}
+                          onAnnotationError={onAnnotationError}
                         />
                       ) : toolDetails ? (
                         <WorkspaceToolDetailsRow
@@ -194,6 +220,14 @@ const WorkspaceActivityGroup = ({
                           isExpanded={isRowExpanded}
                           onNotebookRunNearViewport={onNotebookRunNearViewport}
                           onToggle={onToggleRow}
+                          annotationSessionId={annotationSessionId}
+                          activeTextAnnotations={activeTextAnnotations}
+                          onAddTextAnnotation={onAddTextAnnotation}
+                          onUpdateTextAnnotationNote={onUpdateTextAnnotationNote}
+                          onAnnotationError={onAnnotationError}
+                          revealRequest={
+                            revealRequest?.itemId === activity.id ? revealRequest : undefined
+                          }
                         />
                       ) : (
                         <WorkspaceToolActivityRow activity={activity} phase={phase} />

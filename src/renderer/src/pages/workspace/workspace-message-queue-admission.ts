@@ -90,6 +90,7 @@ const queueItemIsBusy = (item: MessageQueueItem): boolean =>
 const queuedItemHasPayload = (item: MessageQueueItem): boolean =>
   Boolean(item.text.trim()) ||
   item.attachmentCount > 0 ||
+  (item.snapshot.annotations?.length ?? 0) > 0 ||
   item.forcedSkillIds.length > 0 ||
   docToArtifactRefs(item.snapshot.doc).length > 0
 

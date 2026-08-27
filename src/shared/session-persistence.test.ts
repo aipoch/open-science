@@ -555,6 +555,52 @@ describe('message attribution persistence', () => {
 })
 
 describe('message part persistence', () => {
+  it('preserves valid structured annotations on annotation-only user Messages', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: '',
+          annotations: [
+            {
+              id: 'annotation-1',
+              kind: 'text',
+              target: 'agent',
+              quote: '  Preserve this evidence.  ',
+              note: '  Explain it.  ',
+              source: {
+                kind: 'agent-message',
+                sessionId: 'session-1',
+                messageId: 'agent-message-1'
+              }
+            },
+            { kind: 'unknown' }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].annotations).toEqual([
+      {
+        id: 'annotation-1',
+        kind: 'text',
+        target: 'agent',
+        quote: 'Preserve this evidence.',
+        note: 'Explain it.',
+        source: {
+          kind: 'agent-message',
+          sessionId: 'session-1',
+          messageId: 'agent-message-1'
+        }
+      }
+    ])
+  })
+
   it('collects at most five unique Session references with their first title snapshot', () => {
     expect(
       collectSessionReferences([

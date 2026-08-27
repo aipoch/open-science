@@ -3,19 +3,33 @@ import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import type { AnnotationValidationError, TextAnnotation } from '../../../../shared/annotations'
 
+import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import type { InlineParentMessageProjection } from './subagent-release-projection'
+
+type SubagentMessageAnnotationPort = Readonly<{
+  sessionId: string
+  activeAnnotations: readonly TextAnnotation[]
+  onAdd: (annotation: TextAnnotation) => AnnotationValidationError | undefined
+  onUpdateNote?: (id: string, note: string) => AnnotationValidationError | undefined
+  onError: (error: AnnotationValidationError) => void
+}>
 
 type WorkspaceSubagentMessageRowProps = {
   message: InlineParentMessageProjection
   onOpenSource: () => void
+  annotationPort?: SubagentMessageAnnotationPort
+  revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }
 
 const MESSAGE_PREVIEW_LINE_COUNT = 6
 
 const WorkspaceSubagentMessageRow = ({
   message,
-  onOpenSource
+  onOpenSource,
+  annotationPort,
+  revealRequest
 }: WorkspaceSubagentMessageRowProps): React.JSX.Element => {
   const { t } = useTranslation()
   const isQuestion = message.kind === 'question'
@@ -58,6 +72,29 @@ const WorkspaceSubagentMessageRow = ({
     return () => observer.disconnect()
   }, [message.messageId, message.text])
 
+  useLayoutEffect(() => {
+    let cancelled = false
+    if (revealRequest?.itemId === message.messageId && revealRequest.sectionId === 'body') {
+      queueMicrotask(() => {
+        if (!cancelled) setIsExpanded(true)
+      })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [message.messageId, revealRequest])
+
+  const body = (
+    <p
+      ref={messageBodyRef}
+      id={messageBodyId}
+      data-testid="subagent-message-body"
+      className={`whitespace-pre-wrap break-words text-xs text-text-100 leading-5 ${canExpand && !isExpanded ? 'line-clamp-6' : ''}`}
+    >
+      {message.text}
+    </p>
+  )
+
   return (
     <article
       aria-label={
@@ -85,14 +122,25 @@ const WorkspaceSubagentMessageRow = ({
         </Button>
       </header>
       <div className="min-w-0 px-3 py-3">
-        <p
-          ref={messageBodyRef}
-          id={messageBodyId}
-          data-testid="subagent-message-body"
-          className={`whitespace-pre-wrap break-words text-xs text-text-100 leading-5 ${canExpand && !isExpanded ? 'line-clamp-6' : ''}`}
-        >
-          {message.text}
-        </p>
+        {annotationPort ? (
+          <TextAnnotationSurface
+            source={{
+              kind: 'session-item',
+              sessionId: annotationPort.sessionId,
+              itemType: 'subagent-message',
+              itemId: message.messageId,
+              sectionId: 'body'
+            }}
+            activeAnnotations={annotationPort.activeAnnotations}
+            onAdd={annotationPort.onAdd}
+            onUpdateNote={annotationPort.onUpdateNote}
+            onError={annotationPort.onError}
+          >
+            {body}
+          </TextAnnotationSurface>
+        ) : (
+          body
+        )}
         {canExpand ? (
           <div className="mt-2 flex justify-end">
             <Button

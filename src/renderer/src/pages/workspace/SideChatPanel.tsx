@@ -7,7 +7,7 @@ import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-st
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { ArrowUp, MessageCircleMore, Plus, Square, X } from 'lucide-react'
+import { ArrowUp, MapPin, MessageCircleMore, Plus, Quote, Square, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -19,6 +19,10 @@ import {
   type SetStateAction
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import {
+  parseSideChatAnnotationText,
+  type ParsedSideChatAnnotationText
+} from '../../../../shared/annotations'
 
 import { ResizableBottomPanel } from './ResizableBottomPanel'
 import type { SideChatEntry, SideChatView } from './use-side-chat-controller'
@@ -83,6 +87,84 @@ const SideChatAssistantMessage = ({
       isAnimating={presentation.isPresenting}
       sessionLinks
     />
+  )
+}
+
+const SideChatUserMessage = ({ text }: { text: string }): React.JSX.Element => {
+  const { t } = useTranslation()
+  const parsed = parseSideChatAnnotationText(text)
+  if (!parsed) {
+    return (
+      <div data-side-chat-raw-message="true" className="whitespace-pre-wrap break-words">
+        {text}
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {parsed.text ? <div className="whitespace-pre-wrap break-words">{parsed.text}</div> : null}
+      <section
+        className={parsed.text ? 'mt-2 space-y-2' : 'space-y-2'}
+        aria-label={t('Sent annotations')}
+      >
+        {parsed.items.map((item, index) => (
+          <SideChatAnnotationCard
+            key={index}
+            item={item}
+            number={
+              item.type === 'image-point'
+                ? parsed.items
+                    .slice(0, index + 1)
+                    .filter((candidate) => candidate.type === 'image-point').length
+                : index + 1
+            }
+          />
+        ))}
+      </section>
+    </>
+  )
+}
+
+const SideChatAnnotationCard = ({
+  item,
+  number
+}: {
+  item: ParsedSideChatAnnotationText['items'][number]
+  number: number
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const imagePoint = item.type === 'image-point'
+  const source = imagePoint
+    ? item.source.kind === 'artifact-version'
+      ? `${item.source.name} · ${item.source.artifactId} · ${item.source.versionId}`
+      : `${item.source.name} · ${item.source.versionId}`
+    : undefined
+  return (
+    <article
+      data-side-chat-annotation-card="true"
+      className="rounded-lg border border-border/70 bg-background/70 p-2"
+    >
+      <div className="flex items-center gap-1 text-xs font-semibold">
+        {imagePoint ? (
+          <MapPin className="size-3" aria-hidden="true" />
+        ) : (
+          <Quote className="size-3" aria-hidden="true" />
+        )}
+        {imagePoint ? t('Image point {{number}}', { number }) : t('Text quote')}
+      </div>
+      <blockquote className="mt-1 whitespace-pre-wrap break-words border-l-2 border-primary/50 pl-2 text-xs">
+        {imagePoint
+          ? t('Point {{number}} at {{x}}, {{y}}', { number, x: item.x, y: item.y })
+          : item.content}
+      </blockquote>
+      {source ? (
+        <div className="mt-1 break-all text-[11px] opacity-70">
+          {t('Source: {{source}}', { source })}
+        </div>
+      ) : null}
+      {item.instruction ? <div className="mt-1 text-xs">{item.instruction}</div> : null}
+    </article>
   )
 }
 
@@ -237,8 +319,8 @@ const SideChatPanel = ({
                       key={JSON.stringify([view.generation, entry.id])}
                       className="my-3 flex justify-end"
                     >
-                      <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-bg-200 px-3 py-2 text-text-000">
-                        {entry.text}
+                      <div className="max-w-[80%] rounded-2xl bg-bg-200 px-3 py-2 text-text-000">
+                        <SideChatUserMessage text={entry.text} />
                       </div>
                     </div>
                   )

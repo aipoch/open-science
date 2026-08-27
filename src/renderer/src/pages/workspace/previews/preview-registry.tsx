@@ -15,29 +15,42 @@ import { TiffPreviewRenderer } from './renderers/TiffPreview'
 
 // Keeps the registry as the single routing point while avoiding dynamic component creation in render.
 export const renderPreviewFile = ({
-  item
+  item,
+  activeAnnotations,
+  onAddAnnotation,
+  onUpdateAnnotationNote,
+  onRemoveAnnotation,
+  onAnnotationError
 }: PreviewFileRendererProps): React.JSX.Element | undefined => {
+  const props = {
+    item,
+    activeAnnotations,
+    onAddAnnotation,
+    onUpdateAnnotationNote,
+    onRemoveAnnotation,
+    onAnnotationError
+  }
   switch (item.format) {
     case 'code':
-      return <CodePreviewRenderer item={item} />
+      return <CodePreviewRenderer {...props} />
     case 'csv':
       return <CsvPreviewRenderer item={item} />
     case 'fasta':
-      return <FastaPreviewRenderer item={item} />
+      return <FastaPreviewRenderer {...props} />
     case 'html':
-      return <HtmlPreviewRenderer item={item} />
+      return <HtmlPreviewRenderer {...props} />
     case 'image':
-      return <ImagePreviewRenderer item={item} />
+      return <ImagePreviewRenderer {...props} />
     case 'json':
       return <PlanJsonPreview item={item} />
     case 'markdown':
-      return <MarkdownPreviewRenderer item={item} />
+      return <MarkdownPreviewRenderer {...props} />
     case 'pdb':
       return <PdbPreviewRenderer item={item} />
     case 'molecule':
       return <MoleculePreviewRenderer item={item} />
     case 'text':
-      return <TextPreviewRenderer item={item} />
+      return <TextPreviewRenderer {...props} />
     case 'tiff':
       return <TiffPreviewRenderer item={item} />
     case 'pdf':

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 import type { PersistedUploadedAttachment } from './uploads'
 import type { FileReference } from './artifacts'
+import { sanitizeAnnotations, type Annotation } from './annotations'
 import {
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
@@ -387,6 +388,8 @@ export type PersistedChatMessage = {
   // Links a message to session-level artifact metadata without duplicating file records per message.
   artifactIds?: string[]
   uploads?: PersistedUploadedAttachment[]
+  // Structured evidence staged with the Composer and sent as part of this user Message.
+  annotations?: Annotation[]
   // Delegate assignment metadata keeps execution inputs reconstructable without parsing display text.
   delegatedTask?: string
   delegatedInputVersionIds?: string[]
@@ -3208,6 +3211,7 @@ const sanitizeMessage = (
   const parts = Array.isArray(message.parts)
     ? message.parts.map(sanitizeMessagePart).filter((item): item is MessagePart => !!item)
     : []
+  const annotations = role === 'user' ? sanitizeAnnotations(message.annotations) : []
   const images = sanitizeMessageImages(message.images)
   const turnUsage = role === 'agent' ? sanitizeAcpTurnTokenUsage(message.turnUsage) : undefined
   const candidateModelCallUsage =
@@ -3263,6 +3267,7 @@ const sanitizeMessage = (
   if (delegatedCallerSource) sanitized.delegatedCallerSource = delegatedCallerSource
   if (uploads.length > 0) sanitized.uploads = uploads
   if (parts.length > 0) sanitized.parts = parts
+  if (annotations.length > 0) sanitized.annotations = annotations
   if (
     role === 'user' &&
     (message.turnIntent === 'plan-first' || message.turnIntent === 'save-as-skill')

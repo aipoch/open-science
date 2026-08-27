@@ -1,7 +1,9 @@
 import { useTranslation } from 'react-i18next'
 
 import type { ToolActivity } from '@/stores/session-store'
+import type { AnnotationValidationError, TextAnnotation } from '../../../../shared/annotations'
 
+import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton'
 import type { ToolExecutionPhase } from './tool-execution-phase'
 import type { WebSearchDetails } from './workspace-web-search-details'
@@ -12,6 +14,11 @@ type WorkspaceWebSearchActivityRowProps = {
   details: WebSearchDetails
   isExpanded: boolean
   onToggleSearch: (activityId: string, nextExpanded: boolean) => void
+  annotationSessionId?: string
+  activeTextAnnotations?: readonly TextAnnotation[]
+  onAddTextAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
+  onUpdateTextAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
+  onAnnotationError?: (error: AnnotationValidationError) => void
 }
 
 // Formats the compact right-side count label while preserving zero-result visibility.
@@ -21,33 +28,90 @@ const formatResultCountLabel = (
 ): string => (resultCount === 1 ? t('1 result') : t('{{count}} results', { count: resultCount }))
 
 // Renders the expanded payload: the query followed by compact title/url result pairs.
-const renderSearchDetailsBody = (details: WebSearchDetails): React.JSX.Element => (
-  <>
-    <div className="grid grid-cols-[auto_1fr] items-start gap-x-4 gap-y-1.5">
-      <span className="pt-px text-text-100">query</span>
-      <span className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-text-000">
-        {details.query}
-      </span>
-    </div>
-    {details.results.length > 0 ? (
-      <div className="mt-2.5 space-y-1.5">
-        {details.results.map((result) => (
-          <div key={result.url} className="text-xs">
-            <a
-              href={result.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="break-words text-text-000 hover:underline"
-            >
-              {result.title}
-            </a>
-            <div className="truncate text-[10px] text-text-100">{result.url}</div>
-          </div>
-        ))}
+const renderSearchDetailsBody = (
+  activity: ToolActivity,
+  details: WebSearchDetails,
+  annotationProps: Pick<
+    WorkspaceWebSearchActivityRowProps,
+    | 'annotationSessionId'
+    | 'activeTextAnnotations'
+    | 'onAddTextAnnotation'
+    | 'onUpdateTextAnnotationNote'
+    | 'onAnnotationError'
+  >
+): React.JSX.Element => {
+  const canAnnotate =
+    annotationProps.annotationSessionId &&
+    annotationProps.onAddTextAnnotation &&
+    annotationProps.onAnnotationError
+  const annotate = (children: React.ReactNode, sectionId: string): React.JSX.Element =>
+    canAnnotate ? (
+      <TextAnnotationSurface
+        source={{
+          kind: 'session-item',
+          sessionId: annotationProps.annotationSessionId!,
+          itemType: 'tool-activity',
+          itemId: activity.id,
+          sectionId
+        }}
+        activeAnnotations={annotationProps.activeTextAnnotations ?? []}
+        onAdd={annotationProps.onAddTextAnnotation!}
+        onUpdateNote={annotationProps.onUpdateTextAnnotationNote}
+        onError={annotationProps.onAnnotationError!}
+      >
+        {children}
+      </TextAnnotationSurface>
+    ) : (
+      <>{children}</>
+    )
+
+  return (
+    <>
+      <div className="grid grid-cols-[auto_1fr] items-start gap-x-4 gap-y-1.5">
+        <span className="pt-px text-text-100">query</span>
+        {annotate(
+          <span className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-text-000">
+            {details.query}
+          </span>,
+          'query'
+        )}
       </div>
-    ) : null}
-  </>
-)
+      {details.results.length > 0 ? (
+        <div className="mt-2.5 space-y-1.5">
+          {details.results.map((result) => (
+            <div key={result.url} className="text-xs">
+              {annotate(
+                <a
+                  href={result.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="break-words text-text-000 hover:underline"
+                  onClick={(event) => {
+                    const selection = window.getSelection()
+                    if (
+                      selection &&
+                      !selection.isCollapsed &&
+                      selection.anchorNode &&
+                      selection.focusNode &&
+                      event.currentTarget.contains(selection.anchorNode) &&
+                      event.currentTarget.contains(selection.focusNode)
+                    ) {
+                      event.preventDefault()
+                    }
+                  }}
+                >
+                  {result.title}
+                </a>,
+                `result:${encodeURIComponent(result.url)}:title`
+              )}
+              <div className="truncate text-[10px] text-text-100">{result.url}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </>
+  )
+}
 
 // Renders one web-search activity row with an optional expandable result summary.
 const WorkspaceWebSearchActivityRow = ({
@@ -55,7 +119,12 @@ const WorkspaceWebSearchActivityRow = ({
   phase,
   details,
   isExpanded,
-  onToggleSearch
+  onToggleSearch,
+  annotationSessionId,
+  activeTextAnnotations,
+  onAddTextAnnotation,
+  onUpdateTextAnnotationNote,
+  onAnnotationError
 }: WorkspaceWebSearchActivityRowProps): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -75,7 +144,13 @@ const WorkspaceWebSearchActivityRow = ({
       panelTestId="tool-search-details"
       onToggle={onToggleSearch}
     >
-      {renderSearchDetailsBody(details)}
+      {renderSearchDetailsBody(activity, details, {
+        annotationSessionId,
+        activeTextAnnotations,
+        onAddTextAnnotation,
+        onUpdateTextAnnotationNote,
+        onAnnotationError
+      })}
     </WorkspaceToolActivityRowButton>
   )
 }

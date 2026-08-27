@@ -5,9 +5,11 @@ import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
+import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
 
-export const MarkdownPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+export const MarkdownPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => {
+  const { item } = props
   const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
@@ -24,12 +26,18 @@ export const MarkdownPreviewRenderer = ({ item }: PreviewFileRendererProps): Rea
   }
 
   if (state.preview.truncated || state.pagination.pageNumber > 1) {
-    return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
+    return (
+      <PreviewTextAnnotationSurface {...props}>
+        <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
+      </PreviewTextAnnotationSurface>
+    )
   }
 
   return (
-    <div className="size-full overflow-auto bg-bg-10 p-4">
-      <AgentMarkdown content={state.preview.content} />
-    </div>
+    <PreviewTextAnnotationSurface {...props}>
+      <div className="size-full overflow-auto bg-bg-10 p-4">
+        <AgentMarkdown content={state.preview.content} />
+      </div>
+    </PreviewTextAnnotationSurface>
   )
 }

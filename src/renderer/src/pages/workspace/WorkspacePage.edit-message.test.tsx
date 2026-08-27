@@ -90,6 +90,46 @@ const createSession = (overrides: Partial<ChatSession> = {}): ChatSession => {
     cwd: '/workspace/proj-1',
     status: 'idle',
     messages: [],
+    conversationGraph: {
+      schemaVersion: 1,
+      rootFrameId: 'root',
+      activeFrameId: 'root',
+      frames: [
+        {
+          id: 'root',
+          originBindingState: 'root',
+          kind: 'root',
+          status: 'completed',
+          activeBranchId: 'branch-a',
+          createdAt: now
+        }
+      ],
+      branches: [
+        {
+          id: 'branch-a',
+          agentFrameId: 'root',
+          headMessageId: 'message-1',
+          createdAt: now,
+          updatedAt: now
+        }
+      ],
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Run /forecast now',
+          status: 'complete',
+          eventIds: [],
+          agentFrameId: 'root',
+          introducedOnBranchId: 'branch-a',
+          createdAt: now,
+          updatedAt: now
+        }
+      ],
+      activities: [],
+      activityGroups: [],
+      runtimeSegments: []
+    },
     createdAt: now,
     updatedAt: now,
     ...overrides
@@ -193,43 +233,49 @@ describe('WorkspacePage inline edit resend', () => {
     expect(conversationProps.conversation.availability.revise).toBe(true)
 
     await act(async () => {
-      conversationProps.conversation.actions.revise('message-1', editedDoc)
+      await conversationProps.conversation.actions.revise('message-1', editedDoc, [])
     })
 
     // The runtime receives the truncation point plus the adjusted prompt with its mentions resolved.
     expect(runtime.resendEditedMessage).toHaveBeenCalledWith('sess-a', 'message-1', {
       text: 'Run /forecast tomorrow',
+      annotations: [],
       parts: editedDoc.nodes,
       forcedSkillIds: ['skill-forecast'],
       referencedArtifacts: []
     })
   })
 
-  it('refuses to resend while a run is active or the edited doc is empty', async () => {
+  it('queues a revision while a run is active and still rejects an empty edit', async () => {
     await renderPage()
 
     await act(async () => {
       setSession({ status: 'running', messages: [promptMessage] })
     })
-    expect(conversationProps.conversation.availability.revise).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
 
     await act(async () => {
-      conversationProps.conversation.actions.revise('message-1', editedDoc)
+      await conversationProps.conversation.actions.revise('message-1', editedDoc, [])
     })
     expect(runtime.resendEditedMessage).not.toHaveBeenCalled()
+    expect(conversationProps.conversation.queue.items).toEqual([
+      expect.objectContaining({ text: 'Run /forecast tomorrow', phase: 'queued' })
+    ])
 
     await act(async () => {
       setSession({ messages: [promptMessage] })
     })
     expect(conversationProps.conversation.availability.revise).toBe(true)
+    await vi.waitFor(() => expect(runtime.resendEditedMessage).toHaveBeenCalledOnce())
+    runtime.resendEditedMessage.mockClear()
 
     await act(async () => {
-      conversationProps.conversation.actions.revise('message-1', emptyDoc)
+      await conversationProps.conversation.actions.revise('message-1', emptyDoc, [])
     })
     expect(runtime.resendEditedMessage).not.toHaveBeenCalled()
   })
 
-  it('gates editing while a run is active and restores it once settled', async () => {
+  it('allows queued editing during a run but gates permission, Fix Loop, and compaction', async () => {
     await renderPage()
 
     expect(conversationProps.conversation.availability.revise).toBe(true)
@@ -237,7 +283,7 @@ describe('WorkspacePage inline edit resend', () => {
     await act(async () => {
       setSession({ status: 'running', messages: [promptMessage] })
     })
-    expect(conversationProps.conversation.availability.revise).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
 
     await act(async () => {
       setSession({ status: 'waiting-permission', messages: [promptMessage] })
