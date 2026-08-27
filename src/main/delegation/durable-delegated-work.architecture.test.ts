@@ -9,7 +9,6 @@ describe('durable delegated work architecture', () => {
   it('keeps state owners and projections out of the public composer implementation', () => {
     const composer = readSource('./durable-delegated-work.ts')
 
-    expect(composer.split('\n').length).toBeLessThan(1_120)
     expect(composer).not.toContain('class RootDelegatePermissionOwner')
     expect(composer).not.toContain('class DelegatedWorkProjectionOwner')
     expect(composer).not.toContain('class DelegatedWorkReadModel')

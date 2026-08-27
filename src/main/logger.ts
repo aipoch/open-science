@@ -31,6 +31,7 @@ export type LoggerConfig = {
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024 // 5 MB per file
 const DEFAULT_MAX_FILES = 3 // ~15 MB total ceiling
+const DEFAULT_MIRROR_TO_CONSOLE = process.env.NODE_ENV !== 'test'
 
 let config: LoggerConfig | undefined
 // Serializes appends (and rotation) so concurrent log calls cannot interleave partial lines.
@@ -814,7 +815,7 @@ const initLogger = (options: { logDir: string } & Partial<Omit<LoggerConfig, 'lo
     runId: randomUUID(),
     fileName: 'main.log',
     minLevel: 'debug',
-    mirrorToConsole: true,
+    mirrorToConsole: DEFAULT_MIRROR_TO_CONSOLE,
     maxBytes: DEFAULT_MAX_BYTES,
     maxFiles: DEFAULT_MAX_FILES,
     ...options
@@ -857,7 +858,7 @@ const writeFatalLogSync = (scope: string, message: string, data?: unknown): void
 }
 
 const emit = (level: LogLevel, scope: string, message: string, data?: unknown): void => {
-  const mirror = config?.mirrorToConsole ?? true
+  const mirror = config?.mirrorToConsole ?? DEFAULT_MIRROR_TO_CONSOLE
   const line = formatLine(
     level,
     scope,

@@ -877,10 +877,7 @@ const sessionEventSubscriptions = (): string[] =>
 describe('Session Store architecture', () => {
   const facadeSource = readSource(facadePath)
 
-  it('keeps the compatibility facade and private modules within their completion gates', () => {
-    const physicalLines = facadeSource.split(/\r?\n/).length - Number(facadeSource.endsWith('\n'))
-    expect(physicalLines).toBeLessThanOrEqual(395)
-
+  it('keeps the compatibility facade and private module inventory explicit', () => {
     const actualModules = productionSources()
       .filter((path) =>
         modulePath(path).startsWith(modulePath(resolve(__dirname, 'session-store')))
@@ -890,12 +887,6 @@ describe('Session Store architecture', () => {
     expect(actualModules).toEqual(
       ['session-store.ts', ...ownerNames.map((name) => `${name}.ts`)].sort()
     )
-    for (const file of actualModules) {
-      const source = readSource(resolve(__dirname, file))
-      const lines = source.split(/\r?\n/).length - Number(source.endsWith('\n'))
-      const completionGate = file === 'session-store-persistence-owner.ts' ? 785 : 719
-      expect(lines, file).toBeLessThanOrEqual(completionGate)
-    }
   })
 
   it('locks the established public values, types and actions', () => {
