@@ -256,8 +256,4 @@ class CredentialVault {
 }
 
 export { CredentialVault, MAX_PASSWORD_BYTES, validateComputePassword }
-export type {
-  ComputeCredentialReader,
-  CredentialPasswordLease,
-  StoredComputeCredential
-}
+export type { ComputeCredentialReader, CredentialPasswordLease, StoredComputeCredential }
