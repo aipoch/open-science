@@ -1,8 +1,8 @@
 import { useTranslation } from 'react-i18next'
 
 import type { ToolActivity } from '@/stores/session-store'
-import type { AnnotationValidationError, TextAnnotation } from '../../../../shared/annotations'
 
+import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton'
 import type { ToolExecutionPhase } from './tool-execution-phase'
@@ -14,11 +14,7 @@ type WorkspaceWebSearchActivityRowProps = {
   details: WebSearchDetails
   isExpanded: boolean
   onToggleSearch: (activityId: string, nextExpanded: boolean) => void
-  annotationSessionId?: string
-  activeTextAnnotations?: readonly TextAnnotation[]
-  onAddTextAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
-  onUpdateTextAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
-  onAnnotationError?: (error: AnnotationValidationError) => void
+  annotationPort?: AnnotationPort
 }
 
 // Formats the compact right-side count label while preserving zero-result visibility.
@@ -31,33 +27,22 @@ const formatResultCountLabel = (
 const renderSearchDetailsBody = (
   activity: ToolActivity,
   details: WebSearchDetails,
-  annotationProps: Pick<
-    WorkspaceWebSearchActivityRowProps,
-    | 'annotationSessionId'
-    | 'activeTextAnnotations'
-    | 'onAddTextAnnotation'
-    | 'onUpdateTextAnnotationNote'
-    | 'onAnnotationError'
-  >
+  annotationPort?: AnnotationPort
 ): React.JSX.Element => {
-  const canAnnotate =
-    annotationProps.annotationSessionId &&
-    annotationProps.onAddTextAnnotation &&
-    annotationProps.onAnnotationError
   const annotate = (children: React.ReactNode, sectionId: string): React.JSX.Element =>
-    canAnnotate ? (
+    annotationPort ? (
       <TextAnnotationSurface
         source={{
           kind: 'session-item',
-          sessionId: annotationProps.annotationSessionId!,
+          sessionId: annotationPort.sessionId,
           itemType: 'tool-activity',
           itemId: activity.id,
           sectionId
         }}
-        activeAnnotations={annotationProps.activeTextAnnotations ?? []}
-        onAdd={annotationProps.onAddTextAnnotation!}
-        onUpdateNote={annotationProps.onUpdateTextAnnotationNote}
-        onError={annotationProps.onAnnotationError!}
+        activeAnnotations={annotationPort.activeAnnotations}
+        onAdd={annotationPort.onAdd}
+        onUpdateNote={annotationPort.onUpdateNote}
+        onError={annotationPort.onError}
       >
         {children}
       </TextAnnotationSurface>
@@ -120,11 +105,7 @@ const WorkspaceWebSearchActivityRow = ({
   details,
   isExpanded,
   onToggleSearch,
-  annotationSessionId,
-  activeTextAnnotations,
-  onAddTextAnnotation,
-  onUpdateTextAnnotationNote,
-  onAnnotationError
+  annotationPort
 }: WorkspaceWebSearchActivityRowProps): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -144,13 +125,7 @@ const WorkspaceWebSearchActivityRow = ({
       panelTestId="tool-search-details"
       onToggle={onToggleSearch}
     >
-      {renderSearchDetailsBody(activity, details, {
-        annotationSessionId,
-        activeTextAnnotations,
-        onAddTextAnnotation,
-        onUpdateTextAnnotationNote,
-        onAnnotationError
-      })}
+      {renderSearchDetailsBody(activity, details, annotationPort)}
     </WorkspaceToolActivityRowButton>
   )
 }

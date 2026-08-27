@@ -30,7 +30,7 @@ import {
   type ElicitationValue,
   type PendingElicitationRequest
 } from '../../../../shared/acp'
-import type { AnnotationValidationError, TextAnnotation } from '../../../../shared/annotations'
+import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 
 const displayValue = (
@@ -139,12 +139,8 @@ type WorkspaceElicitationCardProps = {
   embedded?: boolean
   onRespond?: (response: ElicitationResponse) => Promise<void>
   onDraftChange?: (answers: ElicitationAnswer[]) => void
-  annotationSessionId?: string
+  annotationPort?: AnnotationPort
   annotationItemId?: string
-  activeTextAnnotations?: readonly TextAnnotation[]
-  onAddTextAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
-  onUpdateTextAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
-  onAnnotationError?: (error: AnnotationValidationError) => void
   revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }
 
@@ -195,12 +191,8 @@ const WorkspaceElicitationCard = ({
   embedded = false,
   onRespond,
   onDraftChange,
-  annotationSessionId,
+  annotationPort,
   annotationItemId,
-  activeTextAnnotations,
-  onAddTextAnnotation,
-  onUpdateTextAnnotationNote,
-  onAnnotationError,
   revealRequest
 }: WorkspaceElicitationCardProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -339,19 +331,19 @@ const WorkspaceElicitationCard = ({
       // Translucent white panel: a different material from the gray summary rows,
       // scaled to the summary rows (size-5 badges, 13px text).
       <div className="mb-1.5 mt-1 rounded-[10px] bg-bg-000/60 p-2">
-        {annotationSessionId && annotationItemId && onAddTextAnnotation && onAnnotationError ? (
+        {annotationPort && annotationItemId ? (
           <TextAnnotationSurface
             source={{
               kind: 'session-item',
-              sessionId: annotationSessionId,
+              sessionId: annotationPort.sessionId,
               itemType: 'elicitation',
               itemId: annotationItemId,
               sectionId: `field:${question.choiceField.id}:${question.choiceField.description ? 'description' : 'label'}`
             }}
-            activeAnnotations={activeTextAnnotations ?? []}
-            onAdd={onAddTextAnnotation}
-            onUpdateNote={onUpdateTextAnnotationNote}
-            onError={onAnnotationError}
+            activeAnnotations={annotationPort.activeAnnotations}
+            onAdd={annotationPort.onAdd}
+            onUpdateNote={annotationPort.onUpdateNote}
+            onError={annotationPort.onError}
           >
             <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
               {question.choiceField.description || question.choiceField.label}
@@ -621,21 +613,21 @@ const WorkspaceElicitationCard = ({
 
       {isAnsweredSummary || isTerminalChoiceSummary ? null : (
         <div className="flex items-start">
-          {annotationSessionId && annotationItemId && onAddTextAnnotation && onAnnotationError ? (
+          {annotationPort && annotationItemId ? (
             <div className="min-w-0 flex-1">
               <TextAnnotationSurface
                 key={titleAnnotationSectionId}
                 source={{
                   kind: 'session-item',
-                  sessionId: annotationSessionId,
+                  sessionId: annotationPort.sessionId,
                   itemType: 'elicitation',
                   itemId: annotationItemId,
                   sectionId: titleAnnotationSectionId
                 }}
-                activeAnnotations={activeTextAnnotations ?? []}
-                onAdd={onAddTextAnnotation}
-                onUpdateNote={onUpdateTextAnnotationNote}
-                onError={onAnnotationError}
+                activeAnnotations={annotationPort.activeAnnotations}
+                onAdd={annotationPort.onAdd}
+                onUpdateNote={annotationPort.onUpdateNote}
+                onError={annotationPort.onError}
               >
                 <h3
                   className={cn(

@@ -26,11 +26,8 @@ import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceToolDiffBlock } from './WorkspaceToolDiffBlock'
 import type { ToolExecutionPhase } from './tool-execution-phase'
-import type {
-  AnnotationValidationError,
-  SessionTextAnnotationItemType,
-  TextAnnotation
-} from '../../../../shared/annotations'
+import type { SessionTextAnnotationItemType } from '../../../../shared/annotations'
+import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 
 type WorkspaceToolDetailsRowProps = {
@@ -41,11 +38,7 @@ type WorkspaceToolDetailsRowProps = {
   isExpanded: boolean
   onNotebookRunNearViewport?: (runId: string, isNearViewport: boolean) => void
   onToggle: (activityId: string, nextExpanded: boolean) => void
-  annotationSessionId?: string
-  activeTextAnnotations?: readonly TextAnnotation[]
-  onAddTextAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
-  onUpdateTextAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
-  onAnnotationError?: (error: AnnotationValidationError) => void
+  annotationPort?: AnnotationPort
   annotationItemType?: SessionTextAnnotationItemType
   revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }
@@ -81,41 +74,32 @@ const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
 const renderCodeBody = (
   section: ToolCodeSection,
   t: (key: string) => string,
-  annotationProps: Pick<
+  annotationContext: Pick<
     WorkspaceToolDetailsRowProps,
-    | 'activity'
-    | 'annotationSessionId'
-    | 'activeTextAnnotations'
-    | 'onAddTextAnnotation'
-    | 'onUpdateTextAnnotationNote'
-    | 'onAnnotationError'
-    | 'annotationItemType'
+    'activity' | 'annotationPort' | 'annotationItemType'
   >
 ): React.JSX.Element => {
   const body = <WorkspaceToolCodeBlock code={section.text} language={section.language} />
   const sectionId = section.label.trim().toLowerCase()
-  const annotatableBody =
-    annotationProps.annotationSessionId &&
-    annotationProps.onAddTextAnnotation &&
-    annotationProps.onAnnotationError ? (
-      <TextAnnotationSurface
-        source={{
-          kind: 'session-item',
-          sessionId: annotationProps.annotationSessionId,
-          itemType: annotationProps.annotationItemType ?? 'tool-activity',
-          itemId: annotationProps.activity.id,
-          sectionId
-        }}
-        activeAnnotations={annotationProps.activeTextAnnotations ?? []}
-        onAdd={annotationProps.onAddTextAnnotation}
-        onUpdateNote={annotationProps.onUpdateTextAnnotationNote}
-        onError={annotationProps.onAnnotationError}
-      >
-        {body}
-      </TextAnnotationSurface>
-    ) : (
-      body
-    )
+  const annotatableBody = annotationContext.annotationPort ? (
+    <TextAnnotationSurface
+      source={{
+        kind: 'session-item',
+        sessionId: annotationContext.annotationPort.sessionId,
+        itemType: annotationContext.annotationItemType ?? 'tool-activity',
+        itemId: annotationContext.activity.id,
+        sectionId
+      }}
+      activeAnnotations={annotationContext.annotationPort.activeAnnotations}
+      onAdd={annotationContext.annotationPort.onAdd}
+      onUpdateNote={annotationContext.annotationPort.onUpdateNote}
+      onError={annotationContext.annotationPort.onError}
+    >
+      {body}
+    </TextAnnotationSurface>
+  ) : (
+    body
+  )
 
   return (
     <>
@@ -186,11 +170,7 @@ const WorkspaceToolDetailsRow = ({
   isExpanded,
   onNotebookRunNearViewport,
   onToggle,
-  annotationSessionId,
-  activeTextAnnotations,
-  onAddTextAnnotation,
-  onUpdateTextAnnotationNote,
-  onAnnotationError,
+  annotationPort,
   annotationItemType,
   revealRequest
 }: WorkspaceToolDetailsRowProps): React.JSX.Element => {
@@ -219,13 +199,9 @@ const WorkspaceToolDetailsRow = ({
       : undefined
   const translateKnownCopy = (value: string): string =>
     TRANSLATABLE_TOOL_DETAIL_COPY.has(value) ? t(value) : value
-  const annotationProps = {
+  const annotationContext = {
     activity,
-    annotationSessionId,
-    activeTextAnnotations,
-    onAddTextAnnotation,
-    onUpdateTextAnnotationNote,
-    onAnnotationError,
+    annotationPort,
     annotationItemType
   }
   const collapsibleSectionRefs = useRef(new Map<string, HTMLDetailsElement>())
@@ -252,19 +228,19 @@ const WorkspaceToolDetailsRow = ({
       return (
         <div key={index} className="space-y-1">
           <div className={sectionLabelClassName}>{translateKnownCopy(section.label)}</div>
-          {annotationSessionId && onAddTextAnnotation && onAnnotationError ? (
+          {annotationPort ? (
             <TextAnnotationSurface
               source={{
                 kind: 'session-item',
-                sessionId: annotationSessionId,
+                sessionId: annotationPort.sessionId,
                 itemType: annotationItemType ?? 'tool-activity',
                 itemId: activity.id,
                 sectionId: `diff:${index}`
               }}
-              activeAnnotations={activeTextAnnotations ?? []}
-              onAdd={onAddTextAnnotation}
-              onUpdateNote={onUpdateTextAnnotationNote}
-              onError={onAnnotationError}
+              activeAnnotations={annotationPort.activeAnnotations}
+              onAdd={annotationPort.onAdd}
+              onUpdateNote={annotationPort.onUpdateNote}
+              onError={annotationPort.onError}
             >
               {diffBody}
             </TextAnnotationSurface>
@@ -300,7 +276,7 @@ const WorkspaceToolDetailsRow = ({
           <summary className={`${sectionLabelClassName} cursor-pointer select-none`}>
             {translateKnownCopy(section.label)}
           </summary>
-          <div className="mt-1">{renderCodeBody(section, t, annotationProps)}</div>
+          <div className="mt-1">{renderCodeBody(section, t, annotationContext)}</div>
         </details>
       )
     }
@@ -308,7 +284,7 @@ const WorkspaceToolDetailsRow = ({
     return (
       <div key={index} className="space-y-1">
         <div className={sectionLabelClassName}>{translateKnownCopy(section.label)}</div>
-        {renderCodeBody(section, t, annotationProps)}
+        {renderCodeBody(section, t, annotationContext)}
       </div>
     )
   }

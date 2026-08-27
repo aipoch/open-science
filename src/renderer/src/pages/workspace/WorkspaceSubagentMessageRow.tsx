@@ -3,23 +3,15 @@ import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import type { AnnotationValidationError, TextAnnotation } from '../../../../shared/annotations'
 
+import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import type { InlineParentMessageProjection } from './subagent-release-projection'
-
-type SubagentMessageAnnotationPort = Readonly<{
-  sessionId: string
-  activeAnnotations: readonly TextAnnotation[]
-  onAdd: (annotation: TextAnnotation) => AnnotationValidationError | undefined
-  onUpdateNote?: (id: string, note: string) => AnnotationValidationError | undefined
-  onError: (error: AnnotationValidationError) => void
-}>
 
 type WorkspaceSubagentMessageRowProps = {
   message: InlineParentMessageProjection
   onOpenSource: () => void
-  annotationPort?: SubagentMessageAnnotationPort
+  annotationPort?: AnnotationPort
   revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }
 

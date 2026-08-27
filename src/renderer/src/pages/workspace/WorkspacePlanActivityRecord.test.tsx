@@ -5,6 +5,7 @@ import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivity } from '@/stores/session-store'
+import { installCssHighlightsMock, type TestHighlightRegistry } from '@/test-utils/css-highlights'
 import type { TextAnnotation } from '../../../../shared/annotations'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 
@@ -92,13 +93,7 @@ const activateNativeButtonWithKeyboard = (button: HTMLButtonElement, key: 'Enter
 const getStepButtons = (container: ParentNode): HTMLButtonElement[] =>
   Array.from(container.querySelectorAll<HTMLButtonElement>('button[aria-controls^="plan-step-"]'))
 
-class TestHighlight extends Set<Range> {
-  constructor(...ranges: Range[]) {
-    super(ranges)
-  }
-}
-
-const highlights = new Map<string, TestHighlight>()
+let highlights: TestHighlightRegistry
 
 const selectText = (element: HTMLElement): void => {
   const range = document.createRange()
@@ -131,9 +126,7 @@ describe('WorkspacePlanActivityRecord', () => {
   const originalResizeObserver = globalThis.ResizeObserver
 
   beforeEach(() => {
-    highlights.clear()
-    vi.stubGlobal('Highlight', TestHighlight)
-    vi.stubGlobal('CSS', { highlights })
+    highlights = installCssHighlightsMock()
     globalThis.ResizeObserver = class {
       constructor(private readonly callback: ResizeObserverCallback) {}
       observe(): void {

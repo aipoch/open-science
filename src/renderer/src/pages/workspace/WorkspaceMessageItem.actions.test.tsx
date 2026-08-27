@@ -96,10 +96,16 @@ const renderItem = async (
         subsequentTurns={options.subsequentTurns ?? 0}
         revisionNavigation={options.revisionNavigation}
         reviewerCorrectionActive={options.reviewerCorrectionActive}
-        annotationSessionId="session-1"
-        activeTextAnnotations={options.activeTextAnnotations}
-        onAddTextAnnotation={options.onAddTextAnnotation}
-        onAnnotationError={noop}
+        annotationPort={
+          options.onAddTextAnnotation
+            ? {
+                sessionId: 'session-1',
+                activeAnnotations: options.activeTextAnnotations ?? [],
+                onAdd: options.onAddTextAnnotation,
+                onError: noop
+              }
+            : undefined
+        }
       />
     )
   })

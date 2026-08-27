@@ -1,4 +1,4 @@
-import { FileText, Image, MapPin, Pencil, Quote, Trash2 } from 'lucide-react'
+import { FileText, Image, Pencil, Quote, Trash2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -13,6 +13,7 @@ import type {
   SessionTextAnnotationItemType
 } from '../../../../../shared/annotations'
 import { prepareImagePointAnnotations } from './image-annotation-payload'
+import { SentAnnotationCards, type SentAnnotationCardView } from './SentAnnotationCards'
 
 const sessionItemSourceLabel = (itemType: SessionTextAnnotationItemType, t: TFunction): string => {
   const labels: Record<SessionTextAnnotationItemType, string> = {
@@ -34,6 +35,36 @@ const annotationSourceLabel = (annotation: Annotation, t: TFunction): string => 
     return sessionItemSourceLabel(annotation.source.itemType, t)
   }
   return annotation.source.name ?? annotation.source.path ?? t('Project File')
+}
+
+const sentAnnotationViews = (
+  annotations: readonly Annotation[],
+  t: TFunction
+): readonly SentAnnotationCardView[] => {
+  const imagePoints = new Map(
+    prepareImagePointAnnotations(annotations).points.map((point) => [point.annotationId, point])
+  )
+  return annotations.map((annotation) => {
+    const imagePoint = imagePoints.get(annotation.id)
+    if (imagePoint) {
+      return {
+        id: annotation.id,
+        kind: 'image-point',
+        number: imagePoint.number,
+        x: imagePoint.x,
+        y: imagePoint.y,
+        source: annotationSourceLabel(annotation, t),
+        note: annotation.note
+      }
+    }
+    return {
+      id: annotation.id,
+      kind: 'text',
+      content: annotation.kind === 'text' ? annotation.quote : annotation.source.name,
+      source: annotationSourceLabel(annotation, t),
+      note: annotation.note
+    }
+  })
 }
 
 const annotationChipLabel = (annotation: Annotation): string =>
@@ -250,45 +281,7 @@ const AnnotationMessageCards = ({
   annotations: readonly Annotation[]
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  if (annotations.length === 0) return null
-  const imagePoints = new Map(
-    prepareImagePointAnnotations(annotations).points.map((point) => [point.annotationId, point])
-  )
-  return (
-    <section className="mb-2 space-y-2" aria-label={t('Sent annotations')}>
-      {annotations.map((annotation) => {
-        const imagePoint = imagePoints.get(annotation.id)
-        return (
-          <article
-            key={annotation.id}
-            className="rounded-lg border border-border/70 bg-background/70 p-2"
-          >
-            <div className="flex items-center gap-1 text-xs font-semibold">
-              {imagePoint ? (
-                <MapPin className="size-3" aria-hidden="true" />
-              ) : (
-                <Quote className="size-3" aria-hidden="true" />
-              )}
-              {imagePoint
-                ? t('Image point {{number}}', { number: imagePoint.number })
-                : t('Text quote')}
-            </div>
-            <blockquote className="mt-1 whitespace-pre-wrap break-words border-l-2 border-primary/50 pl-2 text-xs">
-              {imagePoint
-                ? t('Point {{number}} at {{x}}, {{y}}', imagePoint)
-                : annotation.kind === 'text'
-                  ? annotation.quote
-                  : annotation.source.name}
-            </blockquote>
-            <div className="mt-1 text-[11px] opacity-70">
-              {t('Source: {{source}}', { source: annotationSourceLabel(annotation, t) })}
-            </div>
-            {annotation.note ? <div className="mt-1 text-xs">{annotation.note}</div> : null}
-          </article>
-        )
-      })}
-    </section>
-  )
+  return <SentAnnotationCards cards={sentAnnotationViews(annotations, t)} placement="message" />
 }
 
 export { AnnotationDraftCards, AnnotationMessageCards }

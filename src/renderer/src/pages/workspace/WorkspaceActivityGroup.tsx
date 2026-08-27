@@ -30,7 +30,7 @@ import { formatWebSearchDetails } from './workspace-web-search-details'
 import { getCorrelatedNotebookRun, getToolExecutionPhase } from './tool-execution-phase'
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 import { isNotebookManagePackagesToolName } from './notebook-tool-names'
-import type { AnnotationValidationError, TextAnnotation } from '../../../../shared/annotations'
+import type { AnnotationPort } from './annotations/annotation-port'
 
 const isManagePackagesActivity = (
   activity: ConversationActivityGroupItem['activities'][number]
@@ -53,11 +53,7 @@ type WorkspaceActivityGroupProps = {
   jobsByActivityId?: Map<string, JobSummary>
   onOpenJobDetail?: (job: JobSummary) => void
   permission?: SessionPermissionRuntimeContext
-  annotationSessionId?: string
-  activeTextAnnotations?: readonly TextAnnotation[]
-  onAddTextAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
-  onUpdateTextAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
-  onAnnotationError?: (error: AnnotationValidationError) => void
+  annotationPort?: AnnotationPort
   revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }
 
@@ -101,11 +97,7 @@ const WorkspaceActivityGroup = ({
   jobsByActivityId,
   onOpenJobDetail,
   permission,
-  annotationSessionId,
-  activeTextAnnotations,
-  onAddTextAnnotation,
-  onUpdateTextAnnotationNote,
-  onAnnotationError,
+  annotationPort,
   revealRequest
 }: WorkspaceActivityGroupProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -184,11 +176,7 @@ const WorkspaceActivityGroup = ({
                           phase={phase}
                           isExpanded={isRowExpanded}
                           onToggle={onToggleRow}
-                          annotationSessionId={annotationSessionId}
-                          activeTextAnnotations={activeTextAnnotations}
-                          onAddTextAnnotation={onAddTextAnnotation}
-                          onUpdateTextAnnotationNote={onUpdateTextAnnotationNote}
-                          onAnnotationError={onAnnotationError}
+                          annotationPort={annotationPort}
                           revealRequest={
                             revealRequest?.itemId === activity.id ? revealRequest : undefined
                           }
@@ -200,11 +188,7 @@ const WorkspaceActivityGroup = ({
                           details={searchDetails}
                           isExpanded={isRowExpanded}
                           onToggleSearch={onToggleRow}
-                          annotationSessionId={annotationSessionId}
-                          activeTextAnnotations={activeTextAnnotations}
-                          onAddTextAnnotation={onAddTextAnnotation}
-                          onUpdateTextAnnotationNote={onUpdateTextAnnotationNote}
-                          onAnnotationError={onAnnotationError}
+                          annotationPort={annotationPort}
                         />
                       ) : toolDetails ? (
                         <WorkspaceToolDetailsRow
@@ -220,11 +204,7 @@ const WorkspaceActivityGroup = ({
                           isExpanded={isRowExpanded}
                           onNotebookRunNearViewport={onNotebookRunNearViewport}
                           onToggle={onToggleRow}
-                          annotationSessionId={annotationSessionId}
-                          activeTextAnnotations={activeTextAnnotations}
-                          onAddTextAnnotation={onAddTextAnnotation}
-                          onUpdateTextAnnotationNote={onUpdateTextAnnotationNote}
-                          onAnnotationError={onAnnotationError}
+                          annotationPort={annotationPort}
                           revealRequest={
                             revealRequest?.itemId === activity.id ? revealRequest : undefined
                           }

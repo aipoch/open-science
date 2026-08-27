@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
+import { installCssHighlightsMock, type TestHighlightRegistry } from '@/test-utils/css-highlights'
 import type { TextAnnotation } from '../../../../shared/annotations'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -91,13 +92,7 @@ vi.mock('@/stores/preview-workbench-store', () => ({
   createSessionSubagentsPreviewItem: vi.fn()
 }))
 
-class TestHighlight extends Set<Range> {
-  constructor(...ranges: Range[]) {
-    super(ranges)
-  }
-}
-
-const highlights = new Map<string, TestHighlight>()
+let highlights: TestHighlightRegistry
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
   id: 'message-1',
@@ -157,9 +152,7 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
   let root: Root
 
   beforeEach(() => {
-    highlights.clear()
-    vi.stubGlobal('Highlight', TestHighlight)
-    vi.stubGlobal('CSS', { highlights })
+    highlights = installCssHighlightsMock()
     container = document.createElement('div')
     document.body.appendChild(container)
     Element.prototype.scrollIntoView = vi.fn()

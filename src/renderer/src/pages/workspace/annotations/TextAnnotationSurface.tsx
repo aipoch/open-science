@@ -1,29 +1,23 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Pencil } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@/components/ui/button'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
-import { Textarea } from '@/components/ui/textarea'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type {
   AnnotationValidationError,
   SessionTextAnnotationSource,
   TextAnnotation,
   TextAnnotationSource
 } from '../../../../../shared/annotations'
-import { AnnotationTrigger } from './AnnotationTrigger'
 import { isBackwardSelection } from './annotation-trigger-anchor'
 import { createAnnotationId } from './annotation-id'
 import { revealTextAnnotationRange, subscribeAnnotationReveal } from './annotation-reveal'
+import {
+  AnnotationDraftEditor,
+  AnnotationMarkers,
+  type AnnotationControl
+} from './TextAnnotationEditors'
 import { reconcileTextAnnotationRanges } from './text-annotation-range'
 
 type SelectionDraft = { quote: string; backward: boolean; range: Range }
-type AnnotationControl = Readonly<{
-  annotation: TextAnnotation
-  left: number
-  top: number
-}>
 
 const DRAFT_HIGHLIGHT_NAME = 'agent-annotation-draft'
 const draftHighlightRanges = new Map<string, Range>()
@@ -85,9 +79,6 @@ const TextAnnotationSurface = ({
   const [note, setNote] = useState('')
   const [annotationControls, setAnnotationControls] = useState<readonly AnnotationControl[]>([])
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string>()
-  const [editingAnnotationId, setEditingAnnotationId] = useState<string>()
-  const [editingNote, setEditingNote] = useState('')
-  const editButtons = useRef(new Map<string, HTMLButtonElement>())
   const matchingAnnotations = useMemo(
     () => activeAnnotations.filter((annotation) => sourcesMatch(annotation.source, source)),
     [activeAnnotations, source]
@@ -327,113 +318,24 @@ const TextAnnotationSurface = ({
       <div ref={contentRef} className="contents">
         {children}
       </div>
-      <TooltipProvider>
-        {annotationControls.map(({ annotation, left, top }) => (
-          <Popover
-            key={annotation.id}
-            open={editingAnnotationId === annotation.id}
-            onOpenChange={(next) => {
-              if (!next) setEditingAnnotationId(undefined)
-            }}
-          >
-            <PopoverAnchor asChild>
-              <span
-                className="absolute z-10 -translate-x-1/3 -translate-y-2/3"
-                style={{ left, top }}
-              >
-                <Tooltip>
-                  <TooltipTrigger
-                    asChild
-                    onFocus={(event) => {
-                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
-                    }}
-                  >
-                    <button
-                      ref={(element) => {
-                        if (element) editButtons.current.set(annotation.id, element)
-                        else editButtons.current.delete(annotation.id)
-                      }}
-                      type="button"
-                      data-text-annotation-edit="true"
-                      data-annotation-note={annotation.note ?? annotation.quote}
-                      className="flex size-5 items-center justify-center rounded bg-transparent text-primary/70 hover:bg-muted hover:text-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                      aria-label={t('Edit annotation note')}
-                      onClick={() => {
-                        setEditingAnnotationId(annotation.id)
-                        setEditingNote(annotation.note ?? '')
-                      }}
-                    >
-                      <Pencil className="size-3" aria-hidden="true" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-72 truncate bg-muted text-foreground">
-                    {annotation.note ?? annotation.quote}
-                  </TooltipContent>
-                </Tooltip>
-              </span>
-            </PopoverAnchor>
-            <PopoverContent
-              align="start"
-              side="bottom"
-              className="w-80 space-y-3 border border-border bg-popover p-3 text-popover-foreground"
-              onCloseAutoFocus={(event) => {
-                event.preventDefault()
-                queueMicrotask(() => editButtons.current.get(annotation.id)?.focus())
-              }}
-            >
-              <label className="sr-only" htmlFor={`source-annotation-note-${annotation.id}`}>
-                {t('Annotation note')}
-              </label>
-              <Textarea
-                id={`source-annotation-note-${annotation.id}`}
-                data-source-annotation-note="true"
-                autoFocus
-                value={editingNote}
-                maxLength={2_000}
-                placeholder={t('Add context for the Agent')}
-                onChange={(event) => setEditingNote(event.target.value)}
-              />
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditingAnnotationId(undefined)}
-                >
-                  {t('Cancel')}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={!onUpdateNote}
-                  onClick={() => {
-                    const error = onUpdateNote?.(annotation.id, editingNote)
-                    if (error) onError(error)
-                    else setEditingAnnotationId(undefined)
-                  }}
-                >
-                  {t('Save')}
-                </Button>
-              </div>
-            </PopoverContent>
-            {hoveredAnnotationId === annotation.id ? (
-              <div
-                data-text-annotation-hover-note="true"
-                className="pointer-events-none absolute z-20 max-w-72 truncate rounded-md bg-muted px-2 py-1 text-xs text-foreground shadow-sm"
-                style={{ left, top: top + 18 }}
-              >
-                {annotation.note ?? annotation.quote}
-              </div>
-            ) : null}
-          </Popover>
-        ))}
-      </TooltipProvider>
+      <AnnotationMarkers
+        controls={annotationControls}
+        hoveredAnnotationId={hoveredAnnotationId}
+        variant="workspace"
+        onUpdateNote={onUpdateNote}
+        onError={onError}
+      />
       {matchingAnnotations.length > 0 ? (
         <span className="sr-only">{t('Annotated for Agent')}</span>
       ) : null}
       {selection ? (
-        <Popover
+        <AnnotationDraftEditor
+          range={selection.range}
+          backward={selection.backward}
           open={open}
+          note={note}
+          noteInputId={noteInputId}
+          variant="workspace"
           onOpenChange={(next) => {
             setOpen(next)
             if (!next) {
@@ -443,43 +345,10 @@ const TextAnnotationSurface = ({
               window.getSelection()?.removeAllRanges()
             }
           }}
-        >
-          <AnnotationTrigger
-            range={selection.range}
-            backward={selection.backward}
-            hidden={open}
-            label={t('Annotate')}
-            onActivate={() => setOpen(true)}
-          />
-          <PopoverContent
-            align="start"
-            side="bottom"
-            className="w-80 space-y-3 border border-border bg-popover p-3 text-popover-foreground"
-          >
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {t('To Agent')}
-            </div>
-            <label className="block text-xs font-medium" htmlFor={noteInputId}>
-              {t('Note (optional)')}
-            </label>
-            <Textarea
-              id={noteInputId}
-              autoFocus
-              value={note}
-              maxLength={2_000}
-              placeholder={t('Add context for the Agent')}
-              onChange={(event) => setNote(event.target.value)}
-            />
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>
-                {t('Cancel')}
-              </Button>
-              <Button type="button" size="sm" onClick={add}>
-                {t('Annotate')}
-              </Button>
-            </div>
-          </PopoverContent>
-        </Popover>
+          onCancel={() => setOpen(false)}
+          onNoteChange={setNote}
+          onAdd={add}
+        />
       ) : null}
     </div>
   )

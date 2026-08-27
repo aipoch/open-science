@@ -6,8 +6,8 @@ import type { ToolActivity } from '@/stores/session-store'
 import { cn } from '@/lib/utils'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { AnnotationValidationError, TextAnnotation } from '../../../../shared/annotations'
 
+import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
 import type { ToolExecutionPhase } from './tool-execution-phase'
@@ -21,11 +21,7 @@ type WorkspaceManagePackagesActivityRowProps = {
   phase: ToolExecutionPhase
   isExpanded: boolean
   onToggle: (activityId: string, nextExpanded: boolean) => void
-  annotationSessionId?: string
-  activeTextAnnotations?: readonly TextAnnotation[]
-  onAddTextAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
-  onUpdateTextAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
-  onAnnotationError?: (error: AnnotationValidationError) => void
+  annotationPort?: AnnotationPort
   revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }
 
@@ -109,11 +105,7 @@ const WorkspaceManagePackagesActivityRow = ({
   phase,
   isExpanded,
   onToggle,
-  annotationSessionId,
-  activeTextAnnotations,
-  onAddTextAnnotation,
-  onUpdateTextAnnotationNote,
-  onAnnotationError,
+  annotationPort,
   revealRequest
 }: WorkspaceManagePackagesActivityRowProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -270,8 +262,6 @@ const WorkspaceManagePackagesActivityRow = ({
     return () => clearInterval(timer)
   }, [isActive])
 
-  const canAnnotateTerminalText =
-    !isActive && annotationSessionId && onAddTextAnnotation && onAnnotationError
   const relatedChangesRef = useRef<HTMLDetailsElement>(null)
   useLayoutEffect(() => {
     if (
@@ -284,19 +274,19 @@ const WorkspaceManagePackagesActivityRow = ({
     }
   }, [activity.id, revealRequest])
   const annotateTerminalText = (children: React.ReactNode, sectionId: string): React.JSX.Element =>
-    canAnnotateTerminalText ? (
+    !isActive && annotationPort ? (
       <TextAnnotationSurface
         source={{
           kind: 'session-item',
-          sessionId: annotationSessionId,
+          sessionId: annotationPort.sessionId,
           itemType: 'tool-activity',
           itemId: activity.id,
           sectionId
         }}
-        activeAnnotations={activeTextAnnotations ?? []}
-        onAdd={onAddTextAnnotation}
-        onUpdateNote={onUpdateTextAnnotationNote}
-        onError={onAnnotationError}
+        activeAnnotations={annotationPort.activeAnnotations}
+        onAdd={annotationPort.onAdd}
+        onUpdateNote={annotationPort.onUpdateNote}
+        onError={annotationPort.onError}
       >
         {children}
       </TextAnnotationSurface>

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivity } from '@/stores/session-store'
+import { installCssHighlightsMock, type TestHighlightRegistry } from '@/test-utils/css-highlights'
 import type { TextAnnotation } from '../../../../shared/annotations'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
@@ -15,13 +16,7 @@ vi.mock('@/components/ui/message-scroller', () => ({
   useMessageScroller: () => ({ scrollToMessage: vi.fn() })
 }))
 
-class TestHighlight extends Set<Range> {
-  constructor(...ranges: Range[]) {
-    super(ranges)
-  }
-}
-
-const highlights = new Map<string, TestHighlight>()
+let highlights: TestHighlightRegistry
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
   id: 'activity-1',
@@ -40,9 +35,7 @@ describe('WorkspaceActivityGroup text annotations', () => {
   let root: Root
 
   beforeEach(() => {
-    highlights.clear()
-    vi.stubGlobal('Highlight', TestHighlight)
-    vi.stubGlobal('CSS', { highlights })
+    highlights = installCssHighlightsMock()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -76,10 +69,12 @@ describe('WorkspaceActivityGroup text annotations', () => {
           onToggleGroup={vi.fn()}
           expansionOverrides={{ [activity.id]: true }}
           onToggleRow={vi.fn()}
-          annotationSessionId="session-1"
-          activeTextAnnotations={annotations}
-          onAddTextAnnotation={onAdd}
-          onAnnotationError={vi.fn()}
+          annotationPort={{
+            sessionId: 'session-1',
+            activeAnnotations: annotations,
+            onAdd,
+            onError: vi.fn()
+          }}
           revealRequest={revealRequest}
         />
       )

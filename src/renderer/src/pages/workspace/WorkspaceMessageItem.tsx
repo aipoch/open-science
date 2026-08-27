@@ -75,6 +75,7 @@ import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProb
 import { resolveSessionProviderId } from './error-report'
 import { SessionMessageMarkdown } from './SessionMessageMarkdown'
 import { AnnotationDraftCards, AnnotationMessageCards } from './annotations/AnnotationCards'
+import type { AnnotationPort } from './annotations/annotation-port'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import {
@@ -127,11 +128,7 @@ type WorkspaceMessageItemProps = {
     messageId: string,
     target: EditAnnotationTarget | undefined
   ) => void
-  annotationSessionId?: string
-  activeTextAnnotations?: readonly TextAnnotation[]
-  onAddTextAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
-  onUpdateTextAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
-  onAnnotationError?: (error: AnnotationValidationError) => void
+  annotationPort?: AnnotationPort
   canBranchInNewSession?: boolean
   onBranchInNewSession?: (messageId: string) => void
   // Prompt send time for an Agent response; paired with its completion time for elapsed duration.
@@ -1187,11 +1184,7 @@ const WorkspaceMessageItemImpl = ({
   contentPaddingClassName,
   onSendEditedMessage,
   onEditAnnotationTargetChange,
-  annotationSessionId,
-  activeTextAnnotations = [],
-  onAddTextAnnotation,
-  onUpdateTextAnnotationNote,
-  onAnnotationError,
+  annotationPort,
   canBranchInNewSession = false,
   onBranchInNewSession,
   turnStartedAt,
@@ -1667,17 +1660,17 @@ const WorkspaceMessageItemImpl = ({
             )}
           >
             {message.content ? (
-              annotationSessionId && onAddTextAnnotation && onAnnotationError ? (
+              annotationPort ? (
                 <TextAnnotationSurface
                   source={{
                     kind: 'agent-message',
-                    sessionId: annotationSessionId,
+                    sessionId: annotationPort.sessionId,
                     messageId: message.id
                   }}
-                  activeAnnotations={activeTextAnnotations}
-                  onAdd={onAddTextAnnotation}
-                  onUpdateNote={onUpdateTextAnnotationNote}
-                  onError={onAnnotationError}
+                  activeAnnotations={annotationPort.activeAnnotations}
+                  onAdd={annotationPort.onAdd}
+                  onUpdateNote={annotationPort.onUpdateNote}
+                  onError={annotationPort.onError}
                 >
                   <SessionMessageMarkdown
                     content={assistantPresentation.content}
@@ -1761,6 +1754,19 @@ const areTextAnnotationsEqual = (
   )
 }
 
+const areAnnotationPortsEqual = (
+  previous: AnnotationPort | undefined,
+  next: AnnotationPort | undefined
+): boolean =>
+  previous === next ||
+  (previous !== undefined &&
+    next !== undefined &&
+    previous.sessionId === next.sessionId &&
+    areTextAnnotationsEqual(previous.activeAnnotations, next.activeAnnotations) &&
+    previous.onAdd === next.onAdd &&
+    previous.onUpdateNote === next.onUpdateNote &&
+    previous.onError === next.onError)
+
 // The scroller rebuilds this object (with fresh closures) on every render. The closures only
 // capture the session id and a revision's branch id, both of which change only together with
 // index/total or the message itself, so those fields fully determine what a re-render would show.
@@ -1790,11 +1796,7 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.onPreviewMentionArtifact === next.onPreviewMentionArtifact &&
   previous.onSendEditedMessage === next.onSendEditedMessage &&
   previous.onEditAnnotationTargetChange === next.onEditAnnotationTargetChange &&
-  previous.annotationSessionId === next.annotationSessionId &&
-  areTextAnnotationsEqual(previous.activeTextAnnotations, next.activeTextAnnotations) &&
-  previous.onAddTextAnnotation === next.onAddTextAnnotation &&
-  previous.onUpdateTextAnnotationNote === next.onUpdateTextAnnotationNote &&
-  previous.onAnnotationError === next.onAnnotationError &&
+  areAnnotationPortsEqual(previous.annotationPort, next.annotationPort) &&
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   previous.onBranchInNewSession === next.onBranchInNewSession &&
   (previous.canEditMessage ?? false) === (next.canEditMessage ?? false) &&

@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { installCssHighlightsMock, type TestHighlightRegistry } from '@/test-utils/css-highlights'
 import type { TextAnnotation } from '../../../../../shared/annotations'
 import { WorkspaceToolCodeBlock } from '../WorkspaceToolCodeBlock'
 import { requestAnnotationReveal } from './annotation-reveal'
@@ -10,13 +11,7 @@ import { TextAnnotationSurface } from './TextAnnotationSurface'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-class TestHighlight extends Set<Range> {
-  constructor(...ranges: Range[]) {
-    super(ranges)
-  }
-}
-
-const highlights = new Map<string, TestHighlight>()
+let highlights: TestHighlightRegistry
 const annotation = (id: string, quote: string): TextAnnotation => ({
   id,
   kind: 'text',
@@ -30,9 +25,7 @@ describe('TextAnnotationSurface highlight restoration', () => {
   let root: Root
 
   beforeEach(() => {
-    highlights.clear()
-    vi.stubGlobal('Highlight', TestHighlight)
-    vi.stubGlobal('CSS', { highlights })
+    highlights = installCssHighlightsMock()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -251,21 +244,13 @@ describe('TextAnnotationSurface highlight restoration', () => {
   })
 })
 
-class EditorTestHighlight extends Set<Range> {
-  constructor(...ranges: Range[]) {
-    super(ranges)
-  }
-}
-
 describe('TextAnnotationSurface note editor highlight', () => {
   let container: HTMLDivElement
   let root: Root
-  let highlights: Map<string, Set<Range>>
+  let highlights: TestHighlightRegistry
 
   beforeEach(() => {
-    highlights = new Map()
-    vi.stubGlobal('Highlight', EditorTestHighlight)
-    vi.stubGlobal('CSS', { highlights })
+    highlights = installCssHighlightsMock()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)

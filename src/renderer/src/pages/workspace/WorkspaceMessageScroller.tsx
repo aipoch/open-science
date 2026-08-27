@@ -92,6 +92,7 @@ import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
 import { setWorkspacePresentationRevealing } from './workspace-presentation-revealing'
 import { useTranscriptWindow } from './use-transcript-window'
 import { subscribeAnnotationRevealPreparation } from './annotations/annotation-reveal'
+import type { AnnotationPort } from './annotations/annotation-port'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
@@ -415,6 +416,21 @@ const WorkspaceMessageScrollerImpl = ({
     [onAddAnnotation]
   )
   const currentSessionId = activeSession?.id
+  const activeTextAnnotations = annotations.filter(
+    (annotation): annotation is TextAnnotation => annotation.kind === 'text'
+  )
+  const annotationPortFor = (
+    activeAnnotations: readonly TextAnnotation[]
+  ): AnnotationPort | undefined =>
+    currentSessionId && onAddAnnotation && onAnnotationError
+      ? {
+          sessionId: currentSessionId,
+          activeAnnotations,
+          onAdd: handleAddTextAnnotation,
+          onUpdateNote: onUpdateAnnotationNote,
+          onError: onAnnotationError
+        }
+      : undefined
   const currentProjectId = activeSession?.projectId
   const statusAllowsScrollToFirstMessage = Boolean(
     activeSession &&
@@ -1363,16 +1379,13 @@ const WorkspaceMessageScrollerImpl = ({
                     onEditAnnotationTargetChange: isHumanUser
                       ? handleEditAnnotationTargetChange
                       : undefined,
-                    annotationSessionId: currentSessionId,
-                    activeTextAnnotations: annotations.filter(
-                      (annotation): annotation is TextAnnotation =>
-                        annotation.kind === 'text' &&
-                        annotation.source.kind === 'agent-message' &&
-                        annotation.source.messageId === item.message.id
+                    annotationPort: annotationPortFor(
+                      activeTextAnnotations.filter(
+                        (annotation) =>
+                          annotation.source.kind === 'agent-message' &&
+                          annotation.source.messageId === item.message.id
+                      )
                     ),
-                    onAddTextAnnotation: handleAddTextAnnotation,
-                    onUpdateTextAnnotationNote: onUpdateAnnotationNote,
-                    onAnnotationError,
                     canBranchInNewSession,
                     onBranchInNewSession,
                     turnStartedAt: item.message.responseToMessageId
@@ -1521,20 +1534,7 @@ const WorkspaceMessageScrollerImpl = ({
                                 ? sessionItemRevealRequest
                                 : undefined
                             }
-                            annotationPort={
-                              currentSessionId && onAddAnnotation && onAnnotationError
-                                ? {
-                                    sessionId: currentSessionId,
-                                    activeAnnotations: annotations.filter(
-                                      (annotation): annotation is TextAnnotation =>
-                                        annotation.kind === 'text'
-                                    ),
-                                    onAdd: handleAddTextAnnotation,
-                                    onUpdateNote: onUpdateAnnotationNote,
-                                    onError: onAnnotationError
-                                  }
-                                : undefined
-                            }
+                            annotationPort={annotationPortFor(activeTextAnnotations)}
                             onOpenSource={() => {
                               if (!currentSessionId) return
                               usePreviewWorkbenchStore
@@ -1589,20 +1589,7 @@ const WorkspaceMessageScrollerImpl = ({
                           ? sessionItemRevealRequest
                           : undefined
                       }
-                      annotationPort={
-                        currentSessionId && onAddAnnotation && onAnnotationError
-                          ? {
-                              sessionId: currentSessionId,
-                              activeAnnotations: annotations.filter(
-                                (annotation): annotation is TextAnnotation =>
-                                  annotation.kind === 'text'
-                              ),
-                              onAdd: handleAddTextAnnotation,
-                              onUpdateNote: onUpdateAnnotationNote,
-                              onError: onAnnotationError
-                            }
-                          : undefined
-                      }
+                      annotationPort={annotationPortFor(activeTextAnnotations)}
                     />
                   )
                 }
@@ -1642,17 +1629,12 @@ const WorkspaceMessageScrollerImpl = ({
                                 ? 'pending-placeholder'
                                 : 'default'
                             }
-                            annotationSessionId={
-                              item.activity.elicitation.durable ? currentSessionId : undefined
+                            annotationPort={
+                              item.activity.elicitation.durable
+                                ? annotationPortFor(activeTextAnnotations)
+                                : undefined
                             }
                             annotationItemId={item.activity.id}
-                            activeTextAnnotations={annotations.filter(
-                              (annotation): annotation is TextAnnotation =>
-                                annotation.kind === 'text'
-                            )}
-                            onAddTextAnnotation={handleAddTextAnnotation}
-                            onUpdateTextAnnotationNote={onUpdateAnnotationNote}
-                            onAnnotationError={onAnnotationError}
                             revealRequest={
                               sessionItemRevealRequest?.itemType === 'elicitation' &&
                               sessionItemRevealRequest.itemId === item.activity.id
@@ -1679,13 +1661,7 @@ const WorkspaceMessageScrollerImpl = ({
                     permission={activeSession?.runtimeContext?.permission}
                     jobsByActivityId={jobsByActivityId}
                     onOpenJobDetail={handleOpenJobDetail}
-                    annotationSessionId={currentSessionId}
-                    activeTextAnnotations={annotations.filter(
-                      (annotation): annotation is TextAnnotation => annotation.kind === 'text'
-                    )}
-                    onAddTextAnnotation={handleAddTextAnnotation}
-                    onUpdateTextAnnotationNote={onUpdateAnnotationNote}
-                    onAnnotationError={onAnnotationError}
+                    annotationPort={annotationPortFor(activeTextAnnotations)}
                     revealRequest={
                       sessionItemRevealRequest?.itemType === 'tool-activity'
                         ? sessionItemRevealRequest

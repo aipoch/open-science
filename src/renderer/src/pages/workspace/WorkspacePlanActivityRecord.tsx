@@ -12,26 +12,18 @@ import {
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { AnnotationValidationError, TextAnnotation } from '../../../../shared/annotations'
+import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { projectGeneratePlanActivity } from './generate-plan-activity-projection'
 import { planConfidenceLabelKey } from './session-plan/plan-confidence-label'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
 
-type PlanAnnotationPort = Readonly<{
-  sessionId: string
-  activeAnnotations: readonly TextAnnotation[]
-  onAdd: (annotation: TextAnnotation) => AnnotationValidationError | undefined
-  onUpdateNote?: (id: string, note: string) => AnnotationValidationError | undefined
-  onError: (error: AnnotationValidationError) => void
-}>
-
 type WorkspacePlanActivityRecordProps = Readonly<{
   activity: ToolActivity
   hasDurablePlanAuthority?: boolean
   contentPaddingClassName?: string
-  annotationPort?: PlanAnnotationPort
+  annotationPort?: AnnotationPort
   revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }>
 
@@ -46,7 +38,7 @@ const PlanTextAnnotationSurface = ({
 }: {
   activityId: string
   sectionId: string
-  annotationPort?: PlanAnnotationPort
+  annotationPort?: AnnotationPort
   children: React.ReactNode
 }): React.JSX.Element =>
   annotationPort ? (
@@ -377,11 +369,7 @@ const WorkspacePlanActivityRecord = ({
                   }
                   setFailureDetailsExpanded(nextExpanded)
                 }}
-                annotationSessionId={annotationPort?.sessionId}
-                activeTextAnnotations={annotationPort?.activeAnnotations}
-                onAddTextAnnotation={annotationPort?.onAdd}
-                onUpdateTextAnnotationNote={annotationPort?.onUpdateNote}
-                onAnnotationError={annotationPort?.onError}
+                annotationPort={annotationPort}
                 annotationItemType="plan"
                 revealRequest={revealFailureDetails ? revealRequest : undefined}
               />
