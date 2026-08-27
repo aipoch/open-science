@@ -10,7 +10,8 @@ import {
   projectHandoffLifecycle,
   type HandoffTranscriptProjection
 } from './handoff-lifecycle-projection'
-import { getLoadedSkillName, isSkillActivity } from './workspace-tool-activity-details'
+import { isSkillActivity } from './workspace-tool-activity-details'
+import { getLoadedSkillName } from './workspace-skill-load'
 import {
   projectInlineParentMessages,
   type InlineParentMessageProjection

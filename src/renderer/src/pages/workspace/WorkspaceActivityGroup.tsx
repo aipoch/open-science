@@ -11,9 +11,11 @@ import { RemoteJobRow } from '@/components/RemoteJobRow'
 import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { WorkspaceToolActivityRow } from './WorkspaceToolActivityRow'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
+import { WorkspaceSkillLoadRow } from './WorkspaceSkillLoadRow'
 import { WorkspaceManagePackagesActivityRow } from './WorkspaceManagePackagesActivityRow'
 import { WorkspaceWebSearchActivityRow } from './WorkspaceWebSearchActivityRow'
-import { buildToolActivityDetails } from './workspace-tool-activity-details'
+import { buildToolActivityDetails, getSkillLoadDocument } from './workspace-tool-activity-details'
+import { getLoadedSkillName, isSkillLoadActivity } from './workspace-skill-load'
 import {
   formatActivityGroupElapsed,
   formatActivityGroupPresentationTitle,
@@ -160,7 +162,16 @@ const WorkspaceActivityGroup = ({
                   // Search rows get bespoke query/result details; other tools reuse the shared builder.
                   const isSearch = isSearchActivity(activity, group.activities, activityIndex)
                   const searchDetails = isSearch ? formatWebSearchDetails(activity) : undefined
-                  const toolDetails = isSearch ? undefined : buildToolActivityDetails(activity, t)
+                  // A completed load_skill expands into its rendered SKILL.md; while the document
+                  // is unavailable (running, failed, or old sessions) it keeps the generic row.
+                  const skillLoadDocument =
+                    !isSearch && isSkillLoadActivity(activity)
+                      ? getSkillLoadDocument(activity)
+                      : undefined
+                  const toolDetails =
+                    isSearch || skillLoadDocument
+                      ? undefined
+                      : buildToolActivityDetails(activity, t)
                   // All tool rows — notebook cells included — default collapsed (meaningful title
                   // only); clicking the title reveals the code and output. A user toggle still wins.
                   const isRowExpanded = expansionOverrides[activity.id] ?? false
@@ -189,6 +200,15 @@ const WorkspaceActivityGroup = ({
                           isExpanded={isRowExpanded}
                           onToggleSearch={onToggleRow}
                           annotationPort={annotationPort}
+                        />
+                      ) : skillLoadDocument ? (
+                        <WorkspaceSkillLoadRow
+                          activity={activity}
+                          phase={phase}
+                          skillName={getLoadedSkillName(activity)}
+                          markdown={skillLoadDocument}
+                          isExpanded={isRowExpanded}
+                          onToggle={onToggleRow}
                         />
                       ) : toolDetails ? (
                         <WorkspaceToolDetailsRow
