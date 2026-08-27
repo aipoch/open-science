@@ -48,6 +48,25 @@ const expectPresentation = (actual: DiffRenderBlock[], expected: object[]): void
   expect(actual).toEqual(expectedWithFallback)
 }
 
+const expectSourceReconstruction = (
+  segments: ManagedFileVersionDiffResult['lines'][number]['segments'],
+  before: string,
+  after: string
+): void => {
+  expect(
+    segments
+      .filter((segment) => segment.kind !== 'added')
+      .map((segment) => segment.text)
+      .join('')
+  ).toBe(before)
+  expect(
+    segments
+      .filter((segment) => segment.kind !== 'removed')
+      .map((segment) => segment.text)
+      .join('')
+  ).toBe(after)
+}
+
 describe('managed version diff presentation', () => {
   it('keeps unchanged and inline-changed prose in renderable Markdown blocks', async () => {
     const blocks = await diffMarkdown(
@@ -836,18 +855,227 @@ describe('managed version diff presentation', () => {
     )
 
     expect(block).toBeDefined()
-    expect(
-      block?.fallbackSegments
-        .filter((segment) => segment.kind !== 'added')
-        .map((segment) => segment.text)
-        .join('')
-    ).toBe(before)
-    expect(
-      block?.fallbackSegments
-        .filter((segment) => segment.kind !== 'removed')
-        .map((segment) => segment.text)
-        .join('')
-    ).toBe(after)
+    expectSourceReconstruction(block?.fallbackSegments ?? [], before, after)
+  })
+
+  it.each([
+    {
+      label: 'interleaved list replacement',
+      before: '- old one\n- old two\n',
+      after: '- new one\n- new two\n',
+      content: `- ${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')} one\n- ${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')} two`
+    },
+    {
+      label: 'GFM table without edge pipes',
+      before: 'Name | Value\n--- | ---\nA | old\n\nAfter table\n',
+      after: 'Name | Value\n--- | ---\nA | new\n\nAfter table\n',
+      content: `Name | Value\n--- | ---\nA | ${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')}\n\nAfter table`
+    },
+    {
+      label: 'indented list continuation',
+      before: '- first item\n  old continuation\n  stable continuation\n- second item\n',
+      after: '- first item\n  new continuation\n  stable continuation\n- second item\n',
+      content: `- first item\n  ${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')} continuation\n  stable continuation\n- second item`
+    },
+    {
+      label: 'loose multi-item list continuation',
+      before:
+        '- first item\n\n  old continuation\n\n- second item\n\n  stable continuation\n\nAfter list\n',
+      after:
+        '- first item\n\n  new continuation\n\n- second item\n\n  stable continuation\n\nAfter list\n',
+      content: `- first item\n\n  ${escapedMarkdownChange('removed', 'old')}${escapedMarkdownChange('added', 'new')} continuation\n\n- second item\n\n  stable continuation\n\nAfter list`
+    }
+  ])('keeps a complete $label in one rich block', async (fixture) => {
+    const blocks = await diffMarkdown(
+      fixture.before,
+      fixture.after,
+      `container-${fixture.label.replaceAll(' ', '-')}`
+    )
+    expectPresentation(blocks, [
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: fixture.content,
+        startIndex: 0
+      }
+    ])
+    const block = blocks[0]
+    if (block?.kind !== 'markdown' || block.changeKind !== 'mixed') {
+      throw new Error('expected one mixed Markdown block')
+    }
+    expectSourceReconstruction(block.fallbackSegments, fixture.before, fixture.after)
+  })
+
+  it('falls back a changed table delimiter row to exact source characters', async () => {
+    const before = '| Name | Value |\n| --- | --- |\n| A | stable |\n'
+    const after = '| Name | Value |\n| :--- | ---: |\n| A | stable |\n'
+    const blocks = await diffMarkdown(before, after, 'table-delimiter-replacement')
+
+    expectPresentation(blocks, [
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '| Name | Value |\n| ' },
+          { kind: 'added', text: ':' },
+          { kind: 'context', text: '--- | ---' },
+          { kind: 'added', text: ':' },
+          { kind: 'context', text: ' |\n| A | stable |' }
+        ],
+        startIndex: 0
+      }
+    ])
+    const block = blocks[0]
+    if (block?.kind !== 'text') throw new Error('expected one raw text block')
+    expectSourceReconstruction(block.segments, before.trimEnd(), after.trimEnd())
+  })
+
+  it.each([
+    {
+      label: 'heading and paragraph',
+      suffix: '# Stable heading\nStable paragraph\n',
+      quoteTail: '',
+      rendered: '# Stable heading\nStable paragraph',
+      startIndex: 2
+    },
+    {
+      label: 'HTML block',
+      suffix: '<div>stable</div>\n',
+      quoteTail: '',
+      rendered: '<div>stable</div>',
+      startIndex: 2
+    },
+    {
+      label: 'CommonMark ordered-list interruption',
+      suffix: '2. stable lazy continuation\n1. Stable list item\n',
+      quoteTail: '\n2. stable lazy continuation',
+      rendered: '1. Stable list item',
+      startIndex: 3
+    },
+    {
+      label: 'list block',
+      suffix: '- Stable item\n  Stable continuation\n',
+      quoteTail: '',
+      rendered: '- Stable item\n  Stable continuation',
+      startIndex: 2
+    },
+    {
+      label: 'fenced block',
+      suffix: '```ts\nconst stable = true\n```\n',
+      quoteTail: '',
+      rendered: '```ts\nconst stable = true\n```',
+      startIndex: 2
+    },
+    {
+      label: 'thematic break',
+      suffix: '---\nStable paragraph\n',
+      quoteTail: '',
+      rendered: '---\nStable paragraph',
+      startIndex: 2
+    },
+    {
+      label: 'table block',
+      separator: '\n',
+      suffix: '| Name | Value |\n| --- | --- |\n| A | stable |\n',
+      quoteTail: '',
+      rendered: '\n| Name | Value |\n| --- | --- |\n| A | stable |',
+      startIndex: 2
+    }
+  ])('stops a changed blockquote before an independent $label', async (fixture) => {
+    const separator = fixture.separator ?? ''
+    const blocks = await diffMarkdown(
+      `> old quote\n${separator}${fixture.suffix}`,
+      `> new quote\n${separator}${fixture.suffix}`,
+      `blockquote-before-${fixture.label.replaceAll(' ', '-')}`
+    )
+
+    expectPresentation(blocks, [
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '> ' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: ` quote${fixture.quoteTail}` }
+        ],
+        startIndex: 0
+      },
+      {
+        kind: 'markdown',
+        changeKind: 'context',
+        content: fixture.rendered,
+        startIndex: fixture.startIndex
+      }
+    ])
+  })
+
+  it.each([
+    {
+      label: 'changed lazy continuation',
+      before: '> opening quote\nold lazy continuation\n> adjacent quote line\n\nAfter quote\n',
+      after: '> opening quote\nnew lazy continuation\n> adjacent quote line\n\nAfter quote\n',
+      segments: [
+        { kind: 'context' as const, text: '> opening quote\n' },
+        { kind: 'removed' as const, text: 'old' },
+        { kind: 'added' as const, text: 'new' },
+        { kind: 'context' as const, text: ' lazy continuation\n> adjacent quote line' }
+      ]
+    },
+    {
+      label: 'marked and lazy continuations',
+      before: '> old opening\n> stable marked line\nstable lazy continuation\n\nAfter quote\n',
+      after: '> new opening\n> stable marked line\nstable lazy continuation\n\nAfter quote\n',
+      segments: [
+        { kind: 'context' as const, text: '> ' },
+        { kind: 'removed' as const, text: 'old' },
+        { kind: 'added' as const, text: 'new' },
+        {
+          kind: 'context' as const,
+          text: ' opening\n> stable marked line\nstable lazy continuation'
+        }
+      ]
+    }
+  ])('keeps one blockquote around $label', async (fixture) => {
+    expectPresentation(
+      await diffMarkdown(
+        fixture.before,
+        fixture.after,
+        `blockquote-${fixture.label.replaceAll(' ', '-')}`
+      ),
+      [
+        { kind: 'text', changeKind: 'mixed', segments: fixture.segments, startIndex: 0 },
+        {
+          kind: 'markdown',
+          changeKind: 'context',
+          content: '\nAfter quote',
+          startIndex: 4
+        }
+      ]
+    )
+  })
+
+  it('keeps an indented code block with internal blank lines in one raw fallback', async () => {
+    const before =
+      '    const first = true\n\n    const value = "old"\n\n    const stable = true\nAfter code\n'
+    const after =
+      '    const first = true\n\n    const value = "new"\n\n    const stable = true\nAfter code\n'
+    const blocks = await diffMarkdown(before, after, 'indented-code-replacement')
+
+    expectPresentation(blocks, [
+      {
+        kind: 'text',
+        changeKind: 'mixed',
+        segments: [
+          { kind: 'context', text: '    const first = true\n\n    const value = "' },
+          { kind: 'removed', text: 'old' },
+          { kind: 'added', text: 'new' },
+          { kind: 'context', text: '"\n\n    const stable = true' }
+        ],
+        startIndex: 0
+      },
+      { kind: 'markdown', changeKind: 'context', content: 'After code', startIndex: 6 }
+    ])
   })
 
   it.each([

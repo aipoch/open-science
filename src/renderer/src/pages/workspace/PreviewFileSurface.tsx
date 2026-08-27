@@ -10,15 +10,7 @@ import {
   X
 } from 'lucide-react'
 import type { TFunction } from 'i18next'
-import {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState
-} from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -32,7 +24,6 @@ import type { ArtifactLineageProvenance } from '../../../../shared/artifact-prov
 import {
   MANAGED_TEXT_EDIT_EXTENSIONS,
   type ManagedFileVersionDescriptor,
-  type ManagedFileVersionDiffResult,
   type ManagedFileVersionErrorCode,
   type ManagedFileVersionInspectResult
 } from '../../../../shared/managed-file-versions'
@@ -56,6 +47,7 @@ import { PreviewFileContent } from './previews/PreviewFileContent'
 import type { PreviewDownloadVersionContext } from './previews/preview-runtime-context'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 import { ManagedVersionDiffContent } from './ManagedVersionDiffContent'
+import { useManagedVersionWorkflow, type ManagedVersionMode } from './useManagedVersionWorkflow'
 
 type PreviewFileSurfaceProps = {
   item: PreviewFileItem
@@ -102,15 +94,6 @@ const managedSaveErrorMessage = (code: ManagedFileVersionErrorCode, t: TFunction
     default:
       return t('Changes could not be saved.')
   }
-}
-
-const isDiffModeSourceTextVersion = (inspect: ManagedFileVersionInspectResult): boolean => {
-  const selectedVersion = inspect.versions.find(
-    (version) => version.id === inspect.selectedVersionId
-  )
-  return (
-    selectedVersion !== undefined && !selectedVersion.basedOnVersionId && inspect.text !== undefined
-  )
 }
 
 const PreviewProvenanceButton = ({
@@ -526,12 +509,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       key: string
       value?: ArtifactLineageProvenance
     }>()
-    const [managedInspectResult, setManagedInspectResult] = useState<{
-      key: string
-      value: ManagedFileVersionInspectResult
-    }>()
-    const [managedRefresh, setManagedRefresh] = useState(0)
-    const [mode, setMode] = useState<'view' | 'edit' | 'diff'>('view')
+    const [mode, setMode] = useState<ManagedVersionMode>('view')
     const [draft, setDraft] = useState('')
     const [editBaseline, setEditBaseline] = useState<{
       text: string
@@ -540,9 +518,6 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const [saving, setSaving] = useState(false)
     const [editError, setEditError] = useState<string>()
     const [conflictHead, setConflictHead] = useState<ManagedFileVersionDescriptor>()
-    const [diffResult, setDiffResult] = useState<ManagedFileVersionDiffResult>()
-    const [diffError, setDiffError] = useState<string>()
-    const activeDiffRequestId = useRef<string | undefined>(undefined)
     const saveGenerationRef = useRef(0)
     const acceptedIdentityTransitionRef = useRef<string | undefined>(undefined)
     const activeProjectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
@@ -560,6 +535,19 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const itemIdentityKey = `${sourceItem.projectId ?? ''}:${sourceItem.source ?? 'artifact'}:${sourceItem.id}:${sourceItem.managedFileId ?? ''}:${sourceItem.artifactId ?? ''}:${sourceItem.selectedVersionId ?? ''}:${sourceItem.path}`
     const previewItem = versionOverride?.key === itemIdentityKey ? versionOverride.item : sourceItem
     const projectId = previewItem.projectId ?? activeProjectId
+    const managedWorkflow = useManagedVersionWorkflow({
+      item: previewItem,
+      projectId,
+      mode,
+      setMode,
+      t
+    })
+    const {
+      identity: managedIdentity,
+      inspect: managedInspect,
+      navigationInspect: managedNavigationInspect,
+      controlsInspect: managedControlsInspect
+    } = managedWorkflow
     const surfaceKey = item.id
     const showProvenance = provenanceTarget === surfaceKey
     const lineageKey = `${projectId ?? ''}:${previewItem.sessionId}:${previewItem.artifactId ?? ''}`
@@ -601,64 +589,16 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             projectId
           })
         : previewItem
-    const managedSource: 'artifact' | 'upload' =
-      previewItem.source === 'upload' ? 'upload' : 'artifact'
-    const managedIdentity = useMemo(
-      () =>
-        projectId && previewItem.managedFileId
-          ? { source: managedSource, projectId, fileId: previewItem.managedFileId }
-          : undefined,
-      [managedSource, previewItem.managedFileId, projectId]
-    )
-    const managedRequestKey = managedIdentity
-      ? `${managedIdentity.source}:${managedIdentity.projectId}:${managedIdentity.fileId}:${previewItem.selectedVersionId ?? ''}:${managedRefresh}`
-      : undefined
-    const managedInspect =
-      managedInspectResult && managedInspectResult.key === managedRequestKey
-        ? managedInspectResult.value
-        : undefined
-    const previousManagedInspect =
-      managedIdentity &&
-      managedInspectResult?.value.source === managedIdentity.source &&
-      managedInspectResult.value.projectId === managedIdentity.projectId &&
-      managedInspectResult.value.fileId === managedIdentity.fileId
-        ? managedInspectResult.value
-        : undefined
-    const managedNavigationInspect =
-      managedInspect ??
-      (previousManagedInspect &&
-      previewItem.selectedVersionId &&
-      previousManagedInspect.versions.some(
-        (version) => version.id === previewItem.selectedVersionId
-      )
-        ? { ...previousManagedInspect, selectedVersionId: previewItem.selectedVersionId }
-        : undefined)
-    const managedControlsInspect =
-      managedInspect ?? (mode === 'diff' ? managedNavigationInspect : undefined)
-    const selectedDownloadVersion = managedNavigationInspect?.versions.find(
-      (version) => version.id === managedNavigationInspect.selectedVersionId
-    )
-    const latestDownloadVersion = managedNavigationInspect?.versions.find(
-      (version) => version.id === managedNavigationInspect.headVersionId
-    )
-    const downloadVersionContext =
-      selectedDownloadVersion && latestDownloadVersion
-        ? {
-            versionId: selectedDownloadVersion.id,
-            versionNumber: selectedDownloadVersion.versionNumber,
-            latestVersionId: latestDownloadVersion.id,
-            latestVersionNumber: latestDownloadVersion.versionNumber
-          }
-        : undefined
-    // Text eligibility controls the version toolset, while current write permission only controls
-    // editing. Read-only projects and hosts keep history and comparison available.
-    const showManagedTextTools = managedControlsInspect?.text !== undefined
-    const isSelectedManagedSourceText =
-      managedInspect !== undefined && isDiffModeSourceTextVersion(managedInspect)
     const isDirty = mode === 'edit' && editBaseline !== undefined && draft !== editBaseline.text
     const invalidateSave = (): void => {
       saveGenerationRef.current += 1
       setSaving(false)
+    }
+    const finishVersionSelection = (preserveDiffMode: boolean): void => {
+      invalidateSave()
+      managedWorkflow.resetForVersionSelection(preserveDiffMode)
+      setDraft('')
+      setEditBaseline(undefined)
     }
 
     const confirmLeave = useCallback(
@@ -689,47 +629,6 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         if (saveGenerationRef.current === generation) saveGenerationRef.current += 1
       }
     }, [itemIdentityKey])
-
-    useEffect(() => {
-      let active = true
-      const managedFileVersions = window.api.managedFileVersions
-      if (
-        !managedIdentity ||
-        !managedRequestKey ||
-        typeof managedFileVersions.inspect !== 'function'
-      )
-        return
-      const leaveDiffMode = (): void => {
-        setMode((current) => (current === 'diff' ? 'view' : current))
-        setDiffResult(undefined)
-        setDiffError(undefined)
-      }
-      void managedFileVersions
-        .inspect({
-          ...managedIdentity,
-          ...(previewItem.selectedVersionId ? { versionId: previewItem.selectedVersionId } : {})
-        })
-        .then((result) => {
-          if (!active) return
-          if (!result.ok) {
-            leaveDiffMode()
-            return
-          }
-          setManagedInspectResult({ key: managedRequestKey, value: result.value })
-          const isSourceTextVersion = isDiffModeSourceTextVersion(result.value)
-          if (!result.value.canDiff && !isSourceTextVersion) leaveDiffMode()
-          else if (!result.value.canDiff) {
-            setDiffResult(undefined)
-            setDiffError(undefined)
-          }
-        })
-        .catch(() => {
-          if (active) leaveDiffMode()
-        })
-      return () => {
-        active = false
-      }
-    }, [managedIdentity, managedRequestKey, previewItem.selectedVersionId])
 
     useEffect(() => {
       let active = true
@@ -808,16 +707,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
 
     const selectProvenanceVersion = (nextItem: PreviewFileItem): boolean => {
       if (!applyVersionItem(nextItem)) return false
-      invalidateSave()
-      if (activeDiffRequestId.current) {
-        void window.api.managedFileVersions.cancelDiff({ requestId: activeDiffRequestId.current })
-        activeDiffRequestId.current = undefined
-      }
-      setMode('view')
-      setDraft('')
-      setEditBaseline(undefined)
-      setDiffResult(undefined)
-      setDiffError(undefined)
+      finishVersionSelection(false)
       return true
     }
 
@@ -834,14 +724,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         sessionId: managedNavigationInspect.sessionId
       })
       if (!applyVersionItem(nextItem)) return
-      invalidateSave()
-      if (activeDiffRequestId.current) {
-        void window.api.managedFileVersions.cancelDiff({ requestId: activeDiffRequestId.current })
-        activeDiffRequestId.current = undefined
-      }
-      setMode((current) => (current === 'diff' ? 'diff' : 'view'))
-      setDiffResult(undefined)
-      setDiffError(undefined)
+      finishVersionSelection(true)
     }
 
     const beginEdit = (): void => {
@@ -908,48 +791,20 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           true
         )
       }
-      setManagedRefresh((value) => value + 1)
+      managedWorkflow.refreshInspect()
     }
 
     const toggleDiff = (): void => {
       if (!managedIdentity) return
       if (mode === 'diff') {
-        setMode('view')
-        setDiffResult(undefined)
-        setDiffError(undefined)
+        managedWorkflow.stopDiff()
         return
       }
       if (!managedInspect?.canDiff) return
       if (!confirmLeave()) return
       invalidateSave()
-      setDiffResult(undefined)
-      setDiffError(undefined)
-      setMode('diff')
+      managedWorkflow.startDiff()
     }
-
-    useEffect(() => {
-      if (mode !== 'diff' || !managedIdentity || !managedInspect?.canDiff) return
-      const requestId = crypto.randomUUID()
-      activeDiffRequestId.current = requestId
-      void window.api.managedFileVersions
-        .diffText({ ...managedIdentity, versionId: managedInspect.selectedVersionId, requestId })
-        .then((result) => {
-          if (activeDiffRequestId.current !== requestId) return
-          activeDiffRequestId.current = undefined
-          if (result.ok) setDiffResult(result.value)
-          else if (result.error.code !== 'DIFF_CANCELLED')
-            setDiffError(t('Diff could not be loaded.'))
-        })
-        .catch(() => {
-          if (activeDiffRequestId.current === requestId)
-            setDiffError(t('Diff could not be loaded.'))
-        })
-      return () => {
-        if (activeDiffRequestId.current !== requestId) return
-        activeDiffRequestId.current = undefined
-        void window.api.managedFileVersions.cancelDiff({ requestId })
-      }
-    }, [managedIdentity, managedInspect?.canDiff, managedInspect?.selectedVersionId, mode, t])
 
     return (
       <div className="flex size-full min-h-0 flex-col overflow-hidden">
@@ -972,10 +827,10 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           onViewInContext={canViewInContext ? viewInContext : undefined}
           viewInContextDisabled={originSessionArchived}
           tooltipClassName={tooltipClassName}
-          downloadVersionContext={downloadVersionContext}
+          downloadVersionContext={managedWorkflow.downloadVersionContext}
           managedControlsOnly={mode === 'edit'}
           managedControls={
-            showManagedTextTools && managedControlsInspect ? (
+            managedWorkflow.showTextTools && managedControlsInspect ? (
               mode === 'edit' ? (
                 <div className="flex h-7 shrink-0 items-center gap-1">
                   <Button
@@ -1114,10 +969,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                           sessionId: managedInspect.sessionId
                         })
                         if (!applyVersionItem(nextItem)) return
-                        invalidateSave()
-                        setMode('view')
-                        setDraft('')
-                        setEditBaseline(undefined)
+                        finishVersionSelection(false)
                       }}
                     >
                       {t('View latest version')}
@@ -1127,30 +979,30 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
               ) : null}
             </div>
           ) : mode === 'diff' ? (
-            managedInspect && !managedInspect.canDiff && isSelectedManagedSourceText ? (
+            managedInspect && !managedInspect.canDiff && managedWorkflow.isSelectedSourceText ? (
               renderContent ? (
                 <PreviewFileContent
                   key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
                   item={resolvedPreviewItem}
-                  downloadVersionContext={downloadVersionContext}
+                  downloadVersionContext={managedWorkflow.downloadVersionContext}
                 />
               ) : null
-            ) : diffResult ? (
+            ) : managedWorkflow.diffResult ? (
               <ManagedVersionDiffContent
-                result={diffResult}
+                result={managedWorkflow.diffResult}
                 format={resolvedPreviewItem.format}
                 name={resolvedPreviewItem.name}
               />
             ) : (
               <div className="p-4 text-sm text-text-100">
-                {diffError ?? t('Comparing versions...')}
+                {managedWorkflow.diffError ?? t('Comparing versions...')}
               </div>
             )
           ) : renderContent ? (
             <PreviewFileContent
               key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
               item={resolvedPreviewItem}
-              downloadVersionContext={downloadVersionContext}
+              downloadVersionContext={managedWorkflow.downloadVersionContext}
             />
           ) : null}
         </div>
