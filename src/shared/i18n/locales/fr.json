@@ -1991,6 +1991,7 @@
     "Show rendered HTML": "Afficher le HTML rendu",
     "Show repositories": "Afficher les référentiels",
     "Showing data from {{time}}": "Affichage des données de {{time}}",
+    "Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.": "{{detailed}} appels affichés sur {{reported}} signalés, car certains tours ne disposent pas de détails exacts sur les appels.",
     "Showing first 5,000 entries. Navigate into a subdirectory to see more.": "Affichage des 5 000 premières entrées. Accédez à un sous-répertoire pour en voir plus.",
     "Showing the first entries only — this directory is very large.": "Afficher uniquement les premières entrées — ce répertoire est très volumineux.",
     "Showing {{rows}} rows · {{columns}} columns": "Affichage des lignes {{rows}} · Colonnes {{columns}}",

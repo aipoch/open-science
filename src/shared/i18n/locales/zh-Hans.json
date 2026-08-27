@@ -1975,6 +1975,7 @@
     "Show rendered HTML": "显示渲染后的 HTML",
     "Show repositories": "显示仓库",
     "Showing data from {{time}}": "显示的是 {{time}} 的数据",
+    "Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.": "显示了 {{reported}} 次已报告调用中的 {{detailed}} 次，因为部分轮次没有精确的调用详情。",
     "Showing first 5,000 entries. Navigate into a subdirectory to see more.": "仅显示前 5,000 个条目。进入子目录可查看更多。",
     "Showing the first entries only — this directory is very large.": "仅显示前若干条目 — 该目录非常大。",
     "Showing {{rows}} rows · {{columns}} columns": "显示 {{rows}} 行 · {{columns}} 列",

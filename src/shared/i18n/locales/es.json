@@ -1991,6 +1991,7 @@
     "Show rendered HTML": "Mostrar HTML renderizado",
     "Show repositories": "Mostrar repositorios",
     "Showing data from {{time}}": "Mostrando datos de {{time}}",
+    "Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.": "Se muestran {{detailed}} de {{reported}} llamadas notificadas porque algunos turnos no tienen detalles exactos de las llamadas.",
     "Showing first 5,000 entries. Navigate into a subdirectory to see more.": "Mostrando las primeras 5000 entradas. Navegue a un subdirectorio para ver más.",
     "Showing the first entries only — this directory is very large.": "Mostrando solo las primeras entradas; este directorio es muy grande.",
     "Showing {{rows}} rows · {{columns}} columns": "Mostrando {{rows}} filas · {{columns}} columnas",

@@ -1904,6 +1904,7 @@
     "Show rendered HTML": "レンダリングされた HTML を表示する",
     "Show repositories": "リポジトリを表示する",
     "Showing data from {{time}}": "{{time}} のデータを表示しています",
+    "Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.": "報告された {{reported}} 件の呼び出しのうち {{detailed}} 件を表示しています。一部のターンには正確な呼び出し詳細がありません。",
     "Showing first 5,000 entries. Navigate into a subdirectory to see more.": "最初の 5,000 件のエントリを表示しています。詳細を表示するには、サブディレクトリに移動します。",
     "Showing the first entries only — this directory is very large.": "最初のエントリのみを表示します — このディレクトリは非常に大きいです。",
     "Showing {{rows}} rows · {{columns}} columns": "{{rows}} 行 · {{columns}} 列を表示しています",

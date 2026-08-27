@@ -1972,6 +1972,7 @@
     "Show rendered HTML": "顯示算繪後的 HTML",
     "Show repositories": "顯示儲存庫",
     "Showing data from {{time}}": "顯示的是 {{time}} 的資料",
+    "Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.": "顯示了 {{reported}} 次已回報呼叫中的 {{detailed}} 次，因為部分輪次沒有精確的呼叫詳細資料。",
     "Showing first 5,000 entries. Navigate into a subdirectory to see more.": "僅顯示前 5,000 個項目。進入子目錄可查看更多。",
     "Showing the first entries only — this directory is very large.": "僅顯示前若干項目 — 該目錄非常大。",
     "Showing {{rows}} rows · {{columns}} columns": "顯示 {{rows}} 列 · {{columns}} 欄",

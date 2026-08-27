@@ -2005,6 +2005,7 @@
     "Show rendered HTML": "Показать отрисованный HTML",
     "Show repositories": "Показать репозитории",
     "Showing data from {{time}}": "Данные на {{time}}",
+    "Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.": "Показано {{detailed}} из {{reported}} зарегистрированных вызовов, поскольку для некоторых ходов нет точных сведений о вызовах.",
     "Showing first 5,000 entries. Navigate into a subdirectory to see more.": "Показаны первые 5 000 записей. Перейдите в подкаталог, чтобы увидеть больше.",
     "Showing the first entries only — this directory is very large.": "Показаны только первые записи — этот каталог очень большой.",
     "Showing {{rows}} rows · {{columns}} columns": "Показано {{rows}} строк · {{columns}} столбцов",

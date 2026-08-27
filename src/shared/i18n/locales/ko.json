@@ -1912,6 +1912,7 @@
     "Show rendered HTML": "렌더링된 HTML 표시",
     "Show repositories": "저장소 표시",
     "Showing data from {{time}}": "{{time}} 데이터를 표시하는 중",
+    "Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.": "보고된 호출 {{reported}}개 중 {{detailed}}개를 표시합니다. 일부 턴에는 정확한 호출 세부 정보가 없습니다.",
     "Showing first 5,000 entries. Navigate into a subdirectory to see more.": "처음 5,000개의 항목을 표시합니다. 자세한 내용을 보려면 하위 디렉터리로 이동하세요.",
     "Showing the first entries only — this directory is very large.": "이 디렉터리는 매우 커서 처음 몇 개 항목만 표시합니다.",
     "Showing {{rows}} rows · {{columns}} columns": "{{rows}} 행 · {{columns}} 열 표시 중",
