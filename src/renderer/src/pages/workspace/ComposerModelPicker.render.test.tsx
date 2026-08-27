@@ -88,19 +88,20 @@ const provider = (overrides: Partial<ProviderView>): ProviderView => ({
 })
 
 // Official OpenAI models are documented as Responses-only. Tests that pick those catalog ids must
-// run under a Responses-capable framework; the store's initial Claude Code state only speaks
-// Anthropic, so the picker would otherwise hide the trigger as "No compatible model".
-// Include Anthropic as well so mixed-catalog cases (OpenAI + a custom Gateway) stay selectable.
-const responsesCapableFramework: {
-  agentFrameworkId: 'opencode'
+// run under Codex, the framework that actually speaks Responses. The store's initial Claude Code
+// state only speaks Anthropic, so the picker would otherwise hide the trigger as
+// "No compatible model". OpenCode is not used here: its adapter only drives Anthropic and Chat
+// Completions, even if a fixture claimed otherwise.
+const codexFramework: {
+  agentFrameworkId: 'codex'
   agentFrameworks: AgentFrameworkView[]
 } = {
-  agentFrameworkId: 'opencode',
+  agentFrameworkId: 'codex',
   agentFrameworks: [
     {
-      id: 'opencode',
-      displayName: 'OpenCode',
-      supportedApiTypes: ['anthropic', 'openai', 'responses'],
+      id: 'codex',
+      displayName: 'Codex',
+      supportedApiTypes: ['responses'],
       supportsSkills: true
     }
   ]
@@ -550,7 +551,7 @@ describe('ComposerModelPicker', () => {
     // gpt-5.2 is not in the bundled OpenAI catalog, so it resolves to the vendor-level profile
     // (low-medium-high-xhigh) — supported, with the stored 'high' intent mapping to the High rung.
     useSettingsStore.setState({
-      ...responsesCapableFramework,
+      ...codexFramework,
       providers: [
         provider({
           id: 'off',
@@ -578,7 +579,7 @@ describe('ComposerModelPicker', () => {
     // Long model names must not swallow the effort suffix: the model span truncates, the suffix
     // span is shrink-protected and never wraps.
     useSettingsStore.setState({
-      ...responsesCapableFramework,
+      ...codexFramework,
       providers: [
         provider({
           id: 'off',
@@ -614,7 +615,7 @@ describe('ComposerModelPicker', () => {
 
   it('shows no effort suffix on the trigger when the effort intent is default', () => {
     useSettingsStore.setState({
-      ...responsesCapableFramework,
+      ...codexFramework,
       providers: [
         provider({
           id: 'off',
@@ -726,7 +727,7 @@ describe('ComposerModelPicker', () => {
 
   it('summarizes the current pick in the Model row as provider line over model name', async () => {
     useSettingsStore.setState({
-      ...responsesCapableFramework,
+      ...codexFramework,
       providers: [
         provider({
           id: 'off',
@@ -804,7 +805,7 @@ describe('ComposerModelPicker', () => {
 
   it('keeps the grouped provider catalog in the Model submenu and switches on pick', async () => {
     useSettingsStore.setState({
-      ...responsesCapableFramework,
+      ...codexFramework,
       providers: [
         provider({
           id: 'off',
@@ -813,7 +814,7 @@ describe('ComposerModelPicker', () => {
           name: 'OpenAI',
           models: ['gpt-5.2', 'gpt-5.5']
         }),
-        provider({ id: 'gw', name: 'Gateway', models: ['gm'] })
+        provider({ id: 'gw', name: 'Gateway', apiEndpoints: ['openai'], models: ['gm'] })
       ],
       activeProviderId: 'off',
       activeModel: 'gpt-5.2'
