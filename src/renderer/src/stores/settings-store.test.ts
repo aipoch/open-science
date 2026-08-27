@@ -306,12 +306,13 @@ describe('settings store: saveAndActivateProvider', () => {
       type: 'custom',
       name: 'Gateway',
       baseUrl: 'https://g/v1',
+      model: 'model-a',
       key: 'k'
     })
 
     expect(result).toEqual({ providerId: 'p_new', validation: { ok: true, category: 'ok' } })
-    expect(api.validateProvider).toHaveBeenCalledWith({ providerId: 'p_new' })
-    expect(api.setActiveProvider).toHaveBeenCalledWith({ id: 'p_new' })
+    expect(api.validateProvider).toHaveBeenCalledWith({ providerId: 'p_new', model: 'model-a' })
+    expect(api.setActiveProvider).toHaveBeenCalledWith({ id: 'p_new', model: 'model-a' })
     expect(useSettingsStore.getState().activeProviderId).toBe('p_new')
   })
 
@@ -332,7 +333,7 @@ describe('settings store: saveAndActivateProvider', () => {
     expect(result.validation.ok).toBe(false)
     // A failed probe no longer blocks activation — the provider is configured in and can be tested
     // live; it is still kept (flagged as unverified), not rolled back.
-    expect(api.setActiveProvider).toHaveBeenCalledWith({ id: 'p_new' })
+    expect(api.setActiveProvider).toHaveBeenCalledWith({ id: 'p_new', model: undefined })
     expect(api.deleteProvider).not.toHaveBeenCalled()
   })
 

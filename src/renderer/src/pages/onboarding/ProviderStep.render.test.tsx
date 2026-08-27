@@ -588,6 +588,37 @@ describe('ProviderStep', () => {
     expect(saveAndActivateProvider).toHaveBeenCalledOnce()
   })
 
+  it('lets Claude Code add a mixed-protocol Zen provider before choosing an active model', async () => {
+    readyClaudeEnvironment()
+    useSettingsStore.setState({
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportedApiTypes: ['anthropic'],
+          supportsSkills: true
+        }
+      ]
+    })
+    const saveAndActivateProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: 'zen', validation: { ok: true, category: 'ok' } })
+    useSettingsStore.setState({ saveAndActivateProvider })
+
+    await renderStep({
+      initialValue: createEmptyProviderFormValue({
+        ...providerKindPatch('official:opencode'),
+        key: 'sk-test'
+      })
+    })
+    await clickButton(/test & continue/i)
+
+    expect(container.textContent).not.toContain("isn't compatible with Claude Code")
+    expect(saveAndActivateProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ vendorId: 'opencode', model: 'claude-fable-5' })
+    )
+  })
+
   // Switches the auth picker to the isolated "Sign in with Open Science" mode — the only path that
   // runs the browser login (loginIsolatedCodex).
   const switchToIsolatedSignIn = async (): Promise<void> => {

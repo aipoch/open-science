@@ -240,7 +240,7 @@ describe('AgentRuntimeManager', () => {
       id: 'provider-a',
       type: 'custom',
       name: 'Provider A',
-      model: 'model-a',
+      model: 'stored-model',
       apiEndpoints: ['openai'],
       keyRef: 'encrypted-key',
       lastValidatedAt: 10

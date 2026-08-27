@@ -210,6 +210,18 @@ describe('provider auth slice: persistence and validation', () => {
     expect(refreshPreflight).toHaveBeenCalledOnce()
   })
 
+  it('validates a saved provider with the model selected for activation', async () => {
+    commands.upsertProvider.mockResolvedValue(snapshot([provider('new')]))
+    commands.getSettings.mockResolvedValue(snapshot([provider('new')]))
+
+    await store.getState().saveProvider({ type: 'custom', name: 'new', model: ' model-a ' })
+
+    expect(commands.validateProvider).toHaveBeenCalledWith({
+      providerId: 'new',
+      model: 'model-a'
+    })
+  })
+
   it('returns unknown without validating or refreshing when an upsert has no affected id', async () => {
     commands.upsertProvider.mockResolvedValue(snapshot([]))
 
@@ -232,9 +244,9 @@ describe('provider auth slice: persistence and validation', () => {
     store.setState({ saveProvider, setActiveProvider })
 
     await expect(
-      store.getState().saveAndActivateProvider({ type: 'custom', name: 'new' })
+      store.getState().saveAndActivateProvider({ type: 'custom', name: 'new', model: ' model-a ' })
     ).resolves.toEqual({ providerId: 'new', validation })
-    expect(setActiveProvider).toHaveBeenCalledWith('new')
+    expect(setActiveProvider).toHaveBeenCalledWith('new', 'model-a')
   })
 
   it('refreshes saved validation outcomes but leaves draft validation projection untouched', async () => {

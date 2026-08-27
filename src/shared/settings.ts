@@ -649,6 +649,8 @@ export type SetActiveProviderRequest = {
 export type ValidateProviderRequest = {
   providerId?: string
   draft?: ProviderDraft
+  // Optional model override for validating a saved provider before that model becomes active.
+  model?: string
 }
 
 // Structured validation outcome so the renderer can render an actionable message per category.

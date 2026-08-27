@@ -59,6 +59,53 @@ describe('workspace tool activity details', () => {
     expect(buildToolActivityDetails(activity)).toBeUndefined()
   })
 
+  it('labels a load_skill MCP row with the loaded Skill name and keeps its generic details', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__skills__load_skill',
+      title: 'mcp__skills__load_skill',
+      rawInput: { skill: 'mcp-pubmed' },
+      toolContent: [
+        {
+          type: 'content',
+          content: { type: 'text', text: 'Base directory for this skill: /skills/mcp-pubmed' }
+        }
+      ]
+    })
+
+    expect(isSkillActivity(activity)).toBe(true)
+    expect(getLoadedSkillName(activity)).toBe('mcp-pubmed')
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details?.displayName).toBe('Skill')
+    expect(details?.subtitle).toBe('mcp-pubmed')
+    expect(details?.sections.map((section) => section.label)).toEqual(['Input', 'Output'])
+  })
+
+  it('reads the Skill name from the Codex arguments envelope on a load_skill row', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp.skills.load_skill',
+      title: 'mcp.skills.load_skill',
+      rawInput: { name: 'load_skill', arguments: { skill: 'mcp-pubmed' } }
+    })
+
+    expect(isSkillActivity(activity)).toBe(true)
+    expect(getLoadedSkillName(activity)).toBe('mcp-pubmed')
+  })
+
+  it('does not treat lookalike MCP server or tool names as Skill loads', () => {
+    expect(
+      isSkillActivity(
+        createActivity({ providerToolName: 'mcp__skills__list_skills', rawInput: {} })
+      )
+    ).toBe(false)
+    expect(
+      isSkillActivity(
+        createActivity({ providerToolName: 'mcp__my-skills__load_skill', rawInput: {} })
+      )
+    ).toBe(false)
+  })
+
   it('builds command and output code sections for execute tools', () => {
     const activity = createActivity({
       providerToolName: 'Bash',

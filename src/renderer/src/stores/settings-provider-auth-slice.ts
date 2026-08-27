@@ -105,6 +105,9 @@ const resolveUpsertedProviderId = (
   return after.find((provider) => !beforeIds.has(provider.id))?.id
 }
 
+const normalizeProviderModel = (model: string | undefined): string | undefined =>
+  model?.trim() || undefined
+
 export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
   get,
   getCommands,
@@ -134,7 +137,11 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
       return { providerId: '', validation: { ok: false, category: 'unknown' } }
     }
 
-    const validation = await commands.validateProvider({ providerId })
+    const model = normalizeProviderModel(request.model)
+    const validation = await commands.validateProvider({
+      providerId,
+      ...(model ? { model } : {})
+    })
     reconcileSnapshot(await commands.getSettings())
     await refreshPreflight()
     return { providerId, validation }
@@ -142,7 +149,9 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
 
   saveAndActivateProvider: async (request) => {
     const result = await get().saveProvider(request)
-    if (result.providerId) await get().setActiveProvider(result.providerId)
+    if (result.providerId) {
+      await get().setActiveProvider(result.providerId, normalizeProviderModel(request.model))
+    }
     return result
   },
 

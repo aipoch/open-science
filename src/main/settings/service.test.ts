@@ -1448,6 +1448,36 @@ describe('SettingsService: validation', () => {
     expect((await repository.getSettings()).providers[0].lastValidatedAt).toBeGreaterThan(0)
   })
 
+  it('validates a saved official provider with its pending model before activation', async () => {
+    const service = createService()
+    const fetchMock = vi.fn().mockResolvedValue(validAnthropicResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const created = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'OpenCode Zen',
+        vendorId: 'opencode',
+        key: 'k'
+      })
+    ).providers[0]
+
+    const result = await service.validateProvider({
+      providerId: created.id,
+      model: 'claude-fable-5'
+    })
+
+    expect(result).toMatchObject({ ok: true, category: 'ok', applied: true })
+    expect(fetchMock.mock.calls[0][0]).toBe('https://opencode.ai/zen/v1/messages')
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      model: 'claude-fable-5'
+    })
+
+    const settings = await repository.getSettings()
+    expect(settings.activeModel).toBeUndefined()
+    expect(settings.providers[0].lastValidatedAt).toBeGreaterThan(0)
+  })
+
   it('probes over the proxy-aware net.fetch, not Node global fetch directly', async () => {
     const service = createService()
     // A direct undici fetch ignores the system proxy, so an official vendor reachable only through a
