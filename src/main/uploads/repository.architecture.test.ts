@@ -110,10 +110,12 @@ const newExpressionFiles = (
   return sites
 }
 
-const interactiveTransactionOptions = (): string[] => {
+const interactiveTransactionOptions = (
+  sourceMap: ReadonlyMap<string, string> = sources
+): string[] => {
   const sites: string[] = []
-  for (const file of productionFiles) {
-    const sourceFile = sourceFileFor(file)
+  for (const [file, source] of sourceMap) {
+    const sourceFile = createSourceFile(file, source, ScriptTarget.Latest, true, ScriptKind.TS)
     const visit = (node: Node): void => {
       if (
         isCallExpression(node) &&
@@ -127,6 +129,14 @@ const interactiveTransactionOptions = (): string[] => {
     visit(sourceFile)
   }
   return sites.sort()
+}
+
+const expectSharedUploadTransactionPolicy = (
+  sourceMap: ReadonlyMap<string, string> = sources
+): void => {
+  expect(interactiveTransactionOptions(sourceMap)).toEqual([
+    'staged-publication-owner.ts:UPLOAD_TRANSACTION_OPTIONS'
+  ])
 }
 
 const functionCallSites = (functionName: string): string[] => {
@@ -305,9 +315,17 @@ describe('Upload repository architecture', () => {
     expect(variableInitializer('staged-publication-owner.ts', 'UPLOAD_TRANSACTION_OPTIONS')).toBe(
       '{ maxWait: 10_000 } as const'
     )
-    const transactionOptions = interactiveTransactionOptions()
-    expect(transactionOptions.length).toBeGreaterThan(0)
-    for (const site of transactionOptions) expect(site).toMatch(/:UPLOAD_TRANSACTION_OPTIONS$/)
+    expectSharedUploadTransactionPolicy()
+
+    const shadowedPolicySources = new Map(sources)
+    shadowedPolicySources.set(
+      'rogue-owner.ts',
+      `
+        const UPLOAD_TRANSACTION_OPTIONS = { maxWait: 1 }
+        client.$transaction(operation, UPLOAD_TRANSACTION_OPTIONS)
+      `
+    )
+    expect(() => expectSharedUploadTransactionPolicy(shadowedPolicySources)).toThrow()
 
     expect([...new Set(functionCallSites('runUploadTransaction'))]).toEqual([
       'legacy-recovery-owner.ts',
