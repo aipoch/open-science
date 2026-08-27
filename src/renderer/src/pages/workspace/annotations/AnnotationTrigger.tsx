@@ -8,6 +8,24 @@ import { anchorRangeTrigger, isRangeTriggerVisible } from './annotation-trigger-
 const FALLBACK_TRIGGER_WIDTH = 82
 const FALLBACK_TRIGGER_HEIGHT = 24
 
+const observeSelectionMutations = (range: Range, onMutate: () => void): (() => void) => {
+  if (typeof MutationObserver === 'undefined') return () => {}
+  const node = range.commonAncestorContainer
+  const element = node instanceof Element ? node : node.parentElement
+  if (!element?.isConnected) return () => {}
+  const observers: MutationObserver[] = []
+  const observe = (target: Node, options: MutationObserverInit): void => {
+    const observer = new MutationObserver(onMutate)
+    observer.observe(target, options)
+    observers.push(observer)
+  }
+  observe(element, { childList: true, characterData: true, subtree: true })
+  if (element.parentElement) observe(element.parentElement, { childList: true })
+  return () => {
+    for (const observer of observers) observer.disconnect()
+  }
+}
+
 const AnnotationTrigger = ({
   range,
   backward,
@@ -50,11 +68,13 @@ const AnnotationTrigger = ({
     updatePosition()
     document.addEventListener('scroll', updatePosition, true)
     window.addEventListener('resize', updatePosition)
+    const stopObserving = observeSelectionMutations(range, updatePosition)
     return () => {
       document.removeEventListener('scroll', updatePosition, true)
       window.removeEventListener('resize', updatePosition)
+      stopObserving()
     }
-  }, [updatePosition])
+  }, [range, updatePosition])
 
   return createPortal(
     <>

@@ -666,6 +666,37 @@ describe('TextAnnotationSurface annotate trigger', () => {
     expect(document.querySelector('textarea')).toBeNull()
   })
 
+  it('hides the trigger as soon as the selected content is removed', async () => {
+    const paragraph = await renderSurface()
+    await commitSelection(paragraph)
+    expect(annotateTrigger()).toBeDefined()
+
+    await act(async () => {
+      paragraph.remove()
+    })
+    expect(annotateTrigger()).toBeUndefined()
+  })
+
+  it('hides the trigger when streaming replaces the selected message content', async () => {
+    const paragraph = await renderSurface()
+    await commitSelection(paragraph)
+    expect(annotateTrigger()).toBeDefined()
+
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+          activeAnnotations={[]}
+          onAdd={vi.fn()}
+          onError={vi.fn()}
+        >
+          <p>stream replaced the quote</p>
+        </TextAnnotationSurface>
+      )
+    )
+    expect(annotateTrigger()).toBeUndefined()
+  })
+
   it('hides the trigger when the selection scrolls outside its clipping container', async () => {
     await act(async () =>
       root.render(
