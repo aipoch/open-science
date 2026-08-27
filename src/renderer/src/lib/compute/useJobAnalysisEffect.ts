@@ -1,17 +1,18 @@
 // useJobAnalysisEffect — wires the job-analysis-trigger into the React component tree.
 //
-// Called from WorkspacePage (which owns `sendMessage` from useWorkspaceAgentRuntime).
-// On every `compute:job-updated` broadcast AND once at session hydration time,
+// Owned by the App-level runtime bridge so analysis survives navigation away from Workspace.
+// On every `compute:job-updated` broadcast AND once after App persistence recovery,
 // the trigger is fed the job summary and decides whether to fire / queue an analysis turn.
 //
 // Design decisions:
 // - One readiness-scoped effect owns the trigger and every subscription so delayed work cannot cross
 //   a persistence recovery boundary.
 // - `isSessionInFlight` reads from useSessionStore.getState() synchronously — no subscription needed.
-// - The restart-recovery scan fires whenever the active session id changes (session navigation).
+// - The restart-recovery scan covers every persisted Session from the App-lifetime owner.
 
 import { useEffect, useEffectEvent } from 'react'
 
+import { useWorkspaceAgentRuntime } from '../acp/useWorkspaceAgentRuntime'
 import { useSessionJobStore } from '../../stores/session-job-store'
 import { useSessionStore } from '../../stores/session-store'
 import { createJobAnalysisTrigger } from '../compute/job-analysis-trigger'
@@ -20,6 +21,8 @@ import { createJobAnalysisTrigger } from '../compute/job-analysis-trigger'
 type SendMessageFn = (input: {
   sessionId?: string
   text: string
+  cwd?: string
+  projectId?: string
 }) => Promise<{ sessionId: string; messageId: string } | undefined>
 
 type UseJobAnalysisEffectOptions = {
@@ -28,7 +31,7 @@ type UseJobAnalysisEffectOptions = {
 }
 
 // Subscribes to all done-state compute:job-updated broadcasts and runs the analysis turn trigger.
-// Also scans for pending notifications on session load (restart recovery path).
+// Also scans every Session for pending notifications on startup (restart recovery path).
 export const useJobAnalysisEffect = ({
   enabled,
   sendMessage
@@ -54,7 +57,15 @@ export const useJobAnalysisEffect = ({
       },
       sendPrompt: async (sessionId, text) => {
         if (!isActive) return undefined
-        return sendLatestMessage({ sessionId, text })
+        const session = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === sessionId)
+        return sendLatestMessage({
+          sessionId,
+          text,
+          cwd: session?.cwd,
+          projectId: session?.projectId
+        })
       },
       markConsumed: async (sessionId, jobIds) => {
         if (!isActive) return
@@ -100,39 +111,34 @@ export const useJobAnalysisEffect = ({
       }
     }
 
-    const scanPendingJobs = (sessionId: string | undefined, retryDelay = 1_000): void => {
-      if (!sessionId) return
+    const scanPendingJobs = (retryDelay = 1_000): void => {
       if (typeof window.api?.compute?.jobsPendingNotification !== 'function') return
-      if (useSessionJobStore.getState().hydratedSessionId !== sessionId) return
       clearTimeout(pendingScanRetry)
       pendingScanRetry = undefined
 
       void window.api.compute
-        .jobsPendingNotification(sessionId)
+        .jobsPendingNotification({ allSessions: true })
         .then((jobs) => {
           if (!isActive) return
           const jobStore = useSessionJobStore.getState()
           for (const job of jobs) jobStore.applyUpdate(job)
         })
         .catch((error) => {
-          if (!isActive || useSessionJobStore.getState().hydratedSessionId !== sessionId) return
+          if (!isActive) return
           console.warn('[compute] analysis-turn:pending-scan-failed', error)
           pendingScanRetry = setTimeout(() => {
             pendingScanRetry = undefined
-            scanPendingJobs(sessionId, Math.min(retryDelay * 2, 30_000))
+            scanPendingJobs(Math.min(retryDelay * 2, 30_000))
           }, retryDelay)
         })
     }
 
     const initialState = useSessionJobStore.getState()
     feedNotifiedJobs(initialState)
-    scanPendingJobs(initialState.hydratedSessionId)
+    scanPendingJobs()
 
-    const unsubscribeJobs = useSessionJobStore.subscribe((state, previousState) => {
+    const unsubscribeJobs = useSessionJobStore.subscribe((state) => {
       feedNotifiedJobs(state)
-      if (state.hydratedSessionId !== previousState.hydratedSessionId) {
-        scanPendingJobs(state.hydratedSessionId)
-      }
     })
 
     return () => {
@@ -144,3 +150,11 @@ export const useJobAnalysisEffect = ({
     }
   }, [enabled])
 }
+
+const JobAnalysisRuntimeBridge = ({ enabled }: { enabled: boolean }): null => {
+  const runtime = useWorkspaceAgentRuntime()
+  useJobAnalysisEffect({ enabled, sendMessage: runtime.sendMessage })
+  return null
+}
+
+export { JobAnalysisRuntimeBridge }

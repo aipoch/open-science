@@ -438,3 +438,5 @@ export type JobSummary = {
 // cross-Session query used to hydrate renderer-lifetime activity after startup or recovery.
 export type ComputeJobsListFilter =
   Readonly<{ sessionId: string; status?: string[] }> | Readonly<{ nonTerminal: true }>
+
+export type ComputeJobsPendingNotificationFilter = string | Readonly<{ allSessions: true }>

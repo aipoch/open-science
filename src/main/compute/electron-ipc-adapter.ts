@@ -2,6 +2,7 @@ import type {
   ChangeComputeHostAuthenticationRequest,
   ComputeApprovalDecision,
   ComputeJobsListFilter,
+  ComputeJobsPendingNotificationFilter,
   CreateComputeHostRequest,
   CreatePasswordComputeHostRequest,
   ResetPasswordComputeHostRequest,
@@ -128,8 +129,10 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
     handlers.jobsList(filter)
   )
   // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null — issue 05).
-  ipcMainHandle('compute:jobs:pending-notification', (_event, sessionId: string) =>
-    handlers.jobsPendingNotification(sessionId)
+  ipcMainHandle(
+    'compute:jobs:pending-notification',
+    (_event, filter: ComputeJobsPendingNotificationFilter) =>
+      handlers.jobsPendingNotification(filter)
   )
   // Marks job ids as notification-consumed (analysis turn done — issue 05).
   ipcMainHandle('compute:jobs:mark-consumed', (_event, sessionId: string, jobIds: string[]) =>

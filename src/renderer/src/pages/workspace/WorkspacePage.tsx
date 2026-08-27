@@ -60,7 +60,6 @@ import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
-import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
 import { useWorkspaceConversationController } from './workspace-conversation-controller'
@@ -216,8 +215,6 @@ const WorkspacePage = ({
   } = runtime
   const { respondToElicitation } = useWorkspaceElicitation(runtime.resolveSessionRuntimeSelection)
 
-  // Auto-trigger an analysis turn when a remote job finishes (design §11).
-  useJobAnalysisEffect({ enabled: isSessionPersistenceReady, sendMessage: runtime.sendMessage })
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(defaultPermissionProfile)
   // Draft auto-review state for a not-yet-created conversation. Auto-review defaults off, so a new

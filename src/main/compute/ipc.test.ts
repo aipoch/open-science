@@ -1928,6 +1928,29 @@ describe('compute handlers — jobsPendingNotification', () => {
     expect(result[0]!.notification_consumed_at).toBeUndefined()
   })
 
+  it('returns pending notifications across all Sessions for App-level recovery', async () => {
+    const list = vi.fn().mockResolvedValue([])
+    const findPendingNotifications = vi
+      .fn()
+      .mockResolvedValue([makeJob({ job_id: 'job-a', session_id: 'sess-a' })])
+    const handlers = createComputeHandlers(
+      mockRepository({ list }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepo({ findPendingNotifications }),
+      undefined,
+      undefined,
+      storageRoot
+    )
+
+    const result = await handlers.jobsPendingNotification({ allSessions: true })
+
+    expect(findPendingNotifications).toHaveBeenCalledWith()
+    expect(result[0]).toMatchObject({ job_id: 'job-a', session_id: 'sess-a' })
+  })
+
   it('returns an empty array when no jobRepository is injected', async () => {
     const handlers = createComputeHandlers(mockRepository({}))
     const result = await handlers.jobsPendingNotification('sess-1')

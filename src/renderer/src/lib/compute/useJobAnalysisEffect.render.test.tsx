@@ -106,7 +106,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
       root.render(<Probe enabled />)
       await Promise.resolve()
     })
-    expect(jobsPendingNotification).toHaveBeenCalledWith('session-1')
+    expect(jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
 
     await act(async () => root.render(<Probe enabled={false} />))
     await act(async () => {
@@ -226,8 +226,40 @@ describe('useJobAnalysisEffect persistence readiness', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(jobsPendingNotification).toHaveBeenCalledWith('session-1')
+    expect(jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
     expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('recovers pending analysis across all Sessions from the App-level owner', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-a',
+          title: 'Background Session',
+          cwd: '/workspace/project-a',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<Probe enabled />)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        cwd: '/workspace/project-a',
+        projectId: 'project-a'
+      })
+    )
   })
 
   it('adds pending-scan jobs to the local store before dispatching analysis', async () => {

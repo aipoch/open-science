@@ -656,6 +656,7 @@ describe('workspace runtime architecture', () => {
     }
     expect(unsupportedFacadeImports).toEqual([])
     expect(hookConsumers).toEqual([
+      'lib/compute/useJobAnalysisEffect.ts',
       'pages/workspace/WorkspacePage.tsx',
       'pages/workspace/workspace-message-queue-controller.ts'
     ])

@@ -8,6 +8,7 @@ import type {
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeJobsListFilter,
+  ComputeJobsPendingNotificationFilter,
   JobSummary
 } from '../shared/compute'
 import type {
@@ -626,8 +627,8 @@ const api: OpenScienceAPI = {
     jobsList: (filter: ComputeJobsListFilter) =>
       electronRendererContracts.invoke('compute.jobsList', filter),
     // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null).
-    jobsPendingNotification: (sessionId) =>
-      electronRendererContracts.invoke('compute.jobsPendingNotification', sessionId),
+    jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) =>
+      electronRendererContracts.invoke('compute.jobsPendingNotification', filter),
     // Marks job ids as notification-consumed after a successful analysis turn (issue 05).
     jobsMarkConsumed: (sessionId, jobIds) =>
       electronRendererContracts.invoke('compute.jobsMarkConsumed', sessionId, jobIds),

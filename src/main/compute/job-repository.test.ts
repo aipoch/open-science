@@ -361,6 +361,12 @@ describe('ComputeJob repository (SQLite integration)', () => {
     const pending = await repo.findPendingNotifications('sess-1')
     expect(pending).toHaveLength(1)
     expect(pending[0]!.job_id).toBe('job-notified-unconsumed')
+
+    const allPending = await repo.findPendingNotifications()
+    expect(allPending.map((job) => job.job_id)).toEqual([
+      'job-notified-unconsumed',
+      'job-other-session'
+    ])
   })
 
   it('markNotificationsConsumed sets notificationConsumedAt and is idempotent', async () => {

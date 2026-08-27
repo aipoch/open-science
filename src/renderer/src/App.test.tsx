@@ -35,8 +35,13 @@ const mocks = vi.hoisted(() => {
       enqueueApproval: vi.fn(),
       dismissApproval: vi.fn(),
       pendingApprovals: [] as unknown[],
-      jobsList: vi.fn().mockResolvedValue([])
+      jobsList: vi.fn().mockResolvedValue([]),
+      jobsPendingNotification: vi.fn().mockResolvedValue([]),
+      jobsMarkConsumed: vi.fn().mockResolvedValue(undefined)
     },
+    runtimeSendMessage: vi
+      .fn()
+      .mockResolvedValue({ sessionId: 'session-1', messageId: 'analysis-message' }),
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
     sessions: [] as Array<{ id: string }>,
     appendRoutedUserMessage: vi.fn(),
@@ -172,7 +177,8 @@ vi.mock('@/stores/session-store', () => ({
     getState: () => ({
       sessions: mocks.sessions,
       appendRoutedUserMessage: mocks.appendRoutedUserMessage
-    })
+    }),
+    subscribe: vi.fn(() => vi.fn())
   }
 }))
 vi.mock('@/stores/notebook-env-store', () => ({
@@ -258,7 +264,8 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     pendingPermissions: [],
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
-    saveAsSkillInFlightSessionIds: []
+    saveAsSkillInFlightSessionIds: [],
+    sendMessage: mocks.runtimeSendMessage
   })
 }))
 vi.mock('@/pages/home/HomePage', () => ({
@@ -393,6 +400,9 @@ describe('App startup routing', () => {
     mocks.compute.enqueueApproval.mockClear()
     mocks.compute.dismissApproval.mockClear()
     mocks.compute.jobsList.mockClear()
+    mocks.compute.jobsPendingNotification.mockClear()
+    mocks.compute.jobsMarkConsumed.mockClear()
+    mocks.runtimeSendMessage.mockClear()
     mocks.navigation.view = 'home'
     mocks.startupView = 'app'
     mocks.sessionPersistence.isReady = true
@@ -455,6 +465,8 @@ describe('App startup routing', () => {
         replayPendingApprovals: vi.fn().mockResolvedValue(undefined),
         onJobUpdated: vi.fn(() => vi.fn()),
         jobsList: mocks.compute.jobsList,
+        jobsPendingNotification: mocks.compute.jobsPendingNotification,
+        jobsMarkConsumed: mocks.compute.jobsMarkConsumed,
         enabledHostsSet: vi.fn(() => Promise.resolve())
       },
       permissions: { onChanged: vi.fn(() => vi.fn()) },
@@ -503,6 +515,40 @@ describe('App startup routing', () => {
     await render()
 
     expect(mocks.compute.jobsList).toHaveBeenCalledWith({ nonTerminal: true })
+  })
+
+  it('keeps the remote-job analysis owner active while Home is presented', async () => {
+    mocks.settings.isLoaded = true
+    mocks.compute.jobsPendingNotification.mockResolvedValueOnce([
+      {
+        job_id: 'job-1',
+        provider_id: 'ssh:cluster',
+        display_name: 'Cluster',
+        shape: 'direct_ssh',
+        session_id: 'session-1',
+        status: 'success',
+        intent: 'Analyze results',
+        created_at: 1,
+        started_at: 2,
+        finished_at: 3,
+        exit_code: 0,
+        error_code: undefined,
+        remote_workdir: undefined,
+        stdout_tail: undefined,
+        stderr_tail: undefined,
+        notified_at: 4,
+        notification_consumed_at: undefined
+      }
+    ])
+
+    await render()
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+
+    expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+    expect(mocks.compute.jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
+    expect(mocks.runtimeSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'session-1' })
+    )
   })
 
   it('opens Settings with Cmd/Ctrl+, after startup is interactive', async () => {
