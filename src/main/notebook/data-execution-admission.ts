@@ -54,8 +54,10 @@ const defaultEnvironment = (language: NotebookLanguage): string =>
 const processKey = (language: NotebookLanguage, environment: string): string =>
   `${language === 'r' ? 'r' : 'python'}:${resolveEnvName(language, environment)}`
 
+class NotebookRuntimeRepairRequiredError extends Error {}
+
 const repairRequiredError = (language: NotebookLanguage): Error =>
-  new Error(
+  new NotebookRuntimeRepairRequiredError(
     `RUNTIME_REPAIR_REQUIRED: the bound ${language} runtime failed a protected-package ` +
       'integrity check. Run the runtime Repair workflow before executing another cell.'
   )
@@ -165,7 +167,11 @@ class NotebookDataExecutionAdmissionOwner {
             )
           ) || repair.required
         return operation(
-          postLockRepairRequired ? repairRequiredError(admission.language) : admission.rejection
+          postLockRepairRequired
+            ? repairRequiredError(admission.language)
+            : admission.rejection instanceof NotebookRuntimeRepairRequiredError
+              ? undefined
+              : admission.rejection
         )
       }
     )
