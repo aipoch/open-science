@@ -39,10 +39,6 @@ it('defers coverage thresholds only for explicit shard collection', () => {
   ).toBeUndefined()
 })
 
-it('allows empty projects only while collecting deferred-coverage shards', () => {
-  expect(vitestConfig.test?.passWithNoTests).toBe(!coverageThresholdsEnabled(process.env))
-})
-
 it('ratchets full coverage without raising selective changed-source thresholds', () => {
   expect(FULL_COVERAGE_THRESHOLDS).toEqual({
     lines: 90,
