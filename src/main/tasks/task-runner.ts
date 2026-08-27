@@ -2,7 +2,7 @@ import { constants } from 'node:fs'
 import { access, realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 
-import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpRuntimeEvent, AgentTurnProvenanceContext } from '../../shared/acp'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import {
   getAcpRuntimeEventImage,
@@ -18,19 +18,24 @@ import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE, artifactCreatedAtMs } from '../../
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import {
+  ensureConversationRuntimeSegment,
+  getActiveConversationContext
+} from '../../shared/conversation-graph'
+import {
   PROJECT_DESCRIPTION_MAX_LENGTH,
   PROJECT_NAME_MAX_LENGTH,
   type Project,
   type UpdateProjectRequest
 } from '../../shared/projects'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../shared/settings'
-import type {
-  DelegationPolicy,
-  PersistedArtifact,
-  PersistedChatMessage,
-  PersistedChatSession,
-  PersistedMessageImage,
-  PersistedToolActivity
+import {
+  materializeSessionConversationGraph,
+  type DelegationPolicy,
+  type PersistedArtifact,
+  type PersistedChatMessage,
+  type PersistedChatSession,
+  type PersistedMessageImage,
+  type PersistedToolActivity
 } from '../../shared/session-persistence'
 import type {
   AcquiredTaskArtifact,
@@ -112,6 +117,7 @@ type TaskAgentResumeSessionRequest = {
 type TaskAgentPromptRequest = {
   sessionId: string
   promptMessageId: string
+  provenanceContext: AgentTurnProvenanceContext
   text: string
   turnIntent?: 'plan-first'
   skillIds?: string[]
@@ -965,11 +971,30 @@ class TaskRunner {
       delete session.resumeRecovery
     }
 
-    const committedSession = await this.dependencies.sessions.save(session)
+    const contextReset = Boolean(sessionInfo.contextReset || existing?.pendingHistoryReplay)
+    let sessionToCommit = session
+    if (existing) {
+      const currentGraph = materializeSessionConversationGraph(existing).conversationGraph
+      const graphWithRuntime = ensureConversationRuntimeSegment(currentGraph, {
+        id: `runtime-segment-${userMessageId}`,
+        frameworkId: session.agentFrameworkId ?? 'claude-code',
+        backendId: session.agentBackendId,
+        model: session.agentModel,
+        startedAt: now,
+        forceNew: contextReset
+      })
+      if (graphWithRuntime.runtimeSegments.length !== currentGraph.runtimeSegments.length) {
+        sessionToCommit = materializeSessionConversationGraph({
+          ...session,
+          conversationGraph: graphWithRuntime
+        })
+      }
+    }
+
+    const committedSession = await this.dependencies.sessions.save(sessionToCommit)
     const previousHistoryPreamble = existing
       ? createHistoryPreamble(selectTaskHistoryMessages(existing))
       : undefined
-    const contextReset = Boolean(sessionInfo.contextReset || existing?.pendingHistoryReplay)
     return {
       session: committedSession,
       historyPreamble: contextReset ? previousHistoryPreamble : undefined,
@@ -994,10 +1019,16 @@ class TaskRunner {
     let cancellationAtPromptFailure: MutableTaskRun['cancellation'] = undefined
     try {
       this.publishProgress(run, 'prompt-dispatched')
+      const promptMessageId = session.activeRun!.promptMessageId
+      const provenanceContext = getActiveConversationContext(
+        materializeSessionConversationGraph(session).conversationGraph,
+        promptMessageId
+      )
       await this.dependencies.agent.prompt(
         {
           sessionId: session.id,
-          promptMessageId: session.activeRun!.promptMessageId,
+          promptMessageId,
+          provenanceContext,
           text: prompt,
           ...(request.turnIntent ? { turnIntent: request.turnIntent } : {}),
           ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),

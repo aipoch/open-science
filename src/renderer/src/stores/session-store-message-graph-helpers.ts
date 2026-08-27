@@ -45,6 +45,7 @@ export type AppendUserMessageInput = {
   specialistId?: string
   enabledComputeHosts?: string[]
   selectedComputeHosts?: string[]
+  preserveSelection?: boolean
 }
 
 export type AppendPendingUserMessageInput = Omit<AppendUserMessageInput, 'sessionId' | 'isPending'>

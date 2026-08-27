@@ -38,7 +38,7 @@ type SessionArchiveAvailability = {
 const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest => ({
   sessionId: request.sessionId,
   text: request.text,
-  provenanceContext: { promptMessageId: request.promptMessageId },
+  provenanceContext: request.provenanceContext,
   ...(request.turnIntent ? { turnIntent: request.turnIntent } : {}),
   ...(request.skillIds?.length ? { forcedSkillIds: request.skillIds } : {}),
   ...(request.historyPreamble ? { historyPreamble: request.historyPreamble } : {}),

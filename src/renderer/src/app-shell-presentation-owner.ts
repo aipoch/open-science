@@ -57,15 +57,21 @@ const PRESENTATION_PRIORITY: ReadonlyArray<keyof AppShellPresentationState> = [
 ]
 
 const BLOCKING_DOM_PRESENTATION_SELECTOR = `[role="dialog"], [role="alertdialog"], [data-slot="context-window-dialog"], ${STREAMDOWN_FULLSCREEN_SELECTOR}`
+const FILE_PREVIEW_DIALOG_SELECTOR = '[data-slot="file-preview-dialog"]'
 
 const isEffectivelyOpen = (element: HTMLElement): boolean =>
   element.dataset.state !== 'closed' && element.closest('[aria-hidden="true"], [hidden]') === null
 
 const findTopmostDomPresentation = (
   root: ParentNode,
-  selector = BLOCKING_DOM_PRESENTATION_SELECTOR
+  ignoredSelector?: string
 ): HTMLElement | undefined =>
-  Array.from(root.querySelectorAll<HTMLElement>(selector)).filter(isEffectivelyOpen).at(-1)
+  Array.from(root.querySelectorAll<HTMLElement>(BLOCKING_DOM_PRESENTATION_SELECTOR))
+    .filter(
+      (element) =>
+        isEffectivelyOpen(element) && (!ignoredSelector || !element.matches(ignoredSelector))
+    )
+    .at(-1)
 
 const resolveActivePresentation = (input: AppShellPresentationInput): AppShellPresentation => {
   if (input.startupView !== 'app' || !input.isSessionPersistenceHydrated) return 'startup'
@@ -84,7 +90,7 @@ const closeActionFor = (active: AppShellPresentation, root: ParentNode): AppShel
   // Workspace dialogs and fullscreen viewers can be nested inside a preview modal. They own the
   // first close command; the preview state remains intact until the next command.
   if (active === 'preview') {
-    const nestedPresentation = findTopmostDomPresentation(root)
+    const nestedPresentation = findTopmostDomPresentation(root, FILE_PREVIEW_DIALOG_SELECTOR)
     return nestedPresentation
       ? { kind: 'dismiss-dom-presentation', target: nestedPresentation }
       : { kind: 'close-preview' }

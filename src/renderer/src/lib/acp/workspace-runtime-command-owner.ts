@@ -59,6 +59,7 @@ type SendWorkspaceMessageIntent = {
   selectedComputeHosts?: string[]
   agentConfiguration?: SessionAgentConfiguration
   memoryEnabled?: boolean
+  preserveSelection?: boolean
 }
 type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   agentFrameworkId?: AgentFrameworkId
@@ -494,7 +495,8 @@ const sendWorkspaceMessage = async (
         agentFrameworkId: input.agentFrameworkId,
         agentBackendId: input.agentBackendId,
         agentModel: input.agentModel,
-        agentConfiguration: input.agentConfiguration
+        agentConfiguration: input.agentConfiguration,
+        preserveSelection: input.preserveSelection
       })
       if (!appended) return undefined
       startPendingPrompt(
@@ -574,7 +576,8 @@ const sendWorkspaceMessage = async (
       agentFrameworkId: prepared.appendOwnership.agentFrameworkId,
       agentBackendId: prepared.appendOwnership.agentBackendId,
       agentModel: input.agentModel,
-      agentConfiguration: input.agentConfiguration
+      agentConfiguration: input.agentConfiguration,
+      preserveSelection: input.preserveSelection
     })
     if (!appended) return undefined
     const replay = prepared.replay()

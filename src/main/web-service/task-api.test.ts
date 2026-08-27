@@ -736,6 +736,15 @@ describe('HeadlessTaskApi adapter', () => {
       {
         sessionId: existing.id,
         promptMessageId: 'attached-user',
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-attached',
+          agentFrameId: 'root-frame-session-attached',
+          messageBranchId: 'message-branch-session-attached',
+          messageBranchAncestry: ['message-branch-session-attached'],
+          messageAncestry: ['attached-user'],
+          runtimeSegmentId: 'runtime-segment-session-attached',
+          promptMessageId: 'attached-user'
+        },
         text: 'Continue research.'
       },
       { onProviderPromptAccepted: expect.any(Function) }
@@ -843,6 +852,15 @@ describe('HeadlessTaskApi adapter', () => {
       {
         sessionId: 'session-context',
         promptMessageId: expect.any(String),
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-context',
+          agentFrameId: 'root-frame-session-context',
+          messageBranchId: 'message-branch-session-context',
+          messageBranchAncestry: ['message-branch-session-context'],
+          messageAncestry: [expect.any(String)],
+          runtimeSegmentId: 'runtime-segment-session-context',
+          promptMessageId: expect.any(String)
+        },
         text: 'Research with remote context.'
       },
       { onProviderPromptAccepted: expect.any(Function) }

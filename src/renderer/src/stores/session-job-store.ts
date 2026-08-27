@@ -2,12 +2,16 @@ import { create } from 'zustand'
 
 import type { JobSummary } from '../../../shared/compute'
 
-// Session-scoped job feed store (renderer-only, never persisted).
-// Hydrates from compute:jobs:list once per session and stays fresh via compute:job-updated broadcasts.
-// The store is global so the App can subscribe to the broadcast once at startup.
+const isNonTerminal = (job: JobSummary): boolean =>
+  job.status === 'queued' || job.status === 'submitted' || job.status === 'running'
+
+// Renderer-only job projections, never persisted here: Workspace hydrates a Session history while
+// the App hydrates bounded cross-Session activity. Broadcasts keep both projections current.
 type SessionJobStoreData = {
   // All known jobs indexed by job_id for O(1) incremental updates.
   jobsById: Map<string, JobSummary>
+  // Persisted activity for every Session, hydrated once per renderer recovery cycle.
+  nonTerminalJobsById: Map<string, JobSummary>
   // Session id for which the initial list was last fetched.
   hydratedSessionId: string | undefined
   isLoaded: boolean
@@ -16,6 +20,8 @@ type SessionJobStoreData = {
 type SessionJobStore = SessionJobStoreData & {
   // Loads all jobs for a session from the main process (initial hydration).
   hydrate: (sessionId: string) => Promise<void>
+  // Loads the bounded cross-Session activity projection after app startup or recovery.
+  hydrateNonTerminal: () => Promise<void>
   // Applies an incremental update from the compute:job-updated broadcast.
   // Stored regardless of session match so cross-session jobs in the broadcast window aren't lost.
   applyUpdate: (job: JobSummary) => void
@@ -27,12 +33,14 @@ type SessionJobStore = SessionJobStoreData & {
 
 export const createInitialSessionJobState = (): SessionJobStoreData => ({
   jobsById: new Map(),
+  nonTerminalJobsById: new Map(),
   hydratedSessionId: undefined,
   isLoaded: false
 })
 
 export const useSessionJobStore = create<SessionJobStore>((set, get) => {
   let latestHydrationRequest = 0
+  let latestNonTerminalHydrationRequest = 0
   let latestUpdateRevision = 0
   const updateRevisionByJobId = new Map<string, number>()
 
@@ -72,14 +80,43 @@ export const useSessionJobStore = create<SessionJobStore>((set, get) => {
       })
     },
 
-    // Upserts a single job received via broadcast. Works even if the store has not been hydrated yet
-    // (the job simply lands in the map for when selectors query it).
+    hydrateNonTerminal: async () => {
+      const requestId = ++latestNonTerminalHydrationRequest
+      const startedAtUpdateRevision = latestUpdateRevision
+      const jobs = await window.api.compute.jobsList({ nonTerminal: true })
+      if (requestId !== latestNonTerminalHydrationRequest) return
+
+      set((state) => {
+        const next = new Map<string, JobSummary>()
+
+        for (const job of jobs) {
+          const updateRevision = updateRevisionByJobId.get(job.job_id)
+          if (updateRevision !== undefined && updateRevision > startedAtUpdateRevision) continue
+          next.set(job.job_id, job)
+        }
+
+        for (const [jobId, job] of state.nonTerminalJobsById) {
+          const updateRevision = updateRevisionByJobId.get(jobId)
+          if (updateRevision !== undefined && updateRevision > startedAtUpdateRevision) {
+            next.set(jobId, job)
+          }
+        }
+
+        return { nonTerminalJobsById: next }
+      })
+    },
+
+    // Upserts Session history and adds/removes the job from the global activity projection. Works
+    // before either hydration so a startup broadcast cannot be lost to a later snapshot.
     applyUpdate: (job) => {
       updateRevisionByJobId.set(job.job_id, ++latestUpdateRevision)
       set((state) => {
         const next = new Map(state.jobsById)
+        const nextNonTerminal = new Map(state.nonTerminalJobsById)
         next.set(job.job_id, job)
-        return { jobsById: next }
+        if (isNonTerminal(job)) nextNonTerminal.set(job.job_id, job)
+        else nextNonTerminal.delete(job.job_id)
+        return { jobsById: next, nonTerminalJobsById: nextNonTerminal }
       })
     },
 

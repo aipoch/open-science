@@ -433,3 +433,10 @@ export type JobSummary = {
   left_on_remote?: Array<{ uri: string; size_mb: number; reason: string }>
   harvest_error?: string
 }
+
+// The existing per-Session feed supports workspace history. The non-terminal variant is a bounded
+// cross-Session query used to hydrate renderer-lifetime activity after startup or recovery.
+export type ComputeJobsListFilter =
+  Readonly<{ sessionId: string; status?: string[] }> | Readonly<{ nonTerminal: true }>
+
+export type ComputeJobsPendingNotificationFilter = string | Readonly<{ allSessions: true }>

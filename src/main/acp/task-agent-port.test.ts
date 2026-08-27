@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
+import type { AgentTurnProvenanceContext } from '../../shared/acp'
 import type { TaskAgentPort } from '../tasks/task-runner'
 import {
   materializeSessionAgentConfiguration,
@@ -7,6 +8,16 @@ import {
   type SessionAgentTargetSource
 } from './session-agent-target'
 import { createAcpTaskAgentPort } from './task-agent-port'
+
+const taskProvenanceContext = (promptMessageId: string): AgentTurnProvenanceContext => ({
+  rootFrameId: 'root-frame-1',
+  agentFrameId: 'root-frame-1',
+  messageBranchId: 'message-branch-1',
+  messageBranchAncestry: ['message-branch-1'],
+  messageAncestry: [promptMessageId],
+  runtimeSegmentId: 'runtime-segment-1',
+  promptMessageId
+})
 
 describe('ACP Task Agent port', () => {
   it('exposes only the Task execution capabilities', () => {
@@ -117,6 +128,7 @@ describe('ACP Task Agent port', () => {
     await port.prompt({
       sessionId: 'session-stable',
       promptMessageId: 'persisted-prompt',
+      provenanceContext: taskProvenanceContext('persisted-prompt'),
       text: 'Continue the research.',
       turnIntent: 'plan-first',
       skillIds: ['literature-review'],
@@ -167,7 +179,7 @@ describe('ACP Task Agent port', () => {
     expect(runtime.sendPrompt).toHaveBeenCalledWith({
       sessionId: 'session-stable',
       text: 'Continue the research.',
-      provenanceContext: { promptMessageId: 'persisted-prompt' },
+      provenanceContext: taskProvenanceContext('persisted-prompt'),
       forcedSkillIds: ['literature-review'],
       turnIntent: 'plan-first',
       historyPreamble: 'Previous conversation.',
@@ -230,6 +242,7 @@ describe('ACP Task Agent port', () => {
     const prompt = {
       sessionId: 'session-1',
       promptMessageId: 'persisted-prompt',
+      provenanceContext: taskProvenanceContext('persisted-prompt'),
       text: 'Research this.',
       skillIds: ['literature-review']
     }
@@ -255,7 +268,7 @@ describe('ACP Task Agent port', () => {
     expect(trackPrompt).toHaveBeenCalledWith({
       sessionId: 'session-1',
       text: 'Research this.',
-      provenanceContext: { promptMessageId: 'persisted-prompt' },
+      provenanceContext: taskProvenanceContext('persisted-prompt'),
       forcedSkillIds: ['literature-review']
     })
     expect(untrackPrompt).not.toHaveBeenCalled()
@@ -287,6 +300,7 @@ describe('ACP Task Agent port', () => {
       {
         sessionId: 'session-1',
         promptMessageId: 'prompt-1',
+        provenanceContext: taskProvenanceContext('prompt-1'),
         text: 'Research this.'
       },
       { onProviderPromptAccepted }
