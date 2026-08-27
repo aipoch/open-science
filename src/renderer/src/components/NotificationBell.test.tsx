@@ -133,6 +133,96 @@ describe('NotificationBell', () => {
     expect(icon?.parentElement?.classList.contains('text-success-000')).toBe(true)
   })
 
+  it('gives failed and waiting items their own glyphs and tones', async () => {
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      items: item
+        ? [
+            {
+              ...item,
+              id: 'failed-1',
+              kind: 'task.failed' as const,
+              title: 'Task failed',
+              actionState: undefined
+            },
+            {
+              ...item,
+              id: 'waiting-1',
+              kind: 'task.needs-attention' as const,
+              attentionReason: 'waiting-plan-approval' as const,
+              title: 'Plan waiting',
+              actionState: 'pending' as const
+            }
+          ]
+        : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const failedIcon = document.body.querySelector('.lucide-circle-x')
+    expect(failedIcon?.parentElement?.classList.contains('text-danger-000')).toBe(true)
+    const planIcon = document.body.querySelector('.lucide-clipboard-list')
+    expect(planIcon?.parentElement?.classList.contains('text-session-waiting')).toBe(true)
+  })
+
+  it('neutralizes the icon tile and chip once the request is settled', async () => {
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      items: item ? [{ ...item, actionState: 'expired' }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const icon = document.body.querySelector('.lucide-shield-check')
+    expect(icon?.parentElement?.classList.contains('text-text-300')).toBe(true)
+    expect(icon?.parentElement?.classList.contains('text-session-waiting')).toBe(false)
+    const chip = [...document.body.querySelectorAll('span')].find(
+      (span) => span.textContent === 'Expired'
+    )
+    expect(chip?.className).toContain('rounded-full')
+    expect(chip?.className).toContain('border')
+    expect(chip?.className).toContain('text-text-300')
+  })
+
+  it('dims read titles and clamps detail previews to two lines', async () => {
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      unreadCount: 0,
+      items: item
+        ? [{ ...item, readAt: Date.now(), summary: 'A long summary that should clamp.' }]
+        : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const row = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    const title = row?.querySelector('.truncate.font-medium')
+    expect(title?.classList.contains('text-text-100')).toBe(true)
+    const detail = [...document.body.querySelectorAll('span')].find(
+      (span) => span.textContent === 'A long summary that should clamp.'
+    )
+    expect(detail?.className).toContain('line-clamp-2')
+  })
+
+  it('keeps group headings sticky inside the scroll container', async () => {
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const heading = document.body.querySelector<HTMLElement>('[id$="-unread"]')
+    expect(heading?.className).toContain('sticky')
+    expect(heading?.className).toContain('bg-bg-000')
+  })
+
   it('distinguishes a rejected approval from a resolved one', async () => {
     const item = useNotificationInboxStore.getState().items[0]
     useNotificationInboxStore.setState({

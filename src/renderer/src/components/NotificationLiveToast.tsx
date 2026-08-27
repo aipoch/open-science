@@ -24,6 +24,10 @@ import {
   type OpenNotificationCenterDetail
 } from './notification-bell-events'
 import {
+  notificationEventToneClasses,
+  resolveNotificationEventVisual
+} from './notification-event-visual'
+import {
   presentNotificationInbox,
   type PresentedNotificationInboxItem
 } from './notification-inbox-presentation'
@@ -242,10 +246,8 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
       <div className="flex items-start gap-2.5">
         <span
           className={cn(
-            'mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-bg-300 text-text-100',
-            notification.kind === 'authorization.required' && 'text-session-waiting',
-            notification.kind === 'task.completed' && 'text-success-000',
-            notification.kind === 'task.failed' && 'text-danger-000'
+            'mt-0.5 grid size-7 shrink-0 place-items-center rounded-full',
+            notificationEventToneClasses[resolveNotificationEventVisual(notification).tone].tile
           )}
         >
           <NotificationEventIcon notification={notification} />

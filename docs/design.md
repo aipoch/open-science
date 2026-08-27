@@ -515,6 +515,23 @@ colors communicate a successful or failed probe/migration result.
   item marks that item read, and the header provides an explicit mark-all action.
 - Show authorization lifecycle state separately from read state. Resolving, rejecting, expiring, or
   cancelling a request does not imply that the user has read its notification.
+- Item icons use two-dimensional encoding: the glyph says what happened, the tone says whether it
+  still needs the user. `task.completed` uses `CircleCheck`, `task.failed` uses `CircleX`,
+  `authorization.required` uses `ShieldCheck`, and `task.needs-attention` refines by wait reason —
+  `MessageCircleQuestion` for `waiting-for-user`, `KeyRound` for `waiting-permission`,
+  `ClipboardList` for `waiting-plan-approval`, and `TriangleAlert` for anomalies such as length or
+  turn limits, refusals, and unclean stops. Pending tones use the `session-waiting`, `success-000`,
+  and `danger-000` tokens on tinted tiles (`bg-*/10`); once a request is settled
+  (`resolved`/`rejected`/`expired`/`cancelled`) or its target is invalidated, the glyph stays but
+  the tone falls back to neutral (`bg-bg-300 text-text-300`), so chromatic tokens only ever mark
+  fresh outcomes or requests that still need a decision. Both the bell panel and the live toast
+  resolve this through the shared `resolveNotificationEventVisual` helper.
+- The desktop panel caps at 440px wide. Rows show the context label and relative time on the meta
+  line, then the title (`font-semibold` while unread, `font-medium text-text-100` once read), then
+  a detail preview clamped to two lines (`line-clamp-2`), then the state as a compact rounded-full
+  chip that reuses the item's tone. Unread rows keep the `bg-bg-100/70` tint and trailing red dot;
+  invalidated rows dim with `opacity-60`. Group headings (`Unread` / `Earlier`) are sticky against
+  the panel background while their section scrolls.
 - Use the same backend-owned list and unread state on Electron, local Web, and remote Web. Native OS
   banners, Dock/taskbar attention, and native badges are optional desktop delivery adapters and must
   not affect whether an inbox item is recorded.
