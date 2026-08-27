@@ -1681,14 +1681,16 @@ describe('TaskRunner', () => {
     }
     let admissionActive = false
     let saveCount = 0
+    const savedSessions: PersistedChatSession[] = []
     const resumeRequests: Parameters<TaskRunnerDependencies['agent']['resumeSession']>[0][] = []
     const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
     const ids = ['new-user', 'run-2', 'new-agent']
     const runner = createRunner({
       sessions: {
         list: async () => [existing],
-        save: async () => {
+        save: async (value) => {
           saveCount += 1
+          savedSessions.push(structuredClone(value))
           if (saveCount === 1) expect(admissionActive).toBe(true)
         }
       },
@@ -1744,7 +1746,7 @@ describe('TaskRunner', () => {
           messageBranchId: 'message-branch-session-1',
           messageBranchAncestry: ['message-branch-session-1'],
           messageAncestry: ['old-user', 'old-agent', 'new-user'],
-          runtimeSegmentId: 'runtime-segment-session-1',
+          runtimeSegmentId: expect.not.stringMatching('runtime-segment-session-1'),
           promptMessageId: 'new-user'
         },
         text: 'Follow-up question',
@@ -1753,6 +1755,12 @@ describe('TaskRunner', () => {
           'Previous conversation:\n\nUser: Initial question\n\nAssistant: Initial answer'
       }
     ])
+    const promptRuntimeSegmentId = prompts[0]?.provenanceContext.runtimeSegmentId
+    expect(
+      savedSessions[0]?.conversationGraph?.runtimeSegments.some(
+        ({ id }) => id === promptRuntimeSegmentId
+      )
+    ).toBe(true)
   })
 
   it('adopts a persisted agent configuration for an attached session', async () => {

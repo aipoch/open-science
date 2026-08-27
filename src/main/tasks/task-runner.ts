@@ -17,7 +17,10 @@ import type {
 import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE, artifactCreatedAtMs } from '../../shared/artifacts'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import { getActiveConversationContext } from '../../shared/conversation-graph'
+import {
+  ensureConversationRuntimeSegment,
+  getActiveConversationContext
+} from '../../shared/conversation-graph'
 import {
   PROJECT_DESCRIPTION_MAX_LENGTH,
   PROJECT_NAME_MAX_LENGTH,
@@ -966,11 +969,30 @@ class TaskRunner {
       delete session.resumeRecovery
     }
 
-    const committedSession = await this.dependencies.sessions.save(session)
+    const contextReset = Boolean(sessionInfo.contextReset || existing?.pendingHistoryReplay)
+    let sessionToCommit = session
+    if (existing) {
+      const currentGraph = materializeSessionConversationGraph(existing).conversationGraph
+      const graphWithRuntime = ensureConversationRuntimeSegment(currentGraph, {
+        id: `runtime-segment-${userMessageId}`,
+        frameworkId: session.agentFrameworkId ?? 'claude-code',
+        backendId: session.agentBackendId,
+        model: session.agentModel,
+        startedAt: now,
+        forceNew: contextReset
+      })
+      if (graphWithRuntime.runtimeSegments.length !== currentGraph.runtimeSegments.length) {
+        sessionToCommit = materializeSessionConversationGraph({
+          ...session,
+          conversationGraph: graphWithRuntime
+        })
+      }
+    }
+
+    const committedSession = await this.dependencies.sessions.save(sessionToCommit)
     const previousHistoryPreamble = existing
       ? createHistoryPreamble(selectTaskHistoryMessages(existing))
       : undefined
-    const contextReset = Boolean(sessionInfo.contextReset || existing?.pendingHistoryReplay)
     return {
       session: committedSession,
       historyPreamble: contextReset ? previousHistoryPreamble : undefined,
