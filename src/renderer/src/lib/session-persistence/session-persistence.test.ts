@@ -1121,6 +1121,83 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession.mock.calls[1][1]).toEqual({ conflictRebaseFields: ['title'] })
   })
 
+  it('bounds fast whole-Session writes during a 30 fps live stream', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const session = createPersistedSession()
+      const writeLatest = vi.fn(async () => session)
+      const persistence = createOrderedSessionPersistence(createApi())
+      const writes: Promise<PersistedChatSession>[] = []
+
+      for (let frame = 0; frame < 30; frame += 1) {
+        writes.push(persistence.saveLatestSession('session:session-1', writeLatest))
+        await vi.advanceTimersByTimeAsync(33)
+      }
+
+      await persistence.flush()
+      await Promise.all(writes)
+
+      expect(writeLatest).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flushes a fast alternating multi-Session stream without draining cadence timers', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    let flushing: Promise<void> | undefined
+    try {
+      const sessions = [
+        createPersistedSession({ id: 'session-1' }),
+        createPersistedSession({ id: 'session-2' })
+      ]
+      const writeLatest = vi.fn(async (session: PersistedChatSession) => session)
+      const persistence = createOrderedSessionPersistence(createApi())
+
+      for (let frame = 0; frame < 30; frame += 1) {
+        const session = sessions[frame % sessions.length]
+        void persistence.saveLatestSession(`session:${session.id}`, () => writeLatest(session))
+        await vi.advanceTimersByTimeAsync(33)
+      }
+
+      let flushed = false
+      flushing = persistence.flush().then(() => {
+        flushed = true
+      })
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(flushed).toBe(true)
+      expect(writeLatest.mock.calls.length).toBeLessThanOrEqual(5)
+    } finally {
+      await vi.runAllTimersAsync()
+      await flushing
+      vi.useRealTimers()
+    }
+  })
+
+  it('invalidates a delayed save when a new hydration generation starts', async () => {
+    const session = createPersistedSession({ revision: 1, title: 'Old local title' })
+    const authority = createPersistedSession({ revision: 2, title: 'Hydrated title' })
+    const persistence = createOrderedSessionPersistence(createApi())
+    persistence.seedAcknowledgedSessions([session])
+    await persistence.saveLatestSession('session:session-1', async () => session)
+
+    const staleWrite = vi.fn(async () => session)
+    const staleSave = persistence.saveLatestSession('session:session-1', staleWrite)
+    persistence.seedAcknowledgedSessions([authority])
+
+    await staleSave.catch(() => undefined)
+    await persistence.flush()
+
+    expect(staleWrite).not.toHaveBeenCalled()
+    expect(persistence.getAcknowledgedSession('session-1')).toMatchObject({
+      revision: 2,
+      title: 'Hydrated title'
+    })
+  })
+
   it('chains queued local saves from the last acknowledged durable revision', async () => {
     const firstSave = createDeferred<PersistedChatSession>()
     const saveSession = vi
@@ -1230,6 +1307,122 @@ describe('renderer session persistence bridge', () => {
       'Run the command',
       'Keep this local graph update'
     ])
+  })
+
+  it('retries local activity when Session details advance before a permission revision conflict', async () => {
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        status: 'running',
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Run the command',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        sessionDetailsSource: 'fallback',
+        sessionDetailsGeneration: {
+          status: 'queued',
+          sourceMessageId: 'prompt-1',
+          requestId: 'prompt-1:session-details',
+          queuedAt: 2
+        }
+      })
+    )
+    const runningDetails = {
+      ...base,
+      revision: 9,
+      sessionDetailsGeneration: {
+        ...base.sessionDetailsGeneration!,
+        status: 'running' as const,
+        startedAt: 3,
+        frameworkId: 'opencode' as const,
+        model: 'e2e-model',
+        reasoningEffort: 'low' as const
+      },
+      updatedAt: base.updatedAt + 1
+    }
+    const permissionAuthority = {
+      ...runningDetails,
+      revision: 10,
+      status: 'waiting-permission' as const,
+      sessionDetailsGeneration: {
+        ...runningDetails.sessionDetailsGeneration,
+        status: 'failed' as const,
+        completedAt: 4,
+        usageUnavailable: true
+      },
+      runtimeContext: {
+        version: 1 as const,
+        revision: 1,
+        permission: {
+          state: 'pending' as const,
+          request: {
+            requestId: 'permission-1',
+            sessionId: base.id,
+            toolCallId: 'tool-1',
+            title: 'Run the command',
+            options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' as const }]
+          },
+          originatingPromptMessageId: 'prompt-1',
+          fingerprint: 'a'.repeat(64),
+          createdAt: 4
+        }
+      },
+      updatedAt: runningDetails.updatedAt + 1
+    }
+    const firstSave = createDeferred<void>()
+    const conflict = new SessionRevisionConflictError(8, 10)
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockImplementationOnce(async () => {
+        await firstSave.promise
+        throw conflict
+      })
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 11 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(permissionAuthority),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: base.id,
+      toolCallId: 'tool-1',
+      eventId: 'tool-event-1',
+      promptMessageId: 'prompt-1',
+      title: 'Run the command',
+      status: 'pending'
+    })
+    const savingLocalActivity = save(useSessionStore.getState())
+    await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: runningDetails,
+      mode: 'session-details-authority'
+    })
+    await save(useSessionStore.getState())
+
+    firstSave.resolve()
+    await expect(savingLocalActivity).resolves.toBeUndefined()
+
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 10,
+      status: 'waiting-permission',
+      sessionDetailsGeneration: { status: 'failed' },
+      runtimeContext: permissionAuthority.runtimeContext,
+      activities: [expect.objectContaining({ id: 'tool-1', status: 'pending' })]
+    })
   })
 
   it('retries a pending tool activity save over disjoint concurrent Main graph changes', async () => {

@@ -1353,7 +1353,9 @@ const InstalledSpecialistsPanel = ({
       <div className="mb-5">
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <h2 className="truncate text-lg font-semibold text-foreground">{t('Installed')}</h2>
+            <h2 className="truncate text-lg font-semibold text-foreground">
+              {t('Installed', { context: 'specialists' })}
+            </h2>
             {items.length > 0 ? (
               <Badge variant="outline" className="tabular-nums text-muted-foreground">
                 {items.length}
@@ -1705,7 +1707,7 @@ const InstalledSpecialistsPanel = ({
                             })
                           }
                         >
-                          {t('Update')}
+                          {t('Update', { context: 'verb' })}
                         </Button>
                       ) : null}
                       <SettingsToggle

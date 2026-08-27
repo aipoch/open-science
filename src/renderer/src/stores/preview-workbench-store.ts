@@ -70,7 +70,12 @@ export type PreviewToolItem = PreviewItemBase & {
   selectedAgentFrameId?: string
 }
 
-export type PreviewItem = PreviewFileItem | PreviewToolItem
+export type PreviewSourceItem = PreviewItemBase & {
+  type: 'source'
+  url: string
+}
+
+export type PreviewItem = PreviewFileItem | PreviewToolItem | PreviewSourceItem
 
 type StoredPreviewItem = PreviewItem & {
   createdAt: number
@@ -110,6 +115,7 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
   upsertAndActivateItem: (item: PreviewItem) => void
   activateItem: (itemId: string) => void
   removeItem: (itemId: string) => void
+  removeOtherItems: (keepItemId: string) => void
   removeSessionItems: (sessionId: string) => void
   setToolItemExpanded: (itemId: string | null) => void
   openFileDialog: (item: PreviewFileItem) => void
@@ -143,7 +149,9 @@ const createEmptyPreviewSlice = (): PreviewSlice => ({
 // Preview capabilities are project-scoped. Persisted tabs created before project scope was stored
 // are repaired from the owning workbench slice, and callers cannot accidentally omit that scope.
 const withProjectScope = (item: PreviewItem, projectId: string | undefined): PreviewItem =>
-  item.type === 'file' && !item.projectId && projectId ? { ...item, projectId } : item
+  (item.type === 'file' || item.type === 'source') && !item.projectId && projectId
+    ? { ...item, projectId }
+    : item
 
 // Normalizes incoming preview items so callers never persist or manage timestamps themselves.
 const createStoredPreviewItem = (
@@ -179,7 +187,7 @@ const restoredToSlice = (restored: RestoredPreviewSlice, projectId: string): Pre
 // Persistence owns file tabs and the Session-scoped Subagents selection. Other tool tabs are
 // reconstructed by their runtime owners and must survive a durable snapshot refresh.
 const isDurablePreviewItem = (item: PreviewItem): boolean =>
-  item.type === 'file' || item.toolKind === 'subagents'
+  item.type === 'file' || (item.type === 'tool' && item.toolKind === 'subagents')
 
 const mergeRestoredPreviewSlice = (
   current: PreviewSlice,
@@ -475,6 +483,29 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
         panelState: items.length > 0 ? state.panelState : 'collapsed',
         expandedToolItemId: state.expandedToolItemId === itemId ? null : state.expandedToolItemId,
         fileDialogItem: itemId === PROJECT_FILES_PREVIEW_ID ? undefined : state.fileDialogItem
+      }
+    })
+  },
+
+  // Closes every preview tab except the kept one, which becomes the active tab. Owned here (not
+  // composed from removeItem by callers) so expanded-surface and file-dialog teardown rules stay
+  // in one place.
+  removeOtherItems: (keepItemId) => {
+    set((state) => {
+      if (!state.items.some((item) => item.id === keepItemId)) return state
+
+      const keepsProjectFilesTab = keepItemId === PROJECT_FILES_PREVIEW_ID
+      const removesProjectFilesTab =
+        !keepsProjectFilesTab && state.items.some((item) => item.id === PROJECT_FILES_PREVIEW_ID)
+      const items = state.items.filter((item) => item.id === keepItemId)
+
+      return {
+        items,
+        activeItemId: keepItemId,
+        expandedToolItemId: items.some((item) => item.id === state.expandedToolItemId)
+          ? state.expandedToolItemId
+          : null,
+        fileDialogItem: removesProjectFilesTab ? undefined : state.fileDialogItem
       }
     })
   },

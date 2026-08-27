@@ -625,6 +625,48 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('rejects malformed notebook method params before calling the runtime capability', async () => {
+    const execute = vi.fn(async () => ({ status: 'completed' }))
+    const server = new NotebookLocalRpcServer({ execute } as never, { transport: 'tcp' })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'project-1',
+      'root-frame-session-1'
+    )
+
+    try {
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'execute',
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: '/workspace',
+              code: 'print(1)',
+              language: 'julia'
+            }
+          })
+        },
+        'Notebook RPC request validation test'
+      )
+
+      expect(response.status).toBe(500)
+      await expect(response.json()).resolves.toEqual({
+        error: expect.stringContaining('Invalid notebook RPC params for execute')
+      })
+      expect(execute).not.toHaveBeenCalled()
+    } finally {
+      connection.release?.()
+      await server.close()
+    }
+  })
+
   it('injects only a fresh unambiguous app-owned execution authorization', async () => {
     const server = new NotebookLocalRpcServer({
       execute: vi.fn(async (request: unknown) => request),

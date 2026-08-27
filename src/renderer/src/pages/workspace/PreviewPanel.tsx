@@ -1,21 +1,37 @@
-import { BookOpen, File, FolderOpen, X } from 'lucide-react'
+import { BookOpen, File, FolderOpen, Globe2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { ResizablePanel } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
+import { useNavigationStore } from '@/stores/navigation-store'
 import type {
   PreviewFileItem,
   PreviewItem,
+  PreviewSourceItem,
   PreviewToolItem
 } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { PreviewFileSurface } from './PreviewFileSurface'
+import {
+  getPreviewTabActionGroups,
+  runPreviewTabAction,
+  type PreviewTabAction,
+  type PreviewTabActionCommand
+} from './preview-tab-actions'
 import { PreviewFileContent } from './previews/PreviewFileContent'
+import { SourceWebPreview } from './previews/SourceWebPreview'
 import { PreviewToolContent } from './previews/PreviewToolContent'
 import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
@@ -54,6 +70,8 @@ const PreviewActiveContent = ({
   if (item.type === 'tool') {
     return <PreviewToolContent item={item} restoredPlanResponder={restoredPlanResponder} />
   }
+
+  if (item.type === 'source') return <SourceWebPreview item={item} />
 
   return <PreviewFileContent item={item} />
 }
@@ -96,6 +114,7 @@ const PreviewTab = ({
   tabRef,
   onActivate,
   onClose,
+  onContextMenu,
   onKeyDown
 }: {
   tab: PreviewItem
@@ -104,9 +123,11 @@ const PreviewTab = ({
   tabRef: (element: HTMLButtonElement | null) => void
   onActivate: (id: string) => void
   onClose: (id: string) => void
+  onContextMenu: (event: React.MouseEvent<HTMLButtonElement>, id: string) => void
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const tabTitle = tab.title
 
   return (
     <div
@@ -134,11 +155,18 @@ const PreviewTab = ({
           }
           onActivate(tab.id)
         }}
+        onContextMenu={(event) => onContextMenu(event, tab.id)}
         onKeyDown={onKeyDown}
-        title={tab.title}
+        title={tabTitle}
       >
         {tab.type === 'file' ? (
           <File className="size-3.5 shrink-0" aria-hidden="true" />
+        ) : tab.type === 'source' ? (
+          <Globe2
+            data-source-preview-tab-icon=""
+            className="size-3.5 shrink-0"
+            aria-hidden="true"
+          />
         ) : tab.toolKind === 'files' ? (
           <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
         ) : tab.toolKind === 'notebook' ? (
@@ -147,12 +175,12 @@ const PreviewTab = ({
         {tab.type === 'file' ? (
           <ExtensionPreservingFileName name={tab.name} />
         ) : (
-          <span className="min-w-0 truncate">{tab.title}</span>
+          <span className="min-w-0 truncate">{tabTitle}</span>
         )}
         <span
-          data-preview-close={tab.title}
+          data-preview-close={tabTitle}
           aria-hidden="true"
-          title={t('Close preview of {{title}}', { title: tab.title })}
+          title={t('Close preview of {{title}}', { title: tabTitle })}
           className={cn(
             'shrink-0 rounded-sm p-0.5 hover:bg-bg-000/60',
             isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
@@ -170,12 +198,14 @@ const PreviewTabBar = ({
   tabs,
   activeItemId,
   onActivate,
-  onClose
+  onClose,
+  onTabContextMenu
 }: {
   tabs: PreviewItem[]
   activeItemId: string | undefined
   onActivate: (id: string) => void
   onClose: (id: string) => void
+  onTabContextMenu: (event: React.MouseEvent<HTMLButtonElement>, id: string) => void
 }): React.JSX.Element => {
   const tabListRef = useHorizontalScrollFade<HTMLDivElement>()
   const tabContainerRefs = useRef<Array<HTMLDivElement | null>>([])
@@ -272,10 +302,88 @@ const PreviewTabBar = ({
           }}
           onActivate={onActivate}
           onClose={onClose}
+          onContextMenu={onTabContextMenu}
           onKeyDown={(event) => handleTabKeyDown(event, index)}
         />
       ))}
     </div>
+  )
+}
+
+// Right-click menu for one preview tab. The action list and its rules come from the
+// preview-tab-actions module; this component only renders groups and forwards picks. A hidden
+// zero-size trigger pinned at the pointer position anchors Radix's dropdown without a visible
+// trigger button.
+const PreviewTabContextMenu = ({
+  item,
+  tabCount,
+  pointer,
+  onSelect,
+  onClose
+}: {
+  item: PreviewItem
+  tabCount: number
+  pointer: { x: number; y: number }
+  onSelect: (command: PreviewTabActionCommand) => void
+  onClose: () => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const { shared, specific } = getPreviewTabActionGroups(item, { tabCount })
+
+  const renderItem = (action: PreviewTabAction): React.JSX.Element => {
+    const Icon = action.icon
+    return (
+      <DropdownMenuItem
+        key={action.command}
+        disabled={action.disabled}
+        data-command={action.command}
+        // Compact sizing: the menu sits inside the tab strip's visual rhythm, so it uses a fixed
+        // item height at the tab text scale instead of the standard form-menu sizing. Vertical
+        // spacing comes from the height alone — this file's workspace spacing guard forbids py-*
+        // utilities.
+        className={cn(
+          'min-h-0 h-6 gap-2 rounded-md px-2 py-0 text-[12px]',
+          action.danger &&
+            'text-danger-000 data-[highlighted]:bg-danger-000/10 data-[highlighted]:text-danger-000'
+        )}
+        onSelect={() => onSelect(action.command)}
+      >
+        <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+        {t(action.label)}
+      </DropdownMenuItem>
+    )
+  }
+
+  return (
+    <DropdownMenu
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
+      <DropdownMenuTrigger asChild>
+        <span
+          aria-hidden="true"
+          data-testid="preview-tab-context-anchor"
+          className="pointer-events-none fixed size-0"
+          style={{ left: pointer.x, top: pointer.y }}
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="min-w-[9.5rem] p-1"
+        data-testid="preview-tab-context-menu"
+        onCloseAutoFocus={(event) => {
+          // Focus returns to the tab that opened the menu instead of the hidden anchor.
+          event.preventDefault()
+          document.getElementById(getPreviewTabId(item.id))?.focus()
+        }}
+      >
+        {shared.map(renderItem)}
+        {specific.length > 0 ? <DropdownMenuSeparator /> : null}
+        {specific.map(renderItem)}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -490,6 +598,27 @@ const PreviewToolPanel = ({
   )
 }
 
+const PreviewSourcePanel = ({
+  item,
+  isActive,
+  onClose
+}: {
+  item: PreviewSourceItem
+  isActive: boolean
+  onClose: (id: string) => void
+}): React.JSX.Element => (
+  <section
+    role="tabpanel"
+    id={getPreviewPanelId(item.id)}
+    aria-labelledby={getPreviewTabId(item.id)}
+    tabIndex={0}
+    hidden={!isActive}
+    className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card"
+  >
+    <SourceWebPreview item={item} onClose={() => onClose(item.id)} />
+  </section>
+)
+
 // Shared workbench surface. Desktop wraps it in a resizable panel; mobile presents the exact same
 // tabs and active content inside a bottom sheet.
 const PreviewPanelSurface = ({
@@ -501,8 +630,18 @@ const PreviewPanelSurface = ({
   const panelState = usePreviewWorkbenchStore((state) => state.panelState)
   const activateItem = usePreviewWorkbenchStore((state) => state.activateItem)
   const removeItem = usePreviewWorkbenchStore((state) => state.removeItem)
+  const removeOtherItems = usePreviewWorkbenchStore((state) => state.removeOtherItems)
+  const activeProjectId = useNavigationStore((state) => state.activeProjectId)
+  const [contextMenu, setContextMenu] = useState<{
+    itemId: string
+    x: number
+    y: number
+  } | null>(null)
   const activeItem = items.find((item) => item.id === activeItemId)
-  // Remount replaced files and unmount collapsed content so renderer-owned resources are released.
+  const contextMenuItem = contextMenu
+    ? (items.find((item) => item.id === contextMenu.itemId) ?? undefined)
+    : undefined
+  // Remount replaced file previews and release their renderer-owned resources while collapsed.
   const activeContentKey =
     activeItem?.type === 'file'
       ? JSON.stringify([
@@ -514,6 +653,38 @@ const PreviewPanelSurface = ({
           activeItem.mtimeMs ?? null
         ])
       : (activeItem?.id ?? 'empty')
+
+  // Right-click only opens the menu; the tab is not activated, matching the pointer-first
+  // interaction of tab strips like the prototype's.
+  const handleTabContextMenu = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    itemId: string
+  ): void => {
+    event.preventDefault()
+    setContextMenu({ itemId, x: event.clientX, y: event.clientY })
+  }
+
+  const closeContextMenu = (): void => {
+    setContextMenu(null)
+  }
+
+  const handleContextMenuSelect = (command: PreviewTabActionCommand): void => {
+    const item = contextMenuItem
+    setContextMenu(null)
+    if (!item) return
+
+    // Capture the optional staging pipeline once so the narrowing survives into the closure.
+    const stageLocalPath = window.api.uploads?.stageLocalPath
+
+    runPreviewTabAction(command, item, {
+      closeTab: removeItem,
+      closeOtherTabs: removeOtherItems,
+      saveManagedFile: (request) => window.api.saveManagedFile(request),
+      copyText: (text) => navigator.clipboard.writeText(text),
+      stageLocalPath: stageLocalPath ? (request) => stageLocalPath(request) : undefined,
+      activeProjectId
+    })
+  }
 
   return (
     <aside
@@ -533,10 +704,16 @@ const PreviewPanelSurface = ({
             activeItemId={activeItemId}
             onActivate={activateItem}
             onClose={removeItem}
+            onTabContextMenu={handleTabContextMenu}
           />
         </div>
       ) : null}
-      <div className={cn('min-h-0 flex-1', activeItem?.type === 'file' && 'pl-2 pr-1')}>
+      <div
+        className={cn(
+          'min-h-0 flex-1',
+          (activeItem?.type === 'file' || activeItem?.type === 'source') && 'pl-2 pr-1'
+        )}
+      >
         {!activeItem ? (
           <PreviewActiveContent
             key={activeContentKey}
@@ -560,6 +737,19 @@ const PreviewPanelSurface = ({
             )
           }
 
+          if (item.type === 'source') {
+            // Source frames stay mounted while their tabs exist so browser and failure state survive
+            // tab switches. Removing the item still unmounts the whole subtree and releases the page.
+            return (
+              <PreviewSourcePanel
+                key={item.id}
+                item={item}
+                isActive={isActivePanel}
+                onClose={removeItem}
+              />
+            )
+          }
+
           return isActivePanel ? (
             <PreviewFilePanel
               key={item.id}
@@ -578,6 +768,15 @@ const PreviewPanelSurface = ({
           )
         })}
       </div>
+      {contextMenu && contextMenuItem ? (
+        <PreviewTabContextMenu
+          item={contextMenuItem}
+          tabCount={items.length}
+          pointer={{ x: contextMenu.x, y: contextMenu.y }}
+          onSelect={handleContextMenuSelect}
+          onClose={closeContextMenu}
+        />
+      ) : null}
     </aside>
   )
 }

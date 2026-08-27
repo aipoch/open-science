@@ -50,9 +50,9 @@ describe('stored preference', () => {
   })
 
   it('round-trips a persisted choice', () => {
-    persistPreference('fr')
-    expect(getStoredPreference()).toBe('fr')
-    expect(resolvePreference()).toBe('fr')
+    persistPreference('es')
+    expect(getStoredPreference()).toBe('es')
+    expect(resolvePreference()).toBe('es')
   })
 
   it('ignores a stored value that is not a known preference', () => {
@@ -101,6 +101,11 @@ describe('resolveInitialLocale', () => {
     expect(resolveInitialLocale()).toBe('fr')
   })
 
+  it('detects Spanish regional tags from the device', () => {
+    stubLanguages(['es-MX', 'en'])
+    expect(resolveInitialLocale()).toBe('es')
+  })
+
   it('honors an explicit stored choice over the device language', () => {
     stubLanguages(['zh-TW'])
     persistPreference('en')
@@ -122,5 +127,7 @@ describe('applyHtmlLang', () => {
     expect(document.documentElement.lang).toBe('en')
     applyHtmlLang('fr')
     expect(document.documentElement.lang).toBe('fr')
+    applyHtmlLang('es')
+    expect(document.documentElement.lang).toBe('es')
   })
 })

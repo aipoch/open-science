@@ -268,12 +268,6 @@ class AcpSessionResumePolicy {
 
     const message = readProperty(error, 'message')
     if (!message.readable) return authoritativeFailure('uninspectable-error')
-    if (
-      typeof message.value === 'string' &&
-      /resource not found|session not found|no rollout found for thread id/i.test(message.value)
-    ) {
-      return adoptableFailure('session-not-found-message')
-    }
 
     if (code.value !== -32603) {
       return code.value !== undefined || message.value !== undefined
@@ -288,6 +282,20 @@ class AcpSessionResumePolicy {
     if (!service.readable) return authoritativeFailure('uninspectable-error')
     if (service.value === 'session') return adoptableFailure('session-service-failure')
     if (service.value !== undefined) return authoritativeFailure('non-session-service-failure')
+
+    const errorKind = readProperty(data.value, 'errorKind')
+    if (!errorKind.readable) return authoritativeFailure('uninspectable-error')
+    if (isUnresumableErrorKind(errorKind.value)) {
+      return adoptableFailure('unresumable-error-kind')
+    }
+    if (errorKind.value !== undefined) return authoritativeFailure('unknown-error-kind')
+
+    if (
+      typeof message.value === 'string' &&
+      /resource not found|session not found|no rollout found for thread id/i.test(message.value)
+    ) {
+      return adoptableFailure('session-not-found-message')
+    }
 
     if (typeof message.value === 'string' && /^unknown error\.?$/i.test(message.value.trim())) {
       if (isCodexResponsesResumeContext(context)) {
@@ -306,13 +314,6 @@ class AcpSessionResumePolicy {
     if (typeof message.value !== 'string' || !/^internal error\.?$/i.test(message.value.trim())) {
       return authoritativeFailure('non-internal-error')
     }
-
-    const errorKind = readProperty(data.value, 'errorKind')
-    if (!errorKind.readable) return authoritativeFailure('uninspectable-error')
-    if (isUnresumableErrorKind(errorKind.value)) {
-      return adoptableFailure('unresumable-error-kind')
-    }
-    if (errorKind.value !== undefined) return authoritativeFailure('unknown-error-kind')
 
     const details = readProperty(data.value, 'details')
     if (!details.readable) return authoritativeFailure('uninspectable-error')

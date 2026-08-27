@@ -40,7 +40,7 @@ const updateCopy = (
   if (status.state === 'error') {
     return { title: t('Update failed'), action: t('Retry'), icon: RotateCcw }
   }
-  return { title: t('New version'), action: t('Update'), icon: ArrowUp }
+  return { title: t('New version'), action: t('Update', { context: 'verb' }), icon: ArrowUp }
 }
 
 const UpdateAttention = (): React.JSX.Element => (

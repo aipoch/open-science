@@ -1082,7 +1082,7 @@ class EnvironmentStateTracker {
       const beforeInventory = beforeInventoryChecksum
         ? await this.readInventory(target, beforeInventoryChecksum).catch(() => undefined)
         : undefined
-      let verification: PackageMutationVerification = { result: outcome.result }
+      let verification: PackageMutationVerification
       try {
         const previousInventoryChecksum = cache.inventoryChecksum
         const inventory = await this.captureInventory(target)

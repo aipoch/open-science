@@ -269,7 +269,9 @@ const installMermaidDownload = (): (() => void) => {
     event.preventDefault()
     event.stopImmediatePropagation()
 
-    void saveMermaidSvg(block)
+    void saveMermaidSvg(block).catch((error) => {
+      console.error('[streamdown-download] save failed:', error)
+    })
   }
 
   document.addEventListener('click', onDownloadClick, true)
@@ -763,8 +765,11 @@ const installStreamdown = (): (() => void) => {
   }
 
   installCount += 1
+  let active = true
 
   return () => {
+    if (!active) return
+    active = false
     installCount = Math.max(0, installCount - 1)
     if (installCount === 0) {
       while (uninstallers.length > 0) {

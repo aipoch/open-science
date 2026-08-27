@@ -176,8 +176,8 @@ test('reports accessibility violations in core dialog and workspace surfaces', a
 })
 
 test('reports accessibility violations in permission and file preview states', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
 
   await page.getByRole('button', { name: 'New project' }).click()
   const projectDialog = page.getByRole('dialog', { name: 'New project' })
@@ -223,8 +223,8 @@ test('reports accessibility violations in permission and file preview states', a
 test('reports accessibility violations across representative state combinations', async ({
   app
 }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
   await setViewport(page, 1280)
   const projectId = await createProject(page, 'Accessible state matrix')
 
@@ -285,8 +285,8 @@ test('reports accessibility violations across representative state combinations'
 })
 
 test('supports the core project journey with keyboard input only', async ({ app }) => {
-  let page = await app.completeOnboarding()
-  page = await app.configureFakeAgent()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
 
   const newProject = page.getByRole('button', { name: 'New project' })
   if (!(await focusWithTab(page, newProject))) return

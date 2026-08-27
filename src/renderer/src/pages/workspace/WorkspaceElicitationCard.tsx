@@ -1,7 +1,17 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bot, Check, ChevronLeft, ChevronRight, Eye, Pencil, X } from 'lucide-react'
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  CircleHelp,
+  Minus,
+  Pencil
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -192,7 +202,8 @@ const WorkspaceElicitationCard = ({
   )
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string>()
-  const [isReviewingAnswer, setIsReviewingAnswer] = useState(false)
+  // Accordion review: indexes of the questions whose original content is expanded in place.
+  const [expandedQuestions, setExpandedQuestions] = useState<ReadonlySet<number>>(new Set())
   const customAnswerRef = useRef<HTMLTextAreaElement>(null)
 
   const canSubmit = useMemo(
@@ -203,18 +214,29 @@ const WorkspaceElicitationCard = ({
   const choiceQuestion = choiceQuestions?.[activeChoiceIndex]
   const answers = elicitation.answers ?? []
   const fieldsById = new Map(elicitation.fields.map((field) => [field.id, field]))
+  // Review selections come straight from the recorded answers — form state stays untouched.
+  const reviewValues = useMemo(
+    () => initialValues(request?.fields ?? [], elicitation.answers ?? []),
+    [request, elicitation.answers]
+  )
   const terminalLabel =
     elicitation.state === 'declined'
       ? t('Skipped')
       : elicitation.state === 'cancelled'
         ? t('Cancelled')
         : undefined
-  const isReviewingChoice =
-    isReviewingAnswer && elicitation.state === 'answered' && Boolean(choiceQuestions)
   const currentChoiceAnswer = choiceQuestion
     ? answerForChoiceQuestion(choiceQuestion, values)
     : undefined
   const completedChoiceAnswers = choiceQuestions ? choiceAnswers(choiceQuestions, values) : []
+  // The footer tally sits under the current question's options, so it counts only what is
+  // selected there — a multi-select answer is an array, other answers count as one.
+  const selectedChoiceCount =
+    currentChoiceAnswer === undefined
+      ? 0
+      : Array.isArray(currentChoiceAnswer.value)
+        ? currentChoiceAnswer.value.length
+        : 1
   const isFinalChoiceQuestion = Boolean(
     choiceQuestions && activeChoiceIndex === choiceQuestions.length - 1
   )
@@ -226,22 +248,163 @@ const WorkspaceElicitationCard = ({
     currentChoiceAnswer?.fieldId === choiceQuestion?.customField.id &&
     currentChoiceAnswer?.value === 'Let the agent decide'
   )
-  const customAnswerSelected = Boolean(
-    currentChoiceAnswer?.fieldId === choiceQuestion?.customField.id && !agentDecidesSelected
-  )
   const canReviewAnswer = Boolean(elicitation.state === 'answered' && choiceQuestions)
   const isPendingPlaceholder = variant === 'pending-placeholder' && elicitation.state === 'pending'
   const choiceTitle =
-    choiceQuestion &&
-    (elicitation.state === 'pending' || isReviewingChoice || choiceQuestions?.length === 1)
+    choiceQuestion && (elicitation.state === 'pending' || choiceQuestions?.length === 1)
       ? choiceQuestion.choiceField.description || choiceQuestion.choiceField.label
       : undefined
   const showChoiceProgress = Boolean(
     choiceQuestions &&
     choiceQuestions.length > 1 &&
     !isPendingPlaceholder &&
-    (elicitation.state === 'pending' || isReviewingChoice)
+    elicitation.state === 'pending'
   )
+  const isAnsweredSummary = elicitation.state === 'answered' && answers.length > 0
+  // Terminal choice cards render their own summary-style header, so the top title hides too.
+  const isTerminalChoiceSummary = Boolean(terminalLabel && choiceQuestions)
+  // The summary is titled by the first question itself — the agent's generic prompt message
+  // carries no information. Multi-question cards append a count suffix in the header.
+  const summaryTitle = choiceQuestions?.length
+    ? choiceQuestions[0].choiceField.description || choiceQuestions[0].choiceField.label
+    : elicitation.message
+
+  const toggleQuestionReview = (questionIndex: number): void => {
+    setExpandedQuestions((current) => {
+      const next = new Set(current)
+      if (next.has(questionIndex)) next.delete(questionIndex)
+      else next.add(questionIndex)
+      return next
+    })
+  }
+
+  // Terminal cards put their status (skipped/cancelled) on the title line, right after the icon.
+  const summaryHeader = (statusPrefix?: string): React.JSX.Element => (
+    <div className="flex items-center gap-2">
+      <span className="grid size-[22px] shrink-0 place-items-center text-primary">
+        <CircleHelp className="size-3.5" strokeWidth={2} aria-hidden="true" />
+      </span>
+      <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm font-semibold leading-5">
+        {statusPrefix ? (
+          <span className="text-xs font-normal text-text-300">{`${statusPrefix} · `}</span>
+        ) : null}
+        {summaryTitle}
+        {choiceQuestions && choiceQuestions.length > 1 ? (
+          <span className="font-normal text-text-300">
+            {' · '}
+            {t('{{count}} questions', {
+              count: choiceQuestions.length,
+              defaultValue_one: '{{count}} question'
+            })}
+          </span>
+        ) : null}
+      </h3>
+    </div>
+  )
+
+  // Read-only rendering of one question's original content — shared by answered rows and
+  // skipped/cancelled cards so every question stays reviewable. Selections come from the
+  // recorded answers via reviewValues (empty for terminal cards, so nothing reads as selected).
+  const renderQuestionReview = (question: AgentUserChoiceQuestion): React.JSX.Element => {
+    const questionAnswer = answerForChoiceQuestion(question, reviewValues)
+    const questionAgentDecides = Boolean(
+      questionAnswer?.fieldId === question.customField.id &&
+      questionAnswer?.value === 'Let the agent decide'
+    )
+    const questionCustomSelected = Boolean(
+      questionAnswer?.fieldId === question.customField.id && !questionAgentDecides
+    )
+    return (
+      // Translucent white panel: a different material from the gray summary rows,
+      // scaled to the summary rows (size-5 badges, 13px text).
+      <div className="mb-1.5 mt-1 rounded-[10px] bg-bg-000/60 p-2">
+        <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
+          {question.choiceField.description || question.choiceField.label}
+        </p>
+        <div className="mt-1" data-testid="elicitation-choice-review">
+          {question.choiceField.options?.map((option, index) => {
+            const selected = isChoiceOptionSelected(question, reviewValues, option.value)
+            return (
+              <div
+                key={option.value}
+                data-testid={`elicitation-option-${option.value}`}
+                data-selected={selected ? 'true' : 'false'}
+                className={cn(
+                  'flex w-full items-start gap-2 px-1 py-1.5 text-left',
+                  selected && 'bg-bg-200'
+                )}
+              >
+                <span
+                  className={cn(
+                    'mt-px grid size-5 shrink-0 place-items-center rounded-md text-xs font-medium shadow-sm',
+                    selected ? 'bg-primary text-primary-foreground' : 'bg-bg-200 text-text-100'
+                  )}
+                >
+                  {selected ? (
+                    <Check className="size-3" strokeWidth={2} aria-label={t('Selected')} />
+                  ) : (
+                    index + 1
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block break-words text-[13px] font-medium leading-[18px]">
+                    {option.label}
+                  </span>
+                  {option.description ? (
+                    <span className="mt-px block whitespace-pre-wrap break-words text-xs leading-4 text-text-100">
+                      {option.description}
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+            )
+          })}
+          <div
+            data-selected={questionAgentDecides ? 'true' : 'false'}
+            className={cn(
+              'flex w-full items-start gap-2 px-1 py-1.5 text-left text-[13px] font-medium',
+              questionAgentDecides && 'bg-bg-200'
+            )}
+          >
+            <span
+              className={cn(
+                'mt-px grid size-5 shrink-0 place-items-center rounded-md',
+                questionAgentDecides
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-bg-200 text-text-100'
+              )}
+            >
+              {questionAgentDecides ? (
+                <Check className="size-3" strokeWidth={2} aria-label={t('Selected')} />
+              ) : (
+                <Bot className="size-3" strokeWidth={1.75} aria-hidden="true" />
+              )}
+            </span>
+            <span className="min-w-0 flex-1">{t('Let the agent decide')}</span>
+          </div>
+          {questionCustomSelected ? (
+            <div
+              data-testid="elicitation-custom-answer-review"
+              data-selected="true"
+              aria-label={t('Custom answer')}
+              className="flex items-start gap-2 bg-bg-200 px-1 py-1.5 text-[13px]"
+            >
+              <span className="mt-px grid size-5 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
+                <Check className="size-3" strokeWidth={2} aria-label={t('Selected')} />
+              </span>
+              <span className="min-h-4 min-w-0 flex-1 whitespace-pre-wrap break-words">
+                {displayValue(
+                  questionAnswer?.value ?? '',
+                  fieldsById.get(question.customField.id),
+                  t
+                )}
+              </span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
 
   const respond = async (response: ElicitationResponse): Promise<boolean> => {
     if (!onRespond || isSubmitting) return false
@@ -340,27 +503,13 @@ const WorkspaceElicitationCard = ({
     <div
       data-testid="elicitation-card"
       className={cn(
-        'rounded-2xl bg-bg-000 p-3 text-text-000 sm:p-4',
-        !embedded && 'border border-border-200 shadow-sm'
+        'rounded-2xl p-3 text-text-000 sm:p-4',
+        // Answered and terminal cards read as activity records: match the tool-group surface
+        // (gray, no chrome).
+        elicitation.state !== 'pending' ? 'bg-bg-200/70' : 'bg-bg-000',
+        !embedded && elicitation.state === 'pending' && 'border border-border-200 shadow-sm'
       )}
     >
-      {isReviewingChoice ? (
-        <div className="mb-2 flex justify-end">
-          <button
-            type="button"
-            aria-label={t('Close answer review')}
-            className="grid size-11 shrink-0 place-items-center rounded-lg text-text-100 hover:bg-bg-100 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-            onClick={() => {
-              setIsReviewingAnswer(false)
-              setActiveChoiceIndex(0)
-              setError(undefined)
-            }}
-          >
-            <X className="size-4" strokeWidth={1.75} aria-hidden="true" />
-          </button>
-        </div>
-      ) : null}
-
       {showChoiceProgress && choiceQuestions ? (
         <div className="pointer-events-none sticky top-3 z-10 -mb-5 flex h-5 justify-end sm:top-4">
           <span
@@ -395,16 +544,18 @@ const WorkspaceElicitationCard = ({
         </div>
       ) : null}
 
-      <div className="flex items-start">
-        <h3
-          className={cn(
-            'min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6',
-            showChoiceProgress && 'pr-36'
-          )}
-        >
-          {choiceTitle ?? elicitation.message}
-        </h3>
-      </div>
+      {isAnsweredSummary || isTerminalChoiceSummary ? null : (
+        <div className="flex items-start">
+          <h3
+            className={cn(
+              'min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6',
+              showChoiceProgress && 'pr-36'
+            )}
+          >
+            {choiceTitle ?? elicitation.message}
+          </h3>
+        </div>
+      )}
 
       {isPendingPlaceholder ? (
         <p
@@ -413,132 +564,9 @@ const WorkspaceElicitationCard = ({
         >
           {t('Awaiting your answer…')}
         </p>
-      ) : isReviewingChoice && choiceQuestion ? (
-        <div className="mt-3" data-testid="elicitation-choice-review">
-          <div>
-            {choiceQuestion.choiceField.options?.map((option, index) => {
-              const selected = isChoiceOptionSelected(choiceQuestion, values, option.value)
-              return (
-                <div
-                  key={option.value}
-                  data-testid={`elicitation-option-${option.value}`}
-                  data-selected={selected ? 'true' : 'false'}
-                  className={cn(
-                    'flex w-full items-start gap-3 border-b border-border-200 px-3 py-3 text-left',
-                    selected && 'bg-bg-200'
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg text-sm font-medium shadow-sm',
-                      selected ? 'bg-primary text-primary-foreground' : 'bg-bg-000 text-text-100'
-                    )}
-                  >
-                    {selected ? (
-                      <Check className="size-4" strokeWidth={2} aria-label={t('Selected')} />
-                    ) : (
-                      index + 1
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block break-words text-sm font-medium leading-5">
-                      {option.label}
-                    </span>
-                    {option.description ? (
-                      <span className="mt-0.5 block whitespace-pre-wrap break-words text-sm leading-5 text-text-100">
-                        {option.description}
-                      </span>
-                    ) : null}
-                  </span>
-                </div>
-              )
-            })}
-            <div
-              data-selected={agentDecidesSelected ? 'true' : 'false'}
-              className={cn(
-                'flex w-full items-start gap-3 border-b border-border-200 px-3 py-3 text-left text-sm font-medium',
-                agentDecidesSelected && 'bg-bg-200'
-              )}
-            >
-              <span
-                className={cn(
-                  'mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg',
-                  agentDecidesSelected
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-bg-100 text-text-100'
-                )}
-              >
-                {agentDecidesSelected ? (
-                  <Check className="size-4" strokeWidth={2} aria-label={t('Selected')} />
-                ) : (
-                  <Bot className="size-4" strokeWidth={1.75} aria-hidden="true" />
-                )}
-              </span>
-              <span>{t('Let the agent decide')}</span>
-            </div>
-            <div
-              data-testid="elicitation-custom-answer-review"
-              data-selected={customAnswerSelected ? 'true' : 'false'}
-              aria-label={t('Custom answer')}
-              className={cn(
-                'flex items-start gap-3 border-b border-border-200 px-3 py-3 text-sm',
-                customAnswerSelected && 'bg-bg-200'
-              )}
-            >
-              <span
-                className={cn(
-                  'mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg',
-                  customAnswerSelected
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-bg-100 text-text-100'
-                )}
-              >
-                {customAnswerSelected ? (
-                  <Check className="size-4" strokeWidth={2} aria-label={t('Selected')} />
-                ) : (
-                  <Pencil className="size-4" strokeWidth={1.75} aria-hidden="true" />
-                )}
-              </span>
-              <span className="min-h-5 min-w-0 flex-1 whitespace-pre-wrap break-words">
-                {customAnswerSelected
-                  ? displayValue(
-                      currentChoiceAnswer?.value ?? '',
-                      fieldsById.get(choiceQuestion.customField.id),
-                      t
-                    )
-                  : null}
-              </span>
-            </div>
-          </div>
-
-          {choiceQuestions && choiceQuestions.length > 1 ? (
-            <div className="mt-3 flex items-center justify-end gap-2 border-t border-border-200 pt-3">
-              <button
-                type="button"
-                aria-label={t('Previous question')}
-                disabled={activeChoiceIndex === 0}
-                className="grid size-11 place-items-center rounded-xl border border-border-200 bg-bg-000 text-text-100 hover:bg-bg-100 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                onClick={() => setActiveChoiceIndex((index) => Math.max(index - 1, 0))}
-              >
-                <ChevronLeft className="size-5" strokeWidth={1.75} aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                aria-label={t('Next question')}
-                disabled={activeChoiceIndex === choiceQuestions.length - 1}
-                className="grid size-11 place-items-center rounded-xl border border-border-200 bg-bg-000 text-text-100 hover:bg-bg-100 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                onClick={() =>
-                  setActiveChoiceIndex((index) => Math.min(index + 1, choiceQuestions.length - 1))
-                }
-              >
-                <ChevronRight className="size-5" strokeWidth={1.75} aria-hidden="true" />
-              </button>
-            </div>
-          ) : null}
-        </div>
       ) : elicitation.state === 'pending' && request && choiceQuestion ? (
-        <form className="mt-3" data-testid="elicitation-choice-mode" onSubmit={handleChoiceSubmit}>
-          <div>
+        <form className="mt-2" data-testid="elicitation-choice-mode" onSubmit={handleChoiceSubmit}>
+          <div className="space-y-0.5">
             {choiceQuestion.choiceField.options?.map((option, index) => {
               const selected = isChoiceOptionSelected(choiceQuestion, values, option.value)
               return (
@@ -551,8 +579,8 @@ const WorkspaceElicitationCard = ({
                   aria-pressed={selected}
                   disabled={isSubmitting}
                   className={cn(
-                    'relative flex w-full cursor-pointer items-start gap-3 border-b border-border-200 px-3 py-3 text-left hover:z-10 hover:shadow-card active:bg-bg-200 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
-                    selected && 'bg-bg-200'
+                    'relative flex w-full cursor-pointer items-start gap-2 rounded-xl bg-bg-000 px-2 py-1.5 text-left hover:bg-bg-200 active:bg-bg-200 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
+                    selected && 'bg-primary/10 hover:bg-primary/15'
                   )}
                   onClick={() =>
                     selectChoice({ fieldId: choiceQuestion.choiceField.id, value: option.value })
@@ -560,24 +588,24 @@ const WorkspaceElicitationCard = ({
                 >
                   <span
                     className={cn(
-                      'mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg text-sm font-medium shadow-sm',
-                      selected ? 'bg-primary text-primary-foreground' : 'bg-bg-000 text-text-100'
+                      'mt-px grid size-6 shrink-0 place-items-center rounded-md text-[13px] font-medium shadow-sm',
+                      selected ? 'bg-primary text-primary-foreground' : 'bg-bg-200 text-text-100'
                     )}
                   >
                     {selected ? (
-                      <Check className="size-4" strokeWidth={2} aria-label={t('Selected')} />
+                      <Check className="size-3.5" strokeWidth={2} aria-label={t('Selected')} />
                     ) : (
                       index + 1
                     )}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block break-words text-sm font-medium leading-5">
+                    <span className="block break-words text-[13px] font-medium leading-[18px]">
                       {option.label}
                     </span>
                     {option.description ? (
                       <span
                         data-testid="elicitation-option-description"
-                        className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-5 text-text-100"
+                        className="mt-px whitespace-pre-wrap break-words text-xs leading-4 text-text-100"
                         title={option.description}
                       >
                         {option.description}
@@ -593,8 +621,8 @@ const WorkspaceElicitationCard = ({
               aria-pressed={agentDecidesSelected}
               disabled={isSubmitting}
               className={cn(
-                'relative flex w-full cursor-pointer items-start gap-3 border-b border-border-200 px-3 py-3 text-left text-sm font-medium hover:z-10 hover:shadow-card active:bg-bg-200 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
-                agentDecidesSelected && 'bg-bg-200'
+                'relative flex w-full cursor-pointer items-center gap-2 rounded-xl bg-bg-000 px-2 py-1.5 text-left text-[13px] font-medium hover:bg-bg-200 active:bg-bg-200 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
+                agentDecidesSelected && 'bg-primary/10 hover:bg-primary/15'
               )}
               onClick={() =>
                 selectChoice({
@@ -605,25 +633,25 @@ const WorkspaceElicitationCard = ({
             >
               <span
                 className={cn(
-                  'mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg',
+                  'grid size-6 shrink-0 place-items-center rounded-md',
                   agentDecidesSelected
                     ? 'bg-primary text-primary-foreground'
                     : 'bg-bg-100 text-text-100'
                 )}
               >
                 {agentDecidesSelected ? (
-                  <Check className="size-4" strokeWidth={2} aria-label={t('Selected')} />
+                  <Check className="size-3.5" strokeWidth={2} aria-label={t('Selected')} />
                 ) : (
-                  <Bot className="size-4" strokeWidth={1.75} aria-hidden="true" />
+                  <Bot className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
                 )}
               </span>
-              <span>{t('Let the agent decide')}</span>
+              <span className="min-w-0 flex-1">{t('Let the agent decide')}</span>
             </button>
           </div>
 
-          <div className="flex items-start gap-3 border-b border-border-200 px-3 py-2">
-            <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-bg-100 text-text-100">
-              <Pencil className="size-4" strokeWidth={1.75} aria-hidden="true" />
+          <div className="mt-1.5 flex items-start gap-2 px-2 py-1.5">
+            <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-bg-100 text-text-100">
+              <Pencil className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
             </span>
             <Textarea
               ref={customAnswerRef}
@@ -636,7 +664,7 @@ const WorkspaceElicitationCard = ({
                 choiceQuestion.customField.maxLength ?? MAX_ELICITATION_MESSAGE_CHARS,
                 MAX_ELICITATION_MESSAGE_CHARS
               )}
-              className="max-h-40 min-h-9 min-w-0 flex-1 resize-none overflow-y-auto rounded-none border-0 bg-transparent px-0 py-1.5 shadow-none focus-visible:border-transparent focus-visible:ring-0"
+              className="max-h-40 min-h-7 min-w-0 flex-1 resize-none overflow-y-auto rounded-none border-0 border-b border-border-200 bg-transparent px-0 pb-0.5 pt-1.5 shadow-none focus-visible:ring-0"
               onChange={(event) => {
                 const value = event.currentTarget.value
                 setValues((current) => ({
@@ -646,35 +674,21 @@ const WorkspaceElicitationCard = ({
                 }))
               }}
             />
-            <Button
-              className="mt-0.5"
-              type="button"
-              variant="ghost"
-              disabled={isSubmitting}
-              onClick={() =>
-                void respond({
-                  requestId: request.requestId,
-                  action: 'decline'
-                })
-              }
-            >
-              {t('Skip')}
-            </Button>
           </div>
 
           {choiceQuestions ? (
-            <div className="mt-3 flex items-center justify-between gap-3">
+            <div className="mt-2 flex items-center justify-between gap-3">
               <span className="truncate text-sm text-text-300">
-                {t('{{count}} selected', { count: completedChoiceAnswers.length })}
+                {t('{{count}} selected', { count: selectedChoiceCount })}
               </span>
               <div className="flex shrink-0 items-center justify-end gap-2">
                 {activeChoiceIndex > 0 ? (
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="secondary"
                     aria-label={t('Previous question')}
                     disabled={isSubmitting}
-                    className="h-11 px-3"
+                    className="px-3"
                     onClick={() => setActiveChoiceIndex((index) => Math.max(index - 1, 0))}
                   >
                     <ChevronLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
@@ -683,16 +697,35 @@ const WorkspaceElicitationCard = ({
                 ) : null}
                 {isFinalChoiceQuestion ? (
                   canFinishChoiceSet ? (
-                    <Button className="h-11 px-3" type="submit" disabled={isSubmitting}>
+                    <Button className="px-3" type="submit" disabled={isSubmitting}>
                       {t('Finish')}
                     </Button>
                   ) : null
                 ) : currentChoiceAnswer ? (
-                  <Button className="h-11 px-3" type="submit" disabled={isSubmitting}>
+                  <Button
+                    className="px-3"
+                    type="submit"
+                    aria-label={t('Next question')}
+                    disabled={isSubmitting}
+                  >
                     {t('Next')}
                     <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
                   </Button>
                 ) : null}
+                {/* Skipping declines the whole request, so multi-question cards say "Skip all". */}
+                <Button
+                  className="px-3 bg-status-warning-surface text-status-warning-foreground hover:bg-status-warning-surface/70 dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface/70"
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() =>
+                    void respond({
+                      requestId: request.requestId,
+                      action: 'decline'
+                    })
+                  }
+                >
+                  {choiceQuestions.length > 1 ? t('Skip all') : t('Skip')}
+                </Button>
               </div>
             </div>
           ) : null}
@@ -915,49 +948,117 @@ const WorkspaceElicitationCard = ({
           </div>
         </form>
       ) : answers.length > 0 ? (
-        <button
-          type="button"
-          data-testid="elicitation-answer-summary"
-          aria-expanded={isReviewingAnswer}
-          disabled={!canReviewAnswer}
-          className={cn(
-            'group mt-2 flex w-full items-start justify-between gap-3 rounded-xl py-1 text-left text-sm leading-5',
-            canReviewAnswer &&
-              'transition-colors duration-200 hover:bg-bg-100 active:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:transition-none'
-          )}
-          onClick={() => {
-            if (!canReviewAnswer) return
-            setValues(initialValues(request?.fields ?? [], answers))
-            setActiveChoiceIndex(0)
-            setError(undefined)
-            setIsReviewingAnswer(true)
-          }}
-        >
-          <span className="min-w-0 flex-1 space-y-2">
-            {answers.map((answer) => (
-              <span className="block" key={answer.fieldId}>
-                {answers.length > 1 ? (
-                  <span className="block font-medium text-text-100">
-                    {fieldsById.get(answer.fieldId)?.label ?? answer.fieldId}
-                  </span>
-                ) : null}
-                <span className="block whitespace-pre-wrap break-words">
-                  {displayValue(answer.value, fieldsById.get(answer.fieldId), t)}
-                </span>
-              </span>
-            ))}
-          </span>
-          {canReviewAnswer ? (
-            <span
-              data-testid="elicitation-answer-review-affordance"
-              className="grid size-7 shrink-0 place-items-center rounded-lg bg-bg-100 text-text-100 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
-            >
-              <Eye className="size-4" strokeWidth={1.75} aria-hidden="true" />
-            </span>
-          ) : null}
-        </button>
+        <div data-testid="elicitation-answer-summary">
+          {summaryHeader()}
+          <div className="mt-1.5 flex flex-col">
+            {answers.map((answer) => {
+              const field = fieldsById.get(answer.fieldId)
+              const questionIndex =
+                choiceQuestions?.findIndex(
+                  (candidate) =>
+                    candidate.choiceField.id === answer.fieldId ||
+                    candidate.customField.id === answer.fieldId
+                ) ?? -1
+              const expandable = canReviewAnswer && questionIndex >= 0
+              const expanded = expandable && expandedQuestions.has(questionIndex)
+              const question = expandable ? choiceQuestions?.[questionIndex] : undefined
+              return (
+                <div key={answer.fieldId}>
+                  <button
+                    type="button"
+                    data-testid="elicitation-answer-row"
+                    aria-expanded={expandable ? expanded : undefined}
+                    disabled={!expandable}
+                    className={cn(
+                      'group flex w-full items-start gap-2 rounded-lg px-1 py-1.5 text-left',
+                      expandable
+                        ? 'transition-colors duration-200 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:transition-none'
+                        : 'cursor-default'
+                    )}
+                    onClick={() => {
+                      if (expandable) toggleQuestionReview(questionIndex)
+                    }}
+                  >
+                    <span className="mt-px grid size-5 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
+                      <Check className="size-3" strokeWidth={3} aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      {answers.length > 1 ? (
+                        <span className="block text-xs leading-4 text-text-100">
+                          {/* Custom/agent-decide answers live on the `question_N_custom` field
+                              labeled "Other" — surface the owning question's label instead. */}
+                          {choiceQuestions?.[questionIndex]?.choiceField.label ??
+                            field?.label ??
+                            answer.fieldId}
+                        </span>
+                      ) : null}
+                      <span className="block whitespace-pre-wrap break-words text-[13px] font-medium leading-[18px]">
+                        {displayValue(answer.value, field, t)}
+                      </span>
+                    </span>
+                    {expandable ? (
+                      <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-md text-text-300 transition-colors duration-150 group-hover:text-text-100">
+                        {expanded ? (
+                          <ChevronUp className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                        ) : (
+                          <ChevronDown className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                        )}
+                      </span>
+                    ) : null}
+                  </button>
+
+                  {expanded && question ? renderQuestionReview(question) : null}
+                </div>
+              )
+            })}
+          </div>
+        </div>
       ) : terminalLabel ? (
-        <div className="mt-2 text-sm text-text-300">{terminalLabel}</div>
+        choiceQuestions ? (
+          // Terminal choice cards share the summary surface: same header, one expandable row
+          // per question so the original prompt stays reviewable.
+          <div data-testid="elicitation-answer-summary">
+            {summaryHeader(terminalLabel)}
+            <div className="mt-1.5 flex flex-col">
+              {choiceQuestions.map((question, questionIndex) => {
+                const expanded = expandedQuestions.has(questionIndex)
+                return (
+                  <div key={question.choiceField.id}>
+                    <button
+                      type="button"
+                      data-testid="elicitation-answer-row"
+                      aria-expanded={expanded}
+                      className="group flex w-full items-start gap-2 rounded-lg px-1 py-1.5 text-left transition-colors duration-200 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:transition-none"
+                      onClick={() => toggleQuestionReview(questionIndex)}
+                    >
+                      <span className="mt-px grid size-5 shrink-0 place-items-center rounded-md bg-bg-200 text-text-300">
+                        <Minus className="size-3" strokeWidth={2.5} aria-hidden="true" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs leading-4 text-text-100">
+                          {question.choiceField.label}
+                        </span>
+                        <span className="block whitespace-pre-wrap break-words text-[13px] font-medium leading-[18px]">
+                          {question.choiceField.description || question.choiceField.label}
+                        </span>
+                      </span>
+                      <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-md text-text-300 transition-colors duration-150 group-hover:text-text-100">
+                        {expanded ? (
+                          <ChevronUp className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                        ) : (
+                          <ChevronDown className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                        )}
+                      </span>
+                    </button>
+                    {expanded ? renderQuestionReview(question) : null}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2 text-sm text-text-300">{terminalLabel}</div>
+        )
       ) : (
         <div className="mt-2 text-sm text-text-300">{t('Waiting for a response…')}</div>
       )}

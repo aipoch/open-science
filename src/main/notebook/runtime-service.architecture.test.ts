@@ -240,6 +240,7 @@ describe('Notebook runtime facade architecture', () => {
         'finishCodeCell',
         'getActiveNotebookSessions',
         'getSessionReference',
+        'inspectNamespace',
         'inspectPackages',
         'isDefaultEnvRecoveryBlocked',
         'isPrefixLiveUnconfirmed',

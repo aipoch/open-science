@@ -31,6 +31,7 @@ import type {
   SideChatStartRequest,
   SideChatStartResponse
 } from '../shared/side-chat'
+import type { SourcePreviewLoadState } from '../shared/source-preview'
 import type {
   ArtifactFile,
   ArtifactPreviewResult,
@@ -145,6 +146,8 @@ import type {
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
   NotebookLanguage,
+  NotebookNamespaceRequest,
+  NotebookNamespaceSnapshot,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
@@ -864,6 +867,10 @@ export interface OpenScienceAPI {
     close(sessionId: string): Promise<void>
     onState(listener: (state: OfficePreviewRuntimeState) => void): RemoveListener
   }
+  sourcePreview?: {
+    release(sourceUrl: string): void
+    onLoadState(listener: (state: SourcePreviewLoadState) => void): RemoveListener
+  }
   artifacts: {
     finalizeRunArtifacts(request: FinalizeRunArtifactsRequest): Promise<FinalizeRunArtifactsResult>
     listProjectFiles(request: ListProjectArtifactsRequest): Promise<ArtifactFile[]>
@@ -938,6 +945,7 @@ export interface OpenScienceAPI {
   }
   notebook: {
     state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
+    inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot>
     readInputPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
     getReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
     beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<{

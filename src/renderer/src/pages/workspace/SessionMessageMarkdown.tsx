@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-import { PresentedAgentMarkdown, SessionMessageLink } from '@/components/streamdown/AgentMarkdown'
+import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
+import { SessionMessageLink } from '@/components/streamdown/SessionMessageLink'
 import { memo, useMemo, useState, type ComponentProps, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Components } from 'streamdown'
@@ -135,6 +136,7 @@ const SessionMessageMarkdown = memo(
         a: ({
           href,
           className,
+          title,
           children,
           'data-incomplete': dataIncomplete
         }: SessionMessageLinkComponentProps) => {
@@ -144,6 +146,7 @@ const SessionMessageMarkdown = memo(
               <SessionMessageLink
                 href={href}
                 className={className}
+                title={title}
                 data-incomplete={dataIncomplete}
               >
                 {children}

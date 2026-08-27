@@ -152,6 +152,46 @@ describe('createProjectHandlers', () => {
     })
   })
 
+  it('invalidates Agent Sessions only when an update changes Agent Context', async () => {
+    const oldProject = { ...project, agentContext: 'Always cite DOIs.' }
+    const updatedProject = { ...project, agentContext: 'Prefer Python.', updatedAt: 3 }
+    const repository = {
+      list: vi.fn(),
+      get: vi.fn().mockResolvedValueOnce(oldProject).mockResolvedValueOnce(updatedProject),
+      create: vi.fn(),
+      update: vi.fn().mockResolvedValue(updatedProject)
+    }
+    const deletionCoordinator = {
+      deleteProject: vi.fn(),
+      waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
+    }
+    const onAgentContextChanged = vi.fn()
+    const handlers = createProjectHandlers(repository, deletionCoordinator, {
+      updateArchive: vi.fn(),
+      onAgentContextChanged
+    })
+
+    await handlers.update({
+      id: 'project-1',
+      agentContext: 'Prefer Python.',
+      expectedUpdatedAt: 2
+    })
+    await handlers.update({
+      id: 'project-1',
+      agentContext: 'Prefer Python.',
+      expectedUpdatedAt: 3
+    })
+    await handlers.update({
+      id: 'project-1',
+      name: 'Renamed project',
+      expectedUpdatedAt: 4
+    })
+
+    expect(onAgentContextChanged).toHaveBeenCalledOnce()
+    expect(onAgentContextChanged).toHaveBeenCalledWith('project-1')
+    expect(repository.get).toHaveBeenCalledTimes(2)
+  })
+
   it('leaves only preview state on the capability-specific Electron adapter', async () => {
     const previewRepository = {
       get: vi.fn().mockResolvedValue(null),

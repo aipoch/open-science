@@ -86,9 +86,10 @@ const createComputeAuthenticationOwner = (
       const failure = classifyConnectionFailure(result)
       if (failure) throw failure
     },
-    hasBlockingJobs: (providerId) =>
-      options.jobRepository?.hasIdentityChangeBlockingJobsForProvider(providerId) ??
-      Promise.resolve(false),
+    hasBlockingJobs: async (providerId) => {
+      if (!options.jobRepository) return false
+      return options.jobRepository.hasIdentityChangeBlockingJobsForProvider(providerId)
+    },
     invalidateAuthenticationIdentity: (providerId) =>
       options.connectionBroker.invalidateAuthenticationIdentity?.(providerId),
     commitAuthentication: async (change) => {

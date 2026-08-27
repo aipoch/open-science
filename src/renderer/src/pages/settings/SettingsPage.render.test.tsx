@@ -865,7 +865,7 @@ describe('SettingsPage layout', () => {
 
     const dismiss = alert?.querySelector<HTMLButtonElement>('[aria-label="Dismiss settings error"]')
     await act(async () => dismiss?.focus())
-    expect(document.body.textContent).toContain('Dismiss')
+    expect(document.body.textContent).toContain('Close')
 
     act(() => {
       dismiss?.click()

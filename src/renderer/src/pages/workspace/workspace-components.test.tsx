@@ -609,9 +609,11 @@ describe('conversation message scroller integration', () => {
     expect(workspaceToolRowButtonSource).toContain('const WorkspaceToolActivityRowButton')
     expect(workspaceToolRowButtonSource).toContain('data-testid="tool-chip"')
     expect(workspaceToolRowButtonSource).toContain('aria-controls={canExpand ? detailsDomId')
-    // Code blocks reuse the shared Shiki highlighter for consistent syntax colors.
-    expect(workspaceToolCodeBlockSource).toContain("from '@streamdown/code'")
-    expect(workspaceToolCodeBlockSource).toContain('code.highlight(')
+    // Code blocks reuse the shared lazy Shiki highlighter for consistent syntax colors.
+    expect(workspaceToolCodeBlockSource).toContain(
+      "from '@/components/streamdown/use-code-highlighter'"
+    )
+    expect(workspaceToolCodeBlockSource).toContain('highlighter.highlight(')
   })
 
   it('keeps generated artifact cards the same size when expanded inline', () => {

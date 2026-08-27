@@ -7,6 +7,7 @@ import type {
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookLiveEnvironmentOverlay,
+  NotebookNamespaceVariable,
   NotebookOutput,
   NotebookRunEnvironmentCapture,
   NotebookRunSource,
@@ -73,11 +74,29 @@ export type NotebookSessionExecutionResult = {
   kernelDispatched?: boolean
 }
 
+export type NotebookSessionNamespaceRequest = {
+  language: NotebookLanguage
+  environment: string
+  includePrivate?: boolean
+}
+
+export type NotebookSessionNamespaceResult =
+  | {
+      status: 'available'
+      variableCount: number
+      variablesTruncated: boolean
+      variables: NotebookNamespaceVariable[]
+    }
+  | { status: 'unavailable' }
+
 export type NotebookSessionExecutor<
   Request = NotebookSessionExecutionRequest,
   Result = NotebookSessionExecutionResult
 > = {
   execute: (request: Request) => Promise<Result>
+  inspectNamespace?: (
+    request: NotebookSessionNamespaceRequest
+  ) => Promise<NotebookSessionNamespaceResult>
   shutdown: () => Promise<{ reaped: boolean }>
   restart?: () => Promise<void>
   terminate?: (kind: 'python' | 'r' | 'repl', env: string) => Promise<void>
@@ -484,6 +503,14 @@ export class NotebookSessionAggregate<
     return this.executorValue.execute(request)
   }
 
+  inspectNamespace(
+    request: NotebookSessionNamespaceRequest
+  ): Promise<NotebookSessionNamespaceResult> {
+    return (
+      this.executorValue.inspectNamespace?.(request) ?? Promise.resolve({ status: 'unavailable' })
+    )
+  }
+
   kernelEpochId(processKey: string, reset = false): string {
     if (reset) this.kernelEpochIds.delete(processKey)
     const existing = this.kernelEpochIds.get(processKey)
@@ -491,6 +518,10 @@ export class NotebookSessionAggregate<
     const epochId = randomUUID()
     this.kernelEpochIds.set(processKey, epochId)
     return epochId
+  }
+
+  currentKernelEpochId(processKey: string): string | undefined {
+    return this.kernelEpochIds.get(processKey)
   }
 
   retireKernelEpoch(processKey: string): void {

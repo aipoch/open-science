@@ -6,6 +6,7 @@ import {
   sanitizeAcpMessageImage,
   type AcpMessageImage
 } from '../../shared/acp'
+import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {
   VISION_EVIDENCE_BUDGET_MESSAGE,
   VISION_EVIDENCE_INVALID_MESSAGE,
@@ -511,7 +512,7 @@ class ImageInputCompatibilityOwner {
     try {
       return await analysis
     } finally {
-      if (group.get(context.signal) === analysis) group.delete(context.signal)
+      if (isCurrentInFlight(group.get(context.signal), analysis)) group.delete(context.signal)
       if (group.size === 0 && this.inFlight.get(key) === group) this.inFlight.delete(key)
     }
   }

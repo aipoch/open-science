@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { framePythonNamespaceRequest } from './kernel-protocol'
 
 // Run with: RUN_KERNEL=1 OPEN_SCIENCE_TEST_PY_ENV=/path/to/env/bin/python \
 //   npx vitest run src/main/notebook/python-loop.integration.test.ts
@@ -27,13 +28,30 @@ type LoopResponse = {
     runtime_version: string
     packages: Array<{ name: string; version_status: string; loaded_state: string }>
   }
+  namespace?: {
+    variable_count: number
+    variables_truncated: boolean
+    variables: Array<{
+      name: string
+      type: string
+      size_bytes?: number
+      shape?: string
+      preview: string
+      preview_truncated?: boolean
+      is_private?: boolean
+    }>
+  }
 }
 
 // Minimal one-shot client over the loop's stdio protocol for the test.
 const startLoop = (
   python: string,
   env: NodeJS.ProcessEnv
-): { child: ChildProcessWithoutNullStreams; send: (code: string) => Promise<LoopResponse> } => {
+): {
+  child: ChildProcessWithoutNullStreams
+  send: (code: string) => Promise<LoopResponse>
+  inspect: (includePrivate?: boolean) => Promise<LoopResponse>
+} => {
   const child = spawn(python, [LOOP], { env: { ...process.env, ...env } })
   const rl = createInterface({ input: child.stdout })
   const waiters = new Map<string, (v: LoopResponse) => void>()
@@ -55,10 +73,109 @@ const startLoop = (
       waiters.set(reqId, resolve)
       child.stdin.write(`${JSON.stringify({ req_id: reqId, code })}\n`)
     })
-  return { child, send }
+  const inspect = (includePrivate = false): Promise<LoopResponse> =>
+    new Promise((resolve) => {
+      const reqId = randomUUID()
+      waiters.set(reqId, resolve)
+      child.stdin.write(framePythonNamespaceRequest(reqId, includePrivate))
+    })
+  return { child, send, inspect }
 }
 
 gate('python_loop.py', () => {
+  it('returns fresh bounded user variables while filtering bootstrap and private names', async () => {
+    const { child, send, inspect } = startLoop(pyBin as string, {})
+    try {
+      await send(
+        "x = 41; label = '活跃变量'; _private = 'hidden'; sys = 1; json = 'user json'; " +
+          "items = list(range(10000)); blob = b'x' * 2000000; " +
+          "Explosive = type('Explosive', (), {'__repr__': lambda self: (_ for _ in ()).throw(RuntimeError('no repr'))}); explosive = Explosive(); mixed = [explosive]; globals()[0] = 'non-string key'"
+      )
+      const first = await inspect()
+      expect(first.namespace?.variables.map(({ name }) => name)).toEqual([
+        'Explosive',
+        'blob',
+        'explosive',
+        'items',
+        'json',
+        'label',
+        'mixed',
+        'sys',
+        'x'
+      ])
+      expect(first.namespace?.variables.find(({ name }) => name === 'blob')).toMatchObject({
+        size_bytes: 2_000_033,
+        preview: expect.stringMatching(/^b'/)
+      })
+      expect(first.namespace?.variables.find(({ name }) => name === 'sys')?.preview).toBe('1')
+      expect(first.namespace?.variables.find(({ name }) => name === 'json')?.preview).toBe(
+        "'user json'"
+      )
+      expect(Buffer.byteLength(JSON.stringify(first), 'utf8')).toBeLessThan(256 * 1024)
+
+      await send("x = 42; del label; added = {'ok': True}")
+      const refreshed = await inspect(true)
+      expect(refreshed.namespace?.variables.map(({ name }) => name)).toEqual([
+        'Explosive',
+        '_private',
+        'added',
+        'blob',
+        'explosive',
+        'items',
+        'json',
+        'mixed',
+        'sys',
+        'x'
+      ])
+      expect(refreshed.namespace?.variables.find(({ name }) => name === 'mixed')?.preview).toBe(
+        'list [1]'
+      )
+      expect(refreshed.namespace?.variables.find(({ name }) => name === 'x')?.preview).toBe('42')
+      expect(refreshed.namespace?.variables.find(({ name }) => name === '_private')).toMatchObject({
+        is_private: true
+      })
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('keeps the final JSON response within budget for non-ASCII names and previews', async () => {
+    const { child, send, inspect } = startLoop(pyBin as string, {})
+    try {
+      await send(
+        "globals()['x' * 2_000_000] = 1; globals().update({f'变量{i}': '汉' * 1000 for i in range(500)})"
+      )
+      const response = await inspect()
+
+      expect(response.namespace?.variables_truncated).toBe(true)
+      expect(response.namespace?.variables.some(({ name }) => name.endsWith('…'))).toBe(true)
+      expect(
+        response.namespace?.variables.every(({ name }) => Buffer.byteLength(name, 'utf8') <= 1024)
+      ).toBe(true)
+      expect(Buffer.byteLength(JSON.stringify(response), 'utf8')).toBeLessThan(256 * 1024)
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('does not dereference spoofed scientific object properties', async () => {
+    const { child, send, inspect } = startLoop(pyBin as string, {})
+    try {
+      await send(
+        "shape_reads = []; Spoof = type('ndarray', (), {'__module__': 'numpy', 'shape': property(lambda self: shape_reads.append('read') or (1, 2))}); spoof = Spoof()"
+      )
+
+      const response = await inspect()
+      expect(response.namespace?.variables.find(({ name }) => name === 'spoof')).toMatchObject({
+        type: 'numpy.ndarray',
+        preview: '<numpy.ndarray>'
+      })
+      expect((await send('len(shape_reads)')).result).toBe('0')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
   it('executes non-ASCII source sent over the stdin protocol', async () => {
     const { child, send } = startLoop(pyBin as string, {})
     try {

@@ -149,6 +149,48 @@ export const createLinearConversationGraph = (
 const indexById = <T extends { id: string }>(items: readonly T[]): Map<string, T> =>
   new Map(items.map((item) => [item.id, item]))
 
+type TreeInterval = { start: number; end: number }
+
+const indexTreeAncestry = <T extends { id: string }>(
+  roots: readonly T[],
+  children: ReadonlyMap<string, readonly T[]>
+): Map<string, TreeInterval> => {
+  const ancestry = new Map<string, TreeInterval>()
+  let sequence = 0
+  for (const root of roots) {
+    const stack: Array<{ item: T; exiting: boolean }> = [{ item: root, exiting: false }]
+    while (stack.length > 0) {
+      const { item, exiting } = stack.pop()!
+      if (exiting) {
+        ancestry.get(item.id)!.end = sequence
+        sequence += 1
+        continue
+      }
+      if (ancestry.has(item.id)) continue
+      ancestry.set(item.id, { start: sequence, end: -1 })
+      sequence += 1
+      stack.push({ item, exiting: true })
+      const descendants = children.get(item.id) ?? []
+      for (let index = descendants.length - 1; index >= 0; index -= 1) {
+        stack.push({ item: descendants[index], exiting: false })
+      }
+    }
+  }
+  return ancestry
+}
+
+const isTreeAncestor = (
+  ancestry: ReadonlyMap<string, TreeInterval>,
+  ancestorId: string,
+  descendantId: string
+): boolean => {
+  const ancestor = ancestry.get(ancestorId)
+  const descendant = ancestry.get(descendantId)
+  return Boolean(
+    ancestor && descendant && ancestor.start <= descendant.start && ancestor.end >= descendant.end
+  )
+}
+
 export const resolveMessageBranchPath = (
   graph: PersistedConversationGraph,
   branchId: string
@@ -283,6 +325,8 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
   const branches = indexById(graph.branches)
   const messages = indexById(graph.messages)
   const activities = indexById(graph.activities)
+  const activityGroups = indexById(graph.activityGroups)
+  const runtimeSegments = indexById(graph.runtimeSegments)
   if (frames.size !== graph.frames.length || branches.size !== graph.branches.length) {
     throw new Error('Conversation graph contains duplicate ids.')
   }
@@ -295,62 +339,76 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
   }
   if (!frames.has(graph.activeFrameId))
     throw new Error('Conversation graph active Frame is invalid.')
+  const rootFrame = frames.get(graph.rootFrameId)!
+  if (
+    rootFrame.kind !== 'root' ||
+    rootFrame.originBindingState !== 'root' ||
+    rootFrame.parentFrameId ||
+    rootFrame.originMessageId
+  ) {
+    throw new Error('Conversation root Frame is invalid.')
+  }
+  if (activityGroups.size !== graph.activityGroups.length) {
+    throw new Error('Conversation graph contains duplicate Activity Group ids.')
+  }
+  const activityIdsByGroupId = new Map(
+    graph.activityGroups.map((group) => [group.id, new Set(group.activityIds)])
+  )
+  if (runtimeSegments.size !== graph.runtimeSegments.length) {
+    throw new Error('Conversation graph contains duplicate Runtime Segment ids.')
+  }
 
+  const frameChildren = new Map<string, PersistedAgentFrame[]>()
   for (const frame of graph.frames) {
-    const seen = new Set<string>()
-    let current: PersistedAgentFrame | undefined = frame
-    while (current?.parentFrameId) {
-      if (seen.has(current.id)) throw new Error('Agent Frame graph contains a cycle.')
-      seen.add(current.id)
-      current = frames.get(current.parentFrameId)
-      if (!current) throw new Error('Agent Frame parent is missing.')
-    }
-    if (current?.id !== graph.rootFrameId) throw new Error('Agent Frame is detached from root.')
     const branch = branches.get(frame.activeBranchId)
     if (!branch || branch.agentFrameId !== frame.id) {
       throw new Error('Agent Frame active Branch is invalid.')
     }
+    if (frame.id === graph.rootFrameId) continue
+    if (frame.kind === 'root' || frame.originBindingState === 'root') {
+      throw new Error('Non-root Agent Frame is invalid.')
+    }
+    if (!frame.parentFrameId) throw new Error('Agent Frame is detached from root.')
+    const parent = frames.get(frame.parentFrameId)
+    if (!parent) throw new Error('Agent Frame parent is missing.')
+    const children = frameChildren.get(parent.id)
+    if (children) children.push(frame)
+    else frameChildren.set(parent.id, [frame])
+  }
+  const frameAncestry = indexTreeAncestry([rootFrame], frameChildren)
+  if (frameAncestry.size !== graph.frames.length) {
+    throw new Error('Agent Frame graph contains a cycle.')
   }
 
+  const branchChildren = new Map<string, PersistedMessageBranch[]>()
+  const branchRoots: PersistedMessageBranch[] = []
   for (const branch of graph.branches) {
     if (!frames.has(branch.agentFrameId)) throw new Error('Message Branch Frame is missing.')
-    const seenBranches = new Set<string>()
-    let currentBranch: PersistedMessageBranch | undefined = branch
-    while (currentBranch?.parentBranchId) {
-      if (seenBranches.has(currentBranch.id)) {
-        throw new Error('Message Branch graph contains a cycle.')
-      }
-      seenBranches.add(currentBranch.id)
-      currentBranch = branches.get(currentBranch.parentBranchId)
-      if (!currentBranch || currentBranch.agentFrameId !== branch.agentFrameId) {
-        throw new Error('Message Branch parent is invalid.')
-      }
-    }
     if (branch.parentBranchId) {
       const parent = branches.get(branch.parentBranchId)
       if (!parent || parent.agentFrameId !== branch.agentFrameId) {
         throw new Error('Message Branch parent is invalid.')
       }
+      const children = branchChildren.get(parent.id)
+      if (children) children.push(branch)
+      else branchChildren.set(parent.id, [branch])
+    } else {
+      branchRoots.push(branch)
     }
-    const path = resolveMessageBranchPath(graph, branch.id)
-    const ids = new Set(path.map((message) => message.id))
-    if (branch.forkMessageId && !ids.has(branch.forkMessageId)) {
-      throw new Error('Message Branch fork is not on its path.')
-    }
-    if (branch.forkActivityId && !activities.has(branch.forkActivityId)) {
-      throw new Error('Message Branch Activity fork is missing.')
-    }
+  }
+  const branchAncestry = indexTreeAncestry(branchRoots, branchChildren)
+  if (branchAncestry.size !== graph.branches.length) {
+    throw new Error('Message Branch graph contains a cycle.')
   }
 
-  const runtimeSegments = indexById(graph.runtimeSegments)
-  if (runtimeSegments.size !== graph.runtimeSegments.length) {
-    throw new Error('Conversation graph contains duplicate Runtime Segment ids.')
-  }
   for (const segment of graph.runtimeSegments) {
     if (!frames.has(segment.agentFrameId)) {
       throw new Error('Runtime Segment Agent Frame is missing.')
     }
   }
+
+  const messageChildren = new Map<string, PersistedMessageNode[]>()
+  const messageRoots: PersistedMessageNode[] = []
   for (const message of graph.messages) {
     const introducedOnBranch = branches.get(message.introducedOnBranchId)
     if (!introducedOnBranch || introducedOnBranch.agentFrameId !== message.agentFrameId) {
@@ -361,6 +419,163 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
       if (!segment || segment.agentFrameId !== message.agentFrameId) {
         throw new Error('Message Runtime Segment is invalid.')
       }
+    }
+    if (message.parentMessageId) {
+      const parent = messages.get(message.parentMessageId)
+      if (!parent || parent.agentFrameId !== message.agentFrameId) {
+        throw new Error('Conversation Message parent is invalid.')
+      }
+      if (
+        !isTreeAncestor(branchAncestry, parent.introducedOnBranchId, message.introducedOnBranchId)
+      ) {
+        throw new Error('Message introduction Branch is not on the containing Branch path.')
+      }
+      const children = messageChildren.get(parent.id)
+      if (children) children.push(message)
+      else messageChildren.set(parent.id, [message])
+    } else {
+      messageRoots.push(message)
+    }
+  }
+  const messageAncestry = indexTreeAncestry(messageRoots, messageChildren)
+  if (messageAncestry.size !== graph.messages.length) {
+    throw new Error('Conversation message graph contains a cycle.')
+  }
+
+  const branchHeads = new Map<string, PersistedMessageNode | undefined>()
+  const reachableMessages = new Set<string>()
+  for (const branch of graph.branches) {
+    const head = branch.headMessageId ? messages.get(branch.headMessageId) : undefined
+    if (branch.headMessageId && (!head || head.agentFrameId !== branch.agentFrameId)) {
+      throw new Error(`Conversation branch references an invalid message: ${branch.headMessageId}`)
+    }
+    branchHeads.set(branch.id, head)
+    if (head && !isTreeAncestor(branchAncestry, head.introducedOnBranchId, branch.id)) {
+      throw new Error('Message introduction Branch is not on the containing Branch path.')
+    }
+    const parentBranch = branch.parentBranchId ? branches.get(branch.parentBranchId) : undefined
+    if ((branch.forkMessageId || branch.forkActivityId) && !parentBranch) {
+      throw new Error('Message Branch fork requires a parent Branch.')
+    }
+    const parentHead = parentBranch?.headMessageId
+      ? messages.get(parentBranch.headMessageId)
+      : undefined
+    if (branch.forkMessageId) {
+      const fork = messages.get(branch.forkMessageId)
+      if (
+        !head ||
+        !fork ||
+        fork.agentFrameId !== branch.agentFrameId ||
+        !isTreeAncestor(messageAncestry, fork.id, head.id)
+      ) {
+        throw new Error('Message Branch fork is not on its path.')
+      }
+      if (
+        !parentBranch ||
+        !parentHead ||
+        !isTreeAncestor(messageAncestry, fork.id, parentHead.id) ||
+        !isTreeAncestor(branchAncestry, fork.introducedOnBranchId, parentBranch.id)
+      ) {
+        throw new Error('Message Branch fork is not on its parent path.')
+      }
+    }
+    if (branch.forkActivityId) {
+      const activity = activities.get(branch.forkActivityId)
+      if (!activity) throw new Error('Message Branch Activity fork is missing.')
+      if (
+        !head ||
+        activity.agentFrameId !== branch.agentFrameId ||
+        !isTreeAncestor(messageAncestry, activity.promptMessageId, head.id) ||
+        !isTreeAncestor(branchAncestry, activity.messageBranchId, branch.id)
+      ) {
+        throw new Error('Message Branch Activity fork is not on its path.')
+      }
+      if (
+        !parentBranch ||
+        !parentHead ||
+        !isTreeAncestor(messageAncestry, activity.promptMessageId, parentHead.id) ||
+        !isTreeAncestor(branchAncestry, activity.messageBranchId, parentBranch.id)
+      ) {
+        throw new Error('Message Branch Activity fork is not on its parent path.')
+      }
+    }
+    let current = head
+    while (current && !reachableMessages.has(current.id)) {
+      reachableMessages.add(current.id)
+      current = current.parentMessageId ? messages.get(current.parentMessageId) : undefined
+    }
+  }
+  if (reachableMessages.size !== graph.messages.length) {
+    const unreachable = graph.messages.find((message) => !reachableMessages.has(message.id))
+    throw new Error(`Conversation Message is not reachable from any Branch: ${unreachable?.id}`)
+  }
+
+  for (const group of graph.activityGroups) {
+    const branch = branches.get(group.messageBranchId)
+    if (!branch || branch.agentFrameId !== group.agentFrameId) {
+      throw new Error('Activity Group Branch is invalid.')
+    }
+    const prompt = messages.get(group.promptMessageId)
+    if (
+      !prompt ||
+      prompt.role !== 'user' ||
+      prompt.agentFrameId !== group.agentFrameId ||
+      !branchHeads.get(branch.id) ||
+      !isTreeAncestor(messageAncestry, prompt.id, branchHeads.get(branch.id)!.id)
+    ) {
+      throw new Error('Activity Group Prompt Message is invalid.')
+    }
+    if (group.activityIds.some((id) => !activities.has(id))) {
+      throw new Error('Activity Group member is invalid.')
+    }
+  }
+
+  for (const activity of graph.activities) {
+    const branch = branches.get(activity.messageBranchId)
+    if (!branch || branch.agentFrameId !== activity.agentFrameId) {
+      throw new Error('Activity Branch is invalid.')
+    }
+    const prompt = messages.get(activity.promptMessageId)
+    if (
+      !prompt ||
+      prompt.role !== 'user' ||
+      prompt.agentFrameId !== activity.agentFrameId ||
+      !branchHeads.get(branch.id) ||
+      !isTreeAncestor(messageAncestry, prompt.id, branchHeads.get(branch.id)!.id)
+    ) {
+      throw new Error('Activity Prompt Message is invalid.')
+    }
+    const segment = runtimeSegments.get(activity.runtimeSegmentId)
+    if (!segment || segment.agentFrameId !== activity.agentFrameId) {
+      throw new Error('Activity Runtime Segment is invalid.')
+    }
+    if (activity.activityGroupId) {
+      const group = activityGroups.get(activity.activityGroupId)
+      if (
+        !group ||
+        group.agentFrameId !== activity.agentFrameId ||
+        group.messageBranchId !== activity.messageBranchId ||
+        group.promptMessageId !== activity.promptMessageId ||
+        !activityIdsByGroupId.get(group.id)!.has(activity.id)
+      ) {
+        throw new Error('Activity Group membership is invalid.')
+      }
+    }
+  }
+
+  for (const group of graph.activityGroups) {
+    if (
+      group.activityIds.some((id) => {
+        const activity = activities.get(id)
+        return (
+          activity?.activityGroupId !== group.id ||
+          activity.agentFrameId !== group.agentFrameId ||
+          activity.messageBranchId !== group.messageBranchId ||
+          activity.promptMessageId !== group.promptMessageId
+        )
+      })
+    ) {
+      throw new Error('Activity Group member is invalid.')
     }
   }
 }

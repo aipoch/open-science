@@ -453,6 +453,21 @@ describe('ACP Session resume policy', () => {
     })
   })
 
+  it('does not let diagnostic text override a structured non-session service failure', () => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(
+      policy.classifyFailure({
+        code: -32603,
+        message: 'Provider diagnostic quoted “Session not found” while loading credentials',
+        data: { service: 'provider' }
+      })
+    ).toEqual({
+      disposition: 'authoritative',
+      reason: 'non-session-service-failure'
+    })
+  })
+
   it('keeps an opaque detail-free Internal error authoritative', () => {
     const policy = new AcpSessionResumePolicy()
 

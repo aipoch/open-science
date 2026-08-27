@@ -1,3 +1,4 @@
+import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import type { XaiOAuthDeviceAuthorization } from '../../shared/settings'
 import { netFetchStandard } from '../skills/net-fetch'
 
@@ -223,7 +224,7 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
     try {
       return await pending
     } finally {
-      if (this.refreshPromise === pending) this.refreshPromise = undefined
+      if (isCurrentInFlight(this.refreshPromise, pending)) this.refreshPromise = undefined
     }
   }
 

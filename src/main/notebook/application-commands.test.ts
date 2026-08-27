@@ -15,6 +15,7 @@ import {
   notebookExportIpynbAllCommand,
   notebookExportIpynbCommand,
   notebookFinishCodeCellCommand,
+  notebookInspectNamespaceCommand,
   notebookReadInputPreviewCommand,
   notebookReferenceCommand,
   notebookRestartCommand,
@@ -72,12 +73,13 @@ const invocation = <Args extends readonly unknown[]>(
 })
 
 describe('Notebook application commands', () => {
-  it('owns exactly the 16 renderer-callable Notebook and Environment commands', () => {
+  it('owns exactly the 17 renderer-callable Notebook and Environment commands', () => {
     expect([
       ...notebookApplicationCommands.commands,
       ...notebookEnvironmentApplicationCommands.commands
     ]).toEqual([
       expect.objectContaining({ name: 'notebook:state' }),
+      expect.objectContaining({ name: 'notebook:inspect-namespace' }),
       expect.objectContaining({ name: 'notebook:reference' }),
       expect.objectContaining({ name: 'notebook:begin-code-cell' }),
       expect.objectContaining({ name: 'notebook:append-code-cell' }),
@@ -99,6 +101,7 @@ describe('Notebook application commands', () => {
   it('routes Notebook commands through the owner workflows and input-preview port', async () => {
     const workflowMethods = [
       'state',
+      'inspectNamespace',
       'reference',
       'beginCodeCell',
       'appendCodeCell',
@@ -127,6 +130,11 @@ describe('Notebook application commands', () => {
     const session = { sessionId: 'session-1', workspaceCwd: '/workspace' }
     const cases = [
       [notebookStateCommand, [session], 'state'],
+      [
+        notebookInspectNamespaceCommand,
+        [{ ...session, language: 'python', environment: 'default-python' }],
+        'inspectNamespace'
+      ],
       [notebookReferenceCommand, [session], 'reference'],
       [notebookBeginCodeCellCommand, [session], 'beginCodeCell'],
       [

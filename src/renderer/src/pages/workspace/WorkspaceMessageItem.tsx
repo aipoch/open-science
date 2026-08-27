@@ -295,7 +295,7 @@ const TurnTokenUsage = ({
               strokeWidth={2}
               aria-hidden="true"
             />
-            {t('Usage')}
+            {t('Calls')}
           </button>
         </span>
       </PopoverAnchor>
@@ -318,7 +318,7 @@ const TurnTokenUsage = ({
       >
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
-            <div className="text-[13px] font-medium">{t('Usage')}</div>
+            <div className="text-[13px] font-medium">{t('Calls')}</div>
             {frameworkName || provider ? (
               <div data-slot="turn-runtime-icons" className="flex items-center gap-1">
                 {framework ? (
@@ -365,7 +365,7 @@ const TurnTokenUsage = ({
               data-slot="turn-token-usage-turn-count"
               className="text-[10px] font-normal text-muted-foreground tabular-nums"
             >
-              {t('{{count}} turns', { defaultValue_one: '{{count}} turn', count: usage.turnCount })}
+              {t('{{count}} calls', { defaultValue_one: '{{count}} call', count: usage.turnCount })}
             </div>
           ) : null}
         </div>

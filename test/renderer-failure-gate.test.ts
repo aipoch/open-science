@@ -47,6 +47,19 @@ describe('RendererFailureGate', () => {
     expect(() => gate.assertNoFailures()).not.toThrow()
   })
 
+  it('allows one exact expected console error without hiding other failures', async () => {
+    const gate = new RendererFailureGate()
+    const observed = observablePage()
+    await gate.observe(observed.page as never)
+    gate.allowConsoleError('expected failed resource')
+
+    observed.emit('console', { type: () => 'error', text: () => 'expected failed resource' })
+    expect(() => gate.assertNoFailures()).not.toThrow()
+
+    observed.emit('console', { type: () => 'error', text: () => 'unexpected renderer failure' })
+    expect(() => gate.assertNoFailures()).toThrow(/Renderer emitted errors/)
+  })
+
   it('backfills renderer errors emitted before observation begins', async () => {
     const gate = new RendererFailureGate()
     const observed = observablePage()

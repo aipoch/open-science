@@ -5987,6 +5987,7 @@ describe('branchInNewSession', () => {
               {
                 ...activeBranch,
                 id: 'preserved-inactive-branch',
+                parentBranchId: activeBranch.id,
                 headMessageId: session.messages[0]?.id,
                 updatedAt: Date.now() - 1
               }
@@ -6201,9 +6202,21 @@ describe('truncateSessionFromMessage', () => {
   it('prunes activity group references when edited resend removes their activities', () => {
     seedSession({
       activities: [
-        { ...createActivity('act-1', baseTime + 150), activityGroupId: 'group-1' },
-        { ...createActivity('act-2', baseTime + 250), activityGroupId: 'group-1' },
-        { ...createActivity('act-3', baseTime + 350), activityGroupId: 'group-2' }
+        {
+          ...createActivity('act-1', baseTime + 150),
+          activityGroupId: 'group-1',
+          promptMessageId: 'user-1'
+        },
+        {
+          ...createActivity('act-2', baseTime + 250),
+          activityGroupId: 'group-1',
+          promptMessageId: 'user-1'
+        },
+        {
+          ...createActivity('act-3', baseTime + 350),
+          activityGroupId: 'group-2',
+          promptMessageId: 'user-2'
+        }
       ],
       activityGroups: [
         {
@@ -6211,6 +6224,7 @@ describe('truncateSessionFromMessage', () => {
           title: 'First group',
           sortIndex: 1,
           activityIds: ['act-1', 'act-2'],
+          promptMessageId: 'user-1',
           createdAt: baseTime + 140,
           updatedAt: baseTime + 250,
           completedAt: baseTime + 260
@@ -6220,6 +6234,7 @@ describe('truncateSessionFromMessage', () => {
           title: 'Second group',
           sortIndex: 2,
           activityIds: ['act-3'],
+          promptMessageId: 'user-2',
           createdAt: baseTime + 340,
           updatedAt: baseTime + 350,
           completedAt: baseTime + 360

@@ -35,7 +35,10 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
         ) : null}
       </div>
     )
-  },
+  }
+}))
+
+vi.mock('@/components/streamdown/SessionMessageLink', () => ({
   SessionMessageLink: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
     <a data-fallback-session-link="" href={href}>
       {children}

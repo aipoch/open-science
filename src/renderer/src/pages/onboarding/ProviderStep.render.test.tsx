@@ -105,6 +105,31 @@ const submitClaudeFallbackToken = async (token: string): Promise<void> => {
 }
 
 describe('ProviderStep', () => {
+  it('offers OpenCode Go and Zen when OpenCode is the active framework', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ]
+    })
+
+    await renderStep()
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Provider type"]')
+    await act(async () => {
+      trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(document.body.textContent).toContain('OpenCode Go')
+    expect(document.body.textContent).toContain('OpenCode Zen')
+  })
+
   it('defaults an untouched custom gateway to the active framework API format', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'opencode',

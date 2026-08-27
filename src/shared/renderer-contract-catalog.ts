@@ -7,6 +7,7 @@ import {
   type RendererSurfaceProfile
 } from './renderer-contract'
 import { DATABASE_STARTUP_CHANNELS } from './database-startup'
+import { SOURCE_PREVIEW_LOAD_STATE_CHANNEL, SOURCE_PREVIEW_RELEASE_CHANNEL } from './source-preview'
 
 const WEB = 'web'
 const LOCAL = 'local'
@@ -220,7 +221,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('notebook', 'notebook', [
     ['onAvailable', 'notebook:available', EVENT], ['onChanged', 'notebook:changed', EVENT], ['appendCodeCell', 'notebook:append-code-cell'],
     ['beginCodeCell', 'notebook:begin-code-cell'], ['execute', 'notebook:execute'], ['exportIpynb', 'notebook:export-ipynb', LOCAL],
-    ['exportIpynbAll', 'notebook:export-ipynb-all', LOCAL], ['finishCodeCell', 'notebook:finish-code-cell'], ['getReference', 'notebook:reference'],
+    ['exportIpynbAll', 'notebook:export-ipynb-all', LOCAL], ['finishCodeCell', 'notebook:finish-code-cell'], ['getReference', 'notebook:reference'], ['inspectNamespace', 'notebook:inspect-namespace'],
     ['readInputPreview', 'notebook:read-input-preview'], ['restart', 'notebook:restart'], ['runCell', 'notebook:run-cell'], ['shutdown', 'notebook:shutdown'],
     ['state', 'notebook:state'],
   ]),
@@ -238,6 +239,10 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('office-preview', 'officePreview', [
     ['attachFrame', 'office-preview:attach-frame', ELECTRON], ['close', 'office-preview:close', ELECTRON], ['onState', 'office-preview:state', ELECTRON_EVENT],
     ['open', 'office-preview:open', ELECTRON], ['reportState', 'office-preview:report-state', SEND],
+  ]),
+  group('source-preview', 'sourcePreview', [
+    ['onLoadState', SOURCE_PREVIEW_LOAD_STATE_CHANNEL, ELECTRON_EVENT],
+    ['release', SOURCE_PREVIEW_RELEASE_CHANNEL, SEND],
   ]),
   group('permissions', 'permissions', [
     ['onChanged', 'permissions:changed', EVENT], ['extendUndo', 'permissions:extend-undo'], ['list', 'permissions:list'], ['restore', 'permissions:restore'],

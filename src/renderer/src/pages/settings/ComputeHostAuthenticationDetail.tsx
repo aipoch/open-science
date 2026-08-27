@@ -262,7 +262,7 @@ export function ComputeHostAuthenticationDetail({
                         onClick={onUpdatePassword}
                       >
                         <KeyRound className="size-3.5" aria-hidden="true" />
-                        <span className="sr-only">{t('Update')}</span>
+                        <span className="sr-only">{t('Update', { context: 'verb' })}</span>
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>{t('Update saved password')}</TooltipContent>

@@ -46,6 +46,22 @@ describe('provider registry', () => {
     expect(OFFICIAL_VENDORS[anthropicIndex + 1]?.id).toBe('xai')
   })
 
+  it('places OpenCode Go and Zen immediately before OpenRouter with curated Chat catalogs', () => {
+    const openRouterIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'openrouter')
+
+    expect(
+      OFFICIAL_VENDORS.slice(openRouterIndex - 2, openRouterIndex + 1).map(({ id }) => id)
+    ).toEqual(['opencode-go', 'opencode', 'openrouter'])
+    expect(resolveVendorBaseUrl('opencode-go')).toBe('https://opencode.ai/zen/go/v1')
+    expect(resolveVendorBaseUrl('opencode')).toBe('https://opencode.ai/zen/v1')
+    expect(resolveVendorApiEndpoints('opencode-go')).toEqual(['openai'])
+    expect(resolveVendorApiEndpoints('opencode')).toEqual(['openai'])
+    expect(resolveVendorModelsUrl('opencode-go')).toBeUndefined()
+    expect(resolveVendorModelsUrl('opencode')).toBeUndefined()
+    expect(defaultVendorModel('opencode-go')).toBe('kimi-k2.7-code')
+    expect(defaultVendorModel('opencode')).toBe('kimi-k2.7-code')
+  })
+
   it('resolves a single-endpoint vendor base URL', () => {
     expect(resolveVendorBaseUrl('openai')).toBe('https://api.openai.com')
     expect(getOfficialVendor('openai')?.apiEndpoints).toEqual(['responses'])
@@ -97,6 +113,32 @@ describe('provider registry', () => {
     )
   })
 
+  it('offers GLM-4.5-Air through the official Zhipu provider', () => {
+    expect(getOfficialVendor('zhipu')?.models).toContainEqual({
+      id: 'glm-4.5-air',
+      contextWindow: 128_000
+    })
+  })
+
+  it('offers GLM-5.3 through the pay-as-you-go Zhipu provider', () => {
+    expect(getOfficialVendor('zhipu')?.models).toContainEqual({
+      id: 'glm-5.3',
+      contextWindow: 1_000_000,
+      reasoningEffort: 'low-high-max'
+    })
+  })
+
+  it('offers GLM-5.3-Flash through both Zhipu provider types', () => {
+    const expected = {
+      id: 'glm-5.3-flash',
+      contextWindow: 1_000_000,
+      reasoningEffort: 'low-high-max'
+    }
+
+    expect(getOfficialVendor('zhipu')?.models).toContainEqual(expected)
+    expect(getOfficialVendor('glmcodingplan')?.models).toContainEqual(expected)
+  })
+
   it('routes the GLM Coding Plan through the /api/coding OpenAI path, per region', () => {
     expect(vendorHasRegions('glmcodingplan')).toBe(true)
     expect(resolveVendorApiEndpoints('glmcodingplan')).toEqual(['anthropic', 'openai'])
@@ -115,8 +157,9 @@ describe('provider registry', () => {
     // Quota-based plan: fixed catalog, no live model-list refresh.
     expect(resolveVendorModelsUrl('glmcodingplan')).toBeUndefined()
     expect(defaultVendorModel('glmcodingplan')).toBe('glm-5.3')
-    // The coding plan drops GLM's vision variant, so it serves no multimodal model.
+    // The coding plan omits the older vision variant but serves the natively multimodal Flash model.
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5v-turbo')).toBe(false)
+    expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.3-flash')).toBe(true)
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.3')).toBe(false)
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.2')).toBe(false)
     // Each region points at its own subscription console.
@@ -127,7 +170,7 @@ describe('provider registry', () => {
   it('exposes the first catalog entry as the default model', () => {
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
     expect(defaultVendorModel('xai')).toBe('grok-4.6')
-    expect(defaultVendorModel('zhipu')).toBe('glm-5.2')
+    expect(defaultVendorModel('zhipu')).toBe('glm-5.3')
   })
 
   it('resolves model-specific static reasoning effort profiles without network discovery', () => {
@@ -140,6 +183,14 @@ describe('provider registry', () => {
       slots: ['none', 'high', 'max', 'max', 'max']
     })
     expect(resolveVendorModelReasoningEffort('glmcodingplan', 'glm-5.3')).toEqual({
+      supported: true,
+      slots: ['low', 'high', 'max', 'max', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('zhipu', 'glm-5.3-flash')).toEqual({
+      supported: true,
+      slots: ['low', 'high', 'max', 'max', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('glmcodingplan', 'glm-5.3-flash')).toEqual({
       supported: true,
       slots: ['low', 'high', 'max', 'max', 'max']
     })
@@ -543,8 +594,9 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal(planId, 'deepseek-v4-pro')).toBe(false)
     })
 
-    it('matches Zhipu vision variants by pattern, including future `Nv` ids', () => {
+    it('matches Zhipu vision variants by pattern plus GLM-5.3-Flash explicitly', () => {
       expect(isVendorModelMultimodal('zhipu', 'glm-5v-turbo')).toBe(true)
+      expect(isVendorModelMultimodal('zhipu', 'glm-5.3-flash')).toBe(true)
       // The pattern generalizes to future vision variants the live refresh may surface.
       expect(isVendorModelMultimodal('zhipu', 'glm-6v')).toBe(true)
       expect(isVendorModelMultimodal('zhipu', 'glm-5.2')).toBe(false)
@@ -688,6 +740,8 @@ describe('provider registry', () => {
       expect(resolveModelContextWindow('deepseek', 'deepseek-v4-flash')).toBe(1_000_000)
       expect(resolveModelContextWindow('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(1_000_000)
       expect(resolveModelContextWindow('glmcodingplan', 'glm-5.3')).toBe(1_000_000)
+      expect(resolveModelContextWindow('zhipu', 'glm-5.3-flash')).toBe(1_000_000)
+      expect(resolveModelContextWindow('glmcodingplan', 'glm-5.3-flash')).toBe(1_000_000)
       expect(resolveModelContextWindow('zhipu', 'glm-5.2')).toBe(1_000_000)
       expect(resolveModelContextWindow('zhipu', 'glm-5.1')).toBe(200_000)
       expect(resolveModelContextWindow('kimi', 'kimi-k3')).toBe(1_000_000)

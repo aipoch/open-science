@@ -69,6 +69,7 @@ const queueSessionIsSendable = (
   session: ChatSession
 ): boolean =>
   session.archivedAt === undefined &&
+  (options.isProjectActive?.(session.projectId) ?? true) &&
   (session.status === 'idle' || session.status === 'error') &&
   // Errored turns have no live reveal to wait for; let the queue proceed immediately.
   (session.status === 'error' || !options.isPresentationRevealing(session.id)) &&

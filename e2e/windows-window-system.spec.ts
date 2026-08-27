@@ -36,7 +36,7 @@ test.describe('Windows window system', () => {
     await app.requestMainWindowClose()
     await expect.poll(() => app.mainWindowState()).toEqual({ minimized: false, visible: false })
 
-    page = await app.launchSecondInstance()
+    await app.launchSecondInstance()
     await expect.poll(() => app.mainWindowState()).toEqual({ minimized: false, visible: true })
 
     await app.pressMainWindowShortcut('W', ['control'])

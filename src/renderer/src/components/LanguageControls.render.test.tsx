@@ -65,7 +65,8 @@ describe('LanguageSelect', () => {
       '日本語',
       '한국어',
       'Français',
-      'Русский'
+      'Русский',
+      'Español'
     ])
   })
 
@@ -159,6 +160,25 @@ describe('LanguageSelect', () => {
     expect(document.documentElement.lang).toBe('fr')
     expect(container.querySelector('button')?.getAttribute('aria-label')).toBe(
       "Langue de l'interface"
+    )
+  })
+
+  it('switches to Spanish copy from the language picker', () => {
+    render(<LanguageSelect />)
+    openRadixMenu(container.querySelector('button'))
+
+    const spanish = Array.from(document.querySelectorAll('[role="option"]')).find((option) =>
+      option.textContent?.includes('Español')
+    )
+    clickRadixMenuItem(spanish as HTMLElement)
+
+    expect(useLocaleStore.getState().preference).toBe('es')
+    expect(useLocaleStore.getState().locale).toBe('es')
+    expect(i18next.language).toBe('es')
+    expect(document.documentElement.lang).toBe('es')
+    expect(localStorage.getItem('open-science-language')).toBe('es')
+    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe(
+      'Idioma de la interfaz'
     )
   })
 })

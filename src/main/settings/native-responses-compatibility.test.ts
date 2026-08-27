@@ -387,6 +387,237 @@ describe('native Responses compatibility', () => {
     })
   })
 
+  it('promotes Artifact guidance when a Notebook run returns a generated file', async () => {
+    const privateAssistantText = 'I will export the private result as an artifact:'
+    let upstreamRequest: Record<string, unknown> | undefined
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      upstreamRequest = body
+      const artifactRequired =
+        typeof body.instructions === 'string' &&
+        body.instructions.includes('<open_science_artifact_instructions>')
+      const output = artifactRequired
+        ? {
+            id: 'artifact-call-item-1',
+            type: 'function_call',
+            name: 'mcp__open_science_artifacts__write_artifact_file',
+            call_id: 'artifact-call-1',
+            arguments: JSON.stringify({
+              filename: 'private.png',
+              mimeType: 'image/png',
+              source: { kind: 'localPath', path: 'data/private.png' },
+              producerRunId: 'notebook-run-1'
+            })
+          }
+        : {
+            id: 'message-1',
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: privateAssistantText }]
+          }
+      const upstream = [
+        { type: 'response.output_item.done', output_index: 0, item: output },
+        {
+          type: 'response.completed',
+          response: {
+            id: 'response-1',
+            status: 'completed',
+            output: [output]
+          }
+        },
+        '[DONE]'
+      ]
+        .map((event) => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`)
+        .join('')
+      return new Response(upstream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    })
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.example/v1', model: 'model-a' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          stream: true,
+          instructions: 'base provider instructions',
+          input: [
+            {
+              type: 'message',
+              role: 'developer',
+              content:
+                '<open_science_artifact_instructions>private guidance</open_science_artifact_instructions>'
+            },
+            {
+              type: 'function_call',
+              namespace: 'mcp__open_science_notebook',
+              name: 'notebook_execute',
+              call_id: 'notebook-call-1',
+              arguments: '{}'
+            },
+            {
+              type: 'function_call_output',
+              call_id: 'notebook-call-1',
+              output:
+                '{"runId":"notebook-run-1","workingFiles":[{"relativePath":"data/private.png"}]}'
+            }
+          ],
+          tools: [
+            {
+              type: 'namespace',
+              name: 'mcp__open_science_notebook',
+              tools: [
+                {
+                  type: 'function',
+                  name: 'notebook_execute',
+                  parameters: { type: 'object' }
+                }
+              ]
+            },
+            {
+              type: 'namespace',
+              name: 'mcp__open_science_artifacts',
+              tools: [
+                {
+                  type: 'function',
+                  name: 'write_artifact_file',
+                  parameters: { type: 'object' }
+                }
+              ]
+            }
+          ]
+        })
+      })
+
+      const responseBody = await response.text()
+      expect(response.ok, responseBody).toBe(true)
+      expect(responseBody).toContain('response.completed')
+      expect(responseBody).not.toContain(privateAssistantText)
+      expect(responseBody).toContain('write_artifact_file')
+      expect(upstreamRequest?.instructions).toContain('base provider instructions')
+      expect(upstreamRequest?.instructions).toContain(
+        '<open_science_artifact_instructions>private guidance</open_science_artifact_instructions>'
+      )
+      expect(JSON.stringify(upstreamRequest?.input)).not.toContain(
+        '<open_science_artifact_instructions>'
+      )
+      const requestLog = logSpies.info.mock.calls.find(
+        ([message]) => message === 'native Responses compatibility request'
+      )
+      const streamLog = logSpies.info.mock.calls.find(
+        ([message]) => message === 'native Responses compatibility stream completed'
+      )
+      expect(requestLog?.[1]).toMatchObject({
+        topLevelArtifactInstructionPresent: true,
+        developerArtifactInstructionPresent: false,
+        artifactInstructionPresent: true,
+        artifactToolPresent: true,
+        functionCallOutputHistoryCount: 1
+      })
+      expect(streamLog?.[1]).toMatchObject({
+        requestId: requestLog?.[1]?.requestId,
+        terminalEventType: 'response.completed',
+        terminalStatus: 'completed',
+        terminalOutputItemCount: 1,
+        terminalMessageCount: 0,
+        observedFunctionCallCount: 1,
+        observedArtifactFunctionCallCount: 1
+      })
+      expect(
+        JSON.stringify(Object.values(logSpies).flatMap((spy) => spy.mock.calls))
+      ).not.toContain(privateAssistantText)
+    } finally {
+      await proxy.close()
+    }
+  })
+
+  it('counts an Artifact call emitted before a sparse terminal event', async () => {
+    const artifactCall = {
+      id: 'artifact-call-item-1',
+      type: 'function_call',
+      name: 'mcp__open_science_artifacts__write_artifact_file',
+      call_id: 'artifact-call-1',
+      arguments: '{}'
+    }
+    const upstream = [
+      { type: 'response.output_item.added', output_index: 0, item: artifactCall },
+      { type: 'response.output_item.done', output_index: 0, item: artifactCall },
+      {
+        type: 'response.completed',
+        response: {
+          id: 'response-1',
+          status: 'completed',
+          output: [{ ...artifactCall, id: undefined }]
+        }
+      },
+      '[DONE]'
+    ]
+      .map((event) => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`)
+      .join('')
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.example/v1', model: 'model-a' },
+      vi.fn(
+        async () =>
+          new Response(upstream, {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' }
+          })
+      )
+    )
+    const connection = await proxy.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          stream: true,
+          input: [],
+          tools: [
+            {
+              type: 'namespace',
+              name: 'mcp__open_science_artifacts',
+              tools: [
+                {
+                  type: 'function',
+                  name: 'write_artifact_file',
+                  parameters: { type: 'object' }
+                }
+              ]
+            }
+          ]
+        })
+      })
+
+      expect(response.ok, await response.text()).toBe(true)
+      const streamLog = logSpies.info.mock.calls.find(
+        ([message]) => message === 'native Responses compatibility stream completed'
+      )
+      expect(streamLog?.[1]).toMatchObject({
+        terminalEventType: 'response.completed',
+        terminalOutputItemCount: 1,
+        observedFunctionCallCount: 1,
+        observedArtifactFunctionCallCount: 1
+      })
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('aborts a native Responses stream after the configured idle period', async () => {
     let upstreamSignal: AbortSignal | undefined
     let failUpstream: ((reason?: unknown) => void) | undefined

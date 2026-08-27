@@ -13,6 +13,7 @@ import {
 } from 'react'
 
 import { useSessionStore } from '@/stores/session-store'
+import { useProjectStore } from '@/stores/project-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
@@ -94,6 +95,7 @@ const WorkspaceMessageQueueRuntimeBridge = (): null => {
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
   const openSideChatParentSessionIds = useOpenSideChatParentSessionIds()
+  const projects = useProjectStore((state) => state.projects)
   useLayoutEffect(() => {
     owner.updateRuntime({
       promptInFlightSessionIds: runtime.promptInFlightSessionIds,
@@ -119,6 +121,8 @@ const WorkspaceMessageQueueRuntimeBridge = (): null => {
       isSideChatOpen: (sessionId) => openSideChatParentSessionIds.has(sessionId),
       hasPendingPermissionRequest: (sessionId) =>
         runtime.pendingPermissions.some((request) => request.sessionId === sessionId),
+      isProjectActive: (projectId) =>
+        projects.some((project) => project.id === projectId && project.archivedAt === undefined),
       abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
       getSession: (sessionId) =>
         useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId),
@@ -128,6 +132,7 @@ const WorkspaceMessageQueueRuntimeBridge = (): null => {
     loadSpecialists,
     openSideChatParentSessionIds,
     owner,
+    projects,
     runtime,
     specialistCatalogLoaded,
     specialistItems

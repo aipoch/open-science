@@ -615,34 +615,6 @@
     }
   }
 
-  [data-session-link-favicon] {
-    @apply relative me-[0.3em] inline-grid size-[1em] place-items-center align-[-0.125em] text-sd-muted;
-
-    & > :is(img, svg) {
-      @apply absolute inset-0 m-0! size-full! max-w-none! rounded-none! border-0! bg-transparent! p-0!;
-    }
-
-    & > img {
-      @apply opacity-0 transition-opacity duration-150 ease-out;
-    }
-
-    &[data-state='loading'] > svg {
-      @apply opacity-50;
-    }
-
-    &[data-state='success'] > img {
-      @apply opacity-100;
-    }
-
-    &[data-state='success'] > svg {
-      @apply opacity-0;
-    }
-
-    &[data-state='error'] > svg {
-      @apply opacity-75;
-    }
-  }
-
   [data-streamdown='code-block'] {
     @apply relative my-[0.75em] min-w-0 max-w-full gap-2 rounded-xl border border-border-200 bg-bg-000! p-2.5 first:mt-0 last:mb-0;
   }

@@ -237,6 +237,30 @@ describe('ArchiveCoordinator', () => {
     expect(projects.updateArchive).not.toHaveBeenCalled()
   })
 
+  it('waits for asynchronous Project activity before archiving', async () => {
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn().mockResolvedValue({ ...project, archivedAt: 40 })
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn().mockResolvedValue([]),
+      assertSessionAvailable: vi.fn(),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn()
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn().mockResolvedValue(false),
+      liveSessionProjectId: vi.fn()
+    })
+
+    await expect(
+      coordinator.updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
+    ).resolves.toMatchObject({ archivedAt: 40 })
+
+    expect(projects.updateArchive).toHaveBeenCalledOnce()
+  })
+
   it('resolves a fresh live session owner before archive admission', async () => {
     const projects = {
       get: vi.fn().mockResolvedValue({ ...project, archivedAt: 40 }),

@@ -116,6 +116,7 @@ describe('Web RPC contract', () => {
       'notebook.exportIpynbAll',
       'notebook.finishCodeCell',
       'notebook.getReference',
+      'notebook.inspectNamespace',
       'notebook.readInputPreview',
       'notebook.restart',
       'notebook.runCell',

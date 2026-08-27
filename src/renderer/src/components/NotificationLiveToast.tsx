@@ -268,14 +268,14 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
             <TooltipTrigger asChild>
               <button
                 type="button"
-                aria-label={t('Dismiss')}
+                aria-label={t('Close')}
                 onClick={() => setNotice(undefined)}
                 className="-mr-1 -mt-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
               >
                 <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
               </button>
             </TooltipTrigger>
-            <TooltipContent>{t('Dismiss')}</TooltipContent>
+            <TooltipContent>{t('Close')}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
       </div>

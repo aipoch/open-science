@@ -26,7 +26,7 @@ describe('LocalePreferenceOwner', () => {
   it('creates isolated native i18next instances with CLDR plurals and direct English fallback', async () => {
     const messages =
       (await import('./main-process-messages')) as typeof import('./main-process-messages') & {
-        createNativeI18n?: (locale: 'en' | 'fr' | 'ru' | 'zh-Hans') => {
+        createNativeI18n?: (locale: 'en' | 'es' | 'fr' | 'ru' | 'zh-Hans') => {
           t: (key: string, options?: Record<string, string | number>) => string
         }
       }
@@ -35,6 +35,7 @@ describe('LocalePreferenceOwner', () => {
     if (!messages.createNativeI18n) return
 
     const english = messages.createNativeI18n('en')
+    const spanish = messages.createNativeI18n('es')
     const french = messages.createNativeI18n('fr')
     const russian = messages.createNativeI18n('ru')
     const simplifiedChinese = messages.createNativeI18n('zh-Hans')
@@ -59,6 +60,11 @@ describe('LocalePreferenceOwner', () => {
       'Le dossier choisi contient déjà 1 Notebook.',
       'Le dossier choisi contient déjà 2 Notebooks.',
       'Le dossier choisi contient déjà 1000000 Notebooks.'
+    ])
+    expect([1, 2, 1_000_000].map((count) => spanish.t(key, options(count)))).toEqual([
+      'Ya existe 1 Notebook en el directorio elegido.',
+      'Ya existen 2 Notebooks en el directorio elegido.',
+      'Ya existen 1000000 Notebooks en el directorio elegido.'
     ])
     expect([1, 2].map((count) => simplifiedChinese.t(key, options(count)))).toEqual([
       '所选目录中已存在 1 个 Notebook。',
@@ -139,6 +145,7 @@ describe('LocalePreferenceOwner', () => {
     expect(translateNativeMessage('ko', 'Quit', { context: 'verb' })).toBe('종료')
     expect(translateNativeMessage('ru', 'Quit', { context: 'verb' })).toBe('Выйти')
     expect(translateNativeMessage('fr', 'Quit', { context: 'verb' })).toBe('Quitter')
+    expect(translateNativeMessage('es', 'Quit', { context: 'verb' })).toBe('Salir')
     expect(
       translateNativeMessage(
         'zh-Hans',
@@ -170,6 +177,8 @@ describe('LocalePreferenceOwner', () => {
     expect(owner.t('Quit', { context: 'verb' })).toBe('Выйти')
     await owner.setPreference('fr')
     expect(owner.t('Quit', { context: 'verb' })).toBe('Quitter')
+    await owner.setPreference('es')
+    expect(owner.t('Quit', { context: 'verb' })).toBe('Salir')
   })
 
   it('keeps French high punctuation attached to the preceding text', () => {

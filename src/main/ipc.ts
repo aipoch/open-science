@@ -680,6 +680,11 @@ const createApplicationModules = async (
       ): Promise<void>
     }
   } = {}
+  const computeJobActivityRef: {
+    current?: {
+      findNonTerminal(): Promise<Array<{ project_id: string }>>
+    }
+  } = {}
   const projectRuntimeQuiescenceRef: { current?: ProjectRuntimeQuiescenceOwner } = {}
   const computeJobDeletionPort = {
     restoreProjectJobDeletion: (projectId: string): Promise<void> => {
@@ -857,8 +862,17 @@ const createApplicationModules = async (
         detectArchiveBlockingSessions().some(
           (session) => session.projectId === projectId && session.sessionId === sessionId
         ),
-      isProjectBusy: (projectId) =>
-        detectArchiveBlockingSessions().some((session) => session.projectId === projectId),
+      isProjectBusy: async (projectId) => {
+        if (
+          reviewerProjectRuntime.isProjectBusy(projectId) ||
+          detectArchiveBlockingSessions().some((session) => session.projectId === projectId)
+        ) {
+          return true
+        }
+        const computeJobs = computeJobActivityRef.current
+        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
+        return (await computeJobs.findNonTerminal()).some((job) => job.project_id === projectId)
+      },
       liveSessionProjectId: (sessionId) => runtimeRef.current?.liveSessionProjectId(sessionId)
     }
   )
@@ -885,7 +899,12 @@ const createApplicationModules = async (
     onSessionsReconciled: (sessionIds) => visionEvidenceRepository.reconcileSessions(sessionIds)
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
-    updateArchive: (request) => archiveCoordinator.updateProjectArchive(request)
+    updateArchive: (request) => archiveCoordinator.updateProjectArchive(request),
+    onAgentContextChanged: () => {
+      // Runtime generations capture Project Agent Context during Session setup. Retiring them marks
+      // idle Sessions for resume immediately; an in-flight turn drains before its next prompt.
+      void runtimeRef.current?.requestProjectAgentContextReload()
+    }
   })
   const projectFilesHandlers = createProjectFilesHandlers(
     projectFilesRepository,
@@ -1479,6 +1498,7 @@ const createApplicationModules = async (
     hostRepository,
     enabledComputeHostsRegistry: hostsRegistry
   } = computeIpcModule
+  computeJobActivityRef.current = jobRepository
   const sessionEnabledComputeHostsOwner = new SessionEnabledComputeHostsOwner({
     registry: hostsRegistry,
     hostExists: async (providerId) => (await hostRepository.get(providerId)) !== null,
@@ -2531,14 +2551,18 @@ const createApplicationModules = async (
       shutdownForQuit: async () => {
         const [main, reviewer] = await Promise.all([
           runtime.shutdownForQuit(),
-          reviewerModelRuntimeShutdown?.shutdown() ?? Promise.resolve({ reaped: true })
+          reviewerModelRuntimeShutdown
+            ? reviewerModelRuntimeShutdown.shutdown()
+            : Promise.resolve({ reaped: true })
         ])
         return { reaped: main.reaped && reviewer.reaped }
       },
       shutdownForUpdateGate: async () => {
         const [main, reviewer] = await Promise.all([
           runtime.shutdownForUpdateGate(),
-          reviewerModelRuntimeShutdown?.shutdownForUpdateGate() ?? Promise.resolve({ reaped: true })
+          reviewerModelRuntimeShutdown
+            ? reviewerModelRuntimeShutdown.shutdownForUpdateGate()
+            : Promise.resolve({ reaped: true })
         ])
         return { reaped: main.reaped && reviewer.reaped }
       }
@@ -3199,6 +3223,8 @@ const createApplicationModules = async (
     acpRuntime: runtime,
     modelRuntime: reviewerModelRuntime,
     projectRuntime: reviewerProjectRuntime,
+    withProjectAvailable: <Result>(projectId: string, operation: () => Promise<Result>) =>
+      archiveCoordinator.withProjectAvailable(projectId, operation),
     mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
     resolveSessionAgentTarget,

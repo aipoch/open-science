@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Mimic dual-theme Shiki output: colors live in htmlStyle, not token.color.
-vi.mock('@streamdown/code', () => ({
+vi.mock('@/components/streamdown/code-highlighter-runtime', () => ({
   code: {
     supportsLanguage: () => true,
     getThemes: () => ['github-light', 'github-dark'],

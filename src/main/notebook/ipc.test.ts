@@ -126,6 +126,7 @@ describe('notebook IPC handlers', () => {
   it('registers every notebook channel and forwards the renderer payload unchanged', async () => {
     const service = {
       state: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+      inspectNamespace: vi.fn().mockResolvedValue({ status: 'unavailable' }),
       getSessionReference: vi.fn().mockResolvedValue(null),
       beginCodeCell: vi.fn().mockResolvedValue({ cellId: 'cell-1', writeId: 'write-1' }),
       appendCodeCell: vi.fn().mockResolvedValue({ receivedBytes: 5 }),
@@ -141,6 +142,7 @@ describe('notebook IPC handlers', () => {
 
     expect([...ipcHandlers.keys()]).toEqual([
       'notebook:state',
+      'notebook:inspect-namespace',
       'notebook:reference',
       'notebook:begin-code-cell',
       'notebook:append-code-cell',
@@ -154,6 +156,7 @@ describe('notebook IPC handlers', () => {
     ])
 
     const session = { sessionId: 'session-1', workspaceCwd: '/workspace' }
+    const namespace = { ...session, language: 'python' as const, environment: 'default-python' }
     const begin = { ...session }
     const append = { ...session, cellId: 'cell-1', writeId: 'write-1', delta: 'hello' }
     const finish = { ...session, cellId: 'cell-1', writeId: 'write-1' }
@@ -174,6 +177,7 @@ describe('notebook IPC handlers', () => {
     const execute = { ...publicExecute, ...forgedTurnContext }
 
     await ipcHandlers.get('notebook:state')?.(undefined, session)
+    await ipcHandlers.get('notebook:inspect-namespace')?.(undefined, namespace)
     await ipcHandlers.get('notebook:reference')?.(undefined, session)
     await ipcHandlers.get('notebook:begin-code-cell')?.(undefined, begin)
     await ipcHandlers.get('notebook:append-code-cell')?.(undefined, append)
@@ -186,6 +190,7 @@ describe('notebook IPC handlers', () => {
     await ipcHandlers.get('notebook:shutdown')?.(undefined, session)
 
     expect(service.state).toHaveBeenCalledWith(session)
+    expect(service.inspectNamespace).toHaveBeenCalledWith(namespace)
     expect(service.getSessionReference).toHaveBeenCalledWith(session)
     expect(service.beginCodeCell).toHaveBeenCalledWith(begin)
     expect(service.appendCodeCell).toHaveBeenCalledWith(append)

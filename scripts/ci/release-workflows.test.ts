@@ -23,6 +23,7 @@ type Job = {
   'runs-on'?: string
   steps?: Step[]
   strategy?: { matrix?: { shard?: number[] } }
+  'timeout-minutes'?: number
   uses?: string
   with?: Record<string, unknown>
 }
@@ -68,6 +69,47 @@ describe('release and scheduled workflow topology', () => {
     expect(job).toMatchObject({
       needs: 'plan',
       if: "needs.plan.outputs.should_test == 'true'"
+    })
+  })
+
+  it('runs a separate daily Windows resource soak with a focused manual smoke path', () => {
+    const resource = workflow('runtime-resource-soak.yml')
+    const schedule = resource.on?.schedule as Array<{ cron: string }>
+    const dispatch = resource.on?.workflow_dispatch as {
+      inputs?: { mode?: { default?: string; options?: string[] } }
+    }
+    const plan = resource.jobs.plan
+    const soak = resource.jobs.runtime_resource_soak
+    const profile = step(soak, 'Record runtime resource profile')
+    const upload = step(soak, 'Upload runtime resource evidence')
+
+    expect(schedule).toEqual([{ cron: '23 3 * * *' }])
+    expect(dispatch.inputs?.mode).toMatchObject({
+      default: 'smoke',
+      options: ['smoke', 'soak']
+    })
+    expect(resource.permissions).toEqual({ actions: 'read', contents: 'read' })
+    expect(resource.concurrency).toEqual({
+      group: 'runtime-resource-soak-${{ github.ref }}',
+      'cancel-in-progress': true
+    })
+    expect(step(plan, 'Check for unprofiled main changes').run).toContain(
+      'event=schedule&status=success&per_page=1'
+    )
+    expect(soak).toMatchObject({
+      needs: 'plan',
+      if: "needs.plan.outputs.should_test == 'true'",
+      'runs-on': 'windows-latest',
+      'timeout-minutes': 40
+    })
+    expect(profile.run).toContain("'--stress-cycles=1'")
+    expect(profile.run).toContain("'--stress-cycles=6'")
+    expect(profile.run).toContain("'--output=test-results/performance'")
+    expect(upload).toMatchObject({ if: 'always()' })
+    expect(upload.with).toMatchObject({
+      path: 'test-results',
+      'retention-days': 14,
+      'if-no-files-found': 'error'
     })
   })
 

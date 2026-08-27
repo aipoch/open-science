@@ -28,7 +28,7 @@ _PNG = base64.b64decode(
 )
 
 
-def _respond(req_id, code, error=None, interrupt_ack=False):
+def _respond(req_id, code, error=None, interrupt_ack=False, namespace=None):
     figures = []
     if code == "__FIGURE__" and _FIGURES_DIR:
         path = os.path.join(_FIGURES_DIR, "fake.png")
@@ -52,21 +52,19 @@ def _respond(req_id, code, error=None, interrupt_ack=False):
         suffix = code.removeprefix("__WRITE_DELAYED_").removesuffix("__").lower()
         with open(f"generated-{suffix}.csv", "w", encoding="utf-8") as handle:
             handle.write("x,y\n1,2\n")
-    sys.stdout.write(
-        json.dumps(
-            {
-                "req_id": req_id,
-                "stdout": code,
-                "stderr": "",
-                "error": error,
-                "interrupt_ack": interrupt_ack,
-                "result": None,
-                "cwd": os.getcwd(),
-                "figures": figures,
-            }
-        )
-        + "\n"
-    )
+    response = {
+        "req_id": req_id,
+        "stdout": code,
+        "stderr": "",
+        "error": error,
+        "interrupt_ack": interrupt_ack,
+        "result": None,
+        "cwd": os.getcwd(),
+        "figures": figures,
+    }
+    if namespace is not None:
+        response["namespace"] = namespace
+    sys.stdout.write(json.dumps(response) + "\n")
     sys.stdout.flush()
 
 
@@ -86,15 +84,39 @@ def main():
             request = json.loads(line)
         except Exception:
             try:
-                req_id, raw_length = line.decode("utf-8").split(" ", 1)
+                parts = line.decode("utf-8").split(" ")
+                req_id, raw_length = parts[:2]
                 request = {
                     "req_id": req_id,
                     "code": stream.read(int(raw_length)).decode("utf-8"),
+                    "operation": parts[2] if len(parts) > 2 else "execute",
                 }
             except Exception:
                 continue
         code = request.get("code", "")
         req_id = request.get("req_id")
+        if request.get("operation") == "inspect_namespace":
+            if os.environ.get("OPEN_SCIENCE_FAKE_NAMESPACE_HANG") == "1":
+                time.sleep(30)
+                continue
+            include_private = request.get("include_private") is True or code == "private"
+            variables = [
+                {"name": "answer", "type": "int", "size_bytes": 28, "preview": "42"}
+            ]
+            if include_private:
+                variables.append(
+                    {"name": "_private", "type": "str", "preview": "'hidden'", "is_private": True}
+                )
+            _respond(
+                req_id,
+                code,
+                namespace={
+                    "variable_count": len(variables),
+                    "variables_truncated": False,
+                    "variables": variables,
+                },
+            )
+            continue
         if late_interrupt_pending:
             if code == "Sys.sleep(0.05)" and sys_sleep_masked:
                 late_interrupt_pending = False
@@ -137,6 +159,8 @@ def main():
             try:
                 time.sleep(30)
             except KeyboardInterrupt:
+                # The cancel fixture delivers SIGINT during sleep; continue so the
+                # request still gets a matching response.
                 pass
         _respond(req_id, code)
 

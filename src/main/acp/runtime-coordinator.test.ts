@@ -13,6 +13,7 @@ import type { ConversationPermissionGrantStore } from './permission-broker'
 import type { AgentModelChangeTarget } from '../agent-framework'
 import { DelegateMessageParkedError } from '../delegation/execution-port'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
+import { createProjectHandlers } from '../projects/ipc'
 
 const createDeferred = <Value = void>(): {
   promise: Promise<Value>
@@ -2851,6 +2852,78 @@ describe('AcpRuntimeCoordinator', () => {
 
     retirement.resolve()
     await reloadRequest
+  })
+
+  it('uses a fresh runtime generation on the next prompt after Project Agent Context changes', async () => {
+    let storedAgentContext = 'Always cite DOIs.'
+    const promptContexts: string[] = []
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const generationAgentContext = storedAgentContext
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: created.length === 0 ? ['agent-session'] : ['fresh-session'],
+        callbacks,
+        prompt: async () => {
+          promptContexts.push(generationAgentContext)
+          return { stopReason: 'end_turn' }
+        }
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const project = {
+      id: 'project-1',
+      name: 'Research',
+      description: '',
+      agentContext: storedAgentContext,
+      isExample: false,
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const repository = {
+      list: vi.fn(),
+      get: vi.fn(async () => ({ ...project, agentContext: storedAgentContext })),
+      create: vi.fn(),
+      update: vi.fn(async (request) => {
+        storedAgentContext = request.agentContext ?? storedAgentContext
+        return { ...project, agentContext: storedAgentContext, updatedAt: 3 }
+      })
+    }
+    const handlers = createProjectHandlers(
+      repository,
+      {
+        deleteProject: vi.fn(),
+        waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
+      },
+      {
+        updateArchive: vi.fn(),
+        onAgentContextChanged: () => {
+          void coordinator.requestProjectAgentContextReload()
+        }
+      }
+    )
+    const session = await coordinator.createSession({ projectId: project.id })
+
+    await handlers.update({
+      id: project.id,
+      agentContext: 'Prefer Python.',
+      expectedUpdatedAt: project.updatedAt
+    })
+
+    expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
+    await coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      projectId: project.id,
+      previousFrameworkId: 'claude-code'
+    })
+    await coordinator.sendPrompt({ sessionId: session.sessionId, text: 'Use the current policy' })
+
+    expect(promptContexts).toEqual(['Prefer Python.'])
+    expect(created[0].sendPrompt).not.toHaveBeenCalled()
+    expect(created[1].resumeSession).toHaveBeenCalledOnce()
+    expect(created[1].sendPrompt).toHaveBeenCalledOnce()
   })
 
   it('publishes prompt ownership only from the runtime that currently owns the session', async () => {

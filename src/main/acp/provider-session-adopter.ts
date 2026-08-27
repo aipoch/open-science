@@ -242,13 +242,8 @@ export class AcpProviderSessionAdopter {
 
   private async resolveProjectAgentContext(projectId: string): Promise<string | undefined> {
     if (!this.deps.resolveProjectAgentContext) return undefined
-    try {
-      const context = await this.deps.resolveProjectAgentContext(projectId)
-      return this.presentation.projectAgentContext(context)
-    } catch (error) {
-      log.warn('project Agent Context resolution failed', diagnosticErrorFields(error))
-      return undefined
-    }
+    const context = await this.deps.resolveProjectAgentContext(projectId)
+    return this.presentation.projectAgentContext(context)
   }
 
   private async resolveSpecialistIdentity(

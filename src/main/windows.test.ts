@@ -11,15 +11,22 @@ import {
   WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL,
   type KeyChordInput
 } from '../shared/window-controls'
+import { SOURCE_PREVIEW_RELEASE_CHANNEL } from '../shared/source-preview'
 
 // Hoisted so the electron mock and the test body share the same spies.
-const { openExternalMock, ipcMainOnMock, ipcMainRemoveListenerMock, showMessageBoxMock } =
-  vi.hoisted(() => ({
-    openExternalMock: vi.fn(),
-    ipcMainOnMock: vi.fn(),
-    ipcMainRemoveListenerMock: vi.fn(),
-    showMessageBoxMock: vi.fn()
-  }))
+const {
+  openExternalMock,
+  ipcMainOnMock,
+  ipcMainRemoveListenerMock,
+  showMessageBoxMock,
+  webFrameMainFromIdMock
+} = vi.hoisted(() => ({
+  openExternalMock: vi.fn(),
+  ipcMainOnMock: vi.fn(),
+  ipcMainRemoveListenerMock: vi.fn(),
+  showMessageBoxMock: vi.fn(),
+  webFrameMainFromIdMock: vi.fn()
+}))
 
 const { windowLogSpies } = vi.hoisted(() => ({
   windowLogSpies: {
@@ -56,6 +63,34 @@ vi.mock('./find-overlay', () => ({
 // target="_blank" click or window.open() from the main app frame.
 type WindowOpenDetails = { url: string; referrer: { url: string } }
 let windowOpenHandler: ((details: WindowOpenDetails) => unknown) | undefined
+type PermissionRequestHandler = (
+  webContents: unknown,
+  permission: string,
+  callback: (granted: boolean) => void,
+  details: { isMainFrame: boolean; requestingUrl: string }
+) => void
+type PermissionCheckHandler = (
+  webContents: unknown,
+  permission: string,
+  requestingOrigin: string,
+  details: { isMainFrame: boolean }
+) => boolean
+type HeadersReceivedDetails = {
+  webContentsId?: number
+  frame?: { frameTreeNodeId: number } | null
+  resourceType: string
+  url: string
+  statusCode: number
+  statusLine: string
+  responseHeaders?: Record<string, string[]>
+}
+type HeadersReceivedHandler = (
+  details: HeadersReceivedDetails,
+  callback: (response: { responseHeaders?: Record<string, string | string[]> }) => void
+) => void
+let permissionRequestHandler: PermissionRequestHandler | undefined
+let permissionCheckHandler: PermissionCheckHandler | undefined
+let headersReceivedHandler: HeadersReceivedHandler | undefined
 
 // The most recently constructed window and its captured handlers, so tests can drive the
 // before-input-event / lifecycle listeners and the 'close' interceptor the way Electron would.
@@ -78,7 +113,9 @@ class FakeBrowserWindow {
   hidden = false
   destroyed = false
   hideCalls = 0
+  mainFrame = { frameTreeNodeId: 1, name: '', url: 'file:///app/index.html', parent: null }
   webContents = {
+    id: 101,
     setWindowOpenHandler: (handler: (details: WindowOpenDetails) => unknown): void => {
       windowOpenHandler = handler
     },
@@ -86,7 +123,25 @@ class FakeBrowserWindow {
       this.webContentsHandlers.set(event, handler)
     },
     send: (...args: unknown[]): void => this.sendMock(...args),
-    getURL: (): string => 'file:///app/index.html'
+    getURL: (): string => 'file:///app/index.html',
+    mainFrame: this.mainFrame,
+    session: {
+      setPermissionRequestHandler: (handler: PermissionRequestHandler): void => {
+        permissionRequestHandler = handler
+      },
+      setPermissionCheckHandler: (handler: PermissionCheckHandler): void => {
+        permissionCheckHandler = handler
+      },
+      webRequest: {
+        onHeadersReceived: (
+          filterOrListener: { urls: string[] } | HeadersReceivedHandler | null,
+          handler?: HeadersReceivedHandler | null
+        ): void => {
+          headersReceivedHandler =
+            typeof filterOrListener === 'function' ? filterOrListener : (handler ?? undefined)
+        }
+      }
+    }
   }
 
   on(event: string, handler: (event: CloseEvent) => void): this {
@@ -151,7 +206,8 @@ vi.mock('electron', () => ({
   WebContentsView: class {},
   dialog: { showMessageBox: showMessageBoxMock },
   ipcMain: { on: ipcMainOnMock, removeListener: ipcMainRemoveListenerMock },
-  shell: { openExternal: openExternalMock }
+  shell: { openExternal: openExternalMock },
+  webFrameMain: { fromId: webFrameMainFromIdMock }
 }))
 
 vi.mock('@electron-toolkit/utils', () => ({ is: { dev: false } }))
@@ -232,6 +288,18 @@ describe('window presentation', () => {
       })
     )
   })
+
+  it('unregisters the Session response listener when the window closes', () => {
+    createMainWindow()
+    const window = lastWindow!
+
+    expect(headersReceivedHandler).toBeDefined()
+    for (const closedHandler of window.handlers.get('closed') ?? []) {
+      closedHandler({ preventDefault: vi.fn(), defaultPrevented: false })
+    }
+
+    expect(headersReceivedHandler).toBeUndefined()
+  })
 })
 
 describe('window navigation policy', () => {
@@ -244,49 +312,627 @@ describe('window navigation policy', () => {
     expect(policy?.isAllowedExternalUrl('file:///Users/example/private.txt')).toBe(false)
     expect(policy?.isAllowedExternalUrl('javascript:alert(1)')).toBe(false)
     // External-open is gated on the protocol allowlist alone: the initiating referrer is unreliable
-    // (rel="noreferrer" and file:-origin cross-origin suppression both empty it), and window-open can
-    // only originate from the trusted main frame anyway (see navigation-policy.ts).
+    // for both main-frame links and sandboxed source popups. The handler always denies an in-app
+    // window after handing an allowlisted URL to the OS (see navigation-policy.ts).
     expect(policy?.isAllowedExternalNavigation('https://example.com/report')).toBe(true)
     expect(policy?.isAllowedExternalNavigation('mailto:researcher@example.com')).toBe(true)
     expect(policy?.isAllowedExternalNavigation('javascript:alert(1)')).toBe(false)
     expect(policy?.isAllowedExternalNavigation('file:///Users/example/private.txt')).toBe(false)
   })
 
-  it('keeps subframe navigation inside the managed preview protocol', async () => {
+  it('allows HTTPS source-preview subframes while keeping main-frame navigation constrained', async () => {
     const policy = await import('./navigation-policy').catch(() => undefined)
+    const mainFrame = {
+      frameTreeNodeId: 1,
+      name: '',
+      url: 'file:///app/index.html',
+      parent: null
+    }
+    const guard = policy?.createFrameNavigationGuard(mainFrame)
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      processId: 7,
+      routingId: 8,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: mainFrame
+    }
 
     expect(policy).toBeDefined()
+    expect(guard?.('open-science-preview://resource/report.html', false)).toBe(true)
     expect(
-      policy?.isAllowedFrameNavigation('open-science-preview://resource/report.html', false)
-    ).toBe(true)
-    expect(
-      policy?.isAllowedFrameNavigation(
+      guard?.(
         'open-science-office-preview://runtime/office-preview.html?sessionId=session-1',
         false
       )
     ).toBe(true)
-    expect(policy?.isAllowedFrameNavigation('https://example.com/exfiltrate', false)).toBe(false)
+    expect(guard?.('https://example.com/paper', false)).toBe(false)
+    expect(guard?.('https://example.com/paper', false, '', sourceFrame)).toBe(true)
+
+    const redirectedSourceFrame = {
+      frameTreeNodeId: 2,
+      name: '',
+      url: 'https://example.com/paper',
+      parent: { ...mainFrame }
+    }
+    expect(guard?.('https://example.com/redirected', false, '', redirectedSourceFrame)).toBe(true)
     expect(
-      policy?.isAllowedFrameNavigation(
-        'https://app.example.com/workspace',
-        true,
-        'https://app.example.com/'
-      )
-    ).toBe(true)
-    expect(
-      policy?.isAllowedFrameNavigation(
-        'https://example.com/exfiltrate',
-        true,
-        'https://app.example.com/'
-      )
+      guard?.('open-science-preview://resource/report.html', false, '', redirectedSourceFrame)
     ).toBe(false)
-    expect(
-      policy?.isAllowedFrameNavigation(
-        'file://remote-host/app/index.html',
-        true,
-        'file:///app/index.html'
+    const sourceDescendant = {
+      frameTreeNodeId: 3,
+      name: '',
+      url: 'about:blank',
+      parent: redirectedSourceFrame
+    }
+    expect(guard?.('https://static.example.com/embed', false, '', sourceDescendant)).toBe(true)
+    expect(guard?.('about:blank', false, '', sourceDescendant)).toBe(true)
+    expect(guard?.('about:srcdoc', false, '', sourceDescendant)).toBe(true)
+    expect(guard?.('blob:https://static.example.com/fixture', false, '', sourceDescendant)).toBe(
+      true
+    )
+    expect(guard?.('blob:null/fixture', false, '', sourceDescendant)).toBe(false)
+    expect(guard?.('data:text/html,fixture', false, '', sourceDescendant)).toBe(false)
+    expect(guard?.('about:blank', false, '', redirectedSourceFrame)).toBe(false)
+
+    const htmlPreviewFrame = {
+      frameTreeNodeId: 4,
+      name: 'open-science-source-preview',
+      url: 'open-science-preview://resource/report.html',
+      parent: mainFrame
+    }
+    expect(guard?.('https://example.com/exfiltrate', false, '', htmlPreviewFrame)).toBe(false)
+    const nestedSpoof = {
+      frameTreeNodeId: 5,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: htmlPreviewFrame
+    }
+    expect(guard?.('https://example.com/exfiltrate', false, '', nestedSpoof)).toBe(false)
+    expect(guard?.('http://example.com/paper', false, '', redirectedSourceFrame)).toBe(false)
+    expect(guard?.('https://app.example.com/workspace', true, 'https://app.example.com/')).toBe(
+      true
+    )
+    expect(guard?.('https://example.com/exfiltrate', true, 'https://app.example.com/')).toBe(false)
+    expect(guard?.('file://remote-host/app/index.html', true, 'file:///app/index.html')).toBe(false)
+  })
+
+  it('applies the source-frame guard to server redirects', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    const initialNavigation = {
+      url: 'https://citation.example/paper',
+      isMainFrame: false,
+      processId: 7,
+      routingId: 8,
+      frame: Object('https://citation.example/paper'),
+      preventDefault: vi.fn()
+    }
+    webFrameMainFromIdMock.mockReturnValue(sourceFrame)
+    window.webContentsHandlers.get('will-frame-navigate')?.(initialNavigation)
+    expect(webFrameMainFromIdMock).toHaveBeenCalledWith(7, 8)
+    expect(initialNavigation.preventDefault).not.toHaveBeenCalled()
+
+    const redirectedFrame = {
+      frameTreeNodeId: 2,
+      name: '',
+      url: 'https://citation.example/paper',
+      parent: { ...window.mainFrame }
+    }
+    const allowedRedirect = {
+      url: 'https://publisher.example/paper',
+      isMainFrame: false,
+      frame: null,
+      preventDefault: vi.fn()
+    }
+    webFrameMainFromIdMock.mockReturnValue(redirectedFrame)
+    const redirectHandler = window.webContentsHandlers.get('will-redirect')
+    redirectHandler?.(allowedRedirect, allowedRedirect.url, false, false, 7, 8)
+    expect(webFrameMainFromIdMock).toHaveBeenCalledWith(7, 8)
+    expect(allowedRedirect.preventDefault).not.toHaveBeenCalled()
+
+    const blockedRedirect = {
+      ...allowedRedirect,
+      url: 'open-science-preview://resource/report.html',
+      preventDefault: vi.fn()
+    }
+    redirectHandler?.(blockedRedirect, blockedRedirect.url, false, false, 7, 8)
+    expect(blockedRedirect.preventDefault).toHaveBeenCalledOnce()
+  })
+
+  it('removes only embedding response restrictions from a registered HTTPS source root', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    window.webContentsHandlers.get('will-frame-navigate')?.({
+      url: 'https://citation.example/paper',
+      isMainFrame: false,
+      frame: sourceFrame,
+      preventDefault: vi.fn()
+    })
+
+    expect(headersReceivedHandler).toBeDefined()
+    const callback = vi.fn()
+    const originalHeaders = {
+      'Content-Security-Policy': [
+        "default-src 'none'; frame-ancestors 'none'; script-src 'self'",
+        'img-src https:; FRAME-ANCESTORS https://publisher.example'
+      ],
+      'X-Frame-Options': ['SAMEORIGIN'],
+      'Cross-Origin-Embedder-Policy': ['require-corp']
+    }
+    headersReceivedHandler?.(
+      {
+        webContentsId: 101,
+        frame: sourceFrame,
+        resourceType: 'subFrame',
+        url: 'https://publisher.example/paper',
+        statusCode: 200,
+        statusLine: 'HTTP/1.1 200 OK',
+        responseHeaders: originalHeaders
+      },
+      callback
+    )
+
+    expect(callback).toHaveBeenCalledWith({
+      responseHeaders: {
+        'Content-Security-Policy': ["default-src 'none'; script-src 'self'", 'img-src https:'],
+        'Cross-Origin-Embedder-Policy': ['require-corp']
+      }
+    })
+    expect(originalHeaders).toHaveProperty('X-Frame-Options')
+  })
+
+  it('upgrades an insecure redirect location for a registered HTTPS source root', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    window.webContentsHandlers.get('will-frame-navigate')?.({
+      url: 'https://citation.example/paper',
+      isMainFrame: false,
+      frame: sourceFrame,
+      preventDefault: vi.fn()
+    })
+
+    const callback = vi.fn()
+    headersReceivedHandler?.(
+      {
+        webContentsId: 101,
+        frame: sourceFrame,
+        resourceType: 'subFrame',
+        url: 'https://citation.example/paper',
+        statusCode: 302,
+        statusLine: 'HTTP/1.1 302 Found',
+        responseHeaders: {
+          Location: ['http://biorxiv.org/lookup/doi/10.64898/2026.05.19.726291'],
+          'Cache-Control': ['no-store']
+        }
+      },
+      callback
+    )
+
+    expect(callback).toHaveBeenCalledWith({
+      responseHeaders: {
+        Location: ['https://biorxiv.org/lookup/doi/10.64898/2026.05.19.726291'],
+        'Cache-Control': ['no-store']
+      }
+    })
+  })
+
+  it('preserves response headers outside the registered HTTPS source root', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    window.webContentsHandlers.get('will-frame-navigate')?.({
+      url: 'https://citation.example/paper',
+      isMainFrame: false,
+      frame: sourceFrame,
+      preventDefault: vi.fn()
+    })
+    const protectedHeaders = {
+      'Content-Security-Policy': ["frame-ancestors 'none'; default-src 'self'"],
+      'X-Frame-Options': ['DENY']
+    }
+
+    for (const details of [
+      {
+        webContentsId: 999,
+        frame: sourceFrame,
+        resourceType: 'subFrame',
+        url: 'https://publisher.example/paper'
+      },
+      {
+        webContentsId: 101,
+        frame: { frameTreeNodeId: 3 },
+        resourceType: 'subFrame',
+        url: 'https://publisher.example/embed'
+      },
+      {
+        webContentsId: 101,
+        frame: sourceFrame,
+        resourceType: 'script',
+        url: 'https://publisher.example/app.js'
+      },
+      {
+        webContentsId: 101,
+        frame: sourceFrame,
+        resourceType: 'subFrame',
+        url: 'http://publisher.example/paper'
+      }
+    ]) {
+      const callback = vi.fn()
+      headersReceivedHandler?.(
+        {
+          ...details,
+          statusCode: 200,
+          statusLine: 'HTTP/1.1 200 OK',
+          responseHeaders: protectedHeaders
+        },
+        callback
       )
+      expect(callback).toHaveBeenCalledWith({})
+    }
+  })
+
+  it('reports source root loading and HTTP failures without observing unrelated subframes', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    const initialUrl = 'https://citation.example/missing'
+    const initialNavigation = {
+      url: initialUrl,
+      isMainFrame: false,
+      processId: 7,
+      routingId: 8,
+      frame: sourceFrame,
+      preventDefault: vi.fn()
+    }
+
+    window.webContentsHandlers.get('will-frame-navigate')?.(initialNavigation)
+    window.webContentsHandlers.get('did-start-navigation')?.({
+      url: initialUrl,
+      isSameDocument: false,
+      isMainFrame: false,
+      frame: sourceFrame
+    })
+
+    expect(window.sendMock).toHaveBeenLastCalledWith('source-preview:load-state', {
+      navigationId: 1,
+      sourceUrl: initialUrl,
+      currentUrl: initialUrl,
+      phase: 'loading'
+    })
+
+    const unrelatedFrame = {
+      frameTreeNodeId: 3,
+      name: '',
+      url: 'https://unrelated.example/frame',
+      parent: window.mainFrame
+    }
+    webFrameMainFromIdMock.mockReturnValue(unrelatedFrame)
+    window.webContentsHandlers.get('did-frame-navigate')?.(
+      {},
+      unrelatedFrame.url,
+      200,
+      'OK',
+      false,
+      9,
+      10
+    )
+    expect(window.sendMock).toHaveBeenCalledTimes(1)
+
+    webFrameMainFromIdMock.mockReturnValue(sourceFrame)
+    window.webContentsHandlers.get('did-frame-navigate')?.(
+      {},
+      initialUrl,
+      404,
+      'Not Found',
+      false,
+      7,
+      8
+    )
+
+    expect(window.sendMock).toHaveBeenLastCalledWith('source-preview:load-state', {
+      navigationId: 1,
+      sourceUrl: initialUrl,
+      currentUrl: initialUrl,
+      phase: 'failed',
+      failure: 'http',
+      httpStatusCode: 404,
+      httpStatusText: 'Not Found'
+    })
+  })
+
+  it('releases source monitoring and embed-policy state when its renderer closes the tab', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      processId: 7,
+      routingId: 8,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    const sourceUrl = 'https://citation.example/paper'
+    window.webContentsHandlers.get('will-frame-navigate')?.({
+      url: sourceUrl,
+      isMainFrame: false,
+      frame: sourceFrame,
+      preventDefault: vi.fn()
+    })
+    const releaseHandler = ipcMainOnMock.mock.calls
+      .filter(([channel]) => channel === SOURCE_PREVIEW_RELEASE_CHANNEL)
+      .at(-1)?.[1] as ((event: { sender: unknown }, value: unknown) => void) | undefined
+
+    expect(releaseHandler).toBeDefined()
+    releaseHandler?.({ sender: window.webContents }, sourceUrl)
+    window.sendMock.mockClear()
+
+    const releasedFrame = { ...sourceFrame, name: '', url: sourceUrl }
+    const releasedNavigation = {
+      url: 'https://citation.example/after-close',
+      isMainFrame: false,
+      frame: releasedFrame,
+      preventDefault: vi.fn()
+    }
+    window.webContentsHandlers.get('will-frame-navigate')?.(releasedNavigation)
+    expect(releasedNavigation.preventDefault).toHaveBeenCalledOnce()
+
+    webFrameMainFromIdMock.mockReturnValue(sourceFrame)
+    window.webContentsHandlers.get('did-fail-load')?.(
+      {},
+      -102,
+      'ERR_CONNECTION_REFUSED',
+      sourceUrl,
+      false,
+      7,
+      8
+    )
+    expect(window.sendMock).not.toHaveBeenCalled()
+
+    const callback = vi.fn()
+    headersReceivedHandler?.(
+      {
+        webContentsId: 101,
+        frame: sourceFrame,
+        resourceType: 'subFrame',
+        url: sourceUrl,
+        statusCode: 200,
+        statusLine: 'HTTP/1.1 200 OK',
+        responseHeaders: { 'x-frame-options': ['DENY'] }
+      },
+      callback
+    )
+    expect(callback).toHaveBeenCalledWith({})
+  })
+
+  it.each(['top-level navigation', 'renderer process exit'])(
+    'clears all source-preview state after %s replaces the renderer document',
+    (lifecycle) => {
+      createMainWindow()
+      const window = lastWindow!
+      const sourceUrl = 'https://citation.example/paper'
+      const sourceFrame = {
+        frameTreeNodeId: 2,
+        processId: 7,
+        routingId: 8,
+        name: 'open-science-source-preview',
+        url: 'about:blank',
+        parent: window.mainFrame
+      }
+      window.webContentsHandlers.get('will-frame-navigate')?.({
+        url: sourceUrl,
+        isMainFrame: false,
+        frame: sourceFrame,
+        preventDefault: vi.fn()
+      })
+      window.sendMock.mockClear()
+
+      if (lifecycle === 'top-level navigation') {
+        window.webContentsHandlers.get('did-start-navigation')?.({
+          url: 'file:///app/index.html',
+          isSameDocument: false,
+          isMainFrame: true,
+          frame: window.mainFrame
+        })
+      } else {
+        window.webContentsHandlers.get('render-process-gone')?.(
+          {},
+          {
+            reason: 'killed',
+            exitCode: 1
+          }
+        )
+      }
+
+      const releasedFrame = { ...sourceFrame, name: '', url: sourceUrl }
+      const releasedNavigation = {
+        url: 'https://citation.example/after-reload',
+        isMainFrame: false,
+        frame: releasedFrame,
+        preventDefault: vi.fn()
+      }
+      window.webContentsHandlers.get('will-frame-navigate')?.(releasedNavigation)
+      expect(releasedNavigation.preventDefault).toHaveBeenCalledOnce()
+
+      webFrameMainFromIdMock.mockReturnValue(releasedFrame)
+      window.webContentsHandlers.get('did-fail-load')?.(
+        {},
+        -102,
+        'ERR_CONNECTION_REFUSED',
+        sourceUrl,
+        false,
+        7,
+        8
+      )
+      expect(window.sendMock).not.toHaveBeenCalled()
+
+      const callback = vi.fn()
+      headersReceivedHandler?.(
+        {
+          webContentsId: 101,
+          frame: releasedFrame,
+          resourceType: 'subFrame',
+          url: sourceUrl,
+          statusCode: 200,
+          statusLine: 'HTTP/1.1 200 OK',
+          responseHeaders: { 'x-frame-options': ['DENY'] }
+        },
+        callback
+      )
+      expect(callback).toHaveBeenCalledWith({})
+    }
+  )
+
+  it('reports a source HTTP failure as soon as its response headers arrive', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceFrame = {
+      frameTreeNodeId: 2,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    const sourceUrl = 'https://citation.example/unavailable'
+    window.webContentsHandlers.get('will-frame-navigate')?.({
+      url: sourceUrl,
+      isMainFrame: false,
+      frame: sourceFrame,
+      preventDefault: vi.fn()
+    })
+    window.sendMock.mockClear()
+
+    headersReceivedHandler?.(
+      {
+        webContentsId: 101,
+        frame: sourceFrame,
+        resourceType: 'subFrame',
+        url: sourceUrl,
+        statusCode: 503,
+        statusLine: 'HTTP/1.1 503 Service Unavailable',
+        responseHeaders: { 'Content-Type': ['text/html'] }
+      },
+      vi.fn()
+    )
+
+    expect(window.sendMock).toHaveBeenCalledWith('source-preview:load-state', {
+      navigationId: 1,
+      sourceUrl,
+      currentUrl: sourceUrl,
+      phase: 'failed',
+      failure: 'http',
+      httpStatusCode: 503,
+      httpStatusText: 'Service Unavailable'
+    })
+  })
+
+  it.each([
+    [-27, 'ERR_BLOCKED_BY_RESPONSE'],
+    [-30, 'ERR_BLOCKED_BY_CSP']
+  ])(
+    'reports Chromium embedding failure %i for a blocked source root',
+    (errorCode, errorDescription) => {
+      createMainWindow()
+      const window = lastWindow!
+      const sourceFrame = {
+        frameTreeNodeId: 2,
+        processId: 7,
+        routingId: 8,
+        name: 'open-science-source-preview',
+        url: 'about:blank',
+        parent: window.mainFrame
+      }
+      const initialUrl = 'https://citation.example/blocked'
+      window.webContentsHandlers.get('will-frame-navigate')?.({
+        url: initialUrl,
+        isMainFrame: false,
+        frame: sourceFrame,
+        preventDefault: vi.fn()
+      })
+      window.webContentsHandlers.get('did-start-navigation')?.({
+        url: initialUrl,
+        isSameDocument: false,
+        isMainFrame: false,
+        frame: sourceFrame
+      })
+      window.sendMock.mockClear()
+      webFrameMainFromIdMock.mockReturnValue(undefined)
+
+      window.webContentsHandlers.get('did-fail-load')?.(
+        {},
+        errorCode,
+        errorDescription,
+        initialUrl,
+        false,
+        7,
+        8
+      )
+
+      expect(window.sendMock).toHaveBeenCalledWith('source-preview:load-state', {
+        navigationId: 1,
+        sourceUrl: initialUrl,
+        currentUrl: initialUrl,
+        phase: 'failed',
+        failure: 'blocked',
+        errorCode,
+        errorDescription
+      })
+    }
+  )
+
+  it('denies every subframe permission request while preserving trusted main-frame checks', () => {
+    createMainWindow()
+
+    expect(permissionRequestHandler).toBeDefined()
+    expect(permissionCheckHandler).toBeDefined()
+    const subframeDecision = vi.fn()
+    permissionRequestHandler?.({}, 'geolocation', subframeDecision, {
+      isMainFrame: false,
+      requestingUrl: 'https://example.com/paper'
+    })
+    expect(subframeDecision).toHaveBeenCalledWith(false)
+    expect(
+      permissionCheckHandler?.({}, 'geolocation', 'https://example.com', {
+        isMainFrame: false
+      })
     ).toBe(false)
+
+    const mainFrameDecision = vi.fn()
+    permissionRequestHandler?.({}, 'notifications', mainFrameDecision, {
+      isMainFrame: true,
+      requestingUrl: 'file:///app/index.html'
+    })
+    expect(mainFrameDecision).toHaveBeenCalledWith(true)
+    expect(permissionCheckHandler?.({}, 'notifications', 'file://', { isMainFrame: true })).toBe(
+      true
+    )
   })
 })
 
@@ -477,11 +1123,13 @@ describe('close chord interception', () => {
     const registeredHandler = ipcMainOnMock.mock.calls.find(
       ([registered]) => registered === WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL
     )?.[1]
-    const closedHandler = window.handlers.get('closed')?.[0]
+    const closedHandlers = window.handlers.get('closed') ?? []
 
     expect(registeredHandler).toBeDefined()
-    expect(closedHandler).toBeDefined()
-    closedHandler!({ preventDefault: vi.fn(), defaultPrevented: false })
+    expect(closedHandlers.length).toBeGreaterThan(0)
+    for (const closedHandler of closedHandlers) {
+      closedHandler({ preventDefault: vi.fn(), defaultPrevented: false })
+    }
 
     expect(ipcMainRemoveListenerMock).toHaveBeenCalledWith(
       WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL,

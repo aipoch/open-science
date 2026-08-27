@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, stat, writeFile } from 'node:fs/promises'
 import { arch, platform } from 'node:os'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -10,7 +10,7 @@ import {
   type ProcessTreeSnapshot
 } from './process-snapshot'
 
-const PROFILE_SCHEMA_VERSION = 2
+const PROFILE_SCHEMA_VERSION = 3
 const DEFAULT_SAMPLE_INTERVAL_MS = 1_000
 const MIN_SAMPLE_INTERVAL_MS = 250
 const MAX_SAMPLE_INTERVAL_MS = 10_000
@@ -56,7 +56,26 @@ type RuntimeResourceSample = {
   processTreeComplete: boolean
   processes: RuntimeProcessSample[]
   rootPid: number
+  storage?: RuntimeStorageTotals
   totals: RuntimeResourceTotals
+}
+
+type RuntimeStorageTotals = {
+  notebookRunBytes: number
+  notebookRunFileCount: number
+  sessionBytes: number
+  sessionFileCount: number
+  temporaryBytes: number
+  temporaryFileCount: number
+}
+
+type RuntimeStorageSummary = {
+  notebookRunBytes: NumberStats
+  notebookRunFileCount: NumberStats
+  sessionBytes: NumberStats
+  sessionFileCount: NumberStats
+  temporaryBytes: NumberStats
+  temporaryFileCount: NumberStats
 }
 
 type NumberStats = {
@@ -82,6 +101,7 @@ type RuntimePhaseSummary = {
   >
   includedSampleCount: number
   sampleCount: number
+  storage?: RuntimeStorageSummary
   summedRssKb: NumberStats
   totalCpuPercent: NumberStats
 }
@@ -141,11 +161,86 @@ type RuntimeProfileResult = {
 }
 
 type RuntimeResourceProfilerOptions = {
+  dataRoot?: string
   now?: () => number
   outputRoot?: string
   readTree?: (rootPid: number) => Promise<ProcessTreeSnapshot>
   runId?: string
   sampleIntervalMs?: number
+  storageRoot?: string
+}
+
+type StorageFileKind = 'notebook-run' | 'session' | 'temporary'
+
+const emptyStorageTotals = (): RuntimeStorageTotals => ({
+  notebookRunBytes: 0,
+  notebookRunFileCount: 0,
+  sessionBytes: 0,
+  sessionFileCount: 0,
+  temporaryBytes: 0,
+  temporaryFileCount: 0
+})
+
+const scanStorageFiles = async (
+  root: string,
+  classify: (name: string) => StorageFileKind | undefined,
+  totals: RuntimeStorageTotals
+): Promise<void> => {
+  const entries = await readdir(root, { withFileTypes: true }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return []
+      throw error
+    }
+  )
+  await Promise.all(
+    entries.map(async (entry) => {
+      const path = join(root, entry.name)
+      if (entry.isDirectory()) {
+        await scanStorageFiles(path, classify, totals)
+        return
+      }
+      if (!entry.isFile()) return
+      const kind = classify(entry.name)
+      if (!kind) return
+      const bytes = (await stat(path)).size
+      if (kind === 'session') {
+        totals.sessionFileCount += 1
+        totals.sessionBytes += bytes
+      } else if (kind === 'notebook-run') {
+        totals.notebookRunFileCount += 1
+        totals.notebookRunBytes += bytes
+      } else {
+        totals.temporaryFileCount += 1
+        totals.temporaryBytes += bytes
+      }
+    })
+  )
+}
+
+const readRuntimeStorageSnapshot = async (
+  storageRoot: string,
+  dataRoot = storageRoot
+): Promise<RuntimeStorageTotals> => {
+  const totals = emptyStorageTotals()
+  await Promise.all([
+    scanStorageFiles(
+      join(storageRoot, 'sessions'),
+      (name) =>
+        name.endsWith('.tmp')
+          ? 'temporary'
+          : name !== 'manifest.json' && name.endsWith('.json')
+            ? 'session'
+            : undefined,
+      totals
+    ),
+    scanStorageFiles(
+      join(dataRoot, 'notebooks'),
+      (name) =>
+        name.endsWith('.tmp') ? 'temporary' : name === 'run.json' ? 'notebook-run' : undefined,
+      totals
+    )
+  ])
+  return totals
 }
 
 const SESSION_TRACE_NUMBER_FIELDS = [
@@ -323,6 +418,9 @@ const summarizeSamples = (
     const privateValues = includedSamples
       .map((sample) => sample.totals.electronPrivateKb)
       .filter((value): value is number => value !== undefined)
+    const storageSamples = phaseSamples
+      .map((sample) => sample.storage)
+      .filter((value): value is RuntimeStorageTotals => value !== undefined)
     const roleNames = new Set(
       includedSamples.flatMap((sample) => sample.processes.map((process) => processRole(process)))
     )
@@ -355,6 +453,26 @@ const summarizeSamples = (
         includedSamples.map((sample) => sample.totals.electronWorkingSetKb)
       ),
       processCount: numberStats(includedSamples.map((sample) => sample.totals.processCount)),
+      ...(storageSamples.length === 0
+        ? {}
+        : {
+            storage: {
+              notebookRunBytes: numberStats(
+                storageSamples.map((sample) => sample.notebookRunBytes)
+              ),
+              notebookRunFileCount: numberStats(
+                storageSamples.map((sample) => sample.notebookRunFileCount)
+              ),
+              sessionBytes: numberStats(storageSamples.map((sample) => sample.sessionBytes)),
+              sessionFileCount: numberStats(
+                storageSamples.map((sample) => sample.sessionFileCount)
+              ),
+              temporaryBytes: numberStats(storageSamples.map((sample) => sample.temporaryBytes)),
+              temporaryFileCount: numberStats(
+                storageSamples.map((sample) => sample.temporaryFileCount)
+              )
+            }
+          }),
       ...(privateValues.length === 0 ? {} : { electronPrivateKb: numberStats(privateValues) })
     }
   }
@@ -379,6 +497,7 @@ const summarizeSamples = (
 
 const formatNumber = (value: number): string => value.toFixed(1)
 const formatMb = (valueKb: number): string => formatNumber(valueKb / 1024)
+const formatBytesMb = (valueBytes: number): string => formatNumber(valueBytes / (1024 * 1024))
 
 const renderSummaryMarkdown = (summary: RuntimeProfileSummary): string => {
   const rows = Object.entries(summary.phases).map(([phase, stats]) => {
@@ -433,6 +552,34 @@ Operation | CPU interval | Boundary/outcome | Wall ms | CPU user ms | CPU system
 ---: | --- | --- | ---: | ---: | ---: | ---:
 ${numberedSessionTraceRows.join('\n')}
 `
+  const storageRows = Object.entries(summary.phases).flatMap(([phase, stats]) => {
+    if (!stats.storage) return []
+    return [
+      [
+        phase,
+        formatNumber(stats.storage.sessionFileCount.last),
+        formatBytesMb(stats.storage.sessionBytes.first),
+        formatBytesMb(stats.storage.sessionBytes.last),
+        formatBytesMb(stats.storage.sessionBytes.delta),
+        formatNumber(stats.storage.notebookRunFileCount.last),
+        formatBytesMb(stats.storage.notebookRunBytes.first),
+        formatBytesMb(stats.storage.notebookRunBytes.last),
+        formatBytesMb(stats.storage.notebookRunBytes.delta),
+        formatNumber(stats.storage.temporaryFileCount.max),
+        formatNumber(stats.storage.temporaryFileCount.last)
+      ].join(' | ')
+    ]
+  })
+  const storageSection =
+    storageRows.length === 0
+      ? ''
+      : `
+## Durable storage snapshots
+
+Phase | Session files end | Session start MB | Session end MB | Session delta MB | Notebook run files end | Notebook start MB | Notebook end MB | Notebook delta MB | Temp files peak | Temp files end
+--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---:
+${storageRows.join('\n')}
+`
   return `# Runtime resource profile
 
 - Platform: ${summary.platform}/${summary.architecture}
@@ -445,6 +592,7 @@ Phase | Included/total | CPU mean % | CPU p95 % | CPU peak % | CPU end % | RSS s
 --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---
 ${rows.join('\n')}
 ${sessionTraceSection}
+${storageSection}
 
 RSS is the sum of per-process resident sets and can double-count shared pages. It is intended for
 same-machine trend comparison, not as a portable absolute memory value. The profile records no
@@ -459,7 +607,8 @@ const mergeResourceSample = (
   tree: ProcessTreeSnapshot,
   electronMetrics: readonly ElectronProcessMetric[],
   cpuTracker: ProcessCpuTracker,
-  electronMetricsComplete = true
+  electronMetricsComplete = true,
+  storage?: RuntimeStorageTotals
 ): RuntimeResourceSample => {
   const electronByPid = new Map(electronMetrics.map((metric) => [metric.pid, metric]))
   const processes: RuntimeProcessSample[] = tree.processes.map((process) => {
@@ -507,6 +656,7 @@ const mergeResourceSample = (
     processTreeComplete: tree.complete,
     electronMetricsComplete,
     processes,
+    ...(storage ? { storage } : {}),
     totals: {
       processCount: processes.length,
       totalCpuPercent: processes.reduce((sum, process) => sum + (process.cpuPercent ?? 0), 0),
@@ -527,11 +677,13 @@ class RuntimeResourceProfiler {
   >()
   private electronVersion: string | undefined
   private readonly cpuTracker = new ProcessCpuTracker()
+  private readonly dataRoot: string | undefined
   private readonly now: () => number
   private readonly outputRoot: string
   private readonly readTree: (rootPid: number) => Promise<ProcessTreeSnapshot>
   private readonly runId: string
   private readonly sampleIntervalMs: number
+  private readonly storageRoot: string | undefined
   private readonly samples: RuntimeResourceSample[] = []
   private readonly sessionHydrationTrace: SessionHydrationTraceEvent[] = []
   private phase = 'startup'
@@ -542,6 +694,7 @@ class RuntimeResourceProfiler {
 
   constructor(options: RuntimeResourceProfilerOptions = {}) {
     this.now = options.now ?? Date.now
+    this.dataRoot = options.dataRoot ? resolve(options.dataRoot) : undefined
     this.outputRoot = resolve(
       options.outputRoot ?? join(process.cwd(), 'test-results', 'performance')
     )
@@ -552,6 +705,7 @@ class RuntimeResourceProfiler {
     this.sampleIntervalMs = validateSampleInterval(
       options.sampleIntervalMs ?? DEFAULT_SAMPLE_INTERVAL_MS
     )
+    this.storageRoot = options.storageRoot ? resolve(options.storageRoot) : undefined
     this.startedAt = this.now()
   }
 
@@ -660,8 +814,8 @@ class RuntimeResourceProfiler {
     const previousSample = this.sampleInFlight
     const sampling = (
       previousSample
-        ? previousSample.then(() => this.captureSample(phase))
-        : this.captureSample(phase)
+        ? previousSample.then(() => this.captureSample(phase, force))
+        : this.captureSample(phase, force)
     ).finally(() => {
       if (this.sampleInFlight === sampling) this.sampleInFlight = undefined
     })
@@ -669,12 +823,12 @@ class RuntimeResourceProfiler {
     return sampling
   }
 
-  private async captureSample(phase: string): Promise<void> {
+  private async captureSample(phase: string, includeStorage: boolean): Promise<void> {
     const application = this.application
     const rootPid = application?.process().pid
     if (!application || rootPid === undefined) return
     const capturedAt = this.now()
-    const [tree, electronSnapshot] = await Promise.all([
+    const [tree, electronSnapshot, storage] = await Promise.all([
       this.readTree(rootPid),
       application
         .evaluate(({ app }) =>
@@ -693,7 +847,10 @@ class RuntimeResourceProfiler {
         .then(
           (metrics) => ({ complete: true, metrics }),
           () => ({ complete: false, metrics: [] as ElectronProcessMetric[] })
-        )
+        ),
+      includeStorage && this.storageRoot
+        ? readRuntimeStorageSnapshot(this.storageRoot, this.dataRoot)
+        : Promise.resolve(undefined)
     ])
     this.samples.push(
       mergeResourceSample(
@@ -703,7 +860,8 @@ class RuntimeResourceProfiler {
         tree,
         electronSnapshot.metrics,
         this.cpuTracker,
-        electronSnapshot.complete
+        electronSnapshot.complete,
+        storage
       )
     )
   }
@@ -718,6 +876,7 @@ export {
   RuntimeResourceProfiler,
   mergeResourceSample,
   parseSessionHydrationDiagnostic,
+  readRuntimeStorageSnapshot,
   renderSummaryMarkdown,
   summarizeSamples,
   validatePhase,
@@ -733,5 +892,7 @@ export type {
   RuntimeResourceProfilerOptions,
   RuntimeResourceSample,
   RuntimeResourceTotals,
+  RuntimeStorageSummary,
+  RuntimeStorageTotals,
   SessionHydrationTraceEvent
 }

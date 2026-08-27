@@ -33,7 +33,7 @@ const useOptions = (): { value: LanguagePreference; label: string; description?:
   )
 }
 
-// Language picker for Settings > Appearance. A Select rather than a segmented control: seven options
+// Language picker for Settings > Appearance. A Select rather than a segmented control: nine options
 // with localized labels overflow the row width the theme control fits into.
 export const LanguageSelect = (): React.JSX.Element => {
   const { t } = useTranslation()

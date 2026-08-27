@@ -78,6 +78,7 @@ import type {
   SideChatSessionRequest,
   SideChatStartRequest
 } from '../shared/side-chat'
+import type { SourcePreviewLoadState } from '../shared/source-preview'
 import { announceWindowFindReady, subscribeCloseActivePane } from '../shared/window-controls'
 
 type RemoveListener = () => void
@@ -670,6 +671,12 @@ const api: OpenScienceAPI = {
     close: (sessionId) => electronRendererContracts.invoke('officePreview.close', sessionId),
     onState: (listener) => electronRendererContracts.subscribe('officePreview.onState', listener)
   },
+  sourcePreview: {
+    release: (sourceUrl: string) =>
+      electronRendererContracts.send('sourcePreview.release', sourceUrl),
+    onLoadState: (listener: (state: SourcePreviewLoadState) => void) =>
+      electronRendererContracts.subscribe('sourcePreview.onLoadState', listener)
+  },
   artifacts: {
     // Keep generated file movement in the main process where filesystem trust checks live.
     finalizeRunArtifacts: (request) =>
@@ -741,6 +748,8 @@ const api: OpenScienceAPI = {
   notebook: {
     // Notebook commands stay behind typed IPC so renderer code never talks to local RPC directly.
     state: (request) => electronRendererContracts.invoke('notebook.state', request),
+    inspectNamespace: (request) =>
+      electronRendererContracts.invoke('notebook.inspectNamespace', request),
     readInputPreview: (request) =>
       electronRendererContracts.invoke('notebook.readInputPreview', request),
     getReference: (request) => electronRendererContracts.invoke('notebook.getReference', request),

@@ -648,6 +648,39 @@ export type NotebookSessionStateRequest = NotebookSessionRequest & {
   historyLimit?: number
 }
 
+// Read-only, process-local view of the selected live data-kernel namespace. These values are never
+// persisted: a kernel restart destroys both the interpreter objects and the snapshot identity.
+export type NotebookNamespaceRequest = NotebookSessionRequest & {
+  language: NotebookLanguage
+  environment: string
+  includePrivate?: boolean
+}
+
+export type NotebookNamespaceVariable = {
+  name: string
+  type: string
+  sizeBytes?: number
+  shape?: string
+  preview: string
+  previewTruncated?: boolean
+  private?: boolean
+}
+
+export type NotebookNamespaceSnapshot =
+  | {
+      status: 'available'
+      language: NotebookLanguage
+      environment: string
+      kernelEpochId: string
+      variableCount: number
+      variablesTruncated: boolean
+      variables: NotebookNamespaceVariable[]
+    }
+  | {
+      status: 'unavailable'
+      reason: 'kernel-not-live' | 'kernel-restarted'
+    }
+
 // Resolves the data kernel ('python' or 'r') that owns a given tab. For python/r tabs the
 // answer is the tab itself; for repl/bash tabs it is the most recent data kernel that was
 // active when the control run executed. Returns undefined when no data run has ever occurred.

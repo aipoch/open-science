@@ -1331,6 +1331,12 @@ class AcpRuntimeCoordinator {
     await this.retireRuntimeGenerations(this.runtimes)
   }
 
+  async requestProjectAgentContextReload(): Promise<void> {
+    // Project Agent Context is captured during Session setup. Retire every generation so its idle
+    // Sessions resume with the current Project value before their next prompt.
+    await this.retireRuntimeGenerations(this.runtimes)
+  }
+
   async requestSkillsReloadForFramework(frameworkId: AgentFrameworkId): Promise<void> {
     // A framework-scoped derived asset must not rotate an unrelated backend generation. An empty
     // generation has no session holding stale assets; its first Session will provision from the
