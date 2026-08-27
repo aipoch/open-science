@@ -45,6 +45,7 @@ const AnnotationTrigger = ({
   onActivate: () => void
 }): React.ReactPortal => {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const capturedTextRef = useRef(range.toString())
   const [position, setPosition] = useState({ left: 0, top: 0, ready: false, visible: true })
 
   const updatePosition = useCallback((): void => {
@@ -55,10 +56,12 @@ const AnnotationTrigger = ({
       triggerWidth: trigger?.offsetWidth || FALLBACK_TRIGGER_WIDTH,
       triggerHeight: trigger?.offsetHeight || FALLBACK_TRIGGER_HEIGHT
     })
-    const visible = isRangeTriggerVisible(range, backward, {
-      width: window.innerWidth,
-      height: window.innerHeight
-    })
+    const visible =
+      range.toString() === capturedTextRef.current &&
+      isRangeTriggerVisible(range, backward, {
+        width: window.innerWidth,
+        height: window.innerHeight
+      })
     setPosition((current) =>
       current.ready &&
       current.left === next.left &&
@@ -70,6 +73,7 @@ const AnnotationTrigger = ({
   }, [backward, range])
 
   useLayoutEffect(() => {
+    capturedTextRef.current = range.toString()
     updatePosition()
     document.addEventListener('scroll', updatePosition, true)
     window.addEventListener('resize', updatePosition)

@@ -693,6 +693,17 @@ describe('TextAnnotationSurface annotate trigger', () => {
     expect(annotateTrigger()).toBeUndefined()
   })
 
+  it('hides the trigger when selected character data is replaced in place', async () => {
+    const paragraph = await renderSurface()
+    await commitSelection(paragraph)
+    expect(annotateTrigger()).toBeDefined()
+
+    await act(async () => {
+      if (paragraph.firstChild) paragraph.firstChild.textContent = 'stream replaced the quote'
+    })
+    expect(annotateTrigger()).toBeUndefined()
+  })
+
   it('hides the trigger as soon as the selected content is removed', async () => {
     const paragraph = await renderSurface()
     await commitSelection(paragraph)
