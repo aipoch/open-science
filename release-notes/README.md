@@ -11,6 +11,7 @@ release-notes/
     ja.md
     ko.md
     fr.md
+    pt-BR.md
     ru.md
     es.md
 ```

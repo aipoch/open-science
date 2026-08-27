@@ -490,8 +490,13 @@ describe('settings repository', () => {
     expect(sanitizeSettings({ localePreference: 'de' }).localePreference).toBeUndefined()
     expect(sanitizeSettings({ localePreference: 'es' }).localePreference).toBe('es')
     expect(sanitizeSettings({ localePreference: 'ko' }).localePreference).toBe('ko')
+    expect(sanitizeSettings({ localePreference: 'pt' }).localePreference).toBe('pt-BR')
+    expect(sanitizeSettings({ localePreference: 'pt-BR' }).localePreference).toBe('pt-BR')
+    expect(sanitizeSettings({ localePreference: 'pt-PT' }).localePreference).toBeUndefined()
     expect(sanitizeSettings({ localePreference: 'system' }).localePreference).toBe('system')
 
+    await repository.setLocalePreference('pt-BR')
+    expect((await new SettingsRepository(root).getSettings()).localePreference).toBe('pt-BR')
     await repository.setLocalePreference('es')
     expect((await new SettingsRepository(root).getSettings()).localePreference).toBe('es')
   })

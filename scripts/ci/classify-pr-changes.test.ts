@@ -355,6 +355,7 @@ describe('pull request change classification', () => {
     ['renderer locale catalog', 'src/shared/i18n/locales/ja.json'],
     ['Korean locale catalog', 'src/shared/i18n/locales/ko.json'],
     ['French locale catalog', 'src/shared/i18n/locales/fr.json'],
+    ['Brazilian Portuguese locale catalog', 'src/shared/i18n/locales/pt-BR.json'],
     ['Spanish locale catalog', 'src/shared/i18n/locales/es.json'],
     ['shared contract', 'src/shared/acp.ts'],
     ['main runtime', 'src/main/notebook/runtime-service.ts']
@@ -365,7 +366,7 @@ describe('pull request change classification', () => {
     expect(plan.bundles).toContain('static')
   })
 
-  it.each(['es', 'fr', 'ja', 'ko', 'ru', 'zh-Hans', 'zh-Hant'])(
+  it.each(['es', 'fr', 'ja', 'ko', 'pt-BR', 'ru', 'zh-Hans', 'zh-Hant'])(
     'runs the build and functional Electron journey for a shared %s catalog change',
     (locale) => {
       const plan = classifyChanges([

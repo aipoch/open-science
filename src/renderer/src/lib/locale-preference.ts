@@ -12,7 +12,7 @@
 import {
   DEFAULT_LANGUAGE_PREFERENCE,
   htmlLang,
-  isLanguagePreference,
+  normalizeLanguagePreference,
   resolveLocale,
   type LanguagePreference,
   type Locale
@@ -36,7 +36,15 @@ export const systemLanguageTags = (): string[] => {
 export const getStoredPreference = (): LanguagePreference | undefined => {
   try {
     const value = localStorage.getItem(STORAGE_KEY)
-    return isLanguagePreference(value) ? value : undefined
+    const preference = normalizeLanguagePreference(value)
+    if (value === 'pt' && preference === 'pt-BR') {
+      try {
+        localStorage.setItem(STORAGE_KEY, preference)
+      } catch {
+        // The normalized value is still usable for this session when migration cannot be persisted.
+      }
+    }
+    return preference
   } catch {
     // Private-mode / disabled storage: treat as "no stored choice".
     return undefined

@@ -2,12 +2,11 @@
 
 ## i18n — translating new user-visible strings
 
-The renderer ships seven translated locales: **es** (Spanish), **fr** (French), **zh-Hans**
-(Simplified Chinese), **zh-Hant** (Traditional Chinese), **ja** (Japanese), **ko** (Korean), and
-**ru** (Russian). Every
-user-visible string added to the renderer must have a corresponding entry in the `renderer`
-namespace for all translated locales unless the same meaning is intentionally shared with Electron
-main through the `common` namespace:
+The renderer ships eight translated locales: **es** (Spanish), **fr** (French), **zh-Hans**
+(Simplified Chinese), **zh-Hant** (Traditional Chinese), **ja** (Japanese), **ko** (Korean),
+**pt-BR** (Brazilian Portuguese), and **ru** (Russian). Every user-visible string added to the
+renderer must have a corresponding entry in the `renderer` namespace for all translated locales
+unless the same meaning is intentionally shared with Electron main through the `common` namespace:
 
 ```
 src/shared/i18n/locales/zh-Hans.json
@@ -15,6 +14,7 @@ src/shared/i18n/locales/zh-Hant.json
 src/shared/i18n/locales/ja.json
 src/shared/i18n/locales/ko.json
 src/shared/i18n/locales/fr.json
+src/shared/i18n/locales/pt-BR.json
 src/shared/i18n/locales/ru.json
 src/shared/i18n/locales/es.json
 ```
@@ -75,12 +75,12 @@ English**, so a missing key renders in English instead of borrowing another tran
 
 ### Plurals
 
-Chinese, Japanese, and Korean have a single plural category. Use the `_other` suffix only — never `_one`,
-`_few`, etc. French and Spanish have `_one`, `_many`, and `_other` categories, so all three entries
-are required; `_many` is selected for values such as 1,000,000 and can usually reuse the `_other`
-translation. Russian uses `_one`, `_few`, `_many`, and `_other`; every counted Russian key must
-provide all four forms. The English singular is passed as `defaultValue_one` at the call site and
-never needs a catalog entry.
+Chinese, Japanese, and Korean have a single plural category. Use the `_other` suffix only — never
+`_one`, `_few`, etc. French, Brazilian Portuguese, and Spanish have `_one`, `_many`, and `_other`
+categories, so all three entries are required; `_many` is selected for values such as 1,000,000 and
+can usually reuse the `_other` translation. Russian uses `_one`, `_few`, `_many`, and `_other`;
+every counted Russian key must provide all four forms. The English singular is passed as
+`defaultValue_one` at the call site and never needs a catalog entry.
 
 ```tsx
 // Call site — English needs no catalog entry
@@ -95,6 +95,10 @@ t('{{count}} files', { count: n, defaultValue_one: '{{count}} file' })
 "{{count}} files_one": "{{count}} fichier"      // fr
 "{{count}} files_many": "{{count}} fichiers"    // fr
 "{{count}} files_other": "{{count}} fichiers"   // fr
+
+"{{count}} files_one": "{{count}} arquivo"      // pt-BR
+"{{count}} files_many": "{{count}} arquivos"    // pt-BR
+"{{count}} files_other": "{{count}} arquivos"   // pt-BR
 
 "{{count}} files_one": "{{count}} archivo"     // es
 "{{count}} files_many": "{{count}} archivos"   // es
@@ -126,20 +130,20 @@ for a known set of script-specific characters and will fail on cross-script cont
 
 ### Glossary (mandatory)
 
-| Term                 | fr                   | zh-Hans      | zh-Hant      | ja                     | ko                | ru                       | Note                                              |
-| -------------------- | -------------------- | ------------ | ------------ | ---------------------- | ----------------- | ------------------------ | ------------------------------------------------- |
-| Skill / Skills       | **Compétence(s)**    | **技能**     | **技能**     | **スキル**             | **스킬**          | **Навык / Навыки**       | Translate user-visible prose                      |
-| Agent / Agents       | **Agent(s)**         | **智能体**   | **智能體**   | **エージェント**       | **에이전트**      | **Агент / Агенты**       | Translate user-visible prose                      |
-| Notebook             | **Notebook**         | **Notebook** | **Notebook** | **Notebook**           | **Notebook**      | **Notebook**             | Keep as-is                                        |
-| token (model usage)  | **Jeton(s)**         | **词元**     | **詞元**     | **トークン**           | **토큰**          | **токен**                | Model input, output, context, and usage counts    |
-| token (credential)   | **Jeton(s)**         | **令牌**     | **權杖**     | **トークン**           | **토큰**          | **токен**                | Authentication and personal access credentials    |
-| Specialist           | **Spécialiste**      | **专家**     | **專家**     | **スペシャリスト**     | **스페셜리스트**  | **Специалист**           | Generic role; translate                           |
-| Marketplace          | **Place de marché**  | **市场**     | **市集**     | **マーケットプレイス** | **마켓플레이스**  | **Маркетплейс**          | Generic surface; retain third-party product names |
-| Connector            | **Connecteur**       | **连接器**   | **連接器**   | **コネクタ**           | **커넥터**        | **Коннектор**            | Generic noun; retain exact directory names        |
-| Main Agent           | **Agent principal**  | **主智能体** | **主智能體** | **メインエージェント** | **메인 에이전트** | **Главный агент**        | Translate as a complete compound                  |
-| Main model           | **Modèle principal** | **主模型**   | **主模型**   | **メインモデル**       | **메인 모델**     | **Основная модель**      | Settings main-model label; not a Main Agent role  |
-| Subagent / Subagents | **Sous-agent(s)**    | **子智能体** | **子智能體** | **サブエージェント**   | **서브에이전트**  | **Субагент / Субагенты** | Translate as a complete compound                  |
-| Shell                | **Terminal**         | **命令行**   | **命令列**   | **シェル**             | **셸**            | **Командная строка**     | User-facing label; `Notebook` remains English     |
+| Term                 | fr                   | pt-BR                   | zh-Hans      | zh-Hant      | ja                     | ko                | ru                       | Note                                              |
+| -------------------- | -------------------- | ----------------------- | ------------ | ------------ | ---------------------- | ----------------- | ------------------------ | ------------------------------------------------- |
+| Skill / Skills       | **Compétence(s)**    | **Habilidade(s)**       | **技能**     | **技能**     | **スキル**             | **스킬**          | **Навык / Навыки**       | Translate user-visible prose                      |
+| Agent / Agents       | **Agent(s)**         | **Agente(s)**           | **智能体**   | **智能體**   | **エージェント**       | **에이전트**      | **Агент / Агенты**       | Translate user-visible prose                      |
+| Notebook             | **Notebook**         | **Notebook**            | **Notebook** | **Notebook** | **Notebook**           | **Notebook**      | **Notebook**             | Keep as-is                                        |
+| token (model usage)  | **Jeton(s)**         | **token(s)**            | **词元**     | **詞元**     | **トークン**           | **토큰**          | **токен**                | Model input, output, context, and usage counts    |
+| token (credential)   | **Jeton(s)**         | **token(s)**            | **令牌**     | **權杖**     | **トークン**           | **토큰**          | **токен**                | Authentication and personal access credentials    |
+| Specialist           | **Spécialiste**      | **Especialista**        | **专家**     | **專家**     | **スペシャリスト**     | **스페셜리스트**  | **Специалист**           | Generic role; translate                           |
+| Marketplace          | **Place de marché**  | **Marketplace**         | **市场**     | **市集**     | **マーケットプレイス** | **마켓플레이스**  | **Маркетплейс**          | Generic surface; retain third-party product names |
+| Connector            | **Connecteur**       | **Conector**            | **连接器**   | **連接器**   | **コネクタ**           | **커넥터**        | **Коннектор**            | Generic noun; retain exact directory names        |
+| Main Agent           | **Agent principal**  | **Agente principal**    | **主智能体** | **主智能體** | **メインエージェント** | **메인 에이전트** | **Главный агент**        | Translate as a complete compound                  |
+| Main model           | **Modèle principal** | **Modelo principal**    | **主模型**   | **主模型**   | **メインモデル**       | **메인 모델**     | **Основная модель**      | Settings main-model label; not a Main Agent role  |
+| Subagent / Subagents | **Sous-agent(s)**    | **Subagente(s)**        | **子智能体** | **子智能體** | **サブエージェント**   | **서브에이전트**  | **Субагент / Субагенты** | Translate as a complete compound                  |
+| Shell                | **Terminal**         | **Linha(s) de comando** | **命令行**   | **命令列**   | **シェル**             | **셸**            | **Командная строка**     | User-facing label; `Notebook` remains English     |
 
 Spanish entries use these binding terms:
 

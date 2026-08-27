@@ -6,6 +6,7 @@ import {
   htmlLang,
   isLanguagePreference,
   isLocale,
+  normalizeLanguagePreference,
   resolveLocale,
   resolveLocaleFromTags
 } from './locale'
@@ -27,6 +28,14 @@ describe('resolveLocaleFromTags', () => {
     expect(resolveLocaleFromTags(['fr'])).toBe('fr')
     expect(resolveLocaleFromTags(['fr-FR'])).toBe('fr')
     expect(resolveLocaleFromTags(['FR_ca'])).toBe('fr')
+  })
+
+  it('matches Brazilian Portuguese without claiming European Portuguese', () => {
+    expect(resolveLocaleFromTags(['pt'])).toBe('pt-BR')
+    expect(resolveLocaleFromTags(['pt-BR'])).toBe('pt-BR')
+    expect(resolveLocaleFromTags(['PT_br'])).toBe('pt-BR')
+    expect(resolveLocaleFromTags(['pt-PT'])).toBe('en')
+    expect(resolveLocaleFromTags(['pt-PT', 'fr-FR'])).toBe('fr')
   })
 
   it('matches Spanish and its regional tags', () => {
@@ -104,12 +113,14 @@ describe('resolveLocale', () => {
     expect(resolveLocale('system', ['ko-KR'])).toBe('ko')
     expect(resolveLocale('system', ['ru-RU'])).toBe('ru')
     expect(resolveLocale('system', ['fr-CA'])).toBe('fr')
+    expect(resolveLocale('system', ['pt-BR'])).toBe('pt-BR')
     expect(resolveLocale('system', ['es-MX'])).toBe('es')
   })
 
   it('returns an explicit preference verbatim, ignoring the host list', () => {
     expect(resolveLocale('en', ['zh-TW'])).toBe('en')
     expect(resolveLocale('fr', ['en-US'])).toBe('fr')
+    expect(resolveLocale('pt-BR', ['en-US'])).toBe('pt-BR')
     expect(resolveLocale('ja', ['en-US'])).toBe('ja')
     expect(resolveLocale('ko', ['en-US'])).toBe('ko')
     expect(resolveLocale('ru', ['en-US'])).toBe('ru')
@@ -126,6 +137,8 @@ describe('guards and constants', () => {
     expect(isLocale('ko')).toBe(true)
     expect(isLocale('ru')).toBe(true)
     expect(isLocale('fr')).toBe(true)
+    expect(isLocale('pt-BR')).toBe(true)
+    expect(isLocale('pt')).toBe(false)
     expect(isLocale('es')).toBe(true)
     expect(isLocale('zh-CN')).toBe(false)
     expect(isLocale('system')).toBe(false)
@@ -136,7 +149,17 @@ describe('guards and constants', () => {
     expect(isLanguagePreference('ko')).toBe(true)
     expect(isLanguagePreference('ru')).toBe(true)
     expect(isLanguagePreference('fr')).toBe(true)
+    expect(isLanguagePreference('pt-BR')).toBe(true)
+    expect(isLanguagePreference('pt')).toBe(false)
     expect(isLanguagePreference('es')).toBe(true)
+  })
+
+  it('normalizes the legacy Portuguese preference on persisted-data boundaries', () => {
+    expect(normalizeLanguagePreference('pt')).toBe('pt-BR')
+    expect(normalizeLanguagePreference('pt-BR')).toBe('pt-BR')
+    expect(normalizeLanguagePreference('system')).toBe('system')
+    expect(normalizeLanguagePreference('pt-PT')).toBeUndefined()
+    expect(normalizeLanguagePreference(undefined)).toBeUndefined()
   })
 
   it('defaults to system with an English fallback', () => {
@@ -147,6 +170,7 @@ describe('guards and constants', () => {
   it('emits valid BCP-47 html lang values', () => {
     expect(htmlLang('en')).toBe('en')
     expect(htmlLang('fr')).toBe('fr')
+    expect(htmlLang('pt-BR')).toBe('pt-BR')
     expect(htmlLang('es')).toBe('es')
     expect(htmlLang('ja')).toBe('ja')
     expect(htmlLang('ko')).toBe('ko')

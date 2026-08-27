@@ -7,6 +7,7 @@ import { common as esCommon, native as esNative } from '../../shared/i18n/locale
 import { common as frCommon, native as frNative } from '../../shared/i18n/locales/fr.json'
 import { common as jaCommon, native as jaNative } from '../../shared/i18n/locales/ja.json'
 import { common as koCommon, native as koNative } from '../../shared/i18n/locales/ko.json'
+import { common as ptBrCommon, native as ptBrNative } from '../../shared/i18n/locales/pt-BR.json'
 import { common as ruCommon, native as ruNative } from '../../shared/i18n/locales/ru.json'
 import {
   common as zhHansCommon,
@@ -34,6 +35,10 @@ export const nativeResources = {
     [COMMON_NAMESPACE]: koCommon,
     [NATIVE_NAMESPACE]: koNative
   }),
+  'pt-BR': createNamespacedResource({
+    [COMMON_NAMESPACE]: ptBrCommon,
+    [NATIVE_NAMESPACE]: ptBrNative
+  }),
   ru: createNamespacedResource({
     [COMMON_NAMESPACE]: ruCommon,
     [NATIVE_NAMESPACE]: ruNative
@@ -53,6 +58,7 @@ export const nativeCatalogs = {
   fr: frNative,
   ja: jaNative,
   ko: koNative,
+  'pt-BR': ptBrNative,
   ru: ruNative,
   'zh-Hans': zhHansNative,
   'zh-Hant': zhHantNative

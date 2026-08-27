@@ -189,7 +189,16 @@ describe('module impact shadow', () => {
     expect(report.shadow.graphStatus).toBe('not-used')
   })
 
-  it.each(['es.json', 'fr.json', 'ja.json', 'ko.json', 'ru.json', 'zh-Hans.json', 'zh-Hant.json'])(
+  it.each([
+    'es.json',
+    'fr.json',
+    'ja.json',
+    'ko.json',
+    'pt-BR.json',
+    'ru.json',
+    'zh-Hans.json',
+    'zh-Hant.json'
+  ])(
     'owns %s catalog edits as a selective i18n module instead of an unknown full plan',
     (catalog) => {
       const report = reportFor([{ path: `src/shared/i18n/locales/${catalog}`, status: 'modified' }])

@@ -84,6 +84,39 @@ test('persists Russian into the built main-process native quit dialog', async ({
     })
 })
 
+test('persists Brazilian Portuguese into the built main-process native quit dialog', async ({
+  app
+}) => {
+  let page = await app.completeOnboarding()
+
+  await page
+    .locator('button')
+    .filter({ has: page.locator('svg.lucide-languages') })
+    .click()
+  await page.getByRole('menuitem', { name: 'Português (Brasil)', exact: true }).click()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'pt-BR')
+
+  await expect
+    .poll(() => app.capturePersistedLocaleNativeQuitDialog())
+    .toEqual({
+      buttons: ['Cancelar', 'Sair'],
+      detail: 'O trabalho ainda está em execução e será interrompido se você sair.',
+      includesRendererCatalog: false,
+      message: 'Sair do Open Science?'
+    })
+
+  page = await app.restart()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'pt-BR')
+  await expect
+    .poll(() => app.capturePersistedLocaleNativeQuitDialog())
+    .toEqual({
+      buttons: ['Cancelar', 'Sair'],
+      detail: 'O trabalho ainda está em execução e será interrompido se você sair.',
+      includesRendererCatalog: false,
+      message: 'Sair do Open Science?'
+    })
+})
+
 const localizedSettingsCases = [
   {
     language: 'Simplified Chinese',
@@ -156,6 +189,24 @@ const localizedSettingsCases = [
     reasoningEffort: '추론 강도',
     defaultEffort: '기본값',
     closeSettings: '설정 닫기'
+  },
+  {
+    language: 'Brazilian Portuguese',
+    pickerLabel: 'Português (Brasil)',
+    locale: 'pt-BR',
+    projects: 'Projetos',
+    modelSettings: 'Configurações do modelo',
+    settings: 'Configurações',
+    openNavigation: 'Abrir navegação de configurações',
+    general: 'Geral',
+    appearance: 'Aparência',
+    interfaceLanguage: 'Idioma da interface',
+    mainModel: 'Modelo principal',
+    scenarioModels: 'Modelos de cenários',
+    expandSubagent: 'Expandir as configurações do Subagente',
+    reasoningEffort: 'Esforço de raciocínio',
+    defaultEffort: 'Padrão',
+    closeSettings: 'Fechar as configurações'
   },
   {
     language: 'Russian',

@@ -111,4 +111,17 @@ describe('incompatibilityReason', () => {
     expect(reason).toContain('OpenAI Gateway')
     expect(reason).toContain('需要')
   })
+
+  it('preserves spaces around Brazilian Portuguese route-list conjunctions', () => {
+    const reason = incompatibilityReason(
+      { apiEndpoints: ['openai', 'responses'], type: 'custom', name: 'Gateway' },
+      'Claude Code',
+      ['anthropic', 'responses'],
+      i18next.getFixedT('pt-BR')
+    )
+
+    expect(reason).toContain('/v1/messages ou /v1/responses')
+    expect(reason).toContain('/v1/chat/completions ou /v1/responses')
+    expect(reason).not.toContain('messagesou')
+  })
 })

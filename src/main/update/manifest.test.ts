@@ -6,7 +6,12 @@ const valid = {
   version: '0.3.0',
   releaseDate: '2026-07-13',
   notes: 'n',
-  localizedNotes: { 'zh-Hans': '更新说明', ja: '更新内容', es: 'Notas de la versión' },
+  localizedNotes: {
+    'zh-Hans': '更新说明',
+    ja: '更新内容',
+    'pt-BR': 'Notas da versão',
+    es: 'Notas de la versión'
+  },
   downloads: { 'mac-arm64': { url: 'https://cdn/a.dmg', size: 1, sha256: 'h' } }
 }
 
@@ -14,7 +19,12 @@ describe('parseManifest', () => {
   it('accepts a well-formed manifest', () => {
     expect(parseManifest(valid)).toMatchObject({
       version: '0.3.0',
-      localizedNotes: { 'zh-Hans': '更新说明', ja: '更新内容', es: 'Notas de la versión' }
+      localizedNotes: {
+        'zh-Hans': '更新说明',
+        ja: '更新内容',
+        'pt-BR': 'Notas da versão',
+        es: 'Notas de la versión'
+      }
     })
   })
   it('defaults missing releaseDate/notes to empty strings', () => {
