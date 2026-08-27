@@ -17,7 +17,10 @@ import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 import { sharedDispatchTracker } from './dispatch-tracker'
 import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher'
 import type { StagedInputEntry } from './job-dispatcher'
-import type { ComputeJobRepository } from './job-repository'
+import {
+  type ComputeJobRepository,
+  UnencryptedComputeJobPersistenceApprovalRequiredError
+} from './job-repository'
 import { getJobHarvestDir } from './harvest-engine'
 import { validateHarvestConfig } from './harvest-classifier'
 import type { ComputeHostRepository } from './repository'
@@ -249,45 +252,54 @@ export class ComputeJobWorkflowOwner {
     if (!this.approvalBroker) {
       throw new Error('ComputeApprovalBroker is required to call submitJob.')
     }
+    const approvalBroker = this.approvalBroker
     const commandPreview =
       command.length > COMMAND_PREVIEW_MAX_LEN
         ? `${command.slice(0, COMMAND_PREVIEW_MAX_LEN)}…`
         : command
-    const decision = await this.approvalBroker.requestWithContext(
-      {
-        provider_id: host.providerId,
-        provider_name: host.displayName,
-        shape: host.shape,
-        intent,
-        command_preview: commandPreview,
-        command_full: command,
-        inputs_summary: inputsSummary || undefined,
-        timeout_seconds: timeoutSeconds,
-        remote_workdir: remoteWorkdir,
-        ...(!this.jobRepository.isFieldProtectionAvailable()
-          ? { willPersistUnencrypted: true }
-          : {})
-      },
-      {
-        sessionId: context.sessionId,
-        projectId: context.projectId,
-        operation: 'submit_job',
-        ownerId: host.id
-      },
-      signal
-    )
-
-    if (decision === 'deny') {
-      const error = new Error(
-        `Job submission approval was denied for host "${host.displayName}".`
-      ) as Error & { computeCallError: ComputeCallError }
-      error.computeCallError = {
-        error_code: 'approval_denied',
-        message: `Approval denied for submit_job on ${host.displayName}.`,
-        retry_after_user_action: false
-      }
-      throw error
+    const approvalInfo = {
+      provider_id: host.providerId,
+      provider_name: host.displayName,
+      shape: host.shape,
+      intent,
+      command_preview: commandPreview,
+      command_full: command,
+      inputs_summary: inputsSummary || undefined,
+      timeout_seconds: timeoutSeconds,
+      remote_workdir: remoteWorkdir
     }
+    const approvalContext = {
+      sessionId: context.sessionId,
+      projectId: context.projectId,
+      operation: 'submit_job',
+      ownerId: host.id
+    }
+
+    const requestApproval = async (willPersistUnencrypted: boolean): Promise<void> => {
+      const decision = await approvalBroker.requestWithContext(
+        {
+          ...approvalInfo,
+          ...(willPersistUnencrypted ? { willPersistUnencrypted: true } : {})
+        },
+        approvalContext,
+        signal
+      )
+
+      if (decision === 'deny') {
+        const error = new Error(
+          `Job submission approval was denied for host "${host.displayName}".`
+        ) as Error & { computeCallError: ComputeCallError }
+        error.computeCallError = {
+          error_code: 'approval_denied',
+          message: `Approval denied for submit_job on ${host.displayName}.`,
+          retry_after_user_action: false
+        }
+        throw error
+      }
+    }
+
+    let allowUnencryptedPersistence = !this.jobRepository.isFieldProtectionAvailable()
+    await requestApproval(allowUnencryptedPersistence)
 
     const commandHash = hashCommand(command)
     const inputManifest = stagedEntries.length > 0 ? JSON.stringify(stagedEntries) : undefined
@@ -314,35 +326,51 @@ export class ComputeJobWorkflowOwner {
         harvestConfig: options.harvestConfig,
         timeoutSeconds,
         remoteWorkdir,
-        initialStatus
+        initialStatus,
+        allowUnencryptedPersistence
       })
     }
 
     let initialStatus: 'submitted' | 'queued' = 'submitted'
-    try {
-      if (this.concurrencyManager) {
-        const admitted = await this.concurrencyManager.admit(
-          { sessionId: context.sessionId, providerId },
-          createRow
-        )
-        if (admitted === 'queue_full') throw queueFullError()
-        initialStatus = admitted
-      } else {
-        await createRow('submitted')
-      }
+    while (true) {
+      try {
+        if (this.concurrencyManager) {
+          const admitted = await this.concurrencyManager.admit(
+            { sessionId: context.sessionId, providerId },
+            createRow
+          )
+          if (admitted === 'queue_full') throw queueFullError()
+          initialStatus = admitted
+        } else {
+          await createRow('submitted')
+        }
 
-      if (initialStatus === 'submitted') {
-        const dispatch = dispatchJob(jobId, {
-          connectionBroker: this.connectionBroker,
-          hostRepository: this.hostRepository,
-          jobRepository: this.jobRepository,
-          onJobUpdated: this.handleJobUpdated
-        })
-        this.observeBackgroundDispatch?.(dispatch)
-        void dispatch
+        if (initialStatus === 'submitted') {
+          const dispatch = dispatchJob(jobId, {
+            connectionBroker: this.connectionBroker,
+            hostRepository: this.hostRepository,
+            jobRepository: this.jobRepository,
+            onJobUpdated: this.handleJobUpdated
+          })
+          this.observeBackgroundDispatch?.(dispatch)
+          void dispatch
+        }
+        break
+      } catch (error) {
+        if (
+          allowUnencryptedPersistence ||
+          !(error instanceof UnencryptedComputeJobPersistenceApprovalRequiredError)
+        ) {
+          throw error
+        }
+        await requestApproval(true)
+        allowUnencryptedPersistence = true
+      } finally {
+        if (dispatchHandoffHeld) {
+          sharedDispatchTracker.end(jobId)
+          dispatchHandoffHeld = false
+        }
       }
-    } finally {
-      if (dispatchHandoffHeld) sharedDispatchTracker.end(jobId)
     }
 
     return {

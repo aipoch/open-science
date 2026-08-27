@@ -23,6 +23,13 @@ export type ComputeJobSessionOwner = Readonly<{
   sessionId: string
 }>
 
+export class UnencryptedComputeJobPersistenceApprovalRequiredError extends Error {
+  constructor() {
+    super('Compute Job plaintext persistence requires explicit approval.')
+    this.name = 'UnencryptedComputeJobPersistenceApprovalRequiredError'
+  }
+}
+
 const ownerWhere = (owner: ComputeJobOwner): { projectId: string; sessionId?: string } => ({
   projectId: owner.projectId,
   ...(owner.sessionId === undefined ? {} : { sessionId: owner.sessionId })
@@ -61,6 +68,7 @@ export type CreateJobRequest = {
   timeoutSeconds?: number
   remoteWorkdir?: string
   initialStatus?: ComputeJobStatus
+  allowUnencryptedPersistence?: boolean
 }
 
 export type UpdateJobRequest = {
@@ -88,6 +96,7 @@ export type UpdateJobRequest = {
 }
 
 type ComputeJobUpdateData = Parameters<ComputeJobClient['computeJob']['update']>[0]['data']
+type ComputeJobCreateData = Parameters<ComputeJobClient['computeJob']['create']>[0]['data']
 
 // Owns ComputeJob reads/writes. Follows the same lazy-provider pattern as ComputeHostRepository.
 export class ComputeJobRepository {
@@ -169,44 +178,46 @@ export class ComputeJobRepository {
       const client = await this.getClient()
       const initialStatus = request.initialStatus ?? 'submitted'
       const sensitiveDataEncrypted = this.fieldProtection.isAvailable()
-      const row = await client.computeJob.create({
-        data: {
-          id: request.id,
-          providerId: request.providerId,
-          shape: request.shape,
-          sessionId: request.sessionId,
-          projectId: request.projectId,
-          status: initialStatus,
-          intent: this.protect(request.intent, sensitiveDataEncrypted),
-          command: this.protect(request.command, sensitiveDataEncrypted),
-          commandHash: request.commandHash,
-          sensitiveDataEncrypted,
-          environment: this.protectOptional(request.environment, sensitiveDataEncrypted),
-          resourceRequest: this.protectJsonOptional(
-            request.resourceRequest,
-            'object',
-            sensitiveDataEncrypted
-          ),
-          inputManifest: this.protectJsonOptional(
-            request.inputManifest,
-            'array',
-            sensitiveDataEncrypted
-          ),
-          outputManifest: this.protectJsonOptional(
-            request.outputManifest,
-            'array',
-            sensitiveDataEncrypted
-          ),
-          harvestConfig: this.protectJsonOptional(
-            request.harvestConfig,
-            'object',
-            sensitiveDataEncrypted
-          ),
-          timeoutSeconds: request.timeoutSeconds,
-          remoteWorkdir: this.protectOptional(request.remoteWorkdir, sensitiveDataEncrypted),
-          submittedAt: initialStatus === 'submitted' ? new Date() : undefined
-        }
+      if (!sensitiveDataEncrypted && request.allowUnencryptedPersistence !== true) {
+        throw new UnencryptedComputeJobPersistenceApprovalRequiredError()
+      }
+
+      const buildData = (encrypt: boolean): ComputeJobCreateData => ({
+        id: request.id,
+        providerId: request.providerId,
+        shape: request.shape,
+        sessionId: request.sessionId,
+        projectId: request.projectId,
+        status: initialStatus,
+        intent: this.protect(request.intent, encrypt),
+        command: this.protect(request.command, encrypt),
+        commandHash: request.commandHash,
+        sensitiveDataEncrypted: encrypt,
+        environment: this.protectOptional(request.environment, encrypt),
+        resourceRequest: this.protectJsonOptional(request.resourceRequest, 'object', encrypt),
+        inputManifest: this.protectJsonOptional(request.inputManifest, 'array', encrypt),
+        outputManifest: this.protectJsonOptional(request.outputManifest, 'array', encrypt),
+        harvestConfig: this.protectJsonOptional(request.harvestConfig, 'object', encrypt),
+        timeoutSeconds: request.timeoutSeconds,
+        remoteWorkdir: this.protectOptional(request.remoteWorkdir, encrypt),
+        submittedAt: initialStatus === 'submitted' ? new Date() : undefined
       })
+
+      let data: ReturnType<typeof buildData>
+      try {
+        data = buildData(sensitiveDataEncrypted)
+      } catch (error) {
+        if (sensitiveDataEncrypted && !this.fieldProtection.isAvailable()) {
+          if (request.allowUnencryptedPersistence !== true) {
+            throw new UnencryptedComputeJobPersistenceApprovalRequiredError()
+          }
+          data = buildData(false)
+        } else {
+          throw error
+        }
+      }
+
+      const row = await client.computeJob.create({ data })
       return this.toJob(row)
     })
   }

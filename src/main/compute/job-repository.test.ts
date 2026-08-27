@@ -30,6 +30,11 @@ const protectedFields = (
 ): OptionalSecureStorageStringProtection =>
   new OptionalSecureStorageStringProtection(cipher, 'linux')
 
+const makeJobRepository = (
+  client: ReturnType<typeof createProjectDbClient>
+): ComputeJobRepository =>
+  new ComputeJobRepository(() => Promise.resolve(client), protectedFields())
+
 afterEach(async () => {
   await disconnect?.()
   disconnect = undefined
@@ -49,7 +54,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
     await migrateApplicationDatabase(client)
 
     const hostRepository = new ComputeHostRepository(() => Promise.resolve(client))
-    const jobRepository = new ComputeJobRepository(() => Promise.resolve(client))
+    const jobRepository = makeJobRepository(client)
     const host = await hostRepository.create({ sshAlias: 'credential-conflict-host' })
     await jobRepository.create({
       id: 'credential-conflict-job',
@@ -88,7 +93,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
     await migrateApplicationDatabase(client)
 
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
 
     // Fresh DB: no jobs.
     expect(await repo.findNonTerminal()).toEqual([])
@@ -309,7 +314,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
         command: 'echo secret-that-must-not-be-persisted',
         commandHash: 'encryption-failure-command-hash'
       })
-    ).rejects.toThrow('Compute Job data protection became unavailable')
+    ).rejects.toThrow('Compute Job plaintext persistence requires explicit approval')
 
     await expect(
       client.computeJob.findUnique({ where: { id: 'encryption-failure-job' } })
@@ -325,7 +330,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
         projectId: 'failure-project',
         intent: 'retry intent',
         command: 'echo disclosed-plaintext-fallback',
-        commandHash: 'encryption-fallback-retry-command-hash'
+        commandHash: 'encryption-fallback-retry-command-hash',
+        allowUnencryptedPersistence: true
       })
     ).resolves.toMatchObject({ command: 'echo disclosed-plaintext-fallback' })
     await expect(
@@ -372,6 +378,19 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
     await expect(
       repo.create({
+        id: 'fallback-without-approval-job',
+        providerId: 'ssh:fallback-host',
+        shape: 'direct_ssh',
+        sessionId: 'fallback-session',
+        projectId: 'fallback-project',
+        intent: 'fallback intent',
+        command: 'echo unapproved plaintext',
+        commandHash: 'unapproved-fallback-command-hash'
+      })
+    ).rejects.toThrow('Compute Job plaintext persistence requires explicit approval')
+
+    await expect(
+      repo.create({
         id: 'fallback-job',
         providerId: 'ssh:fallback-host',
         shape: 'direct_ssh',
@@ -379,7 +398,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
         projectId: 'fallback-project',
         intent: 'fallback intent',
         command: 'echo fallback plaintext',
-        commandHash: 'fallback-command-hash'
+        commandHash: 'fallback-command-hash',
+        allowUnencryptedPersistence: true
       })
     ).resolves.toMatchObject({ command: 'echo fallback plaintext' })
 
@@ -431,7 +451,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
     await migrateApplicationDatabase(client)
 
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
 
     await repo.create({
       id: 'job-a',
@@ -471,7 +491,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
     await migrateApplicationDatabase(client)
 
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
 
     const created = await repo.create({
       id: 'job-3b',
@@ -540,7 +560,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
     await migrateApplicationDatabase(client)
 
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
 
     // Terminal + unharvested — should be returned.
     await repo.create({
@@ -616,7 +636,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
 
     const mkJob = async (id: string, sessionId: string): Promise<void> => {
       await repo.create({
@@ -663,7 +683,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
 
     await repo.create({
       id: 'job-to-consume',
@@ -699,7 +719,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
     const createJob = async (id: string, sessionId: string): Promise<void> => {
       await repo.create({
         id,
@@ -743,7 +763,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
 
     // Create jobs for provider-a in different sessions
     await repo.create({
@@ -815,7 +835,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
 
     // Create jobs for session-1 on different providers
     await repo.create({
@@ -887,7 +907,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
 
     // Initially no queued jobs
     expect(await repo.countQueuedJobs()).toBe(0)
@@ -958,7 +978,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
 
     // Create jobs with deliberate timing
     await repo.create({
@@ -1034,7 +1054,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
     await migrateApplicationDatabase(client)
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const repo = makeJobRepository(client)
     const create = (
       id: string,
       projectId: string,
