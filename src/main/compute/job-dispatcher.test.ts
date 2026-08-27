@@ -464,12 +464,12 @@ describe('dispatchJob', () => {
     expect(tracker.has('job-1')).toBe(false) // cleared in finally
   })
 
-  it('clears the in-flight tracker even when dispatch throws', async () => {
+  it('terminalizes unexpected dispatch errors before clearing the in-flight tracker', async () => {
     const job = makeJob()
     const tracker = new DispatchTracker()
     // A runner that throws simulates an unexpected error mid-dispatch.
     const runner: SshRunner = { run: vi.fn(() => Promise.reject(new Error('boom'))) }
-    const { repo } = makeJobRepo(job)
+    const { repo, transition } = makeJobRepo(job)
 
     await expect(
       dispatchJob(job.job_id, {
@@ -478,8 +478,14 @@ describe('dispatchJob', () => {
         jobRepository: repo as unknown as ComputeJobRepository,
         dispatchTracker: tracker
       })
-    ).rejects.toThrow('boom')
+    ).resolves.toBeUndefined()
 
+    expect(transition).toHaveBeenCalledWith('job-1', ['submitted'], {
+      status: 'error',
+      errorCode: 'dispatch_failed',
+      stderrTail: 'The remote Compute Job dispatch failed unexpectedly.',
+      finishedAt: expect.any(Date)
+    })
     expect(tracker.has('job-1')).toBe(false)
   })
 

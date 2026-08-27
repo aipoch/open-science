@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import type { ComputeJob } from '../../shared/compute'
+import { createLogger, errorLogFields } from '../logger'
 import {
   classifyConnectionFailure,
   ComputeConnectionError,
@@ -20,6 +21,7 @@ const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
 // Timeout for the dispatch SSH connection (mkdir + write files + launch). Generous to accommodate
 // slow cluster file systems; the job itself runs detached so the connection can close after.
 const DISPATCH_TIMEOUT_MS = 120_000
+const log = createLogger('compute')
 
 // Remote handle stored in the DB once the job is launched.
 export type RemoteHandle = {
@@ -140,12 +142,22 @@ export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<
     try {
       await dispatchJobInner(jobId, deps)
     } catch (error) {
-      if (!(error instanceof ComputeConnectionError)) throw error
       const lifecycle = new ComputeJobLifecycle(deps.jobRepository, deps.onJobUpdated)
-      await lifecycle.dispatchError(jobId, {
-        errorCode: error.code,
-        stderrTail: error.message
-      })
+      if (error instanceof ComputeConnectionError) {
+        await lifecycle.dispatchError(jobId, {
+          errorCode: error.code,
+          stderrTail: error.message
+        })
+      } else {
+        log.warn('remote Compute Job dispatch failed unexpectedly', {
+          jobId,
+          ...errorLogFields(error)
+        })
+        await lifecycle.dispatchError(jobId, {
+          errorCode: 'dispatch_failed',
+          stderrTail: 'The remote Compute Job dispatch failed unexpectedly.'
+        })
+      }
     }
   } finally {
     tracker.end(jobId)
