@@ -43,13 +43,19 @@ const rectsIntersect = (
   left.bottom > right.top &&
   left.top < right.bottom
 
+const isRangeConnected = (range: Range): boolean => range.commonAncestorContainer.isConnected
+
 const isRangeTriggerVisible = (
   range: Range,
   backward: boolean,
   viewport: Pick<SelectionTriggerViewport, 'width' | 'height'>
 ): boolean => {
+  // A cloned Range survives message remounts. Removing the quoted nodes either
+  // leaves the clone on a disconnected tree or collapses it onto a connected
+  // parent; neither should keep the portalled trigger at the fallback margin.
+  if (!isRangeConnected(range) || range.collapsed) return false
   const anchorRect = rangeAnchorRect(range, backward)
-  // Geometry is unavailable for detached and jsdom ranges. Those environments
+  // Geometry is unavailable for connected jsdom ranges. Those environments
   // often still expose a zero-size DOMRect; treat that as missing so placement
   // keeps its existing fallback. Live browser text selections provide a box.
   if (!anchorRect) return true

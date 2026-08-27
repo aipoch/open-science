@@ -149,6 +149,33 @@ describe('isRangeTriggerVisible', () => {
     expect(isRangeTriggerVisible(range, false, viewport)).toBe(true)
   })
 
+  it('hides the trigger when the cloned range was never connected', () => {
+    const paragraph = document.createElement('p')
+    paragraph.textContent = 'selectable agent reply'
+    const range = document.createRange()
+    range.setStart(paragraph.firstChild!, 0)
+    range.setEnd(paragraph.firstChild!, 10)
+    Object.defineProperty(range, 'getClientRects', {
+      configurable: true,
+      value: () => [rect(100, 20, 180, 40)]
+    })
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(100, 20, 180, 40)
+    })
+
+    expect(range.commonAncestorContainer.isConnected).toBe(false)
+    expect(isRangeTriggerVisible(range, false, viewport)).toBe(false)
+  })
+
+  it('hides the trigger when removing the quoted nodes collapses the cloned range', () => {
+    const range = selectWithRects([rect(100, 20, 180, 40)], rect(100, 20, 180, 40))
+    range.commonAncestorContainer.parentElement?.remove()
+
+    expect(range.collapsed).toBe(true)
+    expect(isRangeTriggerVisible(range, false, viewport)).toBe(false)
+  })
+
   it('keeps the trigger when client rects are empty boxes and only the bounding box is empty', () => {
     const range = selectWithRects([new DOMRect()], new DOMRect())
 
