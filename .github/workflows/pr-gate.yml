@@ -413,7 +413,7 @@ jobs:
       - name: Test complete suite shard
         id: unit_macos_shard
         continue-on-error: true
-        run: npx vitest run --coverage --coverage.reporter=text-summary --shard=${{ matrix.shard }}/2 --reporter=blob --outputFile=vitest-reports/blob-${{ matrix.shard }}.json --passWithNoTests
+        run: npx vitest run --coverage --coverage.reporter=text-summary --shard=${{ matrix.shard }}/2 --reporter=blob --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
       - name: Upload full-suite blob report
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

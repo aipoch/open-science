@@ -150,6 +150,9 @@ export default defineConfig({
     // Pin the pool to Vitest's own CPU-minus-one bound so full-suite runs cannot spawn an unbounded
     // set of short-lived workers. Heavy files below run in later groups and do not share that pool.
     maxWorkers: resolveVitestMaxWorkers(),
+    // A shard can legitimately assign no files from one named project. Keep ordinary discovery
+    // fail-closed, but let deferred-coverage shard collectors publish their partial blob report.
+    passWithNoTests: !coverageThresholdsEnabled(process.env),
     projects: [
       {
         extends: true,
