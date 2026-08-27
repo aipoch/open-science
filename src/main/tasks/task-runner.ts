@@ -2,7 +2,7 @@ import { constants } from 'node:fs'
 import { access, realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 
-import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpRuntimeEvent, AgentTurnProvenanceContext } from '../../shared/acp'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import {
   getAcpRuntimeEventImage,
@@ -17,6 +17,7 @@ import type {
 import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE, artifactCreatedAtMs } from '../../shared/artifacts'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
+import { getActiveConversationContext } from '../../shared/conversation-graph'
 import {
   PROJECT_DESCRIPTION_MAX_LENGTH,
   PROJECT_NAME_MAX_LENGTH,
@@ -24,13 +25,14 @@ import {
   type UpdateProjectRequest
 } from '../../shared/projects'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../shared/settings'
-import type {
-  DelegationPolicy,
-  PersistedArtifact,
-  PersistedChatMessage,
-  PersistedChatSession,
-  PersistedMessageImage,
-  PersistedToolActivity
+import {
+  materializeSessionConversationGraph,
+  type DelegationPolicy,
+  type PersistedArtifact,
+  type PersistedChatMessage,
+  type PersistedChatSession,
+  type PersistedMessageImage,
+  type PersistedToolActivity
 } from '../../shared/session-persistence'
 import type {
   AcquiredTaskArtifact,
@@ -111,6 +113,7 @@ type TaskAgentResumeSessionRequest = {
 type TaskAgentPromptRequest = {
   sessionId: string
   promptMessageId: string
+  provenanceContext: AgentTurnProvenanceContext
   text: string
   turnIntent?: 'plan-first'
   skillIds?: string[]
@@ -992,10 +995,16 @@ class TaskRunner {
     let cancellationAtPromptFailure: MutableTaskRun['cancellation'] = undefined
     try {
       this.publishProgress(run, 'prompt-dispatched')
+      const promptMessageId = session.activeRun!.promptMessageId
+      const provenanceContext = getActiveConversationContext(
+        materializeSessionConversationGraph(session).conversationGraph,
+        promptMessageId
+      )
       await this.dependencies.agent.prompt(
         {
           sessionId: session.id,
-          promptMessageId: session.activeRun!.promptMessageId,
+          promptMessageId,
+          provenanceContext,
           text: prompt,
           ...(request.turnIntent ? { turnIntent: request.turnIntent } : {}),
           ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),

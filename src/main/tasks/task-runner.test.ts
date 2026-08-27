@@ -906,7 +906,16 @@ describe('TaskRunner', () => {
     expect(prompt).toHaveBeenCalledWith(
       expect.objectContaining({
         turnIntent: 'plan-first',
-        promptMessageId: 'user-controlled'
+        promptMessageId: 'user-controlled',
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-controlled',
+          agentFrameId: 'root-frame-session-controlled',
+          messageBranchId: 'message-branch-session-controlled',
+          messageBranchAncestry: ['message-branch-session-controlled'],
+          messageAncestry: ['user-controlled'],
+          runtimeSegmentId: 'runtime-segment-session-controlled',
+          promptMessageId: 'user-controlled'
+        }
       }),
       expect.any(Object)
     )
@@ -1729,6 +1738,15 @@ describe('TaskRunner', () => {
       {
         sessionId: existing.id,
         promptMessageId: 'new-user',
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-1',
+          agentFrameId: 'root-frame-session-1',
+          messageBranchId: 'message-branch-session-1',
+          messageBranchAncestry: ['message-branch-session-1'],
+          messageAncestry: ['old-user', 'old-agent', 'new-user'],
+          runtimeSegmentId: 'runtime-segment-session-1',
+          promptMessageId: 'new-user'
+        },
         text: 'Follow-up question',
         contextReset: true,
         historyPreamble:
@@ -2113,6 +2131,15 @@ describe('TaskRunner', () => {
       {
         sessionId: existing.id,
         promptMessageId: 'skill-user',
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-1',
+          agentFrameId: 'root-frame-session-1',
+          messageBranchId: 'message-branch-session-1',
+          messageBranchAncestry: ['message-branch-session-1'],
+          messageAncestry: ['prior-user', 'prior-agent', 'skill-user'],
+          runtimeSegmentId: 'runtime-segment-session-1',
+          promptMessageId: 'skill-user'
+        },
         text: 'Use the selected skill.',
         skillIds: ['literature-review'],
         resumeFallback: {

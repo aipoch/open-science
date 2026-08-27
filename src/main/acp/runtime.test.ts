@@ -16,6 +16,7 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime.test-utils'
+import { createAcpTaskAgentPort } from './task-agent-port'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
@@ -61,6 +62,7 @@ import type { UploadedAttachment } from '../../shared/uploads'
 import {
   createLinearConversationGraph,
   forkConversationAfterActivity,
+  getActiveConversationContext,
   projectConversationMessage,
   synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
@@ -20918,6 +20920,147 @@ describe('ACP runtime session management', () => {
         invocation_id: 'connector-call-restored'
       }
     })
+  })
+
+  it('finalizes a Task-runner Artifact against its durable Runtime Segment', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const client = createProjectDbClient(storageRoot)
+    temporaryDisconnections.push(() => client.$disconnect())
+    await migrateApplicationDatabase(client)
+    const repository = new ArtifactRepository(storageRoot)
+    const durableSessionAuthority: { current?: PersistedChatSession } = {}
+    const provenance = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository: repository,
+      loadSession: async () => durableSessionAuthority.current
+    })
+    const process = new FakeAgentProcess()
+    let artifactClaimId: string | undefined
+    startFakeAgent(process, ['task-session-1'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onPrompt: async ({ sessionId }) => {
+        await runtime.writeArtifactForCurrentRun(sessionId, {
+          filename: 'plan.json',
+          content: '{"title":"Session Plan"}',
+          mimeType: 'application/json'
+        })
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      artifacts: {
+        configRoot: storageRoot,
+        dataRoot: storageRoot,
+        projectId: 'project-1',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository,
+        provenance
+      },
+      callbacks: {
+        onEvent: (event) => {
+          if (event.kind === 'artifact') artifactClaimId = event.artifactClaimId
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+    const taskAgent = createAcpTaskAgentPort(
+      {
+        getSnapshot: () => runtime.getSnapshot(),
+        resumeSession: (request) => runtime.resumeSession(request),
+        setPermissionProfile: (request) => runtime.setPermissionProfile(request),
+        sendPrompt: (request) => runtime.sendPrompt(request),
+        sendPromptObserved: async (request, onProviderPromptAccepted) => {
+          onProviderPromptAccepted()
+          await runtime.sendPrompt(request)
+        },
+        cancelPrompt: (request) => runtime.cancelPrompt(request)
+      },
+      { create: vi.fn() }
+    )
+    const promptMessage: PersistedChatSession['messages'][number] = {
+      id: 'task-prompt-1',
+      role: 'user',
+      content: 'Generate a Session Plan.',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const assistantMessage: PersistedChatSession['messages'][number] = {
+      id: 'task-assistant-1',
+      role: 'agent',
+      content: 'Saved plan.json.',
+      status: 'complete',
+      responseToMessageId: promptMessage.id,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const promptGraph = createLinearConversationGraph({
+      sessionId: session.sessionId,
+      messages: [promptMessage],
+      frameworkId: codexFramework.id,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const conversationGraph = synchronizeActiveConversationMessages(
+      promptGraph,
+      [promptMessage, assistantMessage],
+      2
+    )
+    durableSessionAuthority.current = {
+      id: session.sessionId,
+      projectId: 'project-1',
+      title: 'Task runner Plan First',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: conversationGraph.messages.map(projectConversationMessage),
+      conversationGraph,
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    const taskPrompt = {
+      sessionId: session.sessionId,
+      promptMessageId: promptMessage.id,
+      text: promptMessage.content,
+      turnIntent: 'plan-first' as const,
+      provenanceContext: getActiveConversationContext(promptGraph, promptMessage.id)
+    }
+    await taskAgent.prompt(taskPrompt)
+
+    expect(artifactClaimId).toBeTruthy()
+    const claim = resolveArtifactRunClaim(runtime, artifactClaimId!)
+    let finalized: Awaited<ReturnType<ArtifactProvenanceRepository['finalizeRun']>>
+    try {
+      finalized = await provenance.finalizeRun({
+        projectId: claim.projectId,
+        appSessionId: claim.sessionId,
+        artifactRunId: claim.runId,
+        artifactVersionIds: claim.artifactVersionIds!,
+        rootFrameId: claim.rootFrameId!,
+        agentFrameId: claim.agentFrameId!,
+        messageBranchId: claim.messageBranchId!,
+        messageBranchAncestry: claim.messageBranchAncestry,
+        messageAncestry: [...(claim.messageAncestry ?? []), assistantMessage.id],
+        runtimeSegmentId: claim.runtimeSegmentId!,
+        promptMessageId: claim.promptMessageId!,
+        messageId: assistantMessage.id
+      })
+    } catch (error) {
+      await expect(
+        client.artifactVersion.findFirstOrThrow({ where: { artifactRunId: claim.runId } })
+      ).resolves.toMatchObject({ state: 'pending', messageId: null })
+      throw error
+    }
+    expect(finalized).toEqual([expect.objectContaining({ name: 'plan.json' })])
+    await expect(
+      client.artifactVersion.findFirstOrThrow({ where: { artifactRunId: claim.runId } })
+    ).resolves.toMatchObject({ state: 'finalized', messageId: assistantMessage.id })
   })
 
   it('emits an artifact event for pending files even when the prompt fails', async () => {
