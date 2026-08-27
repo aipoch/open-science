@@ -7,8 +7,10 @@ import {
   forEachChild,
   getModifiers,
   isArrowFunction,
+  isBindingElement,
   isCallExpression,
   isClassDeclaration,
+  isClassExpression,
   isConstructorDeclaration,
   isEnumDeclaration,
   isExportAssignment,
@@ -19,9 +21,11 @@ import {
   isMethodDeclaration,
   isNamedExports,
   isNewExpression,
+  isParameter,
   isPropertyDeclaration,
   isPropertyAccessExpression,
   isSourceFile,
+  isVariableDeclaration,
   isVariableStatement,
   ScriptKind,
   ScriptTarget,
@@ -131,9 +135,49 @@ const interactiveTransactionOptions = (
   return sites.sort()
 }
 
+const valueBindingsNamed = (sourceFile: SourceFile, name: string): Node[] => {
+  const bindings: Node[] = []
+  const visit = (node: Node): void => {
+    if (isIdentifier(node) && node.text === name) {
+      const declaration = node.parent
+      const isNamedValueDeclaration =
+        isVariableDeclaration(declaration) ||
+        isParameter(declaration) ||
+        isBindingElement(declaration) ||
+        isFunctionDeclaration(declaration) ||
+        isFunctionExpression(declaration) ||
+        isClassDeclaration(declaration) ||
+        isClassExpression(declaration) ||
+        isEnumDeclaration(declaration)
+      const isValueBinding = isNamedValueDeclaration && declaration.name === node
+      if (isValueBinding) bindings.push(node)
+    }
+    forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return bindings
+}
+
 const expectSharedUploadTransactionPolicy = (
   sourceMap: ReadonlyMap<string, string> = sources
 ): void => {
+  const policyFile = 'staged-publication-owner.ts'
+  const policySource = createSourceFile(
+    policyFile,
+    sourceMap.get(policyFile)!,
+    ScriptTarget.Latest,
+    true,
+    ScriptKind.TS
+  )
+  const policyBindings = valueBindingsNamed(policySource, 'UPLOAD_TRANSACTION_OPTIONS')
+  expect(policyBindings).toHaveLength(1)
+  const declaration = policyBindings[0]?.parent
+  expect(
+    declaration !== undefined &&
+      isVariableDeclaration(declaration) &&
+      isVariableStatement(declaration.parent.parent) &&
+      isSourceFile(declaration.parent.parent.parent)
+  ).toBe(true)
   expect(interactiveTransactionOptions(sourceMap)).toEqual([
     'staged-publication-owner.ts:UPLOAD_TRANSACTION_OPTIONS'
   ])
@@ -326,6 +370,19 @@ describe('Upload repository architecture', () => {
       `
     )
     expect(() => expectSharedUploadTransactionPolicy(shadowedPolicySources)).toThrow()
+
+    const sameFileShadowSources = new Map(sources)
+    sameFileShadowSources.set(
+      'staged-publication-owner.ts',
+      sources.get('staged-publication-owner.ts')!.replace(
+        '): Promise<Result> => client.$transaction(operation, UPLOAD_TRANSACTION_OPTIONS)',
+        `): Promise<Result> => {
+            const UPLOAD_TRANSACTION_OPTIONS = { maxWait: 1 }
+            return client.$transaction(operation, UPLOAD_TRANSACTION_OPTIONS)
+          }`
+      )
+    )
+    expect(() => expectSharedUploadTransactionPolicy(sameFileShadowSources)).toThrow()
 
     expect([...new Set(functionCallSites('runUploadTransaction'))]).toEqual([
       'legacy-recovery-owner.ts',
