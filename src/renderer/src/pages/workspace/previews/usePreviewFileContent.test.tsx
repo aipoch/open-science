@@ -18,12 +18,13 @@ const Probe = (): React.JSX.Element => {
   return <div>{state.status === 'ready' ? state.preview.content : state.status}</div>
 }
 
-const SwitchingProbe = ({ path }: { path: string }): React.JSX.Element => {
+const SwitchingProbe = ({ fileId }: { fileId: string }): React.JSX.Element => {
   const state = usePreviewFileContent({
     projectId: 'project-1',
     sessionId: 'session-1',
     source: 'upload',
-    path
+    managedFileId: fileId,
+    path: `/managed/${fileId}.txt`
   })
 
   return <div>{state.status}</div>
@@ -38,13 +39,16 @@ describe('usePreviewFileContent', () => {
     document.body.appendChild(container)
     window.api = {
       previewResources: {
-        acquire: vi.fn(async ({ path }: { path: string }) => ({
-          id: `resource:${path}`,
-          url: `https://preview.test/${encodeURIComponent(path)}`,
-          size: 15,
-          mimeType: 'text/plain',
-          version: 1
-        })),
+        acquire: vi.fn(async (request) => {
+          const identity = request.source === 'local' ? request.path : request.fileId
+          return {
+            id: `resource:${identity}`,
+            url: `https://preview.test/${encodeURIComponent(identity)}`,
+            size: 15,
+            mimeType: 'text/plain',
+            version: 1
+          }
+        }),
         readRange: vi.fn(),
         release: vi.fn().mockResolvedValue(undefined)
       },
@@ -75,22 +79,18 @@ describe('usePreviewFileContent', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       projectId: 'project-1',
-      sessionId: 'source-session',
       source: 'upload',
       fileId: 'upload-file-1',
       versionId: 'upload-version-1',
-      path: 'upload-version:project-1/source-session/upload-version-1'
+      maxBytes: 1024 * 1024
     })
-    expect(fetch).toHaveBeenCalledWith(
-      'https://preview.test/upload-version%3Aproject-1%2Fsource-session%2Fupload-version-1',
-      {
-        cache: 'no-store',
-        headers: { Range: 'bytes=0-14' },
-        signal: expect.any(AbortSignal)
-      }
-    )
+    expect(fetch).toHaveBeenCalledWith('https://preview.test/upload-file-1', {
+      cache: 'no-store',
+      headers: { Range: 'bytes=0-14' },
+      signal: expect.any(AbortSignal)
+    })
     expect(window.api.previewResources.release).toHaveBeenCalledWith({
-      resourceId: 'resource:upload-version:project-1/source-session/upload-version-1'
+      resourceId: 'resource:upload-file-1'
     })
     expect(container.textContent).toBe('group,count\nA,2')
   })
@@ -115,15 +115,15 @@ describe('usePreviewFileContent', () => {
     )
     root = createRoot(container)
 
-    await act(async () => root.render(<SwitchingProbe path="/managed/first.txt" />))
+    await act(async () => root.render(<SwitchingProbe fileId="first" />))
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
-    await act(async () => root.render(<SwitchingProbe path="/managed/second.txt" />))
+    await act(async () => root.render(<SwitchingProbe fileId="second" />))
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
 
     expect(activeDirectReads).toBeLessThanOrEqual(1)
     expect(signals[0]?.aborted).toBe(true)
     expect(window.api.previewResources.release).toHaveBeenCalledWith({
-      resourceId: 'resource:/managed/first.txt'
+      resourceId: 'resource:first'
     })
   })
 
@@ -144,6 +144,7 @@ describe('usePreviewFileContent', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         source: 'upload',
+        managedFileId: 'utf8-file',
         path: '/managed/utf8.txt',
         maxBytes: 4
       })

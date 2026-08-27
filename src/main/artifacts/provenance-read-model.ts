@@ -27,6 +27,7 @@ import type {
   ReviewWithProvenanceEvidence
 } from '../../shared/reviewer'
 import { flagStaleReviews } from '../reviewer/stale-reviews'
+import type { ArtifactVersionContentResolver } from '../reviewer/host-sdk'
 import { selectReviewChainForArtifactVersion } from '../reviewer/artifact-version-review'
 import { toReview } from '../reviewer/repository'
 import { loadReviewSubmissionProjection } from '../reviewer/review-submission-read-model'
@@ -44,6 +45,7 @@ import {
 import { readOptionalFile, resolveStorageKey } from './provenance-storage'
 import type { PersistedVersionFileRecord } from './provenance-version-writer'
 import { requireAgentArtifactVersion } from './provenance-version-kind'
+import { resolveArtifactContentStatus } from './provenance-content-status'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -153,12 +155,7 @@ type ArtifactProvenanceReadModelOptions = {
     projectId: string,
     appSessionId: string
   ) => Promise<ArtifactVersionDescriptor>
-  resolveVersionContent: (request: {
-    projectId: string
-    versionId: string
-    appSessionId?: string
-    artifactId?: string
-  }) => Promise<{ path: string; filename: string; contentType?: string; checksum?: string }>
+  resolveArtifactVersion?: ArtifactVersionContentResolver
   resolveVersionDerivedPath: (
     request: GetArtifactVersionProvenanceRequest,
     filename: string
@@ -274,24 +271,16 @@ class ArtifactProvenanceReadModel {
     )
     const evidence = JSON.parse(evidenceMirror) as ArtifactVersionEvidence
     validateArtifactCoreEvidence(evidence, version)
-    const contentPath = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
-    const contentStatus: ArtifactVersionProvenance['contentStatus'] = await readFile(contentPath)
-      .then((content) =>
-        sha256(content) === version.checksum
-          ? ({ state: 'available' } as const)
-          : ({ state: 'unavailable', reason: 'checksum-mismatch' } as const)
-      )
-      .catch((error: unknown) => {
-        if (
-          typeof error === 'object' &&
-          error !== null &&
-          'code' in error &&
-          (error as { code?: unknown }).code === 'ENOENT'
-        ) {
-          return { state: 'unavailable', reason: 'missing' } as const
-        }
-        throw error
-      })
+    const contentStatus = await resolveArtifactContentStatus({
+      storageRoot: this.options.storageRoot,
+      projectId,
+      sessionId: appSessionId,
+      fileId: artifactId,
+      versionId,
+      contentStorageKey: version.contentStorageKey,
+      checksum: version.checksum,
+      resolveVersion: this.options.resolveArtifactVersion
+    })
 
     let execution: ArtifactExecutionSnapshot | undefined
     if (
@@ -489,7 +478,7 @@ class ArtifactProvenanceReadModel {
               provenanceReviews,
               session,
               this.options.storageRoot,
-              (request) => this.options.resolveVersionContent(request)
+              this.options.resolveArtifactVersion
             )
           ).map((candidate, index) => ({ ...provenanceReviews[index]!, stale: candidate.stale }))
         }

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -107,7 +107,7 @@ describe('default upload repository', () => {
     homeRoot = undefined
   })
 
-  it('stores and previews uploads under the default data root', async () => {
+  it('stores uploads under the default data root', async () => {
     homeRoot = await mkdtemp(join(tmpdir(), 'open-science-upload-ipc-'))
     electronState.homePath = homeRoot
     const repository = createDefaultUploadRepository()
@@ -134,9 +134,7 @@ describe('default upload repository', () => {
         'adverse_events.csv'
       )
     )
-    await expect(
-      repository.readManagedUploadPreview({ path: attachment.path, encoding: 'utf8' })
-    ).resolves.toMatchObject({ content })
+    await expect(readFile(attachment.path, 'utf8')).resolves.toBe(content)
   })
 
   it('holds one migration writer lease across the complete chunk transfer', async () => {

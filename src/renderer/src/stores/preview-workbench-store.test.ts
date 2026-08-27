@@ -399,7 +399,7 @@ describe('preview workbench store', () => {
         id: 'upload:upload-b',
         sessionId: 'session-b',
         path: getUploadedAttachmentPath(
-          { versionId: 'version-b', sessionId: 'session-b' },
+          { id: 'upload-b', versionId: 'version-b', sessionId: 'session-b' },
           'project-b'
         )
       }
@@ -411,7 +411,7 @@ describe('preview workbench store', () => {
         id: 'upload:upload-a',
         sessionId: 'session-a',
         path: getUploadedAttachmentPath(
-          { versionId: 'version-a', sessionId: 'session-a' },
+          { id: 'upload-a', versionId: 'version-a', sessionId: 'session-a' },
           'project-a'
         )
       }

@@ -4,16 +4,25 @@ export type ManagedPreviewSource = 'artifact' | 'upload' | 'notebook-input' | 'l
 
 export const MANAGED_PREVIEW_LOAD_ERROR = 'open-science-preview-load-error'
 
-export type AcquireManagedPreviewRequest = {
-  source: ManagedPreviewSource
-  path: string
-  projectId?: string
-  sessionId?: string
-  fileId?: string
-  versionId?: string
+type ManagedPreviewPresentation = {
   mimeType?: string
   maxBytes?: number
 }
+
+type AcquireManagedVersionPreviewRequest = ManagedPreviewPresentation & {
+  projectId: string
+  fileId: string
+  versionId?: string
+} & ({ source: 'artifact' } | { source: 'upload' })
+
+type AcquirePathPreviewRequest = ManagedPreviewPresentation & {
+  path: string
+  projectId?: string
+  sessionId?: string
+} & ({ source: 'notebook-input' } | { source: 'local' })
+
+export type AcquireManagedPreviewRequest =
+  AcquireManagedVersionPreviewRequest | AcquirePathPreviewRequest
 
 export type ManagedPreviewResource = {
   id: string

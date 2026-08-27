@@ -75,4 +75,3 @@ class TurnResourceSnapshotStore {
 }
 
 export { TurnResourceSnapshotStore }
-export type { TurnResourceSnapshot, TurnResourceSnapshotSource, TurnResourceSnapshotStoreOptions }

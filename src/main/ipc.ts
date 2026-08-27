@@ -81,7 +81,6 @@ import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { connectorSkillSourceDir } from './connectors/provision'
 import { registerFileSaveHandlers } from './file-save'
 import { ImmutableInputAuthority } from './immutable-input-authority'
-import { createSessionArtifactFileResolver } from './session-artifact-file-resolver'
 import { createCliCommandOwner, registerCliInstallIpcHandlers } from './cli-install/ipc'
 
 import { createGithubCommandOwner, registerGithubIpcHandlers } from './github-ipc'
@@ -122,7 +121,10 @@ import {
 } from './managed-preview-ipc'
 import { ManagedPreviewResources } from './managed-preview-resources'
 import type { PreviewProtocolRegistrar } from './managed-preview-protocol'
-import type { ManagedPreviewSource } from '../shared/preview-resources'
+import type {
+  AcquireManagedPreviewRequest,
+  ManagedPreviewSource
+} from '../shared/preview-resources'
 import {
   createOfficePreviewFrameProcessResolver,
   createOfficePreviewProcessMemoryReader
@@ -155,7 +157,10 @@ import { parseUploadVersionReference } from '../shared/uploads'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../shared/artifacts'
 import type { NotebookLanguage } from '../shared/notebook'
 import { MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID } from '../shared/lifecycle-events'
-import { OFFICE_PREVIEW_STATE_CHANNEL } from '../shared/office-preview'
+import {
+  OFFICE_PREVIEW_STATE_CHANNEL,
+  type OfficePreviewOpenRequest
+} from '../shared/office-preview'
 import { prepareExternalPythonRuntime } from './notebook/venv-overlay'
 import {
   createDefaultPreviewStateRepository,
@@ -559,13 +564,13 @@ const createApplicationModules = async (
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
   const artifactRepository = createDefaultArtifactRepository()
   const immutableInputAuthority = new ImmutableInputAuthority({
-    storageRoot: resolveDataRoot(),
-    getClient: () => getProjectDbClient(resolveStorageRoot())
+    managedFileVersions: managedFileVersionService
   })
   const artifactProvenanceRepository = new ArtifactProvenanceRepository({
     storageRoot: resolveDataRoot(),
     getClient: () => getProjectDbClient(resolveStorageRoot()),
     inputAuthority: immutableInputAuthority,
+    managedFileVersions: managedFileVersionService,
     compatibilityRepository: artifactRepository,
     loadSession: (projectId, appSessionId) => sessionRepository.loadSession(projectId, appSessionId)
   })
@@ -591,7 +596,7 @@ const createApplicationModules = async (
   const localFsService = new LocalFsService(grantedRootsRepository)
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
-    source: ManagedPreviewSource,
+    source: Extract<ManagedPreviewSource, 'local' | 'notebook-input'>,
     request: {
       path: string
       projectId?: string
@@ -600,44 +605,13 @@ const createApplicationModules = async (
       versionId?: string
     }
   ): Promise<string> => {
-    if ((source === 'artifact' || source === 'upload') && request.projectId && request.fileId) {
-      return Promise.reject(
-        new Error('Managed logical files must be opened through a Version file lease.')
-      )
-    }
-    if (source === 'artifact') {
-      const versionIdentity = parseArtifactVersionLocator(request.path)
-      return versionIdentity
-        ? artifactProvenanceRepository
-            .resolveVersionContent(versionIdentity)
-            .then((resolved) => resolved.path)
-        : artifactRepository.resolveManagedFilePath(request)
-    }
-    if (source === 'upload') {
-      return uploadRepository.resolveManagedUploadPath(request, {
-        projectId: request.projectId,
-        sessionId: request.sessionId
-      })
-    }
     if (source === 'notebook-input') {
       return notebookInputRegistry
         .resolvePreviewKey(request.path)
         .then((target) => target.absolutePath)
     }
-    // 'local' is the only remaining source, and it is the one that resolves an arbitrary host path.
-    // Falling through to it by default would silently widen any future source added to the union, so
-    // name it and reject anything unknown.
-    if (source === 'local') return localFsService.resolveFilePath(request)
-    const unhandled: never = source
-    return Promise.reject(new Error(`Unsupported managed preview source: ${String(unhandled)}`))
+    return localFsService.resolveFilePath(request)
   }
-  const resolveSessionArtifactFilePath = createSessionArtifactFileResolver({
-    compatibilityProjectId: DEFAULT_ARTIFACT_PROJECT_ID,
-    resolveVersionContent: (identity) =>
-      artifactProvenanceRepository.resolveVersionContent(identity),
-    resolveLegacyArtifactPath: (projectId, sessionId, path) =>
-      artifactRepository.resolveSessionArtifactFilePath(projectId, sessionId, path)
-  })
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
     resolvePath: resolveManagedFilePath,
@@ -820,7 +794,6 @@ const createApplicationModules = async (
     onDelivered: (event) => broadcastToRenderers('side-chat:relay-delivered', event)
   })
   const uploadCommandOwner = createUploadCommandOwner(uploadRepository, {
-    resolveManagedFilePath: (request) => resolveManagedFilePath('upload', request),
     openLatestManagedFile: (request) =>
       managedFileVersionService.openLatest({
         source: 'upload',
@@ -1715,25 +1688,37 @@ const createApplicationModules = async (
     },
     async resolveInput(identity, session) {
       const artifact = parseArtifactVersionLocator(identity)
-      if (artifact) {
-        if (
-          artifact.projectId !== session.projectId ||
-          artifact.appSessionId !== session.sessionId
-        ) {
-          throw new Error('Artifact Version belongs to a different Session.')
-        }
-        const resolved = await artifactProvenanceRepository.resolveVersionContent(artifact)
-        return { path: resolved.path, filename: resolved.filename }
-      }
-      if (!parseUploadVersionReference(identity)) {
+      const upload = parseUploadVersionReference(identity)
+      if (!artifact && !upload) {
         throw new Error('Delegated input is not an immutable Version identity.')
       }
-      const resolved = await uploadRepository.resolveSessionUpload(
-        session.sessionId,
-        { path: identity },
-        session.projectId
+      const source = artifact ? 'artifact' : 'upload'
+      const projectId = artifact?.projectId ?? upload?.projectId
+      const sessionId = artifact?.appSessionId ?? upload?.sessionId
+      const fileId = artifact?.artifactId ?? upload?.fileId
+      const versionId = artifact?.versionId ?? upload?.versionId
+      if (
+        projectId !== session.projectId ||
+        sessionId !== session.sessionId ||
+        !fileId ||
+        !versionId
+      ) {
+        throw new Error('Managed Version input has incomplete or mismatched logical identity.')
+      }
+      const lease = await managedFileVersionService.openVersion(
+        { source, projectId, fileId },
+        versionId
       )
-      return { path: resolved.path, filename: resolved.name }
+      if (lease.logicalFile.sessionId !== session.sessionId) {
+        await lease.close().catch(() => undefined)
+        throw new Error('Managed Version belongs to a different Session.')
+      }
+      return {
+        path: lease.path,
+        filename: lease.logicalFile.displayName,
+        copyTo: (destinationPath: string) => lease.copyTo(destinationPath),
+        close: () => lease.close()
+      }
     },
     frameworks: delegatedFrameworks,
     resolveSpecialist: (profileId) => profileService.resolveRunnableById(profileId),
@@ -2180,7 +2165,6 @@ const createApplicationModules = async (
   declareElectronAdapter('desktop-utilities', () => {
     registerFileSaveHandlers({
       resolveManagedFilePath,
-      resolveSessionArtifactFilePath,
       openLatestManagedFile: (source, request) =>
         managedFileVersionService.openLatest({ source, ...request }),
       openManagedFileVersion: (source, request) =>
@@ -2972,21 +2956,21 @@ const createApplicationModules = async (
       protocol
     )
   )
-  const officePreviewSupervisor = new OfficePreviewSupervisor({
-    inspectResource: ({ source, path, projectId, fileId, versionId }) =>
-      previewResources.inspect({ source, path, projectId, fileId, versionId }),
-    acquireResource: (ownerId, request, snapshot, maxBytes) =>
-      previewResources.acquire(
-        ownerId,
-        {
+  const toManagedPreviewRequest = (
+    request: OfficePreviewOpenRequest
+  ): AcquireManagedPreviewRequest =>
+    request.source === 'notebook-input'
+      ? { source: request.source, path: request.path }
+      : {
           source: request.source,
-          path: request.path,
           projectId: request.projectId,
           fileId: request.fileId,
-          versionId: request.versionId
-        },
-        { snapshot, maxBytes }
-      ),
+          ...(request.versionId ? { versionId: request.versionId } : {})
+        }
+  const officePreviewSupervisor = new OfficePreviewSupervisor({
+    inspectResource: (request) => previewResources.inspect(toManagedPreviewRequest(request)),
+    acquireResource: (ownerId, request, snapshot, maxBytes) =>
+      previewResources.acquire(ownerId, toManagedPreviewRequest(request), { snapshot, maxBytes }),
     releaseResource: (ownerId, resourceId) => previewResources.release(ownerId, { resourceId }),
     createSessionId: randomUUID,
     createRuntimeUrl: createOfficePreviewRuntimeUrl,
@@ -3284,7 +3268,7 @@ const createApplicationModules = async (
     modelRuntime: reviewerModelRuntime,
     projectRuntime: reviewerProjectRuntime,
     mcpEntryPath: mainEntryPath,
-    artifactProvenanceRepository,
+    managedFileVersions: managedFileVersionService,
     resolveSessionAgentTarget,
     saveSessionAgentConfiguration: (
       session: PersistedChatSession,

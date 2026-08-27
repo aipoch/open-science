@@ -90,8 +90,18 @@ export type ArtifactContent = TabularArtifactContent | RawArtifactContent
 
 export type ArtifactVersionContentResolver = (request: {
   projectId: string
+  sessionId: string
+  fileId: string
   versionId: string
-}) => Promise<{ path: string; filename: string; contentType?: string; checksum?: string }>
+}) => Promise<{
+  filename: string
+  contentType?: string
+  checksum: string
+  size: number
+  readRange: (begin: number, end: number) => Promise<Uint8Array>
+  verifyUnchanged: () => Promise<void>
+  close: () => Promise<void>
+}>
 
 export type ReviewerResourceBudgetOptions = {
   requestBytes?: number
@@ -304,13 +314,6 @@ export class ReviewerHostServer {
     // Read the artifact from managed storage. A read failure (missing/unreadable file) MUST surface
     // as an error, not degrade to empty content — otherwise the reviewer cannot distinguish "could
     // not read" from "the file is genuinely empty", which produces false "empty artifact" findings.
-    const resolvedVersion = this.resolveArtifactVersion
-      ? await this.resolveArtifactVersion({ projectId: this.session.projectId, versionId: id })
-      : undefined
-    const artifactPath =
-      resolvedVersion?.path ??
-      resolveArtifactPath(this.artifactStorageRoot, this.session.projectId, id)
-
     const offset = options.offset ?? 0
     const requestedBytes = options.maxBytes ?? this.resourceBudget.readBytes
     if (!Number.isSafeInteger(offset) || offset < 0) {
@@ -332,42 +335,91 @@ export class ReviewerHostServer {
       this.resourceBudget.readBytes,
       remainingSessionBytes
     )
-    let verification: ArtifactVerification
-    try {
-      verification = await this.verifyArtifact(id, artifactPath, resolvedVersion?.checksum, signal)
-    } catch (error) {
-      if (error instanceof ArtifactVersionChecksumMismatchError) throw error
-      throw new Error(
-        `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
-          `${error instanceof Error ? error.message : String(error)}`
-      )
+    const resolvedVersion = this.resolveArtifactVersion
+      ? artifactMeta?.artifactId
+        ? await this.resolveArtifactVersion({
+            projectId: this.session.projectId,
+            sessionId: this.session.id,
+            fileId: artifactMeta.artifactId,
+            versionId: id
+          })
+        : (() => {
+            throw new Error(`Artifact ${JSON.stringify(id)} has no logical file identity.`)
+          })()
+      : undefined
+    const artifactPath = resolvedVersion
+      ? undefined
+      : resolveArtifactPath(this.artifactStorageRoot, this.session.projectId, id)
+    let read: { page: Buffer; returnedBytes: number; sizeBytes: number; sample: Buffer }
+    if (resolvedVersion) {
+      try {
+        if (signal?.aborted) throw signal.reason
+        if (offset > resolvedVersion.size) {
+          throw new Error(
+            `Reviewer Artifact offset ${offset} exceeds file size ${resolvedVersion.size}.`
+          )
+        }
+        const end = Math.min(resolvedVersion.size, offset + returnedLimit)
+        const [page, sample] = await Promise.all([
+          resolvedVersion.readRange(offset, end),
+          resolvedVersion.readRange(0, Math.min(resolvedVersion.size, 512))
+        ])
+        await resolvedVersion.verifyUnchanged()
+        read = {
+          page: Buffer.from(page),
+          returnedBytes: page.byteLength,
+          sizeBytes: resolvedVersion.size,
+          sample: Buffer.from(sample)
+        }
+      } catch (error) {
+        throw new Error(
+          `Failed to read managed Artifact ${JSON.stringify(id)}: ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        )
+      } finally {
+        await resolvedVersion.close()
+      }
+    } else {
+      let verification: ArtifactVerification
+      try {
+        verification = await this.verifyArtifact(id, artifactPath!, undefined, signal)
+      } catch (error) {
+        if (error instanceof ArtifactVersionChecksumMismatchError) throw error
+        throw new Error(
+          `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+
+      if (offset > verification.sizeBytes) {
+        throw new Error(
+          `Reviewer Artifact offset ${offset} exceeds file size ${verification.sizeBytes}.`
+        )
+      }
+      try {
+        const page = await readVerifiedFilePage(
+          artifactPath!,
+          offset,
+          returnedLimit,
+          verification.observation,
+          signal
+        )
+        read = {
+          ...page,
+          sizeBytes: verification.sizeBytes,
+          sample: verification.sample
+        }
+      } catch (error) {
+        this.artifactVerifications.delete(id)
+        throw new Error(
+          `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        )
+      }
     }
 
-    if (offset > verification.sizeBytes) {
-      throw new Error(
-        `Reviewer Artifact offset ${offset} exceeds file size ${verification.sizeBytes}.`
-      )
-    }
-    let page: Awaited<ReturnType<typeof readVerifiedFilePage>>
-    try {
-      page = await readVerifiedFilePage(
-        artifactPath,
-        offset,
-        returnedLimit,
-        verification.observation,
-        signal
-      )
-    } catch (error) {
-      this.artifactVerifications.delete(id)
-      throw new Error(
-        `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
-          `${error instanceof Error ? error.message : String(error)}`
-      )
-    }
-    const read = {
-      ...page,
-      sizeBytes: verification.sizeBytes,
-      sample: verification.sample
+    if (offset > read.sizeBytes) {
+      throw new Error(`Reviewer Artifact offset ${offset} exceeds file size ${read.sizeBytes}.`)
     }
     const isText = isLikelyText(read.sample)
     let result: ArtifactContent

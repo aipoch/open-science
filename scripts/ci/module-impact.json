@@ -650,6 +650,7 @@
     "artifact_provenance": {
       "ownerPaths": [
         "src/main/artifacts/provenance-canonical.ts",
+        "src/main/artifacts/provenance-content-status.ts",
         "src/main/artifacts/provenance-core-evidence.ts",
         "src/main/artifacts/provenance-dependency-reader.ts",
         "src/main/artifacts/provenance-execution-evidence.ts",

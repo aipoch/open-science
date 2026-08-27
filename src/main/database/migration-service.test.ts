@@ -41,13 +41,6 @@ const futureTestMigration = (): MigrationManifestEntry => {
 const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID = '0009_managed_file_version_foundation'
 const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM =
   '54d50c127428b47efcea83e18c30f1dd7b94bfe7f37a3b2aae29a1a7ac43a1f8'
-const LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID = '0013_managed_file_version_foundation'
-const LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM =
-  'ed8b5f4ad1a326a98f844193ec182396cc486d86c90969b19996e9a485aaf6c7'
-const LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID =
-  '0015_managed_file_version_foundation'
-const LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM =
-  '74c880593a5dd434a4fe1f401f8015f9017773b9e833138355ca950e142ceb5d'
 
 const legacyDraftMigrationManifest = (): readonly MigrationManifestEntry[] => {
   const managedIndex = MIGRATION_MANIFEST.findIndex(
@@ -76,48 +69,6 @@ const legacyDraftMigrationManifest = (): readonly MigrationManifestEntry[] => {
       checksum: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
     },
     ...MIGRATION_MANIFEST.slice(upstreamSuffixIndex, sessionProjectionIndex)
-  ]
-}
-
-const legacyCanonicalMigrationManifest = (): readonly MigrationManifestEntry[] => {
-  const managedIndex = MIGRATION_MANIFEST.findIndex(
-    ({ id }) => id === '0016_managed_file_version_foundation'
-  )
-  const sessionProjectionIndex = MIGRATION_MANIFEST.findIndex(
-    ({ id }) => id === '0013_session_projection'
-  )
-  const managedMigration = MIGRATION_MANIFEST[managedIndex]
-  if (managedIndex < 0 || sessionProjectionIndex < 0 || !managedMigration) {
-    throw new Error('Managed migration test fixture is unavailable.')
-  }
-  return [
-    ...MIGRATION_MANIFEST.slice(0, sessionProjectionIndex),
-    {
-      ...managedMigration,
-      id: LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
-      checksum: LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
-    }
-  ]
-}
-
-const legacyPriorCanonicalMigrationManifest = (): readonly MigrationManifestEntry[] => {
-  const managedIndex = MIGRATION_MANIFEST.findIndex(
-    ({ id }) => id === '0016_managed_file_version_foundation'
-  )
-  const sessionModelCallUsageIndex = MIGRATION_MANIFEST.findIndex(
-    ({ id }) => id === '0015_session_model_call_usage'
-  )
-  const managedMigration = MIGRATION_MANIFEST[managedIndex]
-  if (managedIndex < 0 || sessionModelCallUsageIndex < 0 || !managedMigration) {
-    throw new Error('Managed migration test fixture is unavailable.')
-  }
-  return [
-    ...MIGRATION_MANIFEST.slice(0, sessionModelCallUsageIndex),
-    {
-      ...managedMigration,
-      id: LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
-      checksum: LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
-    }
   ]
 }
 
@@ -595,236 +546,21 @@ describe('application database migrations', () => {
     await expect(access(backupPath)).resolves.toBeUndefined()
   })
 
-  it('normalizes the exact legacy Draft managed ledger and retains its recovery backup', async () => {
+  it('rejects the unpublished Draft managed ledger without rewriting it', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-draft-ledger-'))
-    const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0016_managed_file_version_foundation.backup`
     client = createProjectDbClient(storageRoot)
-    await createDatabaseAtReleasedManifest(client, legacyDraftMigrationManifest())
-    await client.$executeRawUnsafe(
-      `INSERT INTO "Project" ("id", "name", "updatedAt")
-       VALUES ('legacy-draft-project', 'Preserved Draft project', CURRENT_TIMESTAMP)`
-    )
-
-    await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
-      adoptedLegacy: false,
-      applied: [
-        '0013_session_projection',
-        '0014_review_query_indexes',
-        '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
-      ],
-      from: '0012_tag_ordering',
-      to: '0016_managed_file_version_foundation'
-    })
-    await expect(
-      client.$queryRawUnsafe<Array<{ id: string; checksum: string }>>(
-        'SELECT "id", "checksum" FROM "_open_science_migrations" ORDER BY "id"'
-      )
-    ).resolves.toEqual(MIGRATION_MANIFEST.map(({ id, checksum }) => ({ id, checksum })))
-    await expect(
-      client.$queryRawUnsafe<Array<{ name: string }>>(
-        `SELECT "name" FROM "Project" WHERE "id" = 'legacy-draft-project'`
-      )
-    ).resolves.toEqual([{ name: 'Preserved Draft project' }])
-    await expect(access(backupPath)).resolves.toBeUndefined()
-
-    await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toMatchObject({
-      applied: []
-    })
-    await expect(access(backupPath)).resolves.toBeUndefined()
-  })
-
-  it('normalizes the exact former 0013 managed ledger through the upstream suffix', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-former-managed-ledger-'))
-    const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0016_managed_file_version_foundation.backup`
-    client = createProjectDbClient(storageRoot)
-    await createDatabaseAtReleasedManifest(client, legacyCanonicalMigrationManifest())
-    await client.$executeRawUnsafe(
-      `INSERT INTO "Project" ("id", "name", "updatedAt")
-       VALUES ('former-managed-project', 'Preserved former managed project', CURRENT_TIMESTAMP)`
-    )
-
-    await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
-      adoptedLegacy: false,
-      applied: [
-        '0013_session_projection',
-        '0014_review_query_indexes',
-        '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
-      ],
-      from: LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
-      to: '0016_managed_file_version_foundation'
-    })
-    await expect(
-      client.$queryRawUnsafe<Array<{ id: string; checksum: string }>>(
-        'SELECT "id", "checksum" FROM "_open_science_migrations" ORDER BY "id"'
-      )
-    ).resolves.toEqual(MIGRATION_MANIFEST.map(({ id, checksum }) => ({ id, checksum })))
-    await expect(
-      client.$queryRawUnsafe<Array<{ name: string }>>(
-        `SELECT "name" FROM "Project" WHERE "id" = 'former-managed-project'`
-      )
-    ).resolves.toEqual([{ name: 'Preserved former managed project' }])
-    await expect(access(backupPath)).resolves.toBeUndefined()
-
-    await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toMatchObject({
-      applied: []
-    })
-    await expect(access(backupPath)).resolves.toBeUndefined()
-  })
-
-  it('normalizes the prior 0015 managed ledger after the upstream migration collision', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-prior-managed-ledger-'))
-    const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0016_managed_file_version_foundation.backup`
-    client = createProjectDbClient(storageRoot)
-    await createDatabaseAtReleasedManifest(client, legacyPriorCanonicalMigrationManifest())
-    await client.$executeRawUnsafe(
-      `INSERT INTO "Project" ("id", "name", "updatedAt")
-       VALUES ('prior-managed-project', 'Preserved prior managed project', CURRENT_TIMESTAMP)`
-    )
-
-    await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
-      adoptedLegacy: false,
-      applied: ['0015_session_model_call_usage', '0016_managed_file_version_foundation'],
-      from: LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
-      to: '0016_managed_file_version_foundation'
-    })
-    await expect(
-      client.$queryRawUnsafe<Array<{ id: string; checksum: string }>>(
-        'SELECT "id", "checksum" FROM "_open_science_migrations" ORDER BY "id"'
-      )
-    ).resolves.toEqual(MIGRATION_MANIFEST.map(({ id, checksum }) => ({ id, checksum })))
-    await expect(
-      client.$queryRawUnsafe<Array<{ name: string }>>(
-        `SELECT "name" FROM "Project" WHERE "id" = 'prior-managed-project'`
-      )
-    ).resolves.toEqual([{ name: 'Preserved prior managed project' }])
-    await expect(access(backupPath)).resolves.toBeUndefined()
-
-    await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toMatchObject({
-      applied: []
-    })
-  })
-
-  it('upgrades the shortest exact legacy Draft managed prefix through the canonical suffix', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-draft-prefix-'))
-    const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0016_managed_file_version_foundation.backup`
-    client = createProjectDbClient(storageRoot)
-    const legacyDraftPrefix = legacyDraftMigrationManifest().slice(0, 9)
-    await createDatabaseAtReleasedManifest(client, legacyDraftPrefix)
-
-    await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
-      adoptedLegacy: false,
-      applied: [
-        '0009_vision_evidence',
-        '0010_compute_password_auth',
-        '0011_cross_resource_tags',
-        '0012_tag_ordering',
-        '0013_session_projection',
-        '0014_review_query_indexes',
-        '0015_session_model_call_usage',
-        '0016_managed_file_version_foundation'
-      ],
-      from: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID,
-      to: '0016_managed_file_version_foundation'
-    })
-    await expect(
-      client.$queryRawUnsafe<Array<{ id: string; checksum: string }>>(
-        'SELECT "id", "checksum" FROM "_open_science_migrations" ORDER BY "id"'
-      )
-    ).resolves.toEqual(MIGRATION_MANIFEST.map(({ id, checksum }) => ({ id, checksum })))
-    await expect(access(backupPath)).resolves.toBeUndefined()
-  })
-
-  it('rejects a corrupted legacy Draft managed checksum without changing its ledger', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-draft-checksum-'))
-    client = createProjectDbClient(storageRoot)
-    const legacyDraftPrefix = legacyDraftMigrationManifest().slice(0, 9)
-    await createDatabaseAtReleasedManifest(client, legacyDraftPrefix)
-    const corruptedChecksum = 'f'.repeat(64)
-    await client.$executeRawUnsafe(
-      `UPDATE "_open_science_migrations" SET "checksum" = ? WHERE "id" = ?`,
-      corruptedChecksum,
-      LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID
-    )
+    const draftManifest = legacyDraftMigrationManifest()
+    await createDatabaseAtReleasedManifest(client, draftManifest)
 
     await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
-      code: 'database_history_invalid'
+      code: 'database_history_invalid',
+      migrationId: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID
     })
     await expect(
       client.$queryRawUnsafe<Array<{ id: string; checksum: string }>>(
         'SELECT "id", "checksum" FROM "_open_science_migrations" ORDER BY "id"'
       )
-    ).resolves.toEqual([
-      ...MIGRATION_MANIFEST.slice(0, 8).map(({ id, checksum }) => ({ id, checksum })),
-      {
-        id: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID,
-        checksum: corruptedChecksum
-      }
-    ])
-  })
-
-  it('rejects a reordered legacy Draft managed identity without changing its ledger', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-draft-order-'))
-    client = createProjectDbClient(storageRoot)
-    const legacyDraftPrefix = legacyDraftMigrationManifest().slice(0, 9)
-    await createDatabaseAtReleasedManifest(client, legacyDraftPrefix)
-    const reorderedId = '0007z_managed_file_version_foundation'
-    await client.$executeRawUnsafe(
-      `UPDATE "_open_science_migrations" SET "id" = ? WHERE "id" = ?`,
-      reorderedId,
-      LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID
-    )
-
-    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
-      code: 'database_history_invalid'
-    })
-    await expect(
-      client.$queryRawUnsafe<Array<{ id: string; checksum: string }>>(
-        `SELECT "id", "checksum" FROM "_open_science_migrations"
-         WHERE "id" = ?`,
-        reorderedId
-      )
-    ).resolves.toEqual([
-      {
-        id: reorderedId,
-        checksum: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
-      }
-    ])
-  })
-
-  it('keeps the legacy Draft ledger identity when canonical registration fails', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-draft-rollback-'))
-    const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0016_managed_file_version_foundation.backup`
-    client = createProjectDbClient(storageRoot)
-    await createDatabaseAtReleasedManifest(client, legacyDraftMigrationManifest())
-    await client.$executeRawUnsafe(`CREATE TRIGGER "reject_canonical_managed_ledger"
-      BEFORE INSERT ON "_open_science_migrations"
-      WHEN NEW."id" = '0016_managed_file_version_foundation'
-      BEGIN
-        SELECT RAISE(ABORT, 'canonical ledger registration rejected');
-      END`)
-
-    await expect(migrateApplicationDatabase(client, { databasePath })).rejects.toMatchObject({
-      code: 'database_migration_failed',
-      migrationId: '0016_managed_file_version_foundation'
-    })
-    await expect(
-      client.$queryRawUnsafe<Array<{ id: string }>>(
-        `SELECT "id" FROM "_open_science_migrations"
-         WHERE "id" IN (
-           '0009_managed_file_version_foundation',
-           '0016_managed_file_version_foundation'
-         )
-         ORDER BY "id"`
-      )
-    ).resolves.toEqual([{ id: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID }])
-    await expect(access(backupPath)).resolves.toBeUndefined()
+    ).resolves.toEqual(draftManifest.map(({ id, checksum }) => ({ id, checksum })))
   })
 
   it('keeps historical aggregate-only turn usage when adding exact model-call storage', async () => {

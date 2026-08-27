@@ -116,9 +116,7 @@ describe('PdfThumbnail', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
-      path: '/uploads/session-1/report.pdf',
       projectId: 'project-1',
-      sessionId: 'session-1',
       fileId: 'upload-1',
       versionId: 'upload-v3'
     })
@@ -182,7 +180,7 @@ describe('PdfThumbnail', () => {
     expect(getViewport).toHaveBeenLastCalledWith({ scale: 7.68 })
   })
 
-  it('recovers silently after a pending path disappears and the finalized path succeeds', async () => {
+  it('keeps a missing local thumbnail quiet and retries after its path changes', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     vi.mocked(window.api.previewResources.acquire)
       .mockRejectedValueOnce(new Error('ENOENT: pending upload moved'))
@@ -199,7 +197,7 @@ describe('PdfThumbnail', () => {
         <PdfThumbnail
           path="/uploads/.pending/report.pdf"
           name="report.pdf"
-          source="upload"
+          source="local"
           size={4096}
           mtimeMs={1}
         />
@@ -218,7 +216,7 @@ describe('PdfThumbnail', () => {
         <PdfThumbnail
           path="/uploads/session-1/report.pdf"
           name="report.pdf"
-          source="upload"
+          source="local"
           size={4096}
           mtimeMs={2}
         />
@@ -227,7 +225,7 @@ describe('PdfThumbnail', () => {
     })
 
     expect(window.api.previewResources.acquire).toHaveBeenLastCalledWith({
-      source: 'upload',
+      source: 'local',
       path: '/uploads/session-1/report.pdf'
     })
     expect(container.querySelector('img[alt="Preview of report.pdf"]')).not.toBeNull()
@@ -253,7 +251,7 @@ describe('PdfThumbnail', () => {
         <PdfThumbnail
           path="/workspace/offscreen.pdf"
           name="offscreen.pdf"
-          source="artifact"
+          source="local"
           size={4096}
           mtimeMs={1}
         />
@@ -296,7 +294,7 @@ describe('PdfThumbnail', () => {
         <PdfThumbnail
           path="/workspace/cancel.pdf"
           name="cancel.pdf"
-          source="artifact"
+          source="local"
           size={4096}
           mtimeMs={1}
         />
@@ -366,7 +364,7 @@ describe('PdfThumbnail', () => {
         <PdfThumbnail
           path="/workspace/render-cancel.pdf"
           name="render-cancel.pdf"
-          source="artifact"
+          source="local"
           size={4096}
           mtimeMs={1}
         />
@@ -401,7 +399,7 @@ describe('PdfThumbnail', () => {
         <PdfThumbnail
           path="/workspace/changing.pdf"
           name="changing.pdf"
-          source="artifact"
+          source="local"
           size={4096}
           mtimeMs={1}
         />
@@ -413,7 +411,7 @@ describe('PdfThumbnail', () => {
         <PdfThumbnail
           path="/workspace/changing.pdf"
           name="changing.pdf"
-          source="artifact"
+          source="local"
           size={8192}
           mtimeMs={2}
         />
@@ -435,14 +433,14 @@ describe('PdfThumbnail', () => {
           <PdfThumbnail
             path="/workspace/shared.pdf"
             name="shared.pdf"
-            source="artifact"
+            source="local"
             size={4096}
             mtimeMs={1}
           />
           <PdfThumbnail
             path="/workspace/shared.pdf"
             name="shared.pdf"
-            source="artifact"
+            source="local"
             size={4096}
             mtimeMs={1}
           />
@@ -475,7 +473,7 @@ describe('PdfThumbnail', () => {
       <PdfThumbnail
         path="/workspace/cached.pdf"
         name="cached.pdf"
-        source="artifact"
+        source="local"
         size={4096}
         mtimeMs={1}
       />
@@ -504,7 +502,7 @@ describe('PdfThumbnail', () => {
         key={path}
         path={path}
         name={path.split('/').at(-1) ?? path}
-        source="artifact"
+        source="local"
         size={4096}
         mtimeMs={1}
       />
@@ -543,7 +541,7 @@ describe('PdfThumbnail', () => {
       <PdfThumbnail
         path="/workspace/handoff.pdf"
         name="handoff.pdf"
-        source="artifact"
+        source="local"
         size={4096}
         mtimeMs={1}
       />
@@ -571,7 +569,7 @@ describe('PdfThumbnail', () => {
         key={path}
         path={path}
         name={path.split('/').at(-1) ?? path}
-        source="artifact"
+        source="local"
         size={4096}
         mtimeMs={1}
       />
@@ -605,14 +603,18 @@ describe('PdfThumbnail', () => {
       await vi.waitFor(() => {
         const firstAcquires = vi
           .mocked(window.api.previewResources.acquire)
-          .mock.calls.filter(([request]) => request.path === '/workspace/evicted-1.pdf')
+          .mock.calls.filter(
+            ([request]) => request.source === 'local' && request.path === '/workspace/evicted-1.pdf'
+          )
         expect(firstAcquires).toHaveLength(2)
       })
     })
 
     const firstAcquires = vi
       .mocked(window.api.previewResources.acquire)
-      .mock.calls.filter(([request]) => request.path === '/workspace/evicted-1.pdf')
+      .mock.calls.filter(
+        ([request]) => request.source === 'local' && request.path === '/workspace/evicted-1.pdf'
+      )
     expect(firstAcquires).toHaveLength(2)
   })
 })

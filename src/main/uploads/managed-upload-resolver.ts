@@ -1,18 +1,14 @@
-import { createReadStream } from 'node:fs'
 import { realpath, rm, stat } from 'node:fs/promises'
 import { basename, join, relative, resolve, sep } from 'node:path'
-import { createHash } from 'node:crypto'
 
 import type { PrismaClient } from '@prisma/client'
 
-import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import {
   DEFAULT_UPLOAD_PROJECT_ID,
   PENDING_UPLOAD_SESSION_ID,
   parseUploadVersionReference,
   type DeleteUploadRequest
 } from '../../shared/uploads'
-import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import {
   UPLOADS_DIR,
   assertPathInsideRoot,
@@ -29,12 +25,6 @@ type ManagedUploadResolverOptions = {
 type ResolvedManagedUpload = {
   path: string
   name: string
-}
-
-const sha256File = async (filePath: string): Promise<string> => {
-  const hash = createHash('sha256')
-  for await (const chunk of createReadStream(filePath)) hash.update(chunk)
-  return hash.digest('hex')
 }
 
 class ManagedUploadResolver {
@@ -77,25 +67,7 @@ class ManagedUploadResolver {
 
     const uploadVersion = parseUploadVersionReference(request.path)
     if (uploadVersion) {
-      if (
-        scope.sessionId &&
-        uploadVersion.sessionId &&
-        uploadVersion.sessionId !== scope.sessionId
-      ) {
-        throw new Error('Upload Version reference belongs to a different session.')
-      }
-      if (
-        scope.projectId &&
-        uploadVersion.projectId &&
-        uploadVersion.projectId !== scope.projectId
-      ) {
-        throw new Error('Upload Version reference belongs to a different project.')
-      }
-      return this.resolveUploadVersionPath(
-        uploadVersion.versionId,
-        scope.projectId ?? uploadVersion.projectId,
-        scope.sessionId ?? uploadVersion.sessionId
-      )
+      throw new Error('Upload Version content requires a managed file lease.')
     }
 
     const uploadRoot = getUploadRoot(this.storageRoot)
@@ -291,53 +263,6 @@ class ManagedUploadResolver {
     })
 
     return { path, name: version?.originalFilename || version?.filename || basename(path) }
-  }
-
-  async readManagedUploadPreview(
-    request: ReadArtifactPreviewRequest
-  ): Promise<ArtifactPreviewResult> {
-    const filePath = await this.resolveManagedUploadPath(request, {
-      projectId: request.projectId,
-      sessionId: request.sessionId
-    })
-    return readBoundedManagedFilePreview(filePath, request, 'Invalid upload preview encoding.')
-  }
-
-  private async resolveUploadVersionPath(
-    versionId: string,
-    projectId: string | undefined,
-    sessionId?: string
-  ): Promise<string> {
-    if (!this.options.getClient) throw new Error('Upload Version storage is not configured.')
-    if (!projectId) throw new Error('Upload Version resolution requires a Project scope.')
-    const safeVersionId = assertSafePathSegment(versionId)
-    const safeProjectId = assertSafePathSegment(projectId)
-    const safeSessionId = sessionId ? assertSafePathSegment(sessionId) : undefined
-    const client = await this.options.getClient()
-    const version = await client.uploadVersion.findFirst({
-      where: {
-        id: safeVersionId,
-        state: 'ready',
-        uploadFile: {
-          is: {
-            projectId: safeProjectId,
-            ...(safeSessionId ? { sessionId: safeSessionId } : {})
-          }
-        }
-      }
-    })
-    if (!version) throw new Error(`Upload Version is unavailable: ${safeVersionId}`)
-    const filePath = resolve(this.storageRoot, ...version.contentStorageKey.split('/'))
-    assertPathInsideRoot(resolve(this.storageRoot), filePath, 'Upload storage key escapes storage.')
-    const fileInfo = await stat(filePath)
-    if (
-      !fileInfo.isFile() ||
-      fileInfo.size !== Number(version.sizeBytes) ||
-      (await sha256File(filePath)) !== version.checksum
-    ) {
-      throw new Error(`Ready Upload Version content is unavailable or corrupt: ${safeVersionId}`)
-    }
-    return filePath
   }
 }
 

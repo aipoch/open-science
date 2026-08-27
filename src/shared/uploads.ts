@@ -147,14 +147,15 @@ export type UploadVersionReference = {
   versionId: string
   projectId?: string
   sessionId?: string
+  fileId?: string
 }
 
 export const createUploadVersionReference = (
   versionId: string,
-  scope?: { projectId: string; sessionId: string }
+  scope?: { projectId: string; sessionId: string; fileId?: string }
 ): string =>
   scope
-    ? `${UPLOAD_VERSION_REFERENCE_PREFIX}${encodeURIComponent(scope.projectId)}/${encodeURIComponent(scope.sessionId)}/${encodeURIComponent(versionId)}`
+    ? `${UPLOAD_VERSION_REFERENCE_PREFIX}${encodeURIComponent(scope.projectId)}/${encodeURIComponent(scope.sessionId)}/${scope.fileId ? `${encodeURIComponent(scope.fileId)}/` : ''}${encodeURIComponent(versionId)}`
     : `${UPLOAD_VERSION_REFERENCE_PREFIX}${versionId}`
 
 export const parseUploadVersionReference = (value: string): UploadVersionReference | undefined => {
@@ -163,12 +164,15 @@ export const parseUploadVersionReference = (value: string): UploadVersionReferen
   if (!body) return undefined
   const segments = body.split('/')
   if (segments.length === 1) return { versionId: segments[0] }
-  if (segments.length !== 3 || segments.some((segment) => !segment)) return undefined
+  if ((segments.length !== 3 && segments.length !== 4) || segments.some((segment) => !segment)) {
+    return undefined
+  }
   try {
     return {
       projectId: decodeURIComponent(segments[0]),
       sessionId: decodeURIComponent(segments[1]),
-      versionId: decodeURIComponent(segments[2])
+      ...(segments.length === 4 ? { fileId: decodeURIComponent(segments[2]) } : {}),
+      versionId: decodeURIComponent(segments.at(-1)!)
     }
   } catch {
     return undefined
@@ -176,13 +180,13 @@ export const parseUploadVersionReference = (value: string): UploadVersionReferen
 }
 
 export const getUploadedAttachmentPath = (
-  attachment: Pick<PersistedUploadedAttachment, 'path' | 'versionId' | 'sessionId'>,
+  attachment: Pick<PersistedUploadedAttachment, 'id' | 'path' | 'versionId' | 'sessionId'>,
   projectId?: string
 ): string => {
   if (attachment.versionId) {
     return createUploadVersionReference(
       attachment.versionId,
-      projectId ? { projectId, sessionId: attachment.sessionId } : undefined
+      projectId ? { projectId, sessionId: attachment.sessionId, fileId: attachment.id } : undefined
     )
   }
   if (attachment.path) return attachment.path

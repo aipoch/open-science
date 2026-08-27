@@ -1,12 +1,10 @@
 import type {
   ArtifactFile,
-  ArtifactPreviewResult,
   ArtifactSourceFileObservation,
   ListPendingRunArtifactsRequest,
   ListProjectMessageArtifactsRequest,
   MovePendingRunArtifactsRequest,
   OpenArtifactFileRequest,
-  ReadArtifactPreviewRequest,
   WritePendingArtifactFileRequest
 } from '../../shared/artifacts'
 import { ArtifactCompatibilityOwner } from './compatibility-owner'
@@ -152,12 +150,6 @@ class ArtifactRepository {
     path: string
   ): Promise<string> {
     return this.compatibilityOwner.resolveSessionArtifactFilePath(projectId, sessionId, path)
-  }
-
-  async readManagedFilePreview(
-    request: ReadArtifactPreviewRequest
-  ): Promise<ArtifactPreviewResult> {
-    return this.compatibilityOwner.readManagedFilePreview(request)
   }
 
   async findRunFinalizationMarker(

@@ -595,8 +595,10 @@ describe('AcpPromptContentOwner', () => {
         }
       ]
     })
+    const referencedLease = createTrustedLease(Buffer.from('referenced body'))
     const reference = {
       id: referencedUpload.id,
+      sourceFileId: referencedUpload.id,
       name: referencedUpload.originalName,
       path: referencedUpload.path,
       source: 'upload' as const,
@@ -604,7 +606,27 @@ describe('AcpPromptContentOwner', () => {
     }
     const owner = new AcpPromptContentOwner({
       uploadRepository: uploads,
-      fileReferenceResolver: createManagedFileReferenceResolver({ uploads }),
+      fileReferenceResolver: createManagedFileReferenceResolver({
+        uploads,
+        managedFileVersions: {
+          openLatest: vi.fn(
+            async () =>
+              ({
+                ...referencedLease,
+                path: '/managed/referenced.txt',
+                logicalFile: {
+                  id: referencedUpload.id,
+                  displayName: referencedUpload.originalName
+                },
+                version: {
+                  id: referencedUpload.versionId,
+                  contentType: referencedUpload.mimeType,
+                  checksum: referencedUpload.checksum
+                }
+              }) as never
+          )
+        } as never
+      }),
       inlineImageBudgetBytes: 1_024
     })
     const finalizeUploads = vi.spyOn(uploads, 'finalizePendingSessionUploads')
@@ -676,7 +698,8 @@ describe('AcpPromptContentOwner', () => {
       originalName: 'notes.txt',
       path: createUploadVersionReference('upload-version-1', {
         projectId: 'project-1',
-        sessionId: 'target-session'
+        sessionId: 'target-session',
+        fileId: 'upload-file-1'
       }),
       mimeType: 'text/plain',
       size: 8,
@@ -764,7 +787,8 @@ describe('AcpPromptContentOwner', () => {
         originalName: 'notes.txt',
         path: createUploadVersionReference('upload-version-2', {
           projectId: 'project-1',
-          sessionId: 'target-session'
+          sessionId: 'target-session',
+          fileId: 'upload-file-1'
         }),
         mimeType: 'text/plain',
         size: headBytes.byteLength,
@@ -791,7 +815,8 @@ describe('AcpPromptContentOwner', () => {
       originalName: 'notes.txt',
       path: createUploadVersionReference('upload-version-1', {
         projectId: 'project-1',
-        sessionId: 'target-session'
+        sessionId: 'target-session',
+        fileId: 'upload-file-1'
       }),
       mimeType: 'text/plain',
       size: 8,

@@ -5,13 +5,17 @@
 // Tests start an actual ReviewerHostServer on a random port and POST to it, mirroring what the
 // Python host bridge does. This exercises the full HTTP RPC layer.
 
-import { writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { readFile, writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ReviewerHostServer, buildReviewerHostPythonBootstrap } from './host-sdk'
-import * as boundedFileIo from '../bounded-file-io'
+import {
+  ReviewerHostServer,
+  buildReviewerHostPythonBootstrap,
+  type ArtifactVersionContentResolver
+} from './host-sdk'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { TurnScope } from '../../shared/reviewer'
 import { ResourceBudgetExceededError } from '../resource-budget'
@@ -69,6 +73,24 @@ const makeScope = (artifactVersionIds: string[] = [V1]): TurnScope => ({
   artifactVersionIds
 })
 
+const makeNativeSession = (
+  versionId: string,
+  filename: string,
+  mimeType: string
+): PersistedChatSession =>
+  makeSession({
+    artifacts: [
+      {
+        id: versionId,
+        artifactId: 'artifact-1',
+        versionId,
+        kind: 'managed-file',
+        path: filename,
+        mimeType
+      }
+    ]
+  })
+
 // Writes an artifact into the REAL managed layout the app uses:
 // <root>/artifacts/<projectId>/<sessionId>/<messageId>/<filename>, keyed by the colon-composite
 // version id <sessionId>:<messageId>:<filename>.
@@ -81,6 +103,27 @@ const writeArtifact = async (root: string, versionId: string, content: string): 
   const dir = join(root, 'artifacts', PROJECT, sessionId, messageId)
   await mkdir(dir, { recursive: true })
   await writeFile(join(dir, filename), content)
+}
+
+const openTestVersion = async (
+  path: string,
+  metadata: { filename: string; contentType?: string },
+  overrides: Partial<{
+    checksum: string
+    verifyUnchanged: () => Promise<void>
+    close: () => Promise<void>
+  }> = {}
+): Promise<Awaited<ReturnType<ArtifactVersionContentResolver>>> => {
+  const bytes = await readFile(path)
+  return {
+    ...metadata,
+    checksum: createHash('sha256').update(bytes).digest('hex'),
+    size: bytes.byteLength,
+    readRange: async (begin: number, end: number) => bytes.subarray(begin, end),
+    verifyUnchanged: async () => undefined,
+    close: async () => undefined,
+    ...overrides
+  }
 }
 
 // Posts a JSON-RPC style request to the host server and returns the parsed body.
@@ -161,17 +204,36 @@ describe('reviewer host request budget', () => {
 describe('host.read_artifact — tabular CSV', () => {
   it('resolves native Artifact Versions through SQLite authority instead of a legacy id path', async () => {
     const nativeVersionId = 'native-version-1'
-    const nativePath = join(tmpDir, 'immutable', 'content')
-    await mkdir(join(tmpDir, 'immutable'), { recursive: true })
-    await writeFile(nativePath, 'sample,value\na,1\nb,2\n')
+    const bytes = Buffer.from('sample,value\na,1\nb,2\n')
     const resolverCalls: unknown[] = []
+    const close = vi.fn().mockResolvedValue(undefined)
+    const verifyUnchanged = vi.fn().mockResolvedValue(undefined)
     server = new ReviewerHostServer(
-      makeSession({ artifacts: [] }),
+      makeSession({
+        artifacts: [
+          {
+            id: nativeVersionId,
+            artifactId: 'artifact-1',
+            versionId: nativeVersionId,
+            kind: 'managed-file',
+            path: 'native.csv',
+            mimeType: 'text/csv'
+          }
+        ]
+      }),
       makeScope([nativeVersionId]),
       tmpDir,
       async (request) => {
         resolverCalls.push(request)
-        return { path: nativePath, filename: 'native.csv', contentType: 'text/csv' }
+        return {
+          filename: 'native.csv',
+          contentType: 'text/csv',
+          checksum: createHash('sha256').update(bytes).digest('hex'),
+          size: bytes.byteLength,
+          readRange: async (begin: number, end: number) => bytes.subarray(begin, end),
+          verifyUnchanged,
+          close
+        }
       }
     )
 
@@ -180,7 +242,16 @@ describe('host.read_artifact — tabular CSV', () => {
       kind: 'tabular',
       rowCount: 2
     })
-    expect(resolverCalls).toEqual([{ projectId: PROJECT, versionId: nativeVersionId }])
+    expect(resolverCalls).toEqual([
+      {
+        projectId: PROJECT,
+        sessionId: 'session-1',
+        fileId: 'artifact-1',
+        versionId: nativeVersionId
+      }
+    ])
+    expect(verifyUnchanged).toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
   })
 
   it('rejects native Artifact bytes that no longer match the authority checksum', async () => {
@@ -189,15 +260,20 @@ describe('host.read_artifact — tabular CSV', () => {
     await mkdir(join(tmpDir, 'immutable-mismatch'), { recursive: true })
     await writeFile(nativePath, 'tampered bytes')
     server = new ReviewerHostServer(
-      makeSession({ artifacts: [] }),
+      makeNativeSession(nativeVersionId, 'native.txt', 'text/plain'),
       makeScope([nativeVersionId]),
       tmpDir,
-      async () => ({
-        path: nativePath,
-        filename: 'native.txt',
-        contentType: 'text/plain',
-        checksum: '0'.repeat(64)
-      })
+      async () =>
+        openTestVersion(
+          nativePath,
+          { filename: 'native.txt', contentType: 'text/plain' },
+          {
+            checksum: '0'.repeat(64),
+            verifyUnchanged: async () => {
+              throw new Error('checksum mismatch')
+            }
+          }
+        )
     )
 
     await expect(server.readArtifact(nativeVersionId)).rejects.toThrow(/checksum mismatch/i)
@@ -208,16 +284,19 @@ describe('host.read_artifact — tabular CSV', () => {
     const nativePath = join(tmpDir, 'immutable-truncated', 'content')
     await mkdir(join(tmpDir, 'immutable-truncated'), { recursive: true })
     await writeFile(nativePath, 'abcdefghij')
-    const verify = vi.spyOn(boundedFileIo, 'readFilePageAndDigest')
+    const verifyUnchanged = vi.fn().mockResolvedValue(undefined)
     server = new ReviewerHostServer(
-      makeSession({ artifacts: [] }),
+      makeNativeSession(nativeVersionId, 'native.txt', 'text/plain'),
       makeScope([nativeVersionId]),
       tmpDir,
-      async () => ({
-        path: nativePath,
-        filename: 'native.txt',
-        contentType: 'text/plain'
-      }),
+      async () =>
+        openTestVersion(
+          nativePath,
+          { filename: 'native.txt', contentType: 'text/plain' },
+          {
+            verifyUnchanged
+          }
+        ),
       undefined,
       { readBytes: 4, sessionBytes: 320 }
     )
@@ -237,7 +316,7 @@ describe('host.read_artifact — tabular CSV', () => {
       returnedBytes: 2,
       truncated: true
     })
-    expect(verify).toHaveBeenCalledTimes(1)
+    expect(verifyUnchanged).toHaveBeenCalledTimes(2)
     await expect(server.readArtifact(nativeVersionId)).rejects.toBeInstanceOf(
       ResourceBudgetExceededError
     )
@@ -249,10 +328,11 @@ describe('host.read_artifact — tabular CSV', () => {
     await mkdir(join(tmpDir, 'immutable-utf8'), { recursive: true })
     await writeFile(nativePath, 'a你b')
     server = new ReviewerHostServer(
-      makeSession({ artifacts: [] }),
+      makeNativeSession(nativeVersionId, 'native.txt', 'text/plain'),
       makeScope([nativeVersionId]),
       tmpDir,
-      async () => ({ path: nativePath, filename: 'native.txt', contentType: 'text/plain' }),
+      async () =>
+        openTestVersion(nativePath, { filename: 'native.txt', contentType: 'text/plain' }),
       undefined,
       { readBytes: 4, sessionBytes: 1_000 }
     )
@@ -279,10 +359,11 @@ describe('host.read_artifact — tabular CSV', () => {
     await mkdir(join(tmpDir, 'immutable-invalid-utf8'), { recursive: true })
     await writeFile(nativePath, bytes)
     server = new ReviewerHostServer(
-      makeSession({ artifacts: [] }),
+      makeNativeSession(nativeVersionId, 'native.txt', 'text/plain'),
       makeScope([nativeVersionId]),
       tmpDir,
-      async () => ({ path: nativePath, filename: 'native.txt', contentType: 'text/plain' }),
+      async () =>
+        openTestVersion(nativePath, { filename: 'native.txt', contentType: 'text/plain' }),
       undefined,
       { readBytes: 2, sessionBytes: 1_000 }
     )
@@ -316,10 +397,11 @@ describe('host.read_artifact — tabular CSV', () => {
     await mkdir(join(tmpDir, 'immutable-invalid-utf8-prefix'), { recursive: true })
     await writeFile(nativePath, bytes)
     server = new ReviewerHostServer(
-      makeSession({ artifacts: [] }),
+      makeNativeSession(nativeVersionId, 'native.txt', 'text/plain'),
       makeScope([nativeVersionId]),
       tmpDir,
-      async () => ({ path: nativePath, filename: 'native.txt', contentType: 'text/plain' }),
+      async () =>
+        openTestVersion(nativePath, { filename: 'native.txt', contentType: 'text/plain' }),
       undefined,
       { readBytes: 2, sessionBytes: 1_000 }
     )

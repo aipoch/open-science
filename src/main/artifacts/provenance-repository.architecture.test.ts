@@ -28,6 +28,7 @@ import { describe, expect, it } from 'vitest'
 
 const productionFiles = [
   'provenance-canonical.ts',
+  'provenance-content-status.ts',
   'provenance-core-evidence.ts',
   'provenance-dependency-reader.ts',
   'provenance-execution-evidence.ts',
@@ -246,8 +247,6 @@ describe('Artifact Provenance repository architecture', () => {
         'releaseWriteReservation',
         'replayVersion',
         'reserveWrite',
-        'resolveVersionContent',
-        'resolveVersionContentForStreamingVerification',
         'resolveVersionDescriptors',
         'validateFinalizationOwnership',
         'writeAppGeneratedVersion',
@@ -255,12 +254,7 @@ describe('Artifact Provenance repository architecture', () => {
       ].sort()
     )
     expect(methods(facade, 'private')).toEqual(
-      [
-        'resolveVersionContentMetadata',
-        'resolveVersionDerivedPath',
-        'toArtifactVersionFile',
-        'toDescriptor'
-      ].sort()
+      ['resolveVersionDerivedPath', 'toArtifactVersionFile', 'toDescriptor'].sort()
     )
   })
 

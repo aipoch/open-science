@@ -54,22 +54,42 @@ export const resolveTurnScopeWithArtifactDigests = async (
         let resolved: Awaited<ReturnType<ArtifactVersionContentResolver>> | undefined
         let resolutionError: unknown
         try {
+          const artifact = (session.artifacts ?? []).find(
+            (candidate) => candidate.id === id || candidate.versionId === id
+          )
           resolved = resolveArtifactVersion
-            ? await resolveArtifactVersion({ projectId: session.projectId, versionId: id })
+            ? artifact?.artifactId
+              ? await resolveArtifactVersion({
+                  projectId: session.projectId,
+                  sessionId: session.id,
+                  fileId: artifact.artifactId,
+                  versionId: id
+                })
+              : (() => {
+                  throw new Error(`Artifact ${JSON.stringify(id)} has no logical file identity.`)
+                })()
             : undefined
         } catch (error) {
           resolutionError = error
         }
 
-        const path =
-          resolved?.path ?? resolveArtifactPath(artifactStorageRoot, session.projectId, id)
-        const digest = await computeArtifactDigest(path)
+        if (resolutionError && resolveArtifactVersion) throw resolutionError
+
+        let digest: string | undefined
+        if (resolved) {
+          try {
+            await resolved.verifyUnchanged()
+            digest = `sha256:${resolved.checksum}`
+          } finally {
+            await resolved.close()
+          }
+        } else if (!resolveArtifactVersion) {
+          const path = resolveArtifactPath(artifactStorageRoot, session.projectId, id)
+          digest = await computeArtifactDigest(path)
+        }
         if (digest === undefined) {
           if (resolutionError) throw resolutionError
           throw new Error(`Artifact content is unavailable while freezing Review scope: ${id}`)
-        }
-        if (resolved?.checksum && digest !== `sha256:${resolved.checksum}`) {
-          throw new Error(`Artifact Version checksum changed while freezing Review scope: ${id}`)
         }
         digests.set(id, digest)
       })

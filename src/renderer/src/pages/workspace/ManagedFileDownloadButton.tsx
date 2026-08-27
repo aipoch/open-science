@@ -74,20 +74,34 @@ const ManagedFileDownloadButtonState = ({
   const downloadFile = (requestedVersionId?: string): void => {
     if (activeSaveRef.current) return
 
+    let request: SaveManagedFileRequest
+    if (source === 'artifact' || source === 'upload') {
+      if (!projectId || !fileId) {
+        console.error(
+          `Failed to download managed file: ${suggestedName}`,
+          new Error('Managed file download requires a logical identity.')
+        )
+        setStatus('error')
+        return
+      }
+      request = {
+        source,
+        projectId,
+        fileId,
+        ...(requestedVersionId ? { versionId: requestedVersionId } : {}),
+        suggestedName
+      }
+    } else {
+      request = { source, path, suggestedName }
+    }
+
     const attempt = Symbol('managed-file-save')
     activeSaveRef.current = attempt
     if (resetTimerRef.current !== undefined) window.clearTimeout(resetTimerRef.current)
     setSizeLimitError(false)
     setStatus('saving')
     void window.api
-      .saveManagedFile({
-        source,
-        path,
-        ...(projectId ? { projectId } : {}),
-        ...(fileId ? { fileId } : {}),
-        ...(requestedVersionId ? { versionId: requestedVersionId } : {}),
-        suggestedName
-      } as SaveManagedFileRequest)
+      .saveManagedFile(request)
       .then((result) => {
         if (!mountedRef.current || activeSaveRef.current !== attempt) return
 
@@ -122,7 +136,9 @@ const ManagedFileDownloadButtonState = ({
     Number.isSafeInteger(versionNumber) &&
     Number.isSafeInteger(latestVersionNumber)
   const versionContextPending = hasExplicitManagedVersion && !hasResolvedVersionContext
-  const effectiveDisabled = disabled || versionContextPending
+  const missingManagedIdentity =
+    (source === 'artifact' || source === 'upload') && (!projectId || !fileId)
+  const effectiveDisabled = disabled || versionContextPending || missingManagedIdentity
   const isHistoricalVersion =
     hasExplicitManagedVersion &&
     hasResolvedVersionContext &&

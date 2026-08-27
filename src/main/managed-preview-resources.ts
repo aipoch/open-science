@@ -8,7 +8,6 @@ import type {
   AcquireManagedPreviewRequest,
   ManagedPreviewRangeResult,
   ManagedPreviewResource,
-  ManagedPreviewSource,
   ReadManagedPreviewRangeRequest,
   ReleaseManagedPreviewRequest
 } from '../shared/preview-resources'
@@ -59,8 +58,8 @@ const inferMimeType = (filePath: string, fallback?: string): string =>
 
 type ManagedPreviewResourcesOptions = {
   resolvePath: (
-    source: ManagedPreviewSource,
-    request: AcquireManagedPreviewRequest
+    source: 'notebook-input' | 'local',
+    request: Extract<AcquireManagedPreviewRequest, { source: 'notebook-input' | 'local' }>
   ) => Promise<string>
   openLatestManagedFile?: (
     source: 'artifact' | 'upload',
@@ -177,7 +176,10 @@ class ManagedPreviewResources {
         await trustedLease.close()
       }
     }
-    // Resolve through the managed repository so metadata checks never accept an arbitrary path.
+    if (request.source === 'artifact' || request.source === 'upload') {
+      throw new Error('Managed preview Version lease is unavailable.')
+    }
+    // Path-backed sources still resolve through their source-specific trust boundary.
     const filePath = await this.options.resolvePath(request.source, request)
     const fileStat = await stat(filePath, { bigint: true })
     if (!fileStat.isFile()) throw new Error('Managed preview path is not a file.')
@@ -196,7 +198,11 @@ class ManagedPreviewResources {
       // Resolve through the managed repository before minting an owner-scoped capability URL.
       const filePath = trustedLease
         ? trustedLease.path
-        : await this.options.resolvePath(request.source, request)
+        : request.source === 'artifact' || request.source === 'upload'
+          ? (() => {
+              throw new Error('Managed preview Version lease is unavailable.')
+            })()
+          : await this.options.resolvePath(request.source, request)
       const fileSnapshot = trustedLease
         ? {
             size: trustedLease.size,
@@ -420,22 +426,25 @@ class ManagedPreviewResources {
   private openTrustedLease(
     request: AcquireManagedPreviewRequest
   ): Promise<ManagedFileReadLease | undefined> {
-    if (
-      (request.source !== 'artifact' && request.source !== 'upload') ||
-      !request.projectId ||
-      !request.fileId
-    ) {
+    if (request.source !== 'artifact' && request.source !== 'upload') {
       return Promise.resolve(undefined)
     }
+    if (!request.projectId?.trim() || !request.fileId?.trim()) {
+      return Promise.reject(new Error('Managed preview requires a logical identity.'))
+    }
     if (request.versionId) {
-      if (!this.options.openManagedFileVersion) return Promise.resolve(undefined)
+      if (!this.options.openManagedFileVersion) {
+        return Promise.reject(new Error('Managed preview Version lease is not configured.'))
+      }
       return this.options.openManagedFileVersion(request.source, {
         projectId: request.projectId,
         fileId: request.fileId,
         versionId: request.versionId
       })
     }
-    if (!this.options.openLatestManagedFile) return Promise.resolve(undefined)
+    if (!this.options.openLatestManagedFile) {
+      return Promise.reject(new Error('Managed preview Version lease is not configured.'))
+    }
     return this.options.openLatestManagedFile(request.source, {
       projectId: request.projectId,
       fileId: request.fileId

@@ -98,9 +98,7 @@ describe('useManagedPreviewResource', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/managed/first.pdf',
       projectId: 'project-1',
-      sessionId: 'session-1',
       fileId: 'artifact-1'
     })
     expect(container.textContent).toBe('resource-1')
@@ -110,9 +108,7 @@ describe('useManagedPreviewResource', () => {
     expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
     expect(window.api.previewResources.acquire).toHaveBeenLastCalledWith({
       source: 'upload',
-      path: 'upload-version:project-1/source-session/upload-version-2',
       projectId: 'project-1',
-      sessionId: 'source-session',
       fileId: 'upload-2'
     })
     expect(container.textContent).toBe('resource-2')
@@ -193,9 +189,7 @@ describe('useManagedPreviewResource', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/managed/first.pdf',
       projectId: 'project-1',
-      sessionId: 'session-1',
       fileId: 'artifact-1',
       maxBytes: 4096
     })

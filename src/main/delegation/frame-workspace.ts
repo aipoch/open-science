@@ -6,7 +6,12 @@ import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../../shared/uploads'
 import type { SessionKey } from './session-records'
 
-type ResolvedImmutableInput = Readonly<{ path: string; filename?: string }>
+type ResolvedImmutableInput = Readonly<{
+  path: string
+  filename?: string
+  copyTo?: (destinationPath: string) => Promise<void>
+  close?: () => Promise<void>
+}>
 
 type ProductionFrameWorkspaceOptions = Readonly<{
   root: string
@@ -94,11 +99,14 @@ const createProductionFrameWorkspace = (
 
   return Object.freeze({
     async validateInput(identity: string, session: SessionKey): Promise<boolean> {
+      let input: ResolvedImmutableInput | undefined
       try {
-        await resolve(identity, session)
+        input = await resolve(identity, session)
         return true
       } catch {
         return false
+      } finally {
+        await input?.close?.().catch(() => undefined)
       }
     },
     async prepare(
@@ -110,9 +118,10 @@ const createProductionFrameWorkspace = (
       const cwd = join(root, 'frames', safeSegment(frameId, 'Frame id'))
       const staging = join(root, '.staging', `${frameId}-${randomUUID()}`)
       const stagedInputs = join(staging, 'inputs')
+      let resolved: ResolvedImmutableInput[] = []
       await mkdir(stagedInputs, { recursive: true })
       try {
-        const resolved = await Promise.all(inputs.map((identity) => resolve(identity, session)))
+        resolved = await Promise.all(inputs.map((identity) => resolve(identity, session)))
         const inputsDir = join(cwd, 'inputs')
         const alreadyPrepared = await stat(inputsDir)
           .then((entry) => entry.isDirectory())
@@ -124,7 +133,8 @@ const createProductionFrameWorkspace = (
             stagedInputs,
             `${ordinal}-${safeFilename(input.filename ?? input.path)}`
           )
-          await copyFile(input.path, target)
+          if (input.copyTo) await input.copyTo(target)
+          else await copyFile(input.path, target)
           await chmod(target, 0o444)
         }
         await mkdir(cwd, { recursive: true })
@@ -132,6 +142,7 @@ const createProductionFrameWorkspace = (
         await chmod(inputsDir, 0o555)
         return { cwd }
       } finally {
+        await Promise.all(resolved.map((input) => input.close?.().catch(() => undefined)))
         await chmod(stagedInputs, 0o755).catch(() => undefined)
         await rm(staging, { recursive: true, force: true }).catch(() => undefined)
       }

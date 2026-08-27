@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
-import { createPreviewRequestScope } from './preview-file-reader'
+import { createManagedPreviewRequest } from './preview-file-reader'
 import { createPreviewResourceKey } from './preview-resource-key'
 
 const MAX_CACHED_IMAGE_BYTES = 64 * 1024 * 1024
@@ -58,16 +58,7 @@ const prune = (): void => {
 }
 
 const loadImage = async (item: PreviewImageItem): Promise<CachedImage> => {
-  const requestScope = createPreviewRequestScope(item)
-  const resource = await window.api.previewResources.acquire({
-    source: item.source ?? 'artifact',
-    path: item.path,
-    ...(requestScope.projectId ? { projectId: requestScope.projectId } : {}),
-    ...(requestScope.sessionId ? { sessionId: requestScope.sessionId } : {}),
-    ...(item.managedFileId ? { fileId: item.managedFileId } : {}),
-    ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {}),
-    ...(item.mimeType ? { mimeType: item.mimeType } : {})
-  })
+  const resource = await window.api.previewResources.acquire(createManagedPreviewRequest(item))
 
   const imageSize = Math.max(item.size ?? 0, resource.size)
   if (imageSize > MAX_CACHED_IMAGE_BYTES) {

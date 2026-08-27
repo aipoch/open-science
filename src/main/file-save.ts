@@ -24,7 +24,7 @@ import { englishNativeTranslator, type NativeTranslator } from './locale/main-pr
 
 type RegisterFileSaveHandlersOptions = {
   resolveManagedFilePath?: (
-    source: SaveManagedFileRequest['source'],
+    source: Extract<SaveManagedFileRequest, { path: string }>['source'],
     request: {
       path: string
       projectId?: string
@@ -33,11 +33,6 @@ type RegisterFileSaveHandlersOptions = {
       versionId?: string
     }
   ) => Promise<ManagedFilePathResolution>
-  resolveSessionArtifactFilePath?: (
-    projectId: string,
-    sessionId: string,
-    path: string
-  ) => Promise<string>
   openManagedFile?: (sourcePath: string) => Promise<ManagedFileHandle>
   openLatestManagedFile?: (
     source: 'artifact' | 'upload',
@@ -96,58 +91,69 @@ type ManagedFileVersionHandle = ManagedFileHandle & {
 }
 
 // IPC input is renderer-controlled; reject malformed sources and paths before any filesystem work.
-const assertSaveManagedFileRequest = (request: SaveManagedFileRequest): void => {
-  const isVersionedSource = request?.source === 'artifact' || request?.source === 'upload'
+const assertSaveManagedFileRequest: (
+  request: unknown
+) => asserts request is SaveManagedFileRequest = (request) => {
+  if (typeof request !== 'object' || request === null) {
+    throw new Error('Invalid managed file save request.')
+  }
+  const candidate = request as Record<string, unknown>
+  const source = candidate.source
   if (
-    typeof request !== 'object' ||
-    request === null ||
-    (request.source !== 'artifact' &&
-      request.source !== 'upload' &&
-      request.source !== 'notebook-input' &&
-      request.source !== 'local') ||
-    typeof request.path !== 'string' ||
-    request.path.trim().length === 0 ||
-    typeof request.suggestedName !== 'string' ||
-    (isVersionedSource &&
-      (('projectId' in request &&
-        request.projectId !== undefined &&
-        (typeof request.projectId !== 'string' || request.projectId.trim().length === 0)) ||
-        ('fileId' in request &&
-          request.fileId !== undefined &&
-          (typeof request.fileId !== 'string' || request.fileId.trim().length === 0)) ||
-        Boolean(request.projectId) !== Boolean(request.fileId) ||
-        ('versionId' in request &&
-          request.versionId !== undefined &&
-          (typeof request.versionId !== 'string' ||
-            request.versionId.trim().length === 0 ||
-            !request.fileId))))
+    (source !== 'artifact' &&
+      source !== 'upload' &&
+      source !== 'notebook-input' &&
+      source !== 'local') ||
+    typeof candidate.suggestedName !== 'string'
   ) {
+    throw new Error('Invalid managed file save request.')
+  }
+  if (source === 'artifact' || source === 'upload') {
+    if (
+      typeof candidate.projectId !== 'string' ||
+      candidate.projectId.trim().length === 0 ||
+      typeof candidate.fileId !== 'string' ||
+      candidate.fileId.trim().length === 0
+    ) {
+      throw new Error('Managed file save requires a logical identity.')
+    }
+    if (
+      candidate.versionId !== undefined &&
+      (typeof candidate.versionId !== 'string' || candidate.versionId.trim().length === 0)
+    ) {
+      throw new Error('Invalid managed file save request.')
+    }
+    return
+  }
+  if (typeof candidate.path !== 'string' || candidate.path.trim().length === 0) {
     throw new Error('Invalid managed file save request.')
   }
 }
 
-const assertSaveSessionArtifactsRequest = (request: SaveSessionArtifactsRequest): void => {
+const assertSaveSessionArtifactsRequest: (
+  request: unknown
+) => asserts request is SaveSessionArtifactsRequest = (request) => {
+  const candidate = request as Record<string, unknown> | null
   if (
-    typeof request !== 'object' ||
-    request === null ||
-    typeof request.projectId !== 'string' ||
-    request.projectId.trim().length === 0 ||
-    typeof request.sessionId !== 'string' ||
-    request.sessionId.trim().length === 0 ||
-    !Array.isArray(request.files) ||
-    request.files.length === 0 ||
-    request.files.some((file) => {
+    candidate === null ||
+    typeof candidate !== 'object' ||
+    typeof candidate.projectId !== 'string' ||
+    candidate.projectId.trim().length === 0 ||
+    typeof candidate.sessionId !== 'string' ||
+    candidate.sessionId.trim().length === 0 ||
+    !Array.isArray(candidate.files) ||
+    candidate.files.length === 0 ||
+    candidate.files.some((file) => {
       if (
         typeof file !== 'object' ||
         file === null ||
-        typeof file.path !== 'string' ||
-        file.path.trim().length === 0 ||
+        typeof file.fileId !== 'string' ||
+        file.fileId.trim().length === 0 ||
         typeof file.suggestedName !== 'string'
       ) {
         return true
       }
-      const hasFileId = typeof file.fileId === 'string' && file.fileId.trim().length > 0
-      if (file.fileId !== undefined && !hasFileId) return true
+      if ('path' in file && file.path !== undefined) return true
       if ('versionId' in file && file.versionId !== undefined) return true
       return false
     })
@@ -498,35 +504,41 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
   ipcMainHandle(
     'file:save-managed',
     async (event, request: SaveManagedFileRequest): Promise<SaveManagedFileResult> => {
-      if (
-        !options.resolveManagedFilePath &&
-        !options.openLatestManagedFile &&
-        !options.openManagedFileVersion
-      ) {
-        throw new Error('Managed file resolver is not configured.')
-      }
-
       assertSaveManagedFileRequest(request)
       const versionedRequest =
         request.source === 'artifact' || request.source === 'upload' ? request : undefined
-      const logicalIdentity = versionedRequest?.fileId
-      const legacySourcePath = logicalIdentity
-        ? undefined
-        : getManagedFilePath(
-            await options.resolveManagedFilePath!(request.source, { path: request.path })
+      const pathRequest =
+        request.source === 'notebook-input' || request.source === 'local' ? request : undefined
+      if (versionedRequest) {
+        if (
+          versionedRequest.versionId
+            ? !options.openManagedFileVersion
+            : !options.openLatestManagedFile
+        ) {
+          throw new Error('Managed file Version lease is not configured.')
+        }
+      } else if (!options.resolveManagedFilePath) {
+        throw new Error('Managed file resolver is not configured.')
+      }
+
+      const pathManagedFile = pathRequest
+        ? await (options.openManagedFile ?? openManagedFile)(
+            getManagedFilePath(
+              await options.resolveManagedFilePath!(pathRequest.source, { path: pathRequest.path })
+            )
           )
+        : undefined
       const requestedBaseName = basename(request.suggestedName.trim())
       const safeName =
         requestedBaseName && requestedBaseName !== '.' && requestedBaseName !== '..'
           ? requestedBaseName
-          : basename(legacySourcePath ?? request.path)
+          : versionedRequest
+            ? versionedRequest.fileId
+            : basename(pathRequest!.path)
       const dialogOptions = {
         defaultPath: join(app.getPath('downloads'), safeName),
         title: (options.translate ?? englishNativeTranslator)('Save file')
       }
-      const legacyManagedFile = legacySourcePath
-        ? await (options.openManagedFile ?? openManagedFile)(legacySourcePath)
-        : undefined
       const parentWindow = BrowserWindow.fromWebContents(event.sender)
       try {
         const { canceled, filePath } = parentWindow
@@ -535,40 +547,27 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
 
         if (canceled || !filePath) return { saved: false }
 
-        // Resolve after user confirmation so a default logical locator observes the current DB head.
-        const managedFile = logicalIdentity
-          ? versionedRequest!.versionId && options.openManagedFileVersion
-            ? await options.openManagedFileVersion(versionedRequest!.source, {
-                projectId: versionedRequest!.projectId!,
-                fileId: logicalIdentity,
-                versionId: versionedRequest!.versionId
+        // Resolve managed identities after confirmation so the default export observes the DB head.
+        const managedFile = versionedRequest
+          ? versionedRequest.versionId
+            ? await options.openManagedFileVersion!(versionedRequest.source, {
+                projectId: versionedRequest.projectId,
+                fileId: versionedRequest.fileId,
+                versionId: versionedRequest.versionId
               })
-            : !versionedRequest!.versionId && options.openLatestManagedFile
-              ? await options.openLatestManagedFile(versionedRequest!.source, {
-                  projectId: versionedRequest!.projectId!,
-                  fileId: logicalIdentity
-                })
-              : await (options.openManagedFile ?? openManagedFile)(
-                  getManagedFilePath(
-                    await options.resolveManagedFilePath!(request.source, {
-                      path: request.path,
-                      projectId: versionedRequest!.projectId,
-                      fileId: logicalIdentity,
-                      ...(versionedRequest!.versionId
-                        ? { versionId: versionedRequest!.versionId }
-                        : {})
-                    })
-                  )
-                )
-          : legacyManagedFile!
+            : await options.openLatestManagedFile!(versionedRequest.source, {
+                projectId: versionedRequest.projectId,
+                fileId: versionedRequest.fileId
+              })
+          : pathManagedFile!
         try {
           await managedFile.copyTo(filePath)
           return { saved: true, filePath }
         } finally {
-          if (logicalIdentity) await managedFile.close()
+          if (versionedRequest) await managedFile.close()
         }
       } finally {
-        await legacyManagedFile?.close()
+        await pathManagedFile?.close()
       }
     }
   )
@@ -576,24 +575,16 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
   ipcMainHandle(
     'file:save-session-artifacts',
     async (event, request: SaveSessionArtifactsRequest): Promise<SaveSessionArtifactsResult> => {
-      const resolveSessionArtifactFilePath = options.resolveSessionArtifactFilePath
-      if (
-        !resolveSessionArtifactFilePath &&
-        !options.resolveManagedFilePath &&
-        !options.openLatestManagedFile
-      ) {
-        throw new Error('Session Artifact file resolver is not configured.')
-      }
-
       assertSaveSessionArtifactsRequest(request)
+      const openLatestManagedFile = options.openLatestManagedFile
+      if (!openLatestManagedFile) {
+        throw new Error('Latest managed file resolver is not configured.')
+      }
       const parentWindow = BrowserWindow.fromWebContents(event.sender)
 
       if (request.files.length === 1) {
         const [file] = request.files
-        const legacySourcePath = file.fileId
-          ? undefined
-          : await resolveSessionArtifactFilePath!(request.projectId, request.sessionId, file.path)
-        const safeName = getSafeFilename(file.suggestedName, legacySourcePath ?? file.path)
+        const safeName = getSafeFilename(file.suggestedName, file.fileId)
         const dialogOptions = {
           defaultPath: join(app.getPath('downloads'), safeName),
           title: (options.translate ?? englishNativeTranslator)('Save artifact')
@@ -604,23 +595,10 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
 
         if (canceled || !filePath) return { saved: false }
 
-        const managedFile = file.fileId
-          ? options.openLatestManagedFile
-            ? await options.openLatestManagedFile('artifact', {
-                projectId: request.projectId,
-                fileId: file.fileId
-              })
-            : await (options.openManagedFile ?? openManagedFile)(
-                getManagedFilePath(
-                  await options.resolveManagedFilePath!('artifact', {
-                    path: file.path,
-                    projectId: request.projectId,
-                    sessionId: request.sessionId,
-                    fileId: file.fileId
-                  })
-                )
-              )
-          : await (options.openManagedFile ?? openManagedFile)(legacySourcePath!)
+        const managedFile = await openLatestManagedFile('artifact', {
+          projectId: request.projectId,
+          fileId: file.fileId
+        })
 
         try {
           await managedFile.copyTo(filePath)
@@ -642,33 +620,17 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       if (canceled || !destinationDirectory) return { saved: false }
 
       const savedPaths: string[] = []
-      const failures: Array<{ path: string; suggestedName: string; message: string }> = []
+      const failures: NonNullable<
+        Extract<SaveSessionArtifactsResult, { saved: true }>['failures']
+      > = []
       for (const file of request.files) {
         let managedFile: ManagedFileHandle | undefined
         try {
-          if (file.fileId && options.openLatestManagedFile) {
-            managedFile = await options.openLatestManagedFile('artifact', {
-              projectId: request.projectId,
-              fileId: file.fileId
-            })
-          } else {
-            const sourcePath = file.fileId
-              ? getManagedFilePath(
-                  await options.resolveManagedFilePath!('artifact', {
-                    path: file.path,
-                    projectId: request.projectId,
-                    sessionId: request.sessionId,
-                    fileId: file.fileId
-                  })
-                )
-              : await resolveSessionArtifactFilePath!(
-                  request.projectId,
-                  request.sessionId,
-                  file.path
-                )
-            managedFile = await (options.openManagedFile ?? openManagedFile)(sourcePath)
-          }
-          const safeName = getSafeFilename(file.suggestedName, file.path)
+          managedFile = await openLatestManagedFile('artifact', {
+            projectId: request.projectId,
+            fileId: file.fileId
+          })
+          const safeName = getSafeFilename(file.suggestedName, file.fileId)
           savedPaths.push(
             await copyToAvailableDestination(managedFile, destinationDirectory, safeName)
           )

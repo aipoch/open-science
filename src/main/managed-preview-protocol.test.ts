@@ -176,7 +176,7 @@ describe('managed preview protocol', () => {
       resolvePath: async () => filePath,
       createId: () => 'resource-1'
     })
-    const request = { source: 'artifact' as const, path: filePath }
+    const request = { source: 'local' as const, path: filePath }
     const snapshot = await resources.inspect(request)
     await resources.acquire(17, request, { snapshot, maxBytes: 192 * 1024 })
 
@@ -229,7 +229,6 @@ describe('managed preview protocol', () => {
     } as never)
     await resources.acquire(17, {
       source: 'artifact',
-      path: 'stale-projection',
       projectId: 'project-1',
       fileId: 'artifact-1'
     })

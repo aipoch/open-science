@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { NotebookInputRegistry } from './input-registry'
 import { createNotebookInputPreviewKey } from '../../shared/notebook'
 
@@ -71,6 +72,10 @@ const createUpload = async (input: {
       }
     }
   })
+  await client.uploadFile.update({
+    where: { id: input.uploadFileId },
+    data: { currentVersionId: input.versionId }
+  })
   return storageKey
 }
 
@@ -119,10 +124,15 @@ const createArtifact = async (input: {
           evidenceJson: '{}',
           evidenceChecksum: checksum('{}'),
           evidenceSchemaVersion: 1,
+          managedVisibleAt: new Date('2026-07-27T10:05:00.000Z'),
           createdAt: new Date('2026-07-27T10:05:00.000Z')
         }
       }
     }
+  })
+  await client.artifactLineage.update({
+    where: { id: input.artifactId },
+    data: { currentVersionId: input.versionId }
   })
 }
 
@@ -130,10 +140,18 @@ const setup = async (): Promise<NotebookInputRegistry> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-input-registry-'))
   client = createProjectDbClient(storageRoot)
   await migrateApplicationDatabase(client)
+  await client.project.createMany({
+    data: [
+      { id: 'project-1', name: 'Project one' },
+      { id: 'project-2', name: 'Project two' }
+    ]
+  })
   return new NotebookInputRegistry({
     inputAuthority: new ImmutableInputAuthority({
-      storageRoot,
-      getClient: () => Promise.resolve(client!)
+      managedFileVersions: new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client!)
+      })
     })
   })
 }
@@ -177,6 +195,7 @@ describe('NotebookInputRegistry', () => {
       references: [
         {
           id: 'artifact-1',
+          sourceFileId: 'artifact-1',
           versionId: 'artifact-version-1',
           source: 'artifact',
           name: 'normalized.csv',
@@ -205,6 +224,7 @@ describe('NotebookInputRegistry', () => {
         path: createNotebookInputPreviewKey({
           projectId: 'project-1',
           sourceKind: 'upload-version',
+          sourceFileId: 'upload-1',
           inputFileVersionId: 'upload-version-1'
         }),
         encoding: 'utf8'
@@ -238,6 +258,7 @@ describe('NotebookInputRegistry', () => {
           },
           {
             id: 'artifact-1',
+            sourceFileId: 'artifact-1',
             versionId: 'artifact-version-1',
             source: 'artifact',
             name: 'normalized.csv',
@@ -309,8 +330,10 @@ describe('NotebookInputRegistry', () => {
         sourceKind: 'upload-version',
         inputFileVersionId: 'upload-version-1'
       })
-    ).resolves.toBe(await realpath(join(storageRoot!, ...storageKey.split('/'))))
-    expect(lease.close()).toEqual([expect.objectContaining({ association: 'resolver-accessed' })])
+    ).resolves.toBe(join(storageRoot!, ...storageKey.split('/')))
+    await expect(lease.close()).resolves.toEqual([
+      expect.objectContaining({ association: 'resolver-accessed' })
+    ])
     expect(() => lease.getRunInputFiles()).toThrow(/closed/i)
   })
 
@@ -396,7 +419,7 @@ describe('NotebookInputRegistry', () => {
         ],
         references: []
       })
-    ).rejects.toThrow(/checksum/i)
+    ).rejects.toThrow(/corrupt|checksum/i)
   })
 
   it('rejects cross-Project identities and conflicting registration for the same prompt', async () => {
@@ -419,6 +442,7 @@ describe('NotebookInputRegistry', () => {
         references: [
           {
             id: 'upload-2',
+            sourceFileId: 'upload-2',
             versionId: 'upload-version-2',
             source: 'upload',
             name: 'private.csv',

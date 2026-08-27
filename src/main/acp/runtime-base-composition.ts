@@ -159,14 +159,11 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       : undefined
   const planInteractions = new SessionPlanInteractionOwner()
   const planService =
-    options.plan && artifactTurns && options.artifacts?.provenance?.resolveVersionContent
+    options.plan && artifactTurns && options.artifacts?.managedFileVersions
       ? createProductionPlanService({
           interactions: planInteractions,
           artifactTurns,
-          provenance: {
-            resolveVersionContent: (request) =>
-              options.artifacts!.provenance!.resolveVersionContent!(request)
-          },
+          managedFileVersions: options.artifacts.managedFileVersions,
           sessions: options.plan.sessions,
           onApprovalRequested: options.plan.onApprovalRequested,
           onApprovalSettled: options.plan.onApprovalSettled

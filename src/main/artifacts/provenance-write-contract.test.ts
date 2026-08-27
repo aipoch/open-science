@@ -80,8 +80,6 @@ const PUBLIC_METHODS = [
   'getVersionReview',
   'readCodeReconstructionCache',
   'writeCodeReconstructionCache',
-  'resolveVersionContentForStreamingVerification',
-  'resolveVersionContent',
   'deleteProjectProvenance'
 ] as const satisfies readonly (keyof ArtifactProvenanceRepository)[]
 
@@ -433,6 +431,11 @@ const createReadyUploadInput = async (
   const createdAt = new Date('2026-08-08T08:00:00.000Z')
   await mkdir(dirname(inputPath), { recursive: true })
   await writeFile(inputPath, content)
+  await value.client.project.upsert({
+    where: { id: 'project-1' },
+    create: { id: 'project-1', name: 'Project one' },
+    update: {}
+  })
   await value.client.fileOriginSession.upsert({
     where: {
       projectId_sessionId: { projectId: 'project-1', sessionId: 'source-session-1' }
@@ -462,6 +465,10 @@ const createReadyUploadInput = async (
         }
       }
     }
+  })
+  await value.client.uploadFile.update({
+    where: { id: 'upload-file-1' },
+    data: { currentVersionId: 'upload-version-1' }
   })
   return {
     inputPath,
@@ -967,8 +974,10 @@ describe('artifact provenance input authority', () => {
     const value = await fixture()
     const { input, inputPath } = await createReadyUploadInput(value)
     const inputAuthority = new ImmutableInputAuthority({
-      storageRoot: value.storageRoot,
-      getClient: () => Promise.resolve(value.client)
+      managedFileVersions: new ManagedFileVersionService({
+        storageRoot: value.storageRoot,
+        getClient: () => Promise.resolve(value.client)
+      })
     })
     await inputAuthority.resolveVersion({
       projectId: 'project-1',
@@ -1000,7 +1009,7 @@ describe('artifact provenance input authority', () => {
           sourceFileObservation: observation
         })
       )
-    ).rejects.toThrow(/input content checksum/i)
+    ).rejects.toThrow(/version content is unavailable or corrupt/i)
     await expect(value.client.artifactVersion.count()).resolves.toBe(0)
   })
 

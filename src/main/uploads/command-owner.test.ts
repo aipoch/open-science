@@ -8,6 +8,7 @@ import type { ApplicationInvocation } from '../application-command-router'
 import { createElectronCallerContext } from '../caller-context'
 import { ApplicationCallerLeaseRegistry } from '../caller-lifecycle'
 import type { DataContentApplicationCommandDependencies } from '../data-content-application-commands'
+import { createUploadVersionReference } from '../../shared/uploads'
 import {
   beginMigration,
   clearMigrationPending,
@@ -456,31 +457,24 @@ describe('upload command owner', () => {
     expect(stagedOwner).toBe(owner)
   })
 
-  it('resolves a logical Upload preview at read time and preserves an explicit Version', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'open-science-upload-preview-owner-'))
-    temporaryRoots.push(root)
-    const currentPath = join(root, 'current.txt')
-    await writeFile(currentPath, 'current upload head')
-    const resolveManagedFilePath = vi.fn().mockResolvedValue(currentPath)
+  it('rejects a path-only Upload preview instead of reopening repository bytes', async () => {
+    const resolveManagedFilePath = vi.fn()
     const readManagedUploadPreview = vi.fn()
     const owner = createUploadCommandOwner(
       { readManagedUploadPreview } as unknown as UploadRepository,
-      { resolveManagedFilePath }
+      {}
     )
     const leases = new ApplicationCallerLeaseRegistry()
     const caller = createCaller(leases, 16)
     const request = {
       path: '/stale/upload.txt',
-      projectId: 'project-1',
-      fileId: 'upload-1',
-      versionId: 'upload-v1',
       maxBytes: 1024
     }
 
-    await expect(
-      owner.readPreview(invocationFor(caller, [request] as const))
-    ).resolves.toMatchObject({ content: 'current upload head' })
-    expect(resolveManagedFilePath).toHaveBeenCalledWith(request)
+    await expect(owner.readPreview(invocationFor(caller, [request] as const))).rejects.toThrow(
+      /logical identity/i
+    )
+    expect(resolveManagedFilePath).not.toHaveBeenCalled()
     expect(readManagedUploadPreview).not.toHaveBeenCalled()
   })
 
@@ -502,7 +496,7 @@ describe('upload command owner', () => {
     const readManagedUploadPreview = vi.fn()
     const owner = createUploadCommandOwner(
       { readManagedUploadPreview } as unknown as UploadRepository,
-      { openManagedFileVersion, resolveManagedFilePath }
+      { openManagedFileVersion }
     )
     const leases = new ApplicationCallerLeaseRegistry()
     const caller = createCaller(leases, 17)
@@ -521,6 +515,42 @@ describe('upload command owner', () => {
     expect(resolveManagedFilePath).not.toHaveBeenCalled()
     expect(readManagedUploadPreview).not.toHaveBeenCalled()
     expect(verifyUnchanged).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('derives the logical Upload identity from a managed Version locator', async () => {
+    const bytes = Buffer.from('managed upload bytes')
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openManagedFileVersion = vi.fn().mockResolvedValue({
+      size: bytes.byteLength,
+      read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+        const chunk = bytes.subarray(position, position + length)
+        buffer.set(chunk, offset)
+        return { bytesRead: chunk.byteLength }
+      }),
+      verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+      close
+    })
+    const owner = createUploadCommandOwner({} as UploadRepository, { openManagedFileVersion })
+    const leases = new ApplicationCallerLeaseRegistry()
+    const caller = createCaller(leases, 18)
+    const path = createUploadVersionReference('upload-v1', {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      fileId: 'upload-1'
+    })
+
+    await expect(
+      owner.readPreview(invocationFor(caller, [{ path, maxBytes: 1024 }] as const))
+    ).resolves.toMatchObject({ content: 'managed upload bytes' })
+    expect(openManagedFileVersion).toHaveBeenCalledWith({
+      path,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      fileId: 'upload-1',
+      versionId: 'upload-v1',
+      maxBytes: 1024
+    })
     expect(close).toHaveBeenCalledOnce()
   })
 })

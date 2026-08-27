@@ -14,9 +14,8 @@ type SaveBlobFileResult = {
 
 type SaveManagedVersionFileRequest = {
   source: 'artifact' | 'upload'
-  path: string
-  projectId?: string
-  fileId?: string
+  projectId: string
+  fileId: string
   versionId?: string
   suggestedName: string
 }
@@ -32,8 +31,7 @@ type SaveManagedFileRequest = SaveManagedVersionFileRequest | SavePathFileReques
 type SaveManagedFileResult = SaveBlobFileResult
 
 type SaveSessionArtifactFile = {
-  path: string
-  fileId?: string
+  fileId: string
   suggestedName: string
 }
 

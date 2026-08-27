@@ -258,7 +258,7 @@ describe('Upload repository architecture', () => {
     }
   })
 
-  it('keeps the established 15-method public facade and three value exports', () => {
+  it('keeps the established 14-method public facade and three value exports', () => {
     const establishedMethods = [
       'abortTransfer',
       'appendTransfer',
@@ -267,7 +267,6 @@ describe('Upload repository architecture', () => {
       'finalizePendingSessionUploads',
       'finishTransfer',
       'getTransferStatus',
-      'readManagedUploadPreview',
       'recoverStagingUploads',
       'resolveManagedUpload',
       'resolveManagedUploadPath',
@@ -345,7 +344,6 @@ describe('Upload repository architecture', () => {
       finalizePendingSessionUploads: 'this.stagedPublicationOwner.finalizePendingSessionUploads',
       finishTransfer: 'this.transferOwner.finishTransfer',
       getTransferStatus: 'this.transferOwner.getTransferStatus',
-      readManagedUploadPreview: 'this.managedUploadResolver.readManagedUploadPreview',
       recoverStagingUploads: 'this.legacyRecoveryOwner.recoverStagingUploads',
       resolveManagedUpload: 'this.managedUploadResolver.resolveManagedUpload',
       resolveManagedUploadPath: 'this.managedUploadResolver.resolveManagedUploadPath',

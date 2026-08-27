@@ -11,7 +11,8 @@ import { OfficePreviewSupervisor } from './office-preview-supervisor'
 const request = {
   requestId: 'request-1',
   source: 'artifact' as const,
-  path: 'project/session/report.docx',
+  projectId: 'project-1',
+  fileId: 'artifact-1',
   name: 'report.docx',
   extension: 'docx' as const,
   attempt: 0

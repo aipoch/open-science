@@ -9,7 +9,7 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { isUnavailableFileError } from '../preview-errors'
 import { createPreviewResourceKey } from '../preview-resource-key'
-import { createPreviewRequestScope } from '../preview-file-reader'
+import { createManagedPreviewRequest } from '../preview-file-reader'
 import { useNearViewport } from '../useNearViewport'
 
 const THUMBNAIL_WIDTH = 220
@@ -321,14 +321,15 @@ export const PdfThumbnail = ({
 
     const subscription = subscribeThumbnailJob(
       requestKey,
-      {
+      createManagedPreviewRequest({
         source,
         path,
-        ...createPreviewRequestScope({ projectId, sessionId, source, path }),
-        ...(managedFileId ? { fileId: managedFileId } : {}),
-        ...(selectedVersionId ? { versionId: selectedVersionId } : {}),
-        ...(mimeType ? { mimeType } : {})
-      },
+        projectId,
+        sessionId,
+        managedFileId,
+        selectedVersionId,
+        mimeType
+      }),
       renderWidth
     )
     let subscribed = true

@@ -125,7 +125,7 @@ export type PdfTextResult = {
   truncated: boolean
 }
 
-export type AttachmentByteSource = {
+type AttachmentByteSource = {
   size: number
   readBytes: () => Promise<Uint8Array>
 }

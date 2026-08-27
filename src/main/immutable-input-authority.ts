@@ -1,11 +1,9 @@
-import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { realpath, stat } from 'node:fs/promises'
-import { isAbsolute, resolve, sep } from 'node:path'
-
-import type { PrismaClient } from '@prisma/client'
-
 import type { NotebookRunInputFile } from '../shared/notebook'
+import {
+  ManagedFileVersionError,
+  type ManagedFileReadLease,
+  type ManagedFileVersionService
+} from './managed-file-versions/service'
 
 type ResolveImmutableInputVersionRequest = {
   projectId: string
@@ -15,21 +13,17 @@ type ResolveImmutableInputVersionRequest = {
 }
 
 type ImmutableInputAuthorityOptions = {
-  storageRoot: string
-  getClient: () => Promise<PrismaClient>
+  managedFileVersions: Pick<ManagedFileVersionService, 'openVersion'>
 }
 
 type ImmutableInputVersionValidation =
   | { state: 'available'; input: NotebookRunInputFile }
   | { state: 'project-mismatch' | 'unavailable' | 'identity-mismatch' }
 
-type VerifiedContent = {
-  fingerprint: string
-  checksum: string
-}
-
-const fileFingerprint = (file: Awaited<ReturnType<typeof stat>>): string =>
-  [file.dev, file.ino, file.size, file.mtimeMs, file.ctimeMs].join(':')
+type ImmutableInputContentLease = Pick<
+  ManagedFileReadLease,
+  'path' | 'readRange' | 'verifyUnchanged' | 'close'
+>
 
 const matchesVersionIdentity = (
   current: NotebookRunInputFile,
@@ -43,160 +37,109 @@ const matchesVersionIdentity = (
   current.checksum === expected.checksum &&
   current.sizeBytes === expected.sizeBytes
 
-class ImmutableInputAuthority {
-  private readonly verifiedContent = new Map<string, VerifiedContent>()
+const isUnavailableVersionError = (error: unknown): boolean =>
+  error instanceof ManagedFileVersionError &&
+  (error.code === 'FILE_NOT_FOUND' ||
+    error.code === 'FILE_DELETED' ||
+    error.code === 'VERSION_NOT_FOUND' ||
+    error.code === 'VERSION_NOT_IN_FILE')
 
+const sourceFor = (sourceKind: NotebookRunInputFile['sourceKind']): 'artifact' | 'upload' =>
+  sourceKind === 'upload-version' ? 'upload' : 'artifact'
+
+const toNotebookInput = (
+  sourceKind: NotebookRunInputFile['sourceKind'],
+  lease: ManagedFileReadLease
+): NotebookRunInputFile => ({
+  inputFileVersionId: lease.version.id,
+  sourceKind,
+  sourceFileId: lease.logicalFile.id,
+  sourceVersionNumber: lease.version.versionNumber,
+  sourceCreatedAt: lease.version.createdAt.toISOString(),
+  sourceProjectId: lease.logicalFile.projectId,
+  sourceSessionId: lease.logicalFile.sessionId,
+  filename: lease.logicalFile.displayName,
+  ...(lease.version.contentType ? { contentType: lease.version.contentType } : {}),
+  sizeBytes: Number(lease.version.sizeBytes),
+  checksum: lease.version.checksum,
+  storageKey: lease.version.contentStorageKey,
+  association: 'turn-attached'
+})
+
+class ImmutableInputAuthority {
   constructor(private readonly options: ImmutableInputAuthorityOptions) {}
 
   async resolveVersion(
     request: ResolveImmutableInputVersionRequest
   ): Promise<NotebookRunInputFile | undefined> {
-    const input = await this.loadVersion(request)
-    if (!input) return undefined
-    await this.resolveContent(input)
-    return input
+    const lease = await this.openRequestedVersion(request)
+    if (!lease) return undefined
+    try {
+      await lease.verifyUnchanged()
+      return toNotebookInput(request.sourceKind, lease)
+    } finally {
+      await lease.close()
+    }
   }
 
   async validateVersion(
     projectId: string,
     input: NotebookRunInputFile
   ): Promise<ImmutableInputVersionValidation> {
-    if (input.sourceProjectId !== projectId) {
-      return { state: 'project-mismatch' }
-    }
-    const current = await this.loadVersion({
+    if (input.sourceProjectId !== projectId) return { state: 'project-mismatch' }
+    const lease = await this.openRequestedVersion({
       projectId,
       sourceKind: input.sourceKind,
       inputFileVersionId: input.inputFileVersionId,
       expectedSourceFileId: input.sourceFileId
     })
-    if (!current) return { state: 'unavailable' }
-    if (!matchesVersionIdentity(current, input)) return { state: 'identity-mismatch' }
-    await this.resolveContent(current)
-    return { state: 'available', input: current }
+    if (!lease) return { state: 'unavailable' }
+    try {
+      const current = toNotebookInput(input.sourceKind, lease)
+      if (!matchesVersionIdentity(current, input)) return { state: 'identity-mismatch' }
+      await lease.verifyUnchanged()
+      return { state: 'available', input: current }
+    } finally {
+      await lease.close()
+    }
   }
 
-  async resolveContent(input: NotebookRunInputFile): Promise<string> {
-    const storageRoot = resolve(this.options.storageRoot)
-    const segments = input.storageKey.split('/')
-    if (
-      !input.storageKey ||
-      isAbsolute(input.storageKey) ||
-      input.storageKey.includes('\\') ||
-      segments.some((segment) => !segment || segment === '.' || segment === '..')
-    ) {
-      throw new Error('Invalid Notebook input storage key.')
-    }
-    const absolutePath = resolve(storageRoot, ...segments)
-    const storageRelativePath = absolutePath.slice(storageRoot.length)
-    if (
-      absolutePath === storageRoot ||
-      (!storageRelativePath.startsWith(sep) && storageRelativePath !== '')
-    ) {
-      throw new Error('Notebook input storage key escapes managed storage.')
-    }
-
-    const [resolvedRoot, resolvedPath] = await Promise.all([
-      realpath(storageRoot),
-      realpath(absolutePath)
-    ])
-    const resolvedRelativePath = resolvedPath.slice(resolvedRoot.length)
-    if (
-      resolvedPath === resolvedRoot ||
-      (!resolvedRelativePath.startsWith(sep) && resolvedRelativePath !== '')
-    ) {
-      throw new Error('Notebook input content escapes managed storage.')
-    }
-
-    const file = await stat(resolvedPath)
-    if (!file.isFile() || file.size !== input.sizeBytes) {
-      throw new Error(
-        'Notebook input content is missing or no longer matches its immutable metadata.'
-      )
-    }
-    const fingerprint = fileFingerprint(file)
-    const cached = this.verifiedContent.get(input.storageKey)
-    if (cached?.fingerprint === fingerprint && cached.checksum === input.checksum) {
-      return resolvedPath
-    }
-
-    const hash = createHash('sha256')
-    for await (const chunk of createReadStream(resolvedPath)) hash.update(chunk)
-    if (hash.digest('hex') !== input.checksum) {
-      throw new Error('Notebook input content checksum does not match its immutable metadata.')
-    }
-    const afterRead = await stat(resolvedPath)
-    if (fileFingerprint(afterRead) !== fingerprint) {
-      throw new Error('Notebook input content changed while its checksum was being validated.')
-    }
-    this.verifiedContent.set(input.storageKey, { fingerprint, checksum: input.checksum })
-    return resolvedPath
-  }
-
-  private async loadVersion(
-    request: ResolveImmutableInputVersionRequest
-  ): Promise<NotebookRunInputFile | undefined> {
-    const client = await this.options.getClient()
-    if (request.sourceKind === 'upload-version') {
-      const version = await client.uploadVersion.findFirst({
-        where: {
-          id: request.inputFileVersionId,
-          state: 'ready',
-          uploadFile: { is: { projectId: request.projectId } }
-        },
-        include: { uploadFile: true }
-      })
-      if (
-        !version ||
-        (request.expectedSourceFileId && version.uploadFileId !== request.expectedSourceFileId)
-      ) {
-        return undefined
-      }
-      return {
-        inputFileVersionId: version.id,
-        sourceKind: request.sourceKind,
-        sourceFileId: version.uploadFileId,
-        sourceVersionNumber: version.versionNumber,
-        ...(version.createdAt ? { sourceCreatedAt: version.createdAt.toISOString() } : {}),
-        sourceProjectId: version.uploadFile.projectId,
-        sourceSessionId: version.uploadFile.sessionId,
-        filename: version.originalFilename || version.filename,
-        ...(version.contentType ? { contentType: version.contentType } : {}),
-        sizeBytes: Number(version.sizeBytes),
-        checksum: version.checksum,
-        storageKey: version.contentStorageKey,
-        association: 'turn-attached'
-      }
-    }
-
-    const version = await client.artifactVersion.findFirst({
-      where: {
-        id: request.inputFileVersionId,
-        state: 'finalized',
-        artifact: { is: { projectId: request.projectId } }
-      },
-      include: { artifact: true }
+  async openContent(input: NotebookRunInputFile): Promise<ImmutableInputContentLease> {
+    const lease = await this.openRequestedVersion({
+      projectId: input.sourceProjectId,
+      sourceKind: input.sourceKind,
+      inputFileVersionId: input.inputFileVersionId,
+      expectedSourceFileId: input.sourceFileId
     })
-    if (
-      !version ||
-      (request.expectedSourceFileId && version.artifactId !== request.expectedSourceFileId)
-    ) {
-      return undefined
+    if (!lease) throw new Error('Notebook input Version is unavailable.')
+    try {
+      if (!matchesVersionIdentity(toNotebookInput(input.sourceKind, lease), input)) {
+        throw new Error('Notebook input identity no longer matches its immutable Version.')
+      }
+      await lease.verifyUnchanged()
+      return lease
+    } catch (error) {
+      await lease.close().catch(() => undefined)
+      throw error
     }
-    return {
-      inputFileVersionId: version.id,
-      sourceKind: request.sourceKind,
-      sourceFileId: version.artifactId,
-      sourceVersionNumber: version.versionNumber,
-      sourceCreatedAt: version.createdAt.toISOString(),
-      sourceProjectId: version.artifact.projectId,
-      sourceSessionId: version.artifact.sessionId,
-      filename: version.artifact.filename,
-      ...(version.contentType ? { contentType: version.contentType } : {}),
-      sizeBytes: Number(version.sizeBytes),
-      checksum: version.checksum,
-      storageKey: version.contentStorageKey,
-      association: 'turn-attached'
+  }
+
+  private async openRequestedVersion(
+    request: ResolveImmutableInputVersionRequest
+  ): Promise<ManagedFileReadLease | undefined> {
+    if (!request.expectedSourceFileId) return undefined
+    try {
+      return await this.options.managedFileVersions.openVersion(
+        {
+          source: sourceFor(request.sourceKind),
+          projectId: request.projectId,
+          fileId: request.expectedSourceFileId
+        },
+        request.inputFileVersionId
+      )
+    } catch (error) {
+      if (isUnavailableVersionError(error)) return undefined
+      throw error
     }
   }
 }
@@ -204,6 +147,7 @@ class ImmutableInputAuthority {
 export { ImmutableInputAuthority }
 export type {
   ImmutableInputAuthorityOptions,
+  ImmutableInputContentLease,
   ImmutableInputVersionValidation,
   ResolveImmutableInputVersionRequest
 }

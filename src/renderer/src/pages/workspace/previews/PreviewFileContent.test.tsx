@@ -79,12 +79,15 @@ let restorePdbLayoutMocks: (() => void) | undefined
 
 const createFileItem = (overrides: Partial<PreviewFileItem>): PreviewFileItem => ({
   id: 'file-1',
+  projectId: 'project-1',
   sessionId: 'session-1',
   title: 'data.json',
   type: 'file',
+  source: 'artifact',
   path: '/workspace/data.json',
   name: 'data.json',
   format: 'json',
+  managedFileId: 'file-1',
   ...overrides
 })
 
@@ -228,7 +231,6 @@ describe('PreviewFileContent', () => {
 
     expect(saveManagedFile).toHaveBeenCalledWith({
       source: 'upload',
-      path: 'upload-version:stale-projection',
       projectId: 'project-1',
       fileId: 'upload-1',
       versionId: 'upload-v5',
@@ -373,8 +375,9 @@ describe('PreviewFileContent', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/data.json',
-      sessionId: 'session-1'
+      projectId: 'project-1',
+      fileId: 'file-1',
+      maxBytes: 1024 * 1024
     })
     expect(container.querySelector('pre')?.textContent).toContain('"name": "sample"')
     expect(container.querySelector('pre')?.textContent).toContain('"values": [')
@@ -584,7 +587,7 @@ describe('PreviewFileContent', () => {
     })
 
     expect(fetch).toHaveBeenLastCalledWith(
-      'open-science-preview://resource-2/large.txt',
+      'open-science-preview://resource-2/file-1',
       expect.objectContaining({ headers: { Range: expect.stringMatching(/^bytes=5-/u) } })
     )
     expect(container.textContent).toContain('second page')
@@ -711,7 +714,7 @@ describe('PreviewFileContent', () => {
     expect(iframe).not.toBeNull()
     expect(iframe?.getAttribute('sandbox')).toBe('allow-scripts')
     expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')
-    expect(iframe?.getAttribute('src')).toBe('open-science-preview://resource-1/data.json')
+    expect(iframe?.getAttribute('src')).toBe('open-science-preview://resource-1/file-1')
     expect(iframe?.hasAttribute('srcdoc')).toBe(false)
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
   })
@@ -741,7 +744,7 @@ describe('PreviewFileContent', () => {
       await Promise.resolve()
     })
     expect(window.api.artifacts.readPreview).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/workspace/data.json', offset: 0 })
+      expect.objectContaining({ path: 'file-1', projectId: 'project-1', offset: 0 })
     )
   })
 
@@ -1063,8 +1066,9 @@ describe('PreviewFileContent', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
-      path: '/Users/example/.open-science/uploads/default-project/session-1/notes.txt',
-      sessionId: 'session-1'
+      projectId: 'project-1',
+      fileId: 'file-1',
+      maxBytes: 1024 * 1024
     })
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
     expect(container.textContent).toContain('uploaded content')

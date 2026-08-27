@@ -213,25 +213,6 @@ const MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM = checksumMigrationPayload(
   managedFileVersionFoundationMigration.statements,
   managedFileVersionFoundationMigration.verifiers
 )
-const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID = '0009_managed_file_version_foundation'
-const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM = checksumMigrationPayload(
-  LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID,
-  managedFileVersionFoundationMigration.statements,
-  managedFileVersionFoundationMigration.verifiers
-)
-const LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID = '0013_managed_file_version_foundation'
-const LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM = checksumMigrationPayload(
-  LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
-  managedFileVersionFoundationMigration.statements,
-  managedFileVersionFoundationMigration.verifiers
-)
-const LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID =
-  '0015_managed_file_version_foundation'
-const LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM = checksumMigrationPayload(
-  LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
-  managedFileVersionFoundationMigration.statements,
-  managedFileVersionFoundationMigration.verifiers
-)
 const VISION_EVIDENCE_CHECKSUM = checksumMigrationPayload(
   visionEvidenceMigration.id,
   visionEvidenceMigration.statements,
@@ -1042,53 +1023,6 @@ const validateLedger = (
   return ledger.length
 }
 
-type LegacyManagedFileVersionLedgerIdentity = { id: string; checksum: string }
-
-const LEGACY_MANAGED_FILE_VERSION_LEDGER_IDENTITIES = [
-  {
-    id: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID,
-    checksum: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
-  },
-  {
-    id: LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
-    checksum: LEGACY_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
-  },
-  {
-    id: LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_ID,
-    checksum: LEGACY_PRIOR_CANONICAL_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
-  }
-] as const satisfies readonly LegacyManagedFileVersionLedgerIdentity[]
-
-const legacyManagedFileVersionHistoryBridgeIdentity = (
-  ledger: readonly LedgerRow[],
-  manifest: readonly MigrationManifestEntry[]
-): LegacyManagedFileVersionLedgerIdentity | undefined => {
-  const managedIndex = manifest.findIndex(
-    (migration) =>
-      migration.id === managedFileVersionFoundationMigration.id &&
-      migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
-  )
-  if (managedIndex < 0 || ledger.length > managedIndex + 1) return undefined
-
-  return LEGACY_MANAGED_FILE_VERSION_LEDGER_IDENTITIES.find((legacyIdentity) => {
-    const legacyInsertionIndex = manifest.findIndex((migration) => migration.id > legacyIdentity.id)
-    if (
-      legacyInsertionIndex < 0 ||
-      legacyInsertionIndex >= managedIndex ||
-      ledger.length <= legacyInsertionIndex
-    ) {
-      return false
-    }
-    return ledger.every((row, index) => {
-      if (index === legacyInsertionIndex) {
-        return row.id === legacyIdentity.id && row.checksum === legacyIdentity.checksum
-      }
-      const expected = manifest[index < legacyInsertionIndex ? index : index - 1]
-      return expected !== undefined && row.id === expected.id && row.checksum === expected.checksum
-    })
-  })
-}
-
 const readForeignKeyState = async (client: PrismaClient): Promise<number> => {
   const rows = await migrationSqlExecutor.query<SqliteForeignKeyStateRow[]>(
     client,
@@ -1292,7 +1226,6 @@ const applyManifestMigration = async (
   migration: MigrationManifestEntry,
   options: {
     repairVisionEvidenceReference?: boolean
-    legacyLedgerIdentityToReplace?: { id: string; checksum: string }
   } = {}
 ): Promise<void> => {
   const preserveCurrentSchema = await hasCurrentManagedFileVersionFoundation(client)
@@ -1364,13 +1297,9 @@ const applyManifestMigration = async (
         }
         await applySqliteMigrationOperations(transactionClient, adapted.operations)
       }
-      if (
-        options.repairVisionEvidenceReference &&
-        (!contractAlreadySatisfied || options.legacyLedgerIdentityToReplace)
-      ) {
+      if (options.repairVisionEvidenceReference && !contractAlreadySatisfied) {
         // The upstream history created VisionEvidence before this immutable migration. Rebuild it
         // after UploadVersion so SQLite does not retain the temporary rename as its FK target.
-        // Former managed-ledger identities receive the same repair before atomic replacement.
         await applySqliteMigrationOperations(transactionClient, visionEvidenceMigration.operations)
       }
       try {
@@ -1383,17 +1312,6 @@ const applyManifestMigration = async (
           migration.id,
           { cause: error }
         )
-      }
-      if (options.legacyLedgerIdentityToReplace) {
-        const removed = await migrationSqlExecutor.execute(
-          transaction,
-          `DELETE FROM "_open_science_migrations" WHERE "id" = ? AND "checksum" = ?`,
-          options.legacyLedgerIdentityToReplace.id,
-          options.legacyLedgerIdentityToReplace.checksum
-        )
-        if (removed !== 1) {
-          throw new Error('The legacy managed migration ledger changed during startup.')
-        }
       }
       await insertLedgerRow(transactionClient, migration)
     })
@@ -1502,25 +1420,6 @@ const migrateApplicationDatabaseWithManifest = async (
     })
   }
 
-  const legacyManagedLedgerIdentity = legacyManagedFileVersionHistoryBridgeIdentity(
-    ledger,
-    manifest
-  )
-  let legacyManagedBackupReady = false
-  if (legacyManagedLedgerIdentity) {
-    const managedMigration = manifest.find(
-      (migration) =>
-        migration.id === managedFileVersionFoundationMigration.id &&
-        migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
-    )!
-    options.onProgress?.({ phase: 'migrating', migrationId: managedMigration.id })
-    await backupBeforeMigration(managedMigration)
-    legacyManagedBackupReady = true
-    // Validate and apply the canonical suffix against an in-memory view. The durable legacy row
-    // remains in place until the canonical managed migration can replace it atomically.
-    ledger = ledger.filter(({ id }) => id !== legacyManagedLedgerIdentity.id)
-  }
-
   const appliedCount = validateLedger(ledger, manifest)
   const complete = async (result: SchemaMigrationResult): Promise<SchemaMigrationResult> => {
     try {
@@ -1609,23 +1508,11 @@ const migrateApplicationDatabaseWithManifest = async (
 
   for (const migration of manifest.slice(nextIndex)) {
     options.onProgress?.({ phase: 'migrating', migrationId: migration.id })
-    if (
-      !legacyManagedBackupReady ||
-      migration.id !== managedFileVersionFoundationMigration.id ||
-      migration.checksum !== MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
-    ) {
-      await backupBeforeMigration(migration)
-    }
+    await backupBeforeMigration(migration)
     await applyManifestMigration(client, migration, {
       repairVisionEvidenceReference:
         migration.id === managedFileVersionFoundationMigration.id &&
-        migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM,
-      legacyLedgerIdentityToReplace:
-        legacyManagedLedgerIdentity &&
-        migration.id === managedFileVersionFoundationMigration.id &&
         migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
-          ? legacyManagedLedgerIdentity
-          : undefined
     })
     applied.push(migration.id)
   }

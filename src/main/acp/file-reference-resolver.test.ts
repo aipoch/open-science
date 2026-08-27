@@ -297,7 +297,7 @@ describe('managed file reference resolver', () => {
     ).rejects.toThrow(/latest.*not configured/i)
   })
 
-  it('validates upload paths and returns trusted on-disk metadata', async () => {
+  it('rejects a path-only Upload reference instead of reopening legacy bytes', async () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
     const uploads = new UploadRepository(root)
     const [pending] = await stageUploadFixtures(uploads, {
@@ -310,27 +310,25 @@ describe('managed file reference resolver', () => {
       ]
     })
     const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [pending])
-    const resolver = createManagedFileReferenceResolver({ uploads })
-
-    const resolved = await resolver.resolve(
-      { projectId: 'default-project', sessionId: 'session-1' },
-      {
-        id: attachment.id,
-        name: attachment.originalName,
-        path: attachment.path,
-        source: 'upload',
-        mimeType: attachment.mimeType
-      }
-    )
-
-    expect(resolved).toMatchObject({
-      absolutePath: await realpath(attachment.path),
-      name: 'study.csv',
-      mimeType: 'text/csv',
-      size: 'id,value\n1,2\n'.length,
-      allowSkillImportReference: true
+    const openLatest = vi.fn()
+    const resolver = createManagedFileReferenceResolver({
+      uploads,
+      managedFileVersions: { openLatest } as never
     })
-    expect(resolved.uri).toMatch(/^file:/u)
+
+    await expect(
+      resolver.resolve(
+        { projectId: 'default-project', sessionId: 'session-1' },
+        {
+          id: attachment.id,
+          name: attachment.originalName,
+          path: attachment.path,
+          source: 'upload',
+          mimeType: attachment.mimeType
+        }
+      )
+    ).rejects.toThrow(/logical identity/i)
+    expect(openLatest).not.toHaveBeenCalled()
   })
 
   it('resolves an explicitly referenced Upload Version from another Session in the same Project', async () => {
@@ -353,13 +351,31 @@ describe('managed file reference resolver', () => {
       [pending],
       'project-1'
     )
-    const resolver = createManagedFileReferenceResolver({ uploads })
+    const openLatest = vi.fn().mockResolvedValue({
+      path: attachment.path,
+      size: 'id,value\n1,2\n'.length,
+      read: vi.fn(),
+      readRange: vi.fn(),
+      verifyUnchanged: vi.fn(),
+      close: vi.fn(),
+      logicalFile: { id: attachment.id, displayName: 'shared.csv' },
+      version: {
+        id: attachment.versionId,
+        checksum: attachment.checksum,
+        contentType: attachment.mimeType
+      }
+    })
+    const resolver = createManagedFileReferenceResolver({
+      uploads,
+      managedFileVersions: { openLatest } as never
+    })
 
     await expect(
       resolver.resolve(
         { projectId: 'project-1', sessionId: 'target-session' },
         {
           id: attachment.id,
+          sourceFileId: attachment.id,
           name: attachment.originalName,
           path: createUploadVersionReference(attachment.versionId ?? '', {
             projectId: 'project-1',
@@ -397,13 +413,21 @@ describe('managed file reference resolver', () => {
       [pending],
       'project-a'
     )
-    const resolver = createManagedFileReferenceResolver({ uploads })
+    const resolver = createManagedFileReferenceResolver({
+      uploads,
+      managedFileVersions: {
+        openLatest: vi
+          .fn()
+          .mockRejectedValue(new Error('Managed file belongs to a different Project.'))
+      } as never
+    })
 
     await expect(
       resolver.resolve(
         { projectId: 'project-b', sessionId: 'target-session' },
         {
           id: attachment.id,
+          sourceFileId: attachment.id,
           name: attachment.originalName,
           path: createUploadVersionReference(attachment.versionId ?? '', {
             projectId: 'project-a',

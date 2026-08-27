@@ -50,7 +50,7 @@ describe('ManagedPreviewResources', () => {
     })
 
     const resource = await resources.acquire(17, {
-      source: 'artifact',
+      source: 'local',
       path: filePath,
       mimeType: 'application/pdf'
     })
@@ -62,8 +62,8 @@ describe('ManagedPreviewResources', () => {
       mimeType: 'application/pdf',
       version: expect.any(Number)
     })
-    expect(resolvePath).toHaveBeenCalledWith('artifact', {
-      source: 'artifact',
+    expect(resolvePath).toHaveBeenCalledWith('local', {
+      source: 'local',
       path: filePath,
       mimeType: 'application/pdf'
     })
@@ -74,26 +74,6 @@ describe('ManagedPreviewResources', () => {
       end: 6,
       total: 10,
       data: new Uint8Array(Buffer.from('2345'))
-    })
-  })
-
-  it('passes a default logical Artifact identity to the resolver at capability acquisition', async () => {
-    const filePath = await createFile(Buffer.from('head bytes'))
-    const resolvePath = vi.fn().mockResolvedValue(filePath)
-    const resources = new ManagedPreviewResources({ resolvePath, createId: () => 'head-resource' })
-
-    await resources.acquire(17, {
-      source: 'artifact',
-      path: 'artifact-version:stale-projection',
-      projectId: 'project-1',
-      fileId: 'artifact-1'
-    })
-
-    expect(resolvePath).toHaveBeenCalledWith('artifact', {
-      source: 'artifact',
-      path: 'artifact-version:stale-projection',
-      projectId: 'project-1',
-      fileId: 'artifact-1'
     })
   })
 
@@ -121,7 +101,6 @@ describe('ManagedPreviewResources', () => {
 
     const resource = await resources.acquire(17, {
       source: 'upload',
-      path: 'stale-projection',
       projectId: 'project-1',
       fileId: 'upload-1',
       versionId: 'upload-v2'
@@ -146,6 +125,19 @@ describe('ManagedPreviewResources', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
+  it.each(['artifact', 'upload'] as const)(
+    'rejects a path-only %s preview instead of resolving its original path',
+    async (source) => {
+      const resolvePath = vi.fn()
+      const resources = new ManagedPreviewResources({ resolvePath })
+
+      await expect(
+        resources.acquire(17, { source, path: '/managed/stale.pdf' } as never)
+      ).rejects.toThrow(/logical identity/i)
+      expect(resolvePath).not.toHaveBeenCalled()
+    }
+  )
+
   it('closes the temporary trusted lease used for Office admission inspection', async () => {
     const close = vi.fn().mockResolvedValue(undefined)
     const openLatestManagedFile = vi.fn().mockResolvedValue({
@@ -167,7 +159,6 @@ describe('ManagedPreviewResources', () => {
     await expect(
       resources.inspect({
         source: 'artifact',
-        path: 'stale-projection',
         projectId: 'project-1',
         fileId: 'artifact-1'
       })
@@ -187,7 +178,7 @@ describe('ManagedPreviewResources', () => {
       createId
     })
 
-    const snapshot = await resources.inspect({ source: 'artifact', path: filePath })
+    const snapshot = await resources.inspect({ source: 'local', path: filePath })
 
     expect(snapshot).toMatchObject({
       size: 6,
@@ -206,7 +197,7 @@ describe('ManagedPreviewResources', () => {
       resolvePath: async () => filePath,
       createId
     })
-    const request = { source: 'artifact' as const, path: filePath }
+    const request = { source: 'local' as const, path: filePath }
     const snapshot = await resources.inspect(request)
 
     await expect(resources.acquire(17, request, { snapshot, maxBytes: 10 })).rejects.toMatchObject({
@@ -224,7 +215,7 @@ describe('ManagedPreviewResources', () => {
       resolvePath: async () => filePath,
       createId
     })
-    const request = { source: 'artifact' as const, path: filePath }
+    const request = { source: 'local' as const, path: filePath }
     const snapshot = await resources.inspect(request)
     await writeFile(filePath, Buffer.from('changed-size'))
 
@@ -249,7 +240,7 @@ describe('ManagedPreviewResources', () => {
       .mockResolvedValueOnce(replacementPath)
     const createId = vi.fn(() => 'resource-1')
     const resources = new ManagedPreviewResources({ resolvePath, createId })
-    const request = { source: 'artifact' as const, path: filePath }
+    const request = { source: 'local' as const, path: filePath }
     const snapshot = await resources.inspect(request)
 
     await expect(
@@ -264,7 +255,7 @@ describe('ManagedPreviewResources', () => {
       resolvePath: async () => filePath,
       createId: () => 'resource-1'
     })
-    const request = { source: 'artifact' as const, path: filePath }
+    const request = { source: 'local' as const, path: filePath }
     const snapshot = await resources.inspect(request)
     const resource = await resources.acquire(17, request, {
       snapshot,
@@ -282,7 +273,7 @@ describe('ManagedPreviewResources', () => {
       resolvePath: async () => filePath,
       createId: () => 'resource-1'
     })
-    const request = { source: 'artifact' as const, path: filePath }
+    const request = { source: 'local' as const, path: filePath }
     const snapshot = await resources.inspect(request)
     const resource = await resources.acquire(17, request, { snapshot, maxBytes: 6 })
 
@@ -304,7 +295,7 @@ describe('ManagedPreviewResources', () => {
       resolvePath: async () => filePath,
       createId: () => 'resource-1'
     })
-    const resource = await resources.acquire(17, { source: 'upload', path: filePath })
+    const resource = await resources.acquire(17, { source: 'local', path: filePath })
 
     expect(resource.mimeType).toBe('application/pdf')
 
@@ -327,8 +318,8 @@ describe('ManagedPreviewResources', () => {
       resolvePath: async () => filePath,
       createId: () => `resource-${++nextId}`
     })
-    const first = await resources.acquire(17, { source: 'artifact', path: filePath })
-    const second = await resources.acquire(17, { source: 'artifact', path: filePath })
+    const first = await resources.acquire(17, { source: 'local', path: filePath })
+    const second = await resources.acquire(17, { source: 'local', path: filePath })
 
     resources.release(17, { resourceId: first.id })
     await expect(
@@ -350,7 +341,7 @@ describe('ManagedPreviewResources', () => {
       createId: () => 'large-resource'
     })
 
-    const resource = await resources.acquire(17, { source: 'artifact', path: filePath })
+    const resource = await resources.acquire(17, { source: 'local', path: filePath })
     const tail = await resources.readRange(17, {
       resourceId: resource.id,
       begin: fileSize - 1,
@@ -369,7 +360,7 @@ describe('ManagedPreviewResources', () => {
     })
 
     const resource = await resources.acquire(17, {
-      source: 'artifact',
+      source: 'local',
       path: filePath,
       mimeType: ' Text/HTML; Charset=UTF-8 '
     })
@@ -386,7 +377,7 @@ describe('ManagedPreviewResources', () => {
         createId: () => 'tiff-resource'
       })
 
-      const resource = await resources.acquire(17, { source: 'artifact', path: filePath })
+      const resource = await resources.acquire(17, { source: 'local', path: filePath })
 
       expect(resource.mimeType).toBe('image/tiff')
     }
@@ -398,7 +389,7 @@ describe('ManagedPreviewResources', () => {
       resolvePath: async () => filePath,
       createId: () => 'resource-1'
     })
-    const resource = await resources.acquire(17, { source: 'artifact', path: filePath })
+    const resource = await resources.acquire(17, { source: 'local', path: filePath })
 
     resources.release(17, { resourceId: resource.id })
     expect(() => resources.release(17, { resourceId: resource.id })).not.toThrow()
@@ -414,7 +405,7 @@ describe('ManagedPreviewResources', () => {
       resolvePath: async () => filePath,
       createId: () => 'resource-1'
     })
-    const resource = await resources.acquire(17, { source: 'artifact', path: filePath })
+    const resource = await resources.acquire(17, { source: 'local', path: filePath })
 
     expect(() => resources.release(99, { resourceId: resource.id })).toThrow(/not available/i)
   })
@@ -446,7 +437,7 @@ describe('ManagedPreviewResources', () => {
       createId: () => 'resource-1'
     })
 
-    const resource = await resources.acquire(17, { source: 'artifact', path: filePath })
+    const resource = await resources.acquire(17, { source: 'local', path: filePath })
     resources.release(17, { resourceId: resource.id })
     resources.releaseOwner(17)
 
@@ -463,9 +454,9 @@ describe('ManagedPreviewResources', () => {
     })
 
     const [first, second, third] = await Promise.all([
-      resources.acquire(17, { source: 'artifact', path: filePath }),
-      resources.acquire(18, { source: 'artifact', path: filePath }),
-      resources.acquire(17, { source: 'artifact', path: filePath })
+      resources.acquire(17, { source: 'local', path: filePath }),
+      resources.acquire(18, { source: 'local', path: filePath }),
+      resources.acquire(17, { source: 'local', path: filePath })
     ])
 
     expect(new Set([first.id, second.id, third.id]).size).toBe(3)
@@ -481,7 +472,7 @@ describe('ManagedPreviewResources', () => {
       resolvePath: async () => filePath,
       createId: () => 'resource-1'
     })
-    const resource = await resources.acquire(17, { source: 'artifact', path: filePath })
+    const resource = await resources.acquire(17, { source: 'local', path: filePath })
 
     await expect(
       resources.readRange(17, { resourceId: resource.id, begin: 4, end: 4 })
@@ -499,11 +490,11 @@ describe('ManagedPreviewResources', () => {
       createId: () => 'resource-1'
     })
 
+    await expect(resources.inspect({ source: 'local', path: temporaryDirectory! })).rejects.toThrow(
+      /not a file/i
+    )
     await expect(
-      resources.inspect({ source: 'artifact', path: temporaryDirectory! })
-    ).rejects.toThrow(/not a file/i)
-    await expect(
-      resources.acquire(17, { source: 'artifact', path: temporaryDirectory! })
+      resources.acquire(17, { source: 'local', path: temporaryDirectory! })
     ).rejects.toThrow(/not a file/i)
     expect(resolvePath).toHaveBeenCalled()
   })
@@ -514,7 +505,7 @@ describe('ManagedPreviewResources', () => {
     const resources = new ManagedPreviewResources({ resolvePath, createId })
 
     await expect(
-      resources.acquire(17, { source: 'artifact', path: '/inaccessible.pdf' })
+      resources.acquire(17, { source: 'local', path: '/inaccessible.pdf' })
     ).rejects.toThrow(/permission denied/i)
     expect(createId).not.toHaveBeenCalled()
   })
@@ -525,7 +516,7 @@ describe('ManagedPreviewResources', () => {
       resolvePath: async () => filePath,
       createId: () => 'non-strict-resource'
     })
-    const resource = await resources.acquire(17, { source: 'artifact', path: filePath })
+    const resource = await resources.acquire(17, { source: 'local', path: filePath })
 
     const protocolResource = await resources.resolveProtocolResource(resource.id)
 

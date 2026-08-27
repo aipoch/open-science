@@ -422,7 +422,8 @@ class AcpPromptContentOwner {
           originalName: lease.logicalFile.displayName,
           path: createUploadVersionReference(lease.version.id, {
             projectId: lease.logicalFile.projectId,
-            sessionId: lease.logicalFile.sessionId
+            sessionId: lease.logicalFile.sessionId,
+            fileId: lease.logicalFile.id
           }),
           ...(lease.version.contentType ? { mimeType: lease.version.contentType } : {}),
           size: lease.size,

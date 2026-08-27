@@ -29,6 +29,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="artifact"
           path="/managed/report.csv"
+          projectId="project-1"
+          fileId="artifact-1"
           suggestedName="report.csv"
         />
       )
@@ -80,7 +82,6 @@ describe('ManagedFileDownloadButton', () => {
 
     expect(saveManagedFile).toHaveBeenCalledWith({
       source: 'artifact',
-      path: 'artifact-version:project-1/session-1/file-1/version-1',
       projectId: 'project-1',
       fileId: 'file-1',
       versionId: 'version-1',
@@ -104,7 +105,6 @@ describe('ManagedFileDownloadButton', () => {
 
     expect(saveManagedFile).toHaveBeenCalledWith({
       source: 'artifact',
-      path: 'artifact-version:project-1/session-1/file-1/version-1',
       projectId: 'project-1',
       fileId: 'file-1',
       suggestedName: 'report.md'
@@ -134,6 +134,26 @@ describe('ManagedFileDownloadButton', () => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
     })
+    expect(saveManagedFile).not.toHaveBeenCalled()
+  })
+
+  it('disables managed downloads that have no logical identity', async () => {
+    const saveManagedFile = vi.fn().mockResolvedValue({ saved: false })
+    window.api = { saveManagedFile } as unknown as Window['api']
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <ManagedFileDownloadButton
+          source="upload"
+          path="/stale/notes.txt"
+          suggestedName="notes.txt"
+        />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>('button')!
+    expect(button.disabled).toBe(true)
+    button.click()
     expect(saveManagedFile).not.toHaveBeenCalled()
   })
 
@@ -194,6 +214,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="upload"
           path="/managed/notes.txt"
+          projectId="project-1"
+          fileId="upload-1"
           suggestedName="notes.txt"
         />
       )
@@ -227,6 +249,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="upload"
           path="/managed/notes.txt"
+          projectId="project-1"
+          fileId="upload-1"
           suggestedName="notes.txt"
         />
       )
@@ -237,6 +261,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="artifact"
           path="/managed/report.csv"
+          projectId="project-1"
+          fileId="artifact-1"
           suggestedName="report.csv"
         />
       )
@@ -257,6 +283,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="artifact"
           path="/managed/missing.csv"
+          projectId="project-1"
+          fileId="missing-artifact"
           suggestedName="missing.csv"
           disabled
         />
@@ -276,6 +304,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="artifact"
           path="/managed/report.csv"
+          projectId="project-1"
+          fileId="artifact-1"
           suggestedName="report.csv"
         />
       )
@@ -326,6 +356,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="artifact"
           path="/managed/report.csv"
+          projectId="project-1"
+          fileId="artifact-1"
           suggestedName="report.csv"
           tone="strong"
         />
@@ -418,6 +450,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="artifact"
           path="/managed/report.csv"
+          projectId="project-1"
+          fileId="artifact-1"
           suggestedName="report.csv"
           appearance="primary"
         />

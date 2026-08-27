@@ -10,12 +10,14 @@ import {
 
 const createFileItem = (overrides: Partial<PreviewFileItem>): PreviewFileItem => ({
   id: 'file-1',
+  projectId: 'project-1',
   sessionId: 'session-1',
   title: 'figure.png',
   type: 'file',
   path: '/workspace/figure.png',
   name: 'figure.png',
   format: 'image',
+  managedFileId: 'artifact-1',
   ...overrides
 })
 
@@ -118,7 +120,8 @@ describe('runPreviewTabAction', () => {
 
     expect(deps.saveManagedFile).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/figure.png',
+      projectId: 'project-1',
+      fileId: 'artifact-1',
       suggestedName: 'figure.png'
     })
   })

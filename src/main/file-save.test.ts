@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { unzipSync } from 'fflate'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -62,23 +63,46 @@ const managedVersionHandle = (
   }
 }
 
-type TestFileSaveOptions = Parameters<typeof registerProductionFileSaveHandlers>[0]
+const fileBackedManagedVersionHandle = async (
+  sourcePath: string
+): Promise<TestManagedVersionHandle> =>
+  managedVersionHandle(await readFile(sourcePath), {
+    copyTo: vi.fn(async (destinationPath, options) =>
+      copyFile(sourcePath, destinationPath, options?.exclusive ? constants.COPYFILE_EXCL : 0)
+    )
+  })
+
+type TestFileSaveOptions = Omit<
+  NonNullable<Parameters<typeof registerProductionFileSaveHandlers>[0]>,
+  'resolveManagedFilePath'
+> & {
+  resolveManagedFilePath?: (
+    source: 'artifact' | 'upload',
+    request: { path: string; projectId?: string; fileId?: string }
+  ) => Promise<string | { path: string }>
+  resolveSessionArtifactFilePath?: (
+    projectId: string,
+    sessionId: string,
+    path: string
+  ) => Promise<string>
+}
 
 // Older archive fixtures use temporary source paths. Adapt those fixtures to the production
 // latest-version lease boundary without restoring a path fallback in the handler itself.
 const registerProjectFileSaveHandlers = (options: TestFileSaveOptions = {}): void => {
+  const { resolveManagedFilePath, resolveSessionArtifactFilePath, ...productionOptions } = options
   const openLatestManagedFile =
     options.openLatestManagedFile ??
-    (options.resolveSessionArtifactFilePath || options.resolveManagedFilePath
+    (resolveSessionArtifactFilePath || resolveManagedFilePath
       ? async (source: 'artifact' | 'upload', request: { projectId: string; fileId: string }) => {
           const resolved =
             source === 'upload'
-              ? await options.resolveManagedFilePath?.(source, {
+              ? await resolveManagedFilePath?.(source, {
                   path: request.fileId,
                   projectId: request.projectId,
                   fileId: request.fileId
                 })
-              : await options.resolveSessionArtifactFilePath?.(
+              : await resolveSessionArtifactFilePath?.(
                   request.projectId,
                   'test-session',
                   request.fileId
@@ -90,7 +114,7 @@ const registerProjectFileSaveHandlers = (options: TestFileSaveOptions = {}): voi
       : undefined)
 
   registerProductionFileSaveHandlers({
-    ...options,
+    ...productionOptions,
     ...(openLatestManagedFile ? { openLatestManagedFile } : {})
   })
 }
@@ -110,9 +134,11 @@ describe('file save IPC handlers', () => {
     const sourcePath = join(root, 'managed-report.csv')
     const destinationPath = join(root, 'downloaded-report.csv')
     await writeFile(sourcePath, 'artifact bytes')
-    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue(sourcePath)
+    const openLatestManagedFile = vi
+      .fn()
+      .mockResolvedValue(await fileBackedManagedVersionHandle(sourcePath))
     showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
-    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+    registerFileSaveHandlers({ openLatestManagedFile } as never)
 
     try {
       const result = await handlers.get('file:save-session-artifacts')!(
@@ -120,15 +146,14 @@ describe('file save IPC handlers', () => {
         {
           projectId: 'project-1',
           sessionId: 'session-1',
-          files: [{ path: 'artifact://report', suggestedName: 'report.csv' }]
+          files: [{ fileId: 'artifact-report', suggestedName: 'report.csv' }]
         }
       )
 
-      expect(resolveSessionArtifactFilePath).toHaveBeenCalledWith(
-        'project-1',
-        'session-1',
-        'artifact://report'
-      )
+      expect(openLatestManagedFile).toHaveBeenCalledWith('artifact', {
+        projectId: 'project-1',
+        fileId: 'artifact-report'
+      })
       expect(showSaveDialog).toHaveBeenCalledWith(
         expect.objectContaining({
           defaultPath: join(downloadsPath, 'report.csv'),
@@ -150,12 +175,12 @@ describe('file save IPC handlers', () => {
     await writeFile(sourceA, 'artifact a')
     await writeFile(sourceB, 'artifact b')
     await mkdir(destinationDirectory)
-    const resolveSessionArtifactFilePath = vi
+    const openLatestManagedFile = vi
       .fn()
-      .mockResolvedValueOnce(sourceA)
-      .mockResolvedValueOnce(sourceB)
+      .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceA))
+      .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceB))
     showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
-    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+    registerFileSaveHandlers({ openLatestManagedFile } as never)
 
     try {
       const result = await handlers.get('file:save-session-artifacts')!(
@@ -164,8 +189,8 @@ describe('file save IPC handlers', () => {
           projectId: 'project-1',
           sessionId: 'session-1',
           files: [
-            { path: 'artifact://a', suggestedName: 'a.csv' },
-            { path: 'artifact://b', suggestedName: 'b.png' }
+            { fileId: 'artifact-a', suggestedName: 'a.csv' },
+            { fileId: 'artifact-b', suggestedName: 'b.png' }
           ]
         }
       )
@@ -202,12 +227,12 @@ describe('file save IPC handlers', () => {
     await writeFile(sourceB, 'artifact b')
     await mkdir(destinationDirectory)
     await writeFile(join(destinationDirectory, 'report.csv'), 'existing download')
-    const resolveSessionArtifactFilePath = vi
+    const openLatestManagedFile = vi
       .fn()
-      .mockResolvedValueOnce(sourceA)
-      .mockResolvedValueOnce(sourceB)
+      .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceA))
+      .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceB))
     showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
-    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+    registerFileSaveHandlers({ openLatestManagedFile } as never)
 
     try {
       const result = await handlers.get('file:save-session-artifacts')!(
@@ -216,8 +241,8 @@ describe('file save IPC handlers', () => {
           projectId: 'project-1',
           sessionId: 'session-1',
           files: [
-            { path: 'artifact://a', suggestedName: 'report.csv' },
-            { path: 'artifact://b', suggestedName: 'report.csv' }
+            { fileId: 'artifact-a', suggestedName: 'report.csv' },
+            { fileId: 'artifact-b', suggestedName: 'report.csv' }
           ]
         }
       )
@@ -251,11 +276,7 @@ describe('file save IPC handlers', () => {
     const copyB = vi.fn().mockRejectedValue(new Error('disk full'))
     showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
     registerFileSaveHandlers({
-      resolveSessionArtifactFilePath: vi
-        .fn()
-        .mockResolvedValueOnce('/managed/a.csv')
-        .mockResolvedValueOnce('/managed/b.csv'),
-      openManagedFile: vi
+      openLatestManagedFile: vi
         .fn()
         .mockResolvedValueOnce({ copyTo: copyA, close: closeA })
         .mockResolvedValueOnce({ copyTo: copyB, close: closeB })
@@ -267,8 +288,8 @@ describe('file save IPC handlers', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         files: [
-          { path: 'artifact://a', suggestedName: 'a.csv' },
-          { path: 'artifact://b', suggestedName: 'b.csv' }
+          { fileId: 'artifact-a', suggestedName: 'a.csv' },
+          { fileId: 'artifact-b', suggestedName: 'b.csv' }
         ]
       }
     )
@@ -278,7 +299,7 @@ describe('file save IPC handlers', () => {
       filePaths: [join(destinationDirectory, 'a.csv')],
       failures: [
         {
-          path: 'artifact://b',
+          fileId: 'artifact-b',
           suggestedName: 'b.csv',
           message: 'disk full'
         }
@@ -294,11 +315,10 @@ describe('file save IPC handlers', () => {
     const close = vi.fn().mockResolvedValue(undefined)
     showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
     registerFileSaveHandlers({
-      resolveSessionArtifactFilePath: vi
+      openLatestManagedFile: vi
         .fn()
         .mockRejectedValueOnce(new Error('Artifact no longer exists'))
-        .mockResolvedValueOnce('/managed/b.csv'),
-      openManagedFile: vi.fn().mockResolvedValue({ copyTo, close })
+        .mockResolvedValueOnce({ copyTo, close })
     } as never)
 
     const result = await handlers.get('file:save-session-artifacts')!(
@@ -307,8 +327,8 @@ describe('file save IPC handlers', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         files: [
-          { path: 'artifact://missing', suggestedName: 'missing.csv' },
-          { path: 'artifact://b', suggestedName: 'b.csv' }
+          { fileId: 'artifact-missing', suggestedName: 'missing.csv' },
+          { fileId: 'artifact-b', suggestedName: 'b.csv' }
         ]
       }
     )
@@ -318,7 +338,7 @@ describe('file save IPC handlers', () => {
       filePaths: [join(destinationDirectory, 'b.csv')],
       failures: [
         {
-          path: 'artifact://missing',
+          fileId: 'artifact-missing',
           suggestedName: 'missing.csv',
           message: 'Artifact no longer exists'
         }
@@ -332,40 +352,6 @@ describe('file save IPC handlers', () => {
     registerFileSaveHandlers()
 
     expect(handlers.has('file:save-managed')).toBe(true)
-  })
-
-  it('resolves a logical managed file only after Save As confirms so a newer DB head is exported', async () => {
-    let headPath = '/managed/v1-report.csv'
-    const resolveManagedFilePath = vi.fn(async (_source, request) => {
-      expect(request).toEqual({
-        path: 'artifact-version:stale-v1',
-        projectId: 'project-1',
-        fileId: 'artifact-1'
-      })
-      return headPath
-    })
-    const openManagedFile = vi.fn().mockResolvedValue({
-      copyTo: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined)
-    })
-    showSaveDialog.mockImplementation(async () => {
-      headPath = '/managed/v2-report.csv'
-      return { canceled: false, filePath: join(downloadsPath, 'report.csv') }
-    })
-    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFile } as never)
-
-    await handlers.get('file:save-managed')!(
-      { sender: {} },
-      {
-        source: 'artifact',
-        path: 'artifact-version:stale-v1',
-        projectId: 'project-1',
-        fileId: 'artifact-1',
-        suggestedName: 'report.csv'
-      }
-    )
-
-    expect(openManagedFile).toHaveBeenCalledWith('/managed/v2-report.csv')
   })
 
   it('opens a trusted logical-file lease after Save As without reopening its resolved path', async () => {
@@ -383,7 +369,6 @@ describe('file save IPC handlers', () => {
       { sender: {} },
       {
         source: 'artifact',
-        path: 'artifact-version:stale-v1',
         projectId: 'project-1',
         fileId: 'artifact-1',
         suggestedName: 'report.csv'
@@ -414,7 +399,6 @@ describe('file save IPC handlers', () => {
       { sender: {} },
       {
         source: 'artifact',
-        path: 'artifact-version:v1',
         projectId: 'project-1',
         fileId: 'artifact-1',
         versionId: 'version-1',
@@ -434,16 +418,12 @@ describe('file save IPC handlers', () => {
 
   it('resolves every logical Session Artifact after the destination folder is chosen', async () => {
     const destinationDirectory = '/downloads/session-artifacts'
-    const resolveManagedFilePath = vi
-      .fn()
-      .mockResolvedValueOnce('/managed/a-v2.csv')
-      .mockResolvedValueOnce('/managed/b-v4.csv')
-    const openManagedFile = vi.fn().mockResolvedValue({
+    const openLatestManagedFile = vi.fn().mockResolvedValue({
       copyTo: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined)
     })
     showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
-    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFile } as never)
+    registerFileSaveHandlers({ openLatestManagedFile } as never)
 
     await handlers.get('file:save-session-artifacts')!(
       { sender: {} },
@@ -451,22 +431,18 @@ describe('file save IPC handlers', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         files: [
-          { path: 'stale-a', fileId: 'artifact-a', suggestedName: 'a.csv' },
-          { path: 'stale-b', fileId: 'artifact-b', suggestedName: 'b.csv' }
+          { fileId: 'artifact-a', suggestedName: 'a.csv' },
+          { fileId: 'artifact-b', suggestedName: 'b.csv' }
         ]
       }
     )
 
-    expect(resolveManagedFilePath).toHaveBeenNthCalledWith(1, 'artifact', {
-      path: 'stale-a',
+    expect(openLatestManagedFile).toHaveBeenNthCalledWith(1, 'artifact', {
       projectId: 'project-1',
-      sessionId: 'session-1',
       fileId: 'artifact-a'
     })
-    expect(resolveManagedFilePath).toHaveBeenNthCalledWith(2, 'artifact', {
-      path: 'stale-b',
+    expect(openLatestManagedFile).toHaveBeenNthCalledWith(2, 'artifact', {
       projectId: 'project-1',
-      sessionId: 'session-1',
       fileId: 'artifact-b'
     })
   })
@@ -492,12 +468,8 @@ describe('file save IPC handlers', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         files: [
-          { path: 'stale-a', fileId: 'artifact-a', suggestedName: 'a.csv' },
-          {
-            path: 'stale-b',
-            fileId: 'artifact-b',
-            suggestedName: 'b.csv'
-          }
+          { fileId: 'artifact-a', suggestedName: 'a.csv' },
+          { fileId: 'artifact-b', suggestedName: 'b.csv' }
         ]
       }
     )
@@ -518,13 +490,13 @@ describe('file save IPC handlers', () => {
   it('passes an Upload logical identity to the source-neutral export resolver', async () => {
     const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/upload-v3.csv')
     showSaveDialog.mockResolvedValue({ canceled: true })
-    registerFileSaveHandlers({ resolveManagedFilePath } as never)
+    const openLatestManagedFile = vi.fn()
+    registerFileSaveHandlers({ resolveManagedFilePath, openLatestManagedFile } as never)
 
     await handlers.get('file:save-managed')!(
       { sender: {} },
       {
         source: 'upload',
-        path: 'upload-version:stale-v1',
         projectId: 'project-1',
         fileId: 'upload-1',
         suggestedName: 'study.csv'
@@ -532,44 +504,25 @@ describe('file save IPC handlers', () => {
     )
 
     expect(resolveManagedFilePath).not.toHaveBeenCalled()
+    expect(openLatestManagedFile).not.toHaveBeenCalled()
   })
 
-  it('opens a managed source once and copies that exact file to the selected destination', async () => {
+  it('rejects a path-only Upload download instead of bypassing the logical-file authority', async () => {
     const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/canonical-report.csv')
-    const copyTo = vi.fn().mockResolvedValue(undefined)
-    const close = vi.fn().mockResolvedValue(undefined)
-    const openManagedFile = vi.fn().mockResolvedValue({ copyTo, close })
-    showSaveDialog.mockResolvedValue({
-      canceled: false,
-      filePath: join(downloadsPath, 'report.csv')
-    })
-    registerFileSaveHandlers({
-      resolveManagedFilePath,
-      openManagedFile
-    })
+    const openManagedFile = vi.fn()
+    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFile })
 
-    const result = await handlers.get('file:save-managed')!(
-      { sender: {} },
-      {
+    await expect(
+      handlers.get('file:save-managed')!({ sender: {} }, {
         source: 'upload',
         path: '/managed/requested-report.csv',
         suggestedName: '../report.csv'
-      }
-    )
+      } as never)
+    ).rejects.toThrow(/logical identity/i)
 
-    expect(resolveManagedFilePath).toHaveBeenCalledWith('upload', {
-      path: '/managed/requested-report.csv'
-    })
-    expect(openManagedFile).toHaveBeenCalledWith('/managed/canonical-report.csv')
-    expect(showSaveDialog).toHaveBeenCalledWith(
-      expect.objectContaining({ defaultPath: join(downloadsPath, 'report.csv') })
-    )
-    expect(copyTo).toHaveBeenCalledWith(join(downloadsPath, 'report.csv'))
-    expect(close).toHaveBeenCalledTimes(1)
-    expect(result).toEqual({
-      saved: true,
-      filePath: join(downloadsPath, 'report.csv')
-    })
+    expect(resolveManagedFilePath).not.toHaveBeenCalled()
+    expect(openManagedFile).not.toHaveBeenCalled()
+    expect(showSaveDialog).not.toHaveBeenCalled()
   })
 
   it('accepts a local source and saves through the same managed pipeline', async () => {
@@ -622,7 +575,7 @@ describe('file save IPC handlers', () => {
 
     await handlers.get('file:save-managed')!(
       { sender: {} },
-      { source: 'artifact', path: 'session/report.csv', suggestedName: 'report.csv' }
+      { source: 'local', path: 'session/report.csv', suggestedName: 'report.csv' }
     )
 
     expect(resolveManagedFilePath).toHaveBeenCalledTimes(1)
@@ -646,7 +599,7 @@ describe('file save IPC handlers', () => {
     try {
       await handlers.get('file:save-managed')!(
         { sender: {} },
-        { source: 'artifact', path: pendingPath, suggestedName: 'report.csv' }
+        { source: 'local', path: pendingPath, suggestedName: 'report.csv' }
       )
 
       await expect(readFile(destinationPath, 'utf8')).resolves.toBe('stable artifact bytes')
@@ -670,7 +623,7 @@ describe('file save IPC handlers', () => {
       await expect(
         handlers.get('file:save-managed')!(
           { sender: {} },
-          { source: 'artifact', path: sourcePath, suggestedName: 'report.csv' }
+          { source: 'local', path: sourcePath, suggestedName: 'report.csv' }
         )
       ).rejects.toThrow('Cannot save a managed file over its source.')
       await expect(readFile(sourcePath, 'utf8')).resolves.toBe('source must survive')
@@ -692,7 +645,7 @@ describe('file save IPC handlers', () => {
 
     await handlers.get('file:save-managed')!(
       { sender: {} },
-      { source: 'upload', path: '/managed/source-report.csv', suggestedName: '..' }
+      { source: 'local', path: '/managed/source-report.csv', suggestedName: '..' }
     )
 
     expect(showSaveDialog).toHaveBeenCalledWith(
@@ -734,7 +687,7 @@ describe('file save IPC handlers', () => {
 
     const result = await handlers.get('file:save-managed')!(
       { sender: {} },
-      { source: 'artifact', path: '/managed/report.csv', suggestedName: 'report.csv' }
+      { source: 'local', path: '/managed/report.csv', suggestedName: 'report.csv' }
     )
 
     expect(result).toEqual({ saved: false })
@@ -759,7 +712,7 @@ describe('file save IPC handlers', () => {
     await expect(
       handlers.get('file:save-managed')!(
         { sender: {} },
-        { source: 'artifact', path: '/managed/report.csv', suggestedName: 'report.csv' }
+        { source: 'local', path: '/managed/report.csv', suggestedName: 'report.csv' }
       )
     ).rejects.toThrow('disk full')
     expect(close).toHaveBeenCalledTimes(1)
@@ -772,7 +725,7 @@ describe('file save IPC handlers', () => {
     await expect(
       handlers.get('file:save-managed')!(
         { sender: {} },
-        { source: 'artifact', path: '/outside/report.csv', suggestedName: 'report.csv' }
+        { source: 'local', path: '/outside/report.csv', suggestedName: 'report.csv' }
       )
     ).rejects.toThrow('outside artifact storage')
 
@@ -785,7 +738,7 @@ describe('file save IPC handlers', () => {
     await expect(
       handlers.get('file:save-managed')!(
         { sender: {} },
-        { source: 'artifact', path: '/managed/report.csv', suggestedName: 'report.csv' }
+        { source: 'local', path: '/managed/report.csv', suggestedName: 'report.csv' }
       )
     ).rejects.toThrow('Managed file resolver is not configured.')
 
@@ -805,7 +758,7 @@ describe('file save IPC handlers', () => {
 
     await handlers.get('file:save-managed')!(
       { sender: {} },
-      { source: 'upload', path: '/managed/source-report.csv', suggestedName: '.' }
+      { source: 'local', path: '/managed/source-report.csv', suggestedName: '.' }
     )
 
     expect(showSaveDialog).toHaveBeenCalledWith(
@@ -828,7 +781,7 @@ describe('file save IPC handlers', () => {
 
     await handlers.get('file:save-managed')!(
       { sender: {} },
-      { source: 'upload', path: '/managed/source-report.csv', suggestedName: '   ' }
+      { source: 'local', path: '/managed/source-report.csv', suggestedName: '   ' }
     )
 
     expect(showSaveDialog).toHaveBeenCalledWith(
@@ -2210,31 +2163,28 @@ describe('assertSaveManagedFileRequest validation paths', () => {
   })
 
   it('rejects a missing path', async () => {
-    await reject({ source: 'artifact', suggestedName: 'report.csv' }, 'missing-path')
+    await reject({ source: 'local', suggestedName: 'report.csv' }, 'missing-path')
   })
 
   it('rejects a non-string path', async () => {
-    await reject({ source: 'artifact', path: 42, suggestedName: 'report.csv' }, 'numeric-path')
+    await reject({ source: 'local', path: 42, suggestedName: 'report.csv' }, 'numeric-path')
   })
 
   it('rejects an empty path', async () => {
-    await reject({ source: 'artifact', path: '', suggestedName: 'report.csv' }, 'empty-path')
+    await reject({ source: 'local', path: '', suggestedName: 'report.csv' }, 'empty-path')
   })
 
   it('rejects a whitespace-only path', async () => {
-    await reject(
-      { source: 'artifact', path: '   ', suggestedName: 'report.csv' },
-      'whitespace-path'
-    )
+    await reject({ source: 'local', path: '   ', suggestedName: 'report.csv' }, 'whitespace-path')
   })
 
   it('rejects a missing suggestedName', async () => {
-    await reject({ source: 'artifact', path: '/managed/report.csv' }, 'missing-suggested-name')
+    await reject({ source: 'local', path: '/managed/report.csv' }, 'missing-suggested-name')
   })
 
   it('rejects a non-string suggestedName', async () => {
     await reject(
-      { source: 'artifact', path: '/managed/report.csv', suggestedName: 7 },
+      { source: 'local', path: '/managed/report.csv', suggestedName: 7 },
       'numeric-suggested-name'
     )
   })
@@ -2248,15 +2198,14 @@ describe('assertSaveSessionArtifactsRequest logical identity validation', () => 
   })
 
   it.each([
+    { identity: {}, label: 'missing file id' },
     { identity: { fileId: 42 }, label: 'numeric file id' },
     { identity: { fileId: '   ' }, label: 'blank file id' },
     { identity: { fileId: 'artifact-1', versionId: 42 }, label: 'numeric version id' },
     { identity: { fileId: 'artifact-1', versionId: '' }, label: 'blank version id' },
     { identity: { versionId: 'artifact-v1' }, label: 'version without file id' }
   ] as const)('rejects $label before opening a save dialog', async ({ identity }) => {
-    registerFileSaveHandlers({
-      resolveSessionArtifactFilePath: vi.fn().mockResolvedValue('/managed/report.csv')
-    } as never)
+    registerFileSaveHandlers({ openLatestManagedFile: vi.fn() } as never)
 
     await expect(
       handlers.get('file:save-session-artifacts')!(

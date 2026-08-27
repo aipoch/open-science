@@ -170,7 +170,11 @@ export const createPreviewFileItemForManagedVersion = ({
           artifactId: version.fileId,
           versionId: version.id
         })
-      : createUploadVersionReference(version.id, { projectId, sessionId }),
+      : createUploadVersionReference(version.id, {
+          projectId,
+          sessionId,
+          fileId: version.fileId
+        }),
   name: version.displayName,
   title: version.displayName,
   size: version.sizeBytes

@@ -11,7 +11,7 @@ import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { isUnavailableFileError } from '../preview-errors'
 import { createPreviewResourceKey } from '../preview-resource-key'
-import { createPreviewRequestScope } from '../preview-file-reader'
+import { createManagedPreviewRequest } from '../preview-file-reader'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useNearViewport } from '../useNearViewport'
 
@@ -405,14 +405,17 @@ export const PdfPreviewContent = ({
 
     void (async () => {
       try {
-        const resource = await window.api.previewResources.acquire({
-          source,
-          path,
-          ...createPreviewRequestScope({ projectId, sessionId, source, path }),
-          ...(managedFileId ? { fileId: managedFileId } : {}),
-          ...(selectedVersionId ? { versionId: selectedVersionId } : {}),
-          ...(mimeType ? { mimeType } : {})
-        })
+        const resource = await window.api.previewResources.acquire(
+          createManagedPreviewRequest({
+            source,
+            path,
+            projectId,
+            sessionId,
+            managedFileId,
+            selectedVersionId,
+            mimeType
+          })
+        )
         resourceId = resource.id
         if (canceled) {
           await dispose()

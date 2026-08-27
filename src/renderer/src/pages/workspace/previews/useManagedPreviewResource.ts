@@ -4,7 +4,7 @@ import type { ManagedPreviewResource } from '../../../../../shared/preview-resou
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { createPreviewResourceKey } from './preview-resource-key'
-import { createPreviewRequestScope } from './preview-file-reader'
+import { createManagedPreviewRequest } from './preview-file-reader'
 
 type ManagedPreviewResourceState =
   | { status: 'idle'; resource?: undefined; error?: undefined }
@@ -29,7 +29,18 @@ const useManagedPreviewResource = (
   const [result, setResult] = useState<ManagedPreviewResourceResult | null>(null)
   // File metadata invalidates a capability when the same path is replaced in place.
   const requestKey = createPreviewResourceKey(item)
-  const requestScope = createPreviewRequestScope(item)
+  const {
+    source,
+    path,
+    projectId,
+    sessionId,
+    managedFileId,
+    selectedVersionId,
+    mimeType,
+    maxBytes,
+    size,
+    mtimeMs
+  } = item
 
   useEffect(() => {
     if (!enabled) return
@@ -38,16 +49,18 @@ const useManagedPreviewResource = (
     let acquiredResource: ManagedPreviewResource | undefined
 
     void window.api.previewResources
-      .acquire({
-        source: item.source ?? 'artifact',
-        path: item.path,
-        ...(requestScope.projectId ? { projectId: requestScope.projectId } : {}),
-        ...(requestScope.sessionId ? { sessionId: requestScope.sessionId } : {}),
-        ...(item.managedFileId ? { fileId: item.managedFileId } : {}),
-        ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {}),
-        ...(item.mimeType ? { mimeType: item.mimeType } : {}),
-        ...(item.maxBytes === undefined ? {} : { maxBytes: item.maxBytes })
-      })
+      .acquire(
+        createManagedPreviewRequest({
+          source,
+          path,
+          projectId,
+          sessionId,
+          managedFileId,
+          selectedVersionId,
+          mimeType,
+          maxBytes
+        })
+      )
       .then((resource) => {
         // Release acquisitions that complete after the consumer was unmounted or disabled.
         if (disposed) {
@@ -82,18 +95,16 @@ const useManagedPreviewResource = (
     }
   }, [
     enabled,
-    item.mimeType,
-    item.maxBytes,
-    item.mtimeMs,
-    item.managedFileId,
-    item.path,
-    item.projectId,
-    item.sessionId,
-    item.selectedVersionId,
-    item.size,
-    item.source,
-    requestScope.projectId,
-    requestScope.sessionId,
+    mimeType,
+    maxBytes,
+    mtimeMs,
+    managedFileId,
+    path,
+    projectId,
+    sessionId,
+    selectedVersionId,
+    size,
+    source,
     requestKey
   ])
 

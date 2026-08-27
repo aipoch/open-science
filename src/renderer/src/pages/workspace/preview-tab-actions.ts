@@ -9,11 +9,8 @@
 
 import { CircleX, ClipboardCopy, Download, PackagePlus, X, type LucideIcon } from 'lucide-react'
 
-import type {
-  PreviewFileItem,
-  PreviewItem,
-  PreviewFileSource
-} from '@/stores/preview-workbench-store'
+import type { PreviewFileItem, PreviewItem } from '@/stores/preview-workbench-store'
+import type { SaveManagedFileRequest } from '../../../../shared/file-save'
 
 export type PreviewTabActionCommand =
   'close' | 'close-others' | 'download' | 'copy-path' | 'save-as-artifact'
@@ -46,11 +43,7 @@ export type PreviewTabActionGroups = {
 export type PreviewTabActionDeps = {
   closeTab: (itemId: string) => void
   closeOtherTabs: (keepItemId: string) => void
-  saveManagedFile: (request: {
-    source: PreviewFileSource
-    path: string
-    suggestedName: string
-  }) => Promise<unknown>
+  saveManagedFile: (request: SaveManagedFileRequest) => Promise<unknown>
   copyText: (text: string) => Promise<void>
   stageLocalPath:
     | ((request: {
@@ -118,12 +111,22 @@ const downloadManagedFile = async (
   item: PreviewFileItem,
   deps: PreviewTabActionDeps
 ): Promise<void> => {
-  // A missing source is the managed-artifact default used across the preview readers.
-  await deps.saveManagedFile({
-    source: item.source ?? 'artifact',
-    path: item.path,
-    suggestedName: item.name
-  })
+  const source = item.source ?? 'artifact'
+  if (source === 'artifact' || source === 'upload') {
+    if (!item.projectId || !item.managedFileId) {
+      throw new Error('Managed file download requires a logical identity.')
+    }
+    await deps.saveManagedFile({
+      source,
+      projectId: item.projectId,
+      fileId: item.managedFileId,
+      ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {}),
+      suggestedName: item.name
+    })
+    return
+  }
+
+  await deps.saveManagedFile({ source, path: item.path, suggestedName: item.name })
 }
 
 export const runPreviewTabAction = (

@@ -537,7 +537,7 @@ describe('Data and content application commands', () => {
     const deps = createDependencies()
     registerDataContentApplicationCommands(router.registrar, deps.dependencies)
     const managedInvocation = invocation([
-      { source: 'artifact' as const, path: 'artifact://report' }
+      { source: 'local' as const, path: '/managed/report' }
     ] as const)
     const uploadInvocation = invocation([
       { transferId: 'transfer-1', offset: 0, chunk: new Uint8Array([1]) }

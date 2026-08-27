@@ -108,7 +108,6 @@ type ArtifactHandlerDependencies = {
     | 'getVersionMessages'
     | 'getVersionReview'
     | 'resolveVersionDescriptors'
-    | 'resolveVersionContent'
   >
   codeReconstruction?: {
     get(request: GetArtifactCodeReconstructionRequest): Promise<ArtifactCodeReconstructionState>
@@ -261,8 +260,7 @@ const createArtifactHandlers = (
       if (logicalRequest) {
         throw new Error('Managed Artifact Version reader is not configured.')
       }
-      if (!versionIdentity) return repository.readManagedFilePreview(request)
-      throw new Error('Managed Artifact Version reader is not configured.')
+      throw new Error('Managed Artifact preview requires a logical identity.')
     },
     getLineage: (request) => {
       if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
@@ -460,7 +458,6 @@ const registerArtifactIpcHandlers = (
     | 'getVersionMessages'
     | 'getVersionReview'
     | 'resolveVersionDescriptors'
-    | 'resolveVersionContent'
   >,
   withSessionMutation?: ArtifactHandlerDependencies['withSessionMutation'],
   handlers: ArtifactHandlers = createArtifactHandlers(repository, runRegistry, {

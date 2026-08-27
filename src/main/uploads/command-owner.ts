@@ -3,7 +3,6 @@ import { stat } from 'node:fs/promises'
 import type { ApplicationCallerLease, ApplicationInvocation } from '../application-command-router'
 import { acquireDataRootWriter, withDataRootWrite } from '../storage/migration-state'
 import {
-  readBoundedManagedFilePreview,
   readBoundedManagedFilePreviewLease,
   type ManagedFilePreviewReadLease
 } from '../managed-file-preview'
@@ -21,6 +20,7 @@ import type {
   UploadTransferStatus
 } from '../../shared/uploads'
 import {
+  parseUploadVersionReference,
   DEFAULT_UPLOAD_PROJECT_ID,
   STANDALONE_UPLOAD_SESSION_ID,
   type UploadedAttachment
@@ -57,7 +57,6 @@ type UploadProgressTarget = Readonly<{
 }>
 
 type UploadCommandOwnerOptions = Readonly<{
-  resolveManagedFilePath?: (request: ReadArtifactPreviewRequest) => Promise<string>
   openLatestManagedFile?: (
     request: Omit<ReadArtifactPreviewRequest, 'versionId'> & { versionId?: never }
   ) => Promise<ManagedFilePreviewReadLease>
@@ -405,30 +404,40 @@ const createUploadCommandOwner = (
           : finalize()
       }),
     readPreview: async ({ args: [request] }) => {
-      const lease =
+      const versionIdentity = parseUploadVersionReference(request.path)
+      const logicalRequest =
         request.projectId && request.fileId
-          ? request.versionId && options.openManagedFileVersion
-            ? await options.openManagedFileVersion({ ...request, versionId: request.versionId })
-            : !request.versionId && options.openLatestManagedFile
-              ? await options.openLatestManagedFile({ ...request, versionId: undefined })
-              : undefined
-          : undefined
-      if (lease) {
-        try {
-          return await readBoundedManagedFilePreviewLease(
-            lease,
-            request,
-            'Invalid upload preview encoding.'
-          )
-        } finally {
-          await lease.close()
-        }
+          ? request
+          : versionIdentity?.projectId && versionIdentity.sessionId && versionIdentity.fileId
+            ? {
+                ...request,
+                projectId: versionIdentity.projectId,
+                sessionId: versionIdentity.sessionId,
+                fileId: versionIdentity.fileId,
+                versionId: versionIdentity.versionId
+              }
+            : undefined
+      if (!logicalRequest) {
+        throw new Error('Managed Upload preview requires a logical identity.')
       }
-      if (!request.projectId || !request.fileId || !options.resolveManagedFilePath) {
-        return repository.readManagedUploadPreview(request)
+      const lease = logicalRequest.versionId
+        ? await options.openManagedFileVersion?.({
+            ...logicalRequest,
+            versionId: logicalRequest.versionId
+          })
+        : await options.openLatestManagedFile?.({ ...logicalRequest, versionId: undefined })
+      if (!lease) {
+        throw new Error('Managed Upload Version lease is not configured.')
       }
-      const path = await options.resolveManagedFilePath(request)
-      return readBoundedManagedFilePreview(path, request, 'Invalid upload preview encoding.')
+      try {
+        return await readBoundedManagedFilePreviewLease(
+          lease,
+          request,
+          'Invalid upload preview encoding.'
+        )
+      } finally {
+        await lease.close()
+      }
     }
   })
 }

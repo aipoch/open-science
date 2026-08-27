@@ -347,7 +347,7 @@ export const createManagedFileReferenceResolver = (dependencies: {
   const resolveLogicalReference = async (
     projectId: string,
     reference: Extract<FileReference, { source: 'artifact' | 'upload' }>
-  ): Promise<ManagedFileReadLease | undefined> => {
+  ): Promise<ManagedFileReadLease> => {
     let sourceFileId = reference.sourceFileId
     if (reference.source === 'artifact') {
       const versionIdentity = parseArtifactVersionLocator(reference.path)
@@ -364,7 +364,12 @@ export const createManagedFileReferenceResolver = (dependencies: {
         }
       }
     }
-    if (!sourceFileId || !dependencies.managedFileVersions) return undefined
+    if (!sourceFileId) {
+      throw new Error('Managed file reference requires a logical identity.')
+    }
+    if (!dependencies.managedFileVersions) {
+      throw new Error('Latest managed file resolution is not configured.')
+    }
     return dependencies.managedFileVersions.openLatest({
       source: reference.source,
       projectId,
@@ -375,43 +380,18 @@ export const createManagedFileReferenceResolver = (dependencies: {
   if (dependencies.uploads || dependencies.managedFileVersions) {
     adapters.push({
       source: 'upload',
-      resolve: async ({ projectId, sessionId }, reference) => {
+      resolve: async ({ projectId }, reference) => {
         if (reference.source !== 'upload') throw new Error('Invalid upload reference.')
         const logical = await resolveLogicalReference(projectId, reference)
-        if (logical) {
-          return {
-            absolutePath: logical.path,
-            name: logical.logicalFile.displayName,
-            mimeType: logical.version.contentType ?? reference.mimeType,
-            allowSkillImportReference: true,
-            sourceFileId: logical.logicalFile.id,
-            versionId: logical.version.id,
-            checksum: logical.version.checksum,
-            trustedLease: logical
-          }
-        }
-        if (!dependencies.uploads) throw new Error('Upload repository is not configured.')
-        let absolutePath: string
-        try {
-          absolutePath = await dependencies.uploads!.resolveSessionUploadPath(
-            sessionId,
-            { path: reference.path },
-            projectId
-          )
-        } catch {
-          // A turn-scoped `@` selection is an explicit user capability and may intentionally refer
-          // to a managed upload from another Session. Project ownership remains an app-issued
-          // boundary: native Versions and trusted legacy mappings must still belong to this Project.
-          absolutePath = await dependencies.uploads!.resolveManagedUploadPath(
-            { path: reference.path },
-            { projectId }
-          )
-        }
         return {
-          absolutePath,
-          name: reference.name,
-          mimeType: reference.mimeType,
-          allowSkillImportReference: true
+          absolutePath: logical.path,
+          name: logical.logicalFile.displayName,
+          mimeType: logical.version.contentType ?? reference.mimeType,
+          allowSkillImportReference: true,
+          sourceFileId: logical.logicalFile.id,
+          versionId: logical.version.id,
+          checksum: logical.version.checksum,
+          trustedLease: logical
         }
       }
     })
@@ -423,26 +403,15 @@ export const createManagedFileReferenceResolver = (dependencies: {
       resolve: async ({ projectId }, reference) => {
         if (reference.source !== 'artifact') throw new Error('Invalid artifact reference.')
         const logical = await resolveLogicalReference(projectId, reference)
-        if (logical) {
-          return {
-            absolutePath: logical.path,
-            name: logical.logicalFile.displayName,
-            mimeType: logical.version.contentType ?? reference.mimeType,
-            allowSkillImportReference: false,
-            sourceFileId: logical.logicalFile.id,
-            versionId: logical.version.id,
-            checksum: logical.version.checksum,
-            trustedLease: logical
-          }
-        }
-        if (!dependencies.artifacts) throw new Error('Artifact repository is not configured.')
         return {
-          absolutePath: await dependencies.artifacts!.resolveManagedFilePath({
-            path: reference.path
-          }),
-          name: reference.name,
-          mimeType: reference.mimeType,
-          allowSkillImportReference: false
+          absolutePath: logical.path,
+          name: logical.logicalFile.displayName,
+          mimeType: logical.version.contentType ?? reference.mimeType,
+          allowSkillImportReference: false,
+          sourceFileId: logical.logicalFile.id,
+          versionId: logical.version.id,
+          checksum: logical.version.checksum,
+          trustedLease: logical
         }
       }
     })

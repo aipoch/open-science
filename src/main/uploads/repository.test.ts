@@ -19,11 +19,7 @@ import { basename, dirname, join, relative, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  createUploadVersionReference,
-  PENDING_UPLOAD_SESSION_ID,
-  type PersistedUploadedAttachment
-} from '../../shared/uploads'
+import { PENDING_UPLOAD_SESSION_ID, type PersistedUploadedAttachment } from '../../shared/uploads'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import {
@@ -420,21 +416,13 @@ describe('upload repository', () => {
     expect(finalized[1].id).not.toBe(finalized[0].id)
     expect(finalized[1].versionId).not.toBe(finalized[0].versionId)
 
-    const scopedReference = createUploadVersionReference(finalized[0].versionId ?? '', {
-      projectId: 'project-1',
-      sessionId: 'session-1'
-    })
     await expect(
-      repository.resolveSessionUploadPath('session-1', { path: scopedReference }, 'project-1')
-    ).resolves.toBe(finalized[0].path)
-    await expect(
-      repository.resolveSessionUploadPath('session-1', { path: scopedReference }, 'project-2')
-    ).rejects.toThrow(/different project/i)
-    await expect(
-      repository.resolveManagedUploadPath({
-        path: createUploadVersionReference(finalized[0].versionId ?? '')
-      })
-    ).rejects.toThrow(/Project scope/i)
+      repository.resolveSessionUploadPath(
+        'session-1',
+        { path: `upload-version:${finalized[0].versionId ?? ''}` },
+        'project-1'
+      )
+    ).rejects.toThrow(/managed file lease/i)
 
     const files = await client.uploadFile.findMany({
       where: { projectId: 'project-1', sessionId: 'session-1' },
@@ -797,16 +785,9 @@ describe('upload repository', () => {
     })
     expect(version).toMatchObject({ state: 'ready', createdAt: null })
 
-    const preview = await repository.readManagedUploadPreview({
-      path: createUploadVersionReference(versionId, {
-        projectId: 'project-1',
-        sessionId: 'session-1'
-      }),
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      encoding: 'utf8'
-    })
-    expect(preview.content).toBe('sample,value\na,1\n')
+    await expect(readFile(join(root, version.contentStorageKey), 'utf8')).resolves.toBe(
+      'sample,value\na,1\n'
+    )
 
     // A crash before Session JSON persistence leaves the original path-only projection on disk.
     // Retrying it must recover from the already-ready Version without recreating legacy bytes.
@@ -866,17 +847,13 @@ describe('upload repository', () => {
     expect(versionId).toBeTruthy()
     expect(durable.messages[0].uploads?.[0]).not.toHaveProperty('path')
     await expect(readFile(legacyPath, 'utf8')).resolves.toBe(content)
-    await expect(
-      repository.readManagedUploadPreview({
-        path: createUploadVersionReference(versionId!, {
-          projectId: 'project-1',
-          sessionId: 'session-1'
-        }),
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        encoding: 'utf8'
-      })
-    ).resolves.toMatchObject({ content })
+    const durableVersion = await client.uploadVersion.findUniqueOrThrow({
+      where: { id: versionId! },
+      select: { contentStorageKey: true }
+    })
+    await expect(readFile(join(root, durableVersion.contentStorageKey), 'utf8')).resolves.toBe(
+      content
+    )
 
     await repository.upgradeLegacySessionUploads(durable)
 
@@ -1484,17 +1461,6 @@ describe('upload repository', () => {
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(readFile(finalPath)).resolves.toEqual(content)
     await expect(readFile(unrelatedPath)).resolves.toEqual(content)
-    await expect(
-      repository.readManagedUploadPreview({
-        path: createUploadVersionReference(versionId, {
-          projectId: 'project-1',
-          sessionId: 'session-1'
-        }),
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        encoding: 'utf8'
-      })
-    ).resolves.toMatchObject({ content: content.toString('utf8') })
 
     await writeFile(legacyPath, content)
     const reconciled = await repository.upgradeLegacySessionUploads(upgraded)
@@ -1707,36 +1673,6 @@ describe('upload repository', () => {
     await expect(
       unavailableAuthorityRepository.upgradeLegacySessionUploads(reconciled)
     ).rejects.toThrow('Upload authority unavailable.')
-  })
-
-  it('reads bounded previews only from managed uploads', async () => {
-    const root = await createStorageRoot()
-    const repository = new UploadRepository(root)
-    const [attachment] = await stageUploadFixtures(repository, {
-      files: [
-        {
-          name: 'notes.txt',
-          mimeType: 'text/plain',
-          content: Buffer.from('hello upload').toString('base64')
-        }
-      ]
-    })
-
-    const preview = await repository.readManagedUploadPreview({
-      path: attachment.path,
-      maxBytes: 5,
-      encoding: 'utf8'
-    })
-
-    expect(preview).toEqual({
-      content: 'hello',
-      encoding: 'utf8',
-      size: 'hello upload'.length,
-      truncated: true
-    })
-    await expect(
-      repository.readManagedUploadPreview({ path: join(root, 'outside.txt') })
-    ).rejects.toThrow(/outside upload storage/)
   })
 
   it('requires a trusted Session-to-Project binding for legacy cross-Project paths', async () => {

@@ -94,8 +94,7 @@ type AcpRuntimeArtifacts = {
   provenanceRepository?: Pick<
     ArtifactProvenanceRepository,
     'listRunVersions' | 'writeAppGeneratedVersion'
-  > &
-    Partial<Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>>
+  >
 }
 
 type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
@@ -123,7 +122,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   >
   managedFileVersions: Pick<
     import('../managed-file-versions/service').ManagedFileVersionService,
-    'openLatest'
+    'openLatest' | 'openVersion'
   >
   onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
   onSessionTurnEnded?: (sessionId: string, turnToken: string) => void

@@ -3,12 +3,9 @@ import { basename, dirname, join, resolve } from 'node:path'
 
 import type {
   ArtifactFile,
-  ArtifactPreviewResult,
   ListProjectMessageArtifactsRequest,
-  OpenArtifactFileRequest,
-  ReadArtifactPreviewRequest
+  OpenArtifactFileRequest
 } from '../../shared/artifacts'
-import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import { createLogger } from '../logger'
 import type { ArtifactRunMarkerReadResult } from './publication-types'
 import {
@@ -179,13 +176,6 @@ class ArtifactCompatibilityOwner {
       throw new Error('Artifact file is outside the declaring session.')
     }
     return resolvedFilePath
-  }
-
-  async readManagedFilePreview(
-    request: ReadArtifactPreviewRequest
-  ): Promise<ArtifactPreviewResult> {
-    const filePath = await this.resolveManagedFilePath(request)
-    return readBoundedManagedFilePreview(filePath, request, 'Invalid artifact preview encoding.')
   }
 }
 

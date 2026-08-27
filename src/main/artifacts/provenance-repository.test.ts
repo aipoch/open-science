@@ -578,22 +578,6 @@ describe('artifact provenance repository', () => {
     expect(await readFile(second.path)).toEqual(createPngBytes('version two'))
     expect(first.name).toBe(common.filename)
     expect(second.name).toBe(replacementFilename)
-    await expect(
-      repository.resolveVersionContent({
-        projectId: common.projectId,
-        appSessionId: common.appSessionId,
-        artifactId: first.artifactId,
-        versionId: first.versionId
-      })
-    ).resolves.toMatchObject({ path: first.path, filename: common.filename })
-    await expect(
-      repository.resolveVersionContent({
-        projectId: common.projectId,
-        appSessionId: 'session-2',
-        artifactId: first.artifactId,
-        versionId: first.versionId
-      })
-    ).rejects.toThrow(`Artifact Version not found: ${first.versionId}`)
     const firstRow = requireAgentArtifactVersion(
       await client.artifactVersion.findUniqueOrThrow({ where: { id: first.versionId } })
     )
@@ -904,6 +888,7 @@ describe('artifact provenance repository', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
       getClient: () => Promise.resolve(client),
@@ -941,6 +926,10 @@ describe('artifact provenance repository', () => {
           }
         }
       }
+    })
+    await client.uploadFile.update({
+      where: { id: 'upload-1' },
+      data: { currentVersionId: 'upload-version-1' }
     })
 
     const version = await repository.writeAppGeneratedVersion({
@@ -1687,6 +1676,7 @@ describe('artifact provenance repository', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
 
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const notebookRepository = new NotebookRunRepository(storageRoot)
@@ -1835,6 +1825,10 @@ describe('artifact provenance repository', () => {
           }
         }
       }
+    })
+    await client.uploadFile.update({
+      where: { id: 'upload-1' },
+      data: { currentVersionId: 'upload-version-1' }
     })
     const inputFile = {
       inputFileVersionId: 'upload-version-1',

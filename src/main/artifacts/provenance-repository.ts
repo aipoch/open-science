@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { PrismaClient } from '@prisma/client'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
 
 import type {
   AppGeneratedArtifactProducer,
@@ -53,9 +54,8 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ArtifactProvenanceDependencyReader } from './provenance-dependency-reader'
 import type { HostLineageDependencyRelation, HostLineageDirection } from '../../shared/host-lineage'
 import { requireAgentArtifactVersion } from './provenance-version-kind'
-import { LOCAL_RESOURCE_BUDGETS, type LocalResourceBudgetOverrides } from '../resource-budget'
+import type { LocalResourceBudgetOverrides } from '../resource-budget'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
-import { digestFileWithinBudget } from '../bounded-file-io'
 import {
   NodeVersionFileOperator,
   VERSION_FILE_CANDIDATE_LIMIT,
@@ -84,6 +84,7 @@ type ArtifactProvenanceRepositoryOptions = {
   durability?: ArtifactDurability
   resourceBudgets?: LocalResourceBudgetOverrides
   versionFileOperator?: VersionFileOperator & VersionFileRecovery
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
 }
 
 type ProjectableVersionFileRecord = Omit<PersistedVersionFileRecord, 'artifactRunId'> & {
@@ -235,8 +236,13 @@ class ArtifactProvenanceRepository {
     const inputAuthority =
       options.inputAuthority ??
       new ImmutableInputAuthority({
-        storageRoot: options.storageRoot,
-        getClient: options.getClient
+        managedFileVersions:
+          options.managedFileVersions ??
+          new ManagedFileVersionService({
+            storageRoot: options.storageRoot,
+            getClient: options.getClient,
+            versionFileOperator: this.versionFileOperator
+          })
       })
     this.dependencyReader = new ArtifactProvenanceDependencyReader(options.getClient)
     this.readModel = new ArtifactProvenanceReadModel({
@@ -248,7 +254,31 @@ class ArtifactProvenanceRepository {
       reconcileSession: (projectId, appSessionId) => this.reconcileSession(projectId, appSessionId),
       projectVersionDescriptor: (version, projectId, appSessionId) =>
         this.toDescriptor(version, projectId, appSessionId),
-      resolveVersionContent: (request) => this.resolveVersionContent(request),
+      resolveArtifactVersion: options.managedFileVersions
+        ? async (request) => {
+            const lease = await options.managedFileVersions!.openVersion(
+              {
+                source: 'artifact',
+                projectId: request.projectId,
+                fileId: request.fileId
+              },
+              request.versionId
+            )
+            if (lease.logicalFile.sessionId !== request.sessionId) {
+              await lease.close()
+              throw new Error('Artifact Version belongs to a different Session.')
+            }
+            return {
+              filename: lease.version.filename,
+              ...(lease.version.contentType ? { contentType: lease.version.contentType } : {}),
+              checksum: lease.version.checksum,
+              size: lease.size,
+              readRange: lease.readRange,
+              verifyUnchanged: lease.verifyUnchanged,
+              close: lease.close
+            }
+          }
+        : undefined,
       resolveVersionDerivedPath: (request, filename) =>
         this.resolveVersionDerivedPath(request, filename)
     })
@@ -706,70 +736,6 @@ class ArtifactProvenanceRepository {
       dirname(resolveStorageKey(this.options.storageRoot, version.contentStorageKey)),
       filename
     )
-  }
-
-  private async resolveVersionContentMetadata(request: {
-    projectId: string
-    versionId: string
-    appSessionId?: string
-    artifactId?: string
-  }): Promise<{ path: string; filename: string; contentType?: string; checksum?: string }> {
-    const projectId = assertSafeSegment(request.projectId, 'project id')
-    const versionId = assertSafeSegment(request.versionId, 'version id')
-    const appSessionId = request.appSessionId
-      ? assertSafeSegment(request.appSessionId, 'app session id')
-      : undefined
-    const artifactId = request.artifactId
-      ? assertSafeSegment(request.artifactId, 'artifact id')
-      : undefined
-    const client = await this.options.getClient()
-    const version = await client.artifactVersion.findFirst({
-      where: {
-        id: versionId,
-        ...(artifactId ? { artifactId } : {}),
-        state: { in: ['pending', 'finalized'] },
-        artifact: { is: { projectId, ...(appSessionId ? { sessionId: appSessionId } : {}) } }
-      },
-      include: { artifact: true }
-    })
-    if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
-
-    return {
-      path: resolveStorageKey(this.options.storageRoot, version.contentStorageKey),
-      filename: version.filename,
-      contentType: version.contentType ?? undefined,
-      checksum: version.checksum
-    }
-  }
-
-  // Reviewer reads hash the full source while retaining only one page, so they request metadata
-  // without a redundant verification pass. The Reviewer host compares this checksum itself.
-  resolveVersionContentForStreamingVerification(request: {
-    projectId: string
-    versionId: string
-    appSessionId?: string
-    artifactId?: string
-  }): Promise<{ path: string; filename: string; contentType?: string; checksum?: string }> {
-    return this.resolveVersionContentMetadata(request)
-  }
-
-  // Resolves preview/consumer reads through the Version authority. Callers that do not stream and
-  // verify content themselves keep the existing verified-path contract.
-  async resolveVersionContent(request: {
-    projectId: string
-    versionId: string
-    appSessionId?: string
-    artifactId?: string
-  }): Promise<{ path: string; filename: string; contentType?: string; checksum?: string }> {
-    const resolved = await this.resolveVersionContentMetadata(request)
-    const digest = await digestFileWithinBudget(
-      resolved.path,
-      LOCAL_RESOURCE_BUDGETS.artifactFileBytes
-    )
-    if (digest.checksum !== resolved.checksum) {
-      throw new Error(`Artifact Version content checksum mismatch: ${request.versionId}`)
-    }
-    return resolved
   }
 
   // Project deletion is the terminal provenance boundary. Session deletion intentionally keeps this

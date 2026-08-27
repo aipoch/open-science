@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
-import { createPreviewRequestScope } from './preview-file-reader'
+import { createManagedPreviewRequest } from './preview-file-reader'
 import { isUnavailableFileError } from './preview-errors'
 
 export const PREVIEW_TEXT_MAX_BYTES = 1024 * 1024
@@ -64,14 +64,7 @@ const readManagedPreviewPage = async (
     signal: AbortSignal
   }
 ): Promise<ArtifactPreviewResult> => {
-  const requestScope = createPreviewRequestScope(request)
-  const resource = await window.api.previewResources.acquire({
-    source: request.source,
-    path: request.path,
-    ...requestScope,
-    ...(request.managedFileId ? { fileId: request.managedFileId } : {}),
-    ...(request.selectedVersionId ? { versionId: request.selectedVersionId } : {})
-  })
+  const resource = await window.api.previewResources.acquire(createManagedPreviewRequest(request))
 
   try {
     if (request.signal.aborted) throw request.signal.reason

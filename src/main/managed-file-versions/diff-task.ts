@@ -652,4 +652,3 @@ class ManagedTextDiffTaskRunner {
 }
 
 export { ManagedTextDiffTaskRunner }
-export type { DiffTask, DiffTaskRunnerOptions }

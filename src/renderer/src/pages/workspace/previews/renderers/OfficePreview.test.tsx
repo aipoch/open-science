@@ -25,6 +25,8 @@ const createItem = (overrides: Partial<PreviewFileItem> = {}): PreviewFileItem =
   title: 'report.docx',
   type: 'file',
   source: 'artifact',
+  projectId: 'project-1',
+  managedFileId: 'artifact-1',
   path: '/artifacts/report.docx',
   name: 'report.docx',
   format: 'word',
@@ -165,7 +167,6 @@ describe('OfficePreviewRenderer', () => {
     expect(open).toHaveBeenCalledWith(
       expect.objectContaining({
         source: 'artifact',
-        path: 'artifact-version:stale-projection',
         projectId: 'project-1',
         fileId: 'artifact-1',
         versionId: 'artifact-v4'
@@ -431,7 +432,6 @@ describe('OfficePreviewRenderer', () => {
 
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'upload',
-      path: 'upload-version:stale-projection',
       projectId: 'project-1',
       fileId: 'upload-1',
       versionId: 'upload-v2',

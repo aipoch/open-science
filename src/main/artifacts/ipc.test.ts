@@ -94,6 +94,24 @@ beforeEach(() => {
   registrationFailure.error = undefined
 })
 
+const createPreviewLease = (
+  bytes: Uint8Array
+): {
+  size: number
+  read: ReturnType<typeof vi.fn>
+  verifyUnchanged: ReturnType<typeof vi.fn>
+  close: ReturnType<typeof vi.fn>
+} => ({
+  size: bytes.byteLength,
+  read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+    const chunk = bytes.subarray(position, position + length)
+    buffer.set(chunk, offset)
+    return { bytesRead: chunk.byteLength }
+  }),
+  verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+  close: vi.fn().mockResolvedValue(undefined)
+})
+
 describe('artifact IPC handlers', () => {
   const createFinalizedArtifact = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
     id: 'session-1:message-1:result.txt',
@@ -677,22 +695,21 @@ describe('artifact IPC handlers', () => {
   })
 
   it('reads only bounded preview text from managed artifact files', async () => {
-    const repository = new ArtifactRepository(await createStorageRoot())
-    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry())
-    const artifact = await repository.writePendingFile({
-      projectId: 'default-project',
-      sessionId: 'artifact-session-1',
-      runId: 'run-1',
-      filename: 'result.txt',
-      source: createInlineSource('alpha\nbeta\ngamma')
+    const openLatestManagedFile = vi
+      .fn()
+      .mockResolvedValue(createPreviewLease(Buffer.from('alpha\nbeta\ngamma')))
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      openLatestManagedFile
     })
 
-    await expect(handlers.readPreview({ path: artifact.path, maxBytes: 10 })).resolves.toEqual({
-      content: 'alpha\nbeta',
-      encoding: 'utf8',
-      size: 16,
-      truncated: true
-    })
+    await expect(
+      handlers.readPreview({
+        path: '/replaceable/result.txt',
+        projectId: 'default-project',
+        fileId: 'artifact-1',
+        maxBytes: 10
+      })
+    ).resolves.toEqual({ content: 'alpha\nbeta', encoding: 'utf8', size: 16, truncated: true })
   })
 
   it('fails closed instead of resolving a logical Artifact Version through a path fallback', async () => {
@@ -771,49 +788,47 @@ describe('artifact IPC handlers', () => {
   })
 
   it('reads bounded base64 previews for small managed image artifacts', async () => {
-    const repository = new ArtifactRepository(await createStorageRoot())
-    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry())
-    const artifact = await repository.writePendingFile({
-      projectId: 'default-project',
-      sessionId: 'artifact-session-1',
-      runId: 'run-1',
-      filename: 'pixel.png',
-      source: createPngInlineSource('png-bytes'),
-      mimeType: 'image/png'
+    const bytes = createPngBytes('png-bytes')
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      openLatestManagedFile: vi.fn().mockResolvedValue(createPreviewLease(bytes))
     })
 
     await expect(
-      handlers.readPreview({ path: artifact.path, maxBytes: 1024, encoding: 'base64' })
+      handlers.readPreview({
+        path: '/replaceable/pixel.png',
+        projectId: 'default-project',
+        fileId: 'artifact-1',
+        maxBytes: 1024,
+        encoding: 'base64'
+      })
     ).resolves.toEqual({
-      content: createPngBytes('png-bytes').toString('base64'),
+      content: bytes.toString('base64'),
       encoding: 'base64',
-      size: createPngBytes('png-bytes').length,
+      size: bytes.length,
       truncated: false
     })
   })
 
   it('rejects invalid preview encodings from renderer IPC input', async () => {
-    const repository = new ArtifactRepository(await createStorageRoot())
-    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry())
-    const artifact = await repository.writePendingFile({
-      projectId: 'default-project',
-      sessionId: 'artifact-session-1',
-      runId: 'run-1',
-      filename: 'result.txt',
-      source: createInlineSource('alpha')
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      openLatestManagedFile: vi.fn().mockResolvedValue(createPreviewLease(Buffer.from('alpha')))
     })
 
     await expect(
-      handlers.readPreview({ path: artifact.path, encoding: 'hex' as 'utf8' })
+      handlers.readPreview({
+        path: '/replaceable/result.txt',
+        projectId: 'default-project',
+        fileId: 'artifact-1',
+        encoding: 'hex' as 'utf8'
+      })
     ).rejects.toThrow(/Invalid artifact preview encoding/)
   })
 
-  it('rejects preview reads outside the managed artifact root', async () => {
-    const repository = new ArtifactRepository(await createStorageRoot())
-    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry())
+  it('rejects preview paths that lack a managed logical identity', async () => {
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry())
 
     await expect(handlers.readPreview({ path: join(tmpdir(), 'outside.txt') })).rejects.toThrow(
-      /outside artifact storage/
+      /logical identity/
     )
   })
 
@@ -1073,13 +1088,17 @@ describe('artifact IPC handler registration', () => {
       readManagedFilePreview
     } as unknown as ArtifactRepository
     const runRegistry = new ArtifactRunRegistry()
+    const openLatestManagedFile = vi
+      .fn()
+      .mockResolvedValue(createPreviewLease(Buffer.from('preview')))
+    const handlers = createArtifactHandlers(repository, runRegistry, { openLatestManagedFile })
     const claimId = runRegistry.register({
       projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1'
     })
-    registerArtifactIpcHandlers(repository, runRegistry)
+    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, undefined, handlers)
 
     const finalizeResult = await ipcHandlers.get('artifacts:finalize-run')?.(
       {},
@@ -1128,13 +1147,19 @@ describe('artifact IPC handler registration', () => {
       {},
       {
         path: '/managed/inside.txt',
+        projectId: 'default-project',
+        fileId: 'artifact-1',
         maxBytes: 16
       }
     )
-    expect(readManagedFilePreview).toHaveBeenCalledWith({
+    expect(openLatestManagedFile).toHaveBeenCalledWith({
       path: '/managed/inside.txt',
+      projectId: 'default-project',
+      fileId: 'artifact-1',
+      versionId: undefined,
       maxBytes: 16
     })
+    expect(readManagedFilePreview).not.toHaveBeenCalled()
   })
 
   it('delegates code reconstruction cache and generation through separate channels', async () => {
@@ -1281,6 +1306,19 @@ describe('artifact IPC handler registration', () => {
     expect(resolveVersionContent).not.toHaveBeenCalled()
     expect(readManagedFilePreview).not.toHaveBeenCalled()
     expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a path-only Artifact preview instead of reopening repository bytes', async () => {
+    const readManagedFilePreview = vi.fn()
+    const handlers = createArtifactHandlers(
+      { readManagedFilePreview } as unknown as ArtifactRepository,
+      new ArtifactRunRegistry()
+    )
+
+    await expect(
+      handlers.readPreview({ path: '/stale/artifact.txt', maxBytes: 64 })
+    ).rejects.toThrow(/logical identity/i)
+    expect(readManagedFilePreview).not.toHaveBeenCalled()
   })
 
   it('uses a legacy Version locator only to open the latest logical Artifact in the system app', async () => {

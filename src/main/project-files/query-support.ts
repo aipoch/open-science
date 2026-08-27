@@ -599,7 +599,8 @@ const toProjectFileItem = (row: ManagedFile, origin?: FileOriginSession): Projec
       source === 'upload'
         ? createUploadVersionReference(versionId, {
             projectId: row.projectId,
-            sessionId: row.sessionId
+            sessionId: row.sessionId,
+            fileId: row.sourceFileId
           })
         : createArtifactVersionLocator({
             projectId: row.projectId,

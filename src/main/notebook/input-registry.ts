@@ -3,6 +3,7 @@ import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../sh
 import { parseNotebookInputPreviewKey, type NotebookRunInputFile } from '../../shared/notebook'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
+import type { ImmutableInputContentLease } from '../immutable-input-authority'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
 
 type RegisterNotebookTurnInputsRequest = {
@@ -21,6 +22,7 @@ type GetNotebookTurnInputsRequest = Pick<
 type ResolveNotebookInputPreviewRequest = {
   projectId: string
   sourceKind: NotebookRunInputFile['sourceKind']
+  sourceFileId: string
   inputFileVersionId: string
 }
 
@@ -44,7 +46,7 @@ type NotebookInputPreviewTarget = {
 type NotebookInputRegistryOptions = {
   inputAuthority: Pick<
     ImmutableInputAuthority,
-    'resolveContent' | 'resolveVersion' | 'validateVersion'
+    'openContent' | 'resolveVersion' | 'validateVersion'
   >
 }
 
@@ -63,11 +65,14 @@ const versionKey = (input: NotebookRunInputFile): string =>
 // registered Version key, and only that live record is upgraded to resolver-accessed.
 class NotebookInputRunLease {
   private readonly inputsByVersion = new Map<string, NotebookRunInputFile>()
+  private readonly contentLeases = new Map<string, ImmutableInputContentLease>()
   private closed = false
 
   constructor(
     private readonly inputFiles: NotebookRunInputFile[],
-    private readonly resolveContent: (input: NotebookRunInputFile) => Promise<string>
+    private readonly openContent: (
+      input: NotebookRunInputFile
+    ) => Promise<ImmutableInputContentLease>
   ) {
     for (const input of inputFiles) this.inputsByVersion.set(versionKey(input), input)
   }
@@ -87,13 +92,22 @@ class NotebookInputRunLease {
         `Notebook input is not registered for this run: ${request.inputFileVersionId}`
       )
     }
-    const path = await this.resolveContent(input)
+    const key = versionKey(input)
+    let contentLease = this.contentLeases.get(key)
+    if (!contentLease) {
+      contentLease = await this.openContent(input)
+      this.contentLeases.set(key, contentLease)
+    }
     input.association = 'resolver-accessed'
-    return path
+    return contentLease.path
   }
 
-  close(): NotebookRunInputFile[] {
+  async close(): Promise<NotebookRunInputFile[]> {
     if (!this.closed) this.closed = true
+    await Promise.all(
+      [...this.contentLeases.values()].map((lease) => lease.close().catch(() => undefined))
+    )
+    this.contentLeases.clear()
     return this.inputFiles.map((input) => ({ ...input }))
   }
 }
@@ -126,11 +140,15 @@ class NotebookInputRegistry {
         // immutable Notebook input edge until their storage identity is upgraded to a Version.
         continue
       }
+      if (!reference.sourceFileId) {
+        throw new Error(`Managed input has no logical file identity: ${reference.name}`)
+      }
       inputs.push(
         await this.resolveVersion({
           projectId: request.projectId,
           sourceKind: reference.source === 'upload' ? 'upload-version' : 'artifact-version',
-          inputFileVersionId: reference.versionId
+          inputFileVersionId: reference.versionId,
+          expectedSourceFileId: reference.sourceFileId
         })
       )
     }
@@ -168,7 +186,7 @@ class NotebookInputRegistry {
       })
     )
     return new NotebookInputRunLease(inputs, (input) =>
-      this.options.inputAuthority.resolveContent(input)
+      this.options.inputAuthority.openContent(input)
     )
   }
 
@@ -182,16 +200,25 @@ class NotebookInputRegistry {
   async resolvePreview(
     request: ResolveNotebookInputPreviewRequest
   ): Promise<NotebookInputPreviewTarget> {
-    const input = await this.resolveVersion(request)
-    const absolutePath = await this.options.inputAuthority.resolveContent(input)
-    return {
-      sourceKind: input.sourceKind,
-      inputFileVersionId: input.inputFileVersionId,
-      filename: input.filename,
-      contentType: input.contentType,
-      sizeBytes: input.sizeBytes,
-      checksum: input.checksum,
-      absolutePath
+    const input = await this.resolveVersion({
+      projectId: request.projectId,
+      sourceKind: request.sourceKind,
+      inputFileVersionId: request.inputFileVersionId,
+      expectedSourceFileId: request.sourceFileId
+    })
+    const lease = await this.options.inputAuthority.openContent(input)
+    try {
+      return {
+        sourceKind: input.sourceKind,
+        inputFileVersionId: input.inputFileVersionId,
+        filename: input.filename,
+        contentType: input.contentType,
+        sizeBytes: input.sizeBytes,
+        checksum: input.checksum,
+        absolutePath: lease.path
+      }
+    } finally {
+      await lease.close()
     }
   }
 

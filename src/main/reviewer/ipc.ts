@@ -23,7 +23,7 @@ import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
-import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import { acquireDataRootWriter } from '../storage/migration-state'
 import { ReviewerProjectRuntimeOwner, type ReviewerProjectAdmission } from './project-runtime-owner'
 import {
@@ -32,6 +32,7 @@ import {
   type SessionAgentTargetResolver
 } from '../acp/session-agent-target'
 import type { SessionAgentConfiguration } from '../../shared/settings'
+import type { ArtifactVersionContentResolver } from './host-sdk'
 
 const log = createLogger('reviewer:ipc')
 
@@ -87,10 +88,7 @@ type ReviewerIpcOptions = {
   storageRoot?: string
   // Optional override for the data root (artifacts) (for testing).
   dataRoot?: string
-  artifactProvenanceRepository?: Pick<
-    ArtifactProvenanceRepository,
-    'resolveVersionContent' | 'resolveVersionContentForStreamingVerification'
-  >
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
   withSessionMutation?: <Result>(
     projectId: string,
     sessionId: string,
@@ -148,14 +146,32 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   }
   void ensureRecovery()
   const sessionRepository = new SessionRepository(storageRoot)
-  const artifactProvenanceRepository =
-    options.artifactProvenanceRepository ??
-    new ArtifactProvenanceRepository({
-      storageRoot: dataRoot,
-      getClient: () => getProjectDbClient(storageRoot),
-      loadSession: (projectId, appSessionId) =>
-        sessionRepository.loadSession(projectId, appSessionId)
-    })
+  const resolveArtifactVersion: ArtifactVersionContentResolver | undefined =
+    options.managedFileVersions
+      ? async (request) => {
+          const lease = await options.managedFileVersions!.openVersion(
+            {
+              source: 'artifact',
+              projectId: request.projectId,
+              fileId: request.fileId
+            },
+            request.versionId
+          )
+          if (lease.logicalFile.sessionId !== request.sessionId) {
+            await lease.close()
+            throw new Error('Artifact Version belongs to a different Session.')
+          }
+          return {
+            filename: lease.version.filename,
+            ...(lease.version.contentType ? { contentType: lease.version.contentType } : {}),
+            checksum: lease.version.checksum,
+            size: lease.size,
+            readRange: lease.readRange,
+            verifyUnchanged: lease.verifyUnchanged,
+            close: lease.close
+          }
+        }
+      : undefined
   const projectRuntime = options.projectRuntime ?? new ReviewerProjectRuntimeOwner()
   // Per-session abort capabilities for active fix loops. Keyed by the main session id (not the
   // reviewer session id). Project deletion owns the same signal, so user cancellation and Project
@@ -186,9 +202,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     } catch {
       return reviews
     }
-    return flagStaleReviews(reviews, session, dataRoot, (versionRequest) =>
-      artifactProvenanceRepository.resolveVersionContent(versionRequest)
-    )
+    return flagStaleReviews(reviews, session, dataRoot, resolveArtifactVersion)
   }
 
   const abortFixLoop = (request: ReviewSessionRequest): void => {
@@ -425,8 +439,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           : {}),
         // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
         artifactStorageRoot: dataRoot,
-        artifactVersionContentResolver: (request) =>
-          artifactProvenanceRepository.resolveVersionContentForStreamingVerification(request),
+        artifactVersionContentResolver: resolveArtifactVersion,
         reviewerMcpEntryPath: options.mcpEntryPath,
         onStarted: () => settle({ started: true }),
         onReviewUpdate: (review: ReviewWithChecks) => {
