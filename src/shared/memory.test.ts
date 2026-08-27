@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import * as memoryContracts from './memory'
 import {
   ABOUT_YOU_MEMORY_CATEGORY_ID,
   ABOUT_YOU_MEMORY_CATEGORY_SYSTEM_KEY,
   memoryApplicationCommandContracts,
+  memoryAgentRememberMcpOutputSchema,
+  memoryAgentRememberResultSchema,
   memoryAgentRememberRequestSchema,
   memoryAgentResultSchema,
   memoryAgentSearchRequestSchema,
@@ -180,20 +181,61 @@ describe('memory contracts', () => {
   })
 
   it('defines structured created, existing, and non-retryable rejected remember results', () => {
-    const schema = (
-      memoryContracts as typeof memoryContracts & {
-        memoryAgentRememberResultSchema?: { parse(value: unknown): unknown }
-      }
-    ).memoryAgentRememberResultSchema
-
-    expect(schema).toBeDefined()
     expect(
-      schema?.parse({
+      memoryAgentRememberResultSchema.parse({
         status: 'rejected',
         retryable: false,
         code: 'invalid_analysis',
         reason: 'The note does not describe durable project knowledge.'
       })
     ).toMatchObject({ status: 'rejected', retryable: false })
+  })
+
+  it('keeps every remember result branch strict in the MCP object schema', () => {
+    const memory = {
+      id: 'entry-1',
+      categoryId: null,
+      categoryName: null,
+      scope: 'project',
+      content: 'Use channel A.',
+      revision: 2,
+      provenance: { origin: 'agent', agentId: 'specialist-1' },
+      updatedAt: 3
+    }
+
+    expect(memoryAgentRememberMcpOutputSchema.parse({ status: 'created', memory })).toMatchObject({
+      status: 'created'
+    })
+    expect(memoryAgentRememberMcpOutputSchema.parse({ status: 'existing', memory })).toMatchObject({
+      status: 'existing'
+    })
+    expect(
+      memoryAgentRememberMcpOutputSchema.parse({
+        status: 'rejected',
+        retryable: false,
+        code: 'invalid_analysis',
+        reason: 'The note does not describe durable project knowledge.'
+      })
+    ).toMatchObject({ status: 'rejected', retryable: false })
+
+    expect(() => memoryAgentRememberMcpOutputSchema.parse({ status: 'created' })).toThrow()
+    expect(() =>
+      memoryAgentRememberMcpOutputSchema.parse({
+        status: 'existing',
+        memory,
+        retryable: false,
+        code: 'invalid_analysis',
+        reason: 'A successful result cannot carry rejection fields.'
+      })
+    ).toThrow()
+    expect(() =>
+      memoryAgentRememberMcpOutputSchema.parse({
+        status: 'rejected',
+        memory,
+        retryable: false,
+        code: 'invalid_analysis',
+        reason: 'A rejected result cannot carry memory.'
+      })
+    ).toThrow()
   })
 })

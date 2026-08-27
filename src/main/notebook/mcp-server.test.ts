@@ -7,7 +7,7 @@ import { z } from 'zod'
 
 import { HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from '../host-sdk/help'
 import {
-  memoryAgentRememberResultSchema,
+  memoryAgentRememberMcpOutputSchema,
   memoryAgentRememberRequestSchema,
   memoryAgentSearchRequestSchema
 } from '../../shared/memory'
@@ -58,6 +58,59 @@ import {
 } from './mcp-server'
 
 const tokenizer = new Tiktoken(cl100kBase)
+
+const rememberMemoryArguments = {
+  content: 'Use channel A for this project.',
+  analysis: {
+    scope: 'project' as const,
+    durability: 'cross-session' as const,
+    evidence: 'project-observed' as const,
+    subject: 'Microscopy channel',
+    reason: 'Future sessions need the working channel.'
+  }
+}
+
+const callRememberMemoryThroughMcp = async (
+  rpcResult: Record<string, unknown>
+): Promise<{
+  result: Awaited<ReturnType<ModelContextProtocolClient['callTool']>>
+  rpcCallCount: number
+}> => {
+  const environment = {
+    endpoint: 'http://127.0.0.1:4567',
+    token: 'secret-token',
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    workspaceCwd: '/workspace',
+    memoryTools: true
+  }
+  const server = createNotebookMcpServer(environment)
+  const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverTransport)
+  await client.connect(clientTransport)
+  const originalFetch = globalThis.fetch
+  const fetchRpc = vi.fn(
+    async () =>
+      ({
+        ok: true,
+        json: async () => ({ result: rpcResult })
+      }) as Response
+  )
+  globalThis.fetch = fetchRpc as typeof fetch
+
+  try {
+    const result = await client.callTool({
+      name: 'remember_memory',
+      arguments: rememberMemoryArguments
+    })
+    return { result, rpcCallCount: fetchRpc.mock.calls.length }
+  } finally {
+    globalThis.fetch = originalFetch
+    await client.close()
+    await server.close()
+  }
+}
 
 describe('notebook MCP server config', () => {
   it('builds an ACP stdio MCP server config scoped to the notebook runtime RPC endpoint', () => {
@@ -274,15 +327,112 @@ describe('notebook MCP server config', () => {
     expect(tools.remember_memory?.description).toContain('durable')
     expect(tools.remember_memory?.description).toContain('current project')
     expect(tools.remember_memory?.description).toContain('Do not retry')
+    expect(tools.remember_memory?.description).toContain('hidden agent-specific memory directories')
     expect(tools.search_memories?.inputSchema).toBe(memoryAgentSearchRequestSchema.shape)
     expect(tools.remember_memory?.inputSchema).toBe(memoryAgentRememberRequestSchema.shape)
-    expect(tools.remember_memory?.outputSchema).toBe(memoryAgentRememberResultSchema)
+    expect(tools.remember_memory?.outputSchema).toBe(memoryAgentRememberMcpOutputSchema)
     expect(tools.list_memory_categories?.mapResult).toBeUndefined()
     expect(tools.search_memories?.mapResult).toBeUndefined()
     expect(tools.remember_memory?.mapResult).toBeUndefined()
     expect(NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)).not.toEqual(
       expect.arrayContaining(['update_memory', 'forget_memory', 'set_memory_enabled'])
     )
+  })
+
+  it('publishes remember_memory with a root object output schema', async () => {
+    const environment = {
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      memoryTools: true
+    }
+    const server = createNotebookMcpServer(environment)
+    const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await server.connect(serverTransport)
+    await client.connect(clientTransport)
+
+    try {
+      const { tools } = await client.listTools()
+      const rememberTool = tools.find(({ name }) => name === 'remember_memory')
+
+      expect(rememberTool?.outputSchema).toEqual(expect.objectContaining({ type: 'object' }))
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('returns a created memory through the real MCP client and calls RPC once', async () => {
+    const { result, rpcCallCount } = await callRememberMemoryThroughMcp({
+      status: 'created',
+      memory: {
+        id: 'entry-1',
+        categoryId: null,
+        categoryName: null,
+        scope: 'project',
+        content: 'Use channel A for this project.',
+        revision: 1,
+        provenance: { origin: 'agent', agentId: 'agent-1' },
+        updatedAt: 3
+      }
+    })
+
+    expect(result.content).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('_zod') })])
+    )
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent).toEqual({
+      status: 'created',
+      memory: {
+        id: 'entry-1',
+        categoryId: null,
+        categoryName: null,
+        scope: 'project',
+        content: 'Use channel A for this project.',
+        revision: 1,
+        provenance: { origin: 'agent', agentId: 'agent-1' },
+        updatedAt: 3
+      }
+    })
+    expect(rpcCallCount).toBe(1)
+  })
+
+  it('returns an existing memory through the real MCP client', async () => {
+    const { result, rpcCallCount } = await callRememberMemoryThroughMcp({
+      status: 'existing',
+      memory: {
+        id: 'entry-1',
+        categoryId: null,
+        categoryName: null,
+        scope: 'project',
+        content: 'Use channel A for this project.',
+        revision: 1,
+        provenance: { origin: 'agent', agentId: 'agent-1' },
+        updatedAt: 3
+      }
+    })
+
+    expect(result.content).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('_zod') })])
+    )
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent).toEqual({
+      status: 'existing',
+      memory: {
+        id: 'entry-1',
+        categoryId: null,
+        categoryName: null,
+        scope: 'project',
+        content: 'Use channel A for this project.',
+        revision: 1,
+        provenance: { origin: 'agent', agentId: 'agent-1' },
+        updatedAt: 3
+      }
+    })
+    expect(rpcCallCount).toBe(1)
   })
 
   it('returns rejected memory writes as structured non-retryable MCP errors', async () => {

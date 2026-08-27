@@ -194,6 +194,55 @@ export const memoryAgentRememberResultSchema = z.discriminatedUnion('status', [
   memoryAgentRememberRejectedSchema
 ])
 
+// MCP can publish only root object output schemas, so preserve the domain union's branch rules here.
+export const memoryAgentRememberMcpOutputSchema = z
+  .object({
+    status: z.enum(['created', 'existing', 'rejected']),
+    memory: memoryAgentResultSchema.optional(),
+    retryable: z.literal(false).optional(),
+    code: z.string().min(1).max(64).optional(),
+    reason: z.string().min(1).max(MEMORY_ANALYSIS_REASON_MAX_LENGTH).optional()
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (result.status === 'created' || result.status === 'existing') {
+      if (!result.memory) {
+        context.addIssue({
+          code: 'custom',
+          path: ['memory'],
+          message: 'A successful remember result requires memory.'
+        })
+      }
+      for (const field of ['retryable', 'code', 'reason'] as const) {
+        if (result[field] !== undefined) {
+          context.addIssue({
+            code: 'custom',
+            path: [field],
+            message: 'A successful remember result cannot include rejection fields.'
+          })
+        }
+      }
+      return
+    }
+
+    if (result.memory !== undefined) {
+      context.addIssue({
+        code: 'custom',
+        path: ['memory'],
+        message: 'A rejected remember result cannot include memory.'
+      })
+    }
+    for (const field of ['retryable', 'code', 'reason'] as const) {
+      if (result[field] === undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: [field],
+          message: 'A rejected remember result requires rejection details.'
+        })
+      }
+    }
+  })
+
 export type MemoryEntryView = z.infer<typeof memoryEntryViewSchema>
 export type MemoryCategoryView = z.infer<typeof memoryCategoryViewSchema>
 export type MemoryProjectView = z.infer<typeof memoryProjectViewSchema>

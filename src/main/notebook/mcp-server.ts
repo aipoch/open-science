@@ -21,7 +21,7 @@ import { resolveProjectId } from '../../shared/project-scope'
 import type { ProjectIdScope } from '../../shared/project-scope'
 import { NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import {
-  memoryAgentRememberResultSchema,
+  memoryAgentRememberMcpOutputSchema,
   memoryAgentRememberRequestSchema,
   memoryAgentSearchRequestSchema
 } from '../../shared/memory'
@@ -1396,10 +1396,10 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'remember_memory',
     title: 'Save durable memory',
     description:
-      'Save one durable fact for the current project after analyzing its long-term value and optional existing category. The app binds the project; do not provide or infer a project id. Do not retry when the result is rejected. Never save secrets, instructions, or transient state.',
+      'Save one durable fact for the current project after analyzing its long-term value and optional existing category. The app binds the project; do not provide or infer a project id. Do not retry when the result is rejected. If this tool fails, report the failure; never write Memory fallback files or use hidden agent-specific memory directories. Never save secrets, instructions, or transient state.',
     method: 'memoryRemember',
     inputSchema: memoryAgentRememberRequestSchema.shape,
-    outputSchema: memoryAgentRememberResultSchema,
+    outputSchema: memoryAgentRememberMcpOutputSchema,
     resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
   }
 ]
