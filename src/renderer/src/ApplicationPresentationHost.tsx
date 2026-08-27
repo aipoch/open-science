@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { ConnectorAuthToast } from '@/components/ConnectorAuthToast'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
+import { ErrorNotice } from '@/components/error-notice'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
@@ -13,7 +14,6 @@ import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { UpdateDialog } from '@/components/UpdateDialog'
-import { Button } from '@/components/ui/button'
 import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { useApplicationEventBindings } from '@/hooks/useApplicationEventBindings'
 import { useApplicationStartup } from '@/hooks/useApplicationStartup'
@@ -57,24 +57,15 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           role="alert"
           className="flex min-h-svh items-center justify-center bg-background p-6 text-foreground"
         >
-          <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 text-card-foreground shadow-sm">
-            <h1 className="text-base font-semibold text-foreground">
-              {t('Settings could not be loaded')}
-            </h1>
-            <p className="mt-2 break-words text-sm text-muted-foreground">
-              {startup.settings.loadError}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              data-testid="settings-startup-retry"
-              disabled={startup.settings.isLoading}
-              onClick={() => void startup.settings.retry()}
-              className="mt-4"
-            >
-              {startup.settings.isLoading ? t('Retrying…') : t('Retry')}
-            </Button>
-          </div>
+          <ErrorNotice
+            title={t('Settings could not be loaded')}
+            description={startup.settings.loadError}
+            primaryButton={{
+              label: startup.settings.isLoading ? t('Retrying…') : t('Retry'),
+              onClick: () => void startup.settings.retry(),
+              loading: startup.settings.isLoading
+            }}
+          />
         </main>
       )
     }
