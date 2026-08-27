@@ -199,6 +199,7 @@ ci/ai-pr-review
   `src/shared/i18n/locales/fr.json` (французский),
   `src/shared/i18n/locales/ja.json` (японский),
   `src/shared/i18n/locales/ko.json` (корейский),
+  `src/shared/i18n/locales/pt-PT.json` (европейский португальский),
   `src/shared/i18n/locales/ru.json` (русский),
   `src/shared/i18n/locales/zh-Hans.json` (упрощённый китайский) и
   `src/shared/i18n/locales/zh-Hant.json` (традиционный китайский). В качестве

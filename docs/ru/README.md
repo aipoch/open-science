@@ -13,6 +13,7 @@
   <a href="../ja/README.md"><img alt="README на японском" src="https://img.shields.io/badge/日本語-d9d9d9"></a>
   <a href="../ko/README.md"><img alt="README на корейском" src="https://img.shields.io/badge/한국어-d9d9d9"></a>
   <a href="../fr/README.md"><img alt="README на французском" src="https://img.shields.io/badge/Français-d9d9d9"></a>
+  <a href="../pt-PT/README.md"><img alt="README на европейском португальском" src="https://img.shields.io/badge/Português%20(Portugal)-d9d9d9"></a>
   <a href="../ru/README.md"><img alt="README на русском" src="https://img.shields.io/badge/Русский-d9d9d9"></a>
   <a href="../es/README.md"><img alt="README на испанском" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>

@@ -749,6 +749,7 @@
         "src/shared/i18n/locales/fr.json",
         "src/shared/i18n/locales/ja.json",
         "src/shared/i18n/locales/ko.json",
+        "src/shared/i18n/locales/pt-PT.json",
         "src/shared/i18n/locales/ru.json",
         "src/shared/i18n/locales/zh-Hans.json",
         "src/shared/i18n/locales/zh-Hant.json"
