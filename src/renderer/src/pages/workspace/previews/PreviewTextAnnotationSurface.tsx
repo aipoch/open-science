@@ -15,9 +15,18 @@ import {
   AnnotationMarkers,
   type AnnotationControl
 } from '../annotations/TextAnnotationEditors'
-import { reconcileTextAnnotationRanges } from '../annotations/text-annotation-range'
+import {
+  quoteOccurrenceForRange,
+  reconcileTextAnnotationRanges,
+  retargetTextAnnotationRange
+} from '../annotations/text-annotation-range'
 
-type SelectionDraft = Readonly<{ quote: string; backward: boolean; range: Range }>
+type SelectionDraft = Readonly<{
+  quote: string
+  backward: boolean
+  range: Range
+  occurrence: number
+}>
 
 const DRAFT_HIGHLIGHT_NAME = 'preview-annotation-draft'
 const DRAFT_HIGHLIGHT_STYLE_ID = 'preview-annotation-draft-style'
@@ -78,9 +87,11 @@ export const PreviewTextAnnotationSurface = ({
 }: PreviewFileRendererProps & { children: React.ReactNode }): React.JSX.Element => {
   const { t } = useTranslation()
   const surfaceRef = useRef<HTMLDivElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
   const ownedRanges = useRef(new Map<string, Range>())
   const pendingRangeRef = useRef<Range | null>(null)
   const [selection, setSelection] = useState<SelectionDraft>()
+  const selectionRef = useRef(selection)
   const [open, setOpen] = useState(false)
   const [note, setNote] = useState('')
   const [annotationControls, setAnnotationControls] = useState<readonly AnnotationControl[]>([])
@@ -136,22 +147,73 @@ export const PreviewTextAnnotationSurface = ({
   }
 
   useLayoutEffect(() => {
+    selectionRef.current = selection
+  }, [selection])
+
+  const retargetDraftSelection = useCallback((): void => {
+    const content = contentRef.current
+    const draft = selectionRef.current
+    if (!content || !draft) return
+    const nextRange = retargetTextAnnotationRange(
+      content,
+      draft.quote,
+      draft.range,
+      draft.occurrence
+    )
+    if (nextRange === draft.range) return
+    if (nextRange) {
+      setSelection({ ...draft, range: nextRange })
+      return
+    }
+    setSelection(undefined)
+    setOpen(false)
+    setNote('')
+  }, [])
+
+  const reconcilePreviewHighlights = useCallback((): void => {
     const highlight = getDraftHighlight()
     if (!highlight) return
     for (const range of ownedRanges.current.values()) highlight.delete(range)
-    const surface = surfaceRef.current
-    if (!surface) {
+    const content = contentRef.current
+    if (!content) {
       ownedRanges.current.clear()
       return
     }
     ownedRanges.current = reconcileTextAnnotationRanges(
-      surface,
+      content,
       matchingAnnotations,
       ownedRanges.current
     )
     for (const range of ownedRanges.current.values()) highlight.add(range)
     measureAnnotationControls()
-  }, [children, matchingAnnotations, measureAnnotationControls])
+  }, [matchingAnnotations, measureAnnotationControls])
+
+  useLayoutEffect(() => {
+    reconcilePreviewHighlights()
+    retargetDraftSelection()
+  }, [children, reconcilePreviewHighlights, retargetDraftSelection])
+
+  useLayoutEffect(() => {
+    const content = contentRef.current
+    if (!content || typeof MutationObserver === 'undefined') return
+    let scheduled = false
+    let disconnected = false
+    const observer = new MutationObserver(() => {
+      if (scheduled) return
+      scheduled = true
+      queueMicrotask(() => {
+        scheduled = false
+        if (disconnected) return
+        reconcilePreviewHighlights()
+        retargetDraftSelection()
+      })
+    })
+    observer.observe(content, { childList: true, characterData: true, subtree: true })
+    return () => {
+      disconnected = true
+      observer.disconnect()
+    }
+  }, [reconcilePreviewHighlights, retargetDraftSelection])
 
   useEffect(() => {
     window.addEventListener('resize', measureAnnotationControls)
@@ -235,10 +297,13 @@ export const PreviewTextAnnotationSurface = ({
       clearDraft()
       return
     }
+    const cloned = range.cloneRange()
+    const content = contentRef.current
     setSelection({
       quote,
       backward: isBackwardSelection(selected),
-      range: range.cloneRange()
+      range: cloned,
+      occurrence: content ? quoteOccurrenceForRange(content, quote, cloned) : 0
     })
   }
 
@@ -305,7 +370,9 @@ export const PreviewTextAnnotationSurface = ({
       onPointerMove={trackAnnotatedTextHover}
       onPointerLeave={() => setHoveredAnnotationId(undefined)}
     >
-      {children}
+      <div ref={contentRef} className="contents">
+        {children}
+      </div>
       <AnnotationMarkers
         controls={annotationControls}
         hoveredAnnotationId={hoveredAnnotationId}
