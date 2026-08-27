@@ -24,6 +24,7 @@ import type {
   MarketplaceDownloadProgress,
   MarketplaceInstallPreview,
   MarketplaceSourceCandidate,
+  MarketplaceSpecialistListing,
   MarketplaceSpecialistRelease
 } from '../../../../shared/specialist-marketplace'
 import { SettingsSearchInput } from './SettingsSearchInput'
@@ -65,6 +66,14 @@ const formatBytes = (value: number): string => {
 
 type MarketplacePresentationStatus =
   'available' | 'installed' | 'update-available' | 'setup-incomplete'
+
+// Browse-view filter chips. Deliberately limited to fields the signed registry schema already
+// carries: trust and derived install state. A category chip row would need a new signed field,
+// which .strict() protocol schemas make a one-way breaking change for older app versions.
+type MarketplaceFilter = 'all' | 'official' | 'community' | 'updates'
+
+const marketplaceListingKey = (item: MarketplaceSpecialistListing): string =>
+  `${item.sourceId}:${item.id}`
 
 const identityTones = [
   'bg-chart-1/15 text-chart-1 ring-chart-1/20',
@@ -162,6 +171,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   // the refresh state, and a failed first load flips this to false so the error renders instead.
   const loading = snapshot === undefined && !lastRefreshFailed
   const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<MarketplaceFilter>('all')
   const [repositoryUrl, setRepositoryUrl] = useState('')
   const [sourceCandidate, setSourceCandidate] = useState<MarketplaceSourceCandidate>()
   const [sourceBusy, setSourceBusy] = useState(false)
@@ -276,16 +286,54 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     }
   }, [t, view])
 
+  // Card status is shared by the grid and the "Updates available" filter chip, so it is derived
+  // once per snapshot instead of per card render.
+  const statusByKey = useMemo(() => {
+    const statuses = new Map<string, MarketplacePresentationStatus>()
+    for (const item of snapshot?.specialists ?? []) {
+      const installedSpecialist = installedSpecialists.find(
+        (specialist) => specialist.id === item.id
+      )
+      const status: MarketplacePresentationStatus = !item.installedVersion
+        ? 'available'
+        : installedSpecialist?.kind !== 'reviewer' && installedSpecialist?.setupPending
+          ? 'setup-incomplete'
+          : item.updateAvailable
+            ? 'update-available'
+            : 'installed'
+      statuses.set(marketplaceListingKey(item), status)
+    }
+    return statuses
+  }, [installedSpecialists, snapshot])
+
+  const filterCounts = useMemo(() => {
+    const counts = { all: 0, official: 0, community: 0, updates: 0 }
+    for (const item of snapshot?.specialists ?? []) {
+      counts.all += 1
+      if (item.sourceTrust === 'official') counts.official += 1
+      else counts.community += 1
+      if (statusByKey.get(marketplaceListingKey(item)) === 'update-available') counts.updates += 1
+    }
+    return counts
+  }, [snapshot, statusByKey])
+
   const visibleListings = useMemo(() => {
     const term = query.trim().toLowerCase()
-    if (!term) return snapshot?.specialists ?? []
-    return (snapshot?.specialists ?? []).filter((item) =>
-      [item.displayName, item.summary, item.publisher.name, item.sourceName]
+    return (snapshot?.specialists ?? []).filter((item) => {
+      if (filter === 'official' && item.sourceTrust !== 'official') return false
+      if (filter === 'community' && item.sourceTrust !== 'user-approved') return false
+      if (
+        filter === 'updates' &&
+        statusByKey.get(marketplaceListingKey(item)) !== 'update-available'
+      )
+        return false
+      if (!term) return true
+      return [item.displayName, item.summary, item.publisher.name, item.sourceName]
         .join(' ')
         .toLowerCase()
         .includes(term)
-    )
-  }, [query, snapshot])
+    })
+  }, [filter, query, snapshot, statusByKey])
 
   // The newest per-source refresh timestamp answers "how old is the data on screen", covering both
   // the TTL-hit case (a few minutes ago) and a just-completed network refresh (now).
@@ -962,6 +1010,51 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           onChange={(event) => setQuery(event.target.value)}
         />
       </div>
+      {!loading && snapshot && snapshot.specialists.length > 0 ? (
+        <div
+          role="group"
+          aria-label={t('Filter Marketplace Specialists')}
+          className="mb-4 flex flex-wrap items-center gap-1.5"
+        >
+          {(
+            [
+              ['all', t('All'), filterCounts.all],
+              ['official', t('Official'), filterCounts.official],
+              ['community', t('Community'), filterCounts.community]
+            ] as const
+          ).map(([key, label, count]) => (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={filter === key}
+              onClick={() => setFilter(key)}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors motion-reduce:transition-none ${
+                filter === key
+                  ? 'bg-primary/10 font-medium text-primary'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              {label}
+              <span className="tabular-nums">{count}</span>
+            </button>
+          ))}
+          {filterCounts.updates > 0 || filter === 'updates' ? (
+            <button
+              type="button"
+              aria-pressed={filter === 'updates'}
+              onClick={() => setFilter('updates')}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors motion-reduce:transition-none ${
+                filter === 'updates'
+                  ? 'bg-primary/10 font-medium text-primary'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              {t('Updates available')}
+              <span className="tabular-nums">{filterCounts.updates}</span>
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {loading ? <MarketplaceLoading label={t('Loading Marketplace…')} /> : null}
       {!loading && !snapshot && lastRefreshFailed ? (
         <MarketplaceError
@@ -1044,32 +1137,29 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           <p className="text-sm text-foreground">
             {query
               ? t('No Specialists match “{{query}}”.', { query })
-              : t('No Marketplace Specialists available.')}
+              : filter !== 'all'
+                ? t('No Specialists match this filter.')
+                : t('No Marketplace Specialists available.')}
           </p>
           <Button
             type="button"
             variant="outline"
             size="sm"
             className="mt-3"
-            onClick={() => (query ? setQuery('') : onNavigate({ kind: 'marketplace-sources' }))}
+            onClick={() => {
+              if (query) setQuery('')
+              else if (filter !== 'all') setFilter('all')
+              else onNavigate({ kind: 'marketplace-sources' })
+            }}
           >
-            {query ? t('Clear search') : t('Manage sources')}
+            {query ? t('Clear search') : filter !== 'all' ? t('Show all') : t('Manage sources')}
           </Button>
         </div>
       ) : null}
       {!loading && visibleListings.length ? (
-        <ul className="space-y-2">
+        <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,240px),1fr))] gap-3">
           {visibleListings.map((item) => {
-            const installedSpecialist = installedSpecialists.find(
-              (specialist) => specialist.id === item.id
-            )
-            const status: MarketplacePresentationStatus = !item.installedVersion
-              ? 'available'
-              : installedSpecialist?.kind !== 'reviewer' && installedSpecialist?.setupPending
-                ? 'setup-incomplete'
-                : item.updateAvailable
-                  ? 'update-available'
-                  : 'installed'
+            const status = statusByKey.get(marketplaceListingKey(item)) ?? ('available' as const)
             const opensDetails = status === 'available' || status === 'update-available'
             const navigate = (): void => {
               if (!opensDetails) {
@@ -1089,76 +1179,71 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
             }
             return (
               <li
-                key={`${item.sourceId}:${item.id}`}
-                className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-background p-3 transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-sm motion-reduce:transition-none"
+                key={marketplaceListingKey(item)}
+                className="group flex flex-col rounded-xl border border-border bg-background p-4 text-center transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-sm motion-reduce:transition-none"
               >
                 <button
                   type="button"
-                  className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="flex min-w-0 flex-1 cursor-pointer flex-col items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   onClick={navigate}
                 >
-                  <SpecialistIdentity id={item.id} displayName={item.displayName} />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="truncate text-sm font-semibold text-foreground">
-                        {item.displayName}
-                      </span>
-                      {status !== 'available' ? (
-                        <span
-                          className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                            status === 'update-available'
-                              ? 'bg-primary/10 text-primary'
-                              : 'bg-muted text-muted-foreground'
-                          }`}
-                        >
-                          {status === 'update-available'
-                            ? t('Update available')
-                            : status === 'setup-incomplete'
-                              ? t('Setup incomplete')
-                              : t('Installed')}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="mt-0.5 line-clamp-2 block text-xs leading-5 text-muted-foreground">
-                      {item.summary}
-                    </span>
-                    <span className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]">
-                      {item.sourceTrust === 'official' ? (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
-                          <BadgeCheck className="size-3.5" aria-hidden="true" />
-                          {t('Official')}
-                        </span>
-                      ) : (
-                        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
-                          {t('Community')}
-                        </span>
-                      )}
-                      <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
-                        {t('Publisher: {{publisher}}', { publisher: item.publisher.name })}
-                      </span>
-                      {item.author ? (
-                        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
-                          {t('Author: {{author}}', { author: item.author })}
-                        </span>
-                      ) : null}
-                      <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
-                        v{item.version}
-                      </span>
-                      <span className="min-w-0 truncate text-muted-foreground">
-                        {item.sourceName}
-                      </span>
-                    </span>
+                  <SpecialistIdentity id={item.id} displayName={item.displayName} size="lg" />
+                  <span className="mt-3 block max-w-full truncate text-sm font-semibold text-foreground">
+                    {item.displayName}
                   </span>
+                  <span className="mt-1.5 flex min-h-5 flex-wrap items-center justify-center gap-1 text-[11px]">
+                    {status !== 'available' ? (
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${
+                          status === 'update-available'
+                            ? 'bg-primary/10 text-primary'
+                            : 'bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        {status === 'update-available'
+                          ? t('Update available')
+                          : status === 'setup-incomplete'
+                            ? t('Setup incomplete')
+                            : t('Installed')}
+                      </span>
+                    ) : null}
+                    {item.sourceTrust === 'official' ? (
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
+                        <BadgeCheck className="size-3.5" aria-hidden="true" />
+                        {t('Official')}
+                      </span>
+                    ) : (
+                      <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
+                        {t('Community')}
+                      </span>
+                    )}
+                  </span>
+                  <span className="mt-2 line-clamp-2 min-h-8 text-xs leading-4 text-muted-foreground">
+                    {item.summary}
+                  </span>
+                  <span className="mt-2 block max-w-full truncate text-[11px] text-muted-foreground">
+                    {item.publisher.name} · v{item.version}
+                  </span>
+                  {item.author ? (
+                    <span className="mt-0.5 block max-w-full truncate text-[11px] text-muted-foreground">
+                      {t('Author: {{author}}', { author: item.author })}
+                    </span>
+                  ) : null}
                 </button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="cursor-pointer"
-                  onClick={navigate}
-                >
-                  {opensDetails ? t('View details') : t('Manage')}
-                </Button>
+                <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-3">
+                  <span className="min-w-0 truncate text-left text-[11px] text-muted-foreground">
+                    {item.sourceName}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 cursor-pointer"
+                    onClick={navigate}
+                  >
+                    {opensDetails ? t('View details') : t('Manage')}
+                  </Button>
+                </div>
               </li>
             )
           })}

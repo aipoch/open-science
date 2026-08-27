@@ -168,7 +168,7 @@ describe('Specialist Marketplace settings', () => {
     )
     expect(container.querySelector('[role="tablist"]')).toBeNull()
     expect(container.textContent).toContain('Example Specialist')
-    expect(container.textContent).toContain('Publisher: Example Publisher')
+    expect(container.textContent).toContain('Example Publisher · v1.0.0')
     expect(container.textContent).toContain('Author: Example Author')
     expect(container.textContent).toContain('Community')
     expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
@@ -187,6 +187,113 @@ describe('Specialist Marketplace settings', () => {
       installedVersion: undefined,
       updateAvailable: undefined
     })
+  })
+
+  it('filters Marketplace cards with trust and update chips', async () => {
+    window.api.specialist.listMarketplace = vi.fn().mockResolvedValue({
+      sources: [
+        snapshot.sources[0],
+        {
+          id: 'official-source',
+          kind: 'github' as const,
+          name: 'Official Marketplace',
+          repositoryUrl: 'https://github.com/example/official',
+          ref: 'published',
+          trust: 'official' as const,
+          keyId: 'official-2026-01',
+          keyFingerprint: 'b'.repeat(64),
+          removable: false
+        }
+      ],
+      specialists: [
+        { ...snapshot.specialists[0] },
+        {
+          sourceId: 'official-source',
+          sourceName: 'Official Marketplace',
+          sourceTrust: 'official' as const,
+          id: 'official-specialist',
+          displayName: 'Official Specialist',
+          summary: 'Maintained workflows.',
+          publisher: { id: 'aipoch', name: 'Aipoch' },
+          version: '2.0.0',
+          installedVersion: '1.0.0',
+          updateAvailable: true
+        }
+      ],
+      failures: []
+    })
+
+    await act(async () => {
+      root.render(<SpecialistMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+    })
+
+    // Cards render as a responsive grid, and chip counts cover the whole catalog rather than
+    // the current search result.
+    expect(container.querySelector('ul.grid')).not.toBeNull()
+    const chip = (label: string): HTMLButtonElement =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('[role="group"] button')).find(
+        (button) => button.textContent?.includes(label)
+      )!
+    expect(chip('All').textContent).toContain('2')
+    expect(chip('Official').textContent).toContain('1')
+    expect(chip('Community').textContent).toContain('1')
+    expect(chip('Updates available').textContent).toContain('1')
+    expect(chip('All').getAttribute('aria-pressed')).toBe('true')
+    expect(container.textContent).toContain('Example Specialist')
+    expect(container.textContent).toContain('Official Specialist')
+    expect(container.textContent).toContain('Update available')
+
+    await act(async () => {
+      fireEvent.click(chip('Official'))
+    })
+    expect(chip('Official').getAttribute('aria-pressed')).toBe('true')
+    expect(container.textContent).not.toContain('Example Specialist')
+    expect(container.textContent).toContain('Official Specialist')
+
+    await act(async () => {
+      fireEvent.click(chip('Updates available'))
+    })
+    expect(container.textContent).not.toContain('Example Specialist')
+    expect(container.textContent).toContain('Official Specialist')
+
+    await act(async () => {
+      fireEvent.click(chip('All'))
+    })
+    expect(container.textContent).toContain('Example Specialist')
+    expect(container.textContent).toContain('Official Specialist')
+  })
+
+  it('offers a way back when a filter leaves no Specialists, and hides the empty updates chip', async () => {
+    await act(async () => {
+      root.render(<SpecialistMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+    })
+
+    // Nothing installed and nothing outdated: the updates chip would always be empty, so the
+    // catalog stays without it.
+    expect(
+      Array.from(container.querySelectorAll('[role="group"] button')).some((button) =>
+        button.textContent?.includes('Updates available')
+      )
+    ).toBe(false)
+
+    await act(async () => {
+      fireEvent.click(
+        Array.from(container.querySelectorAll('[role="group"] button')).find((button) =>
+          button.textContent?.includes('Official')
+        )!
+      )
+    })
+    expect(container.textContent).toContain('No Specialists match this filter.')
+    expect(container.textContent).not.toContain('Example Specialist')
+
+    await act(async () => {
+      fireEvent.click(
+        Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent?.trim() === 'Show all'
+        )!
+      )
+    })
+    expect(container.textContent).toContain('Example Specialist')
   })
 
   it('keeps the current listings visible while a manual refresh retries the latest data', async () => {
