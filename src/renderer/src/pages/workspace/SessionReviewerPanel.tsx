@@ -251,6 +251,11 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
 const ReviewerLogSection = ({ log }: { log: ReviewerLogEntry[] }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
+  const wasTruncated = log.some((entry) =>
+    entry.kind === 'tool'
+      ? Boolean(entry.rawInputTruncated || entry.rawOutputTruncated || entry.reviewLogTruncated)
+      : Boolean(entry.textTruncated || entry.reviewLogTruncated)
+  )
 
   // If the log is empty, show nothing (graceful empty state per acceptance criterion).
   if (log.length === 0) return null
@@ -280,6 +285,11 @@ const ReviewerLogSection = ({ log }: { log: ReviewerLogEntry[] }): React.JSX.Ele
           className="mt-2 border-l-2 border-border-200 pl-2.5 opacity-75 space-y-0.5"
           data-testid="reviewer-log-body"
         >
+          {wasTruncated && (
+            <p className="pb-1 text-[10px] text-text-400" data-testid="reviewer-log-truncated">
+              {t('Reviewer log content was truncated to fit the size limit.')}
+            </p>
+          )}
           {log.map((entry, i) => (
             <ReviewerLogRow key={i} entry={entry} />
           ))}

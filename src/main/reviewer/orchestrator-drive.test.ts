@@ -56,6 +56,22 @@ describe('driveReviewerToStop', () => {
     )
   })
 
+  it('accepts exactly maxUpdates discrete updates before stopping', async () => {
+    const updates: FakeUpdate[] = [
+      ...Array.from({ length: 5 }, () => ({
+        kind: 'session_update',
+        update: { sessionUpdate: 'tool_call' }
+      })),
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let i = 0
+    const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[i++]! }
+
+    await expect(driveReviewerToStop(session, { timeoutMs: 5000, maxUpdates: 5 })).resolves.toBe(
+      'end_turn'
+    )
+  })
+
   it('does not count streaming content chunks toward the update cap', async () => {
     // A verbose reviewer streams many message/thought chunks before it stops. These are proportional
     // to output length, not work, so they must not trip the (much smaller) discrete-update cap.

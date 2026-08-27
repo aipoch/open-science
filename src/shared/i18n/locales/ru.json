@@ -1814,6 +1814,7 @@
     "Review unavailable": "Проверка недоступна",
     "Reviewer": "Рецензент",
     "Reviewer log": "Журнал проверки",
+    "Reviewer log content was truncated to fit the size limit.": "Содержимое журнала проверки обрезано в соответствии с ограничением размера.",
     "Reviewer model Model": "Модель рецензента",
     "Reviewer model Reasoning effort": "Глубина рассуждений модели рецензента",
     "Reviewing...": "Проверка...",
