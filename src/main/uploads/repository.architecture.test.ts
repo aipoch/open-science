@@ -6,15 +6,20 @@ import {
   createSourceFile,
   forEachChild,
   getModifiers,
+  isArrowFunction,
   isCallExpression,
   isClassDeclaration,
+  isConstructorDeclaration,
   isEnumDeclaration,
   isExportAssignment,
   isExportDeclaration,
   isFunctionDeclaration,
+  isFunctionExpression,
   isIdentifier,
+  isMethodDeclaration,
   isNamedExports,
   isNewExpression,
+  isPropertyDeclaration,
   isPropertyAccessExpression,
   isVariableStatement,
   ScriptKind,
@@ -45,21 +50,52 @@ const hasModifier = (node: Node, kind: SyntaxKind): boolean =>
   canHaveModifiers(node) &&
   (getModifiers(node)?.some((modifier) => modifier.kind === kind) ?? false)
 
-const newExpressionFiles = (className: string): string[] => {
+const hasClassLifetime = (expression: Node): boolean => {
+  let current: Node | undefined = expression.parent
+  while (current) {
+    if (isConstructorDeclaration(current) || isPropertyDeclaration(current)) return true
+    if (
+      isMethodDeclaration(current) ||
+      isFunctionDeclaration(current) ||
+      isFunctionExpression(current) ||
+      isArrowFunction(current)
+    ) {
+      return false
+    }
+    current = current.parent
+  }
+  return false
+}
+
+const newExpressionLifetimes = (
+  sourceFile: SourceFile,
+  className: string
+): Array<'class' | 'transient'> => {
+  const lifetimes: Array<'class' | 'transient'> = []
+  const visit = (node: Node): void => {
+    if (
+      isNewExpression(node) &&
+      isIdentifier(node.expression) &&
+      node.expression.text === className
+    ) {
+      lifetimes.push(hasClassLifetime(node) ? 'class' : 'transient')
+    }
+    forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return lifetimes
+}
+
+const newExpressionFiles = (
+  className: string,
+  lifetime: 'class' | 'transient' = 'class'
+): string[] => {
   const sites: string[] = []
   for (const file of productionFiles) {
     const sourceFile = sourceFileFor(file)
-    const visit = (node: Node): void => {
-      if (
-        isNewExpression(node) &&
-        isIdentifier(node.expression) &&
-        node.expression.text === className
-      ) {
-        sites.push(file)
-      }
-      forEachChild(node, visit)
+    for (const siteLifetime of newExpressionLifetimes(sourceFile, className)) {
+      if (siteLifetime === lifetime) sites.push(file)
     }
-    visit(sourceFile)
   }
   return sites
 }
@@ -200,7 +236,28 @@ describe('Upload repository architecture', () => {
       'VerifiedLegacyCleanupOwner'
     ]) {
       expect(newExpressionFiles(owner), owner).toEqual(['repository.ts'])
+      expect(newExpressionFiles(owner, 'transient'), owner).toEqual([])
     }
+
+    const fieldInitializerFile = createSourceFile(
+      'field-initializer.ts',
+      'class Repository { private readonly owner = new ActiveTransferOwner() }',
+      ScriptTarget.Latest,
+      true,
+      ScriptKind.TS
+    )
+    expect(newExpressionLifetimes(fieldInitializerFile, 'ActiveTransferOwner')).toEqual(['class'])
+
+    const methodConstructionFile = createSourceFile(
+      'method-construction.ts',
+      'class Repository { createOwner() { return new ActiveTransferOwner() } }',
+      ScriptTarget.Latest,
+      true,
+      ScriptKind.TS
+    )
+    expect(newExpressionLifetimes(methodConstructionFile, 'ActiveTransferOwner')).toEqual([
+      'transient'
+    ])
   })
 
   it('keeps recovery and verified cleanup decisions behind their owners', () => {

@@ -202,7 +202,7 @@ describe('Compute service architecture', () => {
 
   it('keeps lifecycle writes behind the narrow intent interface', () => {
     expect(calledMembersOn(computePaths.jobLifecycle, ['this', 'repository'])).toEqual(
-      expect.arrayContaining(['abortOwnerDeletion', 'beginOwnerDeletion', 'updateIfStatus'])
+      ['abortOwnerDeletion', 'beginOwnerDeletion', 'deleteByOwner', 'updateIfStatus'].sort()
     )
 
     const lifecycleTarget = modulePath(computePaths.jobLifecycle)

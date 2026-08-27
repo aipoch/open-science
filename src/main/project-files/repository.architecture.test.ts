@@ -4,10 +4,16 @@ import { resolve } from 'node:path'
 import {
   createSourceFile,
   forEachChild,
+  isArrowFunction,
+  isConstructorDeclaration,
   isExportDeclaration,
+  isFunctionDeclaration,
+  isFunctionExpression,
   isIdentifier,
+  isMethodDeclaration,
   isNamedExports,
   isNewExpression,
+  isPropertyDeclaration,
   ScriptKind,
   ScriptTarget,
   type Node,
@@ -28,13 +34,35 @@ const sources = new Map(
 const sourceFileFor = (file: (typeof productionFiles)[number]): SourceFile =>
   createSourceFile(file, sources.get(file)!, ScriptTarget.Latest, true, ScriptKind.TS)
 
-const newExpressionCount = (sourceFile: SourceFile, className: string): number => {
+const hasClassLifetime = (expression: Node): boolean => {
+  let current: Node | undefined = expression.parent
+  while (current) {
+    if (isConstructorDeclaration(current) || isPropertyDeclaration(current)) return true
+    if (
+      isMethodDeclaration(current) ||
+      isFunctionDeclaration(current) ||
+      isFunctionExpression(current) ||
+      isArrowFunction(current)
+    ) {
+      return false
+    }
+    current = current.parent
+  }
+  return false
+}
+
+const newExpressionCount = (
+  sourceFile: SourceFile,
+  className: string,
+  lifetime: 'class' | 'transient' = 'class'
+): number => {
   let count = 0
   const visit = (node: Node): void => {
     if (
       isNewExpression(node) &&
       isIdentifier(node.expression) &&
-      node.expression.text === className
+      node.expression.text === className &&
+      (hasClassLifetime(node) ? 'class' : 'transient') === lifetime
     ) {
       count += 1
     }
@@ -75,6 +103,8 @@ describe('Project Files repository architecture', () => {
   it('composes one mutation owner and one query owner regardless of construction syntax', () => {
     expect(newExpressionCount(facadeFile, 'ProjectFilesMutationOwner')).toBe(1)
     expect(newExpressionCount(facadeFile, 'ProjectFilesQueryOwner')).toBe(1)
+    expect(newExpressionCount(facadeFile, 'ProjectFilesMutationOwner', 'transient')).toBe(0)
+    expect(newExpressionCount(facadeFile, 'ProjectFilesQueryOwner', 'transient')).toBe(0)
 
     const fieldInitializerFile = createSourceFile(
       'field-initializer.ts',
@@ -84,6 +114,18 @@ describe('Project Files repository architecture', () => {
       ScriptKind.TS
     )
     expect(newExpressionCount(fieldInitializerFile, 'ProjectFilesMutationOwner')).toBe(1)
+
+    const methodConstructionFile = createSourceFile(
+      'method-construction.ts',
+      'class Repository { createOwner() { return new ProjectFilesMutationOwner() } }',
+      ScriptTarget.Latest,
+      true,
+      ScriptKind.TS
+    )
+    expect(newExpressionCount(methodConstructionFile, 'ProjectFilesMutationOwner')).toBe(0)
+    expect(
+      newExpressionCount(methodConstructionFile, 'ProjectFilesMutationOwner', 'transient')
+    ).toBe(1)
   })
 
   it('keeps Prisma writes and mutation state out of stateless support modules', () => {
