@@ -2296,6 +2296,7 @@
     "Unable to determine the producer execution for this version.": "Не удалось определить выполнение производителя для этой версии.",
     "Unable to read the selected content file.": "Не удалось прочитать выбранный файл содержимого.",
     "Unable to read the selected reference files.": "Не удалось прочитать выбранные файлы справочных данных.",
+    "Unable to restore plan state. Retrying…": "Не удалось восстановить состояние плана. Повторная попытка…",
     "Unable to save this skill.": "Не удалось сохранить навык.",
     "Unable to send Plan feedback.": "Не удалось отправить обратную связь по плану.",
     "Unable to update the Plan.": "Не удалось обновить план.",

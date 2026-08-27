@@ -2250,6 +2250,7 @@
     "Unable to determine the producer execution for this version.": "無法確定該版本的產生方執行記錄。",
     "Unable to read the selected content file.": "無法讀取所選內容檔案。",
     "Unable to read the selected reference files.": "無法讀取所選參考檔案。",
+    "Unable to restore plan state. Retrying…": "無法恢復計畫狀態。正在重試…",
     "Unable to save this skill.": "無法儲存此技能。",
     "Unable to send Plan feedback.": "無法傳送計畫回饋。",
     "Unable to update the Plan.": "無法更新計畫。",

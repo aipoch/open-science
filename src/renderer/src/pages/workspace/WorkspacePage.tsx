@@ -23,7 +23,8 @@ import {
   projectSessionActionability,
   resolveRootPermissionPending,
   sessionAwaitsHistoryReplay,
-  useSessionStore
+  useSessionStore,
+  type ChatSession
 } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
@@ -81,6 +82,17 @@ type WorkspacePageProps = {
 const newConversationDraftKeyFor = (projectId: string): string => `new:${projectId}`
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
+const planProjectionRecoveryPorts = {
+  getProjection: (projectId: string, sessionId: string) =>
+    window.api.acp.getPlanProjection(projectId, sessionId),
+  getSession: (sessionId: string) =>
+    useSessionStore.getState().sessions.find((session) => session.id === sessionId),
+  setProjection: (
+    sessionId: string,
+    projection: NonNullable<ChatSession['activePlanProjection']>
+  ) => useSessionStore.getState().setActivePlanProjection(sessionId, projection),
+  finishRun: (sessionId: string) => useSessionStore.getState().finishRun(sessionId)
+}
 
 const WorkspacePage = ({
   isSessionPersistenceHydrated,
@@ -123,7 +135,6 @@ const WorkspacePage = ({
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
-  const setActivePlanProjection = useSessionStore((state) => state.setActivePlanProjection)
   const previewItems = usePreviewWorkbenchStore((state) => state.items)
   const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
@@ -388,37 +399,6 @@ const WorkspacePage = ({
       (activeProviderType !== undefined && isCodexSubscriptionProvider(activeProviderType)
         ? 'Side chat is unavailable for Codex subscription because strict tool isolation cannot be enforced.'
         : undefined))
-
-  useEffect(() => {
-    const getPlanProjection = window.api.acp?.getPlanProjection
-    if (
-      !activeSession ||
-      activeSession.activePlanProjection ||
-      !getPlanProjection ||
-      (activeSession.status !== 'waiting-plan-approval' && !activeSession.runtimeContext?.plan)
-    ) {
-      return
-    }
-    let cancelled = false
-    void getPlanProjection(activeSession.projectId, activeSession.id)
-      .then((projection) => {
-        if (cancelled) return
-        if (projection) {
-          setActivePlanProjection(activeSession.id, projection)
-          return
-        }
-        const current = useSessionStore
-          .getState()
-          .sessions.find((session) => session.id === activeSession.id)
-        if (current?.status === 'waiting-plan-approval' && !current.activePlanProjection) {
-          useSessionStore.getState().finishRun(activeSession.id)
-        }
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [activeSession, setActivePlanProjection])
   const canArchiveSession = sessionController.lifecycle.canArchive
   const visiblePermissionRequests = useMemo(
     () =>
@@ -508,7 +488,11 @@ const WorkspacePage = ({
     abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
     getSession: (sessionId) =>
       useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId),
-    subscribeSessionChanges: useSessionStore.subscribe
+    subscribeSessionChanges: useSessionStore.subscribe,
+    planProjectionRecovery:
+      typeof window.api.acp?.getPlanProjection === 'function'
+        ? planProjectionRecoveryPorts
+        : undefined
   })
   // "Request review" is disabled when:
   //   - there is no active session or no completed agent turn yet, OR
@@ -631,7 +615,11 @@ const WorkspacePage = ({
     activeSession.runtimeContext?.permission?.state === 'pending'
       ? (activeSession.error ?? actionError)
       : null
+  const planProjectionRecoveryError = conversation.planProjectionRecoveryError
+    ? t('Unable to restore plan state. Retrying…')
+    : null
   const visibleActionError =
+    planProjectionRecoveryError ??
     attachmentError ??
     sessionController.view.exportError ??
     (activeSession ? durablePermissionError : actionError)

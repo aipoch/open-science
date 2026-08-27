@@ -467,6 +467,7 @@ const createPanelDefaults = (): PanelProps => ({
   },
   conversation: {
     optimisticMessage: undefined,
+    planProjectionRecoveryError: false,
     availability: {
       submit: false,
       submitMode: undefined,

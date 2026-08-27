@@ -2192,6 +2192,7 @@
     "Unable to determine the producer execution for this version.": "이 버전의 생산자 실행을 확인할 수 없습니다.",
     "Unable to read the selected content file.": "선택한 콘텐츠 파일을 읽을 수 없습니다.",
     "Unable to read the selected reference files.": "선택한 참조 파일을 읽을 수 없습니다.",
+    "Unable to restore plan state. Retrying…": "계획 상태를 복원할 수 없습니다. 다시 시도하는 중…",
     "Unable to save this skill.": "이 스킬을 저장할 수 없습니다.",
     "Unable to send Plan feedback.": "계획 피드백을 보낼 수 없습니다.",
     "Unable to update the Plan.": "계획을 업데이트할 수 없습니다.",

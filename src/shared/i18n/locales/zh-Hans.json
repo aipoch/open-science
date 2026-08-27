@@ -2253,6 +2253,7 @@
     "Unable to determine the producer execution for this version.": "无法确定该版本的生成方执行记录。",
     "Unable to read the selected content file.": "无法读取所选内容文件。",
     "Unable to read the selected reference files.": "无法读取所选参考文件。",
+    "Unable to restore plan state. Retrying…": "无法恢复计划状态。正在重试…",
     "Unable to save this skill.": "无法保存此技能。",
     "Unable to send Plan feedback.": "无法发送计划反馈。",
     "Unable to update the Plan.": "无法更新计划。",

@@ -2281,6 +2281,7 @@
     "Unable to determine the producer execution for this version.": "No se puede determinar qué ejecución produjo esta versión.",
     "Unable to read the selected content file.": "No se puede leer el archivo de contenido seleccionado.",
     "Unable to read the selected reference files.": "No se pueden leer los archivos de referencia seleccionados.",
+    "Unable to restore plan state. Retrying…": "No se pudo restaurar el estado del plan. Reintentando…",
     "Unable to save this skill.": "No se puede guardar esta habilidad.",
     "Unable to send Plan feedback.": "No se pueden enviar comentarios sobre el plan.",
     "Unable to update the Plan.": "No se puede actualizar el plan.",

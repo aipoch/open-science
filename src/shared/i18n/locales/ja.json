@@ -2182,6 +2182,7 @@
     "Unable to determine the producer execution for this version.": "このバージョンの生成元実行を特定できません。",
     "Unable to read the selected content file.": "選択したコンテンツファイルを読み取れません。",
     "Unable to read the selected reference files.": "選択した参照ファイルを読み取ることができません。",
+    "Unable to restore plan state. Retrying…": "プランの状態を復元できません。再試行しています…",
     "Unable to save this skill.": "このスキルを保存できません。",
     "Unable to send Plan feedback.": "プランのフィードバックを送信できません。",
     "Unable to update the Plan.": "プランを更新できません。",
