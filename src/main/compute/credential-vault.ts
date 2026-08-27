@@ -35,22 +35,35 @@ export const isSecureStorageAvailable = (
 }
 
 export class OptionalSecureStorageStringProtection {
+  private failed = false
+
   constructor(
     private readonly cipher: SecureStorageCipher = safeStorage,
     private readonly currentPlatform: NodeJS.Platform = platform()
   ) {}
 
   isAvailable(): boolean {
-    return isSecureStorageAvailable(this.cipher, this.currentPlatform)
+    return !this.failed && isSecureStorageAvailable(this.cipher, this.currentPlatform)
   }
 
   protect(value: string): string {
-    if (!this.isAvailable()) return value
-    return `${PROTECTED_STRING_PREFIX}${this.cipher.encryptString(value).toString('base64')}`
+    if (!this.isAvailable()) throw new Error('Compute Job data protection became unavailable.')
+    try {
+      return `${PROTECTED_STRING_PREFIX}${this.cipher.encryptString(value).toString('base64')}`
+    } catch {
+      this.failed = true
+      throw new Error('Compute Job data protection became unavailable.')
+    }
   }
 
   protectJson(value: string, container: ProtectedJsonContainer): string {
-    if (!this.isAvailable()) return value
+    const parsed: unknown = JSON.parse(value)
+    const hasExpectedContainer =
+      container === 'array'
+        ? Array.isArray(parsed)
+        : typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+    if (!hasExpectedContainer) throw new Error(`Expected a JSON ${container}.`)
+
     const protectedValue = this.protect(value)
     return JSON.stringify(
       container === 'object'

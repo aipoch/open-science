@@ -1,6 +1,5 @@
 import type { ComputeJob as PrismaComputeJob, PrismaClient } from '@prisma/client'
 import type { ComputeJob, ComputeJobStatus } from '../../shared/compute'
-import { createLogger } from '../logger'
 import {
   OptionalSecureStorageStringProtection,
   type ProtectedJsonContainer
@@ -13,8 +12,6 @@ type ComputeJobFieldProtection = Pick<
   OptionalSecureStorageStringProtection,
   'isAvailable' | 'protect' | 'protectJson' | 'reveal' | 'revealJson'
 >
-
-const log = createLogger('compute-job-repository')
 
 export type ComputeJobOwner = Readonly<{
   projectId: string
@@ -98,7 +95,6 @@ export class ComputeJobRepository {
   private readonly deletingProjects = new Set<string>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletingProviders = new Set<string>()
-  private warnedAboutProtectionFailure = false
 
   constructor(
     private readonly getClient: ComputeJobClientProvider,
@@ -172,6 +168,7 @@ export class ComputeJobRepository {
       this.assertOwnerMutable(request.projectId, request.sessionId)
       const client = await this.getClient()
       const initialStatus = request.initialStatus ?? 'submitted'
+      const sensitiveDataEncrypted = this.fieldProtection.isAvailable()
       const row = await client.computeJob.create({
         data: {
           id: request.id,
@@ -180,16 +177,33 @@ export class ComputeJobRepository {
           sessionId: request.sessionId,
           projectId: request.projectId,
           status: initialStatus,
-          intent: this.protect(request.intent),
-          command: this.protect(request.command),
+          intent: this.protect(request.intent, sensitiveDataEncrypted),
+          command: this.protect(request.command, sensitiveDataEncrypted),
           commandHash: request.commandHash,
-          environment: this.protectOptional(request.environment),
-          resourceRequest: this.protectJsonOptional(request.resourceRequest, 'object'),
-          inputManifest: this.protectJsonOptional(request.inputManifest, 'array'),
-          outputManifest: this.protectJsonOptional(request.outputManifest, 'array'),
-          harvestConfig: this.protectJsonOptional(request.harvestConfig, 'object'),
+          sensitiveDataEncrypted,
+          environment: this.protectOptional(request.environment, sensitiveDataEncrypted),
+          resourceRequest: this.protectJsonOptional(
+            request.resourceRequest,
+            'object',
+            sensitiveDataEncrypted
+          ),
+          inputManifest: this.protectJsonOptional(
+            request.inputManifest,
+            'array',
+            sensitiveDataEncrypted
+          ),
+          outputManifest: this.protectJsonOptional(
+            request.outputManifest,
+            'array',
+            sensitiveDataEncrypted
+          ),
+          harvestConfig: this.protectJsonOptional(
+            request.harvestConfig,
+            'object',
+            sensitiveDataEncrypted
+          ),
           timeoutSeconds: request.timeoutSeconds,
-          remoteWorkdir: this.protectOptional(request.remoteWorkdir),
+          remoteWorkdir: this.protectOptional(request.remoteWorkdir, sensitiveDataEncrypted),
           submittedAt: initialStatus === 'submitted' ? new Date() : undefined
         }
       })
@@ -256,9 +270,10 @@ export class ComputeJobRepository {
 
   async update(jobId: string, updates: UpdateJobRequest): Promise<ComputeJob> {
     const client = await this.getClient()
+    const current = await client.computeJob.findUnique({ where: { id: jobId } })
     const row = await client.computeJob.update({
       where: { id: jobId },
-      data: this.toUpdateData(updates)
+      data: this.toUpdateData(updates, current?.sensitiveDataEncrypted === true)
     })
     return this.toJob(row)
   }
@@ -276,7 +291,7 @@ export class ComputeJobRepository {
 
         const applied = await transaction.computeJob.updateMany({
           where: { id: jobId, status: { in: [...expectedStatuses] } },
-          data: this.toUpdateData(updates)
+          data: this.toUpdateData(updates, current.sensitiveDataEncrypted === true)
         })
         if (applied.count === 0) return null
 
@@ -453,24 +468,48 @@ export class ComputeJobRepository {
     session_id: row.sessionId,
     project_id: row.projectId,
     status: asStatus(row.status),
-    intent: this.fieldProtection.reveal(row.intent),
-    command: this.fieldProtection.reveal(row.command),
+    intent: this.reveal(row.intent, row.sensitiveDataEncrypted === true),
+    command: this.reveal(row.command, row.sensitiveDataEncrypted === true),
     command_hash: row.commandHash,
-    environment: this.revealOptional(row.environment),
-    resource_request: this.revealJsonOptional(row.resourceRequest, 'object'),
-    input_manifest: this.revealJsonOptional(row.inputManifest, 'array'),
-    output_manifest: this.revealJsonOptional(row.outputManifest, 'array'),
-    harvest_config: this.revealJsonOptional(row.harvestConfig, 'object'),
+    environment: this.revealOptional(row.environment, row.sensitiveDataEncrypted === true),
+    resource_request: this.revealJsonOptional(
+      row.resourceRequest,
+      'object',
+      row.sensitiveDataEncrypted === true
+    ),
+    input_manifest: this.revealJsonOptional(
+      row.inputManifest,
+      'array',
+      row.sensitiveDataEncrypted === true
+    ),
+    output_manifest: this.revealJsonOptional(
+      row.outputManifest,
+      'array',
+      row.sensitiveDataEncrypted === true
+    ),
+    harvest_config: this.revealJsonOptional(
+      row.harvestConfig,
+      'object',
+      row.sensitiveDataEncrypted === true
+    ),
     timeout_seconds: row.timeoutSeconds ?? undefined,
-    remote_workdir: this.revealOptional(row.remoteWorkdir),
-    remote_handle: this.revealJsonOptional(row.remoteHandle, 'object'),
+    remote_workdir: this.revealOptional(row.remoteWorkdir, row.sensitiveDataEncrypted === true),
+    remote_handle: this.revealJsonOptional(
+      row.remoteHandle,
+      'object',
+      row.sensitiveDataEncrypted === true
+    ),
     exit_code: row.exitCode ?? undefined,
-    stdout_tail: this.revealOptional(row.stdoutTail),
-    stderr_tail: this.revealOptional(row.stderrTail),
+    stdout_tail: this.revealOptional(row.stdoutTail, row.sensitiveDataEncrypted === true),
+    stderr_tail: this.revealOptional(row.stderrTail, row.sensitiveDataEncrypted === true),
     error_code: row.errorCode ?? undefined,
-    last_poll_error: this.revealOptional(row.lastPollError),
-    harvest_error: this.revealOptional(row.harvestError),
-    left_on_remote: this.revealJsonOptional(row.leftOnRemote, 'array'),
+    last_poll_error: this.revealOptional(row.lastPollError, row.sensitiveDataEncrypted === true),
+    harvest_error: this.revealOptional(row.harvestError, row.sensitiveDataEncrypted === true),
+    left_on_remote: this.revealJsonOptional(
+      row.leftOnRemote,
+      'array',
+      row.sensitiveDataEncrypted === true
+    ),
     notified_at: row.notifiedAt?.getTime(),
     notification_consumed_at: row.notificationConsumedAt?.getTime(),
     created_at: row.createdAt.getTime(),
@@ -480,35 +519,46 @@ export class ComputeJobRepository {
     harvested_at: row.harvestedAt?.getTime()
   })
 
-  private toUpdateData(updates: UpdateJobRequest): ComputeJobUpdateData {
+  private toUpdateData(
+    updates: UpdateJobRequest,
+    sensitiveDataEncrypted: boolean
+  ): ComputeJobUpdateData {
     const data: ComputeJobUpdateData = {}
 
     if (updates.status !== undefined) data.status = updates.status
     if (updates.remoteHandle !== undefined)
-      data.remoteHandle = this.protectJson(updates.remoteHandle, 'object')
+      data.remoteHandle = this.protectJson(updates.remoteHandle, 'object', sensitiveDataEncrypted)
     if ('exitCode' in updates) data.exitCode = updates.exitCode
     if ('stdoutTail' in updates)
       data.stdoutTail =
-        updates.stdoutTail === null ? null : this.protectOptional(updates.stdoutTail)
+        updates.stdoutTail === null
+          ? null
+          : this.protectOptional(updates.stdoutTail, sensitiveDataEncrypted)
     if ('stderrTail' in updates)
       data.stderrTail =
-        updates.stderrTail === null ? null : this.protectOptional(updates.stderrTail)
+        updates.stderrTail === null
+          ? null
+          : this.protectOptional(updates.stderrTail, sensitiveDataEncrypted)
     if ('errorCode' in updates) data.errorCode = updates.errorCode
     if ('lastPollError' in updates)
       data.lastPollError =
-        updates.lastPollError === null ? null : this.protectOptional(updates.lastPollError)
+        updates.lastPollError === null
+          ? null
+          : this.protectOptional(updates.lastPollError, sensitiveDataEncrypted)
     if (updates.submittedAt !== undefined) data.submittedAt = updates.submittedAt
     if (updates.startedAt !== undefined) data.startedAt = updates.startedAt
     if (updates.finishedAt !== undefined) data.finishedAt = updates.finishedAt
     if (updates.harvestedAt !== undefined) data.harvestedAt = updates.harvestedAt
     if ('harvestError' in updates)
       data.harvestError =
-        updates.harvestError === null ? null : this.protectOptional(updates.harvestError)
+        updates.harvestError === null
+          ? null
+          : this.protectOptional(updates.harvestError, sensitiveDataEncrypted)
     if ('leftOnRemote' in updates)
       data.leftOnRemote =
         updates.leftOnRemote === null
           ? null
-          : this.protectJsonOptional(updates.leftOnRemote, 'array')
+          : this.protectJsonOptional(updates.leftOnRemote, 'array', sensitiveDataEncrypted)
     if ('notifiedAt' in updates) data.notifiedAt = updates.notifiedAt
     if ('notificationConsumedAt' in updates)
       data.notificationConsumedAt = updates.notificationConsumedAt
@@ -516,50 +566,56 @@ export class ComputeJobRepository {
     return data
   }
 
-  private protect(value: string): string {
-    try {
-      return this.fieldProtection.protect(value)
-    } catch {
-      this.warnAboutProtectionFailure()
-      return value
-    }
+  private protect(value: string, sensitiveDataEncrypted: boolean): string {
+    return sensitiveDataEncrypted ? this.fieldProtection.protect(value) : value
   }
 
-  private protectOptional(value: string | undefined): string | undefined {
-    return value === undefined ? undefined : this.protect(value)
+  private protectOptional(
+    value: string | undefined,
+    sensitiveDataEncrypted: boolean
+  ): string | undefined {
+    return value === undefined ? undefined : this.protect(value, sensitiveDataEncrypted)
   }
 
-  private protectJson(value: string, container: ProtectedJsonContainer): string {
-    try {
-      return this.fieldProtection.protectJson(value, container)
-    } catch {
-      this.warnAboutProtectionFailure()
-      return value
-    }
+  private protectJson(
+    value: string,
+    container: ProtectedJsonContainer,
+    sensitiveDataEncrypted: boolean
+  ): string {
+    return sensitiveDataEncrypted ? this.fieldProtection.protectJson(value, container) : value
   }
 
   private protectJsonOptional(
     value: string | undefined,
-    container: ProtectedJsonContainer
+    container: ProtectedJsonContainer,
+    sensitiveDataEncrypted: boolean
   ): string | undefined {
-    return value === undefined ? undefined : this.protectJson(value, container)
+    return value === undefined
+      ? undefined
+      : this.protectJson(value, container, sensitiveDataEncrypted)
   }
 
-  private revealOptional(value: string | null): string | undefined {
-    return value === null ? undefined : this.fieldProtection.reveal(value)
+  private reveal(value: string, sensitiveDataEncrypted: boolean): string {
+    return sensitiveDataEncrypted ? this.fieldProtection.reveal(value) : value
+  }
+
+  private revealOptional(
+    value: string | null,
+    sensitiveDataEncrypted: boolean
+  ): string | undefined {
+    return value === null ? undefined : this.reveal(value, sensitiveDataEncrypted)
   }
 
   private revealJsonOptional(
     value: string | null,
-    container: ProtectedJsonContainer
+    container: ProtectedJsonContainer,
+    sensitiveDataEncrypted: boolean
   ): string | undefined {
-    return value === null ? undefined : this.fieldProtection.revealJson(value, container)
-  }
-
-  private warnAboutProtectionFailure(): void {
-    if (this.warnedAboutProtectionFailure) return
-    this.warnedAboutProtectionFailure = true
-    log.warn('Compute Job field protection failed; persisting without encryption')
+    return value === null
+      ? undefined
+      : sensitiveDataEncrypted
+        ? this.fieldProtection.revealJson(value, container)
+        : value
   }
 
   private assertOwnerMutable(projectId: string, sessionId: string): void {

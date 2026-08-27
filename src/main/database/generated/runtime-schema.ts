@@ -463,6 +463,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "intent" TEXT NOT NULL,
     "command" TEXT NOT NULL,
     "commandHash" TEXT NOT NULL,
+    "sensitiveDataEncrypted" BOOLEAN,
     "environment" TEXT,
     "resourceRequest" TEXT,
     "inputManifest" TEXT,

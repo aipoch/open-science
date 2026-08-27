@@ -199,10 +199,10 @@ describe('ComputeJob repository (SQLite integration)', () => {
     })
 
     const [stored] = await client.$queryRaw<
-      Array<Record<string, string | null>>
+      Array<Record<string, string | boolean | null>>
     >`SELECT "intent", "command", "environment", "resourceRequest", "inputManifest",
       "outputManifest", "harvestConfig", "remoteWorkdir", "remoteHandle", "stdoutTail",
-      "stderrTail", "lastPollError", "harvestError", "leftOnRemote"
+      "stderrTail", "lastPollError", "harvestError", "leftOnRemote", "sensitiveDataEncrypted"
       FROM "ComputeJob" WHERE "id" = 'secret-job'`
     const persistedExecutionData = JSON.stringify(stored)
 
@@ -210,6 +210,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
     expect(persistedExecutionData).not.toContain(commandSecret)
     expect(persistedExecutionData).not.toContain(environmentSecret)
     expect(persistedExecutionData).not.toContain(outputSecret)
+    expect(stored?.sensitiveDataEncrypted).toBe(true)
 
     await expect(repo.get('secret-job')).resolves.toMatchObject({
       intent: `verify persisted job confidentiality ${intentSecret}`,
@@ -248,6 +249,112 @@ describe('ComputeJob repository (SQLite integration)', () => {
     })
     const stored = await client.computeJob.findUniqueOrThrow({ where: { id: 'legacy-job' } })
     expect(stored.command).toBe('echo legacy plaintext')
+    expect(stored.sensitiveDataEncrypted).toBeNull()
+  })
+
+  it('does not mistake a legacy plaintext protection prefix for ciphertext', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-legacy-prefix-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+
+    const legacyCommand = 'open-science:protected:v1:not-ciphertext'
+    await client.computeJob.create({
+      data: {
+        id: 'legacy-prefix-job',
+        providerId: 'ssh:legacy-host',
+        shape: 'direct_ssh',
+        sessionId: 'legacy-session',
+        projectId: 'legacy-project',
+        status: 'queued',
+        intent: 'legacy intent',
+        command: legacyCommand,
+        commandHash: 'legacy-prefix-command-hash'
+      }
+    })
+    const repo = new ComputeJobRepository(() => Promise.resolve(client), protectedFields())
+
+    await expect(repo.get('legacy-prefix-job')).resolves.toMatchObject({
+      command: legacyCommand
+    })
+  })
+
+  it('does not silently persist plaintext after runtime encryption fails', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-encryption-failure-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+
+    const repo = new ComputeJobRepository(
+      () => Promise.resolve(client),
+      protectedFields(
+        testCipher({
+          encryptString: () => {
+            throw new Error('keychain became unavailable')
+          }
+        })
+      )
+    )
+
+    await expect(
+      repo.create({
+        id: 'encryption-failure-job',
+        providerId: 'ssh:failure-host',
+        shape: 'direct_ssh',
+        sessionId: 'failure-session',
+        projectId: 'failure-project',
+        intent: 'failure intent',
+        command: 'echo secret-that-must-not-be-persisted',
+        commandHash: 'encryption-failure-command-hash'
+      })
+    ).rejects.toThrow('Compute Job data protection became unavailable')
+
+    await expect(
+      client.computeJob.findUnique({ where: { id: 'encryption-failure-job' } })
+    ).resolves.toBeNull()
+    expect(repo.isFieldProtectionAvailable()).toBe(false)
+
+    await expect(
+      repo.create({
+        id: 'encryption-fallback-retry-job',
+        providerId: 'ssh:failure-host',
+        shape: 'direct_ssh',
+        sessionId: 'failure-session',
+        projectId: 'failure-project',
+        intent: 'retry intent',
+        command: 'echo disclosed-plaintext-fallback',
+        commandHash: 'encryption-fallback-retry-command-hash'
+      })
+    ).resolves.toMatchObject({ command: 'echo disclosed-plaintext-fallback' })
+    await expect(
+      client.computeJob.findUniqueOrThrow({ where: { id: 'encryption-fallback-retry-job' } })
+    ).resolves.toMatchObject({ sensitiveDataEncrypted: false })
+  })
+
+  it('rejects invalid JSON container shapes before protecting them', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-invalid-protected-json-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+
+    const repo = new ComputeJobRepository(() => Promise.resolve(client), protectedFields())
+
+    await expect(
+      repo.create({
+        id: 'invalid-protected-json-job',
+        providerId: 'ssh:invalid-json-host',
+        shape: 'direct_ssh',
+        sessionId: 'invalid-json-session',
+        projectId: 'invalid-json-project',
+        intent: 'invalid JSON intent',
+        command: 'true',
+        commandHash: 'invalid-json-command-hash',
+        outputManifest: '{}'
+      })
+    ).rejects.toThrow()
   })
 
   it('allows plaintext persistence when secure storage is unavailable', async () => {
@@ -278,6 +385,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
     const stored = await client.computeJob.findUniqueOrThrow({ where: { id: 'fallback-job' } })
     expect(stored.command).toBe('echo fallback plaintext')
+    expect(stored.sensitiveDataEncrypted).toBe(false)
   })
 
   it('fails safely when protected job data cannot be decrypted', async () => {
