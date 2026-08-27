@@ -9,6 +9,7 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SHARED_PROVIDER_ID,
+  type AgentFrameworkView,
   type ProviderView,
   type SessionAgentConfiguration
 } from '../../../../shared/settings'
@@ -85,6 +86,25 @@ const provider = (overrides: Partial<ProviderView>): ProviderView => ({
   needsKey: false,
   ...overrides
 })
+
+// Official OpenAI models are documented as Responses-only. Tests that pick those catalog ids must
+// run under a Responses-capable framework; the store's initial Claude Code state only speaks
+// Anthropic, so the picker would otherwise hide the trigger as "No compatible model".
+// Include Anthropic as well so mixed-catalog cases (OpenAI + a custom Gateway) stay selectable.
+const responsesCapableFramework: {
+  agentFrameworkId: 'opencode'
+  agentFrameworks: AgentFrameworkView[]
+} = {
+  agentFrameworkId: 'opencode',
+  agentFrameworks: [
+    {
+      id: 'opencode',
+      displayName: 'OpenCode',
+      supportedApiTypes: ['anthropic', 'openai', 'responses'],
+      supportsSkills: true
+    }
+  ]
+}
 
 const render = (
   unavailable = false,
@@ -281,6 +301,30 @@ describe('ComposerModelPicker', () => {
     const trigger = container.querySelector('[aria-label="No compatible model"]')
     expect(trigger).not.toBeNull()
     expect(trigger?.textContent).toContain('No compatible model')
+  })
+
+  it('treats official OpenAI Responses models as incompatible with Claude Code', () => {
+    // Official OpenAI catalog entries resolve to Responses regardless of the mock provider's omitted
+    // apiEndpoints. Claude Code remains Anthropic-only, so the picker must warn instead of treating
+    // those models as selectable.
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      providers: [
+        provider({
+          id: 'off',
+          type: 'official',
+          vendorId: 'openai',
+          name: 'OpenAI',
+          models: ['gpt-5.2', 'gpt-5.5']
+        })
+      ],
+      activeProviderId: 'off',
+      activeModel: 'gpt-5.2'
+    })
+    render()
+
+    expect(container.querySelector('[aria-label="Select model"]')).toBeNull()
+    expect(container.querySelector('[aria-label="No compatible model"]')).not.toBeNull()
   })
 
   it('treats a Chat provider as bridge-compatible under Codex without a per-model probe', async () => {
@@ -506,6 +550,7 @@ describe('ComposerModelPicker', () => {
     // gpt-5.2 is not in the bundled OpenAI catalog, so it resolves to the vendor-level profile
     // (low-medium-high-xhigh) — supported, with the stored 'high' intent mapping to the High rung.
     useSettingsStore.setState({
+      ...responsesCapableFramework,
       providers: [
         provider({
           id: 'off',
@@ -533,6 +578,7 @@ describe('ComposerModelPicker', () => {
     // Long model names must not swallow the effort suffix: the model span truncates, the suffix
     // span is shrink-protected and never wraps.
     useSettingsStore.setState({
+      ...responsesCapableFramework,
       providers: [
         provider({
           id: 'off',
@@ -568,6 +614,7 @@ describe('ComposerModelPicker', () => {
 
   it('shows no effort suffix on the trigger when the effort intent is default', () => {
     useSettingsStore.setState({
+      ...responsesCapableFramework,
       providers: [
         provider({
           id: 'off',
@@ -679,6 +726,7 @@ describe('ComposerModelPicker', () => {
 
   it('summarizes the current pick in the Model row as provider line over model name', async () => {
     useSettingsStore.setState({
+      ...responsesCapableFramework,
       providers: [
         provider({
           id: 'off',
@@ -756,6 +804,7 @@ describe('ComposerModelPicker', () => {
 
   it('keeps the grouped provider catalog in the Model submenu and switches on pick', async () => {
     useSettingsStore.setState({
+      ...responsesCapableFramework,
       providers: [
         provider({
           id: 'off',
