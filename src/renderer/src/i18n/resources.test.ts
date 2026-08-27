@@ -1231,6 +1231,18 @@ describe('mandatory product glossary', () => {
     expect(probeOffenders).toEqual([])
   })
 
+  it('uses Compute-Host consistently for German compute-host copy', () => {
+    const offenders = Object.entries(de.renderer)
+      .filter(
+        ([key, value]) =>
+          /Compute Host/iu.test(key) &&
+          (!value.includes('Compute-Host') || /\b(?:Compute Host|Rechenhost)\b/u.test(value))
+      )
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(offenders).toEqual([])
+  })
+
   it('uses Konversation consistently for German conversation copy', () => {
     const offenders = Object.entries(de.renderer)
       .filter(

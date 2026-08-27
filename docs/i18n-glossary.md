@@ -64,17 +64,17 @@ Never translated, in any catalog:
 | ------------------ | -------------------- | ------------------------- | -------------------------- | ------------------- | -------------------- | ---------- | ---------- |
 | project            | Projekt              | projet                    | プロジェクト               | 프로젝트            | проект               | 项目       | 專案       |
 | session            | Sitzung              | session                   | セッション                 | 세션                | сессия               | 会话       | 會話       |
-| conversation       | Gespräch             | conversation              | 会話                       | 대화                | диалог               | 对话       | 對話       |
+| conversation       | Konversation         | conversation              | 会話                       | 대화                | диалог               | 对话       | 對話       |
 | workspace          | Arbeitsbereich       | espace de travail         | ワークスペース             | 워크스페이스        | рабочее пространство | 工作区     | 工作區     |
 | message            | Nachricht            | message                   | メッセージ                 | 메시지              | сообщение            | 消息       | 訊息       |
 | task               | Aufgabe              | tâche                     | タスク                     | 작업                | задача               | 任务       | 任務       |
 | run                | Ausführung           | exécution                 | 実行                       | 실행                | выполнение           | 运行       | 執行       |
-| turn               | Durchgang            | tour                      | ターン                     | 턴                  | ход                  | 轮次       | 輪次       |
+| turn               | Interaktion          | tour                      | ターン                     | 턴                  | ход                  | 轮次       | 輪次       |
 | agent              | Agent                | agent                     | エージェント               | 에이전트            | агент                | 智能体     | 智能體     |
 | subagent           | Unteragent           | sous-agent                | サブエージェント           | 서브에이전트        | субагент             | 子智能体   | 子智能體   |
 | agent framework    | Agenten-Framework    | framework d'agents        | エージェントフレームワーク | 에이전트 프레임워크 | фреймворк агентов    | 智能体框架 | 智能體框架 |
 | model              | Modell               | modèle                    | モデル                     | 모델                | модель               | 模型       | 模型       |
-| provider           | Modellanbieter       | fournisseur               | プロバイダー               | 모델 제공업체       | поставщик моделей    | 模型服务商 | 模型服務商 |
+| provider           | Anbieter             | fournisseur               | プロバイダー               | 모델 제공업체       | поставщик моделей    | 模型服务商 | 模型服務商 |
 | subscription       | Abonnement           | abonnement                | サブスクリプション         | 구독                | подписка             | 订阅       | 訂閱       |
 | skill              | Fähigkeit            | compétence                | スキル                     | 스킬                | навык                | 技能       | 技能       |
 | specialist         | Spezialist           | spécialiste               | スペシャリスト             | 스페셜리스트        | специалист           | 专家       | 專家       |
@@ -87,12 +87,12 @@ Never translated, in any catalog:
 | kernel             | Kernel               | noyau                     | カーネル                   | 커널                | ядро                 | 内核       | 核心       |
 | artifact           | Artefakt             | artefact                  | アーティファクト           | 아티팩트            | артефакт             | 产物       | 產物       |
 | activity group     | Aktivitätsgruppe     | groupe d'activités        | アクティビティグループ     | 활동 그룹           | группа действий      | 活动分组   | 活動分組   |
-| tool               | Werkzeug             | outil                     | ツール                     | 도구                | инструмент           | 工具       | 工具       |
-| compute host       | Rechenhost           | hôte de calcul            | コンピュートホスト         | 컴퓨팅 호스트       | вычислительный узел  | 计算主机   | 運算主機   |
-| runtime            | Laufzeitumgebung     | environnement d'exécution | ランタイム                 | 런타임              | среда выполнения     | 运行时     | 執行環境   |
+| tool               | Tool                 | outil                     | ツール                     | 도구                | инструмент           | 工具       | 工具       |
+| compute host       | Compute-Host         | hôte de calcul            | コンピュートホスト         | 컴퓨팅 호스트       | вычислительный узел  | 计算主机   | 運算主機   |
+| runtime            | Laufzeit             | environnement d'exécution | ランタイム                 | 런타임              | среда выполнения     | 运行时     | 執行環境   |
 | environment        | Umgebung             | environnement             | 環境                       | 환경                | окружение            | 环境       | 環境       |
 | preview            | Vorschau             | aperçu                    | プレビュー                 | 미리보기            | предпросмотр         | 预览       | 預覽       |
-| reasoning effort   | Denkaufwand          | effort de raisonnement    | 推論の強度                 | 추론 강도           | глубина рассуждений  | 推理强度   | 推理強度   |
+| reasoning effort   | Reasoning-Aufwand    | effort de raisonnement    | 推論の強度                 | 추론 강도           | глубина рассуждений  | 推理强度   | 推理強度   |
 | context            | Kontext              | contexte                  | コンテキスト               | 컨텍스트            | контекст             | 上下文     | 上下文     |
 | context compaction | Kontextkomprimierung | compactage du contexte    | コンテキスト圧縮           | 컨텍스트 압축       | сжатие контекста     | 上下文压缩 | 上下文壓縮 |
 
@@ -105,30 +105,30 @@ third-party names and technical identifiers, including `Claude Connectors Direct
 The highest-risk table. A character converter gets most of the Chinese pairs wrong; the Japanese,
 German, Japanese, Korean, and Russian columns record their corresponding independent translations.
 
-| en                 | de                       | ja           | ko          | ru                      | zh-Hans | zh-Hant  |
-| ------------------ | ------------------------ | ------------ | ----------- | ----------------------- | ------- | -------- |
-| file               | Datei                    | ファイル     | 파일        | файл                    | 文件    | 檔案     |
-| document           | Dokument                 | ドキュメント | 문서        | документ                | 文档    | 文件     |
-| folder             | Ordner                   | フォルダー   | 폴더        | папка                   | 文件夹  | 資料夾   |
-| data               | Daten                    | データ       | 데이터      | данные                  | 数据    | 資料     |
-| information        | Informationen            | 情報         | 정보        | информация              | 信息    | 資訊     |
-| software           | Software                 | ソフトウェア | 소프트웨어  | программное обеспечение | 软件    | 軟體     |
-| program            | Programm                 | プログラム   | 프로그램    | программа               | 程序    | 程式     |
-| default            | Standard                 | デフォルト   | 기본값      | по умолчанию            | 默认    | 預設     |
-| settings           | Einstellungen            | 設定         | 설정        | настройки               | 设置    | 設定     |
-| network            | Netzwerk                 | ネットワーク | 네트워크    | сеть                    | 网络    | 網路     |
-| cache              | Cache                    | キャッシュ   | 캐시        | кэш                     | 缓存    | 快取     |
-| process            | Prozess                  | プロセス     | 프로세스    | процесс                 | 进程    | 行程     |
-| thread             | Thread                   | スレッド     | 스레드      | поток                   | 线程    | 執行緒   |
-| queue              | Warteschlange            | キュー       | 대기열      | очередь                 | 队列    | 佇列     |
-| storage            | Speicher                 | ストレージ   | 저장소      | хранилище               | 存储    | 儲存     |
-| credential         | Anmeldedaten             | 認証情報     | 자격 증명   | учётные данные          | 凭据    | 憑證     |
-| log                | Protokoll                | ログ         | 로그        | журнал                  | 日志    | 記錄檔   |
-| mirror             | Spiegelserver            | ミラー       | 미러        | зеркало                 | 镜像源  | 鏡像來源 |
-| tray               | Infobereich              | トレイ       | 트레이      | трей                    | 托盘    | 系統匣   |
-| bookmark           | Lesezeichen              | ブックマーク | 북마크      | закладка                | 书签    | 書籤     |
-| archive (verb)     | archivieren              | アーカイブ   | 보관        | архивировать            | 归档    | 封存     |
-| approve / approval | genehmigen / Genehmigung | 許可 / 承認  | 허용 / 승인 | разрешить / разрешение  | 批准    | 核准     |
+| en                 | de                   | ja           | ko          | ru                      | zh-Hans | zh-Hant  |
+| ------------------ | -------------------- | ------------ | ----------- | ----------------------- | ------- | -------- |
+| file               | Datei                | ファイル     | 파일        | файл                    | 文件    | 檔案     |
+| document           | Dokument             | ドキュメント | 문서        | документ                | 文档    | 文件     |
+| folder             | Ordner               | フォルダー   | 폴더        | папка                   | 文件夹  | 資料夾   |
+| data               | Daten                | データ       | 데이터      | данные                  | 数据    | 資料     |
+| information        | Informationen        | 情報         | 정보        | информация              | 信息    | 資訊     |
+| software           | Software             | ソフトウェア | 소프트웨어  | программное обеспечение | 软件    | 軟體     |
+| program            | Programm             | プログラム   | 프로그램    | программа               | 程序    | 程式     |
+| default            | Standard             | デフォルト   | 기본값      | по умолчанию            | 默认    | 預設     |
+| settings           | Einstellungen        | 設定         | 설정        | настройки               | 设置    | 設定     |
+| network            | Netzwerk             | ネットワーク | 네트워크    | сеть                    | 网络    | 網路     |
+| cache              | Cache                | キャッシュ   | 캐시        | кэш                     | 缓存    | 快取     |
+| process            | Prozess              | プロセス     | 프로세스    | процесс                 | 进程    | 行程     |
+| thread             | Thread               | スレッド     | 스레드      | поток                   | 线程    | 執行緒   |
+| queue              | Warteschlange        | キュー       | 대기열      | очередь                 | 队列    | 佇列     |
+| storage            | Speicher             | ストレージ   | 저장소      | хранилище               | 存储    | 儲存     |
+| credential         | Anmeldedaten         | 認証情報     | 자격 증명   | учётные данные          | 凭据    | 憑證     |
+| log                | Protokoll            | ログ         | 로그        | журнал                  | 日志    | 記錄檔   |
+| mirror             | Spiegelserver        | ミラー       | 미러        | зеркало                 | 镜像源  | 鏡像來源 |
+| tray               | Infobereich          | トレイ       | 트레이      | трей                    | 托盘    | 系統匣   |
+| bookmark           | Lesezeichen          | ブックマーク | 북마크      | закладка                | 书签    | 書籤     |
+| archive (verb)     | archivieren          | アーカイブ   | 보관        | архивировать            | 归档    | 封存     |
+| approve / approval | freigeben / Freigabe | 許可 / 承認  | 허용 / 승인 | разрешить / разрешение  | 批准    | 核准     |
 
 Note the `file` / `document` inversion: Traditional 文件 means what Simplified calls 文档. Getting
 this pair backwards is the single most common failure in Simplified-to-Traditional conversion.
@@ -153,7 +153,7 @@ this pair backwards is the single most common failure in Simplified-to-Tradition
 | minimize to tray     | in den Infobereich minimieren | réduire dans la zone de notif. | トレイに最小化                  | 트레이로 최소화      | свернуть в трей                | 最小化到托盘   | 最小化至系統匣 |
 | idle                 | inaktiv                       | inactif                        | 待機中                          | 대기 중              | ожидание                       | 空闲           | 閒置           |
 | running              | wird ausgeführt               | en cours                       | 実行中                          | 실행 중              | выполняется                    | 运行中         | 執行中         |
-| waiting for approval | wartet auf Genehmigung        | en attente d'approbation       | 承認待ち                        | 승인 대기 중         | ожидает разрешения             | 等待批准       | 等待核准       |
+| waiting for approval | wartet auf Freigabe           | en attente d'approbation       | 承認待ち                        | 승인 대기 중         | ожидает разрешения             | 等待批准       | 等待核准       |
 | failed               | fehlgeschlagen                | échec                          | 失敗                            | 실패                 | ошибка                         | 失败           | 失敗           |
 | completed            | abgeschlossen                 | terminé                        | 完了                            | 완료                 | завершено                      | 已完成         | 已完成         |
 | pending              | ausstehend                    | en attente                     | 保留中                          | 대기 중              | ожидает обработки              | 待处理         | 待處理         |
