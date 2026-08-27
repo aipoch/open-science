@@ -70,7 +70,9 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
   it.runIf(platform() === 'win32')(
     'returns one matching password through the constrained Windows askpass helper',
     async () => {
-      const secret = 'Windows askpass secret "quoted" Unicode 密码'
+      // The JSON prefix places the first byte of this character at the end of the helper's
+      // 4096-byte read buffer, exercising UTF-8 decoding across pipe read boundaries.
+      const secret = `${'a'.repeat(4082)}密码`
       vi.stubEnv('OPEN_SCIENCE_RELEASE_GATE_SECRET', secret)
       const askpass = await createAskpassEnvironment(secret, ['researcher@cluster'])
       const invoke = (

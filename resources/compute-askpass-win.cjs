@@ -8,11 +8,14 @@
 const fs = require('node:fs')
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const path = require('node:path')
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { StringDecoder } = require('node:string_decoder')
 
 let descriptor
 let response = ''
 let password
 const buffer = Buffer.allocUnsafe(4096)
+const decoder = new StringDecoder('utf8')
 
 try {
   const socketPath = process.env.OPEN_SCIENCE_ASKPASS_SOCKET
@@ -35,9 +38,10 @@ try {
   for (;;) {
     const size = fs.readSync(descriptor, buffer, 0, buffer.length, null)
     if (size === 0) break
-    response += buffer.subarray(0, size).toString('utf8')
+    response += decoder.write(buffer.subarray(0, size))
     buffer.fill(0, 0, size)
   }
+  response += decoder.end()
 
   const parsed = JSON.parse(response)
   if (typeof parsed.password !== 'string') throw new Error('Password unavailable.')
