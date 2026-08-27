@@ -8,6 +8,7 @@ const streamdownHarness = vi.hoisted(() => ({
   codeImports: 0,
   mermaidImports: 0,
   disallowedElements: undefined as readonly string[] | undefined,
+  allowedTags: undefined as Record<string, readonly string[]> | undefined,
   components: undefined as Record<string, unknown> | undefined,
   plugins: undefined as Record<string, unknown> | undefined,
   shikiTheme: undefined as unknown,
@@ -33,6 +34,7 @@ vi.mock('streamdown', () => ({
     animated,
     caret,
     components,
+    allowedTags,
     disallowedElements,
     BlockComponent,
     plugins,
@@ -42,6 +44,7 @@ vi.mock('streamdown', () => ({
     animated?: unknown
     caret?: string
     components?: Record<string, unknown>
+    allowedTags?: Record<string, readonly string[]>
     disallowedElements?: readonly string[]
     BlockComponent?: unknown
     plugins?: Record<string, unknown>
@@ -50,6 +53,7 @@ vi.mock('streamdown', () => ({
   }>): React.JSX.Element => {
     if (streamdownHarness.shouldThrow) throw new Error('optimized Markdown chunk failed to load')
     streamdownHarness.components = components
+    streamdownHarness.allowedTags = allowedTags
     streamdownHarness.disallowedElements = disallowedElements
     streamdownHarness.animated = animated
     streamdownHarness.caret = caret
@@ -73,6 +77,7 @@ describe('AgentMarkdown renderer recovery', () => {
   beforeEach(() => {
     streamdownHarness.shouldThrow = true
     streamdownHarness.disallowedElements = undefined
+    streamdownHarness.allowedTags = undefined
     streamdownHarness.components = undefined
     streamdownHarness.plugins = undefined
     streamdownHarness.shikiTheme = undefined
@@ -281,6 +286,27 @@ describe('AgentMarkdown renderer recovery', () => {
 
     expect(streamdownHarness.components?.a).toBe(ArtifactLink)
     expect(streamdownHarness.components?.['session-artifact-image']).toBe(ArtifactImage)
+  })
+
+  it('adds extension tags and renderers without dropping the shared safety allowlist', async () => {
+    streamdownHarness.shouldThrow = false
+    const Added = (): React.JSX.Element => <ins>Added</ins>
+
+    await act(async () => {
+      root.render(
+        <AgentMarkdown
+          content="Changed content"
+          extension={{
+            allowedTags: { 'managed-diff-added-r4nd0m': [] },
+            components: { 'managed-diff-added-r4nd0m': Added }
+          }}
+        />
+      )
+    })
+
+    expect(streamdownHarness.allowedTags?.ins).toEqual([])
+    expect(streamdownHarness.allowedTags?.['managed-diff-added-r4nd0m']).toEqual([])
+    expect(streamdownHarness.components?.['managed-diff-added-r4nd0m']).toBe(Added)
   })
 
   it('defers highlighting of the trailing unclosed code fence via the streaming block', async () => {

@@ -26,77 +26,6 @@ type ManagedDiffTagProps = Record<string, unknown> & { children?: ReactNode }
 type DiffSegment = ManagedFileVersionDiffResult['lines'][number]['segments'][number]
 type MarkdownDiffBlock = Extract<DiffRenderBlock, { kind: 'markdown' }>
 
-const appendDiffSegment = (segments: DiffSegment[], segment: DiffSegment): void => {
-  if (segment.text.length === 0) return
-  const previous = segments.at(-1)
-  if (previous?.kind === segment.kind) previous.text += segment.text
-  else segments.push({ ...segment })
-}
-
-const decodeGeneratedMarkdownText = (content: string): string =>
-  content.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&')
-
-const markdownFallbackSegments = (content: string, tags: MarkdownChangeTags): DiffSegment[] => {
-  const descriptors = (['added', 'removed'] as const).map((kind) => ({
-    kind,
-    opening: `<${tags[kind]}>`,
-    closing: `</${tags[kind]}>`
-  }))
-  const segments: DiffSegment[] = []
-  let cursor = 0
-
-  while (cursor < content.length) {
-    const next = descriptors
-      .map((descriptor) => ({ descriptor, index: content.indexOf(descriptor.opening, cursor) }))
-      .filter(({ index }) => index >= 0)
-      .sort((left, right) => left.index - right.index)[0]
-    if (!next) {
-      appendDiffSegment(segments, { kind: 'context', text: content.slice(cursor) })
-      break
-    }
-
-    appendDiffSegment(segments, {
-      kind: 'context',
-      text: content.slice(cursor, next.index)
-    })
-    const changedStart = next.index + next.descriptor.opening.length
-    const changedEnd = content.indexOf(next.descriptor.closing, changedStart)
-    if (changedEnd < 0) {
-      appendDiffSegment(segments, { kind: 'context', text: content.slice(next.index) })
-      break
-    }
-
-    const changedContent = content.slice(changedStart, changedEnd)
-    cursor = changedEnd + next.descriptor.closing.length
-    if (changedContent.length > 0) {
-      appendDiffSegment(segments, {
-        kind: next.descriptor.kind,
-        text: decodeGeneratedMarkdownText(changedContent)
-      })
-      continue
-    }
-
-    // Empty markers represent a fully changed complex list item or table cell. In the raw fallback,
-    // the exact source boundary is the rest of that item line or the current table cell.
-    const lineStart = content.lastIndexOf('\n', next.index) + 1
-    const lineEnd = content.indexOf('\n', cursor)
-    const cellEnd = content.slice(lineStart, next.index).includes('|')
-      ? content.indexOf('|', cursor)
-      : -1
-    const changedBoundary = [lineEnd, cellEnd]
-      .filter((boundary) => boundary >= 0)
-      .sort((left, right) => left - right)[0]
-    const sourceEnd = changedBoundary ?? content.length
-    appendDiffSegment(segments, {
-      kind: next.descriptor.kind,
-      text: content.slice(cursor, sourceEnd)
-    })
-    cursor = sourceEnd
-  }
-
-  return segments
-}
-
 const ManagedDiffAdded = ({ children }: ManagedDiffTagProps): React.JSX.Element => {
   const { t } = useTranslation()
   const isMarker = Children.count(children) === 0
@@ -152,21 +81,13 @@ const DiffSegments = ({ segments }: { segments: DiffSegment[] }): React.JSX.Elem
   )
 }
 
-const MarkdownDiffFallback = ({
-  block,
-  tags
-}: {
-  block: MarkdownDiffBlock
-  tags: MarkdownChangeTags
-}): React.JSX.Element => (
+const MarkdownDiffFallback = ({ block }: { block: MarkdownDiffBlock }): React.JSX.Element => (
   <pre
     data-managed-version-diff-fallback=""
     className="m-0 min-w-0 whitespace-pre-wrap break-words font-mono"
   >
     {block.changeKind === 'mixed' ? (
-      <DiffSegments
-        segments={block.fallbackSegments ?? markdownFallbackSegments(block.content, tags)}
-      />
+      <DiffSegments segments={block.fallbackSegments} />
     ) : (
       block.content
     )}
@@ -234,7 +155,7 @@ const ManagedVersionDiffContent = memo(
                     content={block.content}
                     allowMedia={false}
                     extension={markdownExtension}
-                    fallback={<MarkdownDiffFallback block={block} tags={markdownChangeTags} />}
+                    fallback={<MarkdownDiffFallback block={block} />}
                   />
                 </div>
               )
@@ -251,7 +172,7 @@ const ManagedVersionDiffContent = memo(
                   content={block.content}
                   allowMedia={false}
                   extension={markdownExtension}
-                  fallback={<MarkdownDiffFallback block={block} tags={markdownChangeTags} />}
+                  fallback={<MarkdownDiffFallback block={block} />}
                 />
               </ins>
             ) : (
@@ -266,7 +187,7 @@ const ManagedVersionDiffContent = memo(
                   content={block.content}
                   allowMedia={false}
                   extension={markdownExtension}
-                  fallback={<MarkdownDiffFallback block={block} tags={markdownChangeTags} />}
+                  fallback={<MarkdownDiffFallback block={block} />}
                 />
               </del>
             )

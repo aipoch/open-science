@@ -32,6 +32,22 @@ const escapedMarkdownChange = (kind: 'added' | 'removed', content: string): stri
 const markdownChangeMarker = (kind: 'added' | 'removed'): string =>
   `<managed-diff-${kind}></managed-diff-${kind}>`
 
+const expectPresentation = (actual: DiffRenderBlock[], expected: object[]): void => {
+  const expectedWithFallback = expected.map((block) => {
+    if (
+      'kind' in block &&
+      'changeKind' in block &&
+      block.kind === 'markdown' &&
+      block.changeKind === 'mixed' &&
+      !('fallbackSegments' in block)
+    ) {
+      return { ...block, fallbackSegments: expect.any(Array) }
+    }
+    return block
+  })
+  expect(actual).toEqual(expectedWithFallback)
+}
+
 describe('managed version diff presentation', () => {
   it('keeps unchanged and inline-changed prose in renderable Markdown blocks', async () => {
     const blocks = await diffMarkdown(
@@ -40,13 +56,34 @@ describe('managed version diff presentation', () => {
       'rendered-prose'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
         content: `# Stable heading\n\nSub title t${escapedMarkdownChange('removed', 'wo')}${escapedMarkdownChange('added', 'hree')}`,
         startIndex: 0
       }
+    ])
+  })
+
+  it('carries exact source segments with every rich Markdown replacement', async () => {
+    const blocks = await diffMarkdown(
+      '# Stable heading\n\nSub title two\n',
+      '# Stable heading\n\nSub title three\n',
+      'rendered-prose-fallback-segments'
+    )
+
+    expectPresentation(blocks, [
+      expect.objectContaining({
+        kind: 'markdown',
+        changeKind: 'mixed',
+        fallbackSegments: [
+          { kind: 'context', text: '# Stable heading\n\nSub title t' },
+          { kind: 'removed', text: 'wo' },
+          { kind: 'added', text: 'hree' },
+          { kind: 'context', text: '\n' }
+        ]
+      })
     ])
   })
 
@@ -57,7 +94,7 @@ describe('managed version diff presentation', () => {
       'rendered-atx-heading'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -74,7 +111,7 @@ describe('managed version diff presentation', () => {
       'rendered-html-heading-text-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -96,7 +133,7 @@ describe('managed version diff presentation', () => {
       tags
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -106,6 +143,24 @@ describe('managed version diff presentation', () => {
     ])
   })
 
+  it('falls back when user content collides with a caller-provided change tag', async () => {
+    const tags = {
+      added: 'managed-diff-added-r4nd0m',
+      removed: 'managed-diff-removed-r4nd0m'
+    }
+    const blocks = await diffMarkdown(
+      `<${tags.added}>user content</${tags.added}> old\n`,
+      `<${tags.added}>user content</${tags.added}> new\n`,
+      'internal-tag-collision',
+      tags
+    )
+
+    expectPresentation(blocks, [expect.objectContaining({ kind: 'text', changeKind: 'mixed' })])
+    expect(
+      blocks.some((block) => block.kind === 'markdown' && block.content.includes(tags.added))
+    ).toBe(false)
+  })
+
   it('keeps a stable multiline HTML wrapper rendered while marking only changed text', async () => {
     const blocks = await diffMarkdown(
       '<h1 align="center">\nOld value\n</h1>\n',
@@ -113,7 +168,7 @@ describe('managed version diff presentation', () => {
       'rendered-multiline-html-text-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -183,7 +238,7 @@ describe('managed version diff presentation', () => {
       `rendered-empty-html-text-${fixture.label}`
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -200,7 +255,7 @@ describe('managed version diff presentation', () => {
       'raw-html-attribute-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -227,7 +282,7 @@ describe('managed version diff presentation', () => {
       'raw-html-tag-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -252,7 +307,7 @@ describe('managed version diff presentation', () => {
       'raw-html-structure-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -275,7 +330,7 @@ describe('managed version diff presentation', () => {
       'rendered-html-near-entity-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -292,7 +347,7 @@ describe('managed version diff presentation', () => {
       'raw-html-entity-source-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -316,7 +371,7 @@ describe('managed version diff presentation', () => {
       'raw-html-raw-text-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -360,7 +415,7 @@ describe('managed version diff presentation', () => {
       'raw-html-multiline-script-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -403,7 +458,7 @@ describe('managed version diff presentation', () => {
 
     const blocks = toDiffPresentationBlocks(result, 'markdown')
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -425,7 +480,7 @@ describe('managed version diff presentation', () => {
       'raw-html-foreign-namespace-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -478,7 +533,7 @@ describe('managed version diff presentation', () => {
       `rendered-stable-${fixture.label.replaceAll(' ', '-')}`
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -526,7 +581,7 @@ describe('managed version diff presentation', () => {
       'rendered-setext-heading'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -543,7 +598,7 @@ describe('managed version diff presentation', () => {
       'setext-marker-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -560,7 +615,7 @@ describe('managed version diff presentation', () => {
   it('falls back an entity replacement to its changed source characters', async () => {
     const blocks = await diffMarkdown('Copyright &copy;\n', 'Copyright &reg;\n', 'entity-change')
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -582,7 +637,7 @@ describe('managed version diff presentation', () => {
       'reference-definition-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -604,7 +659,7 @@ describe('managed version diff presentation', () => {
       'reference-link-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -626,7 +681,7 @@ describe('managed version diff presentation', () => {
       'list-item-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -643,7 +698,7 @@ describe('managed version diff presentation', () => {
       'table-row-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -667,16 +722,17 @@ describe('managed version diff presentation', () => {
       expected: `- stable one\n- ${escapedMarkdownChange('removed', 'removed item')}\n- stable two`
     }
   ])('marks only a standalone $label list item', async ({ before, after, expected }) => {
-    expect(
-      await diffMarkdown(before, after, `standalone-list-${before.length}-${after.length}`)
-    ).toEqual([
-      {
-        kind: 'markdown',
-        changeKind: 'mixed',
-        content: expected,
-        startIndex: 0
-      }
-    ])
+    expectPresentation(
+      await diffMarkdown(before, after, `standalone-list-${before.length}-${after.length}`),
+      [
+        {
+          kind: 'markdown',
+          changeKind: 'mixed',
+          content: expected,
+          startIndex: 0
+        }
+      ]
+    )
   })
 
   it.each([
@@ -693,16 +749,17 @@ describe('managed version diff presentation', () => {
       row: `| ${escapedMarkdownChange('removed', 'B')} | ${escapedMarkdownChange('removed', 'removed')} |`
     }
   ])('marks only a standalone $label table row', async ({ before, after, row }) => {
-    expect(
-      await diffMarkdown(before, after, `standalone-table-${before.length}-${after.length}`)
-    ).toEqual([
-      {
-        kind: 'markdown',
-        changeKind: 'mixed',
-        content: `| Name | Value |\n| --- | --- |\n${row}\n| A | stable |`,
-        startIndex: 0
-      }
-    ])
+    expectPresentation(
+      await diffMarkdown(before, after, `standalone-table-${before.length}-${after.length}`),
+      [
+        {
+          kind: 'markdown',
+          changeKind: 'mixed',
+          content: `| Name | Value |\n| --- | --- |\n${row}\n| A | stable |`,
+          startIndex: 0
+        }
+      ]
+    )
   })
 
   it('keeps inline Markdown rendered inside a standalone added list item', async () => {
@@ -712,7 +769,7 @@ describe('managed version diff presentation', () => {
       'standalone-complex-list-item'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -729,7 +786,7 @@ describe('managed version diff presentation', () => {
       'standalone-nested-list-item'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -746,7 +803,7 @@ describe('managed version diff presentation', () => {
       'standalone-complex-table-row'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -754,6 +811,43 @@ describe('managed version diff presentation', () => {
         startIndex: 0
       }
     ])
+  })
+
+  it.each([
+    { label: 'LF list', eol: '\n', kind: 'list' as const },
+    { label: 'CRLF list', eol: '\r\n', kind: 'list' as const },
+    { label: 'LF table', eol: '\n', kind: 'table' as const },
+    { label: 'CRLF table', eol: '\r\n', kind: 'table' as const }
+  ])('preserves both exact source sides for a complex $label replacement', async (fixture) => {
+    const before =
+      fixture.kind === 'list'
+        ? `- **old** [guide](https://old.example)${fixture.eol}`
+        : `| Name | Value |${fixture.eol}| --- | --- |${fixture.eol}| A | **old** [guide](https://old.example) |${fixture.eol}`
+    const after =
+      fixture.kind === 'list'
+        ? `- **new** [guide](https://new.example)${fixture.eol}`
+        : `| Name | Value |${fixture.eol}| --- | --- |${fixture.eol}| A | **new** [guide](https://new.example) |${fixture.eol}`
+    const blocks = await diffMarkdown(before, after, `complex-${fixture.label}-replacement`)
+    const block = blocks.find(
+      (
+        candidate
+      ): candidate is Extract<DiffRenderBlock, { kind: 'markdown'; changeKind: 'mixed' }> =>
+        candidate.kind === 'markdown' && candidate.changeKind === 'mixed'
+    )
+
+    expect(block).toBeDefined()
+    expect(
+      block?.fallbackSegments
+        .filter((segment) => segment.kind !== 'added')
+        .map((segment) => segment.text)
+        .join('')
+    ).toBe(before)
+    expect(
+      block?.fallbackSegments
+        .filter((segment) => segment.kind !== 'removed')
+        .map((segment) => segment.text)
+        .join('')
+    ).toBe(after)
   })
 
   it.each([
@@ -784,7 +878,7 @@ describe('managed version diff presentation', () => {
     async ({ before, after, segments }) => {
       const blocks = await diffMarkdown(before, after, `markdown-${before.length}-${after.length}`)
 
-      expect(blocks).toEqual([
+      expectPresentation(blocks, [
         {
           kind: 'text',
           changeKind: 'mixed',
@@ -802,7 +896,7 @@ describe('managed version diff presentation', () => {
       'consecutive-added-prose'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'added',
@@ -819,7 +913,7 @@ describe('managed version diff presentation', () => {
       'multiline-emphasis-boundary'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -842,7 +936,7 @@ describe('managed version diff presentation', () => {
       'atx-prefix-boundary'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'context',
@@ -878,7 +972,7 @@ describe('managed version diff presentation', () => {
       'atx-closing-marker-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -898,7 +992,7 @@ describe('managed version diff presentation', () => {
       'inserted-paragraph-line'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -915,7 +1009,7 @@ describe('managed version diff presentation', () => {
       'inserted-paragraph-before-modified-paragraph'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -988,7 +1082,7 @@ describe('managed version diff presentation', () => {
       `rendered-deletion-${fixture.label}-strong`
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -1005,7 +1099,7 @@ describe('managed version diff presentation', () => {
       'rendered-grapheme-change'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'mixed',
@@ -1053,7 +1147,7 @@ describe('managed version diff presentation', () => {
       `rendered-paragraph-line-${fixture.label}`
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1294,7 +1388,7 @@ describe('managed version diff presentation', () => {
       `pure-blank-line-${fixture.label}`
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: fixture.kind,
@@ -1307,7 +1401,7 @@ describe('managed version diff presentation', () => {
   it('shows a trailing-newline-only change as one exact raw character change', async () => {
     const blocks = await diffMarkdown('line', 'line\n', 'trailing-newline-change')
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1330,7 +1424,7 @@ describe('managed version diff presentation', () => {
       `render-trailing-ending-conversion-${fixture.label}`
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1351,7 +1445,7 @@ describe('managed version diff presentation', () => {
       'inserted-continuation-after-newline'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1371,7 +1465,7 @@ describe('managed version diff presentation', () => {
       'inserted-continuation-after-crlf'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1391,7 +1485,7 @@ describe('managed version diff presentation', () => {
       'removed-continuation-after-newline'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1414,7 +1508,7 @@ describe('managed version diff presentation', () => {
       `inserted-${fixture.label}-continuation`
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1447,7 +1541,7 @@ describe('managed version diff presentation', () => {
     const blocks = toDiffPresentationBlocks(result, 'markdown')
 
     expect(lexer).not.toHaveBeenCalled()
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'added',
@@ -1476,7 +1570,7 @@ describe('managed version diff presentation', () => {
     const blocks = toDiffPresentationBlocks(result, 'markdown')
 
     expect(lexer).not.toHaveBeenCalled()
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'added',
@@ -1505,7 +1599,7 @@ describe('managed version diff presentation', () => {
     const blocks = toDiffPresentationBlocks(result, 'markdown')
 
     expect(lexer).not.toHaveBeenCalled()
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'added',
@@ -1524,7 +1618,7 @@ describe('managed version diff presentation', () => {
       'oversized-fenced-replacement'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1566,7 +1660,7 @@ describe('managed version diff presentation', () => {
               { kind: 'context' as const, text: stable }
             ]
 
-      expect(blocks).toEqual([
+      expectPresentation(blocks, [
         {
           kind: 'text',
           changeKind: 'mixed',
@@ -1620,7 +1714,7 @@ describe('managed version diff presentation', () => {
       `oversized-${fixture.label}-fence`
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1655,7 +1749,7 @@ describe('managed version diff presentation', () => {
       `unclosed-oversized-${fixture.label}-fence`
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1686,7 +1780,7 @@ describe('managed version diff presentation', () => {
       'mismatched-blockquote-fence-closer'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1713,7 +1807,7 @@ describe('managed version diff presentation', () => {
       `oversized-${fixture.label}-invalid-closer-tail`
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1752,7 +1846,7 @@ describe('managed version diff presentation', () => {
       'invalid-oversized-backtick-opener'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1780,7 +1874,7 @@ describe('managed version diff presentation', () => {
       'oversized-unclosed-tilde-blank-line'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1814,7 +1908,7 @@ describe('managed version diff presentation', () => {
       `${fixture.label}-tilde-closer`
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1835,7 +1929,7 @@ describe('managed version diff presentation', () => {
       'adjacent-fence-and-heading-changes'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1867,7 +1961,7 @@ describe('managed version diff presentation', () => {
       'fenced-line-insertion'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1888,7 +1982,7 @@ describe('managed version diff presentation', () => {
       'fenced-replacement-with-blank-line'
     )
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -1925,7 +2019,7 @@ describe('managed version diff presentation', () => {
       ]
     }
 
-    expect(toDiffPresentationBlocks(result, 'markdown')).toEqual([
+    expectPresentation(toDiffPresentationBlocks(result, 'markdown'), [
       {
         kind: 'text',
         changeKind: 'context',
@@ -1944,7 +2038,7 @@ describe('managed version diff presentation', () => {
 
     const blocks = await diffMarkdown('', content, 'long-valid-list')
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'added',
@@ -1997,7 +2091,7 @@ describe('managed version diff presentation', () => {
 
     const blocks = toDiffPresentationBlocks(result, 'markdown')
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'markdown',
         changeKind: 'context',
@@ -2305,7 +2399,7 @@ describe('managed version diff presentation', () => {
 
     const blocks = toDiffPresentationBlocks(result, 'prose')
 
-    expect(blocks).toEqual([
+    expectPresentation(blocks, [
       {
         kind: 'text',
         changeKind: 'mixed',
@@ -2412,7 +2506,7 @@ describe('managed version diff presentation', () => {
       ]
     }
 
-    expect(toDiffPresentationBlocks(result, 'markdown')).toEqual([
+    expectPresentation(toDiffPresentationBlocks(result, 'markdown'), [
       {
         kind: 'markdown',
         changeKind: 'mixed',

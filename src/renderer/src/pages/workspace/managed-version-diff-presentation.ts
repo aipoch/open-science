@@ -56,6 +56,12 @@ const HTML_RAW_TEXT_TAGS = new Set([
   'template'
 ])
 
+type MarkdownRenderBlockBase = {
+  kind: 'markdown'
+  content: string
+  startIndex: number
+}
+
 type DiffRenderBlock =
   | {
       kind: 'text'
@@ -63,19 +69,23 @@ type DiffRenderBlock =
       segments: DiffSegment[]
       startIndex: number
     }
-  | {
-      kind: 'markdown'
-      changeKind: 'context' | 'mixed' | 'added' | 'removed'
-      content: string
-      fallbackSegments?: DiffSegment[]
-      startIndex: number
-    }
+  | (MarkdownRenderBlockBase & {
+      changeKind: 'mixed'
+      fallbackSegments: DiffSegment[]
+    })
+  | (MarkdownRenderBlockBase & {
+      changeKind: 'context' | 'added' | 'removed'
+    })
 
 type HtmlTextSpan = { start: number; end: number }
-type SafeHtmlSource = {
+type SourceProjection = {
   structure: string
   nonTextSource: string
   textSpans: HtmlTextSpan[]
+}
+type ParsedHtmlFragment = SourceProjection & {
+  fragment: DefaultTreeAdapterTypes.DocumentFragment
+  markerCount: number
 }
 type HtmlMarkerExpectation = { tagName: string; text: string }
 type MarkdownToken = {
@@ -93,7 +103,7 @@ type MarkdownMarkerEvent = {
   start: number
   end: number
 }
-type SafeInlineMarkdownSource = SafeHtmlSource & {
+type SafeInlineMarkdownSource = SourceProjection & {
   markerEvents: MarkdownMarkerEvent[]
 }
 type HtmlStructureOptions = {
@@ -108,8 +118,10 @@ type MarkedInlineReplacement = {
 type InlineMarkdownReplacement = {
   content: string
   semanticSafety: 'simple' | 'html' | 'markdown'
-  requiresSourceFallback?: boolean
 }
+type RenderedMarkdownDecision = { kind: 'replacement'; content: string } | { kind: 'fallback' }
+type InlineMarkdownDecision =
+  { kind: 'replacement'; value: InlineMarkdownReplacement } | { kind: 'fallback' }
 
 type RenderedMarkdownTextNode = {
   htmlStart: number
@@ -144,6 +156,16 @@ type RenderedHtmlChange = {
   end: number
   content: string
   markers: HtmlMarkerExpectation[]
+}
+
+type StableSourceRule = {
+  parse: (source: string, rejectedMarkerTags: ReadonlySet<string>) => SourceProjection | undefined
+  validate: (
+    content: string,
+    expectedStructure: string,
+    markers: HtmlMarkerExpectation[],
+    tags: MarkdownChangeTags
+  ) => boolean
 }
 
 const isSimpleMarkdownText = (content: string): boolean => {
@@ -561,10 +583,28 @@ const htmlNodeStructure = (
     : ['element', node.tagName, node.namespaceURI, attributeStructure, children]
 }
 
+const toSourceProjection = (
+  source: string,
+  structure: unknown,
+  textSpans: HtmlTextSpan[]
+): SourceProjection | undefined => {
+  textSpans.sort((left, right) => left.start - right.start || left.end - right.end)
+  let nonTextSource = ''
+  let cursor = 0
+  for (const span of textSpans) {
+    if (span.start < cursor) return undefined
+    nonTextSource += source.slice(cursor, span.start)
+    cursor = span.end
+  }
+  nonTextSource += source.slice(cursor)
+  return { structure: JSON.stringify(structure), nonTextSource, textSpans }
+}
+
 const parseSafeHtmlFragmentSource = (
   source: string,
-  rejectedMarkerTags: ReadonlySet<string>
-): SafeHtmlSource | undefined => {
+  rejectedMarkerTags: ReadonlySet<string>,
+  markerExpectations?: HtmlMarkerExpectation[]
+): ParsedHtmlFragment | undefined => {
   let hasParseError = false
   let fragment: DefaultTreeAdapterTypes.DocumentFragment
   try {
@@ -582,27 +622,21 @@ const parseSafeHtmlFragmentSource = (
   const textSpans: HtmlTextSpan[] = []
   const options: HtmlStructureOptions = {
     markerIndex: 0,
-    rejectedMarkerTags
+    rejectedMarkerTags,
+    markerExpectations
   }
   const structure = htmlChildrenStructure(fragment.childNodes, source, textSpans, options)
   if (structure === undefined) return undefined
-
-  textSpans.sort((left, right) => left.start - right.start || left.end - right.end)
-  let nonTextSource = ''
-  let cursor = 0
-  for (const span of textSpans) {
-    if (span.start < cursor) return undefined
-    nonTextSource += source.slice(cursor, span.start)
-    cursor = span.end
-  }
-  nonTextSource += source.slice(cursor)
-  return { structure: JSON.stringify(structure), nonTextSource, textSpans }
+  const projection = toSourceProjection(source, structure, textSpans)
+  return projection === undefined
+    ? undefined
+    : { ...projection, fragment, markerCount: options.markerIndex }
 }
 
 const parseSafeHtmlSource = (
   source: string,
   rejectedMarkerTags: ReadonlySet<string>
-): SafeHtmlSource | undefined =>
+): SourceProjection | undefined =>
   isPureHtmlSource(source) ? parseSafeHtmlFragmentSource(source, rejectedMarkerTags) : undefined
 
 const markdownTokenProperties = (token: MarkdownToken): unknown[] => {
@@ -741,21 +775,8 @@ const parseSafeInlineMarkdownSource = (
   )
   if (structure === undefined) return undefined
 
-  textSpans.sort((left, right) => left.start - right.start || left.end - right.end)
-  let nonTextSource = ''
-  let cursor = 0
-  for (const span of textSpans) {
-    if (span.start < cursor) return undefined
-    nonTextSource += source.slice(cursor, span.start)
-    cursor = span.end
-  }
-  nonTextSource += source.slice(cursor)
-  return {
-    structure: JSON.stringify(structure),
-    nonTextSource,
-    textSpans,
-    markerEvents
-  }
+  const projection = toSourceProjection(source, structure, textSpans)
+  return projection === undefined ? undefined : { ...projection, markerEvents }
 }
 
 const toInlineTextReplacement = (removed: DiffLine, added: DiffLine): DiffSegment[] | undefined => {
@@ -864,30 +885,11 @@ const hasValidInjectedHtmlFragmentMarkers = (
   markers: HtmlMarkerExpectation[],
   tags: MarkdownChangeTags
 ): boolean => {
-  let hasParseError = false
-  let fragment: DefaultTreeAdapterTypes.DocumentFragment
-  try {
-    fragment = parseFragment(content, {
-      sourceCodeLocationInfo: true,
-      onParseError: () => {
-        hasParseError = true
-      }
-    })
-  } catch {
-    return false
-  }
-  if (hasParseError) return false
-
-  const options: HtmlStructureOptions = {
-    markerExpectations: markers,
-    markerIndex: 0,
-    rejectedMarkerTags: new Set([tags.added, tags.removed])
-  }
-  const structure = htmlChildrenStructure(fragment.childNodes, content, [], options)
+  const parsed = parseSafeHtmlFragmentSource(content, new Set([tags.added, tags.removed]), markers)
   return (
-    structure !== undefined &&
-    options.markerIndex === markers.length &&
-    JSON.stringify(structure) === expectedStructure
+    parsed !== undefined &&
+    parsed.markerCount === markers.length &&
+    parsed.structure === expectedStructure
   )
 }
 
@@ -924,6 +926,61 @@ const hasValidInjectedMarkdownMarkers = (
       content.slice(opening.end, closing.start) === escapeHtmlText(marker.text)
     )
   })
+}
+
+const sourceSides = (segments: DiffSegment[]): { before: string; after: string } => ({
+  before: segments
+    .filter((segment) => segment.kind !== 'added')
+    .map((segment) => segment.text)
+    .join(''),
+  after: segments
+    .filter((segment) => segment.kind !== 'removed')
+    .map((segment) => segment.text)
+    .join('')
+})
+
+const hasSafeMarkdownChangeTags = (tags: MarkdownChangeTags): boolean =>
+  tags.added !== tags.removed &&
+  isSafeHtmlMarkerTag(tags.added) &&
+  isSafeHtmlMarkerTag(tags.removed)
+
+const toStableSourceReplacement = (
+  segments: DiffSegment[],
+  tags: MarkdownChangeTags,
+  rules: StableSourceRule[]
+): string | undefined => {
+  if (!hasSafeMarkdownChangeTags(tags)) return undefined
+
+  const { before, after } = sourceSides(segments)
+  const markerTags = new Set([tags.added, tags.removed])
+  const projections = rules.map((rule) => ({
+    rule,
+    before: rule.parse(before, markerTags),
+    after: rule.parse(after, markerTags)
+  }))
+  if (
+    projections.some(
+      (projection) =>
+        projection.before === undefined ||
+        projection.after === undefined ||
+        projection.before.structure !== projection.after.structure ||
+        projection.before.nonTextSource !== projection.after.nonTextSource ||
+        !changedSegmentsFitHtmlText(segments, 'removed', before, projection.before.textSpans) ||
+        !changedSegmentsFitHtmlText(segments, 'added', after, projection.after.textSpans)
+    )
+  ) {
+    return undefined
+  }
+
+  const replacement = toMarkedSegmentsReplacement(segments, tags)
+  return replacement !== undefined &&
+    projections.every(
+      ({ rule, before: projection }) =>
+        projection !== undefined &&
+        rule.validate(replacement.content, projection.structure, replacement.markers, tags)
+    )
+    ? replacement.content
+    : undefined
 }
 
 const RENDERED_INLINE_MARKDOWN_TOKEN_TYPES = new Set(['text', 'escape', 'strong', 'em', 'del'])
@@ -973,20 +1030,6 @@ const renderedInlineMarkdown = (
   const safeHtml = parseSafeHtmlFragmentSource(rendered, rejectedMarkerTags)
   if (safeHtml === undefined) return undefined
 
-  let hasParseError = false
-  let fragment: DefaultTreeAdapterTypes.DocumentFragment
-  try {
-    fragment = parseFragment(rendered, {
-      sourceCodeLocationInfo: true,
-      onParseError: () => {
-        hasParseError = true
-      }
-    })
-  } catch {
-    return undefined
-  }
-  if (hasParseError) return undefined
-
   const textNodes: RenderedMarkdownTextNode[] = []
   let text = ''
   const collectTextNodes = (
@@ -1018,7 +1061,8 @@ const renderedInlineMarkdown = (
     }
     return true
   }
-  if (!collectTextNodes(fragment.childNodes, []) || textNodes.length === 0) return undefined
+  if (!collectTextNodes(safeHtml.fragment.childNodes, []) || textNodes.length === 0)
+    return undefined
 
   return { content: rendered, structure: safeHtml.structure, text, textNodes }
 }
@@ -1242,22 +1286,9 @@ const renderChangedTextNode = (
 const toRenderedInlineMarkdownReplacement = (
   segments: DiffSegment[],
   tags: MarkdownChangeTags
-): string | undefined => {
-  if (
-    tags.added === tags.removed ||
-    !isSafeHtmlMarkerTag(tags.added) ||
-    !isSafeHtmlMarkerTag(tags.removed)
-  ) {
-    return undefined
-  }
-  const beforeSource = segments
-    .filter((segment) => segment.kind !== 'added')
-    .map((segment) => segment.text)
-    .join('')
-  const afterSource = segments
-    .filter((segment) => segment.kind !== 'removed')
-    .map((segment) => segment.text)
-    .join('')
+): RenderedMarkdownDecision | undefined => {
+  if (!hasSafeMarkdownChangeTags(tags)) return undefined
+  const { before: beforeSource, after: afterSource } = sourceSides(segments)
   const markerTags = new Set([tags.added, tags.removed])
   const before = renderedInlineMarkdown(beforeSource, markerTags)
   const after = renderedInlineMarkdown(afterSource, markerTags)
@@ -1269,7 +1300,7 @@ const toRenderedInlineMarkdownReplacement = (
     !renderedGraphemesFitTextNodes(after) ||
     !renderedContextFormattingMatches(before, after, changes)
   ) {
-    return undefined
+    return { kind: 'fallback' }
   }
 
   for (const change of changes) {
@@ -1283,14 +1314,14 @@ const toRenderedInlineMarkdownReplacement = (
       insertionAncestors === undefined ||
       !removalCanUseFormatting(before, change, insertionAncestors)
     ) {
-      return undefined
+      return { kind: 'fallback' }
     }
   }
 
   const htmlChanges: RenderedHtmlChange[] = []
   for (const node of after.textNodes) {
     const replacement = renderChangedTextNode(node, changes, tags)
-    if (replacement === undefined) return undefined
+    if (replacement === undefined) return { kind: 'fallback' }
     htmlChanges.push({
       start: node.htmlStart,
       end: node.htmlEnd,
@@ -1307,7 +1338,7 @@ const toRenderedInlineMarkdownReplacement = (
     )
     if (isInsideTextNode) continue
     const boundary = renderedBoundary(after, change.afterStart)
-    if (boundary === undefined) return undefined
+    if (boundary === undefined) return { kind: 'fallback' }
     const removals = boundaryRemovals.get(boundary.htmlOffset) ?? []
     removals.push(change)
     boundaryRemovals.set(boundary.htmlOffset, removals)
@@ -1328,7 +1359,7 @@ const toRenderedInlineMarkdownReplacement = (
   const markers: HtmlMarkerExpectation[] = []
   let cursor = 0
   for (const change of htmlChanges) {
-    if (change.start < cursor) return undefined
+    if (change.start < cursor) return { kind: 'fallback' }
     content.push(after.content.slice(cursor, change.start), change.content)
     markers.push(...change.markers)
     cursor = change.end
@@ -1341,114 +1372,27 @@ const toRenderedInlineMarkdownReplacement = (
     replacement.length > MARKDOWN_RENDERED_DIFF_MAX_CHARS ||
     !hasValidInjectedHtmlFragmentMarkers(replacement, after.structure, markers, tags)
   ) {
-    return undefined
+    return { kind: 'fallback' }
   }
-  return replacement
+  return { kind: 'replacement', content: replacement }
 }
 
 const toStableInlineMarkdownReplacement = (
   segments: DiffSegment[],
   tags: MarkdownChangeTags
-): string | undefined => {
-  if (
-    tags.added === tags.removed ||
-    !isSafeHtmlMarkerTag(tags.added) ||
-    !isSafeHtmlMarkerTag(tags.removed)
-  ) {
-    return undefined
-  }
-  const before = segments
-    .filter((segment) => segment.kind !== 'added')
-    .map((segment) => segment.text)
-    .join('')
-  const after = segments
-    .filter((segment) => segment.kind !== 'removed')
-    .map((segment) => segment.text)
-    .join('')
-  const markerTags = new Set([tags.added, tags.removed])
-  const parsedBefore = parseSafeInlineMarkdownSource(before, markerTags)
-  const parsedAfter = parseSafeInlineMarkdownSource(after, markerTags)
-  const parsedHtmlBefore = parseSafeHtmlFragmentSource(before, markerTags)
-  const parsedHtmlAfter = parseSafeHtmlFragmentSource(after, markerTags)
-  if (
-    parsedBefore === undefined ||
-    parsedAfter === undefined ||
-    parsedHtmlBefore === undefined ||
-    parsedHtmlAfter === undefined ||
-    parsedBefore.structure !== parsedAfter.structure ||
-    parsedBefore.nonTextSource !== parsedAfter.nonTextSource ||
-    parsedHtmlBefore.structure !== parsedHtmlAfter.structure ||
-    parsedHtmlBefore.nonTextSource !== parsedHtmlAfter.nonTextSource ||
-    !changedSegmentsFitHtmlText(segments, 'removed', before, parsedBefore.textSpans) ||
-    !changedSegmentsFitHtmlText(segments, 'added', after, parsedAfter.textSpans) ||
-    !changedSegmentsFitHtmlText(segments, 'removed', before, parsedHtmlBefore.textSpans) ||
-    !changedSegmentsFitHtmlText(segments, 'added', after, parsedHtmlAfter.textSpans)
-  ) {
-    return undefined
-  }
-
-  const replacement = toMarkedSegmentsReplacement(segments, tags)
-  return replacement !== undefined &&
-    hasValidInjectedMarkdownMarkers(
-      replacement.content,
-      parsedBefore.structure,
-      replacement.markers,
-      tags
-    ) &&
-    hasValidInjectedHtmlFragmentMarkers(
-      replacement.content,
-      parsedHtmlBefore.structure,
-      replacement.markers,
-      tags
-    )
-    ? replacement.content
-    : undefined
-}
+): string | undefined =>
+  toStableSourceReplacement(segments, tags, [
+    { parse: parseSafeInlineMarkdownSource, validate: hasValidInjectedMarkdownMarkers },
+    { parse: parseSafeHtmlFragmentSource, validate: hasValidInjectedHtmlFragmentMarkers }
+  ])
 
 const toStableHtmlReplacement = (
   segments: DiffSegment[],
   tags: MarkdownChangeTags
-): string | undefined => {
-  const before = segments
-    .filter((segment) => segment.kind !== 'added')
-    .map((segment) => segment.text)
-    .join('')
-  const after = segments
-    .filter((segment) => segment.kind !== 'removed')
-    .map((segment) => segment.text)
-    .join('')
-  if (
-    tags.added === tags.removed ||
-    !isSafeHtmlMarkerTag(tags.added) ||
-    !isSafeHtmlMarkerTag(tags.removed)
-  ) {
-    return undefined
-  }
-  const markerTags = new Set([tags.added, tags.removed])
-  const parsedBefore = parseSafeHtmlSource(before, markerTags)
-  const parsedAfter = parseSafeHtmlSource(after, markerTags)
-  if (
-    parsedBefore === undefined ||
-    parsedAfter === undefined ||
-    parsedBefore.structure !== parsedAfter.structure ||
-    parsedBefore.nonTextSource !== parsedAfter.nonTextSource ||
-    !changedSegmentsFitHtmlText(segments, 'removed', before, parsedBefore.textSpans) ||
-    !changedSegmentsFitHtmlText(segments, 'added', after, parsedAfter.textSpans)
-  ) {
-    return undefined
-  }
-
-  const replacement = toMarkedSegmentsReplacement(segments, tags)
-  return replacement !== undefined &&
-    hasValidInjectedHtmlMarkers(
-      replacement.content,
-      parsedBefore.structure,
-      replacement.markers,
-      tags
-    )
-    ? replacement.content
-    : undefined
-}
+): string | undefined =>
+  toStableSourceReplacement(segments, tags, [
+    { parse: parseSafeHtmlSource, validate: hasValidInjectedHtmlMarkers }
+  ])
 
 const isSafeInlineTableRow = (line: DiffLine, allowChangedDelimiters = false): boolean => {
   const content = diffLineText(line)
@@ -1536,7 +1480,7 @@ const toInlineMarkdownReplacement = (
   removed: DiffLine,
   added: DiffLine,
   tags: MarkdownChangeTags
-): InlineMarkdownReplacement | undefined => {
+): InlineMarkdownDecision | undefined => {
   const before = diffLineText(removed)
   const after = diffLineText(added)
   const inlineSegments = toInlineTextReplacement(removed, added)
@@ -1549,18 +1493,30 @@ const toInlineMarkdownReplacement = (
   const displaySegments = withoutTrailingContextLineEnding(inlineSegments)
   const htmlReplacement = toStableHtmlReplacement(displaySegments, tags)
   if (htmlReplacement !== undefined) {
-    return { content: htmlReplacement, semanticSafety: 'html' }
+    return {
+      kind: 'replacement',
+      value: { content: htmlReplacement, semanticSafety: 'html' }
+    }
   }
   const markdownReplacement = toStableInlineMarkdownReplacement(displaySegments, tags)
   if (markdownReplacement !== undefined) {
-    return { content: markdownReplacement, semanticSafety: 'markdown' }
-  }
-  const renderedMarkdownReplacement = toRenderedInlineMarkdownReplacement(displaySegments, tags)
-  if (renderedMarkdownReplacement !== undefined) {
     return {
-      content: renderedMarkdownReplacement,
-      semanticSafety: 'markdown',
-      requiresSourceFallback: true
+      kind: 'replacement',
+      value: {
+        content: markdownReplacement,
+        semanticSafety: 'markdown'
+      }
+    }
+  }
+  const rendered = toRenderedInlineMarkdownReplacement(displaySegments, tags)
+  if (rendered?.kind === 'fallback') return rendered
+  if (rendered?.kind === 'replacement') {
+    return {
+      kind: 'replacement',
+      value: {
+        content: rendered.content,
+        semanticSafety: 'markdown'
+      }
     }
   }
 
@@ -1584,35 +1540,13 @@ const toInlineMarkdownReplacement = (
   const replacement = toMarkedSegmentsReplacement(displaySegments, tags)
   return replacement === undefined
     ? undefined
-    : { content: replacement.content, semanticSafety: 'simple' }
-}
-
-const isRenderedInlineMarkdownCandidate = (
-  removed: DiffLine,
-  added: DiffLine,
-  tags: MarkdownChangeTags
-): boolean => {
-  const inlineSegments = toInlineTextReplacement(removed, added)
-  if (
-    inlineSegments === undefined ||
-    inlineSegments.some((segment) => segment.kind !== 'context' && /[\r\n]/u.test(segment.text))
-  ) {
-    return false
-  }
-  const displaySegments = withoutTrailingContextLineEnding(inlineSegments)
-  const beforeSource = displaySegments
-    .filter((segment) => segment.kind !== 'added')
-    .map((segment) => segment.text)
-    .join('')
-  const afterSource = displaySegments
-    .filter((segment) => segment.kind !== 'removed')
-    .map((segment) => segment.text)
-    .join('')
-  const markerTags = new Set([tags.added, tags.removed])
-  return (
-    renderedInlineMarkdown(beforeSource, markerTags) !== undefined &&
-    renderedInlineMarkdown(afterSource, markerTags) !== undefined
-  )
+    : {
+        kind: 'replacement',
+        value: {
+          content: replacement.content,
+          semanticSafety: 'simple'
+        }
+      }
 }
 
 const appendTextSegment = (segments: DiffSegment[], segment: DiffSegment): void => {
@@ -1711,7 +1645,6 @@ type InlineMarkdownChange = {
   content: string
   endIndex: number
   semanticSafety: InlineMarkdownReplacement['semanticSafety']
-  requiresSourceFallback?: boolean
 }
 
 const toStandaloneMarkdownChange = (
@@ -1770,14 +1703,16 @@ const inlineMarkdownPairs = (
     const removed = lines[index]
     const added = lines[index + 1]
     if (removed?.kind !== 'removed' || added?.kind !== 'added') continue
-    const replacement = toInlineMarkdownReplacement(removed, added, tags)
-    if (replacement === undefined) {
-      if (isRenderedInlineMarkdownCandidate(removed, added, tags)) {
-        forcedRawRanges.push({ start: index, end: index + 1 })
-        index += 1
-      }
+    const decision = toInlineMarkdownReplacement(removed, added, tags)
+    if (decision?.kind === 'fallback') {
+      forcedRawRanges.push({ start: index, end: index + 1 })
+      index += 1
       continue
     }
+    if (decision === undefined) {
+      continue
+    }
+    const replacement = decision.value
     pairs.set(index, { ...replacement, endIndex: index + 1 })
     indexes.add(index)
     indexes.add(index + 1)
@@ -2135,41 +2070,34 @@ const toMarkdownRenderBlocks = (
   let pendingStart = 0
   let pendingEnd = 0
   let pendingMixed = false
-  let pendingRequiresSourceFallback = false
   const flushPending = (): void => {
     while (pendingLines.at(-1) === '') pendingLines.pop()
     if (pendingLines.length > 0) {
-      const exactSegments = pendingMixed
-        ? toMixedTextSegments(result.lines.slice(pendingStart, pendingEnd + 1))
-        : undefined
-      blocks.push({
-        kind: 'markdown',
-        changeKind: pendingMixed ? 'mixed' : 'context',
-        content: joinLineTexts(pendingLines).content,
-        ...(exactSegments &&
-        (pendingRequiresSourceFallback ||
-          exactSegments.some((segment) => segment.text.includes('\r')))
-          ? { fallbackSegments: exactSegments }
-          : {}),
-        startIndex: pendingStart
-      })
+      const content = joinLineTexts(pendingLines).content
+      if (pendingMixed) {
+        const sourceLines = result.lines.slice(pendingStart, pendingEnd + 1)
+        const fallbackSegments =
+          toMixedTextSegments(sourceLines) ??
+          sourceLines.map((line) => ({ kind: line.kind, text: diffLineSourceText(line) }))
+        blocks.push({
+          kind: 'markdown',
+          changeKind: 'mixed',
+          content,
+          fallbackSegments,
+          startIndex: pendingStart
+        })
+      } else {
+        blocks.push({ kind: 'markdown', changeKind: 'context', content, startIndex: pendingStart })
+      }
     }
     pendingLines = []
     pendingMixed = false
-    pendingRequiresSourceFallback = false
   }
-  const appendPending = (
-    content: string,
-    index: number,
-    mixed = false,
-    endIndex = index,
-    requiresSourceFallback = false
-  ): void => {
+  const appendPending = (content: string, index: number, mixed = false, endIndex = index): void => {
     if (pendingLines.length === 0) pendingStart = index
     pendingLines.push(content)
     pendingEnd = endIndex
     pendingMixed ||= mixed
-    pendingRequiresSourceFallback ||= requiresSourceFallback
   }
 
   let rangeIndex = 0
@@ -2189,14 +2117,12 @@ const toMarkdownRenderBlocks = (
         exactSegments === undefined ? undefined : withoutTrailingContextLineEnding(exactSegments)
       const htmlReplacement =
         mixedSegments === undefined ? undefined : toStableHtmlReplacement(mixedSegments, tags)
-      if (htmlReplacement !== undefined) {
+      if (htmlReplacement !== undefined && exactSegments !== undefined) {
         blocks.push({
           kind: 'markdown',
           changeKind: 'mixed',
           content: htmlReplacement,
-          ...(exactSegments?.some((segment) => segment.text.includes('\r'))
-            ? { fallbackSegments: exactSegments }
-            : {}),
+          fallbackSegments: exactSegments,
           startIndex: range.start
         })
       } else if (mixedSegments) {
@@ -2229,7 +2155,7 @@ const toMarkdownRenderBlocks = (
 
     const pair = inline.pairs.get(index)
     if (pair) {
-      appendPending(pair.content, index, true, pair.endIndex, pair.requiresSourceFallback)
+      appendPending(pair.content, index, true, pair.endIndex)
       index = pair.endIndex
       continue
     }

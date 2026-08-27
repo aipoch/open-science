@@ -23,6 +23,7 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
       {
         kind: 'markdown',
         changeKind: 'mixed',
+        fallbackSegments: expect.any(Array),
         content: `- ${markdownChange('removed', 'old')}${markdownChange('added', 'new')} one\n- ${markdownChange('removed', 'old')}${markdownChange('added', 'new')} two`,
         startIndex: 0
       }
@@ -42,6 +43,7 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
       {
         kind: 'markdown',
         changeKind: 'mixed',
+        fallbackSegments: expect.any(Array),
         content: `| Name | Value |\n| --- | --- |\n| A | ${markdownChange('removed', 'old')}${markdownChange('added', 'new')} |`,
         startIndex: 0
       }
@@ -61,6 +63,7 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
       {
         kind: 'markdown',
         changeKind: 'mixed',
+        fallbackSegments: expect.any(Array),
         content: `Name | Value\n--- | ---\nA | ${markdownChange('removed', 'old')}${markdownChange('added', 'new')}\n\nAfter table`,
         startIndex: 0
       }
@@ -105,6 +108,7 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
       {
         kind: 'markdown',
         changeKind: 'mixed',
+        fallbackSegments: expect.any(Array),
         content: `${markdownChange('removed', 'Old')}${markdownChange('added', 'New')} title\n===\nAfter heading`,
         startIndex: 0
       }
@@ -148,6 +152,7 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
       {
         kind: 'markdown',
         changeKind: 'mixed',
+        fallbackSegments: expect.any(Array),
         content: `- first item\n  ${markdownChange('removed', 'old')}${markdownChange('added', 'new')} continuation\n  stable continuation\n- second item`,
         startIndex: 0
       }
@@ -169,6 +174,7 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
       {
         kind: 'markdown',
         changeKind: 'mixed',
+        fallbackSegments: expect.any(Array),
         content: `- first item\n\n  ${markdownChange('removed', 'old')}${markdownChange('added', 'new')} continuation\n\n- second item\n\n  stable continuation\n\nAfter list`,
         startIndex: 0
       }
